@@ -38,14 +38,14 @@ verifier exists without claiming later behavior.
 
 ## Acceptance criteria
 
-- [ ] `bun install` succeeds from a clean clone (submodule included via `git submodule update --init`). Pending the user-directed post-S0 commit and hosted-repository setup; an isolated pre-commit workspace install passes.
-- [ ] `bun run lint`, `bun run fmt:check`, `bun run typecheck`, `bun test` all pass (trivially, on placeholder code) in CI. The workflow is implemented and locally validated; its first hosted run is pending.
+- [x] `bun install` succeeds from a clean clone (submodule included via `git submodule update --init`).
+- [x] `bun run lint`, `bun run fmt:check`, `bun run typecheck`, `bun test` all pass (trivially, on placeholder code) in CI.
 - [x] Lint-test fixtures prove that `as Type`, generic assertions, multiline assertions, angle-bracket assertions, and non-null assertions all fail, while `as const` passes. The checks operate on TypeScript AST node kinds (`TSAsExpression`, `TSTypeAssertion`, and non-null assertion), not a grep heuristic.
 - [x] `vendor/effect` is present, at the pinned tag, and `vendor/effect/ai-docs/src/` is readable.
 - [x] Compile smoke test produces a working binary without `--minify` and the binary runs.
 - [x] `tests/testkit`, `tests/scenarios`, the scenario registry, tracked stage/slice manifests, versioned evidence schemas, and workflow documentation exist; `.artifacts/` is ignored and no production package imports testkit code.
 - [x] The package-graph check enforces exactly D13's four S0 workspace packages and the allowed dependency direction; `defineContractTests` under `tests/testkit` passes against a trivial test-only in-memory stub.
-- [ ] `bun run verify:s0` and `bun run verify:all` pass; `verify:s1` through `verify:s7` explicitly report manifest-empty stages without claiming behavior. Local evidence validates, is redacted, and is replayable; CI artifact upload is pending the first hosted run.
+- [x] `bun run verify:s0` and `bun run verify:all` pass; `verify:s1` through `verify:s7` explicitly report manifest-empty stages without claiming behavior. The S0 evidence bundle validates, is redacted, is replayable, and is uploaded by CI.
 - [x] The S0 plan checklist and scenario/stage manifests reflect the implemented harness, and findings from verification/review by a separate Sol medium agent in an independent run and context are resolved without waiving deterministic failures.
 
 ## References to consult
