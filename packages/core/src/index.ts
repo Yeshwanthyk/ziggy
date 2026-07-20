@@ -27,6 +27,6 @@ export {
   type MemoryRecoveryPoint,
   type MemoryReplacement,
   type SessionAppendPoint,
-  type SessionSummary,
   type StartSessionResult,
+  type StoredSessionSummary,
 } from "./world/filesystem.ts";

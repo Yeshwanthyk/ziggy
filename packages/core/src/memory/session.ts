@@ -9,6 +9,11 @@ export interface OpenSessionOptions {
 }
 
 export async function openSession(options: OpenSessionOptions): Promise<FrozenSessionSnapshot> {
+  const persisted = await options.world.readSessionSnapshot(options.sessionId);
+  if (persisted !== undefined) {
+    return persisted;
+  }
+
   const memory = await options.world.readMemoryBatch(["MEMORY.md", "USER.md"]);
   const snapshot: FrozenSessionSnapshot = {
     systemPrompt: assembleSystemPrompt(

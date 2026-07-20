@@ -59,7 +59,11 @@ export interface AfterToolHookInput extends ToolExecutionInput {
 }
 
 export interface SessionWorld {
-  /** A live SessionRuntime must be the exclusive appender for its Session. */
+  /**
+   * A live SessionRuntime must be the exclusive appender for its Session.
+   * The headless runtime relies on its owner to uphold this contract; the daemon enforces
+   * one live runtime per Session when process lifecycle ownership lands.
+   */
   appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
 }

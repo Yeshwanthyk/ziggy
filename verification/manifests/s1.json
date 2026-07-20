@@ -106,7 +106,7 @@
     {
       "id": "s1.memory-frozen-session-snapshot",
       "status": "implemented",
-      "description": "Session start persists one frozen assembled Memory snapshot; mid-Session writes are immediate but current prompts remain unchanged while a new Session observes new Memory."
+      "description": "Session start persists one frozen assembled Memory snapshot; mid-Session writes are immediate but current prompts remain unchanged while a new Session observes new Memory, and resume uses the persisted snapshot without reading or recovering current Memory."
     },
     {
       "id": "s1.integrated-waist",

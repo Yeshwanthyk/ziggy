@@ -27,7 +27,7 @@ export interface MemoryReplacement {
   readonly content: string;
 }
 
-export interface SessionSummary {
+export interface StoredSessionSummary {
   readonly sessionId: string;
   readonly lastSeq: number;
 }
@@ -47,10 +47,11 @@ export interface FilesystemWorldOptions {
 }
 
 export interface FilesystemWorld {
+  readSessionSnapshot(sessionId: string): Promise<FrozenSessionSnapshot | undefined>;
   startSession(sessionId: string, snapshot: FrozenSessionSnapshot): Promise<StartSessionResult>;
   appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
-  listSessions(): Promise<ReadonlyArray<SessionSummary>>;
+  listSessions(): Promise<ReadonlyArray<StoredSessionSummary>>;
   readMemory(document: string): Promise<string | undefined>;
   readMemoryBatch(
     documents: ReadonlyArray<string>,
@@ -95,6 +96,19 @@ export function createFilesystemWorld(options: FilesystemWorldOptions): Filesyst
   const memoryGate = `memory:${profilePath}`;
 
   return {
+    async readSessionSnapshot(sessionId) {
+      validateSessionId(sessionId);
+      return withGate(`session:${profilePath}:${sessionId}`, async () => {
+        await ensureSafeDirectory(profilePath, false);
+        await ensureSafeDirectoryIfPresent(sessionsPath);
+        const existing = await readValidatedSession(
+          sessionPath(sessionsPath, sessionId),
+          sessionId,
+        );
+        return requireExistingSessionSnapshot(existing.envelopes, sessionId);
+      });
+    },
+
     async startSession(sessionId, snapshot) {
       validateSessionId(sessionId);
       return withGate(`session:${profilePath}:${sessionId}`, async () => {

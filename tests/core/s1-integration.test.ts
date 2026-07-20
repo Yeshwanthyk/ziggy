@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -103,6 +103,38 @@ describe("S1 filesystem production composition", () => {
     expect(replay.filter((envelope) => envelope.event.type === "session-started")).toHaveLength(1);
     expect(requireStartedSnapshot(replay)).toEqual(snapshot);
     await runtime.close();
+  });
+
+  test("resumes from the persisted snapshot without reading or recovering current Memory", async () => {
+    const profile = await createProfile("resume-corrupt-memory");
+    const initialWorld = deterministicWorld(profile);
+    await initialWorld.replaceMemoryBatch([{ document: "MEMORY.md", content: "persisted fact" }]);
+    const initial = await composedRuntime(
+      initialWorld,
+      "persisted-session",
+      new ScriptedProvider([]),
+      ["turn-initial"],
+      ["step-initial"],
+    );
+    await initial.close();
+    await writeFile(join(profile, "memory/.batch-journal.json"), "{malformed", "utf8");
+
+    const provider = new ScriptedProvider([textStep("resumed", 100)]);
+    const resumed = await composedRuntime(
+      deterministicWorld(profile),
+      "persisted-session",
+      provider,
+      ["turn-resumed"],
+      ["step-resumed"],
+      "changed base prompt must be ignored",
+    );
+    await resumed.startTurn({ message: "resume despite corrupt current Memory" });
+    await resumed.waitForIdle();
+
+    expect(provider.calls[0]?.context.systemPrompt).toContain(BASE_PROMPT);
+    expect(provider.calls[0]?.context.systemPrompt).not.toContain("changed base prompt");
+    expect(await readFile(join(profile, "memory/.batch-journal.json"), "utf8")).toBe("{malformed");
+    await resumed.close();
   });
 
   test("the actual Memory tool updates Memory while Session snapshots remain frozen", async () => {
