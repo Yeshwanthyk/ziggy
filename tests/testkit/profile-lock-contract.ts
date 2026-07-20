@@ -5,6 +5,8 @@ export interface ProfileLockSpecimen {
   acquire(): Promise<ProfileLock>;
   writeMetadata(value: string): Promise<void>;
   readMetadata(): Promise<string | undefined>;
+  writeTakeoverMetadata(value: string): Promise<void>;
+  readTakeoverMetadata(): Promise<string | undefined>;
   setAlive(pid: number, alive: boolean): void;
   setOwnerPid(pid: number): void;
 }
@@ -40,6 +42,15 @@ export function defineProfileLockContract(
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const owner = results.find((result) => result.status === "fulfilled");
     if (owner?.status === "fulfilled") await owner.value.close();
+  });
+
+  test(`${name}: recovers an orphaned stale takeover without a lock`, async () => {
+    const specimen = await create();
+    specimen.setAlive(77, false);
+    await specimen.writeTakeoverMetadata('{"schemaVersion":1,"pid":77,"ownerToken":"orphaned"}\n');
+    const lock = await specimen.acquire();
+    expect(await specimen.readTakeoverMetadata()).toBeUndefined();
+    await lock.close();
   });
 
   test(`${name}: release is owner-token safe`, async () => {

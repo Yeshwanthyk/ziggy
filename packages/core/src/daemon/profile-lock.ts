@@ -59,7 +59,12 @@ export async function acquireProfileLock(options: AcquireProfileLockOptions): Pr
         await takeOverStaleLock(filesystem, processOperations, lockPath, takeoverPath, metadata);
         break;
       }
-      if ((await readMetadataIfPresent(filesystem, takeoverPath)) === undefined) {
+      const takeover = await readMetadataIfPresent(filesystem, takeoverPath);
+      if (takeover === undefined) {
+        break;
+      }
+      if (!(await processOperations.isAlive(takeover.pid))) {
+        await removeIfOwned(filesystem, takeoverPath, takeover.ownerToken);
         break;
       }
       await removeIfOwned(filesystem, lockPath, metadata.ownerToken);

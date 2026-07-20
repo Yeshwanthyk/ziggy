@@ -199,6 +199,7 @@ async function createLockSpecimen(): Promise<ProfileLockSpecimen> {
   let pid = process.pid;
   let token = 0;
   const lockPath = join(profile, ".runtime", "daemon.lock");
+  const takeoverPath = join(profile, ".runtime", "daemon.lock.takeover");
   return {
     acquire: () =>
       acquireProfileLock({
@@ -218,6 +219,24 @@ async function createLockSpecimen(): Promise<ProfileLockSpecimen> {
     async readMetadata() {
       try {
         return await readFile(lockPath, "utf8");
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ENOENT"
+        )
+          return undefined;
+        throw error;
+      }
+    },
+    async writeTakeoverMetadata(value) {
+      await mkdir(join(profile, ".runtime"), { recursive: true });
+      await writeFile(takeoverPath, value);
+    },
+    async readTakeoverMetadata() {
+      try {
+        return await readFile(takeoverPath, "utf8");
       } catch (error) {
         if (
           typeof error === "object" &&
