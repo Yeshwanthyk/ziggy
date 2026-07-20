@@ -1,5 +1,6 @@
 export const corePackageName = "@ziggy/core";
 export * from "./memory/index.ts";
+export * from "./daemon/index.ts";
 export {
   createFilesystemSessionRuntime,
   createSessionRuntime,
