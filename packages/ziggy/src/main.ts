@@ -1,5 +1,6 @@
-const version = "0.0.0";
+import { productionDependencies, runCli } from "./cli.ts";
 
-if (Bun.argv.includes("--version")) {
-  console.log(version);
-}
+if (import.meta.main) await runCli(Bun.argv.slice(2), productionDependencies());
+
+export { runCli } from "./cli.ts";
+export * from "./service.ts";
