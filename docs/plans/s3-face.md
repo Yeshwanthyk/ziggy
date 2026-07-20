@@ -4,6 +4,39 @@
 
 Give ziggy a real face: a profile-scaffolding command, starter personalities, a rich terminal client, and CLI one-shots — talking to a real daemon over a real provider for the first time. This is the first stage where a human can actually sit down and use ziggy.
 
+## Entry gate — inherited S2 closure
+
+S2's implementation is present and its deterministic `verify:s2` / `verify:all` gates pass, but
+S3 must not assume every end-to-end product claim is already closed. Before building the Face,
+the next session must inspect the live S2 implementation and close or explicitly disposition these
+inherited gaps:
+
+1. Add a deterministic real-socket scenario proving two different Sessions can run concurrently:
+   block one Session in Provider/tool work and prove the other Session continues its Turn and event
+   delivery independently.
+2. Harden the replay cursor boundary. A safe-integer `sinceSeq` beyond the current durable tail must
+   not later receive live envelopes whose `seq` is below that requested cursor. Prefer rejecting it
+   with the existing `unsafe-sequence` protocol error unless live implementation evidence supports a
+   simpler invariant-preserving rule.
+3. Run native service-definition smoke where the host permits it: macOS `plutil` plus a launchd
+   user-domain load/start/stop check locally, and Linux `systemd-analyze` plus user-manager behavior
+   in a Linux environment. Keep deterministic service-manager contracts authoritative when native
+   service managers are unavailable, and record platform prerequisites such as user lingering.
+4. Exercise S2 auto-start through S3's first real daemon-dependent Client command. The auto-start
+   primitive exists, but S2 intentionally had no normal `ask`/TUI caller; this product-path proof
+   therefore closes only when the first S3 Client connects, starts a missing daemon, completes the
+   protocol readiness handshake, and retries its original intent.
+5. Reconcile the remaining unchecked S2 acceptance criteria and run the required independent S2
+   verification/review after the scenarios above land. Do not mark native or live behavior complete
+   from template/fake tests alone.
+
+Known S2 constraints that are not second authorities and should not be rediscovered as surprise
+design changes: lock ownership uses schema-stamped PID/token metadata rather than an OS advisory
+lock (PID reuse can conservatively look live); `session/resume`'s returned `SessionSummary.lastSeq`
+may trail its authoritative `replayThroughSeq` during a concurrent append; detached auto-start
+currently surfaces a bounded readiness timeout rather than child stderr. Preserve these constraints
+unless S3's real Client path demonstrates that one blocks a required user journey.
+
 ## Deliverables
 
 - `ziggy init [path]` — scaffolds a new profile folder:
@@ -15,6 +48,11 @@ Give ziggy a real face: a profile-scaffolding command, starter personalities, a 
   - `automations/` (empty).
   - `credentials/` — created with `0600`/`0700` permissions for provider auth material.
   - **Non-destructive**: `ziggy init` on a folder that already has a `SOUL.md` (or other profile files) must never clobber them — prompt or no-op instead. (This is a direct lesson from merlin — see `docs/REFERENCES.md`.)
+- Production daemon Session composition — replace S2's deliberately unavailable runtime factory
+  with Profile-config-driven Provider/model/auth resolution and the real filesystem Session runtime.
+  The daemon remains the loop owner; pi-ai remains a Provider wire adapter and never becomes a
+  second loop. A Session must still freeze its prompt/Memory/tool snapshot through the existing S1
+  path before its first Turn.
 - 3–4 starter voice templates (distinct `SOUL.md` starting points — e.g. a neutral/minimal assistant, a warm personal-assistant tone, a terse engineering-focused tone; exact set is DECIDE-AT-BUILD with the user) selectable via `ziggy init --voice <name>` or an interactive prompt.
 - `packages/tui` — rich terminal client built on `pi-tui`, depending **only** on `packages/protocol` (never on `packages/core` — enforce this at the package.json/import-graph level, e.g. via `knip`/dependency-cruiser in CI). Capabilities: streaming render of an in-flight turn, sending a steer message mid-turn, switching between sessions, rendering/responding to approval prompts, replaying history correctly on reconnect (using S2's replay-from-seq).
 - CLI one-shots in `packages/ziggy`: `ziggy ask "<prompt>"` (one-shot turn against the main session, print result, exit), `ziggy sessions list`, `ziggy service <install|start|stop|status>` (wraps S2's service commands), `ziggy doctor` (already built in S2, exposed here as the user-facing entry point).
@@ -44,6 +82,10 @@ test that reaches a live service.
 - [ ] `ziggy init --voice <name>` (or interactive equivalent) seeds `SOUL.md` from the chosen template. Each of at least 3 Voice templates differs in its stated persona summary, tone directives, and default verbosity section; a scripted diff check confirms those sections are non-identical across templates.
 - [ ] `ziggy auth login <provider>` for at least one API-key provider and one OAuth provider succeeds end-to-end and `ziggy doctor` subsequently reports that provider as authenticated.
 - [ ] `ziggy ask "hello"` against a real, authenticated provider returns a real model response, with the turn correctly recorded in the session's NDJSON log per S1/S2.
+- [ ] With no daemon running, the first `ziggy ask` transparently auto-starts the Profile daemon, waits for a successful protocol `initialize`, retries the original request exactly once, and records one Turn rather than zero or two.
+- [ ] Two different Sessions run concurrent scripted Turns over separate real socket Clients; a barrier-blocked Provider/tool call in one Session does not block the other Session's event delivery or completion.
+- [ ] A subscribe/resume request with `sinceSeq` beyond the durable tail is rejected or otherwise proven never to receive a later live envelope below that cursor.
+- [ ] Native service smoke is recorded for supported hosts: launchd validation/lifecycle on macOS and systemd unit validation/user-manager lifecycle on Linux, with unavailable host capabilities reported rather than simulated as success.
 - [ ] The TUI: opens the main session, streams a real response token-by-token (not buffered-then-dumped), successfully steers a running turn, and — after being killed and restarted — replays prior history correctly using S2's reconnect/replay path rather than re-fetching from scratch.
 - [ ] `packages/tui`'s `package.json` has zero dependency on `packages/core` (checked in CI, not just by inspection).
 - [ ] `ziggy sessions list` shows the main session plus any pinned sessions created during testing.
@@ -60,12 +102,13 @@ test that reaches a live service.
 
 For each slice, follow the `docs/VERIFICATION.md` through-loop: dedicated Sol medium scouting/task-decomposition run and context → red scenario → separate Sol medium implementation run and context → independent Sol medium deterministic verification/evidence/review run and context. The implementing run must not be the verifying run.
 
-1. One codex `exec` (sol-medium) task: `ziggy init` + starter voice templates + non-destructive-write tests.
-2. One codex `exec` (sol-medium) task, parallel: `ziggy auth login`/`doctor` provider-auth wiring against `pi-ai`.
-3. One codex `exec` (sol-medium) task, after S2 is stable: `packages/tui` skeleton on `pi-tui` — session view, streaming render, steer input, approval prompts.
-4. One codex `exec` (sol-medium) task, parallel with 3: CLI one-shots (`ask`, `sessions list`, `service` wrapper).
-5. Independent Sol medium verification/review pass in a separate run and context with an explicit check that `packages/tui` has no direct or transitive import path into `packages/core`; convert applicable findings to deterministic regression scenarios.
-6. The independent Sol medium verifying run runs and records this manual acceptance checklist: (1) initialize a new Profile interactively and choose a Voice; (2) edit `SOUL.md`, rerun init, and confirm the edit survives; (3) authenticate one API-key Provider and one OAuth Provider; (4) start a real Turn in the TUI and observe incremental streaming; (5) steer the active Turn and confirm the steer affects the next Step; (6) resolve an approval in the TUI; (7) kill and restart the TUI and confirm replay resumes without duplicates; (8) run `ziggy ask` and `ziggy sessions list` against the same daemon.
+1. One dedicated closure task: inspect current S2, add the cross-Session and replay-cursor scenarios, run available native service smoke, reconcile S2's checklist, and complete independent S2 verification before Face implementation depends on it.
+2. One codex `exec` (sol-medium) task: `ziggy init` + starter voice templates + non-destructive-write tests.
+3. One codex `exec` (sol-medium) task, parallel: production daemon Session composition plus `ziggy auth login`/`doctor` Provider-auth wiring against `pi-ai`.
+4. One codex `exec` (sol-medium) task, after the production daemon composition is stable: `packages/tui` skeleton on `pi-tui` — session view, streaming render, steer input, approval prompts.
+5. One codex `exec` (sol-medium) task, parallel with 4: CLI one-shots (`ask`, `sessions list`, `service` wrapper), including the first real auto-start-through-intent proof.
+6. Independent Sol medium verification/review pass in a separate run and context with an explicit check that `packages/tui` has no direct or transitive import path into `packages/core`; convert applicable findings to deterministic regression scenarios.
+7. The independent Sol medium verifying run runs and records this manual acceptance checklist: (1) initialize a new Profile interactively and choose a Voice; (2) edit `SOUL.md`, rerun init, and confirm the edit survives; (3) authenticate one API-key Provider and one OAuth Provider; (4) start a real Turn in the TUI and observe incremental streaming; (5) steer the active Turn and confirm the steer affects the next Step; (6) resolve an approval in the TUI; (7) kill and restart the TUI and confirm replay resumes without duplicates; (8) stop the daemon, run `ziggy ask`, and confirm auto-start completes exactly one Turn; (9) run `ziggy sessions list` against the same daemon.
 
 ## Non-goals
 
