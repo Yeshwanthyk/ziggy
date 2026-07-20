@@ -1,0 +1,99 @@
+import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { CommandRecorder } from "../testkit/boundaries.ts";
+import {
+  buildCompileArgv,
+  runCompileSmoke,
+  validateCompileArgv,
+} from "../../tooling/verification/compile-smoke.ts";
+
+describe("compile smoke verifier", () => {
+  test("constructs the locked argv", () => {
+    expect(buildCompileArgv("/fixture/ziggy-smoke")).toEqual([
+      "bun",
+      "build",
+      "--compile",
+      "packages/ziggy/src/main.ts",
+      "--outfile",
+      "/fixture/ziggy-smoke",
+    ]);
+  });
+
+  test("rejects minify without invoking Bun's known crash", () => {
+    expect(() =>
+      validateCompileArgv(
+        [
+          "bun",
+          "build",
+          "--compile",
+          "--minify",
+          "packages/ziggy/src/main.ts",
+          "--outfile",
+          "/fixture/ziggy-smoke",
+        ],
+        "/fixture/ziggy-smoke",
+      ),
+    ).toThrow("forbids --minify");
+    expect(() =>
+      validateCompileArgv(
+        [
+          "bun",
+          "build",
+          "--compile",
+          "packages/ziggy/src/main.ts",
+          "--outfile",
+          "/fixture/ziggy-smoke",
+          "--bytecode",
+        ],
+        "/fixture/ziggy-smoke",
+      ),
+    ).toThrow("locked command");
+  });
+
+  test("requires the compiled binary to emit version 0.0.0", async () => {
+    const recorder = new CommandRecorder({
+      exitCode: 0,
+      stdout: "0.0.0\n",
+      stderr: "",
+      timedOut: false,
+    });
+    await runCompileSmoke("/fixture/repo", recorder);
+    expect(recorder.commands).toHaveLength(2);
+    const compile = recorder.commands[0];
+    const version = recorder.commands[1];
+    if (compile === undefined || version === undefined) {
+      throw new Error("expected compile and version commands");
+    }
+    expect(compile.argv.slice(0, 5)).toEqual([
+      "bun",
+      "build",
+      "--compile",
+      "packages/ziggy/src/main.ts",
+      "--outfile",
+    ]);
+    expect(version.argv[0]).toBe(compile.argv[5]);
+    expect(version.argv[1]).toBe("--version");
+    expect(compile.timeoutMs).toBe(120_000);
+    expect(version.timeoutMs).toBe(10_000);
+  });
+
+  test("fails bounded timeouts and always removes the isolated directory", async () => {
+    const recorder = new CommandRecorder({
+      exitCode: -1,
+      stdout: "",
+      stderr: "",
+      timedOut: true,
+    });
+    await expect(
+      runCompileSmoke("/fixture/repo", recorder, { compileMs: 5, versionMs: 5 }),
+    ).rejects.toThrow("timed out");
+    const command = recorder.commands[0];
+    const outfile = command?.argv[5];
+    if (outfile === undefined) {
+      throw new Error("missing compile outfile fixture");
+    }
+    expect(command?.timeoutMs).toBe(5);
+    expect(existsSync(dirname(outfile))).toBe(false);
+  });
+});

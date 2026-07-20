@@ -1,0 +1,15 @@
+{
+  "name": "@ziggy/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
+    "@effect/platform-bun": "4.0.0-beta.99",
+    "@ziggy/protocol": "workspace:*",
+    "effect": "4.0.0-beta.99"
+  }
+}

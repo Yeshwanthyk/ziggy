@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "stage": "s1",
+  "status": "manifest-empty",
+  "predecessors": ["s0"],
+  "scenarios": [],
+  "gates": [],
+  "requirements": [
+    {
+      "id": "s1.torn-session-tail-fails-loud",
+      "status": "pending",
+      "description": "Filesystem Session adapter rejects a partial or torn final NDJSON line without automatic repair."
+    }
+  ]
+}

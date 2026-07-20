@@ -1,0 +1,14 @@
+{
+  "name": "@ziggy/ziggy",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "ziggy": "./src/main.ts"
+  },
+  "type": "module",
+  "dependencies": {
+    "@ziggy/core": "workspace:*",
+    "@ziggy/protocol": "workspace:*",
+    "@ziggy/tui": "workspace:*"
+  }
+}

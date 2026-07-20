@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "stage": "s6",
+  "status": "manifest-empty",
+  "predecessors": ["s0", "s1", "s2", "s3", "s4", "s5"],
+  "scenarios": [],
+  "gates": [],
+  "requirements": []
+}

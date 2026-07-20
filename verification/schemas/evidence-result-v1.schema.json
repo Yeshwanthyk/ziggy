@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ziggy.local/verification/evidence-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "scenarios"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "scenarios": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file", "result", "seed", "schedule", "boundaryConfiguration"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "file": { "type": "string", "pattern": "^tests/.+\\.test\\.ts$" },
+          "result": { "enum": ["passed", "failed", "not-run"] },
+          "seed": { "type": "string", "minLength": 1 },
+          "schedule": { "type": "string", "minLength": 1 },
+          "boundaryConfiguration": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    ".artifacts/**",
+    "coverage/**",
+    "dist/**",
+    "tests/fixtures/lint/**",
+    "vendor/effect/**"
+  ],
+  "jsPlugins": ["./tooling/oxlint/no-unsafe-typescript-syntax.mjs"],
+  "options": {
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    "ziggy/no-unsafe-typescript-syntax": "error"
+  }
+}

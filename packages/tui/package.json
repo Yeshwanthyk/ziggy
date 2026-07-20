@@ -1,0 +1,13 @@
+{
+  "name": "@ziggy/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "0.80.10",
+    "@ziggy/protocol": "workspace:*"
+  }
+}

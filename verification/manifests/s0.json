@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "stage": "s0",
+  "status": "implemented",
+  "predecessors": [],
+  "scenarios": [
+    "s0.boundary-testkit",
+    "s0.compile-smoke-flags",
+    "s0.package-graph",
+    "s0.verification-integrity",
+    "s0.world-contract"
+  ],
+  "gates": [
+    "manifest-integrity",
+    "package-graph",
+    "lint",
+    "lint-fixtures",
+    "fmt-check",
+    "typecheck",
+    "scenarios",
+    "test",
+    "knip",
+    "compile-smoke"
+  ],
+  "requirements": []
+}

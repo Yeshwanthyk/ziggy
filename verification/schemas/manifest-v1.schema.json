@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ziggy.local/verification/manifest-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "stage",
+    "status",
+    "predecessors",
+    "scenarios",
+    "gates",
+    "requirements"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "stage": { "$ref": "#/$defs/stage" },
+    "status": { "enum": ["implemented", "manifest-empty"] },
+    "predecessors": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/stage" } },
+    "scenarios": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^s[0-7]\\.[a-z0-9-]+$" }
+    },
+    "gates": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/gate" }
+    },
+    "requirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^s[0-7]\\.[a-z0-9-]+$" },
+          "status": { "enum": ["pending", "implemented"] },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": { "enum": ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"] },
+    "gate": {
+      "enum": [
+        "manifest-integrity",
+        "package-graph",
+        "lint",
+        "lint-fixtures",
+        "fmt-check",
+        "typecheck",
+        "scenarios",
+        "test",
+        "knip",
+        "compile-smoke"
+      ]
+    }
+  }
+}

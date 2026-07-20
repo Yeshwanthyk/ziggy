@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ziggy.local/verification/evidence-replay-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "command",
+    "summaryDigest",
+    "resultDigest",
+    "workspaceInputDigest",
+    "inputs"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "command": { "type": "string", "minLength": 1 },
+    "summaryDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "resultDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "workspaceInputDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "digest"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

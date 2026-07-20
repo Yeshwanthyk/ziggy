@@ -1,0 +1,41 @@
+{
+  "name": "ziggy",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "compile:smoke": "bun tooling/verification/compile-smoke.ts",
+    "fmt": "oxfmt --disable-nested-config --write .",
+    "fmt:check": "oxfmt --disable-nested-config --check .",
+    "knip": "knip --no-progress --no-config-hints",
+    "lint": "oxlint --disable-nested-config .",
+    "lint:fixtures": "bun test tests/tooling/lint-fixtures.test.ts",
+    "package-graph": "bun tooling/verification/package-graph.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:s0": "bun tooling/verification/runner.ts s0",
+    "verify:s1": "bun tooling/verification/runner.ts s1",
+    "verify:s2": "bun tooling/verification/runner.ts s2",
+    "verify:s3": "bun tooling/verification/runner.ts s3",
+    "verify:s4": "bun tooling/verification/runner.ts s4",
+    "verify:s5": "bun tooling/verification/runner.ts s5",
+    "verify:s6": "bun tooling/verification/runner.ts s6",
+    "verify:s7": "bun tooling/verification/runner.ts s7",
+    "verify:all": "bun tooling/verification/runner.ts all"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13",
+    "ajv": "8.20.0",
+    "knip": "6.27.0",
+    "oxc-parser": "0.140.0",
+    "oxfmt": "0.59.0",
+    "oxlint": "1.74.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "bun": "1.3.13"
+  },
+  "packageManager": "bun@1.3.13"
+}

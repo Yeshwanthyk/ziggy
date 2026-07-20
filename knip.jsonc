@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/knip/schema-jsonc.json",
+  "entry": ["tests/**/*.test.ts", "tooling/verification/*.ts"],
+  "project": ["tests/**/*.ts", "tooling/**/*.ts"],
+  "ignore": [
+    ".artifacts/**",
+    "coverage/**",
+    "dist/**",
+    "tests/fixtures/lint/**",
+    "vendor/effect/**",
+  ],
+  "workspaces": {
+    "packages/core": {
+      "ignoreDependencies": [
+        // S0 placeholder: the Bun platform adapter is predeclared for the S1 runtime boundary.
+        "@effect/platform-bun",
+        // S0 placeholder: Provider integration begins in S1; S0 has no product behavior.
+        "@earendil-works/pi-ai",
+        // S0 placeholder: core consumes attach contracts once the S1 waist exists.
+        "@ziggy/protocol",
+        // S0 placeholder: the Effect runtime is first exercised by the S1 implementation.
+        "effect",
+      ],
+    },
+    "packages/protocol": {},
+    "packages/tui": {
+      "ignoreDependencies": [
+        // S0 placeholder: rendering starts in S3; S0 only establishes the package graph.
+        "@earendil-works/pi-tui",
+        // S0 placeholder: the TUI consumes attach contracts when its S3 client is implemented.
+        "@ziggy/protocol",
+      ],
+    },
+    "packages/ziggy": {
+      "ignoreDependencies": [
+        // S0 placeholder: the CLI composes the runtime after the S1 core exists.
+        "@ziggy/core",
+        // S0 placeholder: the CLI uses attach contracts after the S1 waist exists.
+        "@ziggy/protocol",
+        // S0 placeholder: the CLI launches the client after the S3 TUI exists.
+        "@ziggy/tui",
+      ],
+    },
+  },
+}
