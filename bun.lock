@@ -5,6 +5,7 @@
     "": {
       "name": "ziggy",
       "devDependencies": {
+        "@earendil-works/pi-ai": "0.80.10",
         "@types/bun": "1.3.13",
         "ajv": "8.20.0",
         "knip": "6.27.0",

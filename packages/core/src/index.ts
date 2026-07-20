@@ -1,5 +1,18 @@
 export const corePackageName = "@ziggy/core";
 export {
+  createSessionRuntime,
+  type AfterToolHookInput,
+  type CreateSessionRuntimeOptions,
+  type SessionRuntime,
+  type SessionSubscription,
+  type SessionTool,
+  type SessionWorld,
+  type ToolExecutionInput,
+  type ToolExecutionResult,
+  type ToolHookInput,
+  type TurnStartResult,
+} from "./agent/index.ts";
+export {
   createFilesystemWorld,
   type FilesystemWorld,
   type FilesystemWorldOptions,
