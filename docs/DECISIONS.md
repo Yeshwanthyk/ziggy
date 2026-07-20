@@ -240,6 +240,10 @@ open-sourced.
 visibility does not: Ziggy remains private until the user explicitly says to make it public. This
 supersedes the public-from-S0 and public-from-first-commit parts of D11.
 
+**Operational amendment (2026-07-20):** Hosted CI is disabled while the repository remains
+private. Local `verify:sN` and `verify:all` runs remain the hard correctness gates. CI is restored
+only when the user explicitly chooses the later publication point.
+
 ## D12 — v1 client surface: rich TUI + CLI
 
 **Context:** What ships as the primary v1 human-facing surface, given gateways/GUI are later

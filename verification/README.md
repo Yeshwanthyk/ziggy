@@ -74,8 +74,9 @@ bun tooling/verification/runner.ts s1 --agent-findings /tmp/ziggy-s1-findings.js
 ```
 
 The input uses `agent-findings-v1.schema.json`, is capped at 65,536 bytes, and is redacted before it
-enters evidence. Its source path and raw bytes are never retained. Standard CI commands omit the
-option and continue to publish an empty findings list.
+enters evidence. Its source path and raw bytes are never retained. Standard verifier commands omit
+the option and continue to publish an empty findings list. Hosted CI is disabled while the
+repository is private and resumes only when the user explicitly restores it near publication.
 
 Replay binds summary/result digests and a deterministic workspace-input digest. Its per-file input
 catalog covers manifests, schemas, the scenario registry and files, `bun.lock`, package manifests,

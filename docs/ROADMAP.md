@@ -6,7 +6,7 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 
 | Stage | Name       | One-line goal                                                                                                 | Plan                                       |
 | ----- | ---------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| S0    | Foundation | Bun workspace, tooling, Effect v4 submodule, and contract-test harness exist and pass CI                      | [s0-foundation.md](plans/s0-foundation.md) |
+| S0    | Foundation | Bun workspace, tooling, Effect v4 submodule, and contract-test harness exist and pass verification            | [s0-foundation.md](plans/s0-foundation.md) |
 | S1    | Waist      | The session engine and memory subsystem work headless, against a faux provider                                | [s1-waist.md](plans/s1-waist.md)           |
 | S2    | Daemon     | Ziggy runs as a resident per-profile service with a working attach socket                                     | [s2-daemon.md](plans/s2-daemon.md)         |
 | S3    | Face       | `ziggy init` scaffolds a profile; a real TUI and CLI can talk to a real provider                              | [s3-face.md](plans/s3-face.md)             |
@@ -18,7 +18,7 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 ## Sequencing rules
 
 1. **No stage starts before the prior stage is done.** That means its acceptance criteria pass, its deterministic verifier and all predecessor gates pass, its evidence is replayable, and its required agentic through-loop is complete. S2 depends on S1's real session engine; S3 depends on S2's real attach socket.
-2. **Deterministic gates are cumulative and authoritative.** `verify:sN` includes required predecessor gates; `verify:all` is the CI hard correctness gate. AI verification runs outside GitHub CI, cannot waive failures, and must turn applicable findings into deterministic regression scenarios. See [VERIFICATION.md](VERIFICATION.md).
+2. **Deterministic gates are cumulative and authoritative.** `verify:sN` includes required predecessor gates; `verify:all` is the local hard correctness gate while the repository is private. Hosted CI remains disabled until the user explicitly restores it near publication. AI verification cannot waive failures and must turn applicable findings into deterministic regression scenarios. See [VERIFICATION.md](VERIFICATION.md).
 3. **Every stage plan is self-contained.** An agent picking up `docs/plans/sN-*.md` should need only that file, `AGENTS.md` (vocabulary contract), `docs/CONSTITUTION.md` (invariants), `docs/DECISIONS.md` (locked decisions), `docs/VERIFICATION.md` (verification policy), and `docs/REFERENCES.md` (source repos) to execute — not the full chat history that produced the design.
 4. **"Done when" is reproducible, not vibes.** Acceptance criteria require manifest-registered deterministic scenarios, focused and full gates, schema-valid redacted evidence, and verification/review by a separate Sol medium agent in an independent run and context. Manual or live-integration checks may add confidence but never replace deterministic proof.
 5. **v1 is S6, not S7.** Cloudflare, GUI, and additional gateways are explicitly post-v1 scope — do not let S6 scope-creep into them.

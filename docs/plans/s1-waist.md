@@ -48,15 +48,15 @@ access.
 
 ## Acceptance criteria
 
-- [ ] A headless test can: start a Session, send one user message, get a full Turn (against the faux Provider) recorded as canonical `{ schemaVersion, seq, emittedAt, event }` envelopes with strictly monotonic per-Session `seq` values.
-- [ ] A protocol test proves the envelopes read from the Session file are byte-for-byte shape-equivalent to replayed envelopes; `session/subscribe` with `sinceSeq` returns exactly the later events and then live-tails without gaps, while `session/resume` opens and subscribes with replay atomically.
-- [ ] A headless test proves steer: start a turn, inject a steer message mid-turn (before the faux provider's second step), confirm the steer content reaches the next model call's context and is recorded as a `steer-received` event.
-- [ ] A headless test proves follow-up queuing: queue a follow-up while a turn is in flight, confirm it auto-starts once the turn ends.
-- [ ] A headless test proves parallel tool calls are reordered to source order regardless of completion order.
-- [ ] A headless test proves the `memory` tool: `add` succeeds and persists to `MEMORY.md`; a write exceeding the cap is rejected with an actionable error, not truncated; `replace`/`remove` work; a batch of multiple actions in one tool call all apply atomically.
-- [ ] A headless test proves frozen-snapshot behavior: write to `MEMORY.md` via the tool mid-session, confirm the _current_ session's next-turn prompt does not include the new content, but a _new_ session started afterward does.
-- [ ] `defineContractTests` from S0 is reused for the filesystem-backed semantic World adapter and proves Session ordering/fail-loud torn-line behavior plus crash-safe all-old/all-new Memory batch recovery.
-- [ ] The harness, S1 plan checklist, and scenario/stage manifests include every landed behavior and negative/fault scenario; `verify:s1` and `verify:all` pass with schema-valid redacted evidence and resolved findings from verification/review by a separate Sol medium agent in an independent run and context.
+- [x] A headless test can: start a Session, send one user message, get a full Turn (against the faux Provider) recorded as canonical `{ schemaVersion, seq, emittedAt, event }` envelopes with strictly monotonic per-Session `seq` values.
+- [x] A protocol test proves the envelopes read from the Session file are byte-for-byte shape-equivalent to replayed envelopes; `session/subscribe` with `sinceSeq` returns exactly the later events and then live-tails without gaps, while `session/resume` opens and subscribes with replay atomically.
+- [x] A headless test proves steer: start a turn, inject a steer message mid-turn (before the faux provider's second step), confirm the steer content reaches the next model call's context and is recorded as a `steer-received` event.
+- [x] A headless test proves follow-up queuing: queue a follow-up while a turn is in flight, confirm it auto-starts once the turn ends.
+- [x] A headless test proves parallel tool calls are reordered to source order regardless of completion order.
+- [x] A headless test proves the `memory` tool: `add` succeeds and persists to `MEMORY.md`; a write exceeding the cap is rejected with an actionable error, not truncated; `replace`/`remove` work; a batch of multiple actions in one tool call all apply atomically.
+- [x] A headless test proves frozen-snapshot behavior: write to `MEMORY.md` via the tool mid-session, confirm the _current_ session's next-turn prompt does not include the new content, but a _new_ session started afterward does.
+- [x] `defineContractTests` from S0 is reused for the filesystem-backed semantic World adapter and proves Session ordering/fail-loud torn-line behavior plus crash-safe all-old/all-new Memory batch recovery.
+- [x] The harness, S1 plan checklist, and scenario/stage manifests include every landed behavior and negative/fault scenario; `verify:s1` and `verify:all` pass with schema-valid redacted evidence and resolved findings from verification/review by a separate Sol medium agent in an independent run and context.
 
 ## References to consult
 

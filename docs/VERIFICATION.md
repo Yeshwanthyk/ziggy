@@ -7,10 +7,10 @@ declared done.
 ## Authority model
 
 1. **Deterministic tests and scenarios are the hard correctness authority.** They run without
-   network or model calls, are reproducible from a clean checkout, and gate CI. A failure cannot
-   be waived by an agent review, a manual observation, or prior evidence.
+   network or model calls and are reproducible from a clean checkout. A failure cannot be waived
+   by an agent review, a manual observation, or prior evidence.
 2. **AI-agent verification is a required implementation-loop gate, not a correctness oracle.** It
-   runs outside GitHub CI before a slice or stage is declared done. Findings become deterministic
+   runs in a separate context before a slice or stage is declared done. Findings become deterministic
    regression scenarios when the behavior can be reproduced deterministically; otherwise they
    remain explicit reviewed findings with replayable evidence and a disposition.
 3. **Evidence proves what ran; it does not become product truth.** Verification evidence is
@@ -47,7 +47,8 @@ predecessor gates, and expected evidence.
 
 For evidence formats and outputs, only schemas, manifests, and workflow documentation are tracked.
 Generated reports, logs, traces, fixtures containing runtime output, screenshots, and replay
-material live under `.artifacts/` locally and are uploaded as CI artifacts when produced in CI.
+material live under `.artifacts/` locally. Hosted CI is disabled while the repository is private;
+artifact upload resumes only when the user explicitly restores CI near publication.
 
 ## Deterministic boundary adapters
 
@@ -63,8 +64,8 @@ appropriate to the stage.
 
 A deterministic test never calls a real Provider, model, OAuth service, Gateway API, public
 network endpoint, or Cloudflare service. Real integrations may have separate smoke/manual checks;
-they do not replace deterministic contracts and do not enter the CI correctness gate unless they
-are fully simulated.
+they do not replace deterministic contracts or enter the deterministic correctness gate unless
+they are fully simulated.
 
 ## Evidence bundles
 
@@ -84,8 +85,8 @@ secrets and live services are never required for deterministic replay. Redaction
 bundle is persisted or uploaded: credentials, tokens, Authorization/Cookie headers, owner or
 Person identifiers, message content not explicitly fixture-owned, absolute Profile paths, and
 other user data are removed or replaced with stable synthetic values. Redaction is itself
-schema-checked, and a redaction failure fails evidence publication. CI retains bundles as workflow
-artifacts; generated bundles are never committed.
+schema-checked, and a redaction failure fails evidence publication. Generated bundles are never
+committed.
 
 ## Verifier commands
 
@@ -102,9 +103,9 @@ bun run verify:all
 S0 creates every command and the manifest-driven runner. Before a stage exists, its verifier may
 report `not implemented` successfully only when its tracked manifest declares no behavior yet; it
 must not silently skip declared scenarios. As behavior lands, the same change updates the relevant
-scenario, stage/slice manifest, expected evidence, and plan checklist. `verify:all` is the CI hard
-gate; focused `verify:sN` commands support the implementation loop without weakening inherited
-predecessor gates.
+scenario, stage/slice manifest, expected evidence, and plan checklist. `verify:all` is the local
+hard gate while the repository is private; focused `verify:sN` commands support the implementation
+loop without weakening inherited predecessor gates.
 
 ## AI roles and cadence
 
@@ -123,8 +124,8 @@ predecessor gates.
 Independent Sol medium verification is required at least once per slice and once across the
 integrated stage before it is declared done. Scouting/task decomposition, implementation, and
 verification/review use separate Sol medium runs and contexts. The implementing run must never be
-the verifying run. Verification runs in the implementation loop outside GitHub CI; deterministic
-gates alone run as CI correctness authority.
+the verifying run. While the repository is private, all verification runs locally and hosted CI
+remains disabled until the user explicitly restores it near publication.
 
 ## Through-loop
 
