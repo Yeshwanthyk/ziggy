@@ -77,6 +77,11 @@ losing older memories to truncation or an opaque consolidation job. Frozen-snaps
 the key prompt-cache-friendliness trick borrowed from hermes: mutating memory mid-session would
 bust the cached prefix on every write.
 **Evidence:** `docs/research/openclaw-hermes.md`, `docs/research/per-turn-context-and-memory.md`.
+**S1 contract amendment:** `MEMORY.md` is capped at 2,200 Unicode code points and `USER.md`
+at 1,375. The tool operates on Hermes-style delimited entries and rejects delimiter injection.
+The frozen snapshot is persisted in the canonical `session-started` event so a resumed Session
+keeps the exact stable prompt it started with after process restart. S1 exposes no mid-Session
+snapshot invalidation path; a new Session is the refresh boundary.
 
 ## D4 — Resident-first: one daemon per profile
 
@@ -117,6 +122,11 @@ exactly the reconnect/fan-out/approval problems ziggy needs.
 **Important nuance:** this is a **design model for ziggy's own protocol**, not a provider
 integration. See D7 — pi-ai already covers Codex-subscription auth as a normal wire provider, so
 ziggy does not run or supervise an actual codex app-server process. See CONSTITUTION.md invariant 4.
+**S1 contract amendment:** Every event carries its `sessionId`, preserving the fixed four-field
+canonical envelope while allowing one connection to demultiplex multiple Sessions without a
+wire-only wrapper. Calling `turn/start` while a Turn is active queues a one-at-a-time follow-up and
+returns `disposition: "queued"`; no separate `turn/follow-up` method is added. Approval decisions
+are the closed v1 union `"approve" | "deny"`.
 
 ## D6 — Loop ownership: ziggy owns the loop, pi-ai is per-call only
 
