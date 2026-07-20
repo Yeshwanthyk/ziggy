@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionEnvelope, SessionEvent } from "../../packages/protocol/src/index.ts";
@@ -185,6 +185,7 @@ describe("startup reconciliation", () => {
 test("daemon kernel binds the canonical Profile World and releases its lock after runtimes close", async () => {
   const profile = await mkdtemp(join(tmpdir(), "ziggy-kernel-"));
   profiles.push(profile);
+  const canonicalProfile = await realpath(profile);
   const barrier = new Barrier();
   const made = runtime({ closeBarrier: barrier });
   const world = recordingWorld([]);
@@ -202,7 +203,7 @@ test("daemon kernel binds the canonical Profile World and releases its lock afte
     },
   });
   await kernel.getOrCreateSession("s");
-  expect(worldPath).toBe(profile);
+  expect(worldPath).toBe(canonicalProfile);
   expect(runtimeWorld).toBe(world);
   const closing = kernel.close();
   await barrier.entered;
