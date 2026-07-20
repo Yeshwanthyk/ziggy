@@ -1,4 +1,5 @@
 export const corePackageName = "@ziggy/core";
+export * from "./memory/index.ts";
 export {
   createSessionRuntime,
   type AfterToolHookInput,
