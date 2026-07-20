@@ -505,6 +505,35 @@ describe("Unix attach server", () => {
       await fixture.close();
     }
   });
+
+  test("closes after disconnecting a Client with a subscription request in flight", async () => {
+    const fixture = await memoryFixture(new ScriptedProvider([]));
+    const peer = await SocketPeer.connect(fixture.server.socketPath);
+    const replayRead = new Barrier();
+    try {
+      await initialize(peer, "init");
+      peer.send(request("start-session", "session/start", {}));
+      await response(peer, "start-session");
+
+      fixture.world.blockReadAfter(1, replayRead);
+      peer.send(request("subscribe", "session/subscribe", { sessionId: "session-a", sinceSeq: 0 }));
+      await replayRead.entered;
+
+      const serverClosed = fixture.server.close();
+      const firstSettled = await Promise.race([
+        serverClosed.then(() => "server"),
+        peer.waitForClose().then(() => "peer"),
+      ]);
+      expect(firstSettled).toBe("peer");
+
+      replayRead.release();
+      await serverClosed;
+    } finally {
+      replayRead.release();
+      await peer.close();
+      await fixture.close();
+    }
+  });
 });
 
 afterAll(async () => {
