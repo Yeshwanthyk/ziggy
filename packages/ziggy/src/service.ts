@@ -265,8 +265,10 @@ export function createServiceController(options: ServiceControllerOptions): Serv
         before.process === "running" &&
         before.registration === "registered" &&
         (platform === "darwin" || before.enablement === "enabled")
-      )
+      ) {
+        if (platform === "darwin") await run(["launchctl", "enable", item.identity.target]);
         return before;
+      }
       if (platform === "darwin") {
         if (item.state === "owned-drifted" && before.registration === "registered")
           await run(["launchctl", "bootout", item.identity.target]);
@@ -438,7 +440,50 @@ function normalizeExecutable(content: string, platform: ServicePlatform): string
   const executableStart = start + startToken.length;
   const end = content.indexOf(endToken, executableStart);
   if (end < 0) return undefined;
+  const encoded = content.slice(executableStart, end);
+  const executable =
+    platform === "darwin" ? decodeCanonicalXml(encoded) : decodeCanonicalSystemd(encoded);
+  if (executable === undefined || !executable.startsWith("/")) return undefined;
+  try {
+    rejectControls(executable);
+  } catch {
+    return undefined;
+  }
   return `${content.slice(0, executableStart)}<executable>${content.slice(end)}`;
+}
+function decodeCanonicalXml(encoded: string): string | undefined {
+  const decoded = encoded
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+  return xml(decoded) === encoded ? decoded : undefined;
+}
+function decodeCanonicalSystemd(encoded: string): string | undefined {
+  if (!encoded.startsWith('"') || !encoded.endsWith('"')) return undefined;
+  let decoded = "";
+  const body = encoded.slice(1, -1);
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character === undefined) return undefined;
+    if (character !== "\\" && character !== "%" && character !== "$" && character !== '"') {
+      decoded += character;
+      continue;
+    }
+    const next = body[index + 1];
+    if (
+      (character === "\\" && (next === "\\" || next === '"')) ||
+      (character === "%" && next === "%") ||
+      (character === "$" && next === "$")
+    ) {
+      decoded += character === "\\" ? next : character;
+      index += 1;
+      continue;
+    }
+    return undefined;
+  }
+  return systemdQuote(decoded) === encoded ? decoded : undefined;
 }
 function unknownStatus(definition: DefinitionState): ServiceStatus {
   return {

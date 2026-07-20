@@ -57,11 +57,12 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     context.filesystem.mutations.length = 0;
     context.process.calls.length = 0;
     expectInspect(platform, context.process, identity, running(platform));
+    if (platform === "darwin") context.process.expect(["launchctl", "enable", identity.target]);
     const status = await context.controller.install(input);
     context.process.verifyComplete();
     expect(status.process).toBe("running");
     expect(context.filesystem.mutations).toEqual([]);
-    expect(context.process.calls).toHaveLength(1);
+    expect(context.process.calls).toHaveLength(platform === "darwin" ? 2 : 1);
   });
 
   test(`${platform}: inactive current install starts without replacing`, async () => {
@@ -117,6 +118,20 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     const context = setup();
     const identity = await context.controller.identity(input);
     context.filesystem.files.set(identity.definitionPath, "foreign");
+    expect((await context.controller.status(input)).definition).toBe("foreign");
+    const current = await managedDefinition(platform, context, identity);
+    context.filesystem.mutations.length = 0;
+    const injected =
+      platform === "darwin"
+        ? current.replace(
+            "<array><string>/opt/Ziggy App/ziggy</string>",
+            "<array><string>/old</string><key>Program</key><string>/evil</string><array><string>/ignored</string>",
+          )
+        : current.replace(
+            'ExecStart="/opt/Ziggy App/ziggy"',
+            'ExecStart="/old"\nExecStartPre="/evil"\n#',
+          );
+    context.filesystem.files.set(identity.definitionPath, injected);
     expect((await context.controller.status(input)).definition).toBe("foreign");
     expect(await context.controller.remove(input)).toEqual({ kind: "refused", reason: "foreign" });
     const ownership = {
@@ -317,4 +332,29 @@ function absent(platform: ServicePlatform): ReturnType<typeof ok> {
 
 function stoppedAfterStop(platform: ServicePlatform): ReturnType<typeof ok> {
   return platform === "darwin" ? missing() : stopped(platform);
+}
+
+async function managedDefinition(
+  platform: ServicePlatform,
+  context: ReturnType<typeof createContextShape>,
+  identity: ServiceIdentity,
+): Promise<string> {
+  const isolated = new ScriptedProcess();
+  const controller = createServiceController({
+    platform,
+    home: "/home/u",
+    uid: 501,
+    filesystem: context.filesystem,
+    process: isolated,
+  });
+  context.filesystem.files.delete(identity.definitionPath);
+  expectInspect(platform, isolated, identity, absent(platform));
+  if (platform === "darwin") {
+    isolated.expect(["launchctl", "enable", identity.target]);
+    isolated.expect(["launchctl", "bootstrap", "gui/501", identity.definitionPath]);
+  } else expectSystemdStart(isolated, identity, "start");
+  expectInspect(platform, isolated, identity, running(platform));
+  await controller.install(input);
+  isolated.verifyComplete();
+  return context.filesystem.files.get(identity.definitionPath) ?? "";
 }
