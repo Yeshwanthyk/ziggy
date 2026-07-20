@@ -5,6 +5,7 @@ import {
   type ServiceController,
   type ServiceInput,
 } from "./service.ts";
+import { runDoctor, serveDaemon, type DoctorReport } from "./daemon.ts";
 
 export interface ServeRequest {
   readonly profilePath: string;
@@ -12,6 +13,7 @@ export interface ServeRequest {
 }
 export interface CliDependencies {
   readonly serve?: (request: ServeRequest) => Promise<void>;
+  readonly doctor?: (profilePath: string) => Promise<DoctorReport>;
   readonly cwd: () => string;
   readonly onSignal: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
   readonly offSignal: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
@@ -45,6 +47,12 @@ export async function runCli(
     }
     return;
   }
+  if (command === "doctor") {
+    if (dependencies.doctor === undefined) throw new Error("doctor composition is not available");
+    const result = await dependencies.doctor(profile(argv.slice(1), dependencies.cwd()));
+    dependencies.output(JSON.stringify(result));
+    return;
+  }
   if (command === "service") {
     const action = argv[1];
     if (!isAction(action))
@@ -62,7 +70,9 @@ export async function runCli(
     dependencies.output(JSON.stringify(result));
     return;
   }
-  throw new Error("usage: ziggy serve [--profile PATH] | service install|start|stop|status|remove");
+  throw new Error(
+    "usage: ziggy serve [--profile PATH] | doctor [--profile PATH] | service install|start|stop|status|remove",
+  );
 }
 function profile(argv: ReadonlyArray<string>, cwd: string) {
   if (argv.length === 0) return cwd;
@@ -109,6 +119,8 @@ export class BunProcessManager implements ProcessManager {
 export function productionDependencies(): CliDependencies {
   const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
   const base: CliDependencies = {
+    serve: ({ profilePath, signal }) => serveDaemon({ profilePath, signal }),
+    doctor: (profilePath) => runDoctor({ profilePath }),
     cwd: process.cwd,
     onSignal: (signal, listener) => process.on(signal, listener),
     offSignal: (signal, listener) => process.off(signal, listener),

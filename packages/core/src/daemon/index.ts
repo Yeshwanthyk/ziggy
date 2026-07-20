@@ -9,3 +9,8 @@ export {
   type DaemonKernel,
   type DaemonWorld,
 } from "./kernel.ts";
+export {
+  inspectProfileLock,
+  type InspectProfileLockOptions,
+  type ProfileLockInspection,
+} from "./profile-lock.ts";

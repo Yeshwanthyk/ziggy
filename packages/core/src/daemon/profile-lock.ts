@@ -22,6 +22,17 @@ export interface ProfileLock {
   close(): Promise<void>;
 }
 
+export type ProfileLockInspection =
+  | { readonly state: "absent" }
+  | { readonly state: "live"; readonly pid: number }
+  | { readonly state: "stale"; readonly pid: number };
+
+export interface InspectProfileLockOptions {
+  readonly profilePath: string;
+  readonly filesystem?: Pick<ProfileLockFilesystem, "canonicalize" | "read">;
+  readonly isAlive?: (pid: number) => Promise<boolean>;
+}
+
 export interface AcquireProfileLockOptions {
   readonly profilePath: string;
   readonly filesystem?: ProfileLockFilesystem;
@@ -35,6 +46,22 @@ interface LockMetadata {
 }
 
 const acquisitionGates = new Map<string, Promise<void>>();
+
+export async function inspectProfileLock(
+  options: InspectProfileLockOptions,
+): Promise<ProfileLockInspection> {
+  const filesystem = options.filesystem ?? productionFilesystem;
+  const isAlive = options.isAlive ?? productionProcess.isAlive;
+  const profilePath = await filesystem.canonicalize(options.profilePath);
+  const metadata = await readMetadataIfPresent(
+    filesystem,
+    join(profilePath, ".runtime", "daemon.lock"),
+  );
+  if (metadata === undefined) return { state: "absent" };
+  return (await isAlive(metadata.pid))
+    ? { state: "live", pid: metadata.pid }
+    : { state: "stale", pid: metadata.pid };
+}
 
 export async function acquireProfileLock(options: AcquireProfileLockOptions): Promise<ProfileLock> {
   const filesystem = options.filesystem ?? productionFilesystem;
@@ -119,7 +146,7 @@ async function takeOverStaleLock(
 }
 
 async function readMetadataIfPresent(
-  filesystem: ProfileLockFilesystem,
+  filesystem: Pick<ProfileLockFilesystem, "read">,
   path: string,
 ): Promise<LockMetadata | undefined> {
   try {

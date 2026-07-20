@@ -6,6 +6,7 @@ import type { SessionEnvelope, SessionEvent } from "../../packages/protocol/src/
 import {
   createDaemonKernel,
   createFilesystemWorld,
+  inspectProfileLock,
   type SessionRuntime,
 } from "../../packages/core/src/index.ts";
 import {
@@ -19,6 +20,10 @@ import {
   defineProfileLockContract,
   type ProfileLockSpecimen,
 } from "../testkit/profile-lock-contract.ts";
+import {
+  emitVerificationObservation,
+  emptyRuntimeObservations,
+} from "../testkit/verification-observations.ts";
 
 const profiles: string[] = [];
 
@@ -55,6 +60,28 @@ test("Profile lock propagates injected filesystem and process faults", async () 
       },
     }),
   ).rejects.toBe(processFailure);
+});
+
+test("Profile lock inspection distinguishes absent, live, and stale ownership and rejects schemas", async () => {
+  const profile = await mkdtemp(join(tmpdir(), "ziggy-lock-inspection-"));
+  profiles.push(profile);
+  const lockPath = join(profile, ".runtime", "daemon.lock");
+  await mkdir(join(profile, ".runtime"), { recursive: true });
+
+  expect(await inspectProfileLock({ profilePath: profile })).toEqual({ state: "absent" });
+  await writeFile(lockPath, '{"schemaVersion":1,"pid":77,"ownerToken":"fixture-owner"}\n');
+  expect(
+    await inspectProfileLock({ profilePath: profile, isAlive: async (pid) => pid === 77 }),
+  ).toEqual({ state: "live", pid: 77 });
+  expect(await inspectProfileLock({ profilePath: profile, isAlive: async () => false })).toEqual({
+    state: "stale",
+    pid: 77,
+  });
+
+  await writeFile(lockPath, '{"schemaVersion":2,"pid":77,"ownerToken":"fixture-owner"}\n');
+  await expect(inspectProfileLock({ profilePath: profile })).rejects.toThrow(
+    "Unsupported Profile lock schemaVersion",
+  );
 });
 
 describe("Session registry", () => {
@@ -188,9 +215,10 @@ test("daemon kernel binds the canonical Profile World and releases its lock afte
   await expect(readFile(join(profile, ".runtime", "daemon.lock"), "utf8")).rejects.toThrow();
 });
 
-afterAll(async () =>
-  Promise.all(profiles.map((path) => rm(path, { recursive: true, force: true }))),
-);
+afterAll(async () => {
+  await Promise.all(profiles.map((path) => rm(path, { recursive: true, force: true })));
+  emitVerificationObservation("s2.daemon-kernel", emptyRuntimeObservations());
+});
 
 async function createLockSpecimen(): Promise<ProfileLockSpecimen> {
   const profile = await mkdtemp(join(tmpdir(), "ziggy-lock-"));

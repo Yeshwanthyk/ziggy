@@ -6,6 +6,7 @@ import {
   type CliDependencies,
   type ServeRequest,
 } from "../../packages/ziggy/src/cli.ts";
+import type { DoctorReport } from "../../packages/ziggy/src/daemon.ts";
 import type {
   ServiceController,
   ServiceInput,
@@ -35,7 +36,9 @@ test("--version does not require production service support", async () => {
   const fake = dependencies();
   await runCli(["--version"], fake.value);
   expect(fake.output).toEqual(["0.0.0"]);
-  expect(productionDependencies()).toBeDefined();
+  const production = productionDependencies();
+  expect(production.serve).toBeFunction();
+  expect(production.doctor).toBeFunction();
 });
 test("serve uses default and explicit Profile", async () => {
   const seen: Array<string> = [];
@@ -65,9 +68,36 @@ test("serve signal aborts and always cleans listeners", async () => {
   expect(observed).toBeTrue();
   expect(fake.listeners.size).toBe(0);
 });
-test("production-unavailable serve fails at operation time", async () => {
+test("missing serve composition fails at operation time", async () => {
   const fake = dependencies();
   await expect(runCli(["serve"], fake.value)).rejects.toThrow("not available");
+});
+
+test("doctor uses default and explicit Profile and emits its schema-stamped report", async () => {
+  const fake = dependencies();
+  const profiles: string[] = [];
+  const report: DoctorReport = {
+    schemaVersion: 1,
+    profilePath: "/reported",
+    healthy: true,
+    checks: {
+      daemon: { status: "ok", detail: "ready" },
+      socket: { status: "ok", detail: "safe" },
+      profileLock: { status: "ok", detail: "owned" },
+      providerAuth: { status: "warning", detail: "not configured" },
+    },
+  };
+  const value: CliDependencies = {
+    ...fake.value,
+    doctor: async (profilePath) => {
+      profiles.push(profilePath);
+      return report;
+    },
+  };
+  await runCli(["doctor"], value);
+  await runCli(["doctor", "--profile", "/other"], value);
+  expect(profiles).toEqual(["/cwd", "/other"]);
+  expect(fake.output).toEqual([JSON.stringify(report), JSON.stringify(report)]);
 });
 
 test("service install requires standalone composition rather than executable-name guessing", async () => {
