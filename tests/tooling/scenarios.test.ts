@@ -6,6 +6,11 @@ import { BunProcessRunner } from "../../tooling/verification/compile-smoke.ts";
 import { executeScenarios } from "../../tooling/verification/scenarios.ts";
 import { CommandRecorder } from "../testkit/boundaries.ts";
 import type { ScenarioDeclaration } from "../scenarios/registry.ts";
+import {
+  emptyRuntimeObservations,
+  VERIFICATION_OBSERVATION_MARKER,
+  type RuntimeObservations,
+} from "../testkit/verification-observations.ts";
 
 const scenario: ScenarioDeclaration = {
   schemaVersion: 1,
@@ -41,7 +46,54 @@ describe("explicit scenario execution", () => {
       seed: "fixture-seed",
       schedule: "fixture-schedule",
       boundaryConfiguration: "fixture-boundaries",
+      observations: emptyRuntimeObservations(),
     });
+  });
+
+  test("requires and decodes one bounded structured runtime marker for S1", async () => {
+    const s1 = { ...scenario, id: "s1.fixture", stage: "s1" } satisfies ScenarioDeclaration;
+    const observations: RuntimeObservations = {
+      ...emptyRuntimeObservations(),
+      faultSchedule: [
+        {
+          boundary: "Session-log",
+          point: "torn-final-line",
+          occurrence: 1,
+          outcome: "failed",
+        },
+      ],
+    };
+    const marker = `${VERIFICATION_OBSERVATION_MARKER}${JSON.stringify({
+      scenarioId: s1.id,
+      observations,
+    })}`;
+    const passed = await executeScenarios(
+      "/fixture/repo",
+      [s1],
+      new CommandRecorder({
+        exitCode: 0,
+        stdout: `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${marker}\n`,
+        stderr: "",
+        timedOut: false,
+      }),
+    );
+    expect(passed[0]?.result).toBe("passed");
+    expect(passed[0]?.observations).toEqual(observations);
+    expect(passed[0]?.process.stdout).not.toContain(VERIFICATION_OBSERVATION_MARKER);
+
+    for (const output of [
+      "tests/fixture.test.ts\n(pass) fixture\n1 pass\n",
+      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${marker}\n${marker}\n`,
+      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}{}\n`,
+      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}${"x".repeat(32_769)}\n`,
+    ]) {
+      const result = await executeScenarios(
+        "/fixture/repo",
+        [s1],
+        new CommandRecorder({ exitCode: 0, stdout: output, stderr: "", timedOut: false }),
+      );
+      expect(result[0]?.result).toBe("failed");
+    }
   });
 
   test("real Bun skipped and no-test modules fail the scenario gate", async () => {

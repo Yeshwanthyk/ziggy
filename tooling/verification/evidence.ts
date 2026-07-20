@@ -2,6 +2,7 @@ import { homedir, tmpdir } from "node:os";
 import { lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { ProcessResult } from "../../tests/testkit/boundaries.ts";
+import type { RuntimeObservations } from "../../tests/testkit/verification-observations.ts";
 import type { Stage } from "./manifests.ts";
 import { loadSchemaCatalog } from "./schemas.ts";
 
@@ -43,6 +44,19 @@ export interface ScenarioEvidence {
   readonly seed: string;
   readonly schedule: string;
   readonly boundaryConfiguration: string;
+  readonly observations: RuntimeObservations;
+}
+
+interface AgentFindingEvidence {
+  readonly id: string;
+  readonly role: "scout" | "review";
+  readonly severity: "info" | "warning" | "error";
+  readonly summary: string;
+  readonly disposition: {
+    readonly status: "open" | "accepted" | "fixed" | "not-applicable";
+    readonly rationale: string;
+    readonly regressionScenarioId: string | null;
+  };
 }
 
 export interface EvidenceInput {
@@ -50,6 +64,7 @@ export interface EvidenceInput {
   readonly stage: Stage | "all";
   readonly command: string;
   readonly scenarios: ReadonlyArray<ScenarioEvidence>;
+  readonly agentFindings?: ReadonlyArray<AgentFindingEvidence>;
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly gitRevision: string | null;
@@ -227,6 +242,7 @@ export async function publishEvidence(
     schemaVersion: 1,
     runId: input.runId,
     scenarios: input.scenarios,
+    agentFindings: input.agentFindings ?? [],
   };
   const schemas = await loadSchemaCatalog(root);
   const summaryText = serializeValidated(summary, root, (value) => {
@@ -639,7 +655,7 @@ function decodeOutput(value: unknown, label: string): OutputEvidence {
 
 function decodeResult(value: unknown): DecodedResult {
   const record = requireRecord(value, "result");
-  requireExactKeys(record, ["schemaVersion", "runId", "scenarios"], "result");
+  requireExactKeys(record, ["schemaVersion", "runId", "scenarios", "agentFindings"], "result");
   requireVersion(record, "result");
   if (!Array.isArray(record.scenarios)) {
     throw new Error("result.scenarios must be an array");
@@ -650,7 +666,7 @@ function decodeResult(value: unknown): DecodedResult {
     const scenarioRecord = requireRecord(scenario, "result scenario");
     requireExactKeys(
       scenarioRecord,
-      ["id", "file", "result", "seed", "schedule", "boundaryConfiguration"],
+      ["id", "file", "result", "seed", "schedule", "boundaryConfiguration", "observations"],
       "result scenario",
     );
     const id = requireString(scenarioRecord.id, "result scenario id");
@@ -659,11 +675,38 @@ function decodeResult(value: unknown): DecodedResult {
     requireString(scenarioRecord.seed, "result scenario seed");
     requireString(scenarioRecord.schedule, "result scenario schedule");
     requireString(scenarioRecord.boundaryConfiguration, "result scenario boundaryConfiguration");
+    requireRecord(scenarioRecord.observations, "result scenario observations");
     if (ids.has(id)) {
       throw new Error(`duplicate evidence scenario ${id}`);
     }
     ids.add(id);
     scenarios.push({ id, result: scenarioResult });
+  }
+  if (!Array.isArray(record.agentFindings)) {
+    throw new Error("result.agentFindings must be an array");
+  }
+  for (const finding of record.agentFindings) {
+    const findingRecord = requireRecord(finding, "agent finding");
+    requireExactKeys(
+      findingRecord,
+      ["id", "role", "severity", "summary", "disposition"],
+      "agent finding",
+    );
+    requireString(findingRecord.id, "agent finding id");
+    requireString(findingRecord.role, "agent finding role");
+    requireString(findingRecord.severity, "agent finding severity");
+    requireString(findingRecord.summary, "agent finding summary");
+    const disposition = requireRecord(findingRecord.disposition, "agent finding disposition");
+    requireExactKeys(
+      disposition,
+      ["status", "rationale", "regressionScenarioId"],
+      "agent finding disposition",
+    );
+    requireString(disposition.status, "agent finding disposition status");
+    requireString(disposition.rationale, "agent finding disposition rationale");
+    if (disposition.regressionScenarioId !== null) {
+      requireString(disposition.regressionScenarioId, "agent finding regression scenario");
+    }
   }
   return { runId: requireString(record.runId, "result.runId"), scenarios };
 }

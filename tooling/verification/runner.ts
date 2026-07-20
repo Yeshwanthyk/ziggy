@@ -20,6 +20,7 @@ import {
   type VerificationManifest,
 } from "./manifests.ts";
 import { executeScenarios } from "./scenarios.ts";
+import { emptyRuntimeObservations } from "../../tests/testkit/verification-observations.ts";
 
 const root = new URL("../..", import.meta.url).pathname;
 const processRunner = new BunProcessRunner();
@@ -48,6 +49,7 @@ export async function runVerification(target: Stage | "all"): Promise<void> {
       seed: scenario.seed,
       schedule: scenario.schedule,
       boundaryConfiguration: scenario.boundaryConfiguration,
+      observations: emptyRuntimeObservations(),
     }));
     phases.push(
       phase("preflight", "passed", preflightStarted, "manifest/schema/registry integrity"),
@@ -75,6 +77,7 @@ export async function runVerification(target: Stage | "all"): Promise<void> {
             seed: execution.seed,
             schedule: execution.schedule,
             boundaryConfiguration: execution.boundaryConfiguration,
+            observations: execution.observations,
           }));
           for (const execution of executions) {
             commands.push(

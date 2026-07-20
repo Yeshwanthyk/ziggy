@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { cp, mkdtemp, readdir, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { emptyRuntimeObservations } from "../testkit/verification-observations.ts";
 import {
   assertNoLeaks,
   commandEvidence,
@@ -120,10 +121,82 @@ describe("verification evidence", () => {
     expect(summary).toContain('"diagnostic"');
     expect(summary).not.toContain('"bytes"');
     expect(summary).not.toContain('"digest"');
+    const result = await Bun.file(join(published.directory, "result.json")).text();
+    expect(result).toContain('"canonicalEventTrace"');
+    expect(result).toContain('"agentFindings"');
 
     await expect(publishEvidence(root, input)).rejects.toThrow("already exists");
     const siblings = await readdir(join(root, ".artifacts/verification"));
     expect(siblings.some((name) => name.includes(".tmp-"))).toBe(false);
+  });
+
+  test("retains redacted structured observations and agent finding dispositions", async () => {
+    const root = await temporaryRoot();
+    const input = evidenceInput(root);
+    const published = await publishEvidence(root, {
+      ...input,
+      scenarios: input.scenarios.map((scenario) => ({
+        ...scenario,
+        observations: {
+          ...emptyRuntimeObservations(),
+          canonicalEventTrace: [
+            {
+              schemaVersion: 1,
+              seq: 1,
+              emittedAt: "2026-07-19T00:00:00.000Z",
+              eventType: "turn-started",
+              sessionId: "fixture-session",
+            },
+          ],
+          providerInputs: [
+            {
+              callIndex: 0,
+              sessionId: "fixture-session",
+              cacheRetention: "long",
+              provider: "scripted",
+              model: "scripted-model",
+              systemPromptCodePoints: 42,
+              messageRoles: ["user"],
+              toolNames: ["memory"],
+            },
+          ],
+          faultSchedule: [
+            {
+              boundary: "Memory-batch",
+              point: "afterPrepare",
+              occurrence: 1,
+              outcome: "recovered",
+            },
+          ],
+          filesystemDiffs: [
+            {
+              path: "memory/MEMORY.md",
+              change: "modified",
+              beforeDigest: digest("before"),
+              afterDigest: digest("after"),
+            },
+          ],
+        },
+      })),
+      agentFindings: [
+        {
+          id: "review.fixture",
+          role: "review",
+          severity: "warning",
+          summary: "Authorization: Bearer fixture-review-secret",
+          disposition: {
+            status: "fixed",
+            rationale: "Covered by deterministic replay.",
+            regressionScenarioId: "s0.fixture",
+          },
+        },
+      ],
+    });
+    const result = await Bun.file(join(published.directory, "result.json")).text();
+    expect(result).toContain('"afterPrepare"');
+    expect(result).toContain('"status": "fixed"');
+    expect(result).not.toContain("fixture-review-secret");
+    await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
   });
 
   test("schema validation rejects invalid dates, fractional exits, numeric argv, duplicates, and extras", async () => {
@@ -320,6 +393,7 @@ function evidenceInput(root: string): EvidenceInput {
         seed: "fixture-seed",
         schedule: "fixture-schedule",
         boundaryConfiguration: "fixture-boundaries",
+        observations: emptyRuntimeObservations(),
       },
     ],
     startedAt: "2026-07-19T00:00:00.000Z",

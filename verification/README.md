@@ -5,7 +5,7 @@ Tracked manifests are the closed-world declaration of behavior for each stage. E
 ordered transitive closures; symbolic gates come from the manifest gate allowlist and are
 executed from those declarations. The registry at `tests/scenarios/registry.ts` is bijective with
 manifest scenario IDs and uses unique, normalized, repository-contained `.test.ts` files.
-`s0` is implemented; `s1`–`s7` are intentionally `manifest-empty` until product behavior lands.
+`s0` and `s1` are implemented; `s2`–`s7` remain `manifest-empty` until product behavior lands.
 Pending requirements may be cataloged without claiming implementation. Unsupported schema
 versions, unknown fields/stages/gates/scenarios, duplicates, invalid paths, and status/content
 contradictions fail closed.
@@ -35,7 +35,9 @@ The S0 manifest has separate gates for explicitly executing every registered sce
 for full `bun test`, which covers unregistered supporting/unit tests. A scenario command fails on
 missing tests, skips, command failure, path/output mismatch, or undeclared execution. Evidence
 records each scenario's actual result plus its declared deterministic seed, schedule, and boundary
-configuration.
+configuration. Every S1 scenario must emit exactly one bounded structured observation marker after
+its runtime assertions succeed; missing, duplicate, malformed, mismatched, or oversized markers fail
+the scenario gate. The marker is parsed from captured process output and never persisted directly.
 
 The compile smoke constructs the locked `bun build --compile` argv without `--minify`, writes only
 to an isolated OS temporary directory, applies bounded compile and binary-execution timeouts,
@@ -56,7 +58,12 @@ For each stream it stores bounded redacted diagnostic text, a SHA-256 digest of 
 diagnostic, and whether the redacted text was truncated. Sensitive keys are normalized
 case/separator-insensitively; auth/cookie headers, bearer/basic credentials,
 query tokens, JSON-encoded headers, repository/Profile/home/temp paths, and private-looking Profile
-output are redacted before `.artifacts` exists.
+output are redacted before `.artifacts` exists. Scenario result evidence additionally retains bounded
+schema-validated summaries of observed canonical event traces, Provider call inputs, deterministic
+fault schedules, and filesystem diffs. Event and Provider observations are derived from runtime
+objects, not manifest labels. Optional scout/review findings retain role, severity, and an explicit
+open/accepted/fixed/not-applicable disposition; an empty list means no agent review was recorded for
+that verifier run and does not satisfy an independent-review requirement.
 
 Replay binds summary/result digests and a deterministic workspace-input digest. Its per-file input
 catalog covers manifests, schemas, the scenario registry and files, `bun.lock`, package manifests,

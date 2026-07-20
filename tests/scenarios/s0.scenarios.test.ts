@@ -8,6 +8,11 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s0.package-graph",
     "s0.verification-integrity",
     "s0.world-contract",
+    "s1.protocol",
+    "s1.filesystem-world",
+    "s1.agent-loop",
+    "s1.memory",
+    "s1.integrated-waist",
   ]);
 
   for (const scenario of scenarioRegistry) {

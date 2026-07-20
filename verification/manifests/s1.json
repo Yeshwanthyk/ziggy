@@ -1,15 +1,127 @@
 {
   "schemaVersion": 1,
   "stage": "s1",
-  "status": "manifest-empty",
+  "status": "implemented",
   "predecessors": ["s0"],
-  "scenarios": [],
-  "gates": [],
+  "scenarios": [
+    "s1.protocol",
+    "s1.filesystem-world",
+    "s1.agent-loop",
+    "s1.memory",
+    "s1.integrated-waist"
+  ],
+  "gates": [
+    "manifest-integrity",
+    "package-graph",
+    "lint",
+    "lint-fixtures",
+    "fmt-check",
+    "typecheck",
+    "scenarios",
+    "test",
+    "knip",
+    "compile-smoke"
+  ],
   "requirements": [
     {
+      "id": "s1.protocol-canonical-envelope",
+      "status": "implemented",
+      "description": "Canonical schema-stamped Session envelopes are identical on disk and replay, with strictly monotonic per-Session sequence values and byte-stable framing."
+    },
+    {
+      "id": "s1.protocol-schema-rejection",
+      "status": "implemented",
+      "description": "Protocol framing rejects unsupported schemas, unsafe sequences, unknown or malformed events, non-canonical fields, and torn, empty, or multiple frames."
+    },
+    {
+      "id": "s1.protocol-method-contracts",
+      "status": "implemented",
+      "description": "Initialize, Session lifecycle/subscription, Turn start/steer/interrupt, and approval resolve contracts expose the exact closed S1 method and decision vocabulary."
+    },
+    {
+      "id": "s1.protocol-replay-live-boundary",
+      "status": "implemented",
+      "description": "Subscribe sinceSeq and resume return exactly later durable envelopes and establish live delivery atomically without a replay/live gap or duplicate."
+    },
+    {
+      "id": "s1.world-session-authority",
+      "status": "implemented",
+      "description": "The filesystem semantic World assigns Session sequence authority, preserves append ordering across concurrent instances, filters replay boundaries, and lists validated Sessions."
+    },
+    {
       "id": "s1.torn-session-tail-fails-loud",
+      "status": "implemented",
+      "description": "Filesystem Session reads reject a partial or torn final NDJSON line without automatic ignore, truncation, or repair."
+    },
+    {
+      "id": "s1.agent-full-turn",
+      "status": "implemented",
+      "description": "A headless faux-Provider Turn records the complete canonical Session-start, Turn, Step, model chunk/response, and Turn-end event trace."
+    },
+    {
+      "id": "s1.agent-provider-context",
+      "status": "implemented",
+      "description": "Each model call receives explicit Session cache identity, cache retention, stable frozen system/tool prefix, and volatile history projected only from the Session log."
+    },
+    {
+      "id": "s1.agent-provider-failure",
+      "status": "implemented",
+      "description": "Provider errors and stream defects fail the Step/Turn without projecting a failed response into future model context, and no test accesses a real Provider or model."
+    },
+    {
+      "id": "s1.agent-steer-interleavings",
+      "status": "implemented",
+      "description": "Ready steer messages are durably recorded and folded into the next model call while stale expectedTurnId steering is rejected."
+    },
+    {
+      "id": "s1.agent-follow-up-interleavings",
+      "status": "implemented",
+      "description": "Turn starts received in flight queue one-at-a-time and automatically start in order only after current Turn finalization."
+    },
+    {
+      "id": "s1.agent-interrupt-and-close",
+      "status": "implemented",
+      "description": "Interrupt targets only the expected active Turn, aborts in-flight work without fabricated results, and close safely rejects or releases runtime operations."
+    },
+    {
+      "id": "s1.agent-tool-ordering",
+      "status": "implemented",
+      "description": "Parallel tool calls and internal before/after hooks execute concurrently while durable tool results are normalized and appended in source-call order; duplicate call IDs fail before execution."
+    },
+    {
+      "id": "s1.memory-actions-and-delimiters",
+      "status": "implemented",
+      "description": "The model-visible Memory tool performs batchable add, replace, and remove over exact delimited entries and rejects delimiter injection, malformed lists, missing matches, and ambiguous matches without writes."
+    },
+    {
+      "id": "s1.memory-unicode-caps",
+      "status": "implemented",
+      "description": "MEMORY.md and USER.md limits count Unicode code points in final serialized state, accept the exact cap, and reject over-cap writes actionably without truncation or partial mutation."
+    },
+    {
+      "id": "s1.memory-atomic-recovery",
+      "status": "implemented",
+      "description": "Filesystem Memory batches commit both documents atomically and deterministic faults at every commit/recovery cut expose all-old or all-new state, never a mixed batch."
+    },
+    {
+      "id": "s1.memory-frozen-session-snapshot",
+      "status": "implemented",
+      "description": "Session start persists one frozen assembled Memory snapshot; mid-Session writes are immediate but current prompts remain unchanged while a new Session observes new Memory."
+    },
+    {
+      "id": "s1.integrated-waist",
+      "status": "implemented",
+      "description": "The filesystem composition runs a complete headless Turn, persists exact canonical envelopes, replays boundaries, freezes the executable Memory tool, and resumes replay plus live delivery atomically."
+    },
+    {
+      "id": "s1.verification-evidence",
+      "status": "implemented",
+      "description": "S1 scenarios emit bounded actual-runtime observations for canonical event traces, Provider inputs, fault schedules, and filesystem diffs into schema-validated redacted replay-bound evidence."
+    },
+    {
+      "id": "s1.independent-agent-review",
       "status": "pending",
-      "description": "Filesystem Session adapter rejects a partial or torn final NDJSON line without automatic repair."
+      "description": "A separate Sol medium scout and independent reviewer record Session/Memory authority, loop ownership, ordering, atomicity, boundary-leak findings, and explicit dispositions in a retained evidence bundle."
     }
   ]
 }

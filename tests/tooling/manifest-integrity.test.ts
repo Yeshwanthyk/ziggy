@@ -214,6 +214,7 @@ describe("verification manifest integrity", () => {
     const manifests = await validManifests();
     const s0 = requireManifest(manifests, "s0");
     const s1 = requireManifest(manifests, "s1");
+    const s2 = requireManifest(manifests, "s2");
     await expect(
       validateManifestRegistry(
         root,
@@ -224,7 +225,7 @@ describe("verification manifest integrity", () => {
     await expect(
       validateManifestRegistry(
         root,
-        replaceManifest(manifests, { ...s1, gates: ["test"] }),
+        replaceManifest(manifests, { ...s2, gates: ["test"] }),
         scenarioRegistry,
       ),
     ).rejects.toThrow("manifest-empty");
