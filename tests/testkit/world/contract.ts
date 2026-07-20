@@ -45,6 +45,7 @@ export interface ContractWorld<Event> {
 export interface ContractWorldSpecimen<Event> {
   readonly world: ContractWorld<Event>;
   failNextMemoryBatch(cutPoint: MemoryCommitCutPoint): void;
+  injectTornSessionTail?(sessionId: string): Promise<void>;
   reopen(): ContractWorld<Event>;
 }
 
@@ -53,6 +54,7 @@ export interface ContractWorldFactory<Event> {
   readonly validEventFixtures: readonly [unknown, unknown, unknown];
   readonly expectedEvents: readonly [Event, Event, Event];
   readonly invalidEvent: unknown;
+  readonly supportsTornSessionTail?: true;
   create(): ContractWorldSpecimen<Event>;
 }
 
@@ -178,6 +180,24 @@ export function defineContractTests<Event>(
       expect(before).toEqual([first, second]);
       expect(await reopened.readSession("session-a", 0)).toEqual([...before, third]);
     });
+
+    if (factory.supportsTornSessionTail) {
+      test("a torn durable Session tail fails loud without replay or append repair", async () => {
+        const specimen = factory.create();
+        if (specimen.injectTornSessionTail === undefined) {
+          throw new Error("World specimen declared torn-tail support without an injector");
+        }
+        await specimen.world.appendSession("session-a", firstFixture);
+        await specimen.injectTornSessionTail("session-a");
+        const reopened = specimen.reopen();
+
+        await expect(reopened.readSession("session-a", 0)).rejects.toThrow(/torn|line/i);
+        await expect(reopened.appendSession("session-a", secondFixture)).rejects.toThrow(
+          /torn|line/i,
+        );
+        await expect(reopened.listSessions()).rejects.toThrow(/torn|line/i);
+      });
+    }
 
     test("lists Sessions in creation order with their latest sequence", async () => {
       const specimen = factory.create();

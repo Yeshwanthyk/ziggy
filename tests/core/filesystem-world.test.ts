@@ -1,6 +1,6 @@
 import { afterAll } from "bun:test";
 import { mkdtempSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFilesystemWorld } from "../../packages/core/src/index.ts";
@@ -39,6 +39,7 @@ const fixtures: readonly [SessionEvent, SessionEvent, SessionEvent] = [
 
 defineContractTests("@ziggy/core filesystem specimen", {
   eventValidator: { decode: decodeFixtureEvent },
+  supportsTornSessionTail: true,
   validEventFixtures: fixtures,
   expectedEvents: fixtures,
   invalidEvent: { type: "not-a-session-event" },
@@ -56,6 +57,9 @@ defineContractTests("@ziggy/core filesystem specimen", {
       world: openContractWorld(profile, controls),
       failNextMemoryBatch(cutPoint) {
         fault = cutPoint;
+      },
+      async injectTornSessionTail(sessionId) {
+        await appendFile(join(profile, "sessions", `${sessionId}.ndjson`), '{"schemaVersion":1');
       },
       reopen() {
         return openContractWorld(profile, controls);
