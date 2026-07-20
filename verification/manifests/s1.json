@@ -46,7 +46,7 @@
     {
       "id": "s1.world-session-authority",
       "status": "implemented",
-      "description": "The filesystem semantic World assigns Session sequence authority, preserves append ordering across concurrent instances, filters replay boundaries, and lists validated Sessions."
+      "description": "The filesystem semantic World requires exactly one leading session-started event, assigns Session sequence authority, preserves append ordering across concurrent instances, filters replay boundaries, and lists validated Sessions."
     },
     {
       "id": "s1.torn-session-tail-fails-loud",
@@ -91,7 +91,7 @@
     {
       "id": "s1.memory-actions-and-delimiters",
       "status": "implemented",
-      "description": "The model-visible Memory tool performs batchable add, replace, and remove over exact delimited entries and rejects delimiter injection, malformed lists, missing matches, and ambiguous matches without writes."
+      "description": "The model-visible Memory tool performs concurrent-safe batchable add, replace, and remove over exact delimited entries and rejects delimiter injection, malformed lists, missing matches, and ambiguous matches without writes."
     },
     {
       "id": "s1.memory-unicode-caps",
@@ -120,7 +120,7 @@
     },
     {
       "id": "s1.independent-agent-review",
-      "status": "pending",
+      "status": "implemented",
       "description": "A separate Sol medium scout and independent reviewer record Session/Memory authority, loop ownership, ordering, atomicity, boundary-leak findings, and explicit dispositions in a retained evidence bundle."
     }
   ]

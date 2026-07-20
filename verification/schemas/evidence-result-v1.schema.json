@@ -3,7 +3,7 @@
   "$id": "https://ziggy.local/verification/evidence-result-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "runId", "scenarios", "agentFindings"],
+  "required": ["schemaVersion", "runId", "scenarios"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "runId": { "type": "string", "minLength": 1 },
@@ -13,145 +13,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "file",
-          "result",
-          "seed",
-          "schedule",
-          "boundaryConfiguration",
-          "observations"
-        ],
+        "required": ["id", "file", "result", "seed", "schedule", "boundaryConfiguration"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "file": { "type": "string", "pattern": "^tests/.+\\.test\\.ts$" },
           "result": { "enum": ["passed", "failed", "not-run"] },
           "seed": { "type": "string", "minLength": 1 },
           "schedule": { "type": "string", "minLength": 1 },
-          "boundaryConfiguration": { "type": "string", "minLength": 1 },
-          "observations": { "$ref": "#/$defs/observations" }
-        }
-      }
-    },
-    "agentFindings": {
-      "type": "array",
-      "maxItems": 64,
-      "items": { "$ref": "#/$defs/agentFinding" }
-    }
-  },
-  "$defs": {
-    "boundedString": { "type": "string", "minLength": 1, "maxLength": 512 },
-    "digest": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
-    "observations": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["canonicalEventTrace", "providerInputs", "faultSchedule", "filesystemDiffs"],
-      "properties": {
-        "canonicalEventTrace": {
-          "type": "array",
-          "maxItems": 512,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["schemaVersion", "seq", "emittedAt", "eventType", "sessionId"],
-            "properties": {
-              "schemaVersion": { "const": 1 },
-              "seq": { "type": "integer", "minimum": 0 },
-              "emittedAt": { "type": "string", "format": "date-time" },
-              "eventType": { "$ref": "#/$defs/boundedString" },
-              "sessionId": { "$ref": "#/$defs/boundedString" }
-            }
-          }
-        },
-        "providerInputs": {
-          "type": "array",
-          "maxItems": 64,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "callIndex",
-              "sessionId",
-              "cacheRetention",
-              "provider",
-              "model",
-              "systemPromptCodePoints",
-              "messageRoles",
-              "toolNames"
-            ],
-            "properties": {
-              "callIndex": { "type": "integer", "minimum": 0 },
-              "sessionId": { "type": ["string", "null"], "maxLength": 512 },
-              "cacheRetention": { "enum": ["none", "short", "long", null] },
-              "provider": { "$ref": "#/$defs/boundedString" },
-              "model": { "$ref": "#/$defs/boundedString" },
-              "systemPromptCodePoints": { "type": "integer", "minimum": 0 },
-              "messageRoles": {
-                "type": "array",
-                "maxItems": 256,
-                "items": { "$ref": "#/$defs/boundedString" }
-              },
-              "toolNames": {
-                "type": "array",
-                "maxItems": 64,
-                "items": { "$ref": "#/$defs/boundedString" }
-              }
-            }
-          }
-        },
-        "faultSchedule": {
-          "type": "array",
-          "maxItems": 64,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["boundary", "point", "occurrence", "outcome"],
-            "properties": {
-              "boundary": { "$ref": "#/$defs/boundedString" },
-              "point": { "$ref": "#/$defs/boundedString" },
-              "occurrence": { "type": "integer", "minimum": 0 },
-              "outcome": { "enum": ["continued", "failed", "recovered"] }
-            }
-          }
-        },
-        "filesystemDiffs": {
-          "type": "array",
-          "maxItems": 128,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "change", "beforeDigest", "afterDigest"],
-            "properties": {
-              "path": { "type": "string", "pattern": "^[^/][^\\\\]*$", "maxLength": 512 },
-              "change": { "enum": ["created", "modified", "deleted", "unchanged"] },
-              "beforeDigest": { "$ref": "#/$defs/digest" },
-              "afterDigest": { "$ref": "#/$defs/digest" }
-            }
-          }
-        }
-      }
-    },
-    "agentFinding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "role", "severity", "summary", "disposition"],
-      "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]+$", "maxLength": 128 },
-        "role": { "enum": ["scout", "review"] },
-        "severity": { "enum": ["info", "warning", "error"] },
-        "summary": { "type": "string", "minLength": 1, "maxLength": 2048 },
-        "disposition": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "rationale", "regressionScenarioId"],
-          "properties": {
-            "status": { "enum": ["open", "accepted", "fixed", "not-applicable"] },
-            "rationale": { "type": "string", "minLength": 1, "maxLength": 2048 },
-            "regressionScenarioId": {
-              "type": ["string", "null"],
-              "pattern": "^s[0-7]\\.[a-z0-9-]+$"
-            }
-          }
+          "boundaryConfiguration": { "type": "string", "minLength": 1 }
         }
       }
     }

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ziggy.local/verification/agent-findings-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "agentFindings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "agentFindings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "severity", "summary", "disposition"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]+$", "maxLength": 128 },
+          "role": { "enum": ["scout", "review"] },
+          "severity": { "enum": ["info", "warning", "error"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "disposition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "rationale", "regressionScenarioId"],
+            "properties": {
+              "status": { "enum": ["open", "accepted", "fixed", "not-applicable"] },
+              "rationale": { "type": "string", "minLength": 1, "maxLength": 2048 },
+              "regressionScenarioId": {
+                "type": ["string", "null"],
+                "pattern": "^s[0-7]\\.[a-z0-9-]+$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -3,9 +3,12 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const schemaFiles = [
+  "agent-findings-v1.schema.json",
   "evidence-replay-v1.schema.json",
   "evidence-result-v1.schema.json",
+  "evidence-result-v2.schema.json",
   "evidence-summary-v1.schema.json",
+  "evidence-summary-v2.schema.json",
   "manifest-v1.schema.json",
   "scenario-v1.schema.json",
 ] as const;

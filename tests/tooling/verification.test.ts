@@ -8,11 +8,13 @@ import {
   commandEvidence,
   digest,
   publishEvidence,
+  readAgentFindings,
   redactString,
   redactValue,
   validateReplay,
   type EvidenceInput,
 } from "../../tooling/verification/evidence.ts";
+import { loadSchemaCatalog } from "../../tooling/verification/schemas.ts";
 
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
@@ -115,6 +117,7 @@ describe("verification evidence", () => {
     await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
 
     const summary = await Bun.file(join(published.directory, "summary.json")).text();
+    expect(parseRecord(summary).schemaVersion).toBe(2);
     expect(summary).not.toContain(root);
     expect(summary).not.toContain("fixture-secret");
     expect(summary).not.toContain('"stdout": "');
@@ -122,6 +125,10 @@ describe("verification evidence", () => {
     expect(summary).not.toContain('"bytes"');
     expect(summary).not.toContain('"digest"');
     const result = await Bun.file(join(published.directory, "result.json")).text();
+    expect(parseRecord(result).schemaVersion).toBe(2);
+    expect(
+      parseRecord(await Bun.file(join(published.directory, "replay.json")).text()).schemaVersion,
+    ).toBe(1);
     expect(result).toContain('"canonicalEventTrace"');
     expect(result).toContain('"agentFindings"');
 
@@ -192,11 +199,133 @@ describe("verification evidence", () => {
         },
       ],
     });
+    const summary = await Bun.file(join(published.directory, "summary.json")).text();
+    expect(summary).toContain('"agentFindingsAttached": true');
     const result = await Bun.file(join(published.directory, "result.json")).text();
     expect(result).toContain('"afterPrepare"');
     expect(result).toContain('"status": "fixed"');
     expect(result).not.toContain("fixture-review-secret");
     await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
+  });
+
+  test("keeps v1 schemas immutable and replays old v1 bundles without migration", async () => {
+    const resultV1 = await Bun.file(
+      join(repositoryRoot, "verification/schemas/evidence-result-v1.schema.json"),
+    ).text();
+    const summaryV1 = await Bun.file(
+      join(repositoryRoot, "verification/schemas/evidence-summary-v1.schema.json"),
+    ).text();
+    expect(digest(resultV1)).toBe(
+      "5d80512d4cfe3a9ea3b843323feb4b456249cf721a28efb10a60afa53d676503",
+    );
+    expect(digest(summaryV1)).toBe(
+      "ef66e24a3d7019414c6433fd09e98c99268b83d4ea1f5cdf7a2ff06e99febfb4",
+    );
+
+    const root = await temporaryRoot();
+    const published = await publishEvidence(root, evidenceInput(root));
+    await convertPublishedBundleToV1(published.directory);
+    await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
+    expect(
+      parseRecord(await Bun.file(join(published.directory, "summary.json")).text()),
+    ).not.toHaveProperty("agentFindingsAttached");
+    expect(
+      parseRecord(await Bun.file(join(published.directory, "result.json")).text()),
+    ).not.toHaveProperty("agentFindings");
+  });
+
+  test("rejects version stamps paired with another version shape and mixed-version bundles", async () => {
+    const root = await temporaryRoot();
+    const published = await publishEvidence(root, evidenceInput(root));
+    const summaryPath = join(published.directory, "summary.json");
+    const resultPath = join(published.directory, "result.json");
+    const replayPath = join(published.directory, "replay.json");
+    const summaryV2 = await Bun.file(summaryPath).text();
+    const resultV2 = await Bun.file(resultPath).text();
+
+    const mislabeledSummary = jsonText({ ...parseRecord(summaryV2), schemaVersion: 1 });
+    await Bun.write(summaryPath, mislabeledSummary);
+    await rewriteReplayDigest(replayPath, "summaryDigest", mislabeledSummary);
+    await expect(validateReplay(published.directory, root)).rejects.toThrow("schema validation");
+
+    await Bun.write(summaryPath, summaryV2);
+    await convertPublishedBundleToV1(published.directory);
+    const resultV1 = await Bun.file(resultPath).text();
+    const mislabeledResult = jsonText({ ...parseRecord(resultV1), schemaVersion: 2 });
+    await Bun.write(resultPath, mislabeledResult);
+    await rewriteReplayDigest(replayPath, "resultDigest", mislabeledResult);
+    await expect(validateReplay(published.directory, root)).rejects.toThrow("schema validation");
+
+    await Bun.write(resultPath, resultV2);
+    await rewriteReplayDigest(replayPath, "resultDigest", resultV2);
+    await expect(validateReplay(published.directory, root)).rejects.toThrow(
+      "schemaVersion mismatch",
+    );
+  });
+
+  test("catalog validates only each exact result and summary version shape", async () => {
+    const schemas = await loadSchemaCatalog(repositoryRoot);
+    const root = await temporaryRoot();
+    const published = await publishEvidence(root, evidenceInput(root));
+    const summaryV2 = parseRecord(await Bun.file(join(published.directory, "summary.json")).text());
+    const resultV2 = parseRecord(await Bun.file(join(published.directory, "result.json")).text());
+    expect(() =>
+      schemas.validate("evidence-summary-v2.schema.json", summaryV2, "summary v2"),
+    ).not.toThrow();
+    expect(() =>
+      schemas.validate("evidence-result-v2.schema.json", resultV2, "result v2"),
+    ).not.toThrow();
+    expect(() =>
+      schemas.validate(
+        "evidence-summary-v1.schema.json",
+        { ...summaryV2, schemaVersion: 1 },
+        "summary cross-version",
+      ),
+    ).toThrow("schema validation");
+    expect(() =>
+      schemas.validate(
+        "evidence-result-v1.schema.json",
+        { ...resultV2, schemaVersion: 1 },
+        "result cross-version",
+      ),
+    ).toThrow("schema validation");
+  });
+
+  test("loads bounded schema-valid findings only from an untracked path and redacts before return", async () => {
+    const root = await temporaryRoot();
+    const inputDirectory = await mkdtemp(join(tmpdir(), "ziggy-agent-findings-"));
+    temporaryDirectories.push(inputDirectory);
+    const inputPath = join(inputDirectory, "findings.json");
+    await Bun.write(
+      inputPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        agentFindings: [
+          {
+            id: "review.fixture-input",
+            role: "review",
+            severity: "warning",
+            summary: `Authorization: Bearer fixture-input-secret at ${root}`,
+            disposition: {
+              status: "fixed",
+              rationale: "Covered by deterministic regression.",
+              regressionScenarioId: "s0.fixture",
+            },
+          },
+        ],
+      }),
+    );
+
+    const findings = await readAgentFindings(root, inputPath);
+    expect(findings).toHaveLength(1);
+    expect(JSON.stringify(findings)).not.toContain("fixture-input-secret");
+    expect(JSON.stringify(findings)).not.toContain(root);
+
+    const trackedInput = join(root, "findings.json");
+    await Bun.write(trackedInput, await Bun.file(inputPath).text());
+    await expect(readAgentFindings(root, trackedInput)).rejects.toThrow("outside");
+    await Bun.write(inputPath, "x".repeat(65_537));
+    await expect(readAgentFindings(root, inputPath)).rejects.toThrow("65536");
   });
 
   test("schema validation rejects invalid dates, fractional exits, numeric argv, duplicates, and extras", async () => {
@@ -493,6 +622,29 @@ function reverseFirstTwoPhases(input: EvidenceInput): EvidenceInput {
     throw new Error("missing phase fixtures");
   }
   return { ...input, phases: [second, first, ...input.phases.slice(2)] };
+}
+
+async function convertPublishedBundleToV1(directory: string): Promise<void> {
+  const summaryPath = join(directory, "summary.json");
+  const resultPath = join(directory, "result.json");
+  const replayPath = join(directory, "replay.json");
+  const summaryV2 = parseRecord(await Bun.file(summaryPath).text());
+  const resultV2 = parseRecord(await Bun.file(resultPath).text());
+  const scenarios = requireArray(resultV2.scenarios, "result scenarios").map((value) =>
+    Object.fromEntries(
+      Object.entries(parseRecord(JSON.stringify(value))).filter(([key]) => key !== "observations"),
+    ),
+  );
+  const summaryV1 = jsonText({
+    ...Object.fromEntries(
+      Object.entries(summaryV2).filter(([key]) => key !== "agentFindingsAttached"),
+    ),
+    schemaVersion: 1,
+  });
+  const resultV1 = jsonText({ schemaVersion: 1, runId: resultV2.runId, scenarios });
+  await Promise.all([Bun.write(summaryPath, summaryV1), Bun.write(resultPath, resultV1)]);
+  await rewriteReplayDigest(replayPath, "summaryDigest", summaryV1);
+  await rewriteReplayDigest(replayPath, "resultDigest", resultV1);
 }
 
 async function rewriteReplayDigest(

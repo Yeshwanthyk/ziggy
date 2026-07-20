@@ -49,7 +49,10 @@ directory on every exit path.
 Each verifier atomically publishes redacted derived evidence to
 `<repo>/.artifacts/verification/<run-id>/{summary,result,replay}.json`. Publication uses a sibling
 temporary directory and renames it only after schema validation, explicit decoding, redaction,
-leak scanning, and replay validation; failed publication removes the temporary directory. Evidence
+leak scanning, and replay validation; failed publication removes the temporary directory. New
+publications use `evidence-summary-v2.schema.json` and `evidence-result-v2.schema.json`; replay stays
+on `evidence-replay-v1.schema.json`. Replay selects summary/result schemas from each document's
+version and accepts unchanged S0 v1 bundles without migration. Evidence
 captures preflight, gate, scenario, and publication phases, including failure evidence whenever the
 evidence subsystem remains usable.
 
@@ -63,7 +66,16 @@ schema-validated summaries of observed canonical event traces, Provider call inp
 fault schedules, and filesystem diffs. Event and Provider observations are derived from runtime
 objects, not manifest labels. Optional scout/review findings retain role, severity, and an explicit
 open/accepted/fixed/not-applicable disposition; an empty list means no agent review was recorded for
-that verifier run and does not satisfy an independent-review requirement.
+that verifier run and does not satisfy an independent-review requirement. Independent runs attach a
+bounded schema-valid report from an untracked file outside the repository:
+
+```text
+bun tooling/verification/runner.ts s1 --agent-findings /tmp/ziggy-s1-findings.json
+```
+
+The input uses `agent-findings-v1.schema.json`, is capped at 65,536 bytes, and is redacted before it
+enters evidence. Its source path and raw bytes are never retained. Standard CI commands omit the
+option and continue to publish an empty findings list.
 
 Replay binds summary/result digests and a deterministic workspace-input digest. Its per-file input
 catalog covers manifests, schemas, the scenario registry and files, `bun.lock`, package manifests,

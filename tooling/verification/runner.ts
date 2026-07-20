@@ -4,6 +4,8 @@ import { BunProcessRunner } from "./compile-smoke.ts";
 import {
   commandEvidence,
   publishEvidence,
+  readAgentFindings,
+  type AgentFindingEvidence,
   type CommandEvidence,
   type EvidenceInput,
   type PhaseEvidence,
@@ -27,7 +29,10 @@ const processRunner = new BunProcessRunner();
 const gateTimeoutMs = 180_000;
 const metadataTimeoutMs = 10_000;
 
-export async function runVerification(target: Stage | "all"): Promise<void> {
+export async function runVerification(
+  target: Stage | "all",
+  options: { readonly agentFindings?: ReadonlyArray<AgentFindingEvidence> } = {},
+): Promise<void> {
   const startedAt = now();
   const command = target === "all" ? "bun run verify:all" : `bun run verify:${target}`;
   const runId = `${startedAt.replace(/[:.]/g, "-")}-${process.pid}`;
@@ -142,6 +147,7 @@ export async function runVerification(target: Stage | "all"): Promise<void> {
     toolVersions: await readToolVersions(),
     phases: [...phases].sort((left, right) => left.startedAt.localeCompare(right.startedAt)),
     commands,
+    agentFindings: options.agentFindings,
     result: failure === undefined ? "passed" : "failed",
   };
 
@@ -295,12 +301,38 @@ function parseTarget(value: string | undefined): Stage | "all" {
       return stage;
     }
   }
-  throw new Error("usage: bun tooling/verification/runner.ts <s0|s1|...|s7|all>");
+  throw new Error(usage());
+}
+
+function parseArguments(argv: ReadonlyArray<string>): {
+  readonly target: Stage | "all";
+  readonly agentFindingsPath: string | undefined;
+} {
+  if (argv.length === 1) {
+    return { target: parseTarget(argv[0]), agentFindingsPath: undefined };
+  }
+  if (argv.length === 3 && argv[1] === "--agent-findings") {
+    const path = argv[2];
+    if (path === undefined || path.length === 0) {
+      throw new Error(usage());
+    }
+    return { target: parseTarget(argv[0]), agentFindingsPath: path };
+  }
+  throw new Error(usage());
+}
+
+function usage(): string {
+  return "usage: bun tooling/verification/runner.ts <s0|s1|...|s7|all> [--agent-findings <untracked-json-path>]";
 }
 
 if (import.meta.main) {
   try {
-    await runVerification(parseTarget(Bun.argv[2]));
+    const arguments_ = parseArguments(Bun.argv.slice(2));
+    const agentFindings =
+      arguments_.agentFindingsPath === undefined
+        ? undefined
+        : await readAgentFindings(root, arguments_.agentFindingsPath);
+    await runVerification(arguments_.target, { agentFindings });
   } catch (error) {
     console.error(error instanceof Error ? error.message : "verification failed");
     process.exit(1);

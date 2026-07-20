@@ -1,6 +1,6 @@
 import { homedir, tmpdir } from "node:os";
 import { lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ProcessResult } from "../../tests/testkit/boundaries.ts";
 import type { RuntimeObservations } from "../../tests/testkit/verification-observations.ts";
 import type { Stage } from "./manifests.ts";
@@ -47,7 +47,7 @@ export interface ScenarioEvidence {
   readonly observations: RuntimeObservations;
 }
 
-interface AgentFindingEvidence {
+export interface AgentFindingEvidence {
   readonly id: string;
   readonly role: "scout" | "review";
   readonly severity: "info" | "warning" | "error";
@@ -94,6 +94,7 @@ interface DecodedPhase {
 }
 
 interface DecodedSummary {
+  readonly schemaVersion: 1 | 2;
   readonly runId: string;
   readonly command: string;
   readonly scenarios: ReadonlyArray<string>;
@@ -105,6 +106,7 @@ interface DecodedSummary {
 }
 
 interface DecodedResult {
+  readonly schemaVersion: 1 | 2;
   readonly runId: string;
   readonly scenarios: ReadonlyArray<{ readonly id: string; readonly result: string }>;
 }
@@ -125,6 +127,28 @@ export function commandEvidence(
     stdout: outputEvidence(result.stdout, repositoryRoot),
     stderr: outputEvidence(result.stderr, repositoryRoot),
   };
+}
+
+export async function readAgentFindings(
+  repositoryRoot: string,
+  inputPath: string,
+): Promise<ReadonlyArray<AgentFindingEvidence>> {
+  const path = resolve(inputPath);
+  const relativePath = relative(repositoryRoot, path);
+  if (relativePath !== ".." && !relativePath.startsWith(`..${sep}`)) {
+    throw new Error("agent findings input must be an untracked file outside the repository");
+  }
+  await assertRegularFile(path, "agent findings input");
+  const file = Bun.file(path);
+  if (file.size > 65_536) {
+    throw new Error("agent findings input exceeds 65536 bytes");
+  }
+  const parsed = parseJson(await file.text(), "agent findings input");
+  const schemas = await loadSchemaCatalog(repositoryRoot);
+  schemas.validate("agent-findings-v1.schema.json", parsed, "agent findings input");
+  const redacted = redactValue(parsed, repositoryRoot);
+  schemas.validate("agent-findings-v1.schema.json", redacted, "redacted agent findings input");
+  return decodeAgentFindings(redacted);
 }
 
 export function redactValue(value: unknown, repositoryRoot: string, key = ""): unknown {
@@ -225,10 +249,11 @@ export async function publishEvidence(
   const workspaceInputs = await readWorkspaceInputs(root);
   const workspaceInputDigest = digestWorkspaceInputs(workspaceInputs);
   const summary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: input.runId,
     stage: input.stage,
     command: input.command,
+    agentFindingsAttached: (input.agentFindings?.length ?? 0) > 0,
     scenarios: input.scenarios.map((scenario) => scenario.id),
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
@@ -239,18 +264,18 @@ export async function publishEvidence(
     commands: input.commands,
   };
   const results = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: input.runId,
     scenarios: input.scenarios,
     agentFindings: input.agentFindings ?? [],
   };
   const schemas = await loadSchemaCatalog(root);
   const summaryText = serializeValidated(summary, root, (value) => {
-    schemas.validate("evidence-summary-v1.schema.json", value, "summary");
+    schemas.validate("evidence-summary-v2.schema.json", value, "summary");
     decodeSummary(value);
   });
   const resultText = serializeValidated(results, root, (value) => {
-    schemas.validate("evidence-result-v1.schema.json", value, "result");
+    schemas.validate("evidence-result-v2.schema.json", value, "result");
     decodeResult(value);
   });
   const replay = {
@@ -319,12 +344,25 @@ export async function validateReplay(directory: string, root: string): Promise<v
   const resultValue = parseJson(resultText, "result");
   const replayValue = parseJson(replayText, "replay");
   const schemas = await loadSchemaCatalog(root);
-  schemas.validate("evidence-summary-v1.schema.json", summaryValue, "summary");
-  schemas.validate("evidence-result-v1.schema.json", resultValue, "result");
+  const summaryVersion = requireEvidenceDocumentVersion(summaryValue, "summary");
+  const resultVersion = requireEvidenceDocumentVersion(resultValue, "result");
+  schemas.validate(
+    summaryVersion === 1 ? "evidence-summary-v1.schema.json" : "evidence-summary-v2.schema.json",
+    summaryValue,
+    "summary",
+  );
+  schemas.validate(
+    resultVersion === 1 ? "evidence-result-v1.schema.json" : "evidence-result-v2.schema.json",
+    resultValue,
+    "result",
+  );
   schemas.validate("evidence-replay-v1.schema.json", replayValue, "replay");
   const summary = decodeSummary(summaryValue);
   const result = decodeResult(resultValue);
   const replay = decodeReplay(replayValue);
+  if (summary.schemaVersion !== result.schemaVersion) {
+    throw new Error("summary/result schemaVersion mismatch");
+  }
   if (replay.summaryDigest !== digest(summaryText)) {
     throw new Error("replay summary digest mismatch");
   }
@@ -547,25 +585,29 @@ async function walkWorkspace(root: string, directory: string): Promise<string[]>
 
 function decodeSummary(value: unknown): DecodedSummary {
   const record = requireRecord(value, "summary");
+  const schemaVersion = requireEvidenceDocumentVersion(record, "summary");
+  const keys = [
+    "schemaVersion",
+    "runId",
+    "stage",
+    "command",
+    "scenarios",
+    "startedAt",
+    "finishedAt",
+    "git",
+    "toolVersions",
+    "result",
+    "phases",
+    "commands",
+  ];
   requireExactKeys(
     record,
-    [
-      "schemaVersion",
-      "runId",
-      "stage",
-      "command",
-      "scenarios",
-      "startedAt",
-      "finishedAt",
-      "git",
-      "toolVersions",
-      "result",
-      "phases",
-      "commands",
-    ],
+    schemaVersion === 1 ? keys : [...keys, "agentFindingsAttached"],
     "summary",
   );
-  requireVersion(record, "summary");
+  if (schemaVersion === 2 && typeof record.agentFindingsAttached !== "boolean") {
+    throw new Error("summary.agentFindingsAttached must be boolean");
+  }
   const runId = requireString(record.runId, "summary.runId");
   const command = requireString(record.command, "summary.command");
   const startedAt = requireString(record.startedAt, "summary.startedAt");
@@ -598,6 +640,7 @@ function decodeSummary(value: unknown): DecodedSummary {
     throw new Error("summary.commands must be an array");
   }
   return {
+    schemaVersion,
     runId,
     command,
     scenarios,
@@ -653,10 +696,71 @@ function decodeOutput(value: unknown, label: string): OutputEvidence {
   };
 }
 
+function decodeAgentFindings(value: unknown): ReadonlyArray<AgentFindingEvidence> {
+  const input = requireRecord(value, "agent findings input");
+  requireExactKeys(input, ["schemaVersion", "agentFindings"], "agent findings input");
+  requireVersion(input, "agent findings input", 1);
+  if (!Array.isArray(input.agentFindings)) {
+    throw new Error("agent findings input.agentFindings must be an array");
+  }
+  const ids = new Set<string>();
+  return input.agentFindings.map((value, index) => {
+    const finding = requireRecord(value, `agent finding ${index}`);
+    requireExactKeys(
+      finding,
+      ["id", "role", "severity", "summary", "disposition"],
+      `agent finding ${index}`,
+    );
+    const id = requireString(finding.id, `agent finding ${index}.id`);
+    if (ids.has(id)) {
+      throw new Error(`duplicate agent finding id ${id}`);
+    }
+    ids.add(id);
+    const role = requireAgentRole(finding.role, `agent finding ${index}.role`);
+    const severity = requireAgentSeverity(finding.severity, `agent finding ${index}.severity`);
+    const dispositionValue = requireRecord(
+      finding.disposition,
+      `agent finding ${index}.disposition`,
+    );
+    requireExactKeys(
+      dispositionValue,
+      ["status", "rationale", "regressionScenarioId"],
+      `agent finding ${index}.disposition`,
+    );
+    const regressionScenarioId = dispositionValue.regressionScenarioId;
+    if (regressionScenarioId !== null && typeof regressionScenarioId !== "string") {
+      throw new Error(`agent finding ${index}.regressionScenarioId must be string or null`);
+    }
+    return {
+      id,
+      role,
+      severity,
+      summary: requireString(finding.summary, `agent finding ${index}.summary`),
+      disposition: {
+        status: requireFindingDisposition(
+          dispositionValue.status,
+          `agent finding ${index}.disposition.status`,
+        ),
+        rationale: requireString(
+          dispositionValue.rationale,
+          `agent finding ${index}.disposition.rationale`,
+        ),
+        regressionScenarioId,
+      },
+    };
+  });
+}
+
 function decodeResult(value: unknown): DecodedResult {
   const record = requireRecord(value, "result");
-  requireExactKeys(record, ["schemaVersion", "runId", "scenarios", "agentFindings"], "result");
-  requireVersion(record, "result");
+  const schemaVersion = requireEvidenceDocumentVersion(record, "result");
+  requireExactKeys(
+    record,
+    schemaVersion === 1
+      ? ["schemaVersion", "runId", "scenarios"]
+      : ["schemaVersion", "runId", "scenarios", "agentFindings"],
+    "result",
+  );
   if (!Array.isArray(record.scenarios)) {
     throw new Error("result.scenarios must be an array");
   }
@@ -664,9 +768,10 @@ function decodeResult(value: unknown): DecodedResult {
   const scenarios: Array<{ id: string; result: string }> = [];
   for (const scenario of record.scenarios) {
     const scenarioRecord = requireRecord(scenario, "result scenario");
+    const scenarioKeys = ["id", "file", "result", "seed", "schedule", "boundaryConfiguration"];
     requireExactKeys(
       scenarioRecord,
-      ["id", "file", "result", "seed", "schedule", "boundaryConfiguration", "observations"],
+      schemaVersion === 1 ? scenarioKeys : [...scenarioKeys, "observations"],
       "result scenario",
     );
     const id = requireString(scenarioRecord.id, "result scenario id");
@@ -675,17 +780,30 @@ function decodeResult(value: unknown): DecodedResult {
     requireString(scenarioRecord.seed, "result scenario seed");
     requireString(scenarioRecord.schedule, "result scenario schedule");
     requireString(scenarioRecord.boundaryConfiguration, "result scenario boundaryConfiguration");
-    requireRecord(scenarioRecord.observations, "result scenario observations");
+    if (schemaVersion === 2) {
+      requireRecord(scenarioRecord.observations, "result scenario observations");
+    }
     if (ids.has(id)) {
       throw new Error(`duplicate evidence scenario ${id}`);
     }
     ids.add(id);
     scenarios.push({ id, result: scenarioResult });
   }
-  if (!Array.isArray(record.agentFindings)) {
+  if (schemaVersion === 2) {
+    decodeResultAgentFindings(record.agentFindings);
+  }
+  return {
+    schemaVersion,
+    runId: requireString(record.runId, "result.runId"),
+    scenarios,
+  };
+}
+
+function decodeResultAgentFindings(value: unknown): void {
+  if (!Array.isArray(value)) {
     throw new Error("result.agentFindings must be an array");
   }
-  for (const finding of record.agentFindings) {
+  for (const finding of value) {
     const findingRecord = requireRecord(finding, "agent finding");
     requireExactKeys(
       findingRecord,
@@ -693,8 +811,8 @@ function decodeResult(value: unknown): DecodedResult {
       "agent finding",
     );
     requireString(findingRecord.id, "agent finding id");
-    requireString(findingRecord.role, "agent finding role");
-    requireString(findingRecord.severity, "agent finding severity");
+    requireAgentRole(findingRecord.role, "agent finding role");
+    requireAgentSeverity(findingRecord.severity, "agent finding severity");
     requireString(findingRecord.summary, "agent finding summary");
     const disposition = requireRecord(findingRecord.disposition, "agent finding disposition");
     requireExactKeys(
@@ -702,13 +820,12 @@ function decodeResult(value: unknown): DecodedResult {
       ["status", "rationale", "regressionScenarioId"],
       "agent finding disposition",
     );
-    requireString(disposition.status, "agent finding disposition status");
+    requireFindingDisposition(disposition.status, "agent finding disposition status");
     requireString(disposition.rationale, "agent finding disposition rationale");
     if (disposition.regressionScenarioId !== null) {
       requireString(disposition.regressionScenarioId, "agent finding regression scenario");
     }
   }
-  return { runId: requireString(record.runId, "result.runId"), scenarios };
 }
 
 function decodeReplay(value: unknown): {
@@ -733,7 +850,7 @@ function decodeReplay(value: unknown): {
     ],
     "replay",
   );
-  requireVersion(record, "replay");
+  requireVersion(record, "replay", 1);
   const command = requireString(record.command, "replay.command");
   if (!Array.isArray(record.inputs)) {
     throw new Error("replay.inputs must be an array");
@@ -784,8 +901,16 @@ function requireExactKeys(
   }
 }
 
-function requireVersion(record: Record<string, unknown>, label: string): void {
-  if (record.schemaVersion !== 1) {
+function requireEvidenceDocumentVersion(value: unknown, label: string): 1 | 2 {
+  const record = requireRecord(value, label);
+  if (record.schemaVersion === 1 || record.schemaVersion === 2) {
+    return record.schemaVersion;
+  }
+  throw new Error(`${label} has unsupported schemaVersion`);
+}
+
+function requireVersion(record: Record<string, unknown>, label: string, expected: number): void {
+  if (record.schemaVersion !== expected) {
     throw new Error(`${label} has unsupported schemaVersion`);
   }
 }
@@ -813,6 +938,30 @@ function requireEvidenceResult(value: unknown, label: string): "passed" | "faile
     return value;
   }
   throw new Error(`${label} must be passed or failed`);
+}
+
+function requireAgentRole(value: unknown, label: string): "scout" | "review" {
+  if (value === "scout" || value === "review") {
+    return value;
+  }
+  throw new Error(`${label} must be scout or review`);
+}
+
+function requireAgentSeverity(value: unknown, label: string): "info" | "warning" | "error" {
+  if (value === "info" || value === "warning" || value === "error") {
+    return value;
+  }
+  throw new Error(`${label} must be info, warning, or error`);
+}
+
+function requireFindingDisposition(
+  value: unknown,
+  label: string,
+): "open" | "accepted" | "fixed" | "not-applicable" {
+  if (value === "open" || value === "accepted" || value === "fixed" || value === "not-applicable") {
+    return value;
+  }
+  throw new Error(`${label} has an unsupported disposition`);
 }
 
 function requireStringAllowEmpty(value: unknown, label: string): string {
