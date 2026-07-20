@@ -1,9 +1,61 @@
 {
   "schemaVersion": 1,
   "stage": "s2",
-  "status": "manifest-empty",
+  "status": "implemented",
   "predecessors": ["s0", "s1"],
-  "scenarios": [],
-  "gates": [],
-  "requirements": []
+  "scenarios": [
+    "s2.daemon-kernel",
+    "s2.attach-socket",
+    "s2.service-lifecycle",
+    "s2.operator-readiness"
+  ],
+  "gates": [
+    "manifest-integrity",
+    "package-graph",
+    "lint",
+    "lint-fixtures",
+    "fmt-check",
+    "typecheck",
+    "scenarios",
+    "test",
+    "knip",
+    "compile-smoke"
+  ],
+  "requirements": [
+    {
+      "id": "s2.profile-single-writer",
+      "status": "implemented",
+      "description": "A schema-stamped per-Profile lock admits one daemon owner, serializes stale takeover, recovers orphaned takeover state, releases only matching ownership, and fails loud on malformed or unsupported metadata."
+    },
+    {
+      "id": "s2.daemon-runtime-ownership",
+      "status": "implemented",
+      "description": "The daemon registry owns one runtime per Session, shares concurrent creation, reconciles incomplete durable lifecycle events without resuming work, and closes all runtimes before releasing the Profile lock."
+    },
+    {
+      "id": "s2.attach-local-transport",
+      "status": "implemented",
+      "description": "The daemon serves strict protocol-v1 NDJSON only on the Profile-local Unix socket, verifies mode 0600, bounds frames and per-Client work, and dispatches the complete attach method surface after initialize."
+    },
+    {
+      "id": "s2.replay-live-fanout",
+      "status": "implemented",
+      "description": "Atomic subscription setup orders success before exact canonical replay and deferred live delivery with no second sequence authority, while unsubscribe prevents later events and approval resolution is first-response-wins."
+    },
+    {
+      "id": "s2.disconnect-and-client-isolation",
+      "status": "implemented",
+      "description": "Client disconnect removes only its subscriptions without canceling Session work; reconnect replay remains contiguous, and a slow or overloaded Client is disconnected without blocking healthy Clients."
+    },
+    {
+      "id": "s2.service-lifecycle",
+      "status": "implemented",
+      "description": "Per-Profile launchd and systemd user-service definitions use exact argv, restrictive permissions, schema-stamped ownership, fail-closed drift classification, and bounded lifecycle commands without mutating foreign definitions."
+    },
+    {
+      "id": "s2.foreground-doctor-autostart",
+      "status": "implemented",
+      "description": "Foreground serve composes the filesystem kernel and attach socket with ordered cleanup; readiness requires a protocol initialize handshake, in-process auto-start callers share one readiness operation while the Profile lock enforces one cross-process owner, and doctor reports socket safety, daemon readiness, lock liveness/schema failures, and basic Provider-auth presence without exposing credential values."
+    }
+  ]
 }

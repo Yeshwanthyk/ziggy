@@ -27,9 +27,16 @@ import {
 import { SequenceIds } from "../testkit/boundaries.ts";
 import { Barrier } from "../testkit/barrier.ts";
 import { awaitingAbortStep, ScriptedProvider, textStep } from "../testkit/provider/scripted.ts";
+import {
+  emitVerificationObservation,
+  emptyRuntimeObservations,
+  observeCanonicalEvents,
+  observeProviderInputs,
+} from "../testkit/verification-observations.ts";
 
 const profiles: string[] = [];
 const SNAPSHOT = { systemPrompt: "You are Ziggy.", tools: [] };
+let attachScenarioObservations = emptyRuntimeObservations();
 
 describe("Unix attach server", () => {
   test("creates a mode-0600 socket and enforces initialize before exact method dispatch", async () => {
@@ -182,6 +189,11 @@ describe("Unix attach server", () => {
         turnId: "turn-a",
         status: "completed",
       });
+      attachScenarioObservations = {
+        ...emptyRuntimeObservations(),
+        canonicalEventTrace: observeCanonicalEvents(durable),
+        providerInputs: observeProviderInputs(provider.calls),
+      };
 
       const secondEvents = await readEvents(second, durable.length - 1);
       expect(secondEvents).toEqual(durable.slice(1));
@@ -538,6 +550,7 @@ describe("Unix attach server", () => {
 
 afterAll(async () => {
   await Promise.all(profiles.map((path) => rm(path, { recursive: true, force: true })));
+  emitVerificationObservation("s2.attach-socket", attachScenarioObservations);
 });
 
 interface Fixture<World extends DaemonWorld> {

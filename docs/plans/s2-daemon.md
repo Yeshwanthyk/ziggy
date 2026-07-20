@@ -36,13 +36,13 @@ writers, disconnect-as-cancellation, late approval effects, and non-loopback exp
 
 ## Acceptance criteria
 
-- [ ] `ziggy serve` starts a daemon that creates `<profile>/.runtime/ziggy.sock` at `0600`.
-- [ ] Starting a second `ziggy serve` against the same profile fails fast with a clear "already running (pid N)" error.
-- [ ] Two separate Client connections can both call `session/subscribe` for the same Session and both receive the same live events.
-- [ ] Closing one Client's connection mid-Turn does not stop the Turn; the Session log continues to append; a fresh connection can call `session/subscribe` and see the Turn complete.
-- [ ] A client that disconnects and reconnects can request replay from a given `seq` and receives exactly the events it missed, in order, with no duplicates and no gaps.
+- [x] `ziggy serve` starts a daemon that creates `<profile>/.runtime/ziggy.sock` at `0600`.
+- [x] Starting a second `ziggy serve` against the same profile fails fast with a clear "already running (pid N)" error.
+- [x] Two separate Client connections can both call `session/subscribe` for the same Session and both receive the same live events.
+- [x] Closing one Client's connection mid-Turn does not stop the Turn; the Session log continues to append; a fresh connection can call `session/subscribe` and see the Turn complete.
+- [x] A client that disconnects and reconnects can request replay from a given `seq` and receives exactly the events it missed, in order, with no duplicates and no gaps.
 - [ ] Two different sessions' turns can run concurrently without one's tool execution blocking the other's event delivery.
-- [ ] An approval request sent to 2 subscribed clients: the first response wins and is applied; the second client subsequently receives a `resolved` event and its own late response is a no-op.
+- [x] An approval request sent to 2 subscribed clients: the first response wins and is applied; the second client subsequently receives a `resolved` event and its own late response is a no-op.
 - [ ] `ziggy service install` produces a working launchd plist (macOS) or systemd unit (Linux) that starts the daemon; `ziggy doctor` correctly reports daemon-up/down and a stale lock left by a killed daemon.
 - [ ] Auto-start: running any daemon-dependent CLI command with no daemon running transparently starts one before proceeding, with no manual `ziggy serve` step required.
 - [ ] The harness, S2 plan checklist, and scenario/stage manifests include every landed daemon behavior and concurrency/fault scenario; `verify:s2` and `verify:all` pass with schema-valid redacted evidence and resolved findings from verification/review by a separate Sol medium agent in an independent run and context.

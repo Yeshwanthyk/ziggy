@@ -13,6 +13,10 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s1.agent-loop",
     "s1.memory",
     "s1.integrated-waist",
+    "s2.daemon-kernel",
+    "s2.attach-socket",
+    "s2.service-lifecycle",
+    "s2.operator-readiness",
   ]);
 
   for (const scenario of scenarioRegistry) {
