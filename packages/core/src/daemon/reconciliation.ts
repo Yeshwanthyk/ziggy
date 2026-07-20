@@ -3,7 +3,7 @@ import type { SessionWorld } from "../agent/runtime.ts";
 
 export async function reconcileSession(world: SessionWorld, sessionId: string): Promise<void> {
   const envelopes = await world.readSession(sessionId, 0);
-  const open = scanLifecycle(envelopes);
+  const open = scanSessionLifecycle(envelopes);
   if (open.stepId !== undefined && open.turnId !== undefined) {
     await world.appendSession(sessionId, {
       type: "step-ended",
@@ -23,7 +23,7 @@ export async function reconcileSession(world: SessionWorld, sessionId: string): 
   }
 }
 
-function scanLifecycle(envelopes: ReadonlyArray<SessionEnvelope>): {
+export function scanSessionLifecycle(envelopes: ReadonlyArray<SessionEnvelope>): {
   readonly turnId: string | undefined;
   readonly stepId: string | undefined;
 } {

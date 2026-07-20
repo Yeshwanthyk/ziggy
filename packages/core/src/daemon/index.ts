@@ -1,1 +1,6 @@
-export { createDaemonKernel, type CreateDaemonKernelOptions, type DaemonKernel } from "./kernel.ts";
+export {
+  createDaemonKernel,
+  type CreateDaemonKernelOptions,
+  type DaemonKernel,
+  type DaemonWorld,
+} from "./kernel.ts";

@@ -55,6 +55,7 @@ function facade(runtime: SessionRuntime): RegisteredSessionRuntime {
     startTurn: (input) => runtime.startTurn(input),
     steer: (input) => runtime.steer(input),
     interrupt: (input) => runtime.interrupt(input),
+    resolveApproval: (input) => runtime.resolveApproval(input),
     waitForIdle: () => runtime.waitForIdle(),
     subscribe: (input) => runtime.subscribe(input),
   };

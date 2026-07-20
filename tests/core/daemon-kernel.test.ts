@@ -285,6 +285,7 @@ function runtime(
       startTurn: async () => ({ turnId: "t", disposition: "started" }),
       steer: async () => ({ turnId: "t" }),
       interrupt: async () => ({ turnId: "t" }),
+      resolveApproval: async () => ({ outcome: "already-resolved" }),
       waitForIdle: async () => {},
       subscribe: async () => ({ replayThroughSeq: 0, unsubscribe() {} }),
       async close() {
@@ -324,6 +325,9 @@ function recordingWorld(initial: ReadonlyArray<SessionEvent>) {
         emittedAt: "2026-07-20T00:00:00.000Z",
         event: item,
       }));
+    },
+    async listSessions() {
+      return initial.length === 0 ? [] : [{ sessionId: "s", lastSeq: initial.length }];
     },
     async appendSession(_sessionId: string, item: SessionEvent): Promise<SessionEnvelope> {
       appended.push(item);

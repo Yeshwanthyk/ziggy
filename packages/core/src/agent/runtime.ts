@@ -8,6 +8,7 @@ import type {
   StreamFunction,
 } from "@earendil-works/pi-ai";
 import type {
+  ApprovalDecision,
   FinalModelResponse,
   FrozenSessionSnapshot,
   JsonObject,
@@ -99,9 +100,14 @@ export interface SessionRuntime {
     readonly message: string;
   }): Promise<{ readonly turnId: string }>;
   interrupt(input: { readonly expectedTurnId: string }): Promise<{ readonly turnId: string }>;
+  resolveApproval(input: {
+    readonly approvalId: string;
+    readonly decision: ApprovalDecision;
+  }): Promise<{ readonly outcome: "resolved" | "already-resolved" }>;
   waitForIdle(): Promise<void>;
   subscribe(input: {
     readonly sinceSeq: number;
+    readonly onReplayStart?: (replayThroughSeq: number) => void;
     readonly onEnvelope: (envelope: SessionEnvelope) => void;
   }): Promise<SessionSubscription>;
   close(): Promise<void>;
@@ -160,10 +166,17 @@ class ProviderStreamFailure extends Error {
   }
 }
 
-class RuntimeClosed extends Error {
+export class SessionRuntimeClosedError extends Error {
   constructor() {
     super("Session runtime is closed");
-    this.name = "RuntimeClosed";
+    this.name = "SessionRuntimeClosedError";
+  }
+}
+
+export class StaleTurnError extends Error {
+  constructor(readonly expectedTurnId: string) {
+    super(`Expected active Turn ${expectedTurnId}`);
+    this.name = "StaleTurnError";
   }
 }
 
@@ -651,7 +664,7 @@ export async function createSessionRuntime<TApi extends Api>(
           validateMessage(input.message);
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
-            return yield* Effect.fail(new RuntimeClosed());
+            return yield* Effect.fail(new SessionRuntimeClosedError());
           }
           const turnId = options.nextTurnId();
           if (state.active !== undefined) {
@@ -692,8 +705,11 @@ export async function createSessionRuntime<TApi extends Api>(
         Effect.gen(function* () {
           validateMessage(input.message);
           const state = yield* Ref.get(resources.state);
-          if (state.active?.turnId !== input.expectedTurnId) {
-            return yield* Effect.fail(new Error(`Expected active Turn ${input.expectedTurnId}`));
+          if (
+            state.active?.turnId !== input.expectedTurnId ||
+            state.active.controller.signal.aborted
+          ) {
+            return yield* Effect.fail(new StaleTurnError(input.expectedTurnId));
           }
           yield* appendUnlocked({
             type: "steer-received",
@@ -714,8 +730,11 @@ export async function createSessionRuntime<TApi extends Api>(
       withGate(
         Effect.gen(function* () {
           const state = yield* Ref.get(resources.state);
-          if (state.active?.turnId !== input.expectedTurnId) {
-            return yield* Effect.fail(new Error(`Expected active Turn ${input.expectedTurnId}`));
+          if (
+            state.active?.turnId !== input.expectedTurnId ||
+            state.active.controller.signal.aborted
+          ) {
+            return yield* Effect.fail(new StaleTurnError(input.expectedTurnId));
           }
           yield* appendUnlocked({
             type: "interrupt-received",
@@ -734,6 +753,39 @@ export async function createSessionRuntime<TApi extends Api>(
       ),
     );
 
+  const resolveApproval = (input: {
+    readonly approvalId: string;
+    readonly decision: ApprovalDecision;
+  }): Promise<{ readonly outcome: "resolved" | "already-resolved" }> =>
+    Effect.runPromise(
+      withGate(
+        Effect.gen(function* () {
+          const state = yield* Ref.get(resources.state);
+          if (state.closed) {
+            return yield* Effect.fail(new SessionRuntimeClosedError());
+          }
+          const durable = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
+          const pending = findPendingApproval(durable, input.approvalId);
+          if (pending === undefined) {
+            return { outcome: "already-resolved" };
+          }
+          if (!pending.choices.includes(input.decision)) {
+            return yield* Effect.fail(
+              new Error(`Approval ${input.approvalId} does not allow ${input.decision}`),
+            );
+          }
+          yield* appendUnlocked({
+            type: "approval-resolved",
+            sessionId: options.sessionId,
+            turnId: pending.turnId,
+            approvalId: input.approvalId,
+            decision: input.decision,
+          });
+          return { outcome: "resolved" };
+        }),
+      ),
+    );
+
   const waitForIdle = (): Promise<void> =>
     Effect.runPromise(
       withGate(Ref.get(resources.state)).pipe(
@@ -743,6 +795,7 @@ export async function createSessionRuntime<TApi extends Api>(
 
   const subscribe = (input: {
     readonly sinceSeq: number;
+    readonly onReplayStart?: (replayThroughSeq: number) => void;
     readonly onEnvelope: (envelope: SessionEnvelope) => void;
   }): Promise<SessionSubscription> =>
     Effect.runPromise(
@@ -751,11 +804,19 @@ export async function createSessionRuntime<TApi extends Api>(
           validateSinceSeq(input.sinceSeq);
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
-            return yield* Effect.fail(new RuntimeClosed());
+            return yield* Effect.fail(new SessionRuntimeClosedError());
           }
           const durable = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
           const replay = durable.filter((envelope) => envelope.seq > input.sinceSeq);
           const subscriber: Subscriber = { active: true, onEnvelope: input.onEnvelope };
+          const replayThroughSeq = durable.at(-1)?.seq ?? 0;
+          const onReplayStart = input.onReplayStart;
+          if (onReplayStart !== undefined) {
+            yield* Effect.try({
+              try: () => onReplayStart(replayThroughSeq),
+              catch: toError,
+            });
+          }
           for (const envelope of replay) {
             yield* Effect.try({
               try: () => input.onEnvelope(envelope),
@@ -763,7 +824,6 @@ export async function createSessionRuntime<TApi extends Api>(
             });
           }
           subscribers.add(subscriber);
-          const replayThroughSeq = durable.at(-1)?.seq ?? 0;
           return {
             replayThroughSeq,
             unsubscribe() {
@@ -811,7 +871,41 @@ export async function createSessionRuntime<TApi extends Api>(
     );
   };
 
-  return { startTurn, steer, interrupt, waitForIdle, subscribe, close };
+  return { startTurn, steer, interrupt, resolveApproval, waitForIdle, subscribe, close };
+}
+
+function findPendingApproval(
+  envelopes: ReadonlyArray<SessionEnvelope>,
+  approvalId: string,
+): Extract<SessionEvent, { readonly type: "approval-requested" }> | undefined {
+  let requested: Extract<SessionEvent, { readonly type: "approval-requested" }> | undefined;
+  let pending = false;
+  for (const envelope of envelopes) {
+    const event = envelope.event;
+    if (event.type === "approval-requested" && event.approvalId === approvalId) {
+      if (requested !== undefined) {
+        throw new Error(`Session contains duplicate approval ${approvalId}`);
+      }
+      requested = event;
+      pending = true;
+      continue;
+    }
+    if (event.type === "approval-resolved" && event.approvalId === approvalId) {
+      if (requested === undefined) {
+        throw new Error(`Session resolves unknown approval ${approvalId}`);
+      }
+      pending = false;
+      continue;
+    }
+    if (
+      requested !== undefined &&
+      (event.type === "interrupt-received" || event.type === "turn-ended") &&
+      event.turnId === requested.turnId
+    ) {
+      pending = false;
+    }
+  }
+  return pending ? requested : undefined;
 }
 
 function isJsonArray(value: JsonValue): value is ReadonlyArray<JsonValue> {

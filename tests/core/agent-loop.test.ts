@@ -642,6 +642,93 @@ describe("public Session runtime agent loop", () => {
     });
   });
 
+  test("linearizes concurrent interrupt and steer without accepting steer after interruption", async () => {
+    const interruptAppend = new Barrier();
+    const stored = new RecordingSessionWorld();
+    const world: SessionWorld = {
+      async appendSession(sessionId, event) {
+        if (event.type === "interrupt-received") {
+          await interruptAppend.wait();
+        }
+        return stored.appendSession(sessionId, event);
+      },
+      readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
+    };
+    const { runtime, provider } = await createHarness([awaitingAbortStep(100)], { world });
+    await runtime.startTurn({ message: "race" });
+    await provider.waitForCalls(1);
+
+    const interrupting = runtime.interrupt({ expectedTurnId: "turn-1" });
+    await interruptAppend.entered;
+    const steering = runtime.steer({ expectedTurnId: "turn-1", message: "too late" });
+    interruptAppend.release();
+
+    await expect(interrupting).resolves.toEqual({ turnId: "turn-1" });
+    await expect(steering).rejects.toThrow("Expected active Turn turn-1");
+    await runtime.waitForIdle();
+    const recorded = await events(world);
+    expect(recorded.filter((event) => event.type === "interrupt-received")).toHaveLength(1);
+    expect(recorded.filter((event) => event.type === "steer-received")).toHaveLength(0);
+  });
+
+  test("resolves a pending approval once and broadcasts the winning durable decision", async () => {
+    const resolutionAppend = new Barrier();
+    const stored = new RecordingSessionWorld();
+    await stored.appendSession("session-a", {
+      type: "session-started",
+      sessionId: "session-a",
+      snapshot: SNAPSHOT,
+    });
+    await stored.appendSession("session-a", {
+      type: "turn-started",
+      sessionId: "session-a",
+      turnId: "turn-approval",
+      message: "run guarded work",
+      origin: "user",
+    });
+    await stored.appendSession("session-a", {
+      type: "approval-requested",
+      sessionId: "session-a",
+      turnId: "turn-approval",
+      approvalId: "approval-1",
+      toolCallId: "call-1",
+      prompt: "Allow guarded work?",
+      choices: ["approve", "deny"],
+    });
+    const world: SessionWorld = {
+      async appendSession(sessionId, event) {
+        if (event.type === "approval-resolved") {
+          await resolutionAppend.wait();
+        }
+        return stored.appendSession(sessionId, event);
+      },
+      readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
+    };
+    const { runtime } = await createHarness([], { world });
+    const received: SessionEnvelope[] = [];
+    await runtime.subscribe({ sinceSeq: 3, onEnvelope: (envelope) => received.push(envelope) });
+
+    const approving = runtime.resolveApproval({ approvalId: "approval-1", decision: "approve" });
+    await resolutionAppend.entered;
+    const denying = runtime.resolveApproval({ approvalId: "approval-1", decision: "deny" });
+    resolutionAppend.release();
+
+    await expect(approving).resolves.toEqual({ outcome: "resolved" });
+    await expect(denying).resolves.toEqual({ outcome: "already-resolved" });
+    await expect(
+      runtime.resolveApproval({ approvalId: "approval-1", decision: "deny" }),
+    ).resolves.toEqual({ outcome: "already-resolved" });
+    expect(received.map((envelope) => envelope.event)).toEqual([
+      {
+        type: "approval-resolved",
+        sessionId: "session-a",
+        turnId: "turn-approval",
+        approvalId: "approval-1",
+        decision: "approve",
+      },
+    ]);
+  });
+
   test("aborts an in-flight tool and omits a fabricated tool result", async () => {
     const toolStarted = new Barrier();
     let sawAbort = false;
@@ -795,11 +882,14 @@ describe("public Session runtime agent loop", () => {
     }
     const { runtime } = await createHarness([{ ...response, barrier: responseBarrier }], { world });
     const received: SessionEnvelope[] = [];
+    const deliveryOrder: string[] = [];
     blockRead = true;
 
     const subscribing = runtime.subscribe({
       sinceSeq: 0,
+      onReplayStart: (replayThroughSeq) => deliveryOrder.push(`replay-through-${replayThroughSeq}`),
       onEnvelope: (envelope: SessionEnvelope) => {
+        deliveryOrder.push(`event-${envelope.seq}`);
         received.push(envelope);
       },
     });
@@ -813,6 +903,7 @@ describe("public Session runtime agent loop", () => {
 
     const durable = await stored.readSession("session-a", 0);
     expect(subscription.replayThroughSeq).toBe(1);
+    expect(deliveryOrder.slice(0, 2)).toEqual(["replay-through-1", "event-1"]);
     expect([...received]).toEqual([...durable]);
     expect(received.map((envelope) => envelope.seq)).toEqual(
       durable.map((envelope) => envelope.seq),
