@@ -7,6 +7,7 @@ import {
   type EventValidator,
   type FixtureEvent,
   type MemoryCommitCutPoint,
+  type MemoryExpectation,
   type MemoryReplacement,
   type SessionEnvelope,
   type SessionSummary,
@@ -89,7 +90,15 @@ class InMemoryWorld<Event> implements ContractWorld<Event> {
     return this.state.memory.get(document);
   }
 
-  async replaceMemoryBatch(replacements: ReadonlyArray<MemoryReplacement>): Promise<void> {
+  async replaceMemoryBatch(
+    replacements: ReadonlyArray<MemoryReplacement>,
+    expected: ReadonlyArray<MemoryExpectation> = [],
+  ): Promise<void> {
+    for (const expectation of expected) {
+      if (this.state.memory.get(expectation.document) !== expectation.content) {
+        throw new Error("Memory changed while applying the batch");
+      }
+    }
     const fault = this.state.nextFault;
     this.state.nextFault = undefined;
     failAt(fault, "beforePrepare");

@@ -27,6 +27,18 @@ export interface MemoryReplacement {
   readonly content: string;
 }
 
+export interface MemoryBatchExpectation {
+  readonly document: string;
+  readonly content: string | undefined;
+}
+
+export class MemoryBatchConflictError extends Error {
+  constructor() {
+    super("Memory changed while applying the batch");
+    this.name = "MemoryBatchConflictError";
+  }
+}
+
 export interface StoredSessionSummary {
   readonly sessionId: string;
   readonly lastSeq: number;
@@ -56,7 +68,10 @@ export interface FilesystemWorld {
   readMemoryBatch(
     documents: ReadonlyArray<string>,
   ): Promise<Readonly<Record<string, string | undefined>>>;
-  replaceMemoryBatch(replacements: ReadonlyArray<MemoryReplacement>): Promise<void>;
+  replaceMemoryBatch(
+    replacements: ReadonlyArray<MemoryReplacement>,
+    expected?: ReadonlyArray<MemoryBatchExpectation>,
+  ): Promise<void>;
 }
 
 interface JournalValue {
@@ -156,6 +171,13 @@ export function createFilesystemWorld(options: FilesystemWorldOptions): Filesyst
         await ensureSafeDirectory(sessionsPath, true);
         const path = sessionPath(sessionsPath, sessionId);
         const existing = await readValidatedSession(path, sessionId);
+        requireExistingSessionSnapshot(existing.envelopes, sessionId);
+        if (existing.envelopes.length === 0 && decodedEvent.type !== "session-started") {
+          throw new Error(`Session ${sessionId} must begin with session-started`);
+        }
+        if (existing.envelopes.length > 0 && decodedEvent.type === "session-started") {
+          throw new Error(`Session ${sessionId} already has its session-started event`);
+        }
         const envelope = validateEnvelopeForSession(
           {
             schemaVersion: 1,
@@ -245,11 +267,22 @@ export function createFilesystemWorld(options: FilesystemWorldOptions): Filesyst
       });
     },
 
-    async replaceMemoryBatch(replacements) {
-      const validated = validateReplacements(replacements);
+    async replaceMemoryBatch(replacements, expected) {
+      const expectations = validateMemoryExpectations(expected);
+      const validated = validateReplacements(replacements, expectations.length > 0);
       return withGate(memoryGate, async () => {
         await ensureSafeDirectory(profilePath, false);
         await recoverMemory(memoryPath, nextTemporaryId, onMemoryRecoveryPoint);
+        for (const expectation of expectations) {
+          if (
+            (await readMemoryDocument(memoryPath, expectation.document)) !== expectation.content
+          ) {
+            throw new MemoryBatchConflictError();
+          }
+        }
+        if (validated.length === 0) {
+          return;
+        }
         await ensureSafeDirectory(memoryPath, true);
 
         const journalReplacements: JournalReplacement[] = [];
@@ -406,6 +439,7 @@ async function readValidatedSession(path: string, sessionId: string): Promise<Va
   if (first === undefined) {
     throw new Error(`Session ${sessionId} has no canonical envelope`);
   }
+  requireExistingSessionSnapshot(envelopes, sessionId);
   return { createdAt: first.emittedAt, envelopes };
 }
 
@@ -452,8 +486,9 @@ function validateMemoryDocument(document: string): MemoryDocument {
 
 function validateReplacements(
   replacements: ReadonlyArray<MemoryReplacement>,
+  allowEmpty: boolean,
 ): ReadonlyArray<{ readonly document: MemoryDocument; readonly content: string }> {
-  if (replacements.length === 0) {
+  if (replacements.length === 0 && !allowEmpty) {
     throw new Error("Memory replacement batch must not be empty");
   }
   const seen = new Set<MemoryDocument>();
@@ -467,6 +502,26 @@ function validateReplacements(
       throw new Error(`Memory replacement content for ${document} must be a string`);
     }
     return { document, content: replacement.content };
+  });
+}
+
+function validateMemoryExpectations(
+  expectations: ReadonlyArray<MemoryBatchExpectation> | undefined,
+): ReadonlyArray<{ readonly document: MemoryDocument; readonly content: string | undefined }> {
+  if (expectations === undefined) {
+    return [];
+  }
+  const seen = new Set<MemoryDocument>();
+  return expectations.map((expectation) => {
+    const document = validateMemoryDocument(expectation.document);
+    if (seen.has(document)) {
+      throw new Error(`Duplicate Memory expectation: ${document}`);
+    }
+    seen.add(document);
+    if (expectation.content !== undefined && typeof expectation.content !== "string") {
+      throw new Error(`Memory expectation content for ${document} must be a string or undefined`);
+    }
+    return { document, content: expectation.content };
   });
 }
 

@@ -5,14 +5,17 @@ import { join } from "node:path";
 import {
   createFilesystemWorld,
   MEMORY_DOCUMENT_LIMIT,
+  MEMORY_ENTRY_DELIMITER,
   openSession,
   runMemoryTool,
+  type FilesystemWorld,
 } from "../../packages/core/src/index.ts";
 import {
   emitVerificationObservation,
   emptyRuntimeObservations,
   fixtureDigest,
   observeCanonicalEvents,
+  type FaultScheduleObservation,
 } from "../testkit/verification-observations.ts";
 
 test("S1 Memory batches persist atomically, reject caps, and refresh only at Session start", async () => {
@@ -82,21 +85,60 @@ test("S1 Memory batches persist atomically, reject caps, and refresh only at Ses
     });
     expect(overCap).toMatchObject({ success: false });
     expect(await world.readMemory("MEMORY.md")).toBe("new fact");
+
+    const readsReached = Promise.withResolvers<void>();
+    const releaseReads = Promise.withResolvers<void>();
+    let concurrentReads = 0;
+    const synchronizeFirstRead = (delegate: FilesystemWorld): FilesystemWorld => ({
+      ...delegate,
+      async readMemoryBatch(documents) {
+        const snapshot = await delegate.readMemoryBatch(documents);
+        concurrentReads += 1;
+        if (concurrentReads === 2) {
+          readsReached.resolve();
+        }
+        await releaseReads.promise;
+        return snapshot;
+      },
+    });
+    const concurrent = ["concurrent alpha", "concurrent beta"].map((content) =>
+      runMemoryTool({
+        world: synchronizeFirstRead(createFilesystemWorld({ profilePath: profile })),
+        operations: [{ action: "add", target: "memory", content }],
+      }),
+    );
+    await readsReached.promise;
+    releaseReads.resolve();
+    await expect(Promise.all(concurrent)).resolves.toEqual([
+      expect.objectContaining({ success: true }),
+      expect.objectContaining({ success: true }),
+    ]);
+    const concurrentEntries = new Set(
+      (await world.readMemory("MEMORY.md"))?.split(MEMORY_ENTRY_DELIMITER),
+    );
+    expect(concurrentEntries).toEqual(new Set(["new fact", "concurrent alpha", "concurrent beta"]));
     const memoryAfter = await readFile(join(profile, "memory/MEMORY.md"), "utf8");
     const trace = [
       ...(await world.readSession("fixture-current", 0)),
       ...(await world.readSession("fixture-next", 0)),
     ];
+    const faultSchedule: FaultScheduleObservation[] = commitPoints.map((point, occurrence) => ({
+      boundary: "Memory-batch",
+      point,
+      occurrence: occurrence + 1,
+      outcome: "continued",
+    }));
+    faultSchedule.push({
+      boundary: "Memory-batch",
+      point: "concurrent-conditional-commit",
+      occurrence: 1,
+      outcome: "recovered",
+    });
 
     emitVerificationObservation("s1.memory", {
       ...emptyRuntimeObservations(),
       canonicalEventTrace: observeCanonicalEvents(trace),
-      faultSchedule: commitPoints.map((point, occurrence) => ({
-        boundary: "Memory-batch",
-        point,
-        occurrence: occurrence + 1,
-        outcome: "continued",
-      })),
+      faultSchedule,
       filesystemDiffs: [
         {
           path: "memory/MEMORY.md",

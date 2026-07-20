@@ -17,6 +17,11 @@ export interface MemoryReplacement {
   readonly content: string;
 }
 
+export interface MemoryExpectation {
+  readonly document: string;
+  readonly content: string | undefined;
+}
+
 export type MemoryCommitCutPoint =
   | "beforePrepare"
   | "afterPrepare"
@@ -39,7 +44,10 @@ export interface ContractWorld<Event> {
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope<Event>>>;
   listSessions(): Promise<ReadonlyArray<SessionSummary>>;
   readMemory(document: string): Promise<string | undefined>;
-  replaceMemoryBatch(replacements: ReadonlyArray<MemoryReplacement>): Promise<void>;
+  replaceMemoryBatch(
+    replacements: ReadonlyArray<MemoryReplacement>,
+    expected?: ReadonlyArray<MemoryExpectation>,
+  ): Promise<void>;
 }
 
 export interface ContractWorldSpecimen<Event> {
@@ -202,13 +210,30 @@ export function defineContractTests<Event>(
     test("lists Sessions in creation order with their latest sequence", async () => {
       const specimen = factory.create();
       await specimen.world.appendSession("session-z", firstFixture);
-      await specimen.world.appendSession("session-a", secondFixture);
+      await specimen.world.appendSession("session-a", firstFixture);
       await specimen.world.appendSession("session-z", thirdFixture);
 
       expect(await specimen.world.listSessions()).toEqual([
         { sessionId: "session-z", lastSeq: 2 },
         { sessionId: "session-a", lastSeq: 1 },
       ]);
+    });
+
+    test("conditionally replaces the current Memory authority and rejects stale writers", async () => {
+      const specimen = factory.create();
+      await seedMemory(specimen.world);
+      await specimen.world.replaceMemoryBatch(
+        [{ document: "MEMORY.md", content: "winner" }],
+        [{ document: "MEMORY.md", content: "old-memory" }],
+      );
+
+      await expect(
+        specimen.world.replaceMemoryBatch(
+          [{ document: "MEMORY.md", content: "stale" }],
+          [{ document: "MEMORY.md", content: "old-memory" }],
+        ),
+      ).rejects.toThrow();
+      expect(await specimen.world.readMemory("MEMORY.md")).toBe("winner");
     });
 
     for (const cutPoint of requiredMemoryCommitCutPoints) {

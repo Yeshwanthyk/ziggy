@@ -11,6 +11,7 @@ import {
   runMemoryTool,
   USER_DOCUMENT_LIMIT,
   type FilesystemWorld,
+  type MemoryBatchExpectation,
   type MemoryReplacement,
   type SessionTool,
 } from "../../packages/core/src/index.ts";
@@ -94,6 +95,40 @@ describe("@ziggy/core Memory tool", () => {
       "MEMORY.md",
       "USER.md",
     ]);
+  });
+
+  test("concurrent tool calls retry from the winning Memory authority without losing updates", async () => {
+    const fixture = await createFixture();
+    const firstWorld = createFilesystemWorld({ profilePath: fixture.profile });
+    const secondWorld = createFilesystemWorld({ profilePath: fixture.profile });
+    const readsReached = Promise.withResolvers<void>();
+    const releaseReads = Promise.withResolvers<void>();
+    let reads = 0;
+    const synchronizeFirstRead = (delegate: FilesystemWorld): FilesystemWorld => ({
+      ...delegate,
+      async readMemoryBatch(documents) {
+        const snapshot = await delegate.readMemoryBatch(documents);
+        reads += 1;
+        if (reads === 2) {
+          readsReached.resolve();
+        }
+        await releaseReads.promise;
+        return snapshot;
+      },
+    });
+
+    const first = run(synchronizeFirstRead(firstWorld), add("memory", "alpha"));
+    const second = run(synchronizeFirstRead(secondWorld), add("memory", "beta"));
+    await readsReached.promise;
+    releaseReads.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ success: true }),
+      expect.objectContaining({ success: true }),
+    ]);
+    expect(new Set((await readTarget(fixture.profile, "memory")).split(ENTRY_DELIMITER))).toEqual(
+      new Set(["alpha", "beta"]),
+    );
   });
 
   test("duplicate and sequentially cancelled operations perform no write", async () => {
@@ -439,9 +474,14 @@ function recordingWorld(delegate: FilesystemWorld, calls: WorldCalls): Filesyste
       calls.memoryReads += 1;
       return delegate.readMemoryBatch(documents);
     },
-    replaceMemoryBatch(replacements) {
-      calls.memoryWrites.push(replacements.map((replacement) => ({ ...replacement })));
-      return delegate.replaceMemoryBatch(replacements);
+    replaceMemoryBatch(
+      replacements: ReadonlyArray<MemoryReplacement>,
+      expected?: ReadonlyArray<MemoryBatchExpectation>,
+    ) {
+      if (replacements.length > 0) {
+        calls.memoryWrites.push(replacements.map((replacement) => ({ ...replacement })));
+      }
+      return delegate.replaceMemoryBatch(replacements, expected);
     },
   };
 }

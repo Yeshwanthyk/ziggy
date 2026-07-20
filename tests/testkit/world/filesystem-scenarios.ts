@@ -30,11 +30,9 @@ export interface FilesystemWorldScenarioFactory {
 
 const events: readonly [SessionEvent, SessionEvent, SessionEvent] = [
   {
-    type: "turn-started",
+    type: "session-started",
     sessionId: "session-a",
-    turnId: "turn-1",
-    message: "hello",
-    origin: "user",
+    snapshot: { systemPrompt: "fixture prompt", tools: [] },
   },
   {
     type: "step-started",
@@ -103,6 +101,21 @@ export function defineFilesystemWorldScenarios(
     expect(await filesBelow(profile)).toEqual([]);
   });
 
+  test(`${label}: rejects missing and duplicate session-started authority without changing bytes`, async () => {
+    const profile = await profilePath();
+    const controls = createControls();
+    const world = factory.open(profile, controls);
+
+    await expect(world.appendSession("session-a", events[1])).rejects.toThrow(/session-started/);
+    expect(await filesBelow(profile)).toEqual([]);
+
+    await world.appendSession("session-a", events[0]);
+    const sessionFile = await onlySessionFile(profile);
+    const before = await readFile(sessionFile);
+    await expect(world.appendSession("session-a", events[0])).rejects.toThrow(/session-started/);
+    expect(await readFile(sessionFile)).toEqual(before);
+  });
+
   test(`${label}: rejects an event for another Session without touching bytes or consuming seq`, async () => {
     const profile = await profilePath();
     const controls = createControls();
@@ -133,6 +146,11 @@ export function defineFilesystemWorldScenarios(
       "an event whose Session id differs from its path",
       { ...firstEnvelope(), event: withSessionId(events[0], "session-b") },
     ],
+    ["a missing session-started first event", { ...firstEnvelope(), event: events[1] }],
+    [
+      "a duplicate session-started event",
+      [firstEnvelope(), { ...firstEnvelope(), seq: 2, event: events[0] }],
+    ],
   ];
   for (const [description, corruptEnvelope] of corruptEnvelopes) {
     test(`${label}: ${description} in an existing Session fails read/list/append without byte changes`, async () => {
@@ -141,7 +159,7 @@ export function defineFilesystemWorldScenarios(
       const world = factory.open(profile, controls);
       await world.appendSession("session-a", events[0]);
       const sessionFile = await onlySessionFile(profile);
-      const corrupted = `${JSON.stringify(corruptEnvelope)}\n`;
+      const corrupted = `${Array.isArray(corruptEnvelope) ? corruptEnvelope.map((envelope) => JSON.stringify(envelope)).join("\n") : JSON.stringify(corruptEnvelope)}\n`;
       await writeFile(sessionFile, corrupted);
 
       await expect(world.readSession("session-a", 0)).rejects.toThrow();
@@ -179,7 +197,7 @@ export function defineFilesystemWorldScenarios(
     const world = factory.open(profile, controls);
     await world.appendSession("session-a", events[0]);
     const sessionFile = await onlySessionFile(profile);
-    const corrupted = invalidUtf8JsonLine(firstEnvelope(), "hello");
+    const corrupted = invalidUtf8JsonLine(firstEnvelope(), "fixture prompt");
     await writeFile(sessionFile, corrupted);
 
     await expect(world.readSession("session-a", 0)).rejects.toThrow("valid UTF-8");
@@ -194,6 +212,7 @@ export function defineFilesystemWorldScenarios(
     const profile = await profilePath();
     const controls = createControls();
     const world = factory.open(profile, controls);
+    const started = await world.appendSession("session-a", events[0]);
     const appended = await Promise.all(
       Array.from({ length: 24 }, (_, index) =>
         world.appendSession("session-a", {
@@ -213,10 +232,11 @@ export function defineFilesystemWorldScenarios(
       appended
         .map((item: SessionEnvelope) => item.seq)
         .sort((left: number, right: number) => left - right),
-    ).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
+    ).toEqual(Array.from({ length: 24 }, (_, index) => index + 2));
     expect(replay.map((item) => item.seq)).toEqual(
-      Array.from({ length: 24 }, (_, index) => index + 1),
+      Array.from({ length: 25 }, (_, index) => index + 1),
     );
+    expect(replay[0]).toEqual(started);
     expect(rawLines.at(-1)).toBe("");
     expect(rawLines.slice(0, -1).map(parseJson)).toEqual([...replay]);
   });
@@ -284,8 +304,8 @@ export function defineFilesystemWorldScenarios(
     const controls = createControls();
     const world = factory.open(profile, controls);
     await world.appendSession("session-z", withSessionId(events[0], "session-z"));
-    await world.appendSession("session-a", events[1]);
-    await world.appendSession("session-m", withSessionId(events[2], "session-m"));
+    await world.appendSession("session-a", events[0]);
+    await world.appendSession("session-m", withSessionId(events[0], "session-m"));
     await world.appendSession("session-z", withSessionId(events[1], "session-z"));
 
     const expected = [

@@ -22,6 +22,8 @@ export {
   createFilesystemWorld,
   type FilesystemWorld,
   type FilesystemWorldOptions,
+  MemoryBatchConflictError,
+  type MemoryBatchExpectation,
   type MemoryCommitCutPoint,
   type MemoryDocument,
   type MemoryRecoveryPoint,

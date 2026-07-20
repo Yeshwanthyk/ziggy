@@ -20,17 +20,16 @@ test("S1 filesystem World assigns replay sequence and fails loud on a torn tail"
       nextTemporaryId: () => "fixture-temp",
     });
     await world.appendSession("fixture-session", {
+      type: "session-started",
+      sessionId: "fixture-session",
+      snapshot: { systemPrompt: "fixture prompt", tools: [] },
+    });
+    await world.appendSession("fixture-session", {
       type: "turn-started",
       sessionId: "fixture-session",
       turnId: "fixture-turn",
       message: "fixture message",
       origin: "user",
-    });
-    await world.appendSession("fixture-session", {
-      type: "turn-ended",
-      sessionId: "fixture-session",
-      turnId: "fixture-turn",
-      status: "completed",
     });
     const replay = await world.readSession("fixture-session", 0);
     expect(replay.map((envelope) => envelope.seq)).toEqual([1, 2]);

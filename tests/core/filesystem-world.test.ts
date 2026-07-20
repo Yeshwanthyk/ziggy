@@ -9,17 +9,16 @@ import {
   defineContractTests,
   type ContractWorld,
   type MemoryCommitCutPoint,
+  type MemoryExpectation,
 } from "../testkit/world/contract.ts";
 import { defineFilesystemWorldScenarios } from "../testkit/world/filesystem-scenarios.ts";
 
 const profiles: string[] = [];
 const fixtures: readonly [SessionEvent, SessionEvent, SessionEvent] = [
   {
-    type: "turn-started",
+    type: "session-started",
     sessionId: "session-a",
-    turnId: "turn-1",
-    message: "hello",
-    origin: "user",
+    snapshot: { systemPrompt: "fixture prompt", tools: [] },
   },
   {
     type: "step-started",
@@ -119,8 +118,8 @@ function openContractWorld(
     readMemory(document) {
       return world.readMemory(document);
     },
-    replaceMemoryBatch(replacements) {
-      return world.replaceMemoryBatch(replacements);
+    replaceMemoryBatch(replacements, expected?: ReadonlyArray<MemoryExpectation>) {
+      return world.replaceMemoryBatch(replacements, expected);
     },
   };
 }

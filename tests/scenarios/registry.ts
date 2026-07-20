@@ -69,8 +69,8 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
     stage: "s1",
     file: "tests/scenarios/s1-filesystem-world.test.ts",
     seed: "s1-filesystem-world-v1",
-    schedule: "serial-session-append-then-torn-tail",
-    boundaryConfiguration: "fixed-clock-temporary-profile-filesystem-fault",
+    schedule: "canonical-session-start-append-then-torn-tail",
+    boundaryConfiguration: "fixed-clock-temporary-profile-session-authority-fault",
   },
   {
     schemaVersion: 1,
@@ -87,8 +87,8 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
     stage: "s1",
     file: "tests/scenarios/s1-memory.test.ts",
     seed: "s1-memory-v1",
-    schedule: "serial-memory-batches-and-session-refresh",
-    boundaryConfiguration: "temporary-profile-memory-commit-observer",
+    schedule: "memory-batches-session-refresh-and-conditional-commit-race",
+    boundaryConfiguration: "temporary-profile-memory-commit-observer-and-read-barrier",
   },
   {
     schemaVersion: 1,

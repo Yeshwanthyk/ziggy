@@ -1,5 +1,10 @@
 import type { JsonObject, JsonValue } from "@ziggy/protocol";
-import type { FilesystemWorld, MemoryDocument, MemoryReplacement } from "../world/filesystem.ts";
+import {
+  MemoryBatchConflictError,
+  type FilesystemWorld,
+  type MemoryDocument,
+  type MemoryReplacement,
+} from "../world/filesystem.ts";
 
 export const MEMORY_ENTRY_DELIMITER = "\n§\n";
 export const MEMORY_DOCUMENT_LIMIT = 2_200;
@@ -79,37 +84,51 @@ export async function runMemoryTool(options: RunMemoryToolOptions): Promise<Memo
   }
 
   try {
-    const initial = await options.world.readMemoryBatch(DOCUMENTS);
-    const documents = new Map<MemoryDocument, ReadonlyArray<string>>();
-    documents.set("MEMORY.md", parseDocument("MEMORY.md", initial["MEMORY.md"] ?? ""));
-    documents.set("USER.md", parseDocument("USER.md", initial["USER.md"] ?? ""));
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      const initial = await options.world.readMemoryBatch(DOCUMENTS);
+      const documents = new Map<MemoryDocument, ReadonlyArray<string>>();
+      documents.set("MEMORY.md", parseDocument("MEMORY.md", initial["MEMORY.md"] ?? ""));
+      documents.set("USER.md", parseDocument("USER.md", initial["USER.md"] ?? ""));
 
-    for (const operation of operations) {
-      applyOperation(documents, operation);
-    }
-
-    const replacements: MemoryReplacement[] = [];
-    for (const document of DOCUMENTS) {
-      const entries = documents.get(document);
-      if (entries === undefined) {
-        throw new Error(`Memory batch lost ${document}`);
+      for (const operation of operations) {
+        applyOperation(documents, operation);
       }
-      const content = serializeAndValidate(document, entries);
-      if (content !== (initial[document] ?? "")) {
-        replacements.push({ document, content });
-      }
-    }
 
-    if (replacements.length > 0) {
-      await options.world.replaceMemoryBatch(replacements);
+      const replacements: MemoryReplacement[] = [];
+      for (const document of DOCUMENTS) {
+        const entries = documents.get(document);
+        if (entries === undefined) {
+          throw new Error(`Memory batch lost ${document}`);
+        }
+        const content = serializeAndValidate(document, entries);
+        if (content !== (initial[document] ?? "")) {
+          replacements.push({ document, content });
+        }
+      }
+
+      const touchedDocuments = [
+        ...new Set(operations.map((operation) => documentForTarget(operation.target))),
+      ];
+      try {
+        await options.world.replaceMemoryBatch(
+          replacements,
+          touchedDocuments.map((document) => ({ document, content: initial[document] })),
+        );
+      } catch (error) {
+        if (error instanceof MemoryBatchConflictError && attempt < 8) {
+          continue;
+        }
+        throw error;
+      }
+      return {
+        success: true,
+        message:
+          replacements.length === 0
+            ? "Memory already matched the requested final state; no write was needed."
+            : `Applied ${operations.length} Memory operation(s) atomically.`,
+      };
     }
-    return {
-      success: true,
-      message:
-        replacements.length === 0
-          ? "Memory already matched the requested final state; no write was needed."
-          : `Applied ${operations.length} Memory operation(s) atomically.`,
-    };
+    throw new Error("Memory kept changing; retry the operation.");
   } catch (error) {
     return failure(error);
   }

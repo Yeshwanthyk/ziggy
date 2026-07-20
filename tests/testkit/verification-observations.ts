@@ -22,7 +22,7 @@ export interface ProviderInputObservation {
   readonly toolNames: ReadonlyArray<string>;
 }
 
-interface FaultScheduleObservation {
+export interface FaultScheduleObservation {
   readonly boundary: string;
   readonly point: string;
   readonly occurrence: number;
