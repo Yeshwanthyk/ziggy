@@ -6,6 +6,7 @@ export {
   type ResumeFilesystemSessionOptions,
 } from "./filesystem.ts";
 export {
+  ApprovalDecisionNotAllowedError,
   createSessionRuntime,
   type AfterToolHookInput,
   type CreateSessionRuntimeOptions,

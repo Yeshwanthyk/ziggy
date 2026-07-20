@@ -107,6 +107,7 @@ export interface SessionRuntime {
   waitForIdle(): Promise<void>;
   subscribe(input: {
     readonly sinceSeq: number;
+    readonly onReplay?: (replay: ReadonlyArray<SessionEnvelope>, replayThroughSeq: number) => void;
     readonly onReplayStart?: (replayThroughSeq: number) => void;
     readonly onEnvelope: (envelope: SessionEnvelope) => void;
   }): Promise<SessionSubscription>;
@@ -177,6 +178,16 @@ export class StaleTurnError extends Error {
   constructor(readonly expectedTurnId: string) {
     super(`Expected active Turn ${expectedTurnId}`);
     this.name = "StaleTurnError";
+  }
+}
+
+export class ApprovalDecisionNotAllowedError extends Error {
+  constructor(
+    readonly approvalId: string,
+    readonly decision: ApprovalDecision,
+  ) {
+    super(`Approval ${approvalId} does not allow ${decision}`);
+    this.name = "ApprovalDecisionNotAllowedError";
   }
 }
 
@@ -771,7 +782,7 @@ export async function createSessionRuntime<TApi extends Api>(
           }
           if (!pending.choices.includes(input.decision)) {
             return yield* Effect.fail(
-              new Error(`Approval ${input.approvalId} does not allow ${input.decision}`),
+              new ApprovalDecisionNotAllowedError(input.approvalId, input.decision),
             );
           }
           yield* appendUnlocked({
@@ -795,6 +806,7 @@ export async function createSessionRuntime<TApi extends Api>(
 
   const subscribe = (input: {
     readonly sinceSeq: number;
+    readonly onReplay?: (replay: ReadonlyArray<SessionEnvelope>, replayThroughSeq: number) => void;
     readonly onReplayStart?: (replayThroughSeq: number) => void;
     readonly onEnvelope: (envelope: SessionEnvelope) => void;
   }): Promise<SessionSubscription> =>
@@ -810,18 +822,26 @@ export async function createSessionRuntime<TApi extends Api>(
           const replay = durable.filter((envelope) => envelope.seq > input.sinceSeq);
           const subscriber: Subscriber = { active: true, onEnvelope: input.onEnvelope };
           const replayThroughSeq = durable.at(-1)?.seq ?? 0;
+          const onReplay = input.onReplay;
           const onReplayStart = input.onReplayStart;
-          if (onReplayStart !== undefined) {
+          if (onReplay !== undefined) {
             yield* Effect.try({
-              try: () => onReplayStart(replayThroughSeq),
+              try: () => onReplay(replay, replayThroughSeq),
               catch: toError,
             });
-          }
-          for (const envelope of replay) {
-            yield* Effect.try({
-              try: () => input.onEnvelope(envelope),
-              catch: toError,
-            });
+          } else {
+            if (onReplayStart !== undefined) {
+              yield* Effect.try({
+                try: () => onReplayStart(replayThroughSeq),
+                catch: toError,
+              });
+            }
+            for (const envelope of replay) {
+              yield* Effect.try({
+                try: () => input.onEnvelope(envelope),
+                catch: toError,
+              });
+            }
           }
           subscribers.add(subscriber);
           return {
