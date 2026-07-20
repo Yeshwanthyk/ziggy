@@ -141,7 +141,9 @@ export function defineContractTests<Event>(
         event: secondEvent,
       });
       await expect(
-        specimen.world.appendSession("session-a", factory.invalidEvent),
+        Promise.resolve().then(() =>
+          specimen.world.appendSession("session-a", factory.invalidEvent),
+        ),
       ).rejects.toThrow();
     });
 

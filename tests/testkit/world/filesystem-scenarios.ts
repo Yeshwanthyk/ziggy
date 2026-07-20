@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { SessionEnvelope, SessionEvent } from "../../../packages/protocol/src/index.ts";
 import type { MemoryCommitCutPoint, MemoryReplacement, SessionSummary } from "./contract.ts";
 
-export interface FilesystemScenarioWorld {
+interface FilesystemScenarioWorld {
   appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
   listSessions(): Promise<ReadonlyArray<SessionSummary>>;
@@ -15,9 +15,12 @@ export interface FilesystemScenarioWorld {
   replaceMemoryBatch(replacements: ReadonlyArray<MemoryReplacement>): Promise<void>;
 }
 
-export interface FilesystemScenarioControls {
+interface FilesystemScenarioControls {
   readonly now: () => Date;
+  readonly nextTemporaryId: () => string;
   readonly onMemoryCommitPoint: (point: MemoryCommitCutPoint) => Promise<void>;
+  readonly onMemoryRecoveryPoint: (point: "duringRecovery") => Promise<void>;
+  readonly onSessionAppendPoint: (point: "afterAppend") => Promise<void>;
 }
 
 export interface FilesystemWorldScenarioFactory {
@@ -126,6 +129,10 @@ export function defineFilesystemWorldScenarios(
     ["a noncontiguous sequence", { ...firstEnvelope(), seq: 2 }],
     ["an invalid timestamp", { ...firstEnvelope(), emittedAt: "not-a-timestamp" }],
     ["an invalid event", { ...firstEnvelope(), event: { type: "not-a-session-event" } }],
+    [
+      "an event whose Session id differs from its path",
+      { ...firstEnvelope(), event: withSessionId(events[0], "session-b") },
+    ],
   ];
   for (const [description, corruptEnvelope] of corruptEnvelopes) {
     test(`${label}: ${description} in an existing Session fails read/list/append without byte changes`, async () => {
@@ -159,10 +166,29 @@ export function defineFilesystemWorldScenarios(
 
       await expect(world.readSession("session-a", 0)).rejects.toThrow();
       expect(await readFile(sessionFile, "utf8")).toBe(corrupted);
+      await expect(world.listSessions()).rejects.toThrow();
+      expect(await readFile(sessionFile, "utf8")).toBe(corrupted);
       await expect(world.appendSession("session-a", events[1])).rejects.toThrow();
       expect(await readFile(sessionFile, "utf8")).toBe(corrupted);
     });
   }
+
+  test(`${label}: invalid UTF-8 in Session NDJSON fails read/list/append without replacement or repair`, async () => {
+    const profile = await profilePath();
+    const controls = createControls();
+    const world = factory.open(profile, controls);
+    await world.appendSession("session-a", events[0]);
+    const sessionFile = await onlySessionFile(profile);
+    const corrupted = invalidUtf8JsonLine(firstEnvelope(), "hello");
+    await writeFile(sessionFile, corrupted);
+
+    await expect(world.readSession("session-a", 0)).rejects.toThrow("valid UTF-8");
+    expect(await readFile(sessionFile)).toEqual(corrupted);
+    await expect(world.listSessions()).rejects.toThrow("valid UTF-8");
+    expect(await readFile(sessionFile)).toEqual(corrupted);
+    await expect(world.appendSession("session-a", events[1])).rejects.toThrow("valid UTF-8");
+    expect(await readFile(sessionFile)).toEqual(corrupted);
+  });
 
   test(`${label}: serializes concurrent appends into contiguous whole lines`, async () => {
     const profile = await profilePath();
@@ -193,6 +219,41 @@ export function defineFilesystemWorldScenarios(
     );
     expect(rawLines.at(-1)).toBe("");
     expect(rawLines.slice(0, -1).map(parseJson)).toEqual([...replay]);
+  });
+
+  test(`${label}: cross-instance append/read/list races observe one durable contiguous authority`, async () => {
+    const profile = await profilePath();
+    const reached = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let holdFirstAppend = true;
+    const controls = createControls(undefined, {
+      async onSessionAppendPoint() {
+        if (holdFirstAppend) {
+          holdFirstAppend = false;
+          reached.resolve();
+          await release.promise;
+        }
+      },
+    });
+    const writer = factory.open(profile, controls);
+    const observer = factory.open(profile, controls);
+    const firstWrite = writer.appendSession("session-a", events[0]);
+    await reached.promise;
+
+    const secondWrite = observer.appendSession("session-a", events[1]);
+    const read = observer.readSession("session-a", 0);
+    const list = observer.listSessions();
+    release.resolve();
+
+    const [first, second, replay, summaries] = await Promise.all([
+      firstWrite,
+      secondWrite,
+      read,
+      list,
+    ]);
+    expect([first.seq, second.seq]).toEqual([1, 2]);
+    expect(replay.map((envelope) => envelope.seq)).toEqual([1, 2]);
+    expect(summaries).toEqual([{ sessionId: "session-a", lastSeq: 2 }]);
   });
 
   test(`${label}: rejects path-unsafe Session IDs without touching outside the Session store`, async () => {
@@ -233,6 +294,12 @@ export function defineFilesystemWorldScenarios(
       { sessionId: "session-m", lastSeq: 1 },
     ];
     expect(await world.listSessions()).toEqual(expected);
+    const files = await filesBelow(join(profile, "sessions"));
+    await Promise.all(
+      files.map((file, index) =>
+        utimes(file, new Date(0), new Date((files.length - index) * 1000)),
+      ),
+    );
     expect(await factory.open(profile, controls).listSessions()).toEqual(expected);
   });
 
@@ -277,6 +344,46 @@ export function defineFilesystemWorldScenarios(
     });
   }
 
+  if (factory.supportsSymlinks) {
+    test(`${label}: Memory directory, documents, and journal fail closed on symlinks`, async () => {
+      const profile = await profilePath();
+      const controls = createControls();
+      const world = factory.open(profile, controls);
+      await seedMemory(world);
+      const memoryDirectory = join(profile, "memory");
+      const outside = join(profile, "outside-memory");
+      await mkdir(outside);
+      await writeFile(join(outside, "MEMORY.md"), "outside");
+
+      await rm(join(memoryDirectory, "MEMORY.md"));
+      await symlink(join(outside, "MEMORY.md"), join(memoryDirectory, "MEMORY.md"), "file");
+      await expect(world.readMemory("MEMORY.md")).rejects.toThrow();
+      await expect(
+        world.replaceMemoryBatch([{ document: "MEMORY.md", content: "changed" }]),
+      ).rejects.toThrow();
+      expect(await readFile(join(outside, "MEMORY.md"), "utf8")).toBe("outside");
+
+      await rm(join(memoryDirectory, "MEMORY.md"));
+      await writeFile(join(memoryDirectory, ".batch-journal.json"), "journal-target");
+      await rm(join(memoryDirectory, ".batch-journal.json"));
+      await symlink(
+        join(outside, "MEMORY.md"),
+        join(memoryDirectory, ".batch-journal.json"),
+        "file",
+      );
+      await expect(world.readMemory("USER.md")).rejects.toThrow();
+
+      await rm(join(memoryDirectory, ".batch-journal.json"));
+      await rm(memoryDirectory, { recursive: true });
+      await symlink(outside, memoryDirectory, "dir");
+      await expect(world.readMemory("MEMORY.md")).rejects.toThrow();
+      await expect(
+        world.replaceMemoryBatch([{ document: "MEMORY.md", content: "changed" }]),
+      ).rejects.toThrow();
+      expect(await readFile(join(outside, "MEMORY.md"), "utf8")).toBe("outside");
+    });
+  }
+
   test(`${label}: allows only MEMORY.md and USER.md Memory documents`, async () => {
     const profile = await profilePath();
     const controls = createControls();
@@ -316,27 +423,64 @@ export function defineFilesystemWorldScenarios(
     expect(await snapshotFiles(profile)).toEqual(before);
   });
 
+  test(`${label}: duringCommit cut is reachable when every old Memory document is missing`, async () => {
+    const profile = await profilePath();
+    const controls = createControls((point) => {
+      if (point === "duringCommit") {
+        throw new Error("injected duringCommit fault");
+      }
+    });
+    const world = factory.open(profile, controls);
+
+    await expect(replaceBoth(world)).rejects.toThrow("injected duringCommit fault");
+    const recovered = factory.open(profile, createControls());
+    expect(await recovered.readMemoryBatch(["MEMORY.md", "USER.md"])).toEqual({
+      "MEMORY.md": undefined,
+      "USER.md": undefined,
+    });
+  });
+
+  test(`${label}: rejects unsafe deterministic temporary IDs before creating files`, async () => {
+    const profile = await profilePath();
+    const controls = { ...createControls(), nextTemporaryId: () => "../escape" };
+    const world = factory.open(profile, controls);
+
+    await expect(
+      world.replaceMemoryBatch([{ document: "MEMORY.md", content: "memory" }]),
+    ).rejects.toThrow("Unsafe temporary file id");
+    expect(await filesBelow(profile)).toEqual([]);
+  });
+
   test(`${label}: readMemoryBatch returns one atomic Memory snapshot`, async () => {
     const profile = await profilePath();
     const reached = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    let observeCommit = false;
     const controls = createControls(async (point) => {
-      if (point === "duringCommit") {
+      if (observeCommit && point === "duringCommit") {
         reached.resolve();
         await release.promise;
       }
     });
     const world = factory.open(profile, controls);
+    const reader = factory.open(profile, controls);
     await seedMemory(world);
+    observeCommit = true;
 
     const write = replaceBoth(world);
     await reached.promise;
-    const read = world.readMemoryBatch(["MEMORY.md", "USER.md"]);
+    const read = reader.readMemoryBatch(["MEMORY.md", "USER.md"]);
+    const memoryRead = reader.readMemory("MEMORY.md");
+    const userRead = reader.readMemory("USER.md");
     release.resolve();
-    const snapshot = await read;
+    const [snapshot, memory, user] = await Promise.all([read, memoryRead, userRead]);
     await write;
 
     expect(isOldPair(snapshot) || isNewPair(snapshot)).toBe(true);
+    expect({ "MEMORY.md": memory, "USER.md": user }).toEqual({
+      "MEMORY.md": "new-memory",
+      "USER.md": "new-user",
+    });
   });
 
   test(`${label}: recovery preserves a missing old Memory document`, async () => {
@@ -358,6 +502,45 @@ export function defineFilesystemWorldScenarios(
     const allOld = snapshot["MEMORY.md"] === "old-memory" && snapshot["USER.md"] === undefined;
     expect(allOld || isNewPair(snapshot)).toBe(true);
   });
+
+  for (const [commitPoint, expected] of [
+    ["afterPrepare", { "MEMORY.md": "old-memory", "USER.md": "old-user" }],
+    ["afterCommit", { "MEMORY.md": "new-memory", "USER.md": "new-user" }],
+  ] as const) {
+    test(`${label}: ${commitPoint} Memory recovery remains retryable when recovery itself faults`, async () => {
+      const profile = await profilePath();
+      let failCommit = false;
+      let failRecovery = true;
+      const controls = createControls(
+        (point) => {
+          if (failCommit && point === commitPoint) {
+            throw new Error(`injected ${commitPoint} fault`);
+          }
+        },
+        {
+          onMemoryRecoveryPoint() {
+            if (failRecovery) {
+              failRecovery = false;
+              throw new Error("injected recovery fault");
+            }
+          },
+        },
+      );
+      const world = factory.open(profile, controls);
+      await seedMemory(world);
+      failCommit = true;
+      await expect(replaceBoth(world)).rejects.toThrow(`injected ${commitPoint} fault`);
+      failCommit = false;
+
+      const recovering = factory.open(profile, controls);
+      await expect(recovering.readMemoryBatch(["MEMORY.md", "USER.md"])).rejects.toThrow(
+        "injected recovery fault",
+      );
+      expect((await machineOwnedStructuredFiles(profile)).length).toBe(1);
+      expect(await recovering.readMemoryBatch(["MEMORY.md", "USER.md"])).toEqual(expected);
+      expect(await machineOwnedStructuredFiles(profile)).toEqual([]);
+    });
+  }
 
   test(`${label}: repeated Memory recovery is idempotent`, async () => {
     const profile = await profilePath();
@@ -385,8 +568,10 @@ export function defineFilesystemWorldScenarios(
     test(`${label}: version-stamped Memory journal recovers all-old or all-new at ${cutPoint}`, async () => {
       const profile = await profilePath();
       let fail = false;
-      const controls = createControls((point) => {
+      let evidence: Readonly<Record<string, Uint8Array>> | undefined;
+      const controls = createControls(async (point) => {
         if (fail && point === cutPoint) {
+          evidence = await snapshotFiles(join(profile, "memory"));
           throw new Error(`injected ${cutPoint} fault`);
         }
       });
@@ -396,6 +581,7 @@ export function defineFilesystemWorldScenarios(
       await expect(replaceBoth(world)).rejects.toThrow(`injected ${cutPoint} fault`);
       fail = false;
 
+      expect(decodeSnapshot(evidence)).toEqual(expectedCutEvidence(cutPoint));
       const structuredFiles = await machineOwnedStructuredFiles(profile);
       for (const file of structuredFiles) {
         const record = requireRecord(parseJson(await readFile(file, "utf8")), "Memory journal");
@@ -407,7 +593,12 @@ export function defineFilesystemWorldScenarios(
     });
   }
 
-  for (const malformed of ['{"schemaVersion":', '{"schemaVersion":2,"phase":"prepared"}\n']) {
+  for (const malformed of [
+    '{"schemaVersion":',
+    '{"schemaVersion":2,"phase":"prepared"}\n',
+    '{"schemaVersion":1,"phase":"prepared","replacements":[],"extra":true}\n',
+    '{"schemaVersion":1,"phase":"prepared","replacements":[],"__proto__":{}}\n',
+  ]) {
     test(`${label}: malformed Memory journal fails loud without changing Memory`, async () => {
       const profile = await profilePath();
       let fail = false;
@@ -431,20 +622,70 @@ export function defineFilesystemWorldScenarios(
       expect(await readFile(journal, "utf8")).toBe(malformed);
     });
   }
+
+  test(`${label}: invalid UTF-8 in the Memory journal fails exact decode without mutation`, async () => {
+    const profile = await profilePath();
+    let fail = false;
+    const controls = createControls((point) => {
+      if (fail && point === "afterPrepare") {
+        throw new Error("injected afterPrepare fault");
+      }
+    });
+    const world = factory.open(profile, controls);
+    await seedMemory(world);
+    fail = true;
+    await expect(replaceBoth(world)).rejects.toThrow("injected afterPrepare fault");
+    fail = false;
+    const journal = await onlyMachineOwnedStructuredFile(profile);
+    const corrupted = invalidUtf8JsonLine(
+      {
+        schemaVersion: 1,
+        phase: "prepared",
+        replacements: [
+          {
+            document: "MEMORY.md",
+            old: { exists: true, content: "old-memory" },
+            new: { exists: true, content: "new-memory" },
+          },
+        ],
+      },
+      "old-memory",
+    );
+    await writeFile(journal, corrupted);
+    const before = await snapshotFiles(profile);
+
+    await expect(world.readMemory("MEMORY.md")).rejects.toThrow("valid UTF-8");
+    expect(await snapshotFiles(profile)).toEqual(before);
+  });
 }
 
 function createControls(
   observer: (point: MemoryCommitCutPoint) => Promise<void> | void = () => {},
+  options: {
+    readonly onMemoryRecoveryPoint?: (point: "duringRecovery") => Promise<void> | void;
+    readonly onSessionAppendPoint?: (point: "afterAppend") => Promise<void> | void;
+  } = {},
 ): FilesystemScenarioControls {
   let milliseconds = Date.parse("2026-07-19T00:00:00.000Z");
+  let temporaryId = 0;
   return {
     now() {
       const value = new Date(milliseconds);
       milliseconds += 1;
       return value;
     },
+    nextTemporaryId() {
+      temporaryId += 1;
+      return `fixture-${temporaryId}`;
+    },
     async onMemoryCommitPoint(point) {
       await observer(point);
+    },
+    async onMemoryRecoveryPoint(point) {
+      await options.onMemoryRecoveryPoint?.(point);
+    },
+    async onSessionAppendPoint(point) {
+      await options.onSessionAppendPoint?.(point);
     },
   };
 }
@@ -574,6 +815,78 @@ async function filesBelow(root: string): Promise<ReadonlyArray<string>> {
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function invalidUtf8JsonLine(value: unknown, text: string) {
+  const marker = `"${text}"`;
+  const json = JSON.stringify(value);
+  const markerIndex = json.indexOf(marker);
+  if (markerIndex < 0) {
+    throw new Error(`fixture JSON does not contain ${marker}`);
+  }
+  const invalidByteIndex = markerIndex + 1;
+  return Buffer.concat([
+    Buffer.from(json.slice(0, invalidByteIndex)),
+    Buffer.from([0xff]),
+    Buffer.from(`${json.slice(invalidByteIndex + text.length)}\n`),
+  ]);
+}
+
+function decodeSnapshot(
+  snapshot: Readonly<Record<string, Uint8Array>> | undefined,
+): Readonly<Record<string, string>> {
+  if (snapshot === undefined) {
+    throw new Error("Memory cut point produced no evidence");
+  }
+  return Object.fromEntries(
+    Object.entries(snapshot).map(([path, contents]) => [path, new TextDecoder().decode(contents)]),
+  );
+}
+
+function expectedCutEvidence(cutPoint: MemoryCommitCutPoint): Readonly<Record<string, string>> {
+  const prepared = `${JSON.stringify(memoryJournal("prepared"))}\n`;
+  const committed = `${JSON.stringify(memoryJournal("committed"))}\n`;
+  if (cutPoint === "beforePrepare") {
+    return { "MEMORY.md": "old-memory", "USER.md": "old-user" };
+  }
+  if (cutPoint === "afterPrepare") {
+    return {
+      ".batch-journal.json": prepared,
+      "MEMORY.md": "old-memory",
+      "USER.md": "old-user",
+    };
+  }
+  if (cutPoint === "duringCommit") {
+    return {
+      ".batch-journal.json": prepared,
+      "MEMORY.md": "new-memory",
+      "USER.md": "old-user",
+    };
+  }
+  return {
+    ".batch-journal.json": committed,
+    "MEMORY.md": "new-memory",
+    "USER.md": "new-user",
+  };
+}
+
+function memoryJournal(phase: "prepared" | "committed"): unknown {
+  return {
+    schemaVersion: 1,
+    phase,
+    replacements: [
+      {
+        document: "MEMORY.md",
+        old: { exists: true, content: "old-memory" },
+        new: { exists: true, content: "new-memory" },
+      },
+      {
+        document: "USER.md",
+        old: { exists: true, content: "old-user" },
+        new: { exists: true, content: "new-user" },
+      },
+    ],
+  };
 }
 
 function parseJson(value: string): unknown {

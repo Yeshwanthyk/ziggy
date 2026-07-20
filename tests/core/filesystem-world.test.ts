@@ -77,7 +77,10 @@ defineFilesystemWorldScenarios(
       return createFilesystemWorld({
         profilePath,
         now: controls.now,
+        nextTemporaryId: controls.nextTemporaryId,
         onMemoryCommitPoint: controls.onMemoryCommitPoint,
+        onMemoryRecoveryPoint: controls.onMemoryRecoveryPoint,
+        onSessionAppendPoint: controls.onSessionAppendPoint,
       });
     },
   },
@@ -94,7 +97,10 @@ function openContractWorld(
   const world = createFilesystemWorld({
     profilePath,
     now: controls.now,
+    nextTemporaryId: controls.nextTemporaryId,
     onMemoryCommitPoint: controls.onMemoryCommitPoint,
+    onMemoryRecoveryPoint: controls.onMemoryRecoveryPoint,
+    onSessionAppendPoint: controls.onSessionAppendPoint,
   });
   return {
     appendSession(sessionId, event) {
@@ -117,18 +123,28 @@ function openContractWorld(
 
 function createContractControls(observer: (point: MemoryCommitCutPoint) => void): {
   readonly now: () => Date;
+  readonly nextTemporaryId: () => string;
   readonly onMemoryCommitPoint: (point: MemoryCommitCutPoint) => Promise<void>;
+  readonly onMemoryRecoveryPoint: () => Promise<void>;
+  readonly onSessionAppendPoint: () => Promise<void>;
 } {
   let milliseconds = Date.parse("2026-07-19T00:00:00.000Z");
+  let temporaryId = 0;
   return {
     now() {
       const value = new Date(milliseconds);
       milliseconds += 1;
       return value;
     },
+    nextTemporaryId() {
+      temporaryId += 1;
+      return `contract-${temporaryId}`;
+    },
     async onMemoryCommitPoint(point) {
       observer(point);
     },
+    async onMemoryRecoveryPoint() {},
+    async onSessionAppendPoint() {},
   };
 }
 
