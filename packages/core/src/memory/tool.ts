@@ -1,3 +1,4 @@
+import type { JsonObject, JsonValue } from "@ziggy/protocol";
 import type { FilesystemWorld, MemoryDocument, MemoryReplacement } from "../world/filesystem.ts";
 
 export const MEMORY_ENTRY_DELIMITER = "\n§\n";
@@ -22,6 +23,17 @@ export interface RunMemoryToolOptions {
   readonly operations: unknown;
 }
 
+export interface MemoryToolExecutionInput {
+  readonly input: JsonObject;
+}
+
+export interface MemoryToolDefinition {
+  readonly name: "memory";
+  readonly description: string;
+  readonly inputSchema: JsonObject;
+  execute(input: MemoryToolExecutionInput): Promise<JsonValue>;
+}
+
 type MemoryOperation =
   | {
       readonly action: "add";
@@ -41,6 +53,22 @@ type MemoryOperation =
     };
 
 const DOCUMENTS: ReadonlyArray<MemoryDocument> = ["MEMORY.md", "USER.md"];
+
+export function createMemoryTool(world: FilesystemWorld): MemoryToolDefinition {
+  return {
+    name: "memory",
+    description:
+      "Atomically add, replace, or remove retained Memory entries in MEMORY.md or USER.md.",
+    inputSchema: memoryToolInputSchema(),
+    async execute({ input }): Promise<JsonValue> {
+      const result = await runMemoryTool({ world, operations: input.operations });
+      if (result.success) {
+        return { success: true, message: result.message };
+      }
+      return { success: false, error: result.error };
+    },
+  };
+}
 
 export async function runMemoryTool(options: RunMemoryToolOptions): Promise<MemoryToolResult> {
   let operations: ReadonlyArray<MemoryOperation>;
@@ -85,6 +113,58 @@ export async function runMemoryTool(options: RunMemoryToolOptions): Promise<Memo
   } catch (error) {
     return failure(error);
   }
+}
+
+function memoryToolInputSchema(): JsonObject {
+  const target = { type: "string", enum: ["memory", "user"] };
+  const content = { type: "string", minLength: 1 };
+  const oldText = { type: "string", minLength: 1 };
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["operations"],
+    properties: {
+      operations: {
+        type: "array",
+        minItems: 1,
+        items: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["action", "target", "content"],
+              properties: {
+                action: { const: "add" },
+                target,
+                content,
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["action", "target", "oldText", "content"],
+              properties: {
+                action: { const: "replace" },
+                target,
+                oldText,
+                content,
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["action", "target", "oldText"],
+              properties: {
+                action: { const: "remove" },
+                target,
+                oldText,
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
 }
 
 function decodeOperations(value: unknown): ReadonlyArray<MemoryOperation> {
@@ -196,7 +276,7 @@ function validateEntries(document: MemoryDocument, entries: ReadonlyArray<string
   for (const entry of entries) {
     if (entry.trim().length === 0) {
       throw new Error(
-        `${document} is not a valid entry list: entries separated by the exact delimiter must be non-empty.`,
+        `${document} is not a valid entry list: entries separated by the exact delimiter must be non-empty. Remove leading/trailing delimiters and empty entries manually.`,
       );
     }
     if (entry.includes(MEMORY_ENTRY_DELIMITER)) {

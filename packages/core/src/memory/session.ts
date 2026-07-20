@@ -8,11 +8,12 @@ export interface OpenSessionOptions {
   readonly tools: ReadonlyArray<FrozenTool>;
 }
 
-const sessionGates = new WeakMap<FilesystemWorld, Map<string, Promise<void>>>();
+// Different FilesystemWorld instances can address the same Profile.
+const sessionGates = new Map<string, Promise<void>>();
 
 export async function openSession(options: OpenSessionOptions): Promise<FrozenSessionSnapshot> {
   const tools = structuredClone(options.tools);
-  return withSessionGate(options.world, options.sessionId, async () => {
+  return withSessionGate(options.sessionId, async () => {
     const existing = await options.world.readSession(options.sessionId, 0);
     if (existing.length > 0) {
       const started = existing.filter((envelope) => envelope.event.type === "session-started");
@@ -54,26 +55,20 @@ function assembleSystemPrompt(base: string, memory: string, user: string): strin
 }
 
 async function withSessionGate<Value>(
-  world: FilesystemWorld,
   sessionId: string,
   operation: () => Promise<Value>,
 ): Promise<Value> {
-  let worldGates = sessionGates.get(world);
-  if (worldGates === undefined) {
-    worldGates = new Map<string, Promise<void>>();
-    sessionGates.set(world, worldGates);
-  }
-  const predecessor = worldGates.get(sessionId) ?? Promise.resolve();
+  const predecessor = sessionGates.get(sessionId) ?? Promise.resolve();
   const completion = Promise.withResolvers<void>();
   const tail = predecessor.then(() => completion.promise);
-  worldGates.set(sessionId, tail);
+  sessionGates.set(sessionId, tail);
   await predecessor;
   try {
     return await operation();
   } finally {
     completion.resolve();
-    if (worldGates.get(sessionId) === tail) {
-      worldGates.delete(sessionId);
+    if (sessionGates.get(sessionId) === tail) {
+      sessionGates.delete(sessionId);
     }
   }
 }

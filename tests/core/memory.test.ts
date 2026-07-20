@@ -4,13 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createFilesystemWorld,
+  createMemoryTool,
+  MEMORY_DOCUMENT_LIMIT,
+  MEMORY_ENTRY_DELIMITER,
   openSession,
   runMemoryTool,
+  USER_DOCUMENT_LIMIT,
   type FilesystemWorld,
   type MemoryReplacement,
+  type SessionTool,
 } from "../../packages/core/src/index.ts";
 
-const ENTRY_DELIMITER = "\n§\n";
+const ENTRY_DELIMITER = MEMORY_ENTRY_DELIMITER;
 const profiles: string[] = [];
 
 interface Operation {
@@ -23,9 +28,14 @@ interface Operation {
 const targets: ReadonlyArray<"memory" | "user"> = ["memory", "user"];
 const substringActions: ReadonlyArray<"replace" | "remove"> = ["replace", "remove"];
 const limits: ReadonlyArray<readonly ["memory" | "user", number]> = [
-  ["memory", 2_200],
-  ["user", 1_375],
+  ["memory", MEMORY_DOCUMENT_LIMIT],
+  ["user", USER_DOCUMENT_LIMIT],
 ];
+
+interface WorldCalls {
+  memoryReads: number;
+  memoryWrites: MemoryReplacement[][];
+}
 
 describe("@ziggy/core Memory tool", () => {
   for (const target of targets) {
@@ -63,8 +73,8 @@ describe("@ziggy/core Memory tool", () => {
 
   test("a mixed-target batch applies sequentially and commits both documents once", async () => {
     const fixture = await createFixture();
-    const committed: MemoryReplacement[][] = [];
-    const world = recordingWorld(fixture.world, committed);
+    const calls: WorldCalls = { memoryReads: 0, memoryWrites: [] };
+    const world = recordingWorld(fixture.world, calls);
 
     const operations: readonly Operation[] = [
       add("memory", "alpha"),
@@ -78,21 +88,32 @@ describe("@ziggy/core Memory tool", () => {
     await expect(run(world, ...operations)).resolves.toMatchObject({ success: true });
     expect(await readTarget(fixture.profile, "memory")).toBe("beta");
     expect(await readTarget(fixture.profile, "user")).toBe("uses TypeScript");
-    expect(committed).toHaveLength(1);
-    expect(committed[0]?.map((replacement) => replacement.document).sort()).toEqual([
+    expect(calls.memoryReads).toBe(1);
+    expect(calls.memoryWrites).toHaveLength(1);
+    expect(calls.memoryWrites[0]?.map((replacement) => replacement.document).sort()).toEqual([
       "MEMORY.md",
       "USER.md",
     ]);
   });
 
-  test("an exact duplicate add is idempotent", async () => {
+  test("duplicate and sequentially cancelled operations perform no write", async () => {
     const fixture = await createFixture();
     await run(fixture.world, add("memory", "one fact"));
     const before = await readFile(memoryPath(fixture.profile, "memory"));
+    const calls: WorldCalls = { memoryReads: 0, memoryWrites: [] };
+    const world = recordingWorld(fixture.world, calls);
 
-    await expect(run(fixture.world, add("memory", "one fact"))).resolves.toMatchObject({
-      success: true,
-    });
+    await expect(
+      run(
+        world,
+        add("memory", "one fact"),
+        { action: "replace", target: "memory", oldText: "one fact", content: "one fact" },
+        add("user", "temporary"),
+        { action: "remove", target: "user", oldText: "temporary" },
+      ),
+    ).resolves.toMatchObject({ success: true });
+    expect(calls.memoryReads).toBe(1);
+    expect(calls.memoryWrites).toHaveLength(0);
     expect(await readFile(memoryPath(fixture.profile, "memory"))).toEqual(before);
   });
 
@@ -142,6 +163,35 @@ describe("@ziggy/core Memory tool", () => {
     expect(await readFile(memoryPath(fixture.profile, "memory"))).toEqual(before);
   });
 
+  test("manually malformed entry lists fail actionably without a write", async () => {
+    for (const malformed of [
+      `${ENTRY_DELIMITER}alpha`,
+      `alpha${ENTRY_DELIMITER}`,
+      `alpha${ENTRY_DELIMITER}   ${ENTRY_DELIMITER}beta`,
+    ]) {
+      const fixture = await createFixture();
+      await fixture.world.replaceMemoryBatch([{ document: "MEMORY.md", content: malformed }]);
+      const calls: WorldCalls = { memoryReads: 0, memoryWrites: [] };
+
+      const result = await run(recordingWorld(fixture.world, calls), add("user", "unchanged"));
+
+      expect(result).toMatchObject({ success: false });
+      expect(JSON.stringify(result)).toContain("MEMORY.md");
+      expect(JSON.stringify(result)).toContain("exact delimiter");
+      expect(calls.memoryWrites).toHaveLength(0);
+    }
+  });
+
+  test("delimiter parsing is exact rather than whitespace-normalized", async () => {
+    const fixture = await createFixture();
+    const similar = "alpha\n § \nbeta";
+
+    await expect(run(fixture.world, add("memory", similar))).resolves.toMatchObject({
+      success: true,
+    });
+    expect(await readTarget(fixture.profile, "memory")).toBe(similar);
+  });
+
   for (const [target, limit] of limits) {
     test(`${target}: exactly ${limit} Unicode code points passes`, async () => {
       const fixture = await createFixture();
@@ -167,6 +217,28 @@ describe("@ziggy/core Memory tool", () => {
     });
   }
 
+  test("the Unicode cap includes exact delimiters between entries", async () => {
+    const fixture = await createFixture();
+    const delimiterSize = Array.from(ENTRY_DELIMITER).length;
+    const secondEntrySize = MEMORY_DOCUMENT_LIMIT - delimiterSize - 1;
+
+    await expect(
+      run(fixture.world, add("memory", "a"), add("memory", "🧠".repeat(secondEntrySize))),
+    ).resolves.toMatchObject({ success: true });
+    expect(Array.from(await readTarget(fixture.profile, "memory"))).toHaveLength(
+      MEMORY_DOCUMENT_LIMIT,
+    );
+
+    const overflowFixture = await createFixture();
+    const result = await run(
+      overflowFixture.world,
+      add("memory", "a"),
+      add("memory", "🧠".repeat(secondEntrySize + 1)),
+    );
+    expect(result).toMatchObject({ success: false });
+    expect(JSON.stringify(result)).toContain((MEMORY_DOCUMENT_LIMIT + 1).toString());
+  });
+
   test("the cap is checked on final state so one batch can remove then add", async () => {
     const fixture = await createFixture();
     await run(fixture.world, add("memory", "x".repeat(2_200)));
@@ -179,6 +251,30 @@ describe("@ziggy/core Memory tool", () => {
       ),
     ).resolves.toMatchObject({ success: true });
     expect(await readTarget(fixture.profile, "memory")).toBe("y".repeat(2_200));
+  });
+});
+
+describe("@ziggy/core model-visible Memory tool", () => {
+  test("defines one typed memory tool and adapts model input to the sole Memory authority", async () => {
+    const fixture = await createFixture();
+    const tool = createMemoryTool(fixture.world);
+    const runtimeTool: SessionTool = tool;
+
+    expect(runtimeTool).toBe(tool);
+    expect(tool.name).toBe("memory");
+    expect(tool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["operations"],
+      properties: { operations: { type: "array", minItems: 1 } },
+    });
+    await expect(
+      tool.execute({
+        input: {
+          operations: [{ action: "add", target: "memory", content: "model-visible fact" }],
+        },
+      }),
+    ).resolves.toMatchObject({ success: true });
+    expect(await readTarget(fixture.profile, "memory")).toBe("model-visible fact");
   });
 });
 
@@ -233,6 +329,53 @@ describe("@ziggy/core frozen Session Memory snapshot", () => {
     expect(resumed).toEqual(current);
     expect(await reopenedWorld.readSession("session-current", 0)).toHaveLength(1);
   });
+
+  test("concurrent opens through separate World instances persist exactly the first snapshot", async () => {
+    const fixture = await createFixture();
+    await run(fixture.world, add("memory", "frozen memory"));
+    const firstWorld = createFilesystemWorld({ profilePath: fixture.profile });
+    const secondWorld = createFilesystemWorld({ profilePath: fixture.profile });
+    const tool = createMemoryTool(firstWorld);
+    const frozenTool = {
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    };
+
+    const firstOpen = openSession({
+      world: firstWorld,
+      sessionId: "concurrent-session",
+      baseSystemPrompt: "first prompt",
+      tools: [frozenTool],
+    });
+    const secondOpen = openSession({
+      world: secondWorld,
+      sessionId: "concurrent-session",
+      baseSystemPrompt: "second prompt",
+      tools: [],
+    });
+    const [first, second] = await Promise.all([firstOpen, secondOpen]);
+
+    expect(second).toEqual(first);
+    expect(first.systemPrompt).toContain("first prompt");
+    expect(first.systemPrompt).not.toContain("second prompt");
+    expect(first.tools).toEqual([frozenTool]);
+    const persisted = await secondWorld.readSession("concurrent-session", 0);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]?.event).toEqual({
+      type: "session-started",
+      sessionId: "concurrent-session",
+      snapshot: first,
+    });
+
+    const restarted = await openSession({
+      world: createFilesystemWorld({ profilePath: fixture.profile }),
+      sessionId: "concurrent-session",
+      baseSystemPrompt: "restart must not replace the first snapshot",
+      tools: [],
+    });
+    expect(restarted).toEqual(first);
+  });
 });
 
 afterAll(async () => {
@@ -272,10 +415,7 @@ function readTarget(profile: string, target: "memory" | "user"): Promise<string>
   return readFile(memoryPath(profile, target), "utf8");
 }
 
-function recordingWorld(
-  delegate: FilesystemWorld,
-  committed: MemoryReplacement[][],
-): FilesystemWorld {
+function recordingWorld(delegate: FilesystemWorld, calls: WorldCalls): FilesystemWorld {
   return {
     appendSession(sessionId, event) {
       return delegate.appendSession(sessionId, event);
@@ -290,10 +430,11 @@ function recordingWorld(
       return delegate.readMemory(document);
     },
     readMemoryBatch(documents) {
+      calls.memoryReads += 1;
       return delegate.readMemoryBatch(documents);
     },
     replaceMemoryBatch(replacements) {
-      committed.push(replacements.map((replacement) => ({ ...replacement })));
+      calls.memoryWrites.push(replacements.map((replacement) => ({ ...replacement })));
       return delegate.replaceMemoryBatch(replacements);
     },
   };
