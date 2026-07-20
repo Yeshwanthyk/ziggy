@@ -292,7 +292,11 @@ describe("S1 filesystem production composition", () => {
     });
 
     const durableAtReturn = await deterministicWorld(profile).readSession("resume-session", 0);
-    expect(resumed.subscription.replayThroughSeq).toBe(durableAtReturn.at(-1)?.seq);
+    const durableTail = durableAtReturn.at(-1);
+    if (durableTail === undefined) {
+      throw new Error("Resumed Session has no durable start event");
+    }
+    expect(resumed.subscription.replayThroughSeq).toBe(durableTail.seq);
     const starting = resumed.runtime.startTurn({ message: "immediately live" });
     await provider.waitForCalls(1);
     providerBarrier.release();

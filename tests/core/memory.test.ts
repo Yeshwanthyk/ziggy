@@ -417,6 +417,9 @@ function readTarget(profile: string, target: "memory" | "user"): Promise<string>
 
 function recordingWorld(delegate: FilesystemWorld, calls: WorldCalls): FilesystemWorld {
   return {
+    startSession(sessionId, snapshot) {
+      return delegate.startSession(sessionId, snapshot);
+    },
     appendSession(sessionId, event) {
       return delegate.appendSession(sessionId, event);
     },

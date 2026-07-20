@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import {
   decodeSessionEnvelope,
   encodeSessionEnvelope,
+  type FrozenSessionSnapshot,
   type SessionEnvelope,
   type SessionEvent,
 } from "@ziggy/protocol";
@@ -31,6 +32,11 @@ export interface SessionSummary {
   readonly lastSeq: number;
 }
 
+export interface StartSessionResult {
+  readonly snapshot: FrozenSessionSnapshot;
+  readonly created: boolean;
+}
+
 export interface FilesystemWorldOptions {
   readonly profilePath: string;
   readonly now?: () => Date;
@@ -41,6 +47,7 @@ export interface FilesystemWorldOptions {
 }
 
 export interface FilesystemWorld {
+  startSession(sessionId: string, snapshot: FrozenSessionSnapshot): Promise<StartSessionResult>;
   appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
   listSessions(): Promise<ReadonlyArray<SessionSummary>>;
@@ -88,6 +95,45 @@ export function createFilesystemWorld(options: FilesystemWorldOptions): Filesyst
   const memoryGate = `memory:${profilePath}`;
 
   return {
+    async startSession(sessionId, snapshot) {
+      validateSessionId(sessionId);
+      return withGate(`session:${profilePath}:${sessionId}`, async () => {
+        const event = validateEventForSession(
+          { type: "session-started", sessionId, snapshot },
+          sessionId,
+        );
+        if (event.type !== "session-started") {
+          throw new Error(`Session ${sessionId} produced an invalid start event`);
+        }
+        await ensureSafeDirectory(profilePath, false);
+        await ensureSafeDirectory(sessionsPath, true);
+        const path = sessionPath(sessionsPath, sessionId);
+        const existing = await readValidatedSession(path, sessionId);
+        const existingSnapshot = requireExistingSessionSnapshot(existing.envelopes, sessionId);
+        if (existingSnapshot !== undefined) {
+          return { snapshot: existingSnapshot, created: false };
+        }
+
+        const envelope = validateEnvelopeForSession(
+          {
+            schemaVersion: 1,
+            seq: 1,
+            emittedAt: canonicalNow(now),
+            event,
+          },
+          sessionId,
+          1,
+        );
+        await appendAndFlush(path, encodeSessionEnvelope(envelope));
+        await syncDirectory(sessionsPath);
+        await onSessionAppendPoint("afterAppend");
+        if (envelope.event.type !== "session-started") {
+          throw new Error(`Session ${sessionId} persisted an invalid start event`);
+        }
+        return { snapshot: envelope.event.snapshot, created: true };
+      });
+    },
+
     async appendSession(sessionId, event) {
       validateSessionId(sessionId);
       return withGate(`session:${profilePath}:${sessionId}`, async () => {
@@ -347,6 +393,21 @@ async function readValidatedSession(path: string, sessionId: string): Promise<Va
     throw new Error(`Session ${sessionId} has no canonical envelope`);
   }
   return { createdAt: first.emittedAt, envelopes };
+}
+
+function requireExistingSessionSnapshot(
+  envelopes: ReadonlyArray<SessionEnvelope>,
+  sessionId: string,
+): FrozenSessionSnapshot | undefined {
+  if (envelopes.length === 0) {
+    return undefined;
+  }
+  const first = envelopes[0];
+  const starts = envelopes.filter((envelope) => envelope.event.type === "session-started");
+  if (first === undefined || first.event.type !== "session-started" || starts.length !== 1) {
+    throw new Error(`Session ${sessionId} must start with exactly one session-started snapshot`);
+  }
+  return first.event.snapshot;
 }
 
 function isSessionEntry(entry: Dirent): boolean {

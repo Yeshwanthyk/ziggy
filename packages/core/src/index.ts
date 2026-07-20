@@ -1,9 +1,14 @@
 export const corePackageName = "@ziggy/core";
 export * from "./memory/index.ts";
 export {
+  createFilesystemSessionRuntime,
   createSessionRuntime,
+  resumeFilesystemSession,
   type AfterToolHookInput,
+  type CreateFilesystemSessionRuntimeOptions,
   type CreateSessionRuntimeOptions,
+  type ResumedFilesystemSession,
+  type ResumeFilesystemSessionOptions,
   type SessionRuntime,
   type SessionSubscription,
   type SessionTool,
@@ -23,4 +28,5 @@ export {
   type MemoryReplacement,
   type SessionAppendPoint,
   type SessionSummary,
+  type StartSessionResult,
 } from "./world/filesystem.ts";

@@ -749,9 +749,8 @@ export async function createSessionRuntime<TApi extends Api>(
           if (state.closed) {
             return yield* Effect.fail(new RuntimeClosed());
           }
-          const replay = yield* fromPromise(() =>
-            options.world.readSession(options.sessionId, input.sinceSeq),
-          );
+          const durable = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
+          const replay = durable.filter((envelope) => envelope.seq > input.sinceSeq);
           const subscriber: Subscriber = { active: true, onEnvelope: input.onEnvelope };
           for (const envelope of replay) {
             yield* Effect.try({
@@ -760,7 +759,7 @@ export async function createSessionRuntime<TApi extends Api>(
             });
           }
           subscribers.add(subscriber);
-          const replayThroughSeq = replay.at(-1)?.seq ?? input.sinceSeq;
+          const replayThroughSeq = durable.at(-1)?.seq ?? 0;
           return {
             replayThroughSeq,
             unsubscribe() {
@@ -861,6 +860,13 @@ function validateRuntimeOptions<TApi extends Api>(
   if (implementations.size !== options.tools.length) {
     throw new Error("Tool implementation names must be unique");
   }
+  const frozenNames = new Set(options.snapshot.tools.map((tool) => tool.name));
+  if (frozenNames.size !== options.snapshot.tools.length) {
+    throw new Error("Frozen snapshot tool names must be unique");
+  }
+  if (implementations.size !== frozenNames.size) {
+    throw new Error("Tool implementations and frozen snapshot must form an exact bijection");
+  }
   for (const frozen of options.snapshot.tools) {
     const implementation = implementations.get(frozen.name);
     if (implementation === undefined) {
@@ -868,7 +874,7 @@ function validateRuntimeOptions<TApi extends Api>(
     }
     if (
       implementation.description !== frozen.description ||
-      JSON.stringify(implementation.inputSchema) !== JSON.stringify(frozen.inputSchema)
+      canonicalJson(implementation.inputSchema) !== canonicalJson(frozen.inputSchema)
     ) {
       throw new Error(`Tool implementation differs from frozen snapshot: ${frozen.name}`);
     }

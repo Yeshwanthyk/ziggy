@@ -1,4 +1,11 @@
 export {
+  createFilesystemSessionRuntime,
+  resumeFilesystemSession,
+  type CreateFilesystemSessionRuntimeOptions,
+  type ResumedFilesystemSession,
+  type ResumeFilesystemSessionOptions,
+} from "./filesystem.ts";
+export {
   createSessionRuntime,
   type AfterToolHookInput,
   type CreateSessionRuntimeOptions,
