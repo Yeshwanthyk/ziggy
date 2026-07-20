@@ -290,9 +290,7 @@ const events: ReadonlyArray<SessionEvent> = [
     type: "session-started",
     sessionId: "session-a",
     snapshot: {
-      systemPrompt: "You are Ziggy.",
-      memory: "<memory>remember this</memory>",
-      user: "<user>Yesh</user>",
+      systemPrompt: "You are Ziggy.\n\n<memory>remember this</memory>\n\n<user>Yesh</user>",
       tools: [
         {
           name: "memory",
@@ -330,6 +328,7 @@ const events: ReadonlyArray<SessionEvent> = [
     turnId: "turn-a",
     stepId: "step-a",
     response: {
+      api: "anthropic-messages",
       provider: "anthropic",
       model: "claude-test",
       responseId: "message-a",
@@ -341,7 +340,7 @@ const events: ReadonlyArray<SessionEvent> = [
         },
         { type: "text", text: "answer", textSignature: "text-signature-a" },
         {
-          type: "tool-call",
+          type: "toolCall",
           id: "call-a",
           name: "memory",
           arguments: { action: "add", content: "fact", confidence: 0.75 },
@@ -355,7 +354,7 @@ const events: ReadonlyArray<SessionEvent> = [
         cacheWrite: 0,
         totalTokens: 15,
       },
-      stopReason: "tool-use",
+      stopReason: "toolUse",
       timestamp: 1_784_419_200_000,
     },
   },
@@ -473,6 +472,57 @@ describe("canonical Session events", () => {
     }
   });
 
+  test("accepts pi-ai responses with omitted provider-optional continuity fields", () => {
+    const envelope: SessionEnvelope = {
+      schemaVersion: 1,
+      seq: 1,
+      emittedAt: "2026-07-19T00:00:00.000Z",
+      event: {
+        type: "model-response",
+        sessionId: "session-a",
+        turnId: "turn-a",
+        stepId: "step-a",
+        response: {
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-test",
+          content: [
+            { type: "thinking", thinking: "", redacted: true },
+            { type: "text", text: "answer" },
+            { type: "toolCall", id: "call-a", name: "memory", arguments: {} },
+          ],
+          usage: {
+            input: 10,
+            output: 5,
+            cacheRead: 3,
+            cacheWrite: 1,
+            cacheWrite1h: 1,
+            reasoning: 2,
+            totalTokens: 19,
+          },
+          stopReason: "toolUse",
+          timestamp: 1_784_419_200_000,
+        },
+      },
+    };
+
+    expect(decodeSessionEnvelope(encodeSessionEnvelope(envelope))).toEqual(envelope);
+  });
+
+  test("persists one assembled stable prefix rather than a second Memory authority", () => {
+    const first = events[0];
+
+    expect(first?.type).toBe("session-started");
+    if (first?.type !== "session-started") {
+      throw new Error("Expected session-started fixture");
+    }
+    expect(first.snapshot).toEqual({
+      systemPrompt: "You are Ziggy.\n\n<memory>remember this</memory>\n\n<user>Yesh</user>",
+      tools: first.snapshot.tools,
+    });
+    expect(Object.keys(first.snapshot)).toEqual(["systemPrompt", "tools"]);
+  });
+
   test("encodes one canonical newline-terminated NDJSON frame", () => {
     const encoded = encodeSessionEnvelope(canonicalEnvelope);
 
@@ -512,9 +562,9 @@ describe("canonical Session events", () => {
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"step-ended","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","status":"pending"}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"turn-ended","sessionId":"session-a","turnId":"turn-a"}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"turn-ended","sessionId":"session-a","turnId":"turn-a","status":"pending"}}\n',
-      '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"session-started","sessionId":"session-a","snapshot":{"systemPrompt":"You are Ziggy.","memory":"","user":"","tools":[],"extra":true}}}\n',
+      '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"session-started","sessionId":"session-a","snapshot":{"systemPrompt":"You are Ziggy.","tools":[],"extra":true}}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"tool-call","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","toolCallId":"call-a","toolName":"memory","input":{"score":1e400},"sourceIndex":0}}\n',
-      '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"provider":"anthropic","model":"claude-test","responseId":"message-a","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2},"stopReason":"stop","timestamp":1,"extra":true}}}\n',
+      '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"api":"anthropic-messages","provider":"anthropic","model":"claude-test","responseId":"message-a","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2},"stopReason":"stop","timestamp":1,"extra":true}}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"approval-requested","sessionId":"session-a","turnId":"turn-a","approvalId":"approval-a","toolCallId":"call-a","choices":["approve","deny"]}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"approval-requested","sessionId":"session-a","turnId":"turn-a","approvalId":"approval-a","toolCallId":"call-a","prompt":"Allow?"}}\n',
       '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"approval-requested","sessionId":"session-a","turnId":"turn-a","approvalId":"approval-a","toolCallId":"call-a","prompt":"Allow?","choices":["approve","later"]}}\n',
@@ -525,6 +575,36 @@ describe("canonical Session events", () => {
     for (const frame of invalidFrames) {
       expect(() => decodeSessionEnvelope(frame)).toThrow();
     }
+  });
+
+  test("rejects empty identifiers and invalid token or provider timestamps", () => {
+    const invalidFrames: ReadonlyArray<string> = [
+      canonicalFrame.replace('"sessionId":"session-a"', '"sessionId":""'),
+      canonicalFrame.replace('"turnId":"turn-a"', '"turnId":""'),
+      '{"schemaVersion":1,"seq":1,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"api":"anthropic-messages","provider":"anthropic","model":"claude-test","content":[],"usage":{"input":-1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":0},"stopReason":"stop","timestamp":1}}}\n',
+      '{"schemaVersion":1,"seq":1,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"api":"anthropic-messages","provider":"anthropic","model":"claude-test","content":[],"usage":{"input":1.5,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2},"stopReason":"stop","timestamp":1}}}\n',
+      '{"schemaVersion":1,"seq":1,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"api":"anthropic-messages","provider":"anthropic","model":"claude-test","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2},"stopReason":"stop","timestamp":-1}}}\n',
+      '{"schemaVersion":1,"seq":1,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"model-response","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","response":{"api":"","provider":"anthropic","model":"claude-test","content":[],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2},"stopReason":"stop","timestamp":1}}}\n',
+    ];
+
+    for (const frame of invalidFrames) {
+      expect(() => decodeSessionEnvelope(frame)).toThrow();
+    }
+  });
+
+  test("preserves dangerous JSON keys without prototype mutation", () => {
+    const frame =
+      '{"schemaVersion":1,"seq":1,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"tool-call","sessionId":"session-a","turnId":"turn-a","stepId":"step-a","toolCallId":"call-a","toolName":"memory","input":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}},"sourceIndex":0}}\n';
+    const decoded = decodeSessionEnvelope(frame);
+
+    expect(decoded.event.type).toBe("tool-call");
+    if (decoded.event.type !== "tool-call") {
+      throw new Error("Expected tool-call frame");
+    }
+    expect(Object.hasOwn(decoded.event.input, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(decoded.event.input)).toBe(Object.prototype);
+    expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+    expect(encodeSessionEnvelope(decoded)).toBe(frame);
   });
 
   test("rejects unknown fields on every event variant", () => {
@@ -609,25 +689,19 @@ describe("attach method contracts", () => {
   });
 
   test("covers every Turn request and response shape", () => {
-    expect([
-      turnStartRequest,
-      turnStartResponse,
-      turnSteerRequest,
-      turnSteerResponse,
-      turnInterruptRequest,
-      turnInterruptResponse,
-    ]).toEqual([
-      { sessionId: "session-a", message: "next" },
-      { turnId: "turn-a", disposition: "started" },
-      {
-        sessionId: "session-a",
-        expectedTurnId: "turn-a",
-        message: "change direction",
-      },
-      { turnId: "turn-a" },
-      { sessionId: "session-a", expectedTurnId: "turn-a" },
-      { turnId: "turn-a" },
-    ]);
+    expect(turnStartRequest).toEqual({ sessionId: "session-a", message: "next" });
+    expect(turnStartResponse).toEqual({ turnId: "turn-a", disposition: "started" });
+    expect(turnSteerRequest).toEqual({
+      sessionId: "session-a",
+      expectedTurnId: "turn-a",
+      message: "change direction",
+    });
+    expect(turnSteerResponse).toEqual({ turnId: "turn-a" });
+    expect(turnInterruptRequest).toEqual({
+      sessionId: "session-a",
+      expectedTurnId: "turn-a",
+    });
+    expect(turnInterruptResponse).toEqual({ turnId: "turn-a" });
   });
 
   test("requires replay and optimistic-concurrency boundaries", () => {
