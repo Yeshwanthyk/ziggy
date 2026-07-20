@@ -1,25 +1,22 @@
 import type {
   Api,
-  AssistantMessage,
   AssistantMessageEvent,
   CacheRetention,
   Context,
   Model,
   SimpleStreamOptions,
   StreamFunction,
-  ToolResultMessage,
-  UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
   FinalModelResponse,
   FrozenSessionSnapshot,
   JsonObject,
   JsonValue,
-  ModelContent,
   SessionEnvelope,
   SessionEvent,
   TurnStatus,
 } from "@ziggy/protocol";
+import { projectProviderContext, toFinalModelResponse } from "./context.ts";
 import {
   Deferred,
   Effect,
@@ -62,6 +59,7 @@ export interface AfterToolHookInput extends ToolExecutionInput {
 }
 
 export interface SessionWorld {
+  /** A live SessionRuntime must be the exclusive appender for its Session. */
   appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
   readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
 }
@@ -122,7 +120,7 @@ interface ActiveTurn {
 interface RuntimeState {
   readonly active: ActiveTurn | undefined;
   readonly activeFiber: Fiber.Fiber<void, never> | undefined;
-  readonly idle: Deferred.Deferred<void>;
+  readonly idle: Deferred.Deferred<void, Error>;
   readonly closed: boolean;
 }
 
@@ -174,7 +172,7 @@ export async function createSessionRuntime<TApi extends Api>(
     Effect.gen(function* () {
       const gate = yield* Semaphore.make(1);
       const scope = yield* Scope.make();
-      const idle = yield* Deferred.make<void>();
+      const idle = yield* Deferred.make<void, Error>();
       yield* Deferred.succeed(idle, undefined);
       const state = yield* Ref.make<RuntimeState>({
         active: undefined,
@@ -198,18 +196,20 @@ export async function createSessionRuntime<TApi extends Api>(
       catch: toError,
     });
 
-  const publish = (envelope: SessionEnvelope): Effect.Effect<void, Error> =>
-    Effect.forEach(
-      subscribers,
-      (subscriber) =>
-        subscriber.active
-          ? Effect.try({
-              try: () => subscriber.onEnvelope(envelope),
-              catch: toError,
-            })
-          : Effect.void,
-      { discard: true },
-    );
+  const publish = (envelope: SessionEnvelope): Effect.Effect<void> =>
+    Effect.sync(() => {
+      for (const subscriber of subscribers) {
+        if (!subscriber.active) {
+          continue;
+        }
+        try {
+          subscriber.onEnvelope(envelope);
+        } catch {
+          subscriber.active = false;
+          subscribers.delete(subscriber);
+        }
+      }
+    });
 
   const appendUnlocked = (event: SessionEvent): Effect.Effect<SessionEnvelope, Error> =>
     Effect.gen(function* () {
@@ -252,20 +252,29 @@ export async function createSessionRuntime<TApi extends Api>(
       if (active.controller.signal.aborted) {
         return yield* Effect.interrupt;
       }
-      if (options.beforeToolCall !== undefined) {
-        yield* fromPromise(() => options.beforeToolCall?.(work.input) ?? Promise.resolve());
-      }
-      const tool = tools.get(work.call.name);
-      const initial: ToolExecutionResult =
-        tool === undefined
-          ? {
-              output: { error: `Unknown tool: ${work.call.name}` },
-              isError: true,
-            }
-          : {
-              output: yield* fromPromise(() => tool.execute(work.input)),
-              isError: false,
-            };
+      const initial = yield* Effect.gen(function* () {
+        if (options.beforeToolCall !== undefined) {
+          yield* fromPromise(() => options.beforeToolCall?.(work.input) ?? Promise.resolve());
+        }
+        const tool = tools.get(work.call.name);
+        if (tool === undefined) {
+          return {
+            output: { error: `Unknown tool: ${work.call.name}` },
+            isError: true,
+          } satisfies ToolExecutionResult;
+        }
+        return {
+          output: yield* fromPromise(() => tool.execute(work.input)),
+          isError: false,
+        } satisfies ToolExecutionResult;
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed({
+            output: { error: error.message },
+            isError: true,
+          } satisfies ToolExecutionResult),
+        ),
+      );
       if (options.afterToolCall === undefined) {
         return initial;
       }
@@ -419,6 +428,11 @@ export async function createSessionRuntime<TApi extends Api>(
           input: content.arguments,
           sourceIndex,
         }));
+      if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) {
+        return yield* Effect.fail(
+          new ProviderStreamFailure("Provider emitted duplicate tool call ids"),
+        );
+      }
       if (response.stopReason === "toolUse" && toolCalls.length === 0) {
         return yield* Effect.fail(
           new ProviderStreamFailure("Provider stopped for tool use without tool calls"),
@@ -442,7 +456,7 @@ export async function createSessionRuntime<TApi extends Api>(
 
   const launchTurn = (
     active: ActiveTurn,
-    idle: Deferred.Deferred<void>,
+    idle: Deferred.Deferred<void, Error>,
   ): Effect.Effect<void, Error> =>
     Effect.gen(function* () {
       const launch = yield* Deferred.make<void>();
@@ -485,23 +499,43 @@ export async function createSessionRuntime<TApi extends Api>(
           : completed
             ? "completed"
             : "failed";
+        let appendError: Error | undefined;
+        const appendFinal = (event: SessionEvent): Effect.Effect<void> =>
+          appendUnlocked(event).pipe(
+            Effect.asVoid,
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                appendError ??= error;
+              }),
+            ),
+          );
         if (openStepId !== undefined) {
-          yield* appendUnlocked({
+          yield* appendFinal({
             type: "step-ended",
             sessionId: options.sessionId,
             turnId: active.turnId,
             stepId: openStepId,
             status,
-          }).pipe(Effect.orDie);
+          });
         }
-        yield* appendUnlocked({
+        yield* appendFinal({
           type: "turn-ended",
           sessionId: options.sessionId,
           turnId: active.turnId,
           status,
-        }).pipe(Effect.orDie);
+        });
 
         const state = yield* Ref.get(resources.state);
+        if (appendError !== undefined) {
+          yield* Ref.set(resources.state, {
+            active: undefined,
+            activeFiber: undefined,
+            idle: state.idle,
+            closed: true,
+          });
+          yield* Deferred.fail(state.idle, appendError);
+          return;
+        }
         const followUp = yield* Queue.poll(active.followUpMailbox);
         if (state.closed) {
           yield* Ref.set(resources.state, {
@@ -522,7 +556,16 @@ export async function createSessionRuntime<TApi extends Api>(
             steerMailbox: yield* Queue.unbounded<string>(),
             followUpMailbox: active.followUpMailbox,
           };
-          yield* launchTurn(next, state.idle).pipe(Effect.orDie);
+          const launched = yield* Effect.result(launchTurn(next, state.idle));
+          if (launched._tag === "Failure") {
+            yield* Ref.set(resources.state, {
+              active: undefined,
+              activeFiber: undefined,
+              idle: state.idle,
+              closed: true,
+            });
+            yield* Deferred.fail(state.idle, launched.failure);
+          }
           return;
         }
         yield* Ref.set(resources.state, {
@@ -553,8 +596,10 @@ export async function createSessionRuntime<TApi extends Api>(
         yield* closeStep(active, stepId, "completed");
         openStepId = undefined;
 
-        const steer = yield* Queue.poll(active.steerMailbox);
-        const hasSteer = Option.isSome(steer);
+        let hasSteer = false;
+        while (Option.isSome(yield* Queue.poll(active.steerMailbox))) {
+          hasSteer = true;
+        }
         continueTurn = outcome.response.stopReason === "toolUse" || hasSteer;
       }
       completed = true;
@@ -570,10 +615,27 @@ export async function createSessionRuntime<TApi extends Api>(
   }
 
   const initialize = withGate(
-    appendUnlocked({
-      type: "session-started",
-      sessionId: options.sessionId,
-      snapshot: options.snapshot,
+    Effect.gen(function* () {
+      const existing = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
+      if (existing.length === 0) {
+        yield* appendUnlocked({
+          type: "session-started",
+          sessionId: options.sessionId,
+          snapshot: options.snapshot,
+        });
+        return;
+      }
+      const starts = existing.filter((envelope) => envelope.event.type === "session-started");
+      const first = existing[0];
+      if (
+        first?.event.type !== "session-started" ||
+        starts.length !== 1 ||
+        !snapshotsEqual(first.event.snapshot, options.snapshot)
+      ) {
+        return yield* Effect.fail(
+          new Error("Persisted Session snapshot does not match runtime snapshot"),
+        );
+      }
     }),
   );
   await Effect.runPromise(initialize);
@@ -602,7 +664,7 @@ export async function createSessionRuntime<TApi extends Api>(
             return { turnId, disposition: "queued" };
           }
 
-          const idle = yield* Deferred.make<void>();
+          const idle = yield* Deferred.make<void, Error>();
           const active: ActiveTurn = {
             turnId,
             message: input.message,
@@ -683,6 +745,10 @@ export async function createSessionRuntime<TApi extends Api>(
       withGate(
         Effect.gen(function* () {
           validateSinceSeq(input.sinceSeq);
+          const state = yield* Ref.get(resources.state);
+          if (state.closed) {
+            return yield* Effect.fail(new RuntimeClosed());
+          }
           const replay = yield* fromPromise(() =>
             options.world.readSession(options.sessionId, input.sinceSeq),
           );
@@ -712,8 +778,17 @@ export async function createSessionRuntime<TApi extends Api>(
       ),
     );
 
-  const close = (): Promise<void> =>
-    Effect.runPromise(
+  const close = (): Promise<void> => {
+    const cleanup = withGate(
+      Effect.sync(() => {
+        for (const subscriber of subscribers) {
+          subscriber.active = false;
+        }
+        subscribers.clear();
+      }),
+    ).pipe(Effect.andThen(Scope.close(resources.scope, Exit.void)));
+
+    return Effect.runPromise(
       withGate(
         Effect.gen(function* () {
           const state = yield* Ref.get(resources.state);
@@ -726,210 +801,47 @@ export async function createSessionRuntime<TApi extends Api>(
         }),
       ).pipe(
         Effect.flatMap((fiber) => (fiber === undefined ? Effect.void : Fiber.interrupt(fiber))),
-        Effect.andThen(Scope.close(resources.scope, Exit.void)),
+        Effect.andThen(withGate(Ref.get(resources.state))),
+        Effect.flatMap((state) => Deferred.await(state.idle)),
+        Effect.ensuring(cleanup),
       ),
     );
+  };
 
   return { startTurn, steer, interrupt, waitForIdle, subscribe, close };
-
-  function projectProviderContext(envelopes: ReadonlyArray<SessionEnvelope>): Context {
-    const started = envelopes.find((envelope) => envelope.event.type === "session-started");
-    if (started === undefined || started.event.type !== "session-started") {
-      throw new Error("Session log has no session-started event");
-    }
-    const messages: Context["messages"] = [];
-    const toolNames = new Map<string, string>();
-    const pendingSteers: UserMessage[] = [];
-    let seenStep = false;
-
-    for (const envelope of envelopes) {
-      const event = envelope.event;
-      if (event.type === "turn-started") {
-        messages.push({
-          role: "user",
-          content: event.message,
-          timestamp: Date.parse(envelope.emittedAt),
-        });
-      } else if (event.type === "steer-received") {
-        pendingSteers.push({
-          role: "user",
-          content: event.message,
-          timestamp: Date.parse(envelope.emittedAt),
-        });
-      } else if (event.type === "step-started") {
-        if (seenStep) {
-          const steer = pendingSteers.shift();
-          if (steer !== undefined) {
-            messages.push(steer);
-          }
-        }
-        seenStep = true;
-      } else if (event.type === "model-response") {
-        messages.push(toAssistantMessage(event.response));
-      } else if (event.type === "tool-call") {
-        toolNames.set(event.toolCallId, event.toolName);
-      } else if (event.type === "tool-result") {
-        const toolName = toolNames.get(event.toolCallId);
-        if (toolName === undefined) {
-          throw new Error(`Tool result ${event.toolCallId} has no durable tool call`);
-        }
-        const result: ToolResultMessage<undefined> = {
-          role: "toolResult",
-          toolCallId: event.toolCallId,
-          toolName,
-          content: [{ type: "text", text: jsonText(event.output) }],
-          isError: event.isError,
-          timestamp: Date.parse(envelope.emittedAt),
-        };
-        messages.push(result);
-      }
-    }
-
-    return {
-      systemPrompt: started.event.snapshot.systemPrompt,
-      messages,
-      tools: started.event.snapshot.tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.inputSchema,
-      })),
-    };
-  }
-}
-
-function toFinalModelResponse(message: AssistantMessage): FinalModelResponse {
-  return {
-    api: message.api,
-    provider: message.provider,
-    model: message.model,
-    ...(message.responseModel === undefined ? {} : { responseModel: message.responseModel }),
-    ...(message.responseId === undefined ? {} : { responseId: message.responseId }),
-    content: message.content.map(toModelContent),
-    usage: {
-      input: message.usage.input,
-      output: message.usage.output,
-      cacheRead: message.usage.cacheRead,
-      cacheWrite: message.usage.cacheWrite,
-      ...(message.usage.cacheWrite1h === undefined
-        ? {}
-        : { cacheWrite1h: message.usage.cacheWrite1h }),
-      ...(message.usage.reasoning === undefined ? {} : { reasoning: message.usage.reasoning }),
-      totalTokens: message.usage.totalTokens,
-    },
-    stopReason: message.stopReason,
-    ...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
-    timestamp: message.timestamp,
-  };
-}
-
-function toModelContent(content: AssistantMessage["content"][number]): ModelContent {
-  if (content.type === "text") {
-    return {
-      type: "text",
-      text: content.text,
-      ...(content.textSignature === undefined ? {} : { textSignature: content.textSignature }),
-    };
-  }
-  if (content.type === "thinking") {
-    return {
-      type: "thinking",
-      thinking: content.thinking,
-      ...(content.thinkingSignature === undefined
-        ? {}
-        : { thinkingSignature: content.thinkingSignature }),
-      ...(content.redacted === undefined ? {} : { redacted: content.redacted }),
-    };
-  }
-  return {
-    type: "toolCall",
-    id: content.id,
-    name: content.name,
-    arguments: requireJsonObject(content.arguments),
-    ...(content.thoughtSignature === undefined
-      ? {}
-      : { thoughtSignature: content.thoughtSignature }),
-  };
-}
-
-function toAssistantMessage(response: FinalModelResponse): AssistantMessage {
-  return {
-    role: "assistant",
-    api: response.api,
-    provider: response.provider,
-    model: response.model,
-    ...(response.responseModel === undefined ? {} : { responseModel: response.responseModel }),
-    ...(response.responseId === undefined ? {} : { responseId: response.responseId }),
-    content: response.content.map((content) => {
-      if (content.type === "text") {
-        return {
-          type: "text",
-          text: content.text,
-          ...(content.textSignature === undefined ? {} : { textSignature: content.textSignature }),
-        };
-      }
-      if (content.type === "thinking") {
-        return {
-          type: "thinking",
-          thinking: content.thinking,
-          ...(content.thinkingSignature === undefined
-            ? {}
-            : { thinkingSignature: content.thinkingSignature }),
-          ...(content.redacted === undefined ? {} : { redacted: content.redacted }),
-        };
-      }
-      return {
-        type: "toolCall",
-        id: content.id,
-        name: content.name,
-        arguments: content.arguments,
-        ...(content.thoughtSignature === undefined
-          ? {}
-          : { thoughtSignature: content.thoughtSignature }),
-      };
-    }),
-    usage: {
-      ...response.usage,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: response.stopReason,
-    ...(response.errorMessage === undefined ? {} : { errorMessage: response.errorMessage }),
-    timestamp: response.timestamp,
-  };
-}
-
-function requireJsonObject(value: unknown): JsonObject {
-  const json = requireJsonValue(value);
-  if (typeof json !== "object" || json === null || isJsonArray(json)) {
-    throw new Error("Provider tool arguments must be a JSON object");
-  }
-  return json;
 }
 
 function isJsonArray(value: JsonValue): value is ReadonlyArray<JsonValue> {
   return Array.isArray(value);
 }
 
-function requireJsonValue(value: unknown): JsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return value;
+function snapshotsEqual(left: FrozenSessionSnapshot, right: FrozenSessionSnapshot): boolean {
+  return (
+    left.systemPrompt === right.systemPrompt &&
+    left.tools.length === right.tools.length &&
+    left.tools.every((tool, index) => {
+      const other = right.tools[index];
+      return (
+        other !== undefined &&
+        tool.name === other.name &&
+        tool.description === other.description &&
+        canonicalJson(tool.inputSchema) === canonicalJson(other.inputSchema)
+      );
+    })
+  );
+}
+
+function canonicalJson(value: JsonValue): string {
+  if (isJsonArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
   }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw new Error("JSON numbers must be finite");
-    }
-    return value;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key] ?? null)}`)
+      .join(",")}}`;
   }
-  if (Array.isArray(value)) {
-    return value.map(requireJsonValue);
-  }
-  if (typeof value === "object") {
-    const result: Record<string, JsonValue> = {};
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = requireJsonValue(child);
-    }
-    return result;
-  }
-  throw new Error("Value is not JSON serializable");
+  return JSON.stringify(value);
 }
 
 function validateRuntimeOptions<TApi extends Api>(
@@ -977,8 +889,4 @@ function validateSinceSeq(sinceSeq: number): void {
 
 function toError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
-}
-
-function jsonText(value: JsonValue): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
 }

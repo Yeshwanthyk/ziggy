@@ -11,6 +11,8 @@ import { SequenceIds } from "../testkit/boundaries.ts";
 import { Barrier } from "../testkit/barrier.ts";
 import {
   awaitingAbortStep,
+  continuityStep,
+  errorStep,
   ScriptedProvider,
   terminalDefectStep,
   textStep,
@@ -84,6 +86,7 @@ async function createHarness(
   steps: ReadonlyArray<ScriptedStep>,
   options: {
     readonly world?: SessionWorld;
+    readonly snapshot?: typeof SNAPSHOT;
     readonly tools?: ReadonlyArray<SessionTool>;
     readonly beforeToolCall?: (input: ToolHookInput) => Promise<void>;
     readonly afterToolCall?: (
@@ -101,7 +104,7 @@ async function createHarness(
   );
   const runtime = await createSessionRuntime({
     sessionId: "session-a",
-    snapshot: SNAPSHOT,
+    snapshot: options.snapshot ?? SNAPSHOT,
     world,
     model: provider.model,
     streamSimple: provider.streamSimple,
@@ -262,6 +265,31 @@ describe("public Session runtime agent loop", () => {
     ]);
   });
 
+  test("round-trips pi-ai continuity fields through the durable Session log", async () => {
+    const { runtime, provider } = await createHarness([continuityStep(100), textStep("next", 200)]);
+
+    await runtime.startTurn({ message: "first" });
+    await runtime.waitForIdle();
+    await runtime.startTurn({ message: "second" });
+    await runtime.waitForIdle();
+
+    expect(provider.calls[1]?.context.messages[1]).toMatchObject({
+      role: "assistant",
+      responseModel: "scripted-model-2026",
+      responseId: "response-1",
+      content: [
+        {
+          type: "thinking",
+          thinking: "opaque",
+          thinkingSignature: "thinking-sig",
+          redacted: true,
+        },
+        { type: "text", text: "answer", textSignature: "text-sig" },
+      ],
+      usage: { cacheWrite1h: 3, reasoning: 7 },
+    });
+  });
+
   test.each([
     ["missing terminal", terminalDefectStep("missing-terminal", 100)],
     ["iterator throw", terminalDefectStep("iterator-throw", 100)],
@@ -289,6 +317,43 @@ describe("public Session runtime agent loop", () => {
         turnId: "turn-1",
         status: "failed",
       },
+    ]);
+  });
+
+  test("reopens from the canonical snapshot without appending another session-started event", async () => {
+    const world = new RecordingSessionWorld();
+    const first = await createHarness([], { world });
+    await first.runtime.close();
+    const reopened = await createHarness([textStep("resumed", 100)], { world });
+
+    await reopened.runtime.startTurn({ message: "continue" });
+    await reopened.runtime.waitForIdle();
+
+    expect((await events(world)).filter((event) => event.type === "session-started")).toHaveLength(
+      1,
+    );
+    await expect(
+      createHarness([], {
+        world,
+        snapshot: { ...SNAPSHOT, systemPrompt: "different prompt" },
+      }),
+    ).rejects.toThrow("snapshot");
+  });
+
+  test("excludes a failed Provider response from future model context", async () => {
+    const { runtime, provider } = await createHarness([
+      errorStep("unsafe partial", 100),
+      textStep("recovered", 200),
+    ]);
+
+    await runtime.startTurn({ message: "first" });
+    await runtime.waitForIdle();
+    await runtime.startTurn({ message: "retry" });
+    await runtime.waitForIdle();
+
+    expect(messages(provider.calls[1]?.context ?? { messages: [] })).toEqual([
+      { role: "user", text: "first" },
+      { role: "user", text: "retry" },
     ]);
   });
 
@@ -372,6 +437,69 @@ describe("public Session runtime agent loop", () => {
     ]);
   });
 
+  test("passes normalized tool failures through the after hook", async () => {
+    const hookResults: ToolExecutionResult[] = [];
+    const { runtime, world } = await createHarness(
+      [toolStep([{ id: "call-a", name: "alpha", arguments: {} }], 100), textStep("recovered", 200)],
+      {
+        tools: [
+          createTool("alpha", async () => {
+            throw new Error("tool exploded");
+          }),
+          createTool("beta"),
+        ],
+        afterToolCall: async ({ result }) => {
+          hookResults.push(result);
+          return { output: { recovered: true }, isError: false };
+        },
+      },
+    );
+
+    await runtime.startTurn({ message: "recover tool" });
+    await runtime.waitForIdle();
+
+    expect(hookResults).toEqual([{ output: { error: "tool exploded" }, isError: true }]);
+    expect((await events(world)).filter((event) => event.type === "tool-result")).toEqual([
+      expect.objectContaining({ output: { recovered: true }, isError: false }),
+    ]);
+  });
+
+  test("fails a Provider step with duplicate tool call ids before tool execution", async () => {
+    let executions = 0;
+    const { runtime, world } = await createHarness(
+      [
+        toolStep(
+          [
+            { id: "duplicate", name: "alpha", arguments: {} },
+            { id: "duplicate", name: "beta", arguments: {} },
+          ],
+          100,
+        ),
+      ],
+      {
+        tools: [
+          createTool("alpha", async () => {
+            executions += 1;
+            return { ok: true };
+          }),
+          createTool("beta", async () => {
+            executions += 1;
+            return { ok: true };
+          }),
+        ],
+      },
+    );
+
+    await runtime.startTurn({ message: "invalid calls" });
+    await runtime.waitForIdle();
+
+    expect(executions).toBe(0);
+    expect((await events(world)).filter((event) => event.type === "tool-call")).toHaveLength(0);
+    expect((await events(world)).filter((event) => event.type === "turn-ended")).toEqual([
+      expect.objectContaining({ status: "failed" }),
+    ]);
+  });
+
   test("accepts steer during a tool barrier for the next model call and rejects stale Turn ids silently", async () => {
     const scheduler = new ToolScheduler();
     const { runtime, provider, world } = await createHarness(
@@ -412,6 +540,38 @@ describe("public Session runtime agent loop", () => {
         message: "change direction",
       },
     ]);
+  });
+
+  test("folds every ready steer into the next model call", async () => {
+    const scheduler = new ToolScheduler();
+    const { runtime, provider } = await createHarness(
+      [toolStep([{ id: "call-a", name: "alpha", arguments: {} }], 100), textStep("steered", 200)],
+      {
+        tools: [
+          createTool("alpha", async () => {
+            await scheduler.run("alpha");
+            return { ok: true };
+          }),
+          createTool("beta"),
+        ],
+      },
+    );
+
+    await runtime.startTurn({ message: "begin" });
+    await scheduler.waitForStarted(["alpha"]);
+    await runtime.steer({ expectedTurnId: "turn-1", message: "first steer" });
+    await runtime.steer({ expectedTurnId: "turn-1", message: "second steer" });
+    scheduler.complete("alpha");
+    await runtime.waitForIdle();
+
+    expect(messages(provider.calls[1]?.context ?? { messages: [] })).toEqual([
+      { role: "user", text: "begin" },
+      { role: "assistant", text: "" },
+      { role: "toolResult", text: '{"ok":true}' },
+      { role: "user", text: "first steer" },
+      { role: "user", text: "second steer" },
+    ]);
+    expect(provider.calls).toHaveLength(2);
   });
 
   test("queues one-at-a-time follow-ups and auto-starts each after the previous Turn", async () => {
@@ -482,16 +642,147 @@ describe("public Session runtime agent loop", () => {
     });
   });
 
+  test("aborts an in-flight tool and omits a fabricated tool result", async () => {
+    const toolStarted = new Barrier();
+    let sawAbort = false;
+    const { runtime, world } = await createHarness(
+      [toolStep([{ id: "call-a", name: "alpha", arguments: {} }], 100)],
+      {
+        tools: [
+          createTool(
+            "alpha",
+            (input) =>
+              new Promise((resolve) => {
+                input.signal.addEventListener(
+                  "abort",
+                  () => {
+                    sawAbort = true;
+                    resolve({ ignored: true });
+                  },
+                  { once: true },
+                );
+                void toolStarted.wait();
+              }),
+          ),
+          createTool("beta"),
+        ],
+      },
+    );
+
+    await runtime.startTurn({ message: "run tool" });
+    await toolStarted.entered;
+    await runtime.interrupt({ expectedTurnId: "turn-1" });
+    await runtime.waitForIdle();
+
+    expect(sawAbort).toBe(true);
+    expect((await events(world)).filter((event) => event.type === "tool-result")).toHaveLength(0);
+    toolStarted.release();
+  });
+
+  test("serializes a new Turn behind finalization instead of queuing it onto an ended Turn", async () => {
+    const finalizing = new Barrier();
+    const stored = new RecordingSessionWorld();
+    const world: SessionWorld = {
+      async appendSession(sessionId, event) {
+        if (event.type === "turn-ended" && event.turnId === "turn-1") {
+          await finalizing.wait();
+        }
+        return stored.appendSession(sessionId, event);
+      },
+      readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
+    };
+    const { runtime } = await createHarness([textStep("one", 100), textStep("two", 200)], {
+      world,
+    });
+
+    await runtime.startTurn({ message: "first" });
+    await finalizing.entered;
+    const next = runtime.startTurn({ message: "at boundary" });
+    finalizing.release();
+
+    await expect(next).resolves.toEqual({ turnId: "turn-2", disposition: "started" });
+    await runtime.waitForIdle();
+    expect(
+      (await events(world))
+        .filter((event) => event.type === "turn-started")
+        .map((event) => ({ turnId: event.turnId, origin: event.origin })),
+    ).toEqual([
+      { turnId: "turn-1", origin: "user" },
+      { turnId: "turn-2", origin: "user" },
+    ]);
+  });
+
+  test("isolates a throwing live subscriber from durable Turn work", async () => {
+    const { runtime, provider, world } = await createHarness([textStep("still works", 100)]);
+    let throws = 0;
+    await runtime.subscribe({
+      sinceSeq: 1,
+      onEnvelope: () => {
+        throws += 1;
+        throw new Error("subscriber exploded");
+      },
+    });
+
+    await runtime.startTurn({ message: "continue" });
+    await runtime.waitForIdle();
+
+    expect(throws).toBe(1);
+    expect(provider.calls).toHaveLength(1);
+    expect((await events(world)).filter((event) => event.type === "turn-ended")).toEqual([
+      {
+        type: "turn-ended",
+        sessionId: "session-a",
+        turnId: "turn-1",
+        status: "completed",
+      },
+    ]);
+  });
+
+  test("settles waitForIdle when final durable appends fail", async () => {
+    const stored = new RecordingSessionWorld();
+    const world: SessionWorld = {
+      async appendSession(sessionId, event) {
+        if (event.type === "turn-ended") {
+          throw new Error("disk full");
+        }
+        return stored.appendSession(sessionId, event);
+      },
+      readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
+    };
+    const { runtime } = await createHarness([textStep("answer", 100)], { world });
+
+    await runtime.startTurn({ message: "write it" });
+    const settlement = runtime.waitForIdle().then(
+      () => "resolved",
+      () => "rejected",
+    );
+
+    expect(await Promise.race([settlement, Bun.sleep(100).then(() => "timeout")])).toBe("rejected");
+    await expect(runtime.startTurn({ message: "must reject" })).rejects.toThrow("closed");
+  });
+
+  test("close rejects new subscriptions and releases existing subscribers", async () => {
+    const { runtime } = await createHarness([]);
+    const subscription = await runtime.subscribe({ sinceSeq: 1, onEnvelope: () => undefined });
+
+    await runtime.close();
+    subscription.unsubscribe();
+
+    await expect(runtime.subscribe({ sinceSeq: 0, onEnvelope: () => undefined })).rejects.toThrow(
+      "closed",
+    );
+  });
+
   test("atomically bridges replay into live subscription without a gap or duplicate", async () => {
     const replayBarrier = new Barrier();
     const stored = new RecordingSessionWorld();
-    let firstRead = true;
+    let blockRead = false;
     const world: SessionWorld = {
       appendSession: (sessionId, event) => stored.appendSession(sessionId, event),
       async readSession(sessionId, afterSeq) {
         const replay = await stored.readSession(sessionId, afterSeq);
-        if (firstRead) {
-          firstRead = false;
+        if (blockRead) {
+          blockRead = false;
           await replayBarrier.wait();
         }
         return replay;
@@ -504,6 +795,7 @@ describe("public Session runtime agent loop", () => {
     }
     const { runtime } = await createHarness([{ ...response, barrier: responseBarrier }], { world });
     const received: SessionEnvelope[] = [];
+    blockRead = true;
 
     const subscribing = runtime.subscribe({
       sinceSeq: 0,

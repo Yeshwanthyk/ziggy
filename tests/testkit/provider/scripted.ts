@@ -211,6 +211,48 @@ export function toolStep(
   return { kind: "events", events, result: message };
 }
 
+export function continuityStep(timestamp: number): ScriptedStep {
+  const partial = assistantMessage([], "stop", timestamp);
+  const message: AssistantMessage = {
+    ...assistantMessage(
+      [
+        { type: "thinking", thinking: "opaque", thinkingSignature: "thinking-sig", redacted: true },
+        { type: "text", text: "answer", textSignature: "text-sig" },
+      ],
+      "stop",
+      timestamp,
+    ),
+    responseModel: "scripted-model-2026",
+    responseId: "response-1",
+    usage: { ...EMPTY_USAGE, cacheWrite1h: 3, reasoning: 7 },
+  };
+  return {
+    kind: "events",
+    result: message,
+    events: [
+      { type: "start", partial },
+      { type: "done", reason: "stop", message },
+    ],
+  };
+}
+
+export function errorStep(text: string, timestamp: number): ScriptedStep {
+  const partial = assistantMessage([], "stop", timestamp);
+  const message = {
+    ...assistantMessage([{ type: "text", text }], "error", timestamp),
+    errorMessage: "scripted failure",
+  };
+  return {
+    kind: "events",
+    result: message,
+    events: [
+      { type: "start", partial },
+      { type: "text_delta", contentIndex: 0, delta: text, partial: message },
+      { type: "error", reason: "error", error: message },
+    ],
+  };
+}
+
 export function terminalDefectStep(
   kind: "missing-terminal" | "iterator-throw",
   timestamp: number,
@@ -230,7 +272,7 @@ export function awaitingAbortStep(timestamp: number): ScriptedStep {
   return { kind: "await-abort", partial: assistantMessage([], "stop", timestamp) };
 }
 
-export function assistantMessage(
+function assistantMessage(
   content: AssistantMessage["content"],
   stopReason: AssistantMessage["stopReason"],
   timestamp: number,
