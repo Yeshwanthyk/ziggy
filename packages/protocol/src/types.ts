@@ -289,3 +289,117 @@ export interface ApprovalResolveRequest {
 export interface ApprovalResolveResponse {
   readonly outcome: "resolved" | "already-resolved";
 }
+
+/**
+ * Attach-protocol NDJSON framing (S2 experiment). The codec is transport-agnostic and owns no
+ * connection state, Session registry, replay ordering, or transport behavior. Frame schema
+ * version is stamped with PROTOCOL_VERSION so on-wire frames fail loud on mismatch, mirroring
+ * the Session NDJSON stamp. The Session-event frame carries the canonical SessionEnvelope
+ * unchanged as its payload; it does not create a second event sequence authority.
+ */
+
+/**
+ * Closed union of error codes the sole ServerErrorFrame may carry. Covers both codec-level
+ * rejections (the codes a typed ProtocolDecodeError maps to) and the mandatory daemon
+ * lifecycle/runtime outcomes the S2 daemon must emit. No string-matching required: decode
+ * failures throw ProtocolDecodeError carrying the exact code.
+ */
+export type ProtocolErrorCode =
+  | "version-mismatch"
+  | "malformed-frame"
+  | "unknown-method"
+  | "invalid-params"
+  | "unsafe-sequence"
+  | "not-initialized"
+  | "already-initialized"
+  | "session-not-found"
+  | "stale-turn"
+  | "overloaded"
+  | "shutting-down"
+  | "internal";
+
+interface ClientRequestBase {
+  readonly schemaVersion: typeof PROTOCOL_VERSION;
+  readonly requestId: string;
+}
+
+type ClientRequestVariant<Method extends ProtocolMethod, Params> = ClientRequestBase & {
+  readonly method: Method;
+  readonly params: Params;
+};
+
+/** One client→server NDJSON request frame: schema-stamped, id-correlated, method-specific params. */
+export type ClientRequestFrame =
+  | ClientRequestVariant<"initialize", InitializeRequest>
+  | ClientRequestVariant<"session/start", SessionStartRequest>
+  | ClientRequestVariant<"session/resume", SessionResumeRequest>
+  | ClientRequestVariant<"session/list", SessionListRequest>
+  | ClientRequestVariant<"session/subscribe", SessionSubscribeRequest>
+  | ClientRequestVariant<"session/unsubscribe", SessionUnsubscribeRequest>
+  | ClientRequestVariant<"turn/start", TurnStartRequest>
+  | ClientRequestVariant<"turn/steer", TurnSteerRequest>
+  | ClientRequestVariant<"turn/interrupt", TurnInterruptRequest>
+  | ClientRequestVariant<"approval/resolve", ApprovalResolveRequest>;
+
+type ServerSuccessVariant<Method extends ProtocolMethod, Result> = ClientRequestBase & {
+  readonly method: Method;
+  readonly type: "success";
+  readonly result: Result;
+};
+
+/** Server→client success frame correlated by requestId, echoing the method for a stateless codec. */
+export type ServerSuccessFrame =
+  | ServerSuccessVariant<"initialize", InitializeResponse>
+  | ServerSuccessVariant<"session/start", SessionStartResponse>
+  | ServerSuccessVariant<"session/resume", SessionResumeResponse>
+  | ServerSuccessVariant<"session/list", SessionListResponse>
+  | ServerSuccessVariant<"session/subscribe", SessionSubscribeResponse>
+  | ServerSuccessVariant<"session/unsubscribe", SessionUnsubscribeResponse>
+  | ServerSuccessVariant<"turn/start", TurnStartResponse>
+  | ServerSuccessVariant<"turn/steer", TurnSteerResponse>
+  | ServerSuccessVariant<"turn/interrupt", TurnInterruptResponse>
+  | ServerSuccessVariant<"approval/resolve", ApprovalResolveResponse>;
+
+/**
+ * Server→client structured error frame. `requestId` is `string` when the failing request was
+ * parseable and carried an id, `null` for uncorrelated failures (malformed JSON, missing/invalid
+ * requestId, unsupported framing) where inventing an id would be wrong. Closed error-code union.
+ */
+export interface ServerErrorFrame {
+  readonly schemaVersion: typeof PROTOCOL_VERSION;
+  readonly requestId: string | null;
+  readonly type: "error";
+  readonly code: ProtocolErrorCode;
+  readonly message: string;
+}
+
+/**
+ * Server→client Session-event frame. The `event` payload is the canonical SessionEnvelope
+ * unchanged; its `seq` remains the sole event sequence authority (Constitution rule 2/3).
+ * `subscriptionId` correlates to the subscribe/resume handle for demultiplexing only.
+ */
+export interface ServerSessionEventFrame {
+  readonly schemaVersion: typeof PROTOCOL_VERSION;
+  readonly type: "event";
+  readonly subscriptionId: string;
+  readonly event: SessionEnvelope;
+}
+
+export type ServerFrame = ServerSuccessFrame | ServerErrorFrame | ServerSessionEventFrame;
+
+/**
+ * Typed error thrown by the attach-protocol decode path. Transport/daemon code maps a decode
+ * failure to a ServerErrorFrame by reading `code` and `requestId` — never by matching the
+ * TypeError message text. `requestId` is `null` when the request id could not be recovered
+ * (malformed JSON, missing/invalid requestId field). `message` is preserved for human diagnostics.
+ */
+export class ProtocolDecodeError extends Error {
+  readonly code: ProtocolErrorCode;
+  readonly requestId: string | null;
+  constructor(code: ProtocolErrorCode, requestId: string | null, message: string) {
+    super(message);
+    this.name = "ProtocolDecodeError";
+    this.code = code;
+    this.requestId = requestId;
+  }
+}

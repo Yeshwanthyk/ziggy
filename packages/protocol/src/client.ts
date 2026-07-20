@@ -25,24 +25,26 @@ export function encodeSessionEnvelope(envelope: SessionEnvelope): string {
 }
 
 export function decodeSessionEnvelope(frame: string): SessionEnvelope {
+  return decodeEnvelopeValue(parseNdjsonLine(frame, "Session frame"));
+}
+
+/** Parse one newline-terminated NDJSON line into an unknown JSON value, rejecting empty/torn/multiple frames. */
+export function parseNdjsonLine(frame: string, name: string): unknown {
   if (!frame.endsWith("\n") || frame.length === 1) {
-    throw new TypeError("Session frame must contain one newline-terminated envelope");
+    throw new TypeError(`${name} must contain one newline-terminated frame`);
   }
   const body = frame.slice(0, -1);
   if (body.includes("\n") || body.includes("\r")) {
-    throw new TypeError("Session frame must contain exactly one envelope");
+    throw new TypeError(`${name} must contain exactly one frame`);
   }
-
-  let value: unknown;
   try {
-    value = JSON.parse(body);
+    return JSON.parse(body);
   } catch {
-    throw new TypeError("Session frame is not valid JSON");
+    throw new TypeError(`${name} is not valid JSON`);
   }
-  return decodeEnvelopeValue(value);
 }
 
-function decodeEnvelopeValue(value: unknown): SessionEnvelope {
+export function decodeEnvelopeValue(value: unknown): SessionEnvelope {
   const record = exactRecord(value, ["schemaVersion", "seq", "emittedAt", "event"]);
   if (record.schemaVersion !== SESSION_SCHEMA_VERSION) {
     throw new TypeError("Unsupported Session schema version");
@@ -380,7 +382,7 @@ function decodeJsonObject(value: unknown): JsonObject {
   return Object.fromEntries(decoded);
 }
 
-function exactRecord(
+export function exactRecord(
   value: unknown,
   requiredKeys: ReadonlyArray<string>,
   optionalKeys: ReadonlyArray<string> = [],
@@ -397,7 +399,7 @@ function exactRecord(
   return record;
 }
 
-function objectRecord(value: unknown): Readonly<Record<string, unknown>> {
+export function objectRecord(value: unknown): Readonly<Record<string, unknown>> {
   if (!isObjectRecord(value)) {
     throw new TypeError("Expected a JSON object");
   }
@@ -408,7 +410,7 @@ function isObjectRecord(value: unknown): value is Readonly<Record<string, unknow
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function arrayValue<Value>(
+export function arrayValue<Value>(
   value: unknown,
   decode: (item: unknown) => Value,
   name: string,
@@ -419,14 +421,14 @@ function arrayValue<Value>(
   return value.map(decode);
 }
 
-function stringValue(value: unknown, name: string): string {
+export function stringValue(value: unknown, name: string): string {
   if (typeof value !== "string") {
     throw new TypeError(`${name} must be a string`);
   }
   return value;
 }
 
-function identifierValue(value: unknown, name: string): string {
+export function identifierValue(value: unknown, name: string): string {
   const identifier = stringValue(value, name);
   if (identifier.length === 0) {
     throw new TypeError(`${name} must not be empty`);
@@ -434,7 +436,7 @@ function identifierValue(value: unknown, name: string): string {
   return identifier;
 }
 
-function booleanValue(value: unknown, name: string): boolean {
+export function booleanValue(value: unknown, name: string): boolean {
   if (typeof value !== "boolean") {
     throw new TypeError(`${name} must be a boolean`);
   }
@@ -455,7 +457,7 @@ function positiveSafeInteger(value: unknown, name: string): number {
   return value;
 }
 
-function nonnegativeSafeInteger(value: unknown, name: string): number {
+export function nonnegativeSafeInteger(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(`${name} must be a nonnegative safe integer`);
   }
@@ -463,13 +465,18 @@ function nonnegativeSafeInteger(value: unknown, name: string): number {
 }
 
 function canonicalTimestamp(value: unknown): string {
-  const timestamp = stringValue(value, "emittedAt");
+  return canonicalTimestampFor(value, "emittedAt");
+}
+
+/** Validate a canonical millisecond ISO timestamp, naming the field in errors. */
+export function canonicalTimestampFor(value: unknown, name: string): string {
+  const timestamp = stringValue(value, name);
   if (!MILLISECOND_ISO_TIMESTAMP.test(timestamp)) {
-    throw new TypeError("emittedAt must be a canonical millisecond ISO timestamp");
+    throw new TypeError(`${name} must be a canonical millisecond ISO timestamp`);
   }
   const milliseconds = Date.parse(timestamp);
   if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== timestamp) {
-    throw new TypeError("emittedAt must be a valid canonical timestamp");
+    throw new TypeError(`${name} must be a valid canonical timestamp`);
   }
   return timestamp;
 }
@@ -508,7 +515,7 @@ function stopReason(value: unknown): FinalModelResponse["stopReason"] {
   throw new TypeError("Unknown model stop reason");
 }
 
-function approvalDecision(value: unknown): ApprovalDecision {
+export function approvalDecision(value: unknown): ApprovalDecision {
   if (value === "approve" || value === "deny") {
     return value;
   }
