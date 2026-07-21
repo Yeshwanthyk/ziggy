@@ -7,12 +7,78 @@
     "tests/fixtures/lint/**",
     "vendor/effect/**"
   ],
-  "jsPlugins": ["./tooling/oxlint/no-unsafe-typescript-syntax.mjs"],
+  "jsPlugins": [
+    "./tooling/oxlint/no-unsafe-typescript-syntax.mjs",
+    "./tooling/oxlint/effect-plugin.mjs"
+  ],
   "options": {
-    "denyWarnings": true,
     "reportUnusedDisableDirectives": "error"
   },
   "rules": {
+    "ziggy-effect/no-conditional-tests": "warn",
+    "ziggy-effect/no-effect-escape-hatch": "warn",
+    "ziggy-effect/no-effect-execution-boundary": "warn",
+    "ziggy-effect/no-error-constructor": "warn",
+    "ziggy-effect/no-inline-schema-compile": "warn",
+    "ziggy-effect/no-instanceof-error": "warn",
+    "ziggy-effect/no-instanceof-tagged-error": "warn",
+    "ziggy-effect/no-json-parse": "warn",
+    "ziggy-effect/no-manual-tag-check": "warn",
+    "ziggy-effect/no-match-orelse": "warn",
+    "ziggy-effect/no-native-promise-ownership": "warn",
+    "ziggy-effect/no-promise-catch": "warn",
+    "ziggy-effect/no-promise-client-surface": "warn",
+    "ziggy-effect/no-raw-fetch": "warn",
+    "ziggy-effect/no-redundant-error-factory": "warn",
+    "ziggy-effect/no-try-catch-or-throw": "warn",
+    "ziggy-effect/no-unknown-error-message": "warn",
+    "ziggy-effect/no-unknown-shape-probing": "warn",
+    "ziggy-effect/prefer-effect-predicate": "warn",
+    "ziggy-effect/prefer-schema-inferred-types": "warn",
+    "ziggy-effect/prefer-value-inferred-extension-types": "warn",
+    "ziggy-effect/prefer-yield-tagged-error": "warn",
+    "ziggy-effect/no-ts-nocheck": "error",
+    "ziggy-effect/no-unsupported-effect-api": "error",
     "ziggy/no-unsafe-typescript-syntax": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["packages/protocol/src/**/*.ts"],
+      "rules": {
+        "ziggy-effect/no-effect-escape-hatch": "off",
+        "ziggy-effect/no-effect-execution-boundary": "off",
+        "ziggy-effect/no-error-constructor": "off",
+        "ziggy-effect/no-inline-schema-compile": "off",
+        "ziggy-effect/no-instanceof-error": "off",
+        "ziggy-effect/no-instanceof-tagged-error": "off",
+        "ziggy-effect/no-json-parse": "off",
+        "ziggy-effect/no-manual-tag-check": "off",
+        "ziggy-effect/no-match-orelse": "off",
+        "ziggy-effect/no-native-promise-ownership": "off",
+        "ziggy-effect/no-promise-catch": "off",
+        "ziggy-effect/no-promise-client-surface": "off",
+        "ziggy-effect/no-raw-fetch": "off",
+        "ziggy-effect/no-redundant-error-factory": "off",
+        "ziggy-effect/no-try-catch-or-throw": "off",
+        "ziggy-effect/no-unknown-error-message": "off",
+        "ziggy-effect/no-unknown-shape-probing": "off",
+        "ziggy-effect/prefer-effect-predicate": "off",
+        "ziggy-effect/prefer-schema-inferred-types": "off",
+        "ziggy-effect/prefer-value-inferred-extension-types": "off",
+        "ziggy-effect/prefer-yield-tagged-error": "off"
+      }
+    },
+    {
+      "files": ["tests/**/*.ts"],
+      "rules": {
+        "ziggy-effect/no-effect-execution-boundary": "error"
+      }
+    },
+    {
+      "files": ["tests/testkit/effect.ts"],
+      "rules": {
+        "ziggy-effect/no-effect-execution-boundary": "off"
+      }
+    }
+  ]
 }

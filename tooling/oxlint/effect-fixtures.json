@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["./effect-plugin.mjs"],
+  "rules": {
+    "ziggy-effect/no-conditional-tests": "error",
+    "ziggy-effect/no-effect-escape-hatch": "error",
+    "ziggy-effect/no-effect-execution-boundary": "error",
+    "ziggy-effect/no-error-constructor": "error",
+    "ziggy-effect/no-inline-schema-compile": "error",
+    "ziggy-effect/no-instanceof-error": "error",
+    "ziggy-effect/no-instanceof-tagged-error": "error",
+    "ziggy-effect/no-json-parse": "error",
+    "ziggy-effect/no-manual-tag-check": "error",
+    "ziggy-effect/no-match-orelse": "error",
+    "ziggy-effect/no-native-promise-ownership": "error",
+    "ziggy-effect/no-promise-catch": "error",
+    "ziggy-effect/no-promise-client-surface": "error",
+    "ziggy-effect/no-raw-fetch": "error",
+    "ziggy-effect/no-redundant-error-factory": "error",
+    "ziggy-effect/no-try-catch-or-throw": "error",
+    "ziggy-effect/no-ts-nocheck": "error",
+    "ziggy-effect/no-unknown-error-message": "error",
+    "ziggy-effect/no-unknown-shape-probing": "error",
+    "ziggy-effect/no-unsupported-effect-api": "error",
+    "ziggy-effect/prefer-effect-predicate": "error",
+    "ziggy-effect/prefer-schema-inferred-types": "error",
+    "ziggy-effect/prefer-value-inferred-extension-types": "error",
+    "ziggy-effect/prefer-yield-tagged-error": "error"
+  }
+}
