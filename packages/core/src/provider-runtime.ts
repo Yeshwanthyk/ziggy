@@ -14,6 +14,8 @@ import {
   createProfileCredentialStore,
   type CredentialStoreError,
 } from "./credentials/filesystem-store.ts";
+import { loadInstalledExtensionSkills } from "./extensions/skill-loader.ts";
+import { ZIGGY_VERSION } from "./product-version.ts";
 import type { FilesystemWorld } from "./world/filesystem.ts";
 import { readProfileSoul } from "./provider-node-adapter.ts";
 
@@ -137,7 +139,7 @@ export function createProviderRuntimeComposition(
             .readSessionSnapshot(sessionId)
             .pipe(Effect.mapError(providerFailure("Failed to read Session snapshot")));
           const baseSystemPrompt =
-            snapshot === undefined ? yield* readSoul(options.profilePath) : "";
+            snapshot === undefined ? yield* readProfileInstructions(options.profilePath) : "";
           return yield* createFilesystemSessionRuntime({
             sessionId,
             world,
@@ -207,10 +209,19 @@ function statusFor(
   });
 }
 
-function readSoul(profilePath: string): Effect.Effect<string, ProviderRuntimeError> {
-  return Effect.tryPromise({
-    try: () => readProfileSoul(profilePath),
-    catch: providerFailure("Failed to read Profile SOUL.md"),
+function readProfileInstructions(profilePath: string): Effect.Effect<string, ProviderRuntimeError> {
+  return Effect.gen(function* () {
+    const soul = yield* Effect.tryPromise({
+      try: () => readProfileSoul(profilePath),
+      catch: providerFailure("Failed to read Profile SOUL.md"),
+    });
+    const skills = yield* loadInstalledExtensionSkills(profilePath, ZIGGY_VERSION).pipe(
+      Effect.mapError(providerFailure("Failed to load installed Extension Skills")),
+    );
+    const skillPrompt = skills
+      .map((skill) => `<skill id="${skill.id}">\n${skill.content}\n</skill>`)
+      .join("\n\n");
+    return skillPrompt.length === 0 ? soul : `${soul}\n\n<skills>\n${skillPrompt}\n</skills>`;
   });
 }
 

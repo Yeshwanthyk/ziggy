@@ -17,6 +17,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   createAttachServer,
+  computeTreeDigest,
   createFilesystemWorld,
   createProfileCredentialStore,
   createProviderRuntimeComposition,
@@ -49,9 +50,64 @@ test("production Provider composition binds filesystem credentials, Models, loop
     mkdir(join(profilePath, "credentials"), { mode: 0o700 }),
     mkdir(join(profilePath, "sessions")),
     mkdir(join(profilePath, "memory")),
+    mkdir(join(profilePath, "extensions", "fixture", "skills", "fixture"), {
+      recursive: true,
+    }),
+    mkdir(join(profilePath, ".runtime", "extensions", "fixture"), { recursive: true }),
   ]);
   await chmod(join(profilePath, "credentials"), 0o700);
   await writeFile(join(profilePath, "SOUL.md"), "fixture soul\n");
+  const manifestContents = JSON.stringify({
+    schemaVersion: 1,
+    id: "fixture",
+    version: "1.0.0",
+    name: "Fixture",
+    description: "Proves installed Skills reach the Provider.",
+    ziggy: { requires: ">=0.0.0" },
+    skills: [{ id: "fixture", path: "skills/fixture" }],
+    adapters: [],
+    requires: { env: [], commands: [], os: [] },
+    permissions: { network: false, filesystem: "none", secrets: [] },
+    distribution: { source: "fixture", license: "MIT" },
+  });
+  const skillContents =
+    "---\nname: fixture\ndescription: Fixture Skill\n---\n\nUse the fixture capability.\n";
+  await writeFile(join(profilePath, "extensions", "fixture", "extension.json"), manifestContents);
+  await writeFile(
+    join(profilePath, "extensions", "fixture", "skills", "fixture", "SKILL.md"),
+    skillContents,
+  );
+  const sealedFiles = [
+    {
+      path: "extension.json",
+      kind: "manifest",
+      bytes: Buffer.byteLength(manifestContents),
+      sha256: fixtureDigest(manifestContents),
+    },
+    {
+      path: "skills/fixture/SKILL.md",
+      kind: "skill",
+      bytes: Buffer.byteLength(skillContents),
+      sha256: fixtureDigest(skillContents),
+    },
+  ];
+  await writeFile(
+    join(profilePath, ".runtime", "extensions", "fixture", "state.json"),
+    JSON.stringify({ schemaVersion: 1, extensionId: "fixture", enabled: true }),
+  );
+  await writeFile(
+    join(profilePath, ".runtime", "extensions", "fixture", "provenance.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      extensionId: "fixture",
+      extensionVersion: "1.0.0",
+      source: { kind: "fixture", locator: "daemon-auth" },
+      trustTier: "community",
+      verification: { method: "none", keyId: "", signature: "" },
+      files: sealedFiles,
+      treeDigest: computeTreeDigest(sealedFiles),
+    }),
+  );
   const runtimeScope = await runEffect(Scope.make());
   const credentials = await runEffect(
     createProfileCredentialStore(profilePath).pipe(
@@ -124,7 +180,14 @@ test("production Provider composition binds filesystem credentials, Models, loop
     type: "api_key",
     source: "stored",
   });
-  faux.setResponses([fauxAssistantMessage("fixture response")]);
+  faux.setResponses([
+    (context) => {
+      expect(context.systemPrompt).toContain("fixture soul");
+      expect(context.systemPrompt).toContain('<skill id="fixture">');
+      expect(context.systemPrompt).toContain("Use the fixture capability.");
+      return fauxAssistantMessage("fixture response");
+    },
+  ]);
   const runtime = await runEffect(
     composition
       .createRuntime("composition-session", createFilesystemWorld({ profilePath }))
@@ -139,6 +202,49 @@ test("production Provider composition binds filesystem credentials, Models, loop
         await readFile(join(profilePath, "sessions", "composition-session.ndjson"), "utf8")
       ).includes(canary),
     ).toBeFalse();
+    const incompatibleManifest = manifestContents.replace(
+      '"requires":">=0.0.0"',
+      '"requires":">9.0.0"',
+    );
+    const incompatibleFiles = [
+      {
+        path: "extension.json",
+        kind: "manifest",
+        bytes: Buffer.byteLength(incompatibleManifest),
+        sha256: fixtureDigest(incompatibleManifest),
+      },
+      {
+        path: "skills/fixture/SKILL.md",
+        kind: "skill",
+        bytes: Buffer.byteLength(skillContents),
+        sha256: fixtureDigest(skillContents),
+      },
+    ];
+    await writeFile(
+      join(profilePath, "extensions", "fixture", "extension.json"),
+      incompatibleManifest,
+    );
+    await writeFile(
+      join(profilePath, ".runtime", "extensions", "fixture", "provenance.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        extensionId: "fixture",
+        extensionVersion: "1.0.0",
+        source: { kind: "fixture", locator: "daemon-auth" },
+        trustTier: "community",
+        verification: { method: "none", keyId: "", signature: "" },
+        files: incompatibleFiles,
+        treeDigest: computeTreeDigest(incompatibleFiles),
+      }),
+    );
+    await expect(
+      runEffect(
+        composition
+          .createRuntime("incompatible-session", createFilesystemWorld({ profilePath }))
+          .pipe(Effect.provideService(Scope.Scope, runtimeScope)),
+      ),
+    ).rejects.toThrow("Failed to load installed Extension Skills");
+    expect(faux.state.callCount).toBe(1);
     config = { ...config, defaultModel: "missing-model" };
     await expect(
       runEffect(
