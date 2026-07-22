@@ -392,6 +392,14 @@ test("Extension setup permits confined package executables and declares external
     requires: { ...validManifest.requires, commands: ["bun"] },
   };
   expect(await runEffect(decodeExtensionManifest(mixedExecutables))).toEqual(mixedExecutables);
+  expect(
+    await runEffect(
+      decodeExtensionManifest({
+        ...packageExecutables,
+        requires: { ...packageExecutables.requires, commands: ["setup/verify"] },
+      }),
+    ),
+  ).toMatchObject({ requires: { commands: ["setup/verify"] } });
 
   await expectManifestRejected({
     ...mixedExecutables,
@@ -401,15 +409,53 @@ test("Extension setup permits confined package executables and declares external
     "/setup/verify",
     "../setup/verify",
     "setup/../verify",
+    "setup//verify",
     "./setup/verify",
     "setup\\verify",
     "C:/setup/verify",
     "C:setup-verify",
+    "file:/run",
+    "run\0thing",
   ]) {
     await expectManifestRejected({
       ...packageExecutables,
       setup: { steps: [{ argv: [executable] }] },
       requires: { ...packageExecutables.requires, commands: [executable] },
     });
+    await expectManifestRejected({
+      ...packageExecutables,
+      setup: { steps: [], doctor: { argv: [executable] } },
+      requires: { ...packageExecutables.requires, commands: [executable] },
+    });
   }
+});
+
+test("Extension commands and every argv element reject unsafe lexical forms", async () => {
+  for (const command of [
+    "../evil",
+    "file:/run",
+    "/absolute/run",
+    "C:/drive/run",
+    "run\\thing",
+    "run\0thing",
+    ".",
+    "..",
+    "setup//run",
+    "setup/./run",
+    "setup/../run",
+  ]) {
+    await expectManifestRejected({
+      ...validManifest,
+      requires: { ...validManifest.requires, commands: [command] },
+    });
+  }
+
+  await expectManifestRejected({
+    ...validManifest,
+    setup: { steps: [{ argv: ["setup/verify", "arg\0tail"] }] },
+  });
+  await expectManifestRejected({
+    ...validManifest,
+    setup: { steps: [], doctor: { argv: ["setup/doctor", "arg\0tail"] } },
+  });
 });

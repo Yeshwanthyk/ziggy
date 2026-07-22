@@ -5,12 +5,20 @@ import { isStrictJson } from "./strict-json.ts";
 const IdentifierSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const NonEmptyStringSchema = Schema.String.check(Schema.isNonEmpty());
 const utf8Encoder = new TextEncoder();
+const ProcessArgumentSchema = NonEmptyStringSchema.check(
+  Schema.makeFilter(hasNoNul, { expected: "a non-empty process argument without NUL bytes" }),
+);
+const ExecutableReferenceSchema = NonEmptyStringSchema.check(
+  Schema.makeFilter(isExecutableReference, {
+    expected: "a bare executable name or confined package-relative executable",
+  }),
+);
 const RelativePathSchema = NonEmptyStringSchema.check(
   Schema.makeFilter(isConfinedRelativePath, {
     expected: "a normalized relative path confined to the Extension root",
   }),
 );
-const ArgvSchema = Schema.Array(NonEmptyStringSchema).check(Schema.isNonEmpty());
+const ArgvSchema = Schema.Array(ProcessArgumentSchema).check(Schema.isNonEmpty());
 
 const ExtensionResourceSchema = Schema.Struct({
   id: IdentifierSchema,
@@ -58,7 +66,7 @@ const ExtensionManifestModel = Schema.Struct({
   ),
   requires: Schema.Struct({
     env: Schema.Array(NonEmptyStringSchema),
-    commands: Schema.Array(NonEmptyStringSchema),
+    commands: Schema.Array(ExecutableReferenceSchema),
     os: Schema.Array(Schema.Literals(["darwin", "linux", "win32"])),
   }),
   permissions: Schema.Struct({
@@ -128,18 +136,38 @@ function setupCommandsAreDeclared(manifest: typeof ExtensionManifestModel.Type):
   return argvEntries.every((argv) => {
     const executable = argv[0];
     if (executable === undefined) return false;
-    if (executable.includes("/")) return isConfinedRelativePath(executable);
+    if (isConfinedPackageExecutable(executable)) return true;
     return isBareExecutableName(executable) && manifest.requires.commands.includes(executable);
   });
 }
 
+function isExecutableReference(executable: string): boolean {
+  return isBareExecutableName(executable) || isConfinedPackageExecutable(executable);
+}
+
 function isBareExecutableName(executable: string): boolean {
   return (
+    executable.length > 0 &&
     executable !== "." &&
     executable !== ".." &&
+    hasNoNul(executable) &&
+    !executable.includes("/") &&
     !executable.includes("\\") &&
-    !/^[A-Za-z]:/.test(executable)
+    !executable.includes(":")
   );
+}
+
+function isConfinedPackageExecutable(executable: string): boolean {
+  return (
+    executable.includes("/") &&
+    hasNoNul(executable) &&
+    !executable.includes(":") &&
+    isConfinedRelativePath(executable)
+  );
+}
+
+function hasNoNul(value: string): boolean {
+  return !value.includes("\0");
 }
 
 function resourcesHaveValidIdentities(
