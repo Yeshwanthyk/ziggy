@@ -3,11 +3,22 @@
 /* oxlint-disable ziggy-effect/no-error-constructor -- boundary: Node rejects through native Error values */
 /* oxlint-disable ziggy-effect/no-unknown-shape-probing -- boundary: dynamic import namespaces are normalized before domain validation */
 import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import type { JsonObject } from "@ziggy/protocol";
 import type { ExtensionFileSnapshot } from "./skill-loader-node-adapter.ts";
 import type { ExtensionToolContext, ExtensionToolDefinition } from "./tool.ts";
+
+interface ExtensionToolModuleImport {
+  readonly kind: "import-statement" | "dynamic-import" | "require-call";
+  readonly path: string;
+}
+
+interface ExtensionToolModuleScan {
+  readonly classification: "module" | "data";
+  readonly imports: ReadonlyArray<ExtensionToolModuleImport>;
+}
 
 export interface ExtensionToolExecutionSnapshot {
   readonly rootPath: string;
@@ -66,4 +77,41 @@ export async function invokeExtensionTool(
   context: ExtensionToolContext,
 ): Promise<unknown> {
   return await execute(input, context);
+}
+
+export function scanExtensionToolModuleImports(
+  path: string,
+  bytes: Uint8Array,
+): ExtensionToolModuleScan {
+  const loader = moduleLoader(path);
+  if (loader === undefined) return { classification: "data", imports: [] };
+  try {
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const imports = new Bun.Transpiler({ loader }).scanImports(source);
+    return {
+      classification: "module",
+      imports: imports.flatMap((entry) =>
+        entry.kind === "import-statement" ||
+        entry.kind === "dynamic-import" ||
+        entry.kind === "require-call"
+          ? [{ kind: entry.kind, path: entry.path }]
+          : [],
+      ),
+    };
+  } catch (cause) {
+    if (extname(path).length === 0) return { classification: "data", imports: [] };
+    throw cause;
+  }
+}
+
+export function isExtensionToolBuiltinModule(specifier: string): boolean {
+  return isBuiltin(specifier) || specifier === "bun" || specifier.startsWith("bun:");
+}
+
+function moduleLoader(path: string): "js" | "jsx" | "ts" | "tsx" | undefined {
+  if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "js";
+  if (path.endsWith(".jsx")) return "jsx";
+  if (path.endsWith(".ts") || path.endsWith(".mts") || path.endsWith(".cts")) return "ts";
+  if (path.endsWith(".tsx")) return "tsx";
+  return extname(path).length === 0 ? "js" : undefined;
 }

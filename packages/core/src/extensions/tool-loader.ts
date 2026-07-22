@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import type { JsonObject, JsonValue } from "@ziggy/protocol";
 import { Effect, Schema, Scope } from "effect";
 import type { SessionTool } from "../agent/runtime.ts";
@@ -21,6 +21,7 @@ import {
 import { decodeExtensionManifestJson, type ExtensionManifest } from "./manifest.ts";
 import { decodeExtensionProvenanceJson, type ExtensionProvenance } from "./provenance.ts";
 import {
+  decodeUriComponentMaybe,
   decodeUtf8Maybe,
   readExtensionAuthorityFiles,
   readImmutableExtensionTree,
@@ -35,8 +36,10 @@ import {
   createExtensionToolExecutionSnapshot,
   importExtensionToolModule,
   inspectImportedExtensionToolModule,
+  isExtensionToolBuiltinModule,
   invokeExtensionTool,
   removeExtensionToolExecutionSnapshot,
+  scanExtensionToolModuleImports,
   type ExtensionToolExecutionSnapshot,
 } from "./tool-loader-node-adapter.ts";
 import type { ExtensionToolContext, ExtensionToolDefinition } from "./tool.ts";
@@ -176,6 +179,7 @@ function loadExtensionTools(
     }
     const packageValidation = validateExtensionPackageContent(manifest, tree);
     if (!packageValidation.valid) return yield* fail(packageValidation.message);
+    yield* validateToolDependencyConfinement(manifest, tree);
     const canonicalProfilePath = yield* Effect.tryPromise({
       try: () => canonicalizeExtensionToolProfilePath(profilePath),
       catch: toolLoadFailure(`Failed to canonicalize Profile for Extension ${manifest.id}`),
@@ -222,6 +226,86 @@ function loadExtensionTools(
     }
     return imported;
   });
+}
+
+function validateToolDependencyConfinement(
+  manifest: ExtensionManifest,
+  tree: ExtensionTreeSnapshot,
+): Effect.Effect<void, ExtensionToolLoadError> {
+  return Effect.forEach(manifest.tools ?? [], (tool) => {
+    const prefix = `${tool.path}/`;
+    const files = tree.files.filter((file) => file.path.startsWith(prefix));
+    return Effect.forEach(files, (file) =>
+      Effect.try({
+        try: () => scanExtensionToolModuleImports(file.path, file.bytes),
+        catch: toolLoadFailure(`Failed to scan sealed Tool module ${manifest.id}/${file.path}`),
+      }).pipe(
+        Effect.flatMap(({ imports }) => {
+          const escaped = imports.find((entry) =>
+            relativeModuleTargetEscapes(tool.path, file.path, entry.path),
+          );
+          if (escaped !== undefined) {
+            return fail(
+              `Extension Tool ${manifest.id}/${tool.id} module ${file.path} has escaping ${escaped.kind}: ${escaped.path}`,
+            );
+          }
+          const unsealedPackage = imports.find(
+            (entry) =>
+              isBareModuleSpecifier(entry.path) &&
+              !isExtensionToolBuiltinModule(entry.path) &&
+              !sealedToolPackageExists(tool.path, entry.path, tree),
+          );
+          return unsealedPackage === undefined
+            ? Effect.void
+            : fail(
+                `Extension Tool ${manifest.id}/${tool.id} module ${file.path} imports unsealed package: ${unsealedPackage.path}`,
+              );
+        }),
+      ),
+    ).pipe(Effect.asVoid);
+  }).pipe(Effect.asVoid);
+}
+
+function isBareModuleSpecifier(specifier: string): boolean {
+  return !specifier.startsWith(".") && !isAbsoluteModuleSpecifier(specifier);
+}
+
+function isAbsoluteModuleSpecifier(specifier: string): boolean {
+  return specifier.startsWith("/") || /^[A-Za-z][A-Za-z\d+.-]*:/.test(specifier);
+}
+
+function sealedToolPackageExists(
+  toolRoot: string,
+  specifier: string,
+  tree: ExtensionTreeSnapshot,
+): boolean {
+  const packageName = barePackageName(specifier);
+  if (packageName === undefined) return false;
+  const packagePrefix = `${toolRoot}/node_modules/${packageName}/`;
+  return tree.files.some((file) => file.path.startsWith(packagePrefix));
+}
+
+function barePackageName(specifier: string): string | undefined {
+  const components = specifier.split("/");
+  const first = components[0];
+  if (first === undefined || first.length === 0 || first.startsWith("#")) return undefined;
+  if (!first.startsWith("@")) return first;
+  const second = components[1];
+  return second === undefined || second.length === 0 ? undefined : `${first}/${second}`;
+}
+
+function relativeModuleTargetEscapes(
+  toolRoot: string,
+  sourcePath: string,
+  specifier: string,
+): boolean {
+  const pathOnly = specifier.split(/[?#]/, 1)[0] ?? specifier;
+  const decoded = decodeUriComponentMaybe(pathOnly);
+  if (decoded === undefined) return pathOnly.startsWith(".");
+  if (!decoded.startsWith(".")) return false;
+  if (decoded.includes("\\")) return true;
+  const resolved = posix.normalize(posix.join(posix.dirname(sourcePath), decoded));
+  return resolved !== toolRoot && !resolved.startsWith(`${toolRoot}/`);
 }
 
 function prepareToolSnapshot(

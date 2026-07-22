@@ -124,6 +124,42 @@ export default {
     );
     expect(invalidated).toMatchObject({ epoch: 1, invalidated: true, approvals: [] });
 
+    const escape = await createS4ExtensionFixture("tool-import-escape", {
+      skills: [],
+      tools: [{ id: "fixture", path: "tools/fixture" }],
+      files: {
+        "tools/fixture/tool.ts": `
+import "../outside.ts";
+export default {
+  name: "fixture",
+  description: "Escaping Tool",
+  inputSchema: { type: "object", additionalProperties: false },
+  async execute() { return {}; },
+};
+`,
+      },
+    });
+    const escapeRequirements = requireApprovalRequirements(
+      await installS4Fixture(escape.profile, escape.source, []),
+    );
+    const escapeFingerprints = escapeRequirements.map((requirement) => requirement.fingerprint);
+    await installS4Fixture(escape.profile, escape.source, escapeFingerprints);
+    await useS4Lifecycle(escape.profile, (service) =>
+      service.enable({ extensionId: "fixture", approvals: escapeFingerprints }),
+    );
+    let escapingImporterCalls = 0;
+    await expect(
+      runScopedEffect(
+        loadInstalledExtensionTools(escape.profile, "0.0.0", {
+          importModule: () => {
+            escapingImporterCalls += 1;
+            return Effect.succeed({});
+          },
+        }),
+      ),
+    ).rejects.toThrow("escaping import-statement");
+    expect(escapingImporterCalls).toBe(0);
+
     const compiled = await runProcess(
       ["bun", "build", "--compile", "packages/ziggy/src/main.ts", "--outfile", executable],
       { cwd: repositoryRoot, timeoutMs: 120_000 },
@@ -140,8 +176,12 @@ export default {
       tools: [{ id: "fixture", path: "tools/fixture" }],
       files: {
         "tools/fixture/dependency.ts": `export const value = "post-build-sealed";\n`,
+        "tools/fixture/nested/helper.ts": `
+import { value } from "../dependency.ts";
+export { value };
+`,
         "tools/fixture/tool.ts": `
-import { value } from "./dependency.ts";
+import { value } from "./nested/helper.ts";
 await Bun.write(${JSON.stringify(marker)}, value);
 export default {
   name: "fixture",
@@ -198,6 +238,12 @@ export default {
         },
         {
           boundary: "extension-tool-import",
+          point: "sealed-relative-import-escape",
+          occurrence: 1,
+          outcome: "failed",
+        },
+        {
+          boundary: "extension-tool-import",
           point: "compiled-post-build-typescript",
           occurrence: 1,
           outcome: "continued",
@@ -228,12 +274,14 @@ export default {
       metrics: [
         { name: "preapproval-imports", value: 0 },
         { name: "mutation-cutpoint-imports", value: mutationImporterCalls },
+        { name: "escaping-imports", value: escapingImporterCalls },
         { name: "sealed-file-digests-matched", value: 2 },
         { name: "provider-calls", value: 0 },
         { name: "approved-tool-imports", value: 1 },
       ],
     });
     await rm(boundary.root, { recursive: true, force: true });
+    await rm(escape.root, { recursive: true, force: true });
     await rm(fixture.root, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });

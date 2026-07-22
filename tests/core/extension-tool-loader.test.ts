@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { createFauxCore, createModels, createProvider } from "@earendil-works/pi-ai";
 import type { JsonValue } from "../../packages/protocol/src/index.ts";
 import { Effect } from "effect";
@@ -230,14 +232,20 @@ test("Tool loader rejects duplicate names, including the builtin memory Tool", a
 test("Tool snapshot preserves relative dependencies and closes both mutation races", async () => {
   const fixture = await createToolFixture("snapshot", {
     "tools/fixture/dependency.ts": `export const value = "sealed";\n`,
+    "tools/fixture/nested/helper.ts": `
+import { basename } from "node:path";
+import { value } from "../dependency.ts";
+export const nestedValue = basename("/sealed") + ":" + value;
+`,
     "tools/fixture/tool.ts": `
+import { nestedValue } from "./nested/helper.ts";
 export default {
   name: "fixture",
   description: "Fixture Tool",
   inputSchema: { type: "object", additionalProperties: false },
   async execute() {
-    const dependency = await import("./dependency.ts");
-    return { value: dependency.value };
+    const dependency = await import("./nested/../dependency.ts");
+    return { value: dependency.value, nestedValue };
   },
 };
 `,
@@ -249,7 +257,7 @@ export default {
       return yield* onlyTool(tools).execute(toolInput());
     }),
   );
-  expect(lazyOutput).toEqual({ value: "sealed" });
+  expect(lazyOutput).toEqual({ value: "sealed", nestedValue: "sealed:sealed" });
   const liveRoot = join(fixture.profile, "extensions", "fixture", "tools", "fixture");
   let importerCalls = 0;
   await expect(
@@ -304,6 +312,138 @@ export default {
     ),
   ).rejects.toThrow("loaded Tools were discarded");
   expect(await readFile(sealedMarker, "utf8")).toBe("sealed");
+});
+
+test("Tool loader rejects sealed module imports that escape the declared Tool root", async () => {
+  const outsidePath = join(tmpdir(), `ziggy-unsealed-${randomUUID()}.ts`);
+  const markerPath = `${outsidePath}.marker`;
+  const fixture = await createToolFixture("escape-independent-regression", {
+    "tools/fixture/tool.ts": `
+import { value } from "../${basename(outsidePath)}";
+await Bun.write(${JSON.stringify(markerPath)}, value);
+${VALID_TOOL}
+`,
+  });
+  try {
+    await writeFile(outsidePath, `export const value = "before-approval";\n`);
+    await installAndEnable(fixture.profile, fixture.source);
+    await writeFile(outsidePath, `export const value = "mutated-after-approval";\n`);
+    await expect(
+      runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+    ).rejects.toThrow("escaping import-statement");
+    expect(await Bun.file(markerPath).exists()).toBeFalse();
+  } finally {
+    await Promise.all([
+      rm(outsidePath, { force: true }),
+      rm(markerPath, { force: true }),
+      rm(fixture.root, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("Tool loader rejects every literal module form and near-match directory escape", async () => {
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    [`import "../outside.ts";`, "import-statement"],
+    [`export { value } from "../outside.ts";`, "import-statement"],
+    [`void import("../outside.ts");`, "dynamic-import"],
+    [`require("../outside.ts");`, "require-call"],
+    [`import "./nested/../../outside.ts";`, "import-statement"],
+    [`import ".%2e/outside.ts";`, "import-statement"],
+  ];
+  for (const [statement, kind] of cases) {
+    const fixture = await createToolFixture(`escape-${kind}-${randomUUID()}`, {
+      "tools/fixture/tool.ts": `${statement}\n${VALID_TOOL}`,
+    });
+    try {
+      await installAndEnable(fixture.profile, fixture.source);
+      await expect(
+        runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+      ).rejects.toThrow(`escaping ${kind}`);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("Tool loader scans executable extensionless modules without treating data as code", async () => {
+  const escaping = await createToolFixture("extensionless-escape", {
+    "tools/fixture/dep": `import "../outside.ts";\nexport const value = "bad";\n`,
+    "tools/fixture/tool.ts": `import { value } from "./dep";\nvoid value;\n${VALID_TOOL}`,
+  });
+  try {
+    await installAndEnable(escaping.profile, escaping.source);
+    await expect(
+      runScopedEffect(loadInstalledExtensionTools(escaping.profile, "0.0.0")),
+    ).rejects.toThrow("module tools/fixture/dep has escaping import-statement");
+  } finally {
+    await rm(escaping.root, { recursive: true, force: true });
+  }
+
+  const data = await createToolFixture("extensionless-data", {
+    "tools/fixture/model": "not javascript @@@@",
+    "tools/fixture/tool.ts": VALID_TOOL,
+  });
+  try {
+    await installAndEnable(data.profile, data.source);
+    expect(await executeOnlyTool(data.profile)).toMatchObject({ input: {} });
+  } finally {
+    await rm(data.root, { recursive: true, force: true });
+  }
+});
+
+test("Tool loader won't resolve bare imports from an unsealed ancestor node_modules", async () => {
+  const packageName = `ziggy-unsealed-${randomUUID()}`;
+  const outsidePackage = join(tmpdir(), "node_modules", packageName);
+  const markerPath = join(tmpdir(), `${packageName}.marker`);
+  const fixture = await createToolFixture("bare-package-escape", {
+    "tools/fixture/tool.ts": `
+import { value } from ${JSON.stringify(packageName)};
+await Bun.write(${JSON.stringify(markerPath)}, value);
+${VALID_TOOL}
+`,
+  });
+  try {
+    await mkdir(outsidePackage, { recursive: true });
+    await writeFile(
+      join(outsidePackage, "package.json"),
+      `${JSON.stringify({ name: packageName, module: "index.ts" })}\n`,
+    );
+    await writeFile(join(outsidePackage, "index.ts"), `export const value = "unsealed";\n`);
+    await installAndEnable(fixture.profile, fixture.source);
+    await expect(
+      runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+    ).rejects.toThrow(`imports unsealed package: ${packageName}`);
+    expect(await Bun.file(markerPath).exists()).toBeFalse();
+  } finally {
+    await Promise.all([
+      rm(outsidePackage, { recursive: true, force: true }),
+      rm(markerPath, { force: true }),
+      rm(fixture.root, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("Tool loader permits a bare package sealed inside the declared Tool subtree", async () => {
+  const fixture = await createToolFixture("sealed-bare-package", {
+    "tools/fixture/node_modules/sealed-fixture/package.json": `${JSON.stringify({ name: "sealed-fixture", module: "index.ts" })}\n`,
+    "tools/fixture/node_modules/sealed-fixture/index.ts": `export { value } from "./subpath.ts";\n`,
+    "tools/fixture/node_modules/sealed-fixture/subpath.ts": `export const value = "sealed-package";\n`,
+    "tools/fixture/tool.ts": `
+import { value } from "sealed-fixture";
+export default {
+  name: "fixture",
+  description: "Fixture Tool",
+  inputSchema: { type: "object", additionalProperties: false },
+  async execute() { return { value }; },
+};
+`,
+  });
+  try {
+    await installAndEnable(fixture.profile, fixture.source);
+    expect(await executeOnlyTool(fixture.profile)).toEqual({ value: "sealed-package" });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
 });
 
 test("production Provider composition freezes loaded Extension Tools into the Session snapshot", async () => {
