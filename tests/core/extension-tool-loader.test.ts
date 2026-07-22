@@ -425,24 +425,118 @@ ${VALID_TOOL}
 
 test("Tool loader permits a bare package sealed inside the declared Tool subtree", async () => {
   const fixture = await createToolFixture("sealed-bare-package", {
-    "tools/fixture/node_modules/sealed-fixture/package.json": `${JSON.stringify({ name: "sealed-fixture", module: "index.ts" })}\n`,
-    "tools/fixture/node_modules/sealed-fixture/index.ts": `export { value } from "./subpath.ts";\n`,
+    "tools/fixture/node_modules/sealed-fixture/package.json": `${JSON.stringify({
+      name: "sealed-fixture",
+      module: "./index.ts",
+      main: "./index.ts",
+      exports: {
+        ".": { bun: ["./index.ts"], default: "./index.ts" },
+        "./subpath": "./subpath.ts",
+      },
+      imports: {
+        "#internal": { bun: ["./internal.ts"], default: "./internal.ts" },
+      },
+    })}\n`,
+    "tools/fixture/node_modules/sealed-fixture/index.ts": `export const rootValue = "sealed-root";\n`,
+    "tools/fixture/node_modules/sealed-fixture/internal.ts": `export const internal = "sealed-internal";\n`,
     "tools/fixture/node_modules/sealed-fixture/subpath.ts": `export const value = "sealed-package";\n`,
     "tools/fixture/tool.ts": `
-import { value } from "sealed-fixture";
+import { rootValue } from "sealed-fixture";
+import { value } from "sealed-fixture/subpath";
 export default {
   name: "fixture",
   description: "Fixture Tool",
   inputSchema: { type: "object", additionalProperties: false },
-  async execute() { return { value }; },
+  async execute() { return { rootValue, value }; },
 };
 `,
   });
   try {
     await installAndEnable(fixture.profile, fixture.source);
-    expect(await executeOnlyTool(fixture.profile)).toEqual({ value: "sealed-package" });
+    expect(await executeOnlyTool(fixture.profile)).toEqual({
+      rootValue: "sealed-root",
+      value: "sealed-package",
+    });
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Tool loader rejects package module and main traversal before outside evaluation", async () => {
+  for (const field of ["module", "main"]) {
+    const packageName = `ziggy-package-${field}-${randomUUID()}`;
+    const outsidePath = join(tmpdir(), `${packageName}.ts`);
+    const markerPath = `${outsidePath}.marker`;
+    const fixture = await createToolFixture(`package-${field}-escape`, {
+      [`tools/fixture/node_modules/${packageName}/package.json`]: `${JSON.stringify({
+        name: packageName,
+        [field]: `../../../${basename(outsidePath)}`,
+      })}\n`,
+      "tools/fixture/tool.ts": `import ${JSON.stringify(packageName)};\n${VALID_TOOL}`,
+    });
+    try {
+      await writeFile(outsidePath, `await Bun.write(${JSON.stringify(markerPath)}, "escaped");\n`);
+      await installAndEnable(fixture.profile, fixture.source);
+      await expect(
+        runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+      ).rejects.toThrow(`has escaping ${field} target`);
+      expect(await Bun.file(markerPath).exists()).toBeFalse();
+    } finally {
+      await Promise.all([
+        rm(outsidePath, { force: true }),
+        rm(markerPath, { force: true }),
+        rm(fixture.root, { recursive: true, force: true }),
+      ]);
+    }
+  }
+});
+
+test("Tool loader rejects traversal embedded in a sealed package subpath", async () => {
+  const packageName = `ziggy-subpath-${randomUUID()}`;
+  const fixture = await createToolFixture("package-subpath-escape", {
+    [`tools/fixture/node_modules/${packageName}/index.ts`]: `export const value = "sealed";\n`,
+    "tools/fixture/tool.ts": `import ${JSON.stringify(`${packageName}/../../../outside.ts`)};\n${VALID_TOOL}`,
+  });
+  try {
+    await installAndEnable(fixture.profile, fixture.source);
+    await expect(
+      runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+    ).rejects.toThrow(`imports unsealed package: ${packageName}/../../../outside.ts`);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Tool loader rejects nested exports/imports traversal and invalid package metadata", async () => {
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    [
+      "exports",
+      JSON.stringify({ exports: { ".": { bun: ["./index.ts", "../../../outside.ts"] } } }),
+      "escaping exports...bun[1] target",
+    ],
+    [
+      "imports",
+      JSON.stringify({ imports: { "#internal": { bun: ["./inside.ts", "../../../outside.ts"] } } }),
+      "escaping imports.#internal.bun[1] target",
+    ],
+    ["duplicate", '{"module":"./index.ts","module":"../../../outside.ts"}', "isn't strict JSON"],
+    ["unsupported", JSON.stringify({ exports: 42 }), "exports has an unsupported target"],
+  ];
+  for (const [name, packageJson, message] of cases) {
+    const packageName = `ziggy-metadata-${name}-${randomUUID()}`;
+    const fixture = await createToolFixture(`package-${name}`, {
+      [`tools/fixture/node_modules/${packageName}/package.json`]: `${packageJson}\n`,
+      [`tools/fixture/node_modules/${packageName}/index.ts`]: `export const value = "sealed";\n`,
+      "tools/fixture/tool.ts": VALID_TOOL,
+    });
+    try {
+      await installAndEnable(fixture.profile, fixture.source);
+      await expect(
+        runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+      ).rejects.toThrow(message);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
   }
 });
 

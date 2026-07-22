@@ -35,6 +35,7 @@ import {
   canonicalizeExtensionToolProfilePath,
   createExtensionToolExecutionSnapshot,
   importExtensionToolModule,
+  inspectExtensionToolPackageJson,
   inspectImportedExtensionToolModule,
   isExtensionToolBuiltinModule,
   invokeExtensionTool,
@@ -235,35 +236,111 @@ function validateToolDependencyConfinement(
   return Effect.forEach(manifest.tools ?? [], (tool) => {
     const prefix = `${tool.path}/`;
     const files = tree.files.filter((file) => file.path.startsWith(prefix));
-    return Effect.forEach(files, (file) =>
-      Effect.try({
-        try: () => scanExtensionToolModuleImports(file.path, file.bytes),
-        catch: toolLoadFailure(`Failed to scan sealed Tool module ${manifest.id}/${file.path}`),
-      }).pipe(
-        Effect.flatMap(({ imports }) => {
-          const escaped = imports.find((entry) =>
-            relativeModuleTargetEscapes(tool.path, file.path, entry.path),
-          );
-          if (escaped !== undefined) {
-            return fail(
-              `Extension Tool ${manifest.id}/${tool.id} module ${file.path} has escaping ${escaped.kind}: ${escaped.path}`,
-            );
-          }
-          const unsealedPackage = imports.find(
-            (entry) =>
-              isBareModuleSpecifier(entry.path) &&
-              !isExtensionToolBuiltinModule(entry.path) &&
-              !sealedToolPackageExists(tool.path, entry.path, tree),
-          );
-          return unsealedPackage === undefined
-            ? Effect.void
-            : fail(
-                `Extension Tool ${manifest.id}/${tool.id} module ${file.path} imports unsealed package: ${unsealedPackage.path}`,
-              );
-        }),
-      ),
-    ).pipe(Effect.asVoid);
+    return Effect.forEach(files, (file) => validateToolModule(manifest, tool, tree, file)).pipe(
+      Effect.andThen(validateToolPackageMetadata(manifest, tool, files)),
+      Effect.asVoid,
+    );
   }).pipe(Effect.asVoid);
+}
+
+function validateToolModule(
+  manifest: ExtensionManifest,
+  tool: NonNullable<ExtensionManifest["tools"]>[number],
+  tree: ExtensionTreeSnapshot,
+  file: ExtensionFileSnapshot,
+): Effect.Effect<void, ExtensionToolLoadError> {
+  return Effect.try({
+    try: () => scanExtensionToolModuleImports(file.path, file.bytes),
+    catch: toolLoadFailure(`Failed to scan sealed Tool module ${manifest.id}/${file.path}`),
+  }).pipe(
+    Effect.flatMap(({ imports }) => {
+      const escaped = imports.find((entry) =>
+        relativeModuleTargetEscapes(tool.path, file.path, entry.path),
+      );
+      if (escaped !== undefined) {
+        return fail(
+          `Extension Tool ${manifest.id}/${tool.id} module ${file.path} has escaping ${escaped.kind}: ${escaped.path}`,
+        );
+      }
+      const unsealedPackage = imports.find(
+        (entry) =>
+          isBareModuleSpecifier(entry.path) &&
+          !isExtensionToolBuiltinModule(entry.path) &&
+          (!isConfinedBarePackageSpecifier(entry.path) ||
+            !sealedToolPackageExists(tool.path, entry.path, tree)),
+      );
+      return unsealedPackage === undefined
+        ? Effect.void
+        : fail(
+            `Extension Tool ${manifest.id}/${tool.id} module ${file.path} imports unsealed package: ${unsealedPackage.path}`,
+          );
+    }),
+  );
+}
+
+function isConfinedBarePackageSpecifier(specifier: string): boolean {
+  const pathOnly = specifier.split(/[?#]/, 1)[0] ?? specifier;
+  const decoded = decodeUriComponentMaybe(pathOnly);
+  if (decoded === undefined || decoded.includes("\\")) return false;
+  const components = decoded.split("/");
+  const packageParts = components[0]?.startsWith("@") ? 2 : 1;
+  if (components.length < packageParts) return false;
+  return components.every(
+    (component) => component.length > 0 && component !== "." && component !== "..",
+  );
+}
+
+function validateToolPackageMetadata(
+  manifest: ExtensionManifest,
+  tool: NonNullable<ExtensionManifest["tools"]>[number],
+  files: ReadonlyArray<ExtensionFileSnapshot>,
+): Effect.Effect<void, ExtensionToolLoadError> {
+  const packageJsonFiles = files.filter(
+    (file) => file.path.includes("/node_modules/") && file.path.endsWith("/package.json"),
+  );
+  return Effect.forEach(packageJsonFiles, (file) =>
+    Effect.try({
+      try: () => inspectExtensionToolPackageJson(file.bytes),
+      catch: toolLoadFailure(`Failed to inspect sealed package metadata ${file.path}`),
+    }).pipe(
+      Effect.flatMap((inspection) => {
+        if (!inspection.valid) {
+          return fail(
+            `Extension Tool ${manifest.id}/${tool.id} package ${file.path} ${inspection.message}`,
+          );
+        }
+        const packageRoot = posix.dirname(file.path);
+        const escaped = inspection.targets.find((target) =>
+          packageTargetEscapes(tool.path, packageRoot, target.field, target.path),
+        );
+        return escaped === undefined
+          ? Effect.void
+          : fail(
+              `Extension Tool ${manifest.id}/${tool.id} package ${file.path} has escaping ${escaped.field} target: ${escaped.path}`,
+            );
+      }),
+    ),
+  ).pipe(Effect.asVoid);
+}
+
+function packageTargetEscapes(
+  toolRoot: string,
+  packageRoot: string,
+  field: string,
+  target: string,
+): boolean {
+  const pathOnly = target.split(/[?#]/, 1)[0] ?? target;
+  const decoded = decodeUriComponentMaybe(pathOnly);
+  if (decoded === undefined || decoded.length === 0 || decoded.includes("\\")) return true;
+  if (decoded.startsWith("/") || /^[A-Za-z][A-Za-z\d+.-]*:/.test(decoded)) return true;
+  if ((field.startsWith("exports") || field.startsWith("imports")) && !decoded.startsWith("./")) {
+    return true;
+  }
+  const resolved = posix.normalize(posix.join(packageRoot, decoded));
+  return (
+    (resolved !== packageRoot && !resolved.startsWith(`${packageRoot}/`)) ||
+    (resolved !== toolRoot && !resolved.startsWith(`${toolRoot}/`))
+  );
 }
 
 function isBareModuleSpecifier(specifier: string): boolean {

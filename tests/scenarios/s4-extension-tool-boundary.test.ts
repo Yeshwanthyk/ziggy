@@ -176,18 +176,24 @@ export default {
       tools: [{ id: "fixture", path: "tools/fixture" }],
       files: {
         "tools/fixture/dependency.ts": `export const value = "post-build-sealed";\n`,
+        "tools/fixture/node_modules/compiled-sealed/package.json": `${JSON.stringify({
+          name: "compiled-sealed",
+          exports: { ".": { bun: ["./index.ts"], default: "./index.ts" } },
+        })}\n`,
+        "tools/fixture/node_modules/compiled-sealed/index.ts": `export const packageValue = "sealed-package";\n`,
         "tools/fixture/nested/helper.ts": `
 import { value } from "../dependency.ts";
-export { value };
+import { packageValue } from "compiled-sealed";
+export const nestedValue = value + ":" + packageValue;
 `,
         "tools/fixture/tool.ts": `
-import { value } from "./nested/helper.ts";
-await Bun.write(${JSON.stringify(marker)}, value);
+import { nestedValue } from "./nested/helper.ts";
+await Bun.write(${JSON.stringify(marker)}, nestedValue);
 export default {
   name: "fixture",
   description: "Compiled post-build Tool",
   inputSchema: { type: "object", additionalProperties: false },
-  async execute() { return { value }; },
+  async execute() { return { value: nestedValue }; },
 };
 `,
       },
@@ -207,13 +213,13 @@ export default {
     });
     const markerContents = await waitForFile(
       marker,
-      (contents) => contents === "post-build-sealed",
+      (contents) => contents === "post-build-sealed:sealed-package",
     );
     daemon.kill("SIGINT");
     const stopped = await collectProcess(daemon);
     expect(stopped.exitCode).toBe(130);
-    expect(markerContents).toBe("post-build-sealed");
-    expect(await readFile(marker, "utf8")).toBe("post-build-sealed");
+    expect(markerContents).toBe("post-build-sealed:sealed-package");
+    expect(await readFile(marker, "utf8")).toBe("post-build-sealed:sealed-package");
 
     emitVerificationObservation("s4.extension-tool-boundary", {
       ...emptyRuntimeObservations(),
