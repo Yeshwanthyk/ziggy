@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { parseSync, Visitor, type Argument, type Expression } from "oxc-parser";
+import { isCanonicalSemVer } from "../../packages/core/src/extensions/semver.ts";
 
 const expectedPackageNames: Readonly<Record<string, string>> = {
   core: "@ziggy/core",
@@ -34,12 +35,14 @@ export interface ImportReference {
 export interface PackageDescription {
   readonly directory: string;
   readonly name: string;
+  readonly version: string;
   readonly dependencyGroups: Readonly<Record<DependencyField, Readonly<Record<string, string>>>>;
   readonly imports: ReadonlyArray<ImportReference>;
 }
 
 export interface PackageGraph {
   readonly root: string;
+  readonly rootVersion: string;
   readonly rootWorkspaces: ReadonlyArray<string>;
   readonly rootDependencyGroups: Readonly<
     Record<DependencyField, Readonly<Record<string, string>>>
@@ -72,6 +75,7 @@ export async function loadPackageGraph(root: string): Promise<PackageGraph> {
     packages.push({
       directory,
       name: manifest.name,
+      version: manifest.version,
       dependencyGroups: manifest.dependencyGroups,
       imports: await collectImports(join(packageRoot, "src"), root),
     });
@@ -79,6 +83,7 @@ export async function loadPackageGraph(root: string): Promise<PackageGraph> {
   const engines = requireRecord(rootManifest.engines, "root engines");
   return {
     root,
+    rootVersion: requireString(rootManifest.version, "root version"),
     rootWorkspaces: decodeStringArray(rootManifest.workspaces, "root workspaces"),
     rootDependencyGroups: decodeDependencyGroups(rootManifest, "root"),
     packageManager: requireString(rootManifest.packageManager, "root packageManager"),
@@ -91,6 +96,9 @@ export async function loadPackageGraph(root: string): Promise<PackageGraph> {
 
 export function validatePackageGraph(graph: PackageGraph): void {
   validateBunToolchain(graph);
+  if (!isCanonicalSemVer(graph.rootVersion)) {
+    throw new Error(`root package version must be canonical SemVer, got ${graph.rootVersion}`);
+  }
   if (graph.rootWorkspaces.length !== 1 || graph.rootWorkspaces[0] !== "packages/*") {
     throw new Error("root workspaces must be exactly packages/*");
   }
@@ -111,6 +119,11 @@ export function validatePackageGraph(graph: PackageGraph): void {
     const expectedName = expectedPackageNames[item.directory];
     if (expectedName === undefined || item.name !== expectedName) {
       throw new Error(`${item.directory}: package name must be ${expectedName ?? "known"}`);
+    }
+    if (item.version !== graph.rootVersion) {
+      throw new Error(
+        `${item.name}: workspace version must mirror root version ${graph.rootVersion}`,
+      );
     }
     const allowed = allowedEdges[item.name];
     if (allowed === undefined) {
@@ -290,6 +303,7 @@ function validateImport(
       );
     }
     rejectProductionBoundaryImport(graph.root, item, target, reference);
+    if (isRootProductVersionImport(graph, item, target, reference)) return;
     const targetPackage = packageContaining(graph, target);
     if (targetPackage === undefined) {
       throw new Error(
@@ -330,6 +344,20 @@ function validateImport(
   if (!(external in declared)) {
     throw new Error(`${item.name}: external import ${external} is undeclared`);
   }
+}
+
+function isRootProductVersionImport(
+  graph: PackageGraph,
+  item: PackageDescription,
+  target: string,
+  reference: ImportReference,
+): boolean {
+  return (
+    item.name === "@ziggy/core" &&
+    reference.sourceFile === "packages/core/src/product-version.ts" &&
+    reference.specifier === "../../../package.json" &&
+    target === normalize(join(graph.root, "package.json"))
+  );
 }
 
 function rejectProductionBoundaryImport(
@@ -411,13 +439,18 @@ function decodePackageManifest(
   source: string,
 ): {
   name: string;
+  version: string;
   dependencyGroups: Readonly<Record<DependencyField, Readonly<Record<string, string>>>>;
 } {
   const record = requireRecord(value, `${source} package.json`);
   if (typeof record.name !== "string") {
     throw new Error(`${source}: package name is required`);
   }
-  return { name: record.name, dependencyGroups: decodeDependencyGroups(record, source) };
+  return {
+    name: record.name,
+    version: requireString(record.version, `${source} version`),
+    dependencyGroups: decodeDependencyGroups(record, source),
+  };
 }
 
 function decodeDependencyGroups(

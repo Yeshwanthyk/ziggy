@@ -1,4 +1,5 @@
 export const corePackageName = "@ziggy/core";
+export { ZIGGY_VERSION } from "./product-version.ts";
 export * from "./extensions/index.ts";
 export * from "./memory/index.ts";
 export * from "./credentials/index.ts";

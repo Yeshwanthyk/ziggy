@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
+import { ZIGGY_VERSION } from "../../packages/core/src/product-version.ts";
 import { AttachOutcomeUnknownError } from "../../packages/ziggy/src/attach.ts";
 import {
   BunProcessManager,
@@ -46,7 +47,7 @@ function dependencies(serve?: (request: ServeRequest) => Effect.Effect<void>): {
 test("--version does not require production service support", async () => {
   const fake = dependencies();
   await runEffect(runCli(["--version"], fake.value));
-  expect(fake.output).toEqual(["0.0.0"]);
+  expect(fake.output).toEqual([ZIGGY_VERSION]);
   const production = await runEffect(productionDependencies);
   expect(production.serve).toBeFunction();
   expect(production.doctor).toBeFunction();

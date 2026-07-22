@@ -1,4 +1,5 @@
 import type { AuthStatus, AuthType } from "@ziggy/protocol";
+import { ZIGGY_VERSION } from "@ziggy/core";
 import { Cause, Effect, Exit, Option, Predicate, Result, Schema } from "effect";
 import { loginProvider, type AuthClientError } from "./auth-client.ts";
 import {
@@ -99,7 +100,7 @@ export interface CliExecutableDependencies<E = never, R = never> extends CliDepe
 export function runCli<E, R>(argv: ReadonlyArray<string>, dependencies: CliDependencies<E, R>) {
   return Effect.gen(function* () {
     if (argv.length === 1 && argv[0] === "--version") {
-      yield* dependencies.output("0.0.0");
+      yield* dependencies.output(ZIGGY_VERSION);
       return;
     }
     if (argv.length === 1 && argv[0] === "--runtime-mode") {

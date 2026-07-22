@@ -4,6 +4,7 @@ import { isStrictJson } from "./strict-json.ts";
 
 const IdentifierSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const NonEmptyStringSchema = Schema.String.check(Schema.isNonEmpty());
+const utf8Encoder = new TextEncoder();
 const RelativePathSchema = NonEmptyStringSchema.check(
   Schema.makeFilter(isConfinedRelativePath, {
     expected: "a normalized relative path confined to the Extension root",
@@ -108,6 +109,10 @@ function hasValidManifestSemantics(manifest: typeof ExtensionManifestModel.Type)
     (manifest.skills.length > 0 || manifest.tools !== undefined) &&
     resourcesHaveValidIdentities(manifest.skills, "skills") &&
     (manifest.tools === undefined || resourcesHaveValidIdentities(manifest.tools, "tools")) &&
+    isStrictlySortedUnique(manifest.requires.env) &&
+    isStrictlySortedUnique(manifest.requires.commands) &&
+    isStrictlySortedUnique(manifest.requires.os) &&
+    isStrictlySortedUnique(manifest.permissions.secrets) &&
     (manifest.defaults?.model === undefined || manifest.defaults.provider !== undefined) &&
     manifest.permissions.secrets.every((secret) => manifest.requires.env.includes(secret)) &&
     setupCommandsAreDeclared(manifest)
@@ -122,18 +127,57 @@ function setupCommandsAreDeclared(manifest: typeof ExtensionManifestModel.Type):
   ];
   return argvEntries.every((argv) => {
     const executable = argv[0];
-    return executable !== undefined && manifest.requires.commands.includes(executable);
+    if (executable === undefined) return false;
+    if (executable.includes("/")) return isConfinedRelativePath(executable);
+    return isBareExecutableName(executable) && manifest.requires.commands.includes(executable);
   });
+}
+
+function isBareExecutableName(executable: string): boolean {
+  return (
+    executable !== "." &&
+    executable !== ".." &&
+    !executable.includes("\\") &&
+    !/^[A-Za-z]:/.test(executable)
+  );
 }
 
 function resourcesHaveValidIdentities(
   resources: ReadonlyArray<typeof ExtensionResourceSchema.Type>,
   root: "skills" | "tools",
 ): boolean {
-  const ids = new Set<string>();
-  for (const resource of resources) {
-    if (ids.has(resource.id) || resource.path !== `${root}/${resource.id}`) return false;
-    ids.add(resource.id);
+  return (
+    isStrictlySortedUnique(resources, (resource) => resource.id) &&
+    resources.every((resource) => resource.path === `${root}/${resource.id}`)
+  );
+}
+
+function isStrictlySortedUnique<Value>(
+  values: ReadonlyArray<Value>,
+  key: (value: Value) => string = String,
+): boolean {
+  for (let index = 1; index < values.length; index += 1) {
+    const previous = values[index - 1];
+    const current = values[index];
+    if (
+      previous === undefined ||
+      current === undefined ||
+      compareUtf8Bytes(key(previous), key(current)) >= 0
+    )
+      return false;
   }
   return true;
+}
+
+function compareUtf8Bytes(left: string, right: string): number {
+  const leftBytes = utf8Encoder.encode(left);
+  const rightBytes = utf8Encoder.encode(right);
+  const length = Math.min(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftByte = leftBytes[index];
+    const rightByte = rightBytes[index];
+    if (leftByte === undefined || rightByte === undefined) continue;
+    if (leftByte !== rightByte) return leftByte < rightByte ? -1 : 1;
+  }
+  return leftBytes.length < rightBytes.length ? -1 : leftBytes.length > rightBytes.length ? 1 : 0;
 }

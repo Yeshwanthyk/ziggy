@@ -59,6 +59,18 @@ describe("package graph enforcement", () => {
     );
   });
 
+  test("root product version is exact and every workspace mirrors it", async () => {
+    const graph = await graphPromise;
+    expect(() => validatePackageGraph({ ...graph, rootVersion: "workspace:*" })).toThrow(
+      "root package version must be canonical SemVer",
+    );
+    expect(() =>
+      validatePackageGraph(
+        mutatePackage(graph, "@ziggy/core", (item) => ({ ...item, version: "9.9.9" })),
+      ),
+    ).toThrow("workspace version must mirror root version");
+  });
+
   test("AST detects every static module form, including template imports", async () => {
     const imports = await collectFixture(`
       import value from "static-package";
@@ -258,6 +270,30 @@ describe("package graph enforcement", () => {
           })),
         ),
       ).toThrow(diagnostic);
+    }
+  });
+
+  test("allows only the core product-version module to import root package.json", async () => {
+    const graph = await graphPromise;
+    const allowed = {
+      sourceFile: "packages/core/src/product-version.ts",
+      specifier: "../../../package.json",
+    };
+    expect(() =>
+      validatePackageGraph(
+        mutatePackage(graph, "@ziggy/core", (item) => ({ ...item, imports: [allowed] })),
+      ),
+    ).not.toThrow();
+
+    for (const reference of [
+      { ...allowed, sourceFile: "packages/core/src/index.ts" },
+      { ...allowed, specifier: "../../../README.md" },
+    ]) {
+      expect(() =>
+        validatePackageGraph(
+          mutatePackage(graph, "@ziggy/core", (item) => ({ ...item, imports: [reference] })),
+        ),
+      ).toThrow("known workspace package");
     }
   });
 

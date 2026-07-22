@@ -1,4 +1,5 @@
 import { createConnection } from "node:net";
+import { ZIGGY_VERSION } from "@ziggy/core";
 import {
   decodeServerFrame,
   encodeClientRequest,
@@ -84,7 +85,7 @@ export function queryProviderAuthStatus(
           schemaVersion: PROTOCOL_VERSION,
           requestId: "doctor-initialize",
           method: "initialize",
-          params: { client: { name: "ziggy-doctor", version: "0.0.0" }, features: [] },
+          params: { client: { name: "ziggy-doctor", version: ZIGGY_VERSION }, features: [] },
         });
         yield* requireAuthSupport(yield* transport.nextFrame, "doctor-initialize");
         yield* transport.write({
@@ -138,7 +139,7 @@ export function loginProvider<E>(
           schemaVersion: PROTOCOL_VERSION,
           requestId: "auth-initialize",
           method: "initialize",
-          params: { client: { name: "ziggy-auth", version: "0.0.0" }, features: [] },
+          params: { client: { name: "ziggy-auth", version: ZIGGY_VERSION }, features: [] },
         });
         yield* requireAuthSupport(yield* transport.nextFrame, "auth-initialize");
         yield* transport.write({

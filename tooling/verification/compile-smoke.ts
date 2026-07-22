@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ZIGGY_VERSION } from "../../packages/core/src/product-version.ts";
 import type { ProcessRequest, ProcessResult, ProcessRunner } from "./process.ts";
 
 const entrypoint = "packages/ziggy/src/main.ts";
@@ -89,7 +90,7 @@ export async function runCompileSmoke(
       timeoutMs: timeouts.versionMs,
     });
     requireSuccess("version", version);
-    if (version.stdout.trim() !== "0.0.0") {
+    if (version.stdout.trim() !== ZIGGY_VERSION) {
       throw new Error(`compiled binary emitted unexpected version: ${version.stdout.trim()}`);
     }
     const runtimeMode = await runner.run({

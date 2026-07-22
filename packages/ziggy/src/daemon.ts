@@ -10,6 +10,7 @@ import {
   inspectProfileLock,
   type ProfileLockInspection,
   ProviderRuntimeError,
+  ZIGGY_VERSION,
 } from "@ziggy/core";
 import {
   decodeServerFrame,
@@ -392,7 +393,7 @@ function probeSocket(
           schemaVersion: PROTOCOL_VERSION,
           requestId: READINESS_REQUEST_ID,
           method: "initialize",
-          params: { client: { name: "ziggy-readiness", version: "0.0.0" }, features: [] },
+          params: { client: { name: "ziggy-readiness", version: ZIGGY_VERSION }, features: [] },
         }),
       );
     });

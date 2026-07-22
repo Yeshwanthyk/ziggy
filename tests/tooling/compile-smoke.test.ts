@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
+import { ZIGGY_VERSION } from "../../packages/core/src/product-version.ts";
 import { CommandRecorder, type ProcessRequest } from "../testkit/boundaries.ts";
 import {
   buildCompileArgv,
@@ -51,10 +52,10 @@ describe("compile smoke verifier", () => {
     ).toThrow("locked command");
   });
 
-  test("requires the compiled binary to emit version 0.0.0", async () => {
+  test("requires the compiled binary to emit the root Ziggy version", async () => {
     const recorder = new CommandRecorder({
       exitCode: 0,
-      stdout: "0.0.0\n",
+      stdout: `${ZIGGY_VERSION}\n`,
       stderr: "",
       timedOut: false,
     });
@@ -67,7 +68,7 @@ describe("compile smoke verifier", () => {
               ? "compiled\n"
               : request.argv[1] === "--oauth-loader-smoke"
                 ? "oauth-loaders:ok\n"
-                : "0.0.0\n",
+                : `${ZIGGY_VERSION}\n`,
           stderr: "",
           timedOut: false,
         });

@@ -1,4 +1,5 @@
 import type { SessionSummary } from "@ziggy/protocol";
+import { ZIGGY_VERSION } from "@ziggy/core";
 import { Effect, Schema } from "effect";
 import {
   createAttachClient,
@@ -93,7 +94,7 @@ export function runProductionAsk<E, SetupR, OutputR>(
       const ready = yield* prepareClientDaemon(profilePath, setup);
       const client = yield* createAttachClient({
         transport: unixAttachTransportFactory(ready.socketPath),
-        client: { name: "ziggy-ask", version: "0.0.0", features: ["modelChunks"] },
+        client: { name: "ziggy-ask", version: ZIGGY_VERSION, features: ["modelChunks"] },
       });
       yield* runAskWithClient(client, prompt, writeStdout);
     }),
@@ -110,7 +111,7 @@ export function runProductionTui<R>(
       const ready = yield* prepareClientDaemon(profilePath, setup);
       const client = yield* createAttachClient({
         transport: unixAttachTransportFactory(ready.socketPath),
-        client: { name: "ziggy-tui", version: "0.0.0", features: ["modelChunks"] },
+        client: { name: "ziggy-tui", version: ZIGGY_VERSION, features: ["modelChunks"] },
       });
       yield* hostFactory === undefined
         ? runTuiWithClient(client)
@@ -128,7 +129,7 @@ export function runProductionSessionsList<R>(
       const ready = yield* prepareClientDaemon(profilePath, setup);
       const client = yield* createAttachClient({
         transport: unixAttachTransportFactory(ready.socketPath),
-        client: { name: "ziggy-sessions", version: "0.0.0" },
+        client: { name: "ziggy-sessions", version: ZIGGY_VERSION },
       });
       return yield* runSessionsListWithClient(client);
     }),

@@ -229,6 +229,67 @@ test("Extension manifest schema enforces capability and cross-field invariants",
   expect(await runEffect(decodeExtensionManifest(toolOnly))).toEqual(toolOnly);
 });
 
+test("Extension manifest schema requires canonical set ordering and uniqueness", async () => {
+  const canonical = {
+    ...validManifest,
+    skills: [
+      { id: "alpha-skill", path: "skills/alpha-skill" },
+      { id: "fixture-skill", path: "skills/fixture-skill" },
+    ],
+    tools: [
+      { id: "alpha-tool", path: "tools/alpha-tool" },
+      { id: "fixture-tool", path: "tools/fixture-tool" },
+    ],
+    requires: {
+      env: ["ALPHA_TOKEN", "FIXTURE_TOKEN"],
+      commands: ["bun", "node"],
+      os: ["darwin", "linux", "win32"],
+    },
+    permissions: {
+      ...validManifest.permissions,
+      secrets: ["ALPHA_TOKEN", "FIXTURE_TOKEN"],
+    },
+  } satisfies ExtensionManifest;
+  expect(await runEffect(decodeExtensionManifest(canonical))).toEqual(canonical);
+
+  const invalid = [
+    { ...canonical, skills: [...canonical.skills].reverse() },
+    { ...canonical, skills: [canonical.skills[0], canonical.skills[0]] },
+    { ...canonical, tools: [...canonical.tools].reverse() },
+    { ...canonical, tools: [canonical.tools[0], canonical.tools[0]] },
+    { ...canonical, requires: { ...canonical.requires, env: ["FIXTURE_TOKEN", "ALPHA_TOKEN"] } },
+    { ...canonical, requires: { ...canonical.requires, env: ["ALPHA_TOKEN", "ALPHA_TOKEN"] } },
+    { ...canonical, requires: { ...canonical.requires, commands: ["node", "bun"] } },
+    { ...canonical, requires: { ...canonical.requires, commands: ["bun", "bun"] } },
+    { ...canonical, requires: { ...canonical.requires, os: ["linux", "darwin"] } },
+    { ...canonical, requires: { ...canonical.requires, os: ["darwin", "darwin"] } },
+    {
+      ...canonical,
+      permissions: { ...canonical.permissions, secrets: ["FIXTURE_TOKEN", "ALPHA_TOKEN"] },
+    },
+    {
+      ...canonical,
+      permissions: { ...canonical.permissions, secrets: ["ALPHA_TOKEN", "ALPHA_TOKEN"] },
+    },
+  ];
+  for (const manifest of invalid) await expectManifestRejected(manifest);
+
+  const canonicalUtf8: readonly [string, string] = ["\uE000", "\u{10000}"];
+  expect(canonicalUtf8[0] < canonicalUtf8[1]).toBe(false);
+  expect(
+    await runEffect(
+      decodeExtensionManifest({
+        ...validManifest,
+        requires: { ...validManifest.requires, env: canonicalUtf8 },
+      }),
+    ),
+  ).toMatchObject({ requires: { env: canonicalUtf8 } });
+  await expectManifestRejected({
+    ...validManifest,
+    requires: { ...validManifest.requires, env: [...canonicalUtf8].reverse() },
+  });
+});
+
 test("Extension manifest schema rejects package-authored provenance and trust", async () => {
   const invalid = [
     {
@@ -310,4 +371,45 @@ test("Extension manifest schema accepts argv arrays and rejects shell command st
     ...validManifest,
     setup: { steps: [{ argv: [] }] },
   });
+});
+
+test("Extension setup permits confined package executables and declares external commands", async () => {
+  const packageExecutables = {
+    ...validManifest,
+    setup: {
+      steps: [{ argv: ["setup/verify", "--offline"] }],
+      doctor: { argv: ["skills/fixture-skill/scripts/doctor"] },
+    },
+    requires: { ...validManifest.requires, commands: [] },
+  };
+  expect(await runEffect(decodeExtensionManifest(packageExecutables))).toEqual(packageExecutables);
+
+  const mixedExecutables = {
+    ...packageExecutables,
+    setup: {
+      steps: [{ argv: ["bun", "setup/verify"] }, { argv: ["setup/verify"] }],
+    },
+    requires: { ...validManifest.requires, commands: ["bun"] },
+  };
+  expect(await runEffect(decodeExtensionManifest(mixedExecutables))).toEqual(mixedExecutables);
+
+  await expectManifestRejected({
+    ...mixedExecutables,
+    requires: { ...mixedExecutables.requires, commands: [] },
+  });
+  for (const executable of [
+    "/setup/verify",
+    "../setup/verify",
+    "setup/../verify",
+    "./setup/verify",
+    "setup\\verify",
+    "C:/setup/verify",
+    "C:setup-verify",
+  ]) {
+    await expectManifestRejected({
+      ...packageExecutables,
+      setup: { steps: [{ argv: [executable] }] },
+      requires: { ...packageExecutables.requires, commands: [executable] },
+    });
+  }
 });
