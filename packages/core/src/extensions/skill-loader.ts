@@ -301,6 +301,7 @@ function unquoteYamlScalar(value: string): string {
 }
 
 function isExternalDestination(destination: string): boolean {
+  if (/^[A-Za-z]:/.test(destination)) return false;
   return destination.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(destination);
 }
 

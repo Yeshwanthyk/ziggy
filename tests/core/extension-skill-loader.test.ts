@@ -138,6 +138,37 @@ test("rejects escaping, dangling, orphan, and cyclic Skill support links", async
   }
 });
 
+test("rejects drive-prefixed Skill links while ignoring external schemes", async () => {
+  const driveDestinations = [
+    "C:/outside.md",
+    "C:outside.md",
+    "c:/outside.md",
+    "c:outside.md",
+    "%43%3A/outside.md",
+    "%63%3Aoutside.md",
+  ];
+  for (const destination of driveDestinations) {
+    const profile = await createFixture(`drive-${driveDestinations.indexOf(destination)}`, {
+      files: {
+        "skills/fixture/SKILL.md": skill("fixture", `[drive](${destination})`),
+      },
+    });
+    await expect(runEffect(loadInstalledExtensionSkills(profile, "1.0.0"))).rejects.toThrow(
+      "Unsupported local Skill link",
+    );
+  }
+
+  const externalProfile = await createFixture("external-scheme", {
+    files: {
+      "skills/fixture/SKILL.md": skill(
+        "fixture",
+        "Read [the external guide](https://example.test/guide.md).",
+      ),
+    },
+  });
+  expect(await runEffect(loadInstalledExtensionSkills(externalProfile, "1.0.0"))).toHaveLength(1);
+});
+
 test("rejects post-seal mutation", async () => {
   const profile = await createFixture("mutation", {
     files: { "skills/fixture/SKILL.md": skill("fixture", "Original.") },
