@@ -239,6 +239,43 @@ describe("S4 Extension integrity", () => {
     await expect(verifyExtensionIntegrity(root)).resolves.toMatchObject({ landedReviewCount: 1 });
   });
 
+  test("binds a core-Skill review to production composition but not unrelated later work", async () => {
+    const root = await landedSkillCreatorFixture();
+    await expect(verifyExtensionIntegrity(root)).resolves.toMatchObject({ landedReviewCount: 1 });
+
+    await mkdir(join(root, "docs"), { recursive: true });
+    await Bun.write(join(root, "docs/unrelated.md"), "# Unrelated later work\n");
+    await commitAll(root, "unrelated");
+
+    await expect(verifyExtensionIntegrity(root)).resolves.toMatchObject({ landedReviewCount: 1 });
+  });
+
+  test("invalidates a core-Skill review when production composition changes", async () => {
+    for (const change of ["mutation", "removal", "reordering"] as const) {
+      const root = await landedSkillCreatorFixture();
+      const path = join(root, "packages/core/src/provider-runtime.ts");
+      if (change === "removal") {
+        await rm(path);
+      } else {
+        const source = await Bun.file(path).text();
+        await Bun.write(
+          path,
+          change === "mutation"
+            ? `${source}\n// changed production composition\n`
+            : source.replace(
+                "const skillPrompt = [coreSkill, ...extensionSkills]",
+                "const skillPrompt = [...extensionSkills, coreSkill]",
+              ),
+        );
+      }
+      await commitAll(root, `provider-runtime-${change}`);
+
+      await expect(verifyExtensionIntegrity(root)).rejects.toThrow(
+        change === "removal" ? "repository input is missing" : "stale reviewedInputDigest",
+      );
+    }
+  });
+
   test("invalidates a review when a reviewed candidate input changes", async () => {
     const root = await landedArchitectureDiagramFixture({
       manifestText: architectureDiagramManifest(),
@@ -412,18 +449,112 @@ async function landedArchitectureDiagramFixture(
   return root;
 }
 
+async function landedSkillCreatorFixture(): Promise<string> {
+  const root = await fixtureRoot();
+  await cp(join(repositoryRoot, "package.json"), join(root, "package.json"));
+  await cp(join(repositoryRoot, "bun.lock"), join(root, "bun.lock"));
+  await mkdir(join(root, "packages/core"), { recursive: true });
+  await cp(
+    join(repositoryRoot, "packages/core/package.json"),
+    join(root, "packages/core/package.json"),
+  );
+  const ledger = record(await ledgerFixture());
+  const candidates = array(ledger.candidates);
+  const candidate: Record<string, unknown> = {
+    ...requireCandidate(candidates, "skill-creator"),
+    deliveryStatus: "landed",
+  };
+  await Bun.write(
+    join(root, "docs/plans/s4-merlin-migration.json"),
+    `${JSON.stringify({ ...ledger, candidates: replaceCandidate(candidates, candidate) }, null, 2)}\n`,
+  );
+  const allowedFiles = [
+    "packages/core/src/provider-runtime.ts",
+    "packages/core/src/skills/skill-writing/SKILL.md",
+    "packages/core/src/skills/skill-writing/index.ts",
+  ];
+  for (const path of allowedFiles) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await cp(join(repositoryRoot, path), join(root, path));
+  }
+  await git(root, "init");
+  await commitAll(root, "fixture");
+  const revision = (await Bun.$`git rev-parse HEAD`.cwd(root).quiet()).text().trim();
+  const candidatePermissions = record(candidate.permissions);
+  const budgets = {
+    production: {
+      allowedFiles,
+      maximumLines: 500,
+      lineMetric: "physical-non-generated-text-lines-final-partial-counted",
+    },
+    runtimeDependencies: ["Ziggy Skill/manifest schemas"],
+    permissions: {
+      network: candidatePermissions.network,
+      filesystem: candidatePermissions.filesystem,
+      secrets: candidatePermissions.secrets,
+      externalAuthorities: candidatePermissions.externalAuthorities,
+    },
+    subprocesses: [],
+    persistedStatePaths: [],
+    supportMaterial: { files: [], maximumFiles: 0, maximumBytes: 0 },
+  };
+  const reviewedInputDigest = await fixtureReviewedInputDigest(root, candidate, allowedFiles);
+  const review = {
+    schemaVersion: 1,
+    id: "skill-creator",
+    review: {
+      role: "independent",
+      reviewedAt: "2026-07-22T12:03:00.000Z",
+      gitRevision: revision,
+      reviewedInputDigest,
+      contexts: {
+        scout: { id: "scout", completedAt: "2026-07-22T12:00:00.000Z" },
+        implementer: { id: "implementer", completedAt: "2026-07-22T12:01:00.000Z" },
+        verifier: { id: "verifier", startedAt: "2026-07-22T12:02:00.000Z" },
+      },
+    },
+    userOutcome: record(candidate.capability).userOutcome,
+    target: { mechanism: "core-skill", id: "skill-writing" },
+    overlap: [],
+    capabilityContract: { scenarioIds: ["s4.skill-writing"] },
+    budgets,
+    removableMaterial: [],
+    assertions: {
+      lowestTrustTier: true,
+      noDuplicateAuthority: true,
+      noCompatibilityShim: true,
+      noInactiveVendoredMaterial: true,
+    },
+    findings: [],
+    disposition: "accepted",
+  };
+  await Bun.write(
+    join(root, "docs/plans/s4-extension-reviews/skill-creator.json"),
+    `${JSON.stringify(review, null, 2)}\n`,
+  );
+  await commitAll(root, "review");
+  return root;
+}
+
 async function fixtureReviewedInputDigest(
   root: string,
   candidate: Record<string, unknown>,
   allowedFiles: ReadonlyArray<string>,
 ): Promise<string> {
-  const paths = [...new Set(["bun.lock", "package.json", ...allowedFiles])].sort((left, right) =>
-    Buffer.from(left).compare(Buffer.from(right)),
-  );
+  const candidateId = candidate.id;
+  if (typeof candidateId !== "string") throw new Error("missing candidate id fixture");
+  const pathSet = new Set(["bun.lock", "package.json", ...allowedFiles]);
+  for (const path of allowedFiles) {
+    const components = path.split("/");
+    if (components[0] === "packages" && components[1] !== undefined) {
+      pathSet.add(`packages/${components[1]}/package.json`);
+    }
+  }
+  const paths = [...pathSet].sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
   const candidateText = canonicalJson(candidate);
   const inputs = [
     {
-      path: "docs/plans/s4-merlin-migration.json#candidate/architecture-diagram",
+      path: `docs/plans/s4-merlin-migration.json#candidate/${candidateId}`,
       bytes: new TextEncoder().encode(candidateText).byteLength,
       sha256: sha256(candidateText),
     },
@@ -436,11 +567,25 @@ async function fixtureReviewedInputDigest(
   return sha256(
     canonicalJson({
       schemaVersion: 1,
-      candidateId: "architecture-diagram",
+      candidateId,
       deliveryStatus: candidate.deliveryStatus,
       ledgerRowDigest: sha256(candidateText),
       inputs,
     }),
+  );
+}
+
+async function commitAll(root: string, message: string): Promise<void> {
+  await git(root, "add", ".");
+  await git(
+    root,
+    "-c",
+    "user.name=Ziggy Test",
+    "-c",
+    "user.email=ziggy@example.invalid",
+    "commit",
+    "-m",
+    message,
   );
 }
 

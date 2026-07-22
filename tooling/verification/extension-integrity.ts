@@ -16,6 +16,7 @@ import { loadSchemaCatalog } from "./schemas.ts";
 
 const ledgerPath = "docs/plans/s4-merlin-migration.json";
 const reviewDirectory = "docs/plans/s4-extension-reviews";
+const coreSkillMechanismFiles = ["packages/core/src/provider-runtime.ts"] as const;
 const decodeExtensionManifest = Schema.decodeUnknownSync(ExtensionManifestSchema, {
   errors: "all",
   onExcessProperty: "error",
@@ -387,7 +388,10 @@ async function discoverImplementationFiles(
     target.mechanism === "extension"
       ? `extensions/${targetId}`
       : `packages/core/src/skills/${targetId}`;
-  return collectRegularFiles(root, directory);
+  const implementationFiles = await collectRegularFiles(root, directory);
+  return target.mechanism === "core-skill"
+    ? [...implementationFiles, ...coreSkillMechanismFiles].sort(compareUtf8)
+    : implementationFiles;
 }
 
 async function collectRegularFiles(
@@ -601,6 +605,9 @@ function requiresLandedReview(candidate: Record<string, unknown>): boolean {
 
 async function validateRepositoryFile(root: string, path: string): Promise<void> {
   if (!isSafeRepositoryPath(path)) throw new Error(`unsafe repository path: ${path}`);
+  if (!(await Bun.file(join(root, path)).exists())) {
+    throw new Error(`repository input is missing: ${path}`);
+  }
   const absoluteRoot = resolve(root);
   let current = absoluteRoot;
   const components = path.split("/");
