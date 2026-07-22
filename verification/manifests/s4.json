@@ -3,7 +3,12 @@
   "stage": "s4",
   "status": "pending",
   "predecessors": ["s0", "s1", "s2", "s3"],
-  "scenarios": ["s4.manifest-version-compatibility"],
+  "scenarios": [
+    "s4.extension-daemon-lifecycle",
+    "s4.extension-journal-recovery",
+    "s4.extension-mutation-recovery",
+    "s4.manifest-version-compatibility"
+  ],
   "gates": ["manifest-integrity", "extension-integrity", "fmt-check", "typecheck", "scenarios"],
   "requirements": [
     {
@@ -15,6 +20,21 @@
       "id": "s4.merlin-ledger-integrity",
       "status": "implemented",
       "description": "The closed 47-candidate Merlin migration ledger, conditional independent-review set, review freshness and budget contract, and deterministic extension-integrity gate are checked in without requiring the sibling Merlin repository."
+    },
+    {
+      "id": "s4.extension-daemon-lifecycle",
+      "status": "implemented",
+      "description": "The production daemon owns Extension install, exact approval, disabled installation, list, enable, doctor, disable, and restart persistence over the real Unix attach socket while Client operations preserve direct-write canaries."
+    },
+    {
+      "id": "s4.extension-mutation-recovery",
+      "status": "implemented",
+      "description": "Tool-list and Skill-load seal failures durably invalidate approvals, restored immutable bytes remain rejected, explicit fresh approval reinstall recovers disabled without moving mutable state, and Extension processes receive only declared environment values."
+    },
+    {
+      "id": "s4.extension-journal-recovery",
+      "status": "implemented",
+      "description": "Schema-stamped Extension publication journals recover real process death to a complete old or new generation at every durable cut point, preserve mutable-state inode identity, clean idempotently, and serialize list discovery across the package publication gap."
     }
   ]
 }

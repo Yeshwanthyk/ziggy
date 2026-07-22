@@ -28,6 +28,9 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s3.profile-config",
     "s3.profile-initialization",
     "s3.tui-protocol-face",
+    "s4.extension-daemon-lifecycle",
+    "s4.extension-journal-recovery",
+    "s4.extension-mutation-recovery",
     "s4.manifest-version-compatibility",
   ]);
 

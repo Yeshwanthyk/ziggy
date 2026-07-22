@@ -250,6 +250,37 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
   },
   {
     schemaVersion: 1,
+    id: "s4.extension-daemon-lifecycle",
+    stage: "s4",
+    file: "tests/scenarios/s4-extension-daemon-lifecycle.test.ts",
+    seed: "s4-extension-daemon-lifecycle-v1",
+    schedule: "serial-real-socket-approval-lifecycle-then-daemon-restart",
+    boundaryConfiguration:
+      "temporary-profile-production-daemon-real-unix-socket-cli-client-and-direct-write-canaries",
+  },
+  {
+    schemaVersion: 1,
+    id: "s4.extension-journal-recovery",
+    stage: "s4",
+    file: "tests/scenarios/s4-extension-journal-recovery.test.ts",
+    seed: "s4-extension-journal-recovery-v1",
+    schedule:
+      "serial-sigkill-at-every-publication-cut-double-recovery-and-list-publication-barrier",
+    boundaryConfiguration:
+      "temporary-profile-real-child-process-schema-journal-mutable-state-inode-and-publication-permit",
+  },
+  {
+    schemaVersion: 1,
+    id: "s4.extension-mutation-recovery",
+    stage: "s4",
+    file: "tests/scenarios/s4-extension-mutation-recovery.test.ts",
+    seed: "s4-extension-mutation-recovery-v1",
+    schedule: "serial-tool-list-skill-load-byte-restore-fresh-reapproval-and-reinstall",
+    boundaryConfiguration:
+      "temporary-profile-sealed-package-daemon-authority-mutable-state-and-filtered-process-environment",
+  },
+  {
+    schemaVersion: 1,
     id: "s4.manifest-version-compatibility",
     stage: "s4",
     file: "tests/scenarios/s4-manifest-version-compatibility.test.ts",
