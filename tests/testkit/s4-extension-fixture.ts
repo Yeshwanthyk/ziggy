@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -167,18 +167,7 @@ export async function s4TransactionArtifacts(profilePath: string): Promise<Reado
   return entries.sort();
 }
 
-export async function mutableStateIdentity(
-  profilePath: string,
-): Promise<{ readonly contents: string; readonly inode: number }> {
-  const path = join(profilePath, ".runtime", "extensions", "fixture", "state", "owner.json");
-  return { contents: await readFile(path, "utf8"), inode: (await stat(path)).ino };
-}
-
-export async function writeFixtureFile(
-  root: string,
-  path: string,
-  contents: string,
-): Promise<void> {
+async function writeFixtureFile(root: string, path: string, contents: string): Promise<void> {
   await mkdir(dirname(join(root, path)), { recursive: true });
   await writeFile(join(root, path), contents, { mode: 0o700 });
 }
