@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "hyperframes",
+  "review": {
+    "role": "independent",
+    "reviewedAt": "2026-07-22T20:42:00.000Z",
+    "gitRevision": "85015b74229fd20c5d9e37d18fc683a878de7508",
+    "reviewedInputDigest": "bb306a711c4eaac66b677f0826b4aa30c1fc5f1d72b54bafed15d42df5fb4389",
+    "contexts": {
+      "scout": {
+        "id": "task-9-scout",
+        "completedAt": "2026-07-22T18:00:00.000Z"
+      },
+      "implementer": {
+        "id": "task-9-implementation-remediation",
+        "completedAt": "2026-07-22T20:37:12.000Z"
+      },
+      "verifier": {
+        "id": "task-9-independent-review-remediation",
+        "startedAt": "2026-07-22T20:38:00.000Z"
+      }
+    }
+  },
+  "userOutcome": "configure a Profile/project for HTML-to-video rendering",
+  "target": {
+    "mechanism": "blueprint",
+    "id": "hyperframes"
+  },
+  "overlap": [],
+  "capabilityContract": {
+    "scenarioIds": ["s4.blueprint-postconditions"]
+  },
+  "budgets": {
+    "production": {
+      "allowedFiles": ["blueprints/hyperframes.md"],
+      "maximumLines": 46,
+      "lineMetric": "physical-non-generated-text-lines-final-partial-counted"
+    },
+    "runtimeDependencies": ["HyperFrames, Node, Chrome, FFmpeg, optional Docker"],
+    "permissions": {
+      "network": true,
+      "filesystem": "full",
+      "secrets": [],
+      "externalAuthorities": ["full project/media filesystem", "network setup"]
+    },
+    "subprocesses": [],
+    "persistedStatePaths": [],
+    "supportMaterial": {
+      "files": [],
+      "maximumFiles": 0,
+      "maximumBytes": 0
+    }
+  },
+  "removableMaterial": [],
+  "assertions": {
+    "lowestTrustTier": true,
+    "noDuplicateAuthority": true,
+    "noCompatibilityShim": true,
+    "noInactiveVendoredMaterial": true
+  },
+  "findings": [],
+  "disposition": "accepted"
+}
