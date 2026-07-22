@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ESNext"],
     "module": "Preserve",
     "moduleDetection": "force",
     "moduleResolution": "Bundler",
     "noEmit": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "strict": true,

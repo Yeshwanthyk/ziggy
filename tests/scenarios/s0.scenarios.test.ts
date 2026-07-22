@@ -17,6 +17,17 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s2.attach-socket",
     "s2.service-lifecycle",
     "s2.operator-readiness",
+    "s3.attach-client",
+    "s3.stable-main",
+    "s3.cli-ask",
+    "s3.cli-sessions-list",
+    "s3.compiled-daemon-lifecycle",
+    "s3.compiled-cli-process",
+    "s3.credential-authority",
+    "s3.provider-auth",
+    "s3.profile-config",
+    "s3.profile-initialization",
+    "s3.tui-protocol-face",
   ]);
 
   for (const scenario of scenarioRegistry) {

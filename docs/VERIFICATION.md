@@ -88,6 +88,22 @@ other user data are removed or replaced with stable synthetic values. Redaction 
 schema-checked, and a redaction failure fails evidence publication. Generated bundles are never
 committed.
 
+Native service smoke evidence is a separate, host-dependent development artifact. Run
+`bun run native-service:smoke` on Darwin or Linux; it compiles a disposable executable, initializes
+a disposable Profile through that executable's `ziggy init` command, exercises the real user-service lifecycle, validates the native definition,
+and always retries native unregister plus owned-definition/Profile cleanup. The ignored
+`.artifacts/verification/native-service-smoke-<timestamp>/record.json` uses the dedicated
+`native-service-smoke-v1.schema.json` contract. It records only placeholder-based command steps,
+timestamps, git/tool versions, semantic bounded diagnostics and their digests, cleanup outcome,
+host capability disposition, a bounded tooling-input digest, and replay instructions. It never enters or substitutes for the
+deterministic summary/result/replay evidence contract.
+
+The smoke refuses unsupported platforms and missing native tools before creating disposable state.
+Darwin requires `launchctl` and `plutil`. Linux requires `systemctl`, `systemd-analyze`, `loginctl`,
+a reachable user manager, and enabled user lingering; its record reports each capability explicitly
+and cleans disposable state after runtime-capability failure. The non-host platform is recorded as
+`unavailable-on-host`, not inferred or claimed as tested.
+
 ## Verifier commands
 
 The intended end-state root commands are:

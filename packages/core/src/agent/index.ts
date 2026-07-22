@@ -7,12 +7,17 @@ export {
 } from "./filesystem.ts";
 export {
   ApprovalDecisionNotAllowedError,
+  type ApprovalResolutionResult,
   createSessionRuntime,
   type AfterToolHookInput,
   type CreateSessionRuntimeOptions,
+  InvalidSessionRuntimeInputError,
   type SessionRuntime,
   type SessionSubscription,
+  SinceSeqBeyondTailError,
   SessionRuntimeClosedError,
+  SessionRuntimeError,
+  SessionSnapshotMismatchError,
   type SessionTool,
   type SessionWorld,
   StaleTurnError,

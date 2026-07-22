@@ -29,7 +29,7 @@ Let a profile define scheduled or webhook-triggered work that runs the agent loo
 
 **Webhook ingress (D9).** The daemon binds its HTTP listener to `127.0.0.1` only and only when at least one webhook-triggered Automation is enabled. Requests go to `/hooks/<name>` and must present that hook's token. Ziggy never exposes this listener remotely; the owner supplies any tunnel or reverse proxy.
 
-**No separate cron infrastructure.** Explicitly rejecting openclaw's model of a distinct cron subsystem/dashboard: an Automation Run is a Session like any other, so `ziggy session list`/the TUI/replay all work on Runs for free. `ziggy automations runs` is a filtered view over Sessions tagged with their originating Automation, not a parallel data store.
+**No separate cron infrastructure.** Explicitly rejecting openclaw's model of a distinct cron subsystem/dashboard: an Automation Run is a Session like any other, so `ziggy sessions list`/the TUI/replay all work on Runs for free. `ziggy automations runs` is a filtered view over Sessions tagged with their originating Automation, not a parallel data store.
 
 **Example automation file:**
 

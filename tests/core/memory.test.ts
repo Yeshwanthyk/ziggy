@@ -2,19 +2,25 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Effect } from "../../packages/core/node_modules/effect/dist/index.js";
 import {
   createFilesystemWorld,
   createMemoryTool,
   MEMORY_DOCUMENT_LIMIT,
   MEMORY_ENTRY_DELIMITER,
-  openSession,
-  runMemoryTool,
+  openSession as openSessionEffect,
+  runMemoryTool as runMemoryToolEffect,
   USER_DOCUMENT_LIMIT,
   type FilesystemWorld,
   type MemoryBatchExpectation,
   type MemoryReplacement,
   type SessionTool,
 } from "../../packages/core/src/index.ts";
+import { runEffect } from "../testkit/effect.ts";
+
+function openSession(options: Parameters<typeof openSessionEffect>[0]) {
+  return runEffect(openSessionEffect(options));
+}
 
 const ENTRY_DELIMITER = MEMORY_ENTRY_DELIMITER;
 const profiles: string[] = [];
@@ -106,15 +112,16 @@ describe("@ziggy/core Memory tool", () => {
     let reads = 0;
     const synchronizeFirstRead = (delegate: FilesystemWorld): FilesystemWorld => ({
       ...delegate,
-      async readMemoryBatch(documents) {
-        const snapshot = await delegate.readMemoryBatch(documents);
-        reads += 1;
-        if (reads === 2) {
-          readsReached.resolve();
-        }
-        await releaseReads.promise;
-        return snapshot;
-      },
+      readMemoryBatch: (documents) =>
+        Effect.gen(function* () {
+          const snapshot = yield* delegate.readMemoryBatch(documents);
+          reads += 1;
+          if (reads === 2) {
+            readsReached.resolve();
+          }
+          yield* Effect.promise(() => releaseReads.promise);
+          return snapshot;
+        }),
     });
 
     const first = run(synchronizeFirstRead(firstWorld), add("memory", "alpha"));
@@ -205,7 +212,9 @@ describe("@ziggy/core Memory tool", () => {
       `alpha${ENTRY_DELIMITER}   ${ENTRY_DELIMITER}beta`,
     ]) {
       const fixture = await createFixture();
-      await fixture.world.replaceMemoryBatch([{ document: "MEMORY.md", content: malformed }]);
+      await runEffect(
+        fixture.world.replaceMemoryBatch([{ document: "MEMORY.md", content: malformed }]),
+      );
       const calls: WorldCalls = { memoryReads: 0, memoryWrites: [] };
 
       const result = await run(recordingWorld(fixture.world, calls), add("user", "unchanged"));
@@ -303,11 +312,13 @@ describe("@ziggy/core model-visible Memory tool", () => {
       properties: { operations: { type: "array", minItems: 1 } },
     });
     await expect(
-      tool.execute({
-        input: {
-          operations: [{ action: "add", target: "memory", content: "model-visible fact" }],
-        },
-      }),
+      runEffect(
+        tool.execute({
+          input: {
+            operations: [{ action: "add", target: "memory", content: "model-visible fact" }],
+          },
+        }),
+      ),
     ).resolves.toMatchObject({ success: true });
     expect(await readTarget(fixture.profile, "memory")).toBe("model-visible fact");
   });
@@ -336,7 +347,7 @@ describe("@ziggy/core frozen Session Memory snapshot", () => {
     expect(current.systemPrompt).toContain("original memory");
     expect(current.systemPrompt).not.toContain("new memory");
 
-    const currentReplay = await fixture.world.readSession("session-current", 0);
+    const currentReplay = await runEffect(fixture.world.readSession("session-current", 0));
     expect(currentReplay).toHaveLength(1);
     expect(currentReplay[0]?.event).toEqual({
       type: "session-started",
@@ -362,7 +373,7 @@ describe("@ziggy/core frozen Session Memory snapshot", () => {
       tools: [],
     });
     expect(resumed).toEqual(current);
-    expect(await reopenedWorld.readSession("session-current", 0)).toHaveLength(1);
+    expect(await runEffect(reopenedWorld.readSession("session-current", 0))).toHaveLength(1);
   });
 
   test("concurrent opens through separate World instances persist exactly the first snapshot", async () => {
@@ -395,7 +406,7 @@ describe("@ziggy/core frozen Session Memory snapshot", () => {
     expect(first.systemPrompt).toContain("first prompt");
     expect(first.systemPrompt).not.toContain("second prompt");
     expect(first.tools).toEqual([frozenTool]);
-    const persisted = await secondWorld.readSession("concurrent-session", 0);
+    const persisted = await runEffect(secondWorld.readSession("concurrent-session", 0));
     expect(persisted).toHaveLength(1);
     expect(persisted[0]?.event).toEqual({
       type: "session-started",
@@ -431,7 +442,7 @@ function add(target: "memory" | "user", content: string): Operation {
 }
 
 function run(world: FilesystemWorld, ...operations: ReadonlyArray<Operation>) {
-  return runMemoryTool({ world, operations });
+  return runEffect(runMemoryToolEffect({ world, operations }));
 }
 
 async function seedEntries(
@@ -464,9 +475,7 @@ function recordingWorld(delegate: FilesystemWorld, calls: WorldCalls): Filesyste
     readSession(sessionId, afterSeq) {
       return delegate.readSession(sessionId, afterSeq);
     },
-    listSessions() {
-      return delegate.listSessions();
-    },
+    listSessions: delegate.listSessions,
     readMemory(document) {
       return delegate.readMemory(document);
     },

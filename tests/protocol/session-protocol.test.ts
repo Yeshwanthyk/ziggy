@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   decodeSessionEnvelope,
   encodeSessionEnvelope,
+  negotiateServerFeatures,
   type ApprovalResolveRequest,
   type ApprovalResolveResponse,
   type InitializeRequest,
   type InitializeResponse,
   type ProtocolMethod,
+  type SessionEnsureRequest,
+  type SessionEnsureResponse,
   type SessionEnvelope,
   type SessionEvent,
   type SessionListRequest,
@@ -114,7 +117,11 @@ expectType<
   Equal<
     ProtocolMethod,
     | "initialize"
+    | "auth/login"
+    | "auth/respond"
+    | "auth/status"
     | "session/start"
+    | "session/ensure"
     | "session/resume"
     | "session/list"
     | "session/subscribe"
@@ -138,9 +145,14 @@ expectType<
   Equal<
     InitializeResponse,
     {
-      readonly protocolVersion: 1;
+      readonly protocolVersion: 2;
       readonly features: ReadonlyArray<
-        "sessionReplay" | "turnSteering" | "turnInterrupt" | "approvals"
+        | "sessionReplay"
+        | "turnSteering"
+        | "turnInterrupt"
+        | "approvals"
+        | "stableMainSession"
+        | "providerAuth"
       >;
     }
   >
@@ -158,6 +170,8 @@ expectType<
 >();
 expectType<Equal<SessionStartRequest, Record<never, never>>>();
 expectType<Equal<SessionStartResponse, { readonly session: SessionSummary }>>();
+expectType<Equal<SessionEnsureRequest, { readonly sessionId: "main" }>>();
+expectType<Equal<SessionEnsureResponse, { readonly session: SessionSummary }>>();
 expectType<
   Equal<SessionResumeRequest, { readonly sessionId: string; readonly sinceSeq: number }>
 >();
@@ -214,6 +228,7 @@ expectType<Equal<ApprovalResolveResponse, { readonly outcome: "resolved" | "alre
 const protocolMethods: ReadonlyArray<ProtocolMethod> = [
   "initialize",
   "session/start",
+  "session/ensure",
   "session/resume",
   "session/list",
   "session/subscribe",
@@ -228,8 +243,15 @@ const initializeRequest: InitializeRequest = {
   features: ["modelChunks", "approvalRequests"],
 };
 const initializeResponse: InitializeResponse = {
-  protocolVersion: 1,
-  features: ["sessionReplay", "turnSteering", "turnInterrupt", "approvals"],
+  protocolVersion: 2,
+  features: [
+    "sessionReplay",
+    "turnSteering",
+    "turnInterrupt",
+    "approvals",
+    "stableMainSession",
+    "providerAuth",
+  ],
 };
 const session: SessionSummary = {
   sessionId: "session-a",
@@ -239,6 +261,10 @@ const session: SessionSummary = {
 };
 const sessionStartRequest: SessionStartRequest = {};
 const sessionStartResponse: SessionStartResponse = { session };
+const sessionEnsureRequest: SessionEnsureRequest = { sessionId: "main" };
+const sessionEnsureResponse: SessionEnsureResponse = {
+  session: { ...session, sessionId: "main" },
+};
 const sessionResumeRequest: SessionResumeRequest = { sessionId: "session-a", sinceSeq: 4 };
 const sessionResumeResponse: SessionResumeResponse = {
   session,
@@ -640,6 +666,7 @@ describe("attach method contracts", () => {
     expect(protocolMethods).toEqual([
       "initialize",
       "session/start",
+      "session/ensure",
       "session/resume",
       "session/list",
       "session/subscribe",
@@ -657,15 +684,32 @@ describe("attach method contracts", () => {
       features: ["modelChunks", "approvalRequests"],
     });
     expect(initializeResponse).toEqual({
-      protocolVersion: 1,
-      features: ["sessionReplay", "turnSteering", "turnInterrupt", "approvals"],
+      protocolVersion: 2,
+      features: [
+        "sessionReplay",
+        "turnSteering",
+        "turnInterrupt",
+        "approvals",
+        "stableMainSession",
+        "providerAuth",
+      ],
     });
+    expect(negotiateServerFeatures(false)).toEqual([
+      "sessionReplay",
+      "turnSteering",
+      "turnInterrupt",
+      "approvals",
+      "stableMainSession",
+    ]);
+    expect(negotiateServerFeatures(true)).toEqual(initializeResponse.features);
   });
 
   test("covers every Session request and response shape", () => {
     expect([
       sessionStartRequest,
       sessionStartResponse,
+      sessionEnsureRequest,
+      sessionEnsureResponse,
       sessionResumeRequest,
       sessionResumeResponse,
       sessionListRequest,
@@ -677,6 +721,8 @@ describe("attach method contracts", () => {
     ]).toEqual([
       {},
       { session },
+      { sessionId: "main" },
+      { session: { ...session, sessionId: "main" } },
       { sessionId: "session-a", sinceSeq: 4 },
       { session, subscriptionId: "subscription-a", replayThroughSeq: 4 },
       {},

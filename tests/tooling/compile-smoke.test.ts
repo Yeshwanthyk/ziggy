@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { CommandRecorder } from "../testkit/boundaries.ts";
+import { CommandRecorder, type ProcessRequest } from "../testkit/boundaries.ts";
 import {
   buildCompileArgv,
   runCompileSmoke,
@@ -58,13 +58,38 @@ describe("compile smoke verifier", () => {
       stderr: "",
       timedOut: false,
     });
-    await runCompileSmoke("/fixture/repo", recorder);
-    expect(recorder.commands).toHaveLength(2);
+    const runner = {
+      run(request: ProcessRequest) {
+        recorder.respondWith({
+          exitCode: 0,
+          stdout:
+            request.argv[1] === "--runtime-mode"
+              ? "compiled\n"
+              : request.argv[1] === "--oauth-loader-smoke"
+                ? "oauth-loaders:ok\n"
+                : "0.0.0\n",
+          stderr: "",
+          timedOut: false,
+        });
+        return recorder.run(request);
+      },
+    };
+    await runCompileSmoke("/fixture/repo", runner);
+    expect(recorder.commands).toHaveLength(4);
     const compile = recorder.commands[0];
     const version = recorder.commands[1];
-    if (compile === undefined || version === undefined) {
-      throw new Error("expected compile and version commands");
+    const runtimeMode = recorder.commands[2];
+    const oauthLoader = recorder.commands[3];
+    if (
+      compile === undefined ||
+      version === undefined ||
+      runtimeMode === undefined ||
+      oauthLoader === undefined
+    ) {
+      throw new Error("expected compile, version, runtime-mode, and OAuth-loader commands");
     }
+    const compiledOutfile = compile.argv[5];
+    if (compiledOutfile === undefined) throw new Error("expected compiled outfile");
     expect(compile.argv.slice(0, 5)).toEqual([
       "bun",
       "build",
@@ -72,10 +97,14 @@ describe("compile smoke verifier", () => {
       "packages/ziggy/src/main.ts",
       "--outfile",
     ]);
-    expect(version.argv[0]).toBe(compile.argv[5]);
+    expect(version.argv[0]).toBe(compiledOutfile);
     expect(version.argv[1]).toBe("--version");
+    expect(runtimeMode.argv).toEqual([compiledOutfile, "--runtime-mode"]);
+    expect(oauthLoader.argv).toEqual([compiledOutfile, "--oauth-loader-smoke"]);
     expect(compile.timeoutMs).toBe(120_000);
     expect(version.timeoutMs).toBe(10_000);
+    expect(runtimeMode.timeoutMs).toBe(10_000);
+    expect(oauthLoader.timeoutMs).toBe(10_000);
   });
 
   test("fails bounded timeouts and always removes the isolated directory", async () => {

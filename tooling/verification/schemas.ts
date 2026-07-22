@@ -10,6 +10,7 @@ const schemaFiles = [
   "evidence-summary-v1.schema.json",
   "evidence-summary-v2.schema.json",
   "manifest-v1.schema.json",
+  "native-service-smoke-v1.schema.json",
   "scenario-v1.schema.json",
 ] as const;
 

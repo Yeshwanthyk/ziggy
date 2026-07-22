@@ -2,14 +2,15 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Effect, Scope } from "../../packages/core/node_modules/effect/dist/index.js";
 import {
-  createFilesystemSessionRuntime,
+  createFilesystemSessionRuntime as createFilesystemSessionRuntimeEffect,
   createFilesystemWorld,
   createMemoryTool,
-  openSession,
-  resumeFilesystemSession,
+  openSession as openSessionEffect,
+  resumeFilesystemSession as resumeFilesystemSessionEffect,
   type FilesystemWorld,
-  type SessionRuntime,
+  type SessionRuntime as EffectSessionRuntime,
   type SessionTool,
 } from "../../packages/core/src/index.ts";
 import type {
@@ -27,9 +28,58 @@ import {
   toolStep,
   type ScriptedStep,
 } from "../testkit/provider/scripted.ts";
+import { runEffect } from "../testkit/effect.ts";
 
 const profiles: string[] = [];
 const BASE_PROMPT = "You are Ziggy.";
+
+type SessionRuntime = ReturnType<typeof promiseRuntime>;
+
+async function createFilesystemSessionRuntime(
+  options: Parameters<typeof createFilesystemSessionRuntimeEffect>[0],
+) {
+  const scope = await runEffect(Scope.make());
+  const runtime = await runEffect(
+    createFilesystemSessionRuntimeEffect(options).pipe(Effect.provideService(Scope.Scope, scope)),
+  );
+  return promiseRuntime(runtime);
+}
+
+function openSession(options: Parameters<typeof openSessionEffect>[0]) {
+  return runEffect(openSessionEffect(options));
+}
+
+async function resumeFilesystemSession(
+  options: Parameters<typeof resumeFilesystemSessionEffect>[0],
+) {
+  const scope = await runEffect(Scope.make());
+  const resumed = await runEffect(
+    resumeFilesystemSessionEffect(options).pipe(Effect.provideService(Scope.Scope, scope)),
+  );
+  return {
+    runtime: promiseRuntime(resumed.runtime),
+    subscription: {
+      replayThroughSeq: resumed.subscription.replayThroughSeq,
+      unsubscribe: () => runEffect(resumed.subscription.unsubscribe),
+    },
+  };
+}
+
+function promiseRuntime(runtime: EffectSessionRuntime) {
+  return {
+    startTurn: (input: Parameters<typeof runtime.startTurn>[0]) =>
+      runEffect(runtime.startTurn(input)),
+    steer: (input: Parameters<typeof runtime.steer>[0]) => runEffect(runtime.steer(input)),
+    interrupt: (input: Parameters<typeof runtime.interrupt>[0]) =>
+      runEffect(runtime.interrupt(input)),
+    resolveApproval: (input: Parameters<typeof runtime.resolveApproval>[0]) =>
+      runEffect(runtime.resolveApproval(input)),
+    waitForIdle: () => runEffect(runtime.waitForIdle),
+    subscribe: (input: Parameters<typeof runtime.subscribe>[0]) =>
+      runEffect(runtime.subscribe(input)),
+    close: () => runEffect(runtime.close),
+  };
+}
 
 interface RuntimeFixture {
   readonly profile: string;
@@ -48,14 +98,14 @@ describe("S1 filesystem production composition", () => {
     });
     await fixture.runtime.waitForIdle();
 
-    const replay = await fixture.world.readSession("text-session", 0);
+    const replay = await runEffect(fixture.world.readSession("text-session", 0));
     const snapshot = requireStartedSnapshot(replay);
     expect(replay).toEqual(expectedTextTurn(snapshot));
     expect(await readFile(sessionPath(fixture.profile, "text-session"), "utf8")).toBe(
       replay.map((envelope) => JSON.stringify(envelope)).join("\n") + "\n",
     );
-    expect(await fixture.world.readSession("text-session", 0)).toEqual(replay);
-    expect(await fixture.world.readSession("text-session", replay.length)).toEqual([]);
+    expect(await runEffect(fixture.world.readSession("text-session", 0))).toEqual(replay);
+    expect(await runEffect(fixture.world.readSession("text-session", replay.length))).toEqual([]);
   });
 
   test("atomically starts one Session across concurrent openSession and runtime creation", async () => {
@@ -68,15 +118,17 @@ describe("S1 filesystem production composition", () => {
       systemPrompt: "first persisted snapshot",
       tools: frozenTools,
     };
-    expect(await firstWorld.startSession("direct-session", directSnapshot)).toEqual({
+    expect(await runEffect(firstWorld.startSession("direct-session", directSnapshot))).toEqual({
       snapshot: directSnapshot,
       created: true,
     });
     expect(
-      await secondWorld.startSession("direct-session", {
-        systemPrompt: "must lose",
-        tools: [],
-      }),
+      await runEffect(
+        secondWorld.startSession("direct-session", {
+          systemPrompt: "must lose",
+          tools: [],
+        }),
+      ),
     ).toEqual({ snapshot: directSnapshot, created: false });
     const provider = new ScriptedProvider([]);
 
@@ -99,7 +151,7 @@ describe("S1 filesystem production composition", () => {
     });
     const [snapshot, runtime] = await Promise.all([opened, created]);
 
-    const replay = await firstWorld.readSession("shared-session", 0);
+    const replay = await runEffect(firstWorld.readSession("shared-session", 0));
     expect(replay.filter((envelope) => envelope.event.type === "session-started")).toHaveLength(1);
     expect(requireStartedSnapshot(replay)).toEqual(snapshot);
     await runtime.close();
@@ -108,7 +160,9 @@ describe("S1 filesystem production composition", () => {
   test("resumes from the persisted snapshot without reading or recovering current Memory", async () => {
     const profile = await createProfile("resume-corrupt-memory");
     const initialWorld = deterministicWorld(profile);
-    await initialWorld.replaceMemoryBatch([{ document: "MEMORY.md", content: "persisted fact" }]);
+    await runEffect(
+      initialWorld.replaceMemoryBatch([{ document: "MEMORY.md", content: "persisted fact" }]),
+    );
     const initial = await composedRuntime(
       initialWorld,
       "persisted-session",
@@ -140,7 +194,9 @@ describe("S1 filesystem production composition", () => {
   test("the actual Memory tool updates Memory while Session snapshots remain frozen", async () => {
     const profile = await createProfile("memory-freeze");
     const world = deterministicWorld(profile);
-    await world.replaceMemoryBatch([{ document: "MEMORY.md", content: "original fact" }]);
+    await runEffect(
+      world.replaceMemoryBatch([{ document: "MEMORY.md", content: "original fact" }]),
+    );
     const currentProvider = new ScriptedProvider([
       toolStep(
         [
@@ -173,9 +229,9 @@ describe("S1 filesystem production composition", () => {
 
     await current.startTurn({ message: "update Memory" });
     await current.waitForIdle();
-    expect(await world.readMemory("MEMORY.md")).toBe("updated fact");
+    expect(await runEffect(world.readMemory("MEMORY.md"))).toBe("updated fact");
     expect(
-      (await world.readSession("current-session", 0))
+      (await runEffect(world.readSession("current-session", 0)))
         .filter((envelope) => envelope.event.type === "tool-result")
         .map((envelope) => envelope.event),
     ).toContainEqual(
@@ -239,7 +295,7 @@ describe("S1 filesystem production composition", () => {
     });
     await runtime.close();
 
-    const snapshot = requireStartedSnapshot(await world.readSession("tools-session", 0));
+    const snapshot = requireStartedSnapshot(await runEffect(world.readSession("tools-session", 0)));
     const memory = createMemoryTool(world);
     const expectedMemory = freezeTools([memory])[0];
     expect(snapshot.tools.find((tool) => tool.name === "memory")).toEqual(expectedMemory);
@@ -323,7 +379,9 @@ describe("S1 filesystem production composition", () => {
       },
     });
 
-    const durableAtReturn = await deterministicWorld(profile).readSession("resume-session", 0);
+    const durableAtReturn = await runEffect(
+      deterministicWorld(profile).readSession("resume-session", 0),
+    );
     const durableTail = durableAtReturn.at(-1);
     if (durableTail === undefined) {
       throw new Error("Resumed Session has no durable start event");
@@ -336,7 +394,7 @@ describe("S1 filesystem production composition", () => {
     await resumed.runtime.waitForIdle();
     resumed.subscription.unsubscribe();
 
-    const durable = await deterministicWorld(profile).readSession("resume-session", 0);
+    const durable = await runEffect(deterministicWorld(profile).readSession("resume-session", 0));
     expect([...received]).toEqual([...durable]);
     expect(received.map((envelope) => envelope.seq)).toEqual(
       Array.from({ length: durable.length }, (_, index) => index + 1),
@@ -453,9 +511,7 @@ function fixtureTool(name: string, reverseSchema: boolean): SessionTool {
     name,
     description: `Run ${name}.`,
     inputSchema,
-    async execute() {
-      return { tool: name };
-    },
+    execute: () => Effect.succeed({ tool: name }),
   };
 }
 

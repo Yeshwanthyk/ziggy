@@ -45,7 +45,13 @@
     "observations": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["canonicalEventTrace", "providerInputs", "faultSchedule", "filesystemDiffs"],
+      "required": [
+        "canonicalEventTrace",
+        "providerInputs",
+        "faultSchedule",
+        "filesystemDiffs",
+        "metrics"
+      ],
       "properties": {
         "canonicalEventTrace": {
           "type": "array",
@@ -53,13 +59,31 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["schemaVersion", "seq", "emittedAt", "eventType", "sessionId"],
+            "required": [
+              "schemaVersion",
+              "seq",
+              "emittedAt",
+              "eventType",
+              "sessionId",
+              "turnId",
+              "stepId",
+              "origin",
+              "status",
+              "delta",
+              "fixtureText"
+            ],
             "properties": {
               "schemaVersion": { "const": 1 },
               "seq": { "type": "integer", "minimum": 0 },
               "emittedAt": { "type": "string", "format": "date-time" },
               "eventType": { "$ref": "#/$defs/boundedString" },
-              "sessionId": { "$ref": "#/$defs/boundedString" }
+              "sessionId": { "$ref": "#/$defs/boundedString" },
+              "turnId": { "type": ["string", "null"], "maxLength": 512 },
+              "stepId": { "type": ["string", "null"], "maxLength": 512 },
+              "origin": { "type": ["string", "null"], "maxLength": 512 },
+              "status": { "type": ["string", "null"], "maxLength": 512 },
+              "delta": { "type": ["string", "null"], "maxLength": 512 },
+              "fixtureText": { "type": ["string", "null"], "maxLength": 512 }
             }
           }
         },
@@ -128,18 +152,41 @@
               "afterDigest": { "$ref": "#/$defs/digest" }
             }
           }
+        },
+        "metrics": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "$ref": "#/$defs/boundedString" },
+              "value": { "type": "integer", "minimum": 0 }
+            }
+          }
         }
       }
     },
     "agentFinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "role", "severity", "summary", "disposition"],
+      "required": ["id", "role", "severity", "summary", "review", "disposition"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]+$", "maxLength": 128 },
         "role": { "enum": ["scout", "review"] },
         "severity": { "enum": ["info", "warning", "error"] },
         "summary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["workspaceDigest", "gitRevision", "reviewedAt"],
+          "properties": {
+            "workspaceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "gitRevision": { "type": ["string", "null"], "pattern": "^[a-f0-9]{40}$" },
+            "reviewedAt": { "type": "string", "format": "date-time" }
+          }
+        },
         "disposition": {
           "type": "object",
           "additionalProperties": false,

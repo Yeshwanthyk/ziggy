@@ -1,0 +1,8 @@
+ZIGGY / main                                                                       READY
+----------------------------------------------------------------------------------------
+
+No messages yet. Type below and press Enter to start.
+----------------------------------------------------------------------------------------
+[FOCUS: COMPOSER] [ENTER STARTS]
+> _
+Enter start | ^P Sessions | ^C detach

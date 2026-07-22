@@ -35,6 +35,7 @@ export type ScriptedStep =
       readonly events: ReadonlyArray<AssistantMessageEvent>;
       readonly result: AssistantMessage;
       readonly barrier?: Barrier;
+      readonly eventBarriers?: ReadonlyMap<number, Barrier>;
       readonly omitTerminal?: boolean;
     }
   | { readonly kind: "throw"; readonly error: Error }
@@ -118,7 +119,8 @@ export class ScriptedProvider {
       const events = step.omitTerminal
         ? step.events.filter((event) => event.type !== "done" && event.type !== "error")
         : step.events;
-      for (const event of events) {
+      for (const [index, event] of events.entries()) {
+        await step.eventBarriers?.get(index)?.wait();
         stream.push(event);
       }
       stream.end(step.result);

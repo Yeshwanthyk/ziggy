@@ -1,5 +1,6 @@
 import type { FrozenSessionSnapshot, FrozenTool } from "@ziggy/protocol";
-import type { FilesystemWorld } from "../world/filesystem.ts";
+import { Effect } from "effect";
+import type { FilesystemWorld, FilesystemWorldError } from "../world/filesystem.ts";
 
 export interface OpenSessionOptions {
   readonly world: FilesystemWorld;
@@ -8,23 +9,27 @@ export interface OpenSessionOptions {
   readonly tools: ReadonlyArray<FrozenTool>;
 }
 
-export async function openSession(options: OpenSessionOptions): Promise<FrozenSessionSnapshot> {
-  const persisted = await options.world.readSessionSnapshot(options.sessionId);
-  if (persisted !== undefined) {
-    return persisted;
-  }
+export function openSession(
+  options: OpenSessionOptions,
+): Effect.Effect<FrozenSessionSnapshot, FilesystemWorldError> {
+  return Effect.gen(function* () {
+    const persisted = yield* options.world.readSessionSnapshot(options.sessionId);
+    if (persisted !== undefined) {
+      return persisted;
+    }
 
-  const memory = await options.world.readMemoryBatch(["MEMORY.md", "USER.md"]);
-  const snapshot: FrozenSessionSnapshot = {
-    systemPrompt: assembleSystemPrompt(
-      options.baseSystemPrompt,
-      memory["MEMORY.md"] ?? "",
-      memory["USER.md"] ?? "",
-    ),
-    tools: structuredClone(options.tools),
-  };
-  const started = await options.world.startSession(options.sessionId, snapshot);
-  return started.snapshot;
+    const memory = yield* options.world.readMemoryBatch(["MEMORY.md", "USER.md"]);
+    const snapshot: FrozenSessionSnapshot = {
+      systemPrompt: assembleSystemPrompt(
+        options.baseSystemPrompt,
+        memory["MEMORY.md"] ?? "",
+        memory["USER.md"] ?? "",
+      ),
+      tools: structuredClone(options.tools),
+    };
+    const started = yield* options.world.startSession(options.sessionId, snapshot);
+    return started.snapshot;
+  });
 }
 
 function assembleSystemPrompt(base: string, memory: string, user: string): string {

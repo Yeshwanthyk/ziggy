@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Effect } from "../../packages/core/node_modules/effect/dist/index.js";
 import { createFilesystemWorld } from "../../packages/core/src/index.ts";
 import { decodeSessionEnvelope, type SessionEvent } from "../../packages/protocol/src/index.ts";
 import {
@@ -12,6 +13,7 @@ import {
   type MemoryExpectation,
 } from "../testkit/world/contract.ts";
 import { defineFilesystemWorldScenarios } from "../testkit/world/filesystem-scenarios.ts";
+import { runEffect } from "../testkit/effect.ts";
 
 const profiles: string[] = [];
 const fixtures: readonly [SessionEvent, SessionEvent, SessionEvent] = [
@@ -77,14 +79,16 @@ defineFilesystemWorldScenarios(
   {
     supportsSymlinks: process.platform !== "win32",
     open(profilePath, controls) {
-      return createFilesystemWorld({
-        profilePath,
-        now: controls.now,
-        nextTemporaryId: controls.nextTemporaryId,
-        onMemoryCommitPoint: controls.onMemoryCommitPoint,
-        onMemoryRecoveryPoint: controls.onMemoryRecoveryPoint,
-        onSessionAppendPoint: controls.onSessionAppendPoint,
-      });
+      return promiseWorld(
+        createFilesystemWorld({
+          profilePath,
+          now: controls.now,
+          nextTemporaryId: controls.nextTemporaryId,
+          onMemoryCommitPoint: controls.onMemoryCommitPoint,
+          onMemoryRecoveryPoint: controls.onMemoryRecoveryPoint,
+          onSessionAppendPoint: controls.onSessionAppendPoint,
+        }),
+      );
     },
   },
 );
@@ -107,20 +111,42 @@ function openContractWorld(
   });
   return {
     appendSession(sessionId, event) {
-      return world.appendSession(sessionId, withSessionId(decodeFixtureEvent(event), sessionId));
+      return runEffect(
+        world.appendSession(sessionId, withSessionId(decodeFixtureEvent(event), sessionId)),
+      );
     },
     readSession(sessionId, afterSeq) {
-      return world.readSession(sessionId, afterSeq);
+      return runEffect(world.readSession(sessionId, afterSeq));
     },
     listSessions() {
-      return world.listSessions();
+      return runEffect(world.listSessions);
     },
     readMemory(document) {
-      return world.readMemory(document);
+      return runEffect(world.readMemory(document));
     },
     replaceMemoryBatch(replacements, expected?: ReadonlyArray<MemoryExpectation>) {
-      return world.replaceMemoryBatch(replacements, expected);
+      return runEffect(world.replaceMemoryBatch(replacements, expected));
     },
+  };
+}
+
+function promiseWorld(world: ReturnType<typeof createFilesystemWorld>) {
+  return {
+    readSessionSnapshot: (sessionId: string) => runEffect(world.readSessionSnapshot(sessionId)),
+    startSession: (sessionId: string, snapshot: Parameters<typeof world.startSession>[1]) =>
+      runEffect(world.startSession(sessionId, snapshot)),
+    appendSession: (sessionId: string, event: Parameters<typeof world.appendSession>[1]) =>
+      runEffect(world.appendSession(sessionId, event)),
+    readSession: (sessionId: string, afterSeq: number) =>
+      runEffect(world.readSession(sessionId, afterSeq)),
+    listSessions: () => runEffect(world.listSessions),
+    readMemory: (document: string) => runEffect(world.readMemory(document)),
+    readMemoryBatch: (documents: ReadonlyArray<string>) =>
+      runEffect(world.readMemoryBatch(documents)),
+    replaceMemoryBatch: (
+      replacements: Parameters<typeof world.replaceMemoryBatch>[0],
+      expected?: Parameters<typeof world.replaceMemoryBatch>[1],
+    ) => runEffect(world.replaceMemoryBatch(replacements, expected)),
   };
 }
 

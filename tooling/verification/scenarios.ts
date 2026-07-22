@@ -40,7 +40,7 @@ export async function executeScenarios(
       hasTests &&
       !skipped &&
       namesDeclaredFile &&
-      (scenario.stage !== "s1" || marker.valid);
+      (scenario.stage === "s0" || marker.valid);
     results.push({
       id: scenario.id,
       file: scenario.file,
@@ -90,6 +90,7 @@ function parseObservationMarker(
   try {
     const value: unknown = JSON.parse(line.slice(VERIFICATION_OBSERVATION_MARKER.length));
     const record = requireRecord(value);
+    requireExactKeys(record, ["scenarioId", "observations"]);
     if (record.scenarioId !== scenarioId) {
       return { valid: false, observations: emptyRuntimeObservations() };
     }
@@ -106,11 +107,24 @@ function decodeObservations(value: unknown): RuntimeObservations {
     "providerInputs",
     "faultSchedule",
     "filesystemDiffs",
+    "metrics",
   ]);
   return {
     canonicalEventTrace: requireArray(record.canonicalEventTrace, 512).map((item) => {
       const event = requireRecord(item);
-      requireExactKeys(event, ["schemaVersion", "seq", "emittedAt", "eventType", "sessionId"]);
+      requireExactKeys(event, [
+        "schemaVersion",
+        "seq",
+        "emittedAt",
+        "eventType",
+        "sessionId",
+        "turnId",
+        "stepId",
+        "origin",
+        "status",
+        "delta",
+        "fixtureText",
+      ]);
       if (event.schemaVersion !== 1) {
         throw new Error("invalid observed Session schema version");
       }
@@ -120,6 +134,12 @@ function decodeObservations(value: unknown): RuntimeObservations {
         emittedAt: requireString(event.emittedAt),
         eventType: requireString(event.eventType),
         sessionId: requireString(event.sessionId),
+        turnId: requireNullableString(event.turnId),
+        stepId: requireNullableString(event.stepId),
+        origin: requireNullableString(event.origin),
+        status: requireNullableString(event.status),
+        delta: requireNullableString(event.delta),
+        fixtureText: requireNullableString(event.fixtureText),
       };
     }),
     providerInputs: requireArray(record.providerInputs, 64).map((item) => {
@@ -180,6 +200,14 @@ function decodeObservations(value: unknown): RuntimeObservations {
         afterDigest: requireNullableDigest(diff.afterDigest),
       };
     }),
+    metrics: requireArray(record.metrics, 128).map((item) => {
+      const metric = requireRecord(item);
+      requireExactKeys(metric, ["name", "value"]);
+      return {
+        name: requireString(metric.name),
+        value: requireNonNegativeInteger(metric.value),
+      };
+    }),
   };
 }
 
@@ -204,6 +232,10 @@ function requireArray(value: unknown, maximum: number): ReadonlyArray<unknown> {
     throw new Error("observation array is invalid or unbounded");
   }
   return value;
+}
+
+function requireNullableString(value: unknown): string | null {
+  return value === null ? null : requireString(value);
 }
 
 function requireString(value: unknown): string {

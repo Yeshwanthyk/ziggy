@@ -22,7 +22,8 @@ comments, commits, and docs.
 - **Profile** — a folder on disk that is the whole identity of one ziggy: config, SOUL.md,
   voices, sessions, memory, extensions, automations, runtime socket. Path is identity.
 - **Session** — one durable conversation: an append-only transcript plus its live turn state.
-  The main session, pinned sessions, and automation-run sessions are all Sessions.
+  The stable main Session, additional user-created Sessions, and Automation-run Sessions are all
+  Sessions. Session pinning is not currently a defined capability.
 - **Memory** — the retained-facts store, distinct from and outliving any single Session's
   transcript. `MEMORY.md` and `USER.md` exist from S1; person-scoped `memory/people/` files
   arrive at S6 and are part of v1.
@@ -65,11 +66,33 @@ existing one — do not invent a synonym.
   `vendor/effect` at that exact tag: `vendor/effect/ai-docs/src/` for narrative patterns and
   `vendor/effect/migration/` for what changed from v3 (services, forking, schema, scheduling).
   When in doubt, grep `vendor/effect/packages/effect/src/` — it is the authoritative source.
+- **Effect ownership**: keep total, deterministic computation as plain synchronous TypeScript.
+  Anything that can fail, perform I/O, observe time, own mutable runtime state, run concurrently,
+  be interrupted, or acquire a resource is an Effect. Production orchestration must not expose or
+  compose native `Promise`s, `async` functions, manual cleanup stacks, or detached background work.
+- **Effect boundaries**: host and vendor callbacks may use Promise or callback APIs only inside a
+  small, named adapter that immediately wraps them with `Effect.tryPromise`, `Effect.callback`, or an
+  appropriate platform service. Run Effects once at the executable edge with
+  `BunRuntime.runMain`; tests cross the boundary only through `tests/testkit/effect.ts`. Do not call
+  `Effect.runPromise`, `Effect.runSync`, or `Effect.runFork` in library or application modules.
+- **Effect architecture**: model fallible domain errors with `Schema.TaggedErrorClass`, define
+  capabilities with `Context.Service`, construct them with explicit `Layer.effect`, and acquire
+  resources with `Effect.acquireRelease` or `Effect.acquireUseRelease`. Use structured fibers
+  (`Effect.forkScoped`, `FiberSet`) so interruption and shutdown have one owner. Never use
+  `Effect.orDie`, `Effect.ignore`, `Effect.ignoreCause`, or defects to erase a recoverable domain
+  failure. `Effect.exit` and `Effect.either` are only for code that deliberately inspects every
+  failure case, such as aggregating independent finalizer failures; they are not error suppression.
+- **Effect remediation**: the repo-local skills under `.agents/skills/` are the required playbooks
+  for typed errors, Schema boundaries, runtime boundaries, client wrappers, tests, and TypeScript
+  safety. When a lint rule identifies an Effect problem, use the matching skill to fix the design;
+  do not suppress the rule or route around it.
 - **TypeScript**: strict. No `any`. No `!` non-null assertion. No `as` type assertion (use
   proper narrowing, Schema decode, or a typed constructor). If you think you need one of these,
   the type is wrong — fix the type.
-- **Lint/format**: oxlint + oxfmt, enforced in CI. Run them before considering anything done.
-  `knip` catches dead exports/deps — keep it clean, it's how we keep the core small.
+- **Lint/format**: oxlint + oxfmt, enforced in CI. Run `bun run check` before considering anything
+  done. It must cover formatting, repo-local skill validation, blocking Effect lint, Effect lint
+  fixtures, Effect-aware TypeScript, tests, `knip`, package boundaries, and compiled-executable
+  smoke. `knip` catches dead exports/deps — keep it clean, it's how we keep the core small.
 - **Recurring issues**: when implementation repeatedly encounters and fixes the same issue class,
   call out the pattern and propose an enforceable lint rule or check. Do not add it until the user
   explicitly approves the proposal.

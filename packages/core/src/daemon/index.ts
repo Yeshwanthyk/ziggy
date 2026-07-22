@@ -1,4 +1,5 @@
 export {
+  AttachServerError,
   createAttachServer,
   type AttachServer,
   type CreateAttachServerOptions,
@@ -11,6 +12,7 @@ export {
 } from "./kernel.ts";
 export {
   inspectProfileLock,
+  ProfileLockCoordinator,
   type InspectProfileLockOptions,
   type ProfileLockInspection,
 } from "./profile-lock.ts";

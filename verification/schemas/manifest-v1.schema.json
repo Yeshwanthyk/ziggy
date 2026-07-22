@@ -15,7 +15,7 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "stage": { "$ref": "#/$defs/stage" },
-    "status": { "enum": ["implemented", "manifest-empty"] },
+    "status": { "enum": ["pending", "implemented", "manifest-empty"] },
     "predecessors": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/stage" } },
     "scenarios": {
       "type": "array",

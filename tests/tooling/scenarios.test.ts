@@ -24,9 +24,13 @@ const scenario: ScenarioDeclaration = {
 
 describe("explicit scenario execution", () => {
   test("executes each declared module and preserves actual deterministic configuration", async () => {
+    const marker = `${VERIFICATION_OBSERVATION_MARKER}${JSON.stringify({
+      scenarioId: scenario.id,
+      observations: emptyRuntimeObservations(),
+    })}`;
     const runner = new CommandRecorder({
       exitCode: 0,
-      stdout: "tests/fixture.test.ts\n(pass) fixture\n 1 pass\n",
+      stdout: `tests/fixture.test.ts\n(pass) fixture\n 1 pass\n${marker}\n`,
       stderr: "",
       timedOut: false,
     });
@@ -50,7 +54,7 @@ describe("explicit scenario execution", () => {
     });
   });
 
-  test("requires and decodes one bounded structured runtime marker for S1", async () => {
+  test("requires and decodes one bounded structured runtime marker for every stage", async () => {
     const s1 = { ...scenario, id: "s1.fixture", stage: "s1" } satisfies ScenarioDeclaration;
     const observations: RuntimeObservations = {
       ...emptyRuntimeObservations(),
@@ -81,18 +85,29 @@ describe("explicit scenario execution", () => {
     expect(passed[0]?.observations).toEqual(observations);
     expect(passed[0]?.process.stdout).not.toContain(VERIFICATION_OBSERVATION_MARKER);
 
-    for (const output of [
-      "tests/fixture.test.ts\n(pass) fixture\n1 pass\n",
-      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${marker}\n${marker}\n`,
-      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}{}\n`,
-      `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}${"x".repeat(32_769)}\n`,
-    ]) {
-      const result = await executeScenarios(
-        "/fixture/repo",
-        [s1],
-        new CommandRecorder({ exitCode: 0, stdout: output, stderr: "", timedOut: false }),
+    for (const stage of ["s1", "s2", "s3"] as const) {
+      const required = { ...s1, id: `${stage}.fixture`, stage } satisfies ScenarioDeclaration;
+      const requiredMarker = marker.replace(s1.id, required.id);
+      const mismatchedMarker = requiredMarker.replace(required.id, `${stage}.other`);
+      const unknownFieldMarker = requiredMarker.replace(
+        '"observations":',
+        '"unexpected":true,"observations":',
       );
-      expect(result[0]?.result).toBe("failed");
+      for (const output of [
+        "tests/fixture.test.ts\n(pass) fixture\n1 pass\n",
+        `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${requiredMarker}\n${requiredMarker}\n`,
+        `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${mismatchedMarker}\n`,
+        `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${unknownFieldMarker}\n`,
+        `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}{}\n`,
+        `tests/fixture.test.ts\n(pass) fixture\n1 pass\n${VERIFICATION_OBSERVATION_MARKER}${"x".repeat(32_769)}\n`,
+      ]) {
+        const result = await executeScenarios(
+          "/fixture/repo",
+          [required],
+          new CommandRecorder({ exitCode: 0, stdout: output, stderr: "", timedOut: false }),
+        );
+        expect(result[0]?.result).toBe("failed");
+      }
     }
   });
 

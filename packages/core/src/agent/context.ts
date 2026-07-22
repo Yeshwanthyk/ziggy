@@ -11,11 +11,21 @@ import type {
   ModelContent,
   SessionEnvelope,
 } from "@ziggy/protocol";
+import { Result, Schema } from "effect";
 
-export function projectProviderContext(envelopes: ReadonlyArray<SessionEnvelope>): Context {
+export class SessionContextError extends Schema.TaggedErrorClass<SessionContextError>()(
+  "SessionContextError",
+  { message: Schema.String },
+) {}
+
+export function projectProviderContext(
+  envelopes: ReadonlyArray<SessionEnvelope>,
+): Result.Result<Context, SessionContextError> {
   const started = envelopes.find((envelope) => envelope.event.type === "session-started");
   if (started === undefined || started.event.type !== "session-started") {
-    throw new Error("Session log has no session-started event");
+    return Result.fail(
+      new SessionContextError({ message: "Session log has no session-started event" }),
+    );
   }
   const messages: Context["messages"] = [];
   const toolNames = new Map<string, string>();
@@ -70,7 +80,11 @@ export function projectProviderContext(envelopes: ReadonlyArray<SessionEnvelope>
     ) {
       const toolName = toolNames.get(event.toolCallId);
       if (toolName === undefined) {
-        throw new Error(`Tool result ${event.toolCallId} has no durable tool call`);
+        return Result.fail(
+          new SessionContextError({
+            message: `Tool result ${event.toolCallId} has no durable tool call`,
+          }),
+        );
       }
       const result: ToolResultMessage<undefined> = {
         role: "toolResult",
@@ -84,7 +98,7 @@ export function projectProviderContext(envelopes: ReadonlyArray<SessionEnvelope>
     }
   }
 
-  return {
+  return Result.succeed({
     systemPrompt: started.event.snapshot.systemPrompt,
     messages,
     tools: started.event.snapshot.tools.map((tool) => ({
@@ -92,17 +106,19 @@ export function projectProviderContext(envelopes: ReadonlyArray<SessionEnvelope>
       description: tool.description,
       parameters: tool.inputSchema,
     })),
-  };
+  });
 }
 
-export function toFinalModelResponse(message: AssistantMessage): FinalModelResponse {
-  return {
+export function toFinalModelResponse(
+  message: AssistantMessage,
+): Result.Result<FinalModelResponse, SessionContextError> {
+  return Result.map(Result.all(message.content.map(toModelContent)), (content) => ({
     api: message.api,
     provider: message.provider,
     model: message.model,
     ...(message.responseModel === undefined ? {} : { responseModel: message.responseModel }),
     ...(message.responseId === undefined ? {} : { responseId: message.responseId }),
-    content: message.content.map(toModelContent),
+    content,
     usage: {
       input: message.usage.input,
       output: message.usage.output,
@@ -117,36 +133,38 @@ export function toFinalModelResponse(message: AssistantMessage): FinalModelRespo
     stopReason: message.stopReason,
     ...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
     timestamp: message.timestamp,
-  };
+  }));
 }
 
-function toModelContent(content: AssistantMessage["content"][number]): ModelContent {
+function toModelContent(
+  content: AssistantMessage["content"][number],
+): Result.Result<ModelContent, SessionContextError> {
   if (content.type === "text") {
-    return {
+    return Result.succeed({
       type: "text",
       text: content.text,
       ...(content.textSignature === undefined ? {} : { textSignature: content.textSignature }),
-    };
+    });
   }
   if (content.type === "thinking") {
-    return {
+    return Result.succeed({
       type: "thinking",
       thinking: content.thinking,
       ...(content.thinkingSignature === undefined
         ? {}
         : { thinkingSignature: content.thinkingSignature }),
       ...(content.redacted === undefined ? {} : { redacted: content.redacted }),
-    };
+    });
   }
-  return {
+  return Result.map(requireJsonObject(content.arguments), (arguments_) => ({
     type: "toolCall",
     id: content.id,
     name: content.name,
-    arguments: requireJsonObject(content.arguments),
+    arguments: arguments_,
     ...(content.thoughtSignature === undefined
       ? {}
       : { thoughtSignature: content.thoughtSignature }),
-  };
+  }));
 }
 
 function toAssistantMessage(response: FinalModelResponse): AssistantMessage {
@@ -195,35 +213,45 @@ function toAssistantMessage(response: FinalModelResponse): AssistantMessage {
   };
 }
 
-function requireJsonObject(value: unknown): JsonObject {
-  const json = requireJsonValue(value);
-  if (typeof json !== "object" || json === null || isJsonArray(json)) {
-    throw new Error("Provider tool arguments must be a JSON object");
-  }
-  return json;
+function requireJsonObject(value: unknown): Result.Result<JsonObject, SessionContextError> {
+  return Result.flatMap(requireJsonValue(value), (json) =>
+    typeof json !== "object" || json === null || isJsonArray(json)
+      ? Result.fail(
+          new SessionContextError({
+            message: "Provider tool arguments must be a JSON object",
+          }),
+        )
+      : Result.succeed(json),
+  );
 }
 
-function requireJsonValue(value: unknown): JsonValue {
+function requireJsonValue(value: unknown): Result.Result<JsonValue, SessionContextError> {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return value;
+    return Result.succeed(value);
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
-      throw new Error("JSON numbers must be finite");
+      return Result.fail(new SessionContextError({ message: "JSON numbers must be finite" }));
     }
-    return value;
+    return Result.succeed(value);
   }
   if (Array.isArray(value)) {
-    return value.map(requireJsonValue);
+    return Result.all(value.map(requireJsonValue));
   }
   if (typeof value === "object") {
-    const result: Record<string, JsonValue> = {};
-    for (const [key, child] of Object.entries(value)) {
-      result[key] = requireJsonValue(child);
-    }
-    return result;
+    return Result.map(
+      Result.all(
+        Object.entries(value).map(([key, child]) =>
+          Result.map(
+            requireJsonValue(child),
+            (decoded) => [key, decoded] satisfies readonly [string, JsonValue],
+          ),
+        ),
+      ),
+      (entries) => Object.fromEntries(entries),
+    );
   }
-  throw new Error("Value is not JSON serializable");
+  return Result.fail(new SessionContextError({ message: "Value is not JSON serializable" }));
 }
 
 function isJsonArray(value: JsonValue): value is ReadonlyArray<JsonValue> {

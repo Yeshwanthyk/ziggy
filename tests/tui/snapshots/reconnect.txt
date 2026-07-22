@@ -1,0 +1,11 @@
+ZIGGY / main                                                 WORKING · REPLAY -> #6 · #4
+----------------------------------------------------------------------------------------
+YOU
+Check the resident queue.
+
+ZIGGY / STREAMING
+The daemon is healthy; two jobs remain in the queue.
+----------------------------------------------------------------------------------------
+[FOCUS: COMPOSER] [READ ONLY]
+> prioritize the database check_
+^P Sessions | ^C detach

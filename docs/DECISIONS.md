@@ -128,6 +128,14 @@ wire-only wrapper. Calling `turn/start` while a Turn is active queues a one-at-a
 returns `disposition: "queued"`; no separate `turn/follow-up` method is added. Approval decisions
 are the closed v1 union `"approve" | "deny"`.
 
+**S3 contract amendment:** Attach protocol v2 adds idempotent `session/ensure` with the literal
+`sessionId: "main"` and advertises `stableMainSession` during initialization. The daemon lazily
+materializes `sessions/main.ndjson` on the first ensure; `ziggy init`, daemon startup,
+`session/list`, and `session/resume` never create it. Attach v1 frames fail with
+`version-mismatch`; canonical Session NDJSON remains schema version 1. `session/list` remains a
+pure query over all persisted Sessions, and Session pinning is deferred without adding pin state or
+pin/unpin methods.
+
 ## D6 — Loop ownership: ziggy owns the loop, pi-ai is per-call only
 
 **Context:** Need to decide whether the agentic loop (tool-call orchestration, steer/follow-up
@@ -255,6 +263,16 @@ agnostic), plus simple CLI one-shot commands. GUI is explicitly a later stage (S
 **Rationale:** User's explicit choice (grilling Q10). pi-tui exists and is agent-agnostic, so
 reuse rather than rebuild.
 **Evidence:** `docs/research/pi-mono.md`.
+
+**S3 contract amendment:** `ziggy ask` streams only its accepted Turn's model text to stdout and
+ends success with exactly one newline. Exit codes are `0` success, `1` known runtime failure, `2`
+usage, `3` outcome unknown, and `130` local interruption. Setup may retry once only before any
+`turn/start` write; after a write without a correlated response, the Client never resends. After
+correlated acceptance it may reconnect and replay from the last fully applied sequence without
+resending. The TUI is steer-first: active-Turn Enter steers, Alt+Enter or F2 selects a queued
+follow-up, Ctrl+X interrupts explicitly, Ctrl+P opens the Session picker, Escape dismisses overlays,
+and Ctrl+C or quit detaches without interrupting daemon work. Reconnect uses the existing
+`replayThroughSeq` watermark; no replay-complete frame or durable operation identity is added in S3.
 
 ## D13 — Repo layout: 4-package workspace + curated extensions
 

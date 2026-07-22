@@ -1,7 +1,9 @@
 import type { JsonObject, JsonValue } from "@ziggy/protocol";
+import { Effect, Predicate, Result, Schema } from "effect";
 import {
   MemoryBatchConflictError,
   type FilesystemWorld,
+  type FilesystemWorldError,
   type MemoryDocument,
   type MemoryReplacement,
 } from "../world/filesystem.ts";
@@ -36,8 +38,13 @@ export interface MemoryToolDefinition {
   readonly name: "memory";
   readonly description: string;
   readonly inputSchema: JsonObject;
-  execute(input: MemoryToolExecutionInput): Promise<JsonValue>;
+  execute(input: MemoryToolExecutionInput): Effect.Effect<JsonValue>;
 }
+
+export class MemoryToolError extends Schema.TaggedErrorClass<MemoryToolError>()("MemoryToolError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 type MemoryOperation =
   | {
@@ -65,60 +72,51 @@ export function createMemoryTool(world: FilesystemWorld): MemoryToolDefinition {
     description:
       "Atomically add, replace, or remove retained Memory entries in MEMORY.md or USER.md.",
     inputSchema: memoryToolInputSchema(),
-    async execute({ input }): Promise<JsonValue> {
-      const result = await runMemoryTool({ world, operations: input.operations });
-      if (result.success) {
-        return { success: true, message: result.message };
-      }
-      return { success: false, error: result.error };
+    execute({ input }) {
+      return runMemoryTool({ world, operations: input.operations }).pipe(
+        Effect.map((result) =>
+          result.success
+            ? { success: true, message: result.message }
+            : { success: false, error: result.error },
+        ),
+      );
     },
   };
 }
 
-export async function runMemoryTool(options: RunMemoryToolOptions): Promise<MemoryToolResult> {
-  let operations: ReadonlyArray<MemoryOperation>;
-  try {
-    operations = decodeOperations(options.operations);
-  } catch (error) {
-    return failure(error);
-  }
-
-  try {
+export function runMemoryTool(options: RunMemoryToolOptions): Effect.Effect<MemoryToolResult> {
+  const operation = Effect.gen(function* () {
+    const operations = yield* Effect.fromResult(decodeOperations(options.operations));
     for (let attempt = 1; attempt <= 8; attempt += 1) {
-      const initial = await options.world.readMemoryBatch(DOCUMENTS);
-      const documents = new Map<MemoryDocument, ReadonlyArray<string>>();
-      documents.set("MEMORY.md", parseDocument("MEMORY.md", initial["MEMORY.md"] ?? ""));
-      documents.set("USER.md", parseDocument("USER.md", initial["USER.md"] ?? ""));
+      const initial = yield* options.world.readMemoryBatch(DOCUMENTS);
+      const documents = yield* Effect.fromResult(
+        Result.gen(function* () {
+          const values = new Map<MemoryDocument, ReadonlyArray<string>>();
+          values.set("MEMORY.md", yield* parseDocument("MEMORY.md", initial["MEMORY.md"] ?? ""));
+          values.set("USER.md", yield* parseDocument("USER.md", initial["USER.md"] ?? ""));
+          for (const memoryOperation of operations) {
+            yield* applyOperation(values, memoryOperation);
+          }
+          return values;
+        }),
+      );
 
-      for (const operation of operations) {
-        applyOperation(documents, operation);
-      }
-
-      const replacements: MemoryReplacement[] = [];
-      for (const document of DOCUMENTS) {
-        const entries = documents.get(document);
-        if (entries === undefined) {
-          throw new Error(`Memory batch lost ${document}`);
-        }
-        const content = serializeAndValidate(document, entries);
-        if (content !== (initial[document] ?? "")) {
-          replacements.push({ document, content });
-        }
-      }
+      const replacements = yield* Effect.fromResult(buildReplacements(documents, initial));
 
       const touchedDocuments = [
         ...new Set(operations.map((operation) => documentForTarget(operation.target))),
       ];
-      try {
-        await options.world.replaceMemoryBatch(
+      const replaced = yield* Effect.result(
+        options.world.replaceMemoryBatch(
           replacements,
           touchedDocuments.map((document) => ({ document, content: initial[document] })),
-        );
-      } catch (error) {
-        if (error instanceof MemoryBatchConflictError && attempt < 8) {
+        ),
+      );
+      if (Result.isFailure(replaced)) {
+        if (Predicate.isTagged("MemoryBatchConflictError")(replaced.failure) && attempt < 8) {
           continue;
         }
-        throw error;
+        return yield* replaced.failure;
       }
       return {
         success: true,
@@ -126,12 +124,33 @@ export async function runMemoryTool(options: RunMemoryToolOptions): Promise<Memo
           replacements.length === 0
             ? "Memory already matched the requested final state; no write was needed."
             : `Applied ${operations.length} Memory operation(s) atomically.`,
-      };
+      } satisfies MemoryToolResult;
     }
-    throw new Error("Memory kept changing; retry the operation.");
-  } catch (error) {
-    return failure(error);
+    return yield* new MemoryToolError({
+      message: "Memory kept changing; retry the operation.",
+    });
+  });
+  return operation.pipe(Effect.catch((error) => Effect.succeed(failure(error))));
+}
+
+function buildReplacements(
+  documents: ReadonlyMap<MemoryDocument, ReadonlyArray<string>>,
+  initial: Readonly<Record<string, string | undefined>>,
+): Result.Result<ReadonlyArray<MemoryReplacement>, MemoryToolError> {
+  const replacements: MemoryReplacement[] = [];
+  for (const document of DOCUMENTS) {
+    const entries = documents.get(document);
+    if (entries === undefined) {
+      return Result.fail(new MemoryToolError({ message: `Memory batch lost ${document}` }));
+    }
+    const serialized = serializeAndValidate(document, entries);
+    if (Result.isFailure(serialized)) return Result.fail(serialized.failure);
+    const content = serialized.success;
+    if (content !== (initial[document] ?? "")) {
+      replacements.push({ document, content });
+    }
   }
+  return Result.succeed(replacements);
 }
 
 function memoryToolInputSchema(): JsonObject {
@@ -186,54 +205,65 @@ function memoryToolInputSchema(): JsonObject {
   };
 }
 
-function decodeOperations(value: unknown): ReadonlyArray<MemoryOperation> {
+function decodeOperations(
+  value: unknown,
+): Result.Result<ReadonlyArray<MemoryOperation>, MemoryToolError> {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("Memory operations must be a non-empty array.");
+    return Result.fail(
+      new MemoryToolError({ message: "Memory operations must be a non-empty array." }),
+    );
   }
-  return value.map((operation, index) => decodeOperation(operation, index));
+  return Result.all(value.map((operation, index) => decodeOperation(operation, index)));
 }
 
-function decodeOperation(value: unknown, index: number): MemoryOperation {
-  const label = `Memory operation ${index + 1}`;
-  const candidate = requireRecord(value, label);
-  const action = candidate.action;
+function decodeOperation(
+  value: unknown,
+  index: number,
+): Result.Result<MemoryOperation, MemoryToolError> {
+  return Result.gen(function* () {
+    const label = `Memory operation ${index + 1}`;
+    const candidate = yield* requireRecord(value, label);
+    const action = candidate.action;
 
-  if (action === "add") {
-    requireExactFields(candidate, ["action", "target", "content"], label);
-    return {
-      action,
-      target: decodeTarget(candidate.target, label),
-      content: decodeEntry(candidate.content, `${label} content`),
-    };
-  }
-  if (action === "replace") {
-    requireExactFields(candidate, ["action", "target", "oldText", "content"], label);
-    return {
-      action,
-      target: decodeTarget(candidate.target, label),
-      oldText: decodeOldText(candidate.oldText, label),
-      content: decodeEntry(candidate.content, `${label} content`),
-    };
-  }
-  if (action === "remove") {
-    requireExactFields(candidate, ["action", "target", "oldText"], label);
-    return {
-      action,
-      target: decodeTarget(candidate.target, label),
-      oldText: decodeOldText(candidate.oldText, label),
-    };
-  }
-  throw new Error(`${label} action must be add, replace, or remove.`);
+    if (action === "add") {
+      yield* requireExactFields(candidate, ["action", "target", "content"], label);
+      return {
+        action,
+        target: yield* decodeTarget(candidate.target, label),
+        content: yield* decodeEntry(candidate.content, `${label} content`),
+      };
+    }
+    if (action === "replace") {
+      yield* requireExactFields(candidate, ["action", "target", "oldText", "content"], label);
+      return {
+        action,
+        target: yield* decodeTarget(candidate.target, label),
+        oldText: yield* decodeOldText(candidate.oldText, label),
+        content: yield* decodeEntry(candidate.content, `${label} content`),
+      };
+    }
+    if (action === "remove") {
+      yield* requireExactFields(candidate, ["action", "target", "oldText"], label);
+      return {
+        action,
+        target: yield* decodeTarget(candidate.target, label),
+        oldText: yield* decodeOldText(candidate.oldText, label),
+      };
+    }
+    return yield* Result.fail(
+      new MemoryToolError({ message: `${label} action must be add, replace, or remove.` }),
+    );
+  });
 }
 
 function applyOperation(
   documents: Map<MemoryDocument, ReadonlyArray<string>>,
   operation: MemoryOperation,
-): void {
+): Result.Result<void, MemoryToolError> {
   const document = documentForTarget(operation.target);
   const entries = documents.get(document);
   if (entries === undefined) {
-    throw new Error(`Memory batch lost ${document}`);
+    return Result.fail(new MemoryToolError({ message: `Memory batch lost ${document}` }));
   }
 
   if (operation.action === "add") {
@@ -241,25 +271,33 @@ function applyOperation(
       document,
       entries.includes(operation.content) ? entries : [...entries, operation.content],
     );
-    return;
+    return Result.succeed(undefined);
   }
 
   const matches = entries.flatMap((entry, index) =>
     entry.includes(operation.oldText) ? [index] : [],
   );
   if (matches.length === 0) {
-    throw new Error(
-      `No ${operation.target} entry matched ${JSON.stringify(operation.oldText)}. Retry with a unique substring from the current entries.`,
+    return Result.fail(
+      new MemoryToolError({
+        message: `No ${operation.target} entry matched ${JSON.stringify(operation.oldText)}. Retry with a unique substring from the current entries.`,
+      }),
     );
   }
   if (matches.length > 1) {
-    throw new Error(
-      `${JSON.stringify(operation.oldText)} matched multiple ${operation.target} entries. Retry with a more specific substring.`,
+    return Result.fail(
+      new MemoryToolError({
+        message: `${JSON.stringify(operation.oldText)} matched multiple ${operation.target} entries. Retry with a more specific substring.`,
+      }),
     );
   }
   const match = matches[0];
   if (match === undefined) {
-    throw new Error("Memory match disappeared while applying the batch.");
+    return Result.fail(
+      new MemoryToolError({
+        message: "Memory match disappeared while applying the batch.",
+      }),
+    );
   }
 
   if (operation.action === "replace") {
@@ -267,107 +305,147 @@ function applyOperation(
       document,
       entries.map((entry, index) => (index === match ? operation.content : entry)),
     );
-    return;
+    return Result.succeed(undefined);
   }
   documents.set(
     document,
     entries.filter((_entry, index) => index !== match),
   );
+  return Result.succeed(undefined);
 }
 
-function parseDocument(document: MemoryDocument, content: string): ReadonlyArray<string> {
+function parseDocument(
+  document: MemoryDocument,
+  content: string,
+): Result.Result<ReadonlyArray<string>, MemoryToolError> {
   if (content.length === 0) {
-    return [];
+    return Result.succeed([]);
   }
   const entries = content.split(MEMORY_ENTRY_DELIMITER);
-  validateEntries(document, entries);
-  return entries;
+  return Result.map(validateEntries(document, entries), () => entries);
 }
 
-function serializeAndValidate(document: MemoryDocument, entries: ReadonlyArray<string>): string {
-  validateEntries(document, entries);
-  const content = entries.join(MEMORY_ENTRY_DELIMITER);
-  validateLimit(document, content);
-  return content;
+function serializeAndValidate(
+  document: MemoryDocument,
+  entries: ReadonlyArray<string>,
+): Result.Result<string, MemoryToolError> {
+  return Result.gen(function* () {
+    yield* validateEntries(document, entries);
+    const content = entries.join(MEMORY_ENTRY_DELIMITER);
+    yield* validateLimit(document, content);
+    return content;
+  });
 }
 
-function validateEntries(document: MemoryDocument, entries: ReadonlyArray<string>): void {
+function validateEntries(
+  document: MemoryDocument,
+  entries: ReadonlyArray<string>,
+): Result.Result<void, MemoryToolError> {
   for (const entry of entries) {
     if (entry.trim().length === 0) {
-      throw new Error(
-        `${document} is not a valid entry list: entries separated by the exact delimiter must be non-empty. Remove leading/trailing delimiters and empty entries manually.`,
+      return Result.fail(
+        new MemoryToolError({
+          message: `${document} is not a valid entry list: entries separated by the exact delimiter must be non-empty. Remove leading/trailing delimiters and empty entries manually.`,
+        }),
       );
     }
     if (entry.includes(MEMORY_ENTRY_DELIMITER)) {
-      throw new Error(`${document} contains an injected Memory entry delimiter.`);
+      return Result.fail(
+        new MemoryToolError({
+          message: `${document} contains an injected Memory entry delimiter.`,
+        }),
+      );
     }
   }
+  return Result.succeed(undefined);
 }
 
-function validateLimit(document: MemoryDocument, content: string): void {
+function validateLimit(
+  document: MemoryDocument,
+  content: string,
+): Result.Result<void, MemoryToolError> {
   const limit = document === "MEMORY.md" ? MEMORY_DOCUMENT_LIMIT : USER_DOCUMENT_LIMIT;
   const count = Array.from(content).length;
   if (count > limit) {
-    throw new Error(
-      `${document} would use ${count} Unicode code points, exceeding its ${limit} limit. Remove, replace, shorten, or consolidate entries in the same batch.`,
+    return Result.fail(
+      new MemoryToolError({
+        message: `${document} would use ${count} Unicode code points, exceeding its ${limit} limit. Remove, replace, shorten, or consolidate entries in the same batch.`,
+      }),
     );
   }
+  return Result.succeed(undefined);
 }
 
-function decodeEntry(value: unknown, label: string): string {
+function decodeEntry(value: unknown, label: string): Result.Result<string, MemoryToolError> {
   if (typeof value !== "string") {
-    throw new Error(`${label} must be a string.`);
+    return Result.fail(new MemoryToolError({ message: `${label} must be a string.` }));
   }
   const entry = value.trim();
   if (entry.length === 0) {
-    throw new Error(`${label} must not be empty.`);
+    return Result.fail(new MemoryToolError({ message: `${label} must not be empty.` }));
   }
   if (entry.includes(MEMORY_ENTRY_DELIMITER)) {
-    throw new Error(`${label} must not contain the exact Memory entry delimiter.`);
+    return Result.fail(
+      new MemoryToolError({
+        message: `${label} must not contain the exact Memory entry delimiter.`,
+      }),
+    );
   }
-  return entry;
+  return Result.succeed(entry);
 }
 
-function decodeOldText(value: unknown, label: string): string {
+function decodeOldText(value: unknown, label: string): Result.Result<string, MemoryToolError> {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${label} oldText must be a non-empty string.`);
+    return Result.fail(
+      new MemoryToolError({ message: `${label} oldText must be a non-empty string.` }),
+    );
   }
-  return value.trim();
+  return Result.succeed(value.trim());
 }
 
-function decodeTarget(value: unknown, label: string): MemoryTarget {
+function decodeTarget(value: unknown, label: string): Result.Result<MemoryTarget, MemoryToolError> {
   if (value === "memory" || value === "user") {
-    return value;
+    return Result.succeed(value);
   }
-  throw new Error(`${label} target must be memory or user.`);
+  return Result.fail(new MemoryToolError({ message: `${label} target must be memory or user.` }));
 }
 
 function documentForTarget(target: MemoryTarget): MemoryDocument {
   return target === "memory" ? "MEMORY.md" : "USER.md";
 }
 
-function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
+function requireRecord(
+  value: unknown,
+  label: string,
+): Result.Result<Readonly<Record<string, unknown>>, MemoryToolError> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
+    return Result.fail(new MemoryToolError({ message: `${label} must be an object.` }));
   }
-  return Object.fromEntries(Object.entries(value));
+  return Result.succeed(Object.fromEntries(Object.entries(value)));
 }
 
 function requireExactFields(
   value: Readonly<Record<string, unknown>>,
   fields: ReadonlyArray<string>,
   label: string,
-): void {
+): Result.Result<void, MemoryToolError> {
   const actual = Object.keys(value);
   if (actual.length !== fields.length || actual.some((field) => !fields.includes(field))) {
-    throw new Error(`${label} must contain exactly: ${fields.join(", ")}.`);
+    return Result.fail(
+      new MemoryToolError({
+        message: `${label} must contain exactly: ${fields.join(", ")}.`,
+      }),
+    );
   }
+  return Result.succeed(undefined);
 }
 
-function failure(error: unknown): MemoryToolResult {
+function failure(
+  error: MemoryToolError | FilesystemWorldError | MemoryBatchConflictError,
+): MemoryToolResult {
   return {
     success: false,
-    error:
-      error instanceof Error ? error.message : "Memory operation failed without an error message.",
+    // oxlint-disable-next-line ziggy-effect/no-unknown-error-message -- typed: every Memory failure exposes its stable model-visible message contract
+    error: error.message,
   };
 }

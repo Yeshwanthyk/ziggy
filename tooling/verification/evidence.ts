@@ -7,6 +7,8 @@ import type { Stage } from "./manifests.ts";
 import { loadSchemaCatalog } from "./schemas.ts";
 
 const diagnosticLimit = 8_192;
+const multilineValueByteLimit = 65_536;
+const multilineValueLineLimit = 256;
 const excludedWorkspaceDirectories = new Set([
   ".artifacts",
   ".git",
@@ -52,6 +54,11 @@ export interface AgentFindingEvidence {
   readonly role: "scout" | "review";
   readonly severity: "info" | "warning" | "error";
   readonly summary: string;
+  readonly review: {
+    readonly workspaceDigest: string;
+    readonly gitRevision: string | null;
+    readonly reviewedAt: string;
+  };
   readonly disposition: {
     readonly status: "open" | "accepted" | "fixed" | "not-applicable";
     readonly rationale: string;
@@ -148,16 +155,21 @@ export async function readAgentFindings(
   schemas.validate("agent-findings-v1.schema.json", parsed, "agent findings input");
   const redacted = redactValue(parsed, repositoryRoot);
   schemas.validate("agent-findings-v1.schema.json", redacted, "redacted agent findings input");
-  return decodeAgentFindings(redacted);
+  const findings = decodeAgentFindings(redacted);
+  const currentDigest = await currentWorkspaceInputDigest(repositoryRoot);
+  for (const finding of findings) {
+    if (finding.review.workspaceDigest !== currentDigest) {
+      throw new Error(`agent finding ${finding.id} does not review the current workspace`);
+    }
+  }
+  return findings;
 }
 
 export function redactValue(value: unknown, repositoryRoot: string, key = ""): unknown {
-  if (typeof value === "string") {
-    if (isSensitiveField(key)) {
-      return `<redacted:${normalizeKey(key) || "sensitive"}>`;
-    }
-    return redactString(value, repositoryRoot);
+  if (isSensitiveField(key)) {
+    return redactSensitiveTree(value, normalizeKey(key) || "sensitive");
   }
+  if (typeof value === "string") return redactString(value, repositoryRoot);
   if (Array.isArray(value)) {
     return value.map((item) => redactValue(item, repositoryRoot));
   }
@@ -172,14 +184,30 @@ export function redactValue(value: unknown, repositoryRoot: string, key = ""): u
   return value;
 }
 
+function redactSensitiveTree(value: unknown, label: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => redactSensitiveTree(item, label));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactSensitiveTree(entryValue, label),
+      ]),
+    );
+  }
+  return `<redacted:${label}>`;
+}
+
 export function redactString(value: string, repositoryRoot: string): string {
   let redacted = replacePaths(value, repositoryRoot);
+  redacted = redactPemBlocks(redacted);
   redacted = redactHeaders(redacted);
   redacted = redacted.replace(
     /\b(?:Bearer|Basic)\s+(?!<redacted)[A-Za-z0-9._~+/=-]+/gi,
     "<redacted:auth>",
   );
+  redacted = redactJsonSensitiveFields(redacted);
   redacted = redactSensitiveAssignments(redacted);
+  redacted = redactFixtureCanaries(redacted);
   redacted = redacted.replace(
     /\bProfile\s*(?:path)?\s*[:=]\s*(?!<redacted>)[^\r\n]+/gi,
     "Profile: <redacted>",
@@ -188,9 +216,45 @@ export function redactString(value: string, repositoryRoot: string): string {
 }
 
 export function assertNoLeaks(serialized: string, repositoryRoot: string): void {
-  if (redactString(serialized, repositoryRoot) !== serialized) {
-    throw new Error("evidence redaction leak detected");
+  const parsed = tryParseJson(serialized);
+  const containsLeak =
+    parsed === undefined
+      ? containsSensitiveLexicalLeak(serialized) ||
+        redactString(serialized, repositoryRoot) !== serialized
+      : containsStructuredLeak(parsed, repositoryRoot);
+  if (containsLeak) throw new Error("evidence redaction leak detected");
+}
+
+function tryParseJson(value: string): unknown | undefined {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
   }
+}
+
+function containsStructuredLeak(value: unknown, repositoryRoot: string, key = ""): boolean {
+  if (isSensitiveField(key)) return !isRedactedTree(value);
+  if (typeof value === "string") {
+    return containsSensitiveLexicalLeak(value) || redactString(value, repositoryRoot) !== value;
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsStructuredLeak(entry, repositoryRoot));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).some(([entryKey, entryValue]) =>
+      containsStructuredLeak(entryValue, repositoryRoot, entryKey),
+    );
+  }
+  return false;
+}
+
+function isRedactedTree(value: unknown): boolean {
+  if (Array.isArray(value)) return value.every(isRedactedTree);
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).every(isRedactedTree);
+  }
+  return typeof value === "string" && isRedacted(value);
 }
 
 function redactArgv(argv: ReadonlyArray<string>, repositoryRoot: string): ReadonlyArray<string> {
@@ -221,25 +285,348 @@ function redactArgv(argv: ReadonlyArray<string>, repositoryRoot: string): Readon
 
 function redactHeaders(value: string): string {
   return value.replace(
-    /((?:[A-Za-z0-9_.-]*(?:authorization|cookie)|proxy-authorization|set-cookie|x-api-key)[\\"']*\s*[:=]\s*)(\\?["'](?:\\.|[^"'\\])*\\?["']|[^\r\n,}]+)/gi,
+    /((?:[A-Za-z0-9_.-]*(?:authorization|cookie)|proxy-authorization|set-cookie|x-api-key)[\\"']*\s*[:=]\s*)(\\?["'](?:\\.|[^"'\\])*\\?["']|[^\r\n,}\\]+)/gi,
     (match, prefix: string, candidate: string) =>
       isRedacted(candidate) ? match : `${prefix}<redacted>`,
   );
 }
 
+function redactJsonSensitiveFields(value: string): string {
+  return redactSensitiveValues(
+    value,
+    /("(?:\\.|[^"\\])*"\s*:\s*)/g,
+    (prefix) => {
+      const keyLiteral = /^("(?:\\.|[^"\\])*")/.exec(prefix)?.[1];
+      return keyLiteral === undefined ? undefined : decodeJsonString(keyLiteral);
+    },
+    "json",
+  );
+}
+
+function decodeJsonString(value: string): string | undefined {
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return typeof decoded === "string" ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function redactSensitiveAssignments(value: string): string {
+  return redactSensitiveValues(
+    value,
+    /\b(?![A-Za-z0-9_.-]*\.(?:test|spec)\.ts\s*:)([A-Za-z0-9_.-]+)[\\"']*\s*[=:]\s*/gi,
+    (prefix) => prefix,
+    "assignment",
+  );
+}
+
+function redactPemBlocks(value: string): string {
+  const begin = /-----BEGIN ([A-Z0-9][A-Z0-9 ._/-]{0,80})-----/g;
+  let output = "";
+  let cursor = 0;
+  for (const match of value.matchAll(begin)) {
+    const index = match.index;
+    const label = match[1];
+    if (index < cursor || label === undefined) continue;
+    const endToken = `-----END ${label}-----`;
+    const tokenIndex = value.indexOf(endToken, index + match[0].length);
+    if (tokenIndex < 0) throw new Error("unclosed PEM credential block");
+    const end = tokenIndex + endToken.length;
+    assertMultilineBounds(value, index, end);
+    output += `${value.slice(cursor, index)}<redacted:pem>`;
+    cursor = end;
+  }
+  return cursor === 0 ? value : `${output}${value.slice(cursor)}`;
+}
+
+function redactFixtureCanaries(value: string): string {
   return value.replace(
-    /\b([A-Za-z0-9_.-]*(?:password|passwd|passphrase|secret|token|api[_\-.]?key|credential|auth)[A-Za-z0-9_.-]*[\\"']*\s*[=:]\s*)(\\?["'](?:\\.|[^"'\\])*\\?["']|[^\s,;&}]+)/gi,
-    (match, prefix: string, candidate: string) =>
-      isRedacted(candidate) ? match : `${prefix}<redacted>`,
+    /\b(?:auth|credential)(?:[-_.][a-z0-9]+)*[-_.]canary\b/gi,
+    "<redacted:fixture-canary>",
   );
 }
 
 function isRedacted(value: string): boolean {
-  return value
-    .trim()
-    .replace(/^[\\"']+/, "")
-    .startsWith("<redacted");
+  const trimmed = value.trim();
+  const token = /^<redacted(?::[A-Za-z0-9_.-]+)?>$/;
+  if (token.test(trimmed)) return true;
+  const decoded = decodeJsonString(trimmed);
+  if (decoded !== undefined && token.test(decoded)) return true;
+  return token.test(trimmed.replace(/^[\\"']+|[\\"']+$/g, ""));
+}
+
+function redactSensitiveValues(
+  value: string,
+  pattern: RegExp,
+  keyFromPrefix: (prefix: string) => string | undefined,
+  boundary: "json" | "assignment",
+): string {
+  let output = "";
+  let cursor = 0;
+  for (const match of value.matchAll(pattern)) {
+    const index = match.index;
+    const prefix = match[1] ?? match[0];
+    const key = keyFromPrefix(prefix);
+    if (index < cursor || key === undefined || !isSensitiveField(key)) continue;
+    const start = index + match[0].length;
+    const end = consumeSensitiveValue(value, start, boundary);
+    output += value.slice(cursor, start);
+    const candidate = value.slice(start, end);
+    output += isExactRedaction(value, start, end, boundary) ? candidate : "<redacted>";
+    cursor = end;
+  }
+  return cursor === 0 ? value : `${output}${value.slice(cursor)}`;
+}
+
+function consumeSensitiveValue(
+  value: string,
+  start: number,
+  boundary: "json" | "assignment",
+): number {
+  let index = start;
+  while (index < value.length && (value[index] === " " || value[index] === "\t")) index += 1;
+  if (boundary === "assignment") {
+    const multilineEnd = consumeAssignmentMultiline(value, start, index);
+    if (multilineEnd !== undefined) return multilineEnd;
+  }
+  while (boundary === "json" && index < value.length && /\s/.test(value[index] ?? "")) index += 1;
+  const first = value[index];
+  if (first === '"' || first === "'") return consumeQuoted(value, index, first);
+  if (first === "[" || first === "{") return consumeBalanced(value, index);
+  if (value.startsWith("<redacted", index)) {
+    const tokenEnd = value.indexOf(">", index);
+    if (tokenEnd < 0) return value.length;
+    const end = tokenEnd + 1;
+    return isExactRedaction(value, index, end, boundary)
+      ? end
+      : consumeMalformedSensitiveValue(value, end, boundary);
+  }
+  while (index < value.length) {
+    const character = value[index];
+    if (
+      character === undefined ||
+      character === "," ||
+      character === ";" ||
+      character === "&" ||
+      character === "}" ||
+      (boundary === "assignment" && (character === "\n" || character === "\r")) ||
+      (boundary === "json" && /\s/.test(character))
+    ) {
+      break;
+    }
+    index += 1;
+  }
+  return index;
+}
+
+function consumeAssignmentMultiline(
+  value: string,
+  assignmentStart: number,
+  valueStart: number,
+): number | undefined {
+  const continuationEnd = consumeShellContinuations(value, valueStart);
+  if (continuationEnd !== undefined) return continuationEnd;
+  const lineEnd = lineEndingIndex(value, valueStart);
+  const firstLine = value.slice(valueStart, lineEnd).trimEnd();
+  if (/^[|>](?:[+-]?[1-9]?|[1-9]?[+-]?)$/.test(firstLine)) {
+    const bodyStart = skipLineEnding(value, lineEnd);
+    const end = consumeIndentedLines(value, bodyStart, lineIndent(value, assignmentStart));
+    if (end === bodyStart) throw new Error("sensitive block scalar has no indented body");
+    return end;
+  }
+  if (valueStart === lineEnd && lineEnd < value.length) {
+    const bodyStart = skipLineEnding(value, lineEnd);
+    const end = consumeIndentedLines(value, bodyStart, lineIndent(value, assignmentStart));
+    return end === bodyStart ? undefined : end;
+  }
+  return undefined;
+}
+
+function consumeShellContinuations(value: string, start: number): number | undefined {
+  let cursor = start;
+  let continuationSeen = false;
+  let lines = 0;
+  while (cursor < value.length) {
+    const end = lineEndingIndex(value, cursor);
+    const line = value.slice(cursor, end);
+    let trailingBackslashes = 0;
+    for (let index = line.length - 1; index >= 0 && line[index] === "\\"; index -= 1) {
+      trailingBackslashes += 1;
+    }
+    if (trailingBackslashes % 2 === 0) {
+      if (!continuationSeen) return undefined;
+      assertMultilineBounds(value, start, end);
+      return end;
+    }
+    continuationSeen = true;
+    lines += 1;
+    if (lines >= multilineValueLineLimit || end - start > multilineValueByteLimit) {
+      throw new Error("sensitive multiline value exceeds bounds");
+    }
+    const next = skipLineEnding(value, end);
+    if (next === end) throw new Error("unclosed sensitive shell continuation");
+    cursor = next;
+  }
+  return continuationSeen ? value.length : undefined;
+}
+
+function consumeIndentedLines(value: string, start: number, parentIndent: number): number {
+  let cursor = start;
+  let consumedEnd = start;
+  let lines = 0;
+  while (cursor < value.length) {
+    const end = lineEndingIndex(value, cursor);
+    const line = value.slice(cursor, end);
+    if (line.trim().length > 0 && lineIndent(value, cursor) <= parentIndent) break;
+    consumedEnd = end;
+    cursor = skipLineEnding(value, end);
+    lines += 1;
+    if (lines > multilineValueLineLimit || consumedEnd - start > multilineValueByteLimit) {
+      throw new Error("sensitive multiline value exceeds bounds");
+    }
+  }
+  assertMultilineBounds(value, start, consumedEnd);
+  return consumedEnd;
+}
+
+function lineIndent(value: string, index: number): number {
+  const lineStart = Math.max(value.lastIndexOf("\n", Math.max(0, index - 1)) + 1, 0);
+  let cursor = lineStart;
+  while (value[cursor] === " ") cursor += 1;
+  return cursor - lineStart;
+}
+
+function lineEndingIndex(value: string, start: number): number {
+  const newline = value.indexOf("\n", start);
+  const carriage = value.indexOf("\r", start);
+  if (newline < 0) return carriage < 0 ? value.length : carriage;
+  return carriage < 0 ? newline : Math.min(newline, carriage);
+}
+
+function skipLineEnding(value: string, index: number): number {
+  if (value[index] === "\r" && value[index + 1] === "\n") return index + 2;
+  return value[index] === "\r" || value[index] === "\n" ? index + 1 : index;
+}
+
+function assertMultilineBounds(value: string, start: number, end: number): void {
+  if (end - start > multilineValueByteLimit) {
+    throw new Error("sensitive multiline value exceeds bounds");
+  }
+  let lines = 1;
+  for (let index = start; index < end; index += 1) {
+    if (value[index] === "\n") lines += 1;
+    if (lines > multilineValueLineLimit) {
+      throw new Error("sensitive multiline value exceeds bounds");
+    }
+  }
+}
+
+function consumeQuoted(value: string, start: number, quote: string): number {
+  let escaped = false;
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) escaped = false;
+    else if (character === "\\") escaped = true;
+    else if (character === quote) return index + 1;
+  }
+  return value.length;
+}
+
+function consumeBalanced(value: string, start: number): number {
+  const stack: string[] = [];
+  let quote: string | undefined;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote !== undefined) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[" || character === "{") stack.push(character);
+    else if (character === "]" || character === "}") {
+      const opening = stack.pop();
+      if (
+        opening === undefined ||
+        (character === "]" && opening !== "[") ||
+        (character === "}" && opening !== "{")
+      ) {
+        return value.length;
+      }
+      if (stack.length === 0) return index + 1;
+    }
+  }
+  return value.length;
+}
+
+function consumeMalformedSensitiveValue(
+  value: string,
+  start: number,
+  boundary: "json" | "assignment",
+): number {
+  if (boundary === "assignment") {
+    const newline = value.indexOf("\n", start);
+    return newline < 0 ? value.length : newline;
+  }
+  const closing = value.indexOf("}", start);
+  return closing < 0 ? value.length : closing;
+}
+
+function isExactRedaction(
+  value: string,
+  start: number,
+  end: number,
+  boundary: "json" | "assignment",
+): boolean {
+  if (!isRedacted(value.slice(start, end))) return false;
+  let index = end;
+  while (index < value.length && (value[index] === " " || value[index] === "\t")) index += 1;
+  const next = value[index];
+  if (next === undefined || next === "," || next === "}" || next === "]") return true;
+  if (boundary === "assignment" && (next === ";" || next === "&")) return true;
+  if (boundary === "assignment" && (next === "\n" || next === "\r")) {
+    const following = skipLineEnding(value, index);
+    return following >= value.length || lineIndent(value, following) === 0;
+  }
+  if (boundary !== "assignment" || (next !== '"' && next !== "'")) return false;
+  const afterQuote = value[index + 1];
+  return afterQuote === undefined || afterQuote === "," || afterQuote === "}" || afterQuote === "]";
+}
+
+function containsSensitiveLexicalLeak(value: string): boolean {
+  const patterns: ReadonlyArray<{
+    readonly pattern: RegExp;
+    readonly key: (prefix: string) => string | undefined;
+    readonly boundary: "json" | "assignment";
+  }> = [
+    {
+      pattern: /("(?:\\.|[^"\\])*"\s*:\s*)/g,
+      key(prefix) {
+        const literal = /^("(?:\\.|[^"\\])*")/.exec(prefix)?.[1];
+        return literal === undefined ? undefined : decodeJsonString(literal);
+      },
+      boundary: "json",
+    },
+    {
+      pattern: /\b(?![A-Za-z0-9_.-]*\.(?:test|spec)\.ts\s*:)([A-Za-z0-9_.-]+)[\\"']*\s*[=:]\s*/gi,
+      key: (prefix) => prefix,
+      boundary: "assignment",
+    },
+  ];
+  for (const scanner of patterns) {
+    for (const match of value.matchAll(scanner.pattern)) {
+      const prefix = match[1] ?? match[0];
+      const key = scanner.key(prefix);
+      if (key === undefined || !isSensitiveField(key)) continue;
+      const start = match.index + match[0].length;
+      const end = consumeSensitiveValue(value, start, scanner.boundary);
+      if (!isExactRedaction(value, start, end, scanner.boundary)) return true;
+    }
+  }
+  return false;
 }
 
 export async function publishEvidence(
@@ -402,6 +789,10 @@ export async function validateReplay(directory: string, root: string): Promise<v
   }
 }
 
+export async function currentWorkspaceInputDigest(root: string): Promise<string> {
+  return digestWorkspaceInputs(await readWorkspaceInputs(root));
+}
+
 async function readWorkspaceInputs(root: string): Promise<ReadonlyArray<ReplayInput>> {
   const paths = await walkWorkspace(root, root);
   const inputs: ReplayInput[] = [];
@@ -511,6 +902,7 @@ function replacePaths(value: string, repositoryRoot: string): string {
 
 function isSensitiveField(key: string): boolean {
   const normalized = normalizeKey(key);
+  if (["access", "refresh", "key"].includes(normalized)) return true;
   if (
     [
       "password",
@@ -708,7 +1100,7 @@ function decodeAgentFindings(value: unknown): ReadonlyArray<AgentFindingEvidence
     const finding = requireRecord(value, `agent finding ${index}`);
     requireExactKeys(
       finding,
-      ["id", "role", "severity", "summary", "disposition"],
+      ["id", "role", "severity", "summary", "review", "disposition"],
       `agent finding ${index}`,
     );
     const id = requireString(finding.id, `agent finding ${index}.id`);
@@ -718,6 +1110,16 @@ function decodeAgentFindings(value: unknown): ReadonlyArray<AgentFindingEvidence
     ids.add(id);
     const role = requireAgentRole(finding.role, `agent finding ${index}.role`);
     const severity = requireAgentSeverity(finding.severity, `agent finding ${index}.severity`);
+    const reviewValue = requireRecord(finding.review, `agent finding ${index}.review`);
+    requireExactKeys(
+      reviewValue,
+      ["workspaceDigest", "gitRevision", "reviewedAt"],
+      `agent finding ${index}.review`,
+    );
+    const gitRevision = reviewValue.gitRevision;
+    if (gitRevision !== null && typeof gitRevision !== "string") {
+      throw new Error(`agent finding ${index}.review.gitRevision must be string or null`);
+    }
     const dispositionValue = requireRecord(
       finding.disposition,
       `agent finding ${index}.disposition`,
@@ -736,6 +1138,17 @@ function decodeAgentFindings(value: unknown): ReadonlyArray<AgentFindingEvidence
       role,
       severity,
       summary: requireString(finding.summary, `agent finding ${index}.summary`),
+      review: {
+        workspaceDigest: requireString(
+          reviewValue.workspaceDigest,
+          `agent finding ${index}.review.workspaceDigest`,
+        ),
+        gitRevision,
+        reviewedAt: requireString(
+          reviewValue.reviewedAt,
+          `agent finding ${index}.review.reviewedAt`,
+        ),
+      },
       disposition: {
         status: requireFindingDisposition(
           dispositionValue.status,
@@ -807,13 +1220,23 @@ function decodeResultAgentFindings(value: unknown): void {
     const findingRecord = requireRecord(finding, "agent finding");
     requireExactKeys(
       findingRecord,
-      ["id", "role", "severity", "summary", "disposition"],
+      ["id", "role", "severity", "summary", "review", "disposition"],
       "agent finding",
     );
     requireString(findingRecord.id, "agent finding id");
     requireAgentRole(findingRecord.role, "agent finding role");
     requireAgentSeverity(findingRecord.severity, "agent finding severity");
     requireString(findingRecord.summary, "agent finding summary");
+    const review = requireRecord(findingRecord.review, "agent finding review");
+    requireExactKeys(
+      review,
+      ["workspaceDigest", "gitRevision", "reviewedAt"],
+      "agent finding review",
+    );
+    requireString(review.workspaceDigest, "agent finding workspace digest");
+    if (review.gitRevision !== null)
+      requireString(review.gitRevision, "agent finding git revision");
+    requireString(review.reviewedAt, "agent finding review timestamp");
     const disposition = requireRecord(findingRecord.disposition, "agent finding disposition");
     requireExactKeys(
       disposition,
@@ -895,7 +1318,7 @@ function requireExactKeys(
     }
   }
   for (const key of expectedKeys) {
-    if (!(key in record)) {
+    if (!Object.hasOwn(record, key)) {
       throw new Error(`${label} is missing field ${key}`);
     }
   }

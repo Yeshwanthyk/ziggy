@@ -6,12 +6,10 @@ import {
   createAttachServer,
   createDaemonKernel,
   createFilesystemWorld,
+  createProviderRuntimeComposition,
   inspectProfileLock,
-  type AttachServer,
-  type DaemonKernel,
-  type FilesystemWorld,
   type ProfileLockInspection,
-  type SessionRuntime,
+  ProviderRuntimeError,
 } from "@ziggy/core";
 import {
   decodeServerFrame,
@@ -19,6 +17,10 @@ import {
   PROTOCOL_VERSION,
   type ServerFrame,
 } from "@ziggy/protocol";
+import { Clock, Context, Deferred, Effect, Layer, Option, Ref, Result, Schema } from "effect";
+import { queryProviderAuthStatus } from "./auth-client.ts";
+import { productionRuntimeInvocation, serveArgv } from "./executable.ts";
+import { loadProfileConfig } from "./profile-config.ts";
 
 const SOCKET_MODE = 0o600;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -27,10 +29,23 @@ const DEFAULT_RETRY_INTERVAL_MS = 50;
 const MAX_PROBE_RESPONSE_BYTES = 64 * 1024;
 const READINESS_REQUEST_ID = "ziggy-readiness";
 
+const ErrorMessageSchema = Schema.Struct({ message: Schema.String });
+const ErrorCodeSchema = Schema.Struct({ code: Schema.String });
+const decodeErrorMessage = Schema.decodeUnknownOption(ErrorMessageSchema);
+const decodeErrorCode = Schema.decodeUnknownOption(ErrorCodeSchema);
+
+export class DaemonControlError extends Schema.TaggedErrorClass<DaemonControlError>()(
+  "DaemonControlError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export interface ServeDaemonOptions {
   readonly profilePath: string;
   readonly signal: AbortSignal;
-  readonly createRuntime?: (sessionId: string, world: FilesystemWorld) => Promise<SessionRuntime>;
 }
 
 export type DaemonProbeResult =
@@ -38,7 +53,7 @@ export type DaemonProbeResult =
       readonly status: "ready";
       readonly profilePath: string;
       readonly socketPath: string;
-      readonly protocolVersion: 1;
+      readonly protocolVersion: typeof PROTOCOL_VERSION;
     }
   | {
       readonly status: "unavailable";
@@ -63,18 +78,21 @@ export type DaemonProbeResult =
 export interface ProbeDaemonOptions {
   readonly profilePath: string;
   readonly timeoutMs?: number;
-  readonly canonicalize?: (path: string) => Promise<string>;
+  readonly canonicalize?: (path: string) => Effect.Effect<string, DaemonControlError>;
 }
 
 export interface EnsureDaemonReadyOptions {
   readonly profilePath: string;
-  readonly start: (canonicalProfilePath: string) => Promise<void>;
-  readonly probe?: (canonicalProfilePath: string) => Promise<DaemonProbeResult>;
-  readonly canonicalize?: (path: string) => Promise<string>;
-  readonly now?: () => number;
-  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly start: (canonicalProfilePath: string) => Effect.Effect<void, DaemonControlError>;
+  readonly probe?: (
+    canonicalProfilePath: string,
+  ) => Effect.Effect<DaemonProbeResult, DaemonControlError>;
+  readonly canonicalize?: (path: string) => Effect.Effect<string, DaemonControlError>;
+  readonly now?: Effect.Effect<number>;
+  readonly sleep?: (milliseconds: number) => Effect.Effect<void>;
   readonly timeoutMs?: number;
   readonly retryIntervalMs?: number;
+  readonly requireAbsent?: boolean;
 }
 
 export interface DoctorCheck {
@@ -97,193 +115,254 @@ export interface DoctorReport {
 
 export interface DoctorOptions {
   readonly profilePath: string;
-  readonly canonicalize?: (path: string) => Promise<string>;
-  readonly probe?: (canonicalProfilePath: string) => Promise<DaemonProbeResult>;
-  readonly inspectLock?: (canonicalProfilePath: string) => Promise<ProfileLockInspection>;
-  readonly providerAuthPresent?: () => boolean;
+  readonly canonicalize?: (path: string) => Effect.Effect<string, DaemonControlError>;
+  readonly probe?: (
+    canonicalProfilePath: string,
+  ) => Effect.Effect<DaemonProbeResult, DaemonControlError>;
+  readonly inspectLock?: (
+    canonicalProfilePath: string,
+  ) => Effect.Effect<ProfileLockInspection, DaemonControlError>;
+  readonly providerAuthPresent?: Effect.Effect<boolean, DaemonControlError>;
+  readonly providerAuthStatus?: (socketPath: string) => Effect.Effect<boolean, DaemonControlError>;
 }
 
-const readinessGates = new Map<string, Promise<DaemonProbeResult>>();
-
-export async function serveDaemon(options: ServeDaemonOptions): Promise<void> {
-  let kernel: DaemonKernel | undefined;
-  let server: AttachServer | undefined;
-  let failed = false;
-  let failure: unknown;
-  try {
-    kernel = await createDaemonKernel({
-      profilePath: options.profilePath,
-      createWorld: (profilePath) => createFilesystemWorld({ profilePath }),
-      createRuntime: options.createRuntime ?? unavailableRuntime,
-    });
-    server = await createAttachServer({ kernel });
-    await waitForAbort(options.signal);
-  } catch (error) {
-    failed = true;
-    failure = error;
-  }
-
-  const closeFailures: unknown[] = [];
-  if (server !== undefined) {
-    try {
-      await server.close();
-    } catch (error) {
-      closeFailures.push(error);
-    }
-  }
-  if (kernel !== undefined) {
-    try {
-      await kernel.close();
-    } catch (error) {
-      closeFailures.push(error);
-    }
-  }
-  if (failed && closeFailures.length > 0) {
-    throw new AggregateError([failure, ...closeFailures], "Daemon failed and cleanup also failed");
-  }
-  if (failed) throw failure;
-  if (closeFailures.length > 0) throw new AggregateError(closeFailures, "Daemon cleanup failed");
+interface ReadinessGate {
+  readonly owner: boolean;
+  readonly result: Deferred.Deferred<DaemonProbeResult, DaemonControlError>;
 }
 
-export async function probeDaemon(options: ProbeDaemonOptions): Promise<DaemonProbeResult> {
-  const canonicalize = options.canonicalize ?? realpath;
-  const profilePath = await canonicalize(options.profilePath);
-  const socketPath = join(profilePath, ".runtime", "ziggy.sock");
-  let socket: Stats;
-  try {
-    socket = await lstat(socketPath);
-  } catch (error) {
-    if (hasCode(error, "ENOENT")) {
-      return {
-        status: "unavailable",
-        profilePath,
-        socketPath,
-        socketState: "absent",
-        detail: "Attach socket is absent",
-      };
-    }
-    throw error;
-  }
-  if (!socket.isSocket() || socket.isSymbolicLink()) {
-    return {
-      status: "unsafe",
-      profilePath,
-      socketPath,
-      detail: "Attach socket path is not a Unix socket",
-    };
-  }
-  if ((socket.mode & 0o777) !== SOCKET_MODE) {
-    return {
-      status: "unsafe",
-      profilePath,
-      socketPath,
-      detail: "Attach socket permissions are not 0600",
-    };
-  }
-  return probeSocket(
-    profilePath,
-    socketPath,
-    positiveMilliseconds(options.timeoutMs, DEFAULT_PROBE_TIMEOUT_MS),
+type ReadinessGates = ReadonlyMap<string, Deferred.Deferred<DaemonProbeResult, DaemonControlError>>;
+
+interface DaemonReadinessShape {
+  ensure(options: EnsureDaemonReadyOptions): Effect.Effect<DaemonProbeResult, DaemonControlError>;
+}
+
+export class DaemonReadiness extends Context.Service<DaemonReadiness, DaemonReadinessShape>()(
+  "@ziggy/ziggy/DaemonReadiness",
+  {
+    make: Ref.make<ReadinessGates>(new Map()).pipe(
+      Effect.map((gates) => ({
+        ensure: (options: EnsureDaemonReadyOptions) =>
+          Effect.gen(function* () {
+            const profilePath = yield* (options.canonicalize ?? canonicalizeProfilePath)(
+              options.profilePath,
+            );
+            const candidate = yield* Deferred.make<DaemonProbeResult, DaemonControlError>();
+            const gate = yield* Ref.modify(gates, (current) =>
+              selectReadinessGate(current, profilePath, candidate),
+            );
+            if (!gate.owner) return yield* Deferred.await(gate.result);
+            const clear = Ref.update(gates, (current) => {
+              if (current.get(profilePath) !== gate.result) return current;
+              const next = new Map(current);
+              next.delete(profilePath);
+              return next;
+            });
+            return yield* Deferred.complete(
+              gate.result,
+              ensureCanonicalDaemonReady(profilePath, options),
+            ).pipe(Effect.andThen(Deferred.await(gate.result)), Effect.ensuring(clear));
+          }),
+      })),
+    ),
+  },
+) {
+  static readonly layer = Layer.effect(this, this.make);
+}
+
+function selectReadinessGate(
+  current: ReadinessGates,
+  profilePath: string,
+  candidate: Deferred.Deferred<DaemonProbeResult, DaemonControlError>,
+): readonly [ReadinessGate, ReadinessGates] {
+  const existing = current.get(profilePath);
+  if (existing !== undefined) return [{ owner: false, result: existing }, current];
+  const next = new Map(current);
+  next.set(profilePath, candidate);
+  return [{ owner: true, result: candidate }, next];
+}
+
+export function serveDaemon(options: ServeDaemonOptions) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* loadProfileConfig(options.profilePath);
+      const composition = yield* createProviderRuntimeComposition({
+        profilePath: options.profilePath,
+        config,
+        loadConfig: () =>
+          loadProfileConfig(options.profilePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeError({
+                  message: "Failed to reload Profile config",
+                  cause,
+                }),
+            ),
+          ),
+      });
+      return yield* Effect.acquireUseRelease(
+        createDaemonKernel({
+          profilePath: options.profilePath,
+          createWorld: (profilePath) => createFilesystemWorld({ profilePath }),
+          createRuntime: composition.createRuntime,
+        }),
+        (kernel) =>
+          Effect.acquireUseRelease(
+            createAttachServer({ kernel, auth: composition.auth }),
+            () => waitForAbort(options.signal),
+            (server) => server.close,
+          ),
+        (kernel) => kernel.close,
+      );
+    }),
   );
 }
 
-export async function ensureDaemonReady(
-  options: EnsureDaemonReadyOptions,
-): Promise<DaemonProbeResult> {
-  const profilePath = await (options.canonicalize ?? realpath)(options.profilePath);
-  const pending = readinessGates.get(profilePath);
-  if (pending !== undefined) return pending;
-  const operation = ensureCanonicalDaemonReady(profilePath, options);
-  readinessGates.set(profilePath, operation);
-  const clear = (): void => {
-    if (readinessGates.get(profilePath) === operation) readinessGates.delete(profilePath);
-  };
-  void operation.then(clear, clear);
-  return operation;
-}
-
-export function ensureProductionDaemonReady(profilePath: string): Promise<DaemonProbeResult> {
-  return ensureDaemonReady({
-    profilePath,
-    start: startBackgroundDaemon,
+export function probeDaemon(
+  options: ProbeDaemonOptions,
+): Effect.Effect<DaemonProbeResult, DaemonControlError> {
+  return Effect.gen(function* () {
+    const profilePath = yield* (options.canonicalize ?? canonicalizeProfilePath)(
+      options.profilePath,
+    );
+    const socketPath = join(profilePath, ".runtime", "ziggy.sock");
+    const inspected = yield* Effect.result(inspectPath(socketPath));
+    if (Result.isFailure(inspected)) {
+      if (errorCode(inspected.failure.cause) === "ENOENT") {
+        return {
+          status: "unavailable",
+          profilePath,
+          socketPath,
+          socketState: "absent",
+          detail: "Attach socket is absent",
+        };
+      }
+      return yield* inspected.failure;
+    }
+    const socket = inspected.success;
+    if (!socket.isSocket() || socket.isSymbolicLink()) {
+      return {
+        status: "unsafe",
+        profilePath,
+        socketPath,
+        detail: "Attach socket path is not a Unix socket",
+      };
+    }
+    if ((socket.mode & 0o777) !== SOCKET_MODE) {
+      return {
+        status: "unsafe",
+        profilePath,
+        socketPath,
+        detail: "Attach socket permissions are not 0600",
+      };
+    }
+    const timeoutMs = yield* positiveMilliseconds(options.timeoutMs, DEFAULT_PROBE_TIMEOUT_MS);
+    return yield* probeSocket(profilePath, socketPath, timeoutMs);
   });
 }
 
-export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
-  const profilePath = await (options.canonicalize ?? realpath)(options.profilePath);
-  let probe: DaemonProbeResult;
-  try {
-    probe = await (options.probe ?? ((path) => probeDaemon({ profilePath: path })))(profilePath);
-  } catch (error) {
-    probe = {
-      status: "unsafe",
-      profilePath,
-      socketPath: join(profilePath, ".runtime", "ziggy.sock"),
-      detail: errorDetail(error, "Attach socket inspection failed"),
-    };
-  }
-  let lock: ProfileLockInspection | undefined;
-  let lockFailure: unknown;
-  try {
-    lock = await (options.inspectLock ?? ((path) => inspectProfileLock({ profilePath: path })))(
-      profilePath,
-    );
-  } catch (error) {
-    lockFailure = error;
-  }
-  const daemon = daemonCheck(probe);
-  const socket = socketCheck(probe);
-  const profileLock = lockCheck(probe, lock, lockFailure);
-  const providerAuth: DoctorCheck = (options.providerAuthPresent ?? productionProviderAuthPresent)()
-    ? { status: "ok", detail: "Provider authentication is present" }
-    : {
-        status: "warning",
-        detail: "No supported Provider API-key environment variable is present",
-      };
-  const checks = { daemon, socket, profileLock, providerAuth };
-  return {
-    schemaVersion: 1,
-    profilePath,
-    healthy: Object.values(checks).every((check) => check.status !== "error"),
-    checks,
-  };
+export function ensureDaemonReady(
+  options: EnsureDaemonReadyOptions,
+): Effect.Effect<DaemonProbeResult, DaemonControlError, DaemonReadiness> {
+  return DaemonReadiness.use((readiness) => readiness.ensure(options));
 }
 
-async function ensureCanonicalDaemonReady(
+export function ensureProductionDaemonReady(
+  profilePath: string,
+): Effect.Effect<DaemonProbeResult, DaemonControlError, DaemonReadiness> {
+  return ensureDaemonReady({ profilePath, start: startBackgroundDaemon, requireAbsent: true });
+}
+
+export function runDoctor(options: DoctorOptions): Effect.Effect<DoctorReport, DaemonControlError> {
+  return Effect.gen(function* () {
+    const profilePath = yield* (options.canonicalize ?? canonicalizeProfilePath)(
+      options.profilePath,
+    );
+    const socketPath = join(profilePath, ".runtime", "ziggy.sock");
+    const probe = yield* (options.probe ?? ((path) => probeDaemon({ profilePath: path })))(
+      profilePath,
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.succeed<DaemonProbeResult>({
+          status: "unsafe",
+          profilePath,
+          socketPath,
+          detail: errorDetail(error, "Attach socket inspection failed"),
+        }),
+      ),
+    );
+    const lockResult = yield* Effect.result(
+      (options.inspectLock ?? productionInspectProfileLock)(profilePath),
+    );
+    const lock = Result.isSuccess(lockResult) ? lockResult.success : undefined;
+    const lockFailure = Result.isFailure(lockResult) ? lockResult.failure : undefined;
+    const daemon = daemonCheck(probe);
+    const socket = socketCheck(probe);
+    const profileLock = lockCheck(probe, lock, lockFailure);
+    const providerAuth = yield* doctorProviderAuth(options, probe);
+    const checks = { daemon, socket, profileLock, providerAuth };
+    return {
+      schemaVersion: 1,
+      profilePath,
+      healthy: Object.values(checks).every((check) => check.status !== "error"),
+      checks,
+    };
+  });
+}
+
+function ensureCanonicalDaemonReady(
   profilePath: string,
   options: EnsureDaemonReadyOptions,
-): Promise<DaemonProbeResult> {
-  const probe = options.probe ?? ((path) => probeDaemon({ profilePath: path }));
-  const initial = await probe(profilePath);
-  if (initial.status === "ready") return initial;
-  if (initial.status !== "unavailable") {
-    throw new Error(`Refusing daemon auto-start: ${initial.detail}`);
-  }
-  await options.start(profilePath);
-
-  const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? defaultSleep;
-  const timeoutMs = positiveMilliseconds(options.timeoutMs, DEFAULT_START_TIMEOUT_MS);
-  const retryIntervalMs = positiveMilliseconds(options.retryIntervalMs, DEFAULT_RETRY_INTERVAL_MS);
-  const deadline = now() + timeoutMs;
-  let latest: DaemonProbeResult = initial;
-  while (now() < deadline) {
-    latest = await probe(profilePath);
-    if (latest.status === "ready") return latest;
-    if (latest.status === "incompatible") {
-      throw new Error(`Daemon started an incompatible attach server: ${latest.detail}`);
+): Effect.Effect<DaemonProbeResult, DaemonControlError> {
+  return Effect.gen(function* () {
+    const probe = options.probe ?? ((path) => probeDaemon({ profilePath: path }));
+    const initial = yield* probe(profilePath);
+    if (initial.status === "ready") return initial;
+    if (
+      initial.status !== "unavailable" ||
+      (options.requireAbsent === true && initial.socketState !== "absent")
+    ) {
+      return yield* new DaemonControlError({
+        operation: "auto-start",
+        message: `Refusing daemon auto-start: ${initial.detail}`,
+      });
     }
-    await sleep(Math.min(retryIntervalMs, Math.max(1, deadline - now())));
-  }
-  throw new Error(`Daemon did not become protocol-ready: ${latest.detail}`);
+    yield* options.start(profilePath);
+
+    const timeoutMs = yield* positiveMilliseconds(options.timeoutMs, DEFAULT_START_TIMEOUT_MS);
+    const retryIntervalMs = yield* positiveMilliseconds(
+      options.retryIntervalMs,
+      DEFAULT_RETRY_INTERVAL_MS,
+    );
+    const now = options.now ?? Clock.currentTimeMillis;
+    const sleep = options.sleep ?? ((milliseconds) => Effect.sleep(milliseconds));
+    const deadline = (yield* now) + timeoutMs;
+    let latest: DaemonProbeResult = initial;
+    while ((yield* now) < deadline) {
+      latest = yield* probe(profilePath);
+      if (latest.status === "ready") return latest;
+      if (latest.status === "incompatible") {
+        return yield* new DaemonControlError({
+          operation: "auto-start",
+          message: `Daemon started an incompatible attach server: ${latest.detail}`,
+        });
+      }
+      const remaining = Math.max(1, deadline - (yield* now));
+      yield* sleep(Math.min(retryIntervalMs, remaining));
+    }
+    return yield* new DaemonControlError({
+      operation: "auto-start",
+      message: `Daemon did not become protocol-ready: ${latest.detail}`,
+    });
+  });
 }
 
 function probeSocket(
   profilePath: string,
   socketPath: string,
   timeoutMs: number,
-): Promise<DaemonProbeResult> {
-  return new Promise((resolve) => {
+): Effect.Effect<DaemonProbeResult> {
+  return Effect.callback((resume) => {
     const socket = createConnection(socketPath);
     let connected = false;
     let settled = false;
@@ -293,7 +372,7 @@ function probeSocket(
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(result);
+      resume(Effect.succeed(result));
     };
     const unavailable = (socketState: "absent" | "stale", detail: string): void =>
       finish({ status: "unavailable", profilePath, socketPath, socketState, detail });
@@ -330,30 +409,39 @@ function probeSocket(
         incompatible("Attach server sent multiple frames during initialize");
         return;
       }
-      let frame: ServerFrame;
-      try {
+      const decoded = Result.try((): ServerFrame => {
         const encoded = new TextDecoder("utf-8", { fatal: true }).decode(response);
-        frame = decodeServerFrame(encoded);
-      } catch {
+        return decodeServerFrame(encoded);
+      });
+      if (Result.isFailure(decoded)) {
         incompatible("Attach server returned an invalid initialize frame");
         return;
       }
+      const frame = decoded.success;
       if (
         frame.type !== "success" ||
         frame.requestId !== READINESS_REQUEST_ID ||
         frame.method !== "initialize" ||
-        frame.result.protocolVersion !== PROTOCOL_VERSION
+        frame.result.protocolVersion !== PROTOCOL_VERSION ||
+        !frame.result.features.includes("stableMainSession")
       ) {
-        incompatible("Attach server did not complete the expected initialize handshake");
+        incompatible(
+          "Attach server did not complete the expected v2 stable-main initialize handshake",
+        );
         return;
       }
-      finish({ status: "ready", profilePath, socketPath, protocolVersion: PROTOCOL_VERSION });
+      finish({
+        status: "ready",
+        profilePath,
+        socketPath,
+        protocolVersion: PROTOCOL_VERSION,
+      });
     });
     socket.on("error", (error) => {
-      if (!connected && hasCode(error, "ENOENT")) unavailable("absent", "Attach socket is absent");
-      else if (!connected && hasCode(error, "ECONNREFUSED"))
-        unavailable("stale", "Attach socket is stale or not accepting connections");
-      else incompatible("Attach socket failed during protocol initialize");
+      const code = errorCode(error);
+      if (!connected && (code === "ENOENT" || code === "ECONNREFUSED")) {
+        unavailable("stale", "Attach socket is stale or disappeared before accepting connections");
+      } else incompatible("Attach socket failed during protocol initialize");
     });
     socket.on("close", () => {
       if (!settled) {
@@ -361,7 +449,48 @@ function probeSocket(
         else unavailable("stale", "Attach socket closed before accepting a connection");
       }
     });
+    return Effect.sync(() => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+      }
+    });
   });
+}
+
+function doctorProviderAuth(
+  options: DoctorOptions,
+  probe: DaemonProbeResult,
+): Effect.Effect<DoctorCheck> {
+  if (probe.status === "ready") {
+    const status =
+      options.providerAuthStatus ??
+      (options.providerAuthPresent === undefined
+        ? productionProviderAuthStatus
+        : () => options.providerAuthPresent ?? Effect.succeed(false));
+    return status(probe.socketPath).pipe(
+      Effect.match({
+        onFailure: (): DoctorCheck => ({
+          status: "error",
+          detail: "Daemon Provider authentication status is unavailable",
+        }),
+        onSuccess: (present): DoctorCheck =>
+          present
+            ? { status: "ok", detail: "Provider authentication is present" }
+            : { status: "warning", detail: "No configured Provider authentication is present" },
+      }),
+    );
+  }
+  return (options.providerAuthPresent ?? productionProviderAuthPresent()).pipe(
+    Effect.catch(() => Effect.succeed(false)),
+    Effect.map(
+      (present): DoctorCheck =>
+        present
+          ? { status: "ok", detail: "Provider authentication is present" }
+          : { status: "warning", detail: "No configured Provider authentication is present" },
+    ),
+  );
 }
 
 function daemonCheck(probe: DaemonProbeResult): DoctorCheck {
@@ -421,62 +550,136 @@ function lockCheck(
   }
 }
 
-function startBackgroundDaemon(profilePath: string): Promise<void> {
-  const child = Bun.spawn([...productionServeArgv(profilePath)], {
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
+function startBackgroundDaemon(profilePath: string): Effect.Effect<void, DaemonControlError> {
+  return productionRuntimeInvocation.pipe(
+    Effect.mapError(
+      (cause) =>
+        new DaemonControlError({
+          operation: "start-background-daemon",
+          message: "Failed to resolve the daemon executable",
+          cause,
+        }),
+    ),
+    Effect.flatMap((runtime) =>
+      Effect.try({
+        try: () => {
+          const child = Bun.spawn([...serveArgv(runtime, profilePath)], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          child.unref();
+        },
+        catch: (cause) =>
+          new DaemonControlError({
+            operation: "start-background-daemon",
+            message: "Failed to start background daemon",
+            cause,
+          }),
+      }),
+    ),
+  );
+}
+
+function productionProviderAuthStatus(
+  socketPath: string,
+): Effect.Effect<boolean, DaemonControlError> {
+  return queryProviderAuthStatus(socketPath).pipe(
+    Effect.map((statuses) => statuses.some((status) => status.configured)),
+    Effect.mapError(
+      (cause) =>
+        new DaemonControlError({
+          operation: "provider-auth-status",
+          message: "Failed to query daemon Provider authentication",
+          cause,
+        }),
+    ),
+  );
+}
+
+function productionProviderAuthPresent(): Effect.Effect<boolean> {
+  return Effect.sync(() =>
+    [
+      process.env.ANTHROPIC_API_KEY,
+      process.env.OPENAI_API_KEY,
+      process.env.GEMINI_API_KEY,
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    ].some((value) => value !== undefined && value.trim().length > 0),
+  );
+}
+
+function productionInspectProfileLock(
+  profilePath: string,
+): Effect.Effect<ProfileLockInspection, DaemonControlError> {
+  return inspectProfileLock({ profilePath }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DaemonControlError({
+          operation: "inspect-profile-lock",
+          message: "Failed to inspect Profile lock",
+          cause,
+        }),
+    ),
+  );
+}
+
+function waitForAbort(signal: AbortSignal): Effect.Effect<void> {
+  return Effect.callback((resume) => {
+    if (signal.aborted) {
+      resume(Effect.void);
+      return;
+    }
+    const onAbort = (): void => resume(Effect.void);
+    signal.addEventListener("abort", onAbort, { once: true });
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort));
   });
-  child.unref();
-  return Promise.resolve();
 }
 
-function productionServeArgv(profilePath: string): ReadonlyArray<string> {
-  if ("isStandaloneExecutable" in Bun && Bun.isStandaloneExecutable === true) {
-    return [process.execPath, "serve", "--profile", profilePath];
-  }
-  if (Bun.main.length === 0) throw new Error("Cannot locate the Ziggy source entry point");
-  return [process.execPath, Bun.main, "serve", "--profile", profilePath];
-}
-
-function productionProviderAuthPresent(): boolean {
-  return [
-    process.env.ANTHROPIC_API_KEY,
-    process.env.OPENAI_API_KEY,
-    process.env.GEMINI_API_KEY,
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-  ].some((value) => value !== undefined && value.trim().length > 0);
-}
-
-function unavailableRuntime(): Promise<SessionRuntime> {
-  return Promise.reject(
-    new Error("Session Provider composition is unavailable until Profile configuration lands"),
-  );
-}
-
-function waitForAbort(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) =>
-    signal.addEventListener("abort", () => resolve(), { once: true }),
-  );
-}
-
-function positiveMilliseconds(value: number | undefined, fallback: number): number {
+function positiveMilliseconds(
+  value: number | undefined,
+  fallback: number,
+): Effect.Effect<number, DaemonControlError> {
   const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new Error("Timeout and retry values must be positive safe integers");
-  }
-  return resolved;
+  return Number.isSafeInteger(resolved) && resolved > 0
+    ? Effect.succeed(resolved)
+    : Effect.fail(
+        new DaemonControlError({
+          operation: "validate-timeout",
+          message: "Timeout and retry values must be positive safe integers",
+        }),
+      );
 }
 
-function defaultSleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function canonicalizeProfilePath(path: string): Effect.Effect<string, DaemonControlError> {
+  return Effect.tryPromise({
+    try: () => realpath(path),
+    catch: (cause) =>
+      new DaemonControlError({
+        operation: "canonicalize-profile",
+        message: `Failed to canonicalize Profile ${path}`,
+        cause,
+      }),
+  });
+}
+
+function inspectPath(path: string): Effect.Effect<Stats, DaemonControlError> {
+  return Effect.tryPromise({
+    try: () => lstat(path),
+    catch: (cause) =>
+      new DaemonControlError({
+        operation: "inspect-socket",
+        message: `Failed to inspect attach socket ${path}`,
+        cause,
+      }),
+  });
 }
 
 function errorDetail(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
+  const decoded = decodeErrorMessage(error);
+  return Option.isSome(decoded) ? decoded.value.message : fallback;
 }
 
-function hasCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+function errorCode(error: unknown): string | undefined {
+  const decoded = decodeErrorCode(error);
+  return Option.isSome(decoded) ? decoded.value.code : undefined;
 }

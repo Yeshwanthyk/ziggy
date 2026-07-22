@@ -6,6 +6,7 @@ import { emptyRuntimeObservations } from "../testkit/verification-observations.t
 import {
   assertNoLeaks,
   commandEvidence,
+  currentWorkspaceInputDigest,
   digest,
   publishEvidence,
   readAgentFindings,
@@ -18,6 +19,11 @@ import { loadSchemaCatalog } from "../../tooling/verification/schemas.ts";
 
 const repositoryRoot = new URL("../..", import.meta.url).pathname;
 const temporaryDirectories: string[] = [];
+const fixtureReview = (workspaceDigest = "a".repeat(64)) => ({
+  workspaceDigest,
+  gitRevision: null,
+  reviewedAt: "2026-07-21T00:00:00.000Z",
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -81,6 +87,7 @@ describe("verification evidence", () => {
 
     for (const leak of [
       "--team_refresh-token=fixture-leak",
+      "service.auth=fixture-leak",
       "Authorization: Bearer fixture-leak",
       '{"x_api_key":"fixture-leak"}',
       "https://fixture.test/?account-password=fixture-leak",
@@ -92,12 +99,299 @@ describe("verification evidence", () => {
     }
   });
 
+  test("redacts exact pi-ai OAuth credential fields across evidence surfaces without prose false positives", async () => {
+    const root = await temporaryRoot();
+    const canaries = {
+      access: "oauth-access-canary",
+      refresh: "oauth-refresh-canary",
+      multilineAccess: "oauth-multiline-access-canary",
+      multilineRefresh: "oauth-multiline-refresh-canary",
+      escapedAccess: 'oauth-access-\\"escaped-canary',
+      escapedAccessKey: "oauth-access-key-escaped-canary",
+      escapedRefresh: "oauth-refresh-escaped-canary",
+    };
+    const structured = {
+      type: "oauth",
+      access: canaries.access,
+      refresh: canaries.refresh,
+      expires: 1_900_000_000_000,
+    };
+    expect(redactValue(structured, root)).toEqual({
+      type: "oauth",
+      access: "<redacted:access>",
+      refresh: "<redacted:refresh>",
+      expires: 1_900_000_000_000,
+    });
+
+    const raw = [
+      JSON.stringify(structured),
+      `access=${canaries.access}`,
+      `refresh: ${canaries.refresh}`,
+      `access = {\n  "nested": "${canaries.multilineAccess}"\n}`,
+      `refresh = [\n  "${canaries.multilineRefresh}"\n]`,
+      JSON.stringify({ access: canaries.escapedAccess }),
+      String.raw`{"\u0061ccess":"${canaries.escapedAccessKey}"}`,
+      String.raw`{"\u0072efresh":"${canaries.escapedRefresh}"}`,
+    ].join("\n");
+    const redacted = redactString(raw, root);
+    for (const canary of Object.values(canaries)) expect(redacted).not.toContain(canary);
+    expect(redactString(redacted, root)).toBe(redacted);
+    expect(() => assertNoLeaks(raw, root)).toThrow("leak");
+    expect(() => assertNoLeaks(redacted, root)).not.toThrow();
+
+    const argv = commandEvidence(
+      ["fixture", "--access", canaries.access, `--refresh=${canaries.refresh}`],
+      { exitCode: 1, stdout: raw, stderr: raw, timedOut: false },
+      root,
+    );
+    expect(argv.argv[2]).toBe("<redacted:access>");
+    expect(argv.argv[3]).toBe("--refresh=<redacted:refresh>");
+
+    const published = await publishEvidence(root, {
+      ...evidenceInput(root),
+      result: "failed",
+      commands: [argv],
+      agentFindings: [
+        {
+          id: "review.oauth-evidence",
+          role: "review",
+          severity: "error",
+          summary: raw,
+          review: fixtureReview(),
+          disposition: {
+            status: "fixed",
+            rationale: raw,
+            regressionScenarioId: "s0.fixture",
+          },
+        },
+      ],
+    });
+    await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
+    for (const name of ["summary.json", "result.json", "replay.json"]) {
+      const text = await Bun.file(join(published.directory, name)).text();
+      JSON.parse(text);
+      for (const canary of Object.values(canaries)) expect(text).not.toContain(canary);
+    }
+
+    const ordinary = [
+      "accessibility=public",
+      "refreshRate=60",
+      '{"accessibility":"public","refreshRate":60,"accessor":"field"}',
+      "access control remains public",
+      "refreshing the page",
+      "keyboard=ordinary prose",
+    ].join("\n");
+    expect(redactString(ordinary, root)).toBe(ordinary);
+    expect(
+      redactValue({ accessibility: "public", refreshRate: 60, accessor: "field" }, root),
+    ).toEqual({ accessibility: "public", refreshRate: 60, accessor: "field" });
+    expect(() => assertNoLeaks(ordinary, root)).not.toThrow();
+  });
+
+  test("sanitizes bare auth/credential canaries and generic key values without filename false positives", async () => {
+    const root = await temporaryRoot();
+    const markers = [
+      "auth-secret-canary",
+      "credential-secret-canary",
+      "plain-key-canary",
+      "unicode-key-canary",
+    ];
+    const raw = [
+      "tests/core/credential-store.test.ts:",
+      "tests/core/daemon-auth.test.ts:",
+      markers[0],
+      `credential=${markers[1]}`,
+      `key=${markers[2]}`,
+      JSON.stringify({ key: markers[2] }),
+      `{"api_\\u006bey":"${markers[3]}"}`,
+    ].join("\n");
+    const redacted = redactString(raw, root);
+    for (const marker of markers) expect(redacted.includes(marker)).toBeFalse();
+    expect(redacted.includes("tests/core/credential-store.test.ts")).toBeTrue();
+    expect(redacted.includes("tests/core/daemon-auth.test.ts")).toBeTrue();
+    expect(redactString(redacted, root)).toBe(redacted);
+    expect(() => assertNoLeaks(raw, root)).toThrow("leak");
+    expect(() => assertNoLeaks(redacted, root)).not.toThrow();
+    expect(redactValue({ key: markers[2] }, root)).toEqual({ key: "<redacted:key>" });
+
+    const base = evidenceInput(root);
+    const input: EvidenceInput = {
+      ...base,
+      result: "failed",
+      commands: [
+        commandEvidence(
+          ["bun", "test"],
+          { exitCode: 1, stdout: raw, stderr: raw, timedOut: false },
+          root,
+        ),
+      ],
+    };
+    const published = await publishEvidence(root, input);
+    await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
+    const summary = await Bun.file(join(published.directory, "summary.json")).text();
+    for (const marker of markers) expect(summary.includes(marker)).toBeFalse();
+    expect(summary.includes("tests/core/credential-store.test.ts")).toBeTrue();
+    expect(summary.includes("tests/core/daemon-auth.test.ts")).toBeTrue();
+  });
+
+  test("redacts complete multiline structured secrets without trusting spoofed labels", async () => {
+    const root = await temporaryRoot();
+    const raw = [
+      '{"credentials": [',
+      '  "fixture-array-secret",',
+      '  {"nestedToken":"fixture-nested-secret"}',
+      "],",
+      '"metadata": {',
+      '  "secret": {',
+      '    "api_key": "fixture-object-secret"',
+      "  }",
+      "}}",
+      "secret = {",
+      '  "token": "fixture-assignment-secret"',
+      "}",
+    ].join("\n");
+    const spoofed = [
+      '{"token": <redacted:token>\n"fixture-after-label"}',
+      '{"token": <redacted:token>["fixture-after-label"]}',
+      "token=<redacted> fixture-after-label",
+      "token=<redacted>\tfixture-after-label",
+      'token="<redacted>" fixture-after-label',
+      "token='<redacted>' fixture-after-label",
+      String.raw`token=<redacted>\nfixture-after-label`,
+    ];
+    const markers = [
+      "fixture-array-secret",
+      "fixture-nested-secret",
+      "fixture-object-secret",
+      "fixture-assignment-secret",
+    ];
+    const headings = [
+      "tests/core/credential-store.test.ts:",
+      "tests/core/daemon-auth.test.ts:",
+    ].join("\n");
+    const redacted = redactString(`${headings}\n${raw}`, root);
+    for (const marker of markers) expect(redacted).not.toContain(marker);
+    expect(redacted.startsWith(headings)).toBeTrue();
+    expect(redactString(redacted, root)).toBe(redacted);
+    expect(() => assertNoLeaks(raw, root)).toThrow("leak");
+    expect(() => assertNoLeaks(redacted, root)).not.toThrow();
+    for (const spoof of spoofed) expect(() => assertNoLeaks(spoof, root)).toThrow("leak");
+    expect(
+      redactValue(
+        { credentials: ["fixture-array-secret", { nested: "fixture-nested-secret" }] },
+        root,
+      ),
+    ).toEqual({ credentials: ["<redacted:credentials>", { nested: "<redacted:credentials>" }] });
+
+    const base = evidenceInput(root);
+    const published = await publishEvidence(root, {
+      ...base,
+      result: "failed",
+      commands: [
+        commandEvidence(
+          ["bun", "test"],
+          { exitCode: 1, stdout: raw, stderr: raw, timedOut: false },
+          root,
+        ),
+      ],
+      agentFindings: [
+        {
+          id: "review.multiline-redaction",
+          role: "review",
+          severity: "warning",
+          summary: raw,
+          review: fixtureReview(),
+          disposition: {
+            status: "fixed",
+            rationale: "Covered by deterministic regression.",
+            regressionScenarioId: "s0.fixture",
+          },
+        },
+      ],
+    });
+    await expect(validateReplay(published.directory, root)).resolves.toBeUndefined();
+    for (const name of ["summary.json", "result.json", "replay.json"]) {
+      const text = await Bun.file(join(published.directory, name)).text();
+      JSON.parse(text);
+      for (const marker of markers) expect(text).not.toContain(marker);
+    }
+  });
+
+  test("redacts YAML block scalars, multiline assignments, and PEM bodies with scanner parity", async () => {
+    const root = await temporaryRoot();
+    const canaries = [
+      "fixture-yaml-secret",
+      "fixture-folded-secret",
+      "fixture-pem-secret",
+      "fixture-orphan-pem-secret",
+    ];
+    const raw = [
+      "token: |",
+      `  ${canaries[0]}`,
+      "credential: >-",
+      `    ${canaries[1]}`,
+      "credential=-----BEGIN PRIVATE KEY-----",
+      canaries[2] ?? "missing",
+      "-----END PRIVATE KEY-----",
+      "API_TOKEN=alpha\\",
+      "shell-continuation-canary",
+      "Authorization=Bearer alpha\\",
+      "authorization-continuation-canary",
+      "-----BEGIN CERTIFICATE-----",
+      canaries[3] ?? "missing",
+      "-----END CERTIFICATE-----",
+    ].join("\n");
+    const redacted = redactString(raw, root);
+    for (const canary of [
+      ...canaries,
+      "shell-continuation-canary",
+      "authorization-continuation-canary",
+    ]) {
+      expect(redacted).not.toContain(canary);
+    }
+    expect(redactString(redacted, root)).toBe(redacted);
+    expect(() => assertNoLeaks(raw, root)).toThrow("leak");
+    expect(() => assertNoLeaks(redacted, root)).not.toThrow();
+    for (const malformed of [
+      "token: <redacted>\n  fixture-spoofed-body",
+      "token: |\nfixture-unindented-body",
+      "credential=-----BEGIN PRIVATE KEY-----\nfixture-unclosed-pem",
+      "-----BEGIN CERTIFICATE-----\nfixture-unclosed-orphan",
+      "API_TOKEN=<redacted>\\\nfixture-spoofed-continuation",
+      "Authorization=<redacted>\\\nfixture-spoofed-authorization",
+      `token: |\n${Array.from({ length: 257 }, () => "  fixture-over-bound").join("\n")}`,
+    ]) {
+      expect(() => assertNoLeaks(malformed, root)).toThrow();
+    }
+
+    await expect(
+      publishEvidence(root, {
+        ...evidenceInput(root),
+        agentFindings: [
+          {
+            id: "review.malformed-secret",
+            role: "review",
+            severity: "error",
+            summary: "credential=-----BEGIN PRIVATE KEY-----\nfixture-unclosed-publication",
+            review: fixtureReview(),
+            disposition: {
+              status: "open",
+              rationale: "Must fail closed.",
+              regressionScenarioId: null,
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("unclosed PEM");
+    expect(await Bun.file(join(root, ".artifacts")).exists()).toBe(false);
+  });
+
   test("keeps only bounded redacted output diagnostics with recomputable digests", () => {
     const output = commandEvidence(
       ["fixture"],
       {
         exitCode: 0,
-        stdout: `token=fixture-output-value ${"x".repeat(9_000)}`,
+        stdout: `${"x".repeat(9_000)}\ntoken=fixture-output-value`,
         stderr: "",
         timedOut: false,
       },
@@ -153,6 +447,12 @@ describe("verification evidence", () => {
               emittedAt: "2026-07-19T00:00:00.000Z",
               eventType: "turn-started",
               sessionId: "fixture-session",
+              turnId: "fixture-turn",
+              stepId: null,
+              origin: "message",
+              status: null,
+              delta: null,
+              fixtureText: "fixture input",
             },
           ],
           providerInputs: [
@@ -191,6 +491,7 @@ describe("verification evidence", () => {
           role: "review",
           severity: "warning",
           summary: "Authorization: Bearer fixture-review-secret",
+          review: fixtureReview(),
           disposition: {
             status: "fixed",
             rationale: "Covered by deterministic replay.",
@@ -296,6 +597,7 @@ describe("verification evidence", () => {
     const inputDirectory = await mkdtemp(join(tmpdir(), "ziggy-agent-findings-"));
     temporaryDirectories.push(inputDirectory);
     const inputPath = join(inputDirectory, "findings.json");
+    const reviewedWorkspaceDigest = await currentWorkspaceInputDigest(root);
     await Bun.write(
       inputPath,
       JSON.stringify({
@@ -306,6 +608,7 @@ describe("verification evidence", () => {
             role: "review",
             severity: "warning",
             summary: `Authorization: Bearer fixture-input-secret at ${root}`,
+            review: fixtureReview(reviewedWorkspaceDigest),
             disposition: {
               status: "fixed",
               rationale: "Covered by deterministic regression.",
@@ -320,6 +623,11 @@ describe("verification evidence", () => {
     expect(findings).toHaveLength(1);
     expect(JSON.stringify(findings)).not.toContain("fixture-input-secret");
     expect(JSON.stringify(findings)).not.toContain(root);
+
+    const staleReport = JSON.parse(await Bun.file(inputPath).text());
+    staleReport.agentFindings[0].review.workspaceDigest = "b".repeat(64);
+    await Bun.write(inputPath, JSON.stringify(staleReport));
+    await expect(readAgentFindings(root, inputPath)).rejects.toThrow("current workspace");
 
     const trackedInput = join(root, "findings.json");
     await Bun.write(trackedInput, await Bun.file(inputPath).text());
@@ -489,6 +797,20 @@ describe("verification evidence", () => {
       "/fixture/repo",
     );
     expect(diagnostic).not.toContain("private");
+  });
+
+  test("redaction is idempotent for Bun credential and auth test headings", () => {
+    for (const output of [
+      "tests/core/credential-store.test.ts:\n(pass) bounded credential fixture [1.00ms]",
+      "tests/core/daemon-auth.test.ts:\n(pass) auth callback fixture [1.00ms]",
+    ]) {
+      const redacted = redactString(output, "/fixture/repo");
+      expect(redacted).toBe(output);
+      expect(redactString(redacted, "/fixture/repo")).toBe(redacted);
+      expect(() =>
+        assertNoLeaks(JSON.stringify({ diagnostic: redacted }), "/fixture/repo"),
+      ).not.toThrow();
+    }
   });
 });
 

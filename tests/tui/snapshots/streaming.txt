@@ -1,0 +1,11 @@
+ZIGGY / main                                                                     WORKING
+----------------------------------------------------------------------------------------
+YOU
+Check the resident queue.
+
+ZIGGY / STREAMING
+The daemon is healthy; two jobs remain in the queue.
+----------------------------------------------------------------------------------------
+[FOCUS: COMPOSER] [ENTER STEERS]
+> prioritize the database check_
+Enter steer | Alt+Enter/F2 queue | ^X interrupt | ^P Sessions | ^C detach

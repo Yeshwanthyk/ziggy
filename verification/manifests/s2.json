@@ -30,7 +30,7 @@
     {
       "id": "s2.daemon-runtime-ownership",
       "status": "implemented",
-      "description": "The daemon registry owns one runtime per Session, shares concurrent creation, reconciles incomplete durable lifecycle events without resuming work, and closes all runtimes before releasing the Profile lock."
+      "description": "The daemon registry owns one runtime per Session, shares concurrent creation, runs different Sessions independently when one is blocked in Provider work, reconciles incomplete durable lifecycle events without resuming work, and closes all runtimes before releasing the Profile lock."
     },
     {
       "id": "s2.attach-local-transport",
@@ -40,7 +40,7 @@
     {
       "id": "s2.replay-live-fanout",
       "status": "implemented",
-      "description": "Atomic subscription setup orders success before exact canonical replay and deferred live delivery with no second sequence authority, while unsubscribe prevents later events and approval resolution is first-response-wins."
+      "description": "Atomic subscription setup validates sinceSeq against the authoritative durable Session tail, accepts equality, rejects beyond-tail cursors as unsafe-sequence, and orders success before exact canonical replay and deferred live delivery with no second sequence authority; unsubscribe prevents later events and approval resolution is first-response-wins."
     },
     {
       "id": "s2.disconnect-and-client-isolation",

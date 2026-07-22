@@ -13,7 +13,8 @@ and you reach it.
 
 1. **Drop it.** One compiled binary, no install step, no external services required to start.
 2. **`ziggy init`.** Scaffolds a Profile: config, `SOUL.md`, a choice of starter Voices, empty
-   Memory, an empty extensions directory. You get a main Session immediately.
+   Memory, and empty Session and Extension directories. The first main-dependent Client command
+   asks the daemon to lazily create the Profile's stable main Session.
 3. **Mold it.** Edit `SOUL.md` in a text editor. Add Extensions — your own, or ones from the
    maintained set (smart-memory, smart-extensions, executor). A Voice means only a starter
    `SOUL.md` template offered by `ziggy init`; per-Session persona pinning is not a v1 concept.

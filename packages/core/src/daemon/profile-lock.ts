@@ -1,25 +1,37 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Context, Deferred, Effect, Layer, Ref, Schema, Semaphore } from "effect";
+import {
+  rawProductionProfileLockFilesystem,
+  type RawProfileLockFilesystem,
+} from "./profile-lock-node-adapter.ts";
+
+export class ProfileLockError extends Schema.TaggedErrorClass<ProfileLockError>(
+  "@ziggy/core/daemon/ProfileLockError",
+)("ProfileLockError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 export interface ProfileLockFilesystem {
-  canonicalize(path: string): Promise<string>;
-  mkdir(path: string): Promise<void>;
-  create(path: string, content: string): Promise<void>;
-  read(path: string): Promise<string>;
-  remove(path: string): Promise<void>;
+  canonicalize(path: string): Effect.Effect<string, ProfileLockError>;
+  mkdir(path: string): Effect.Effect<void, ProfileLockError>;
+  create(path: string, content: string): Effect.Effect<void, ProfileLockError>;
+  read(path: string): Effect.Effect<string, ProfileLockError>;
+  remove(path: string): Effect.Effect<void, ProfileLockError>;
 }
 
 interface ProfileLockProcess {
   readonly pid: number;
-  isAlive(pid: number): Promise<boolean>;
-  ownerToken(): string;
+  isAlive(pid: number): Effect.Effect<boolean, ProfileLockError>;
+  readonly ownerToken: Effect.Effect<string, ProfileLockError>;
 }
 
 export interface ProfileLock {
   readonly profilePath: string;
   readonly pid: number;
-  close(): Promise<void>;
+  readonly close: Effect.Effect<void, ProfileLockError>;
 }
 
 export type ProfileLockInspection =
@@ -30,7 +42,7 @@ export type ProfileLockInspection =
 export interface InspectProfileLockOptions {
   readonly profilePath: string;
   readonly filesystem?: Pick<ProfileLockFilesystem, "canonicalize" | "read">;
-  readonly isAlive?: (pid: number) => Promise<boolean>;
+  readonly isAlive?: (pid: number) => Effect.Effect<boolean, ProfileLockError>;
 }
 
 export interface AcquireProfileLockOptions {
@@ -45,176 +57,302 @@ interface LockMetadata {
   readonly ownerToken: string;
 }
 
-const acquisitionGates = new Map<string, Promise<void>>();
+const LockMetadataWireSchema = Schema.Struct({
+  schemaVersion: Schema.Finite,
+  pid: Schema.Finite,
+  ownerToken: Schema.String,
+});
 
-export async function inspectProfileLock(
-  options: InspectProfileLockOptions,
-): Promise<ProfileLockInspection> {
-  const filesystem = options.filesystem ?? productionFilesystem;
-  const isAlive = options.isAlive ?? productionProcess.isAlive;
-  const profilePath = await filesystem.canonicalize(options.profilePath);
-  const metadata = await readMetadataIfPresent(
-    filesystem,
-    join(profilePath, ".runtime", "daemon.lock"),
-  );
-  if (metadata === undefined) return { state: "absent" };
-  return (await isAlive(metadata.pid))
-    ? { state: "live", pid: metadata.pid }
-    : { state: "stale", pid: metadata.pid };
+const decodeLockMetadataWire = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(LockMetadataWireSchema),
+);
+
+interface ProfileLockCoordinatorShape {
+  withPermit<A, E, R>(key: string, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R>;
 }
 
-export async function acquireProfileLock(options: AcquireProfileLockOptions): Promise<ProfileLock> {
+export class ProfileLockCoordinator extends Context.Service<
+  ProfileLockCoordinator,
+  ProfileLockCoordinatorShape
+>()("@ziggy/core/daemon/ProfileLockCoordinator") {
+  static readonly make = Effect.gen(function* () {
+    const registryGate = yield* Semaphore.make(1);
+    const gates = yield* Ref.make<ReadonlyMap<string, Semaphore.Semaphore>>(new Map());
+    const gateFor = (key: string) =>
+      Semaphore.withPermit(
+        registryGate,
+        Effect.gen(function* () {
+          const current = yield* Ref.get(gates);
+          const existing = current.get(key);
+          if (existing !== undefined) return existing;
+          const created = yield* Semaphore.make(1);
+          yield* Ref.set(gates, new Map(current).set(key, created));
+          return created;
+        }),
+      );
+    return ProfileLockCoordinator.of({
+      withPermit: (key, effect) =>
+        gateFor(key).pipe(Effect.flatMap((gate) => Semaphore.withPermit(gate, effect))),
+    });
+  });
+
+  static readonly layer = Layer.effect(this, this.make);
+}
+
+export function inspectProfileLock(
+  options: InspectProfileLockOptions,
+): Effect.Effect<ProfileLockInspection, ProfileLockError> {
   const filesystem = options.filesystem ?? productionFilesystem;
-  const processOperations = options.process ?? productionProcess;
-  const profilePath = await filesystem.canonicalize(options.profilePath);
-  return withGate(profilePath, async () => {
-    const runtimePath = join(profilePath, ".runtime");
-    const lockPath = join(runtimePath, "daemon.lock");
-    const takeoverPath = join(runtimePath, "daemon.lock.takeover");
-    await filesystem.mkdir(runtimePath);
-    const metadata: LockMetadata = {
-      schemaVersion: 1,
-      pid: processOperations.pid,
-      ownerToken: processOperations.ownerToken(),
-    };
-
-    while (true) {
-      try {
-        await filesystem.create(lockPath, `${JSON.stringify(metadata)}\n`);
-      } catch (error) {
-        if (!hasCode(error, "EEXIST")) throw error;
-        await takeOverStaleLock(filesystem, processOperations, lockPath, takeoverPath, metadata);
-        break;
-      }
-      const takeover = await readMetadataIfPresent(filesystem, takeoverPath);
-      if (takeover === undefined) {
-        break;
-      }
-      if (!(await processOperations.isAlive(takeover.pid))) {
-        await removeIfOwned(filesystem, takeoverPath, takeover.ownerToken);
-        break;
-      }
-      await removeIfOwned(filesystem, lockPath, metadata.ownerToken);
-    }
-
-    let closing: Promise<void> | undefined;
-    return {
-      profilePath,
-      pid: metadata.pid,
-      close() {
-        if (closing === undefined) {
-          closing = removeIfOwned(filesystem, lockPath, metadata.ownerToken);
-        }
-        return closing;
-      },
-    };
+  const isAlive = options.isAlive ?? productionProcess.isAlive;
+  return Effect.gen(function* () {
+    const profilePath = yield* filesystem.canonicalize(options.profilePath);
+    const metadata = yield* readMetadataIfPresent(
+      filesystem,
+      join(profilePath, ".runtime", "daemon.lock"),
+    );
+    if (metadata === undefined) return { state: "absent" };
+    return (yield* isAlive(metadata.pid))
+      ? { state: "live", pid: metadata.pid }
+      : { state: "stale", pid: metadata.pid };
   });
 }
 
-async function takeOverStaleLock(
+export function acquireProfileLock(
+  options: AcquireProfileLockOptions,
+): Effect.Effect<ProfileLock, ProfileLockError, ProfileLockCoordinator> {
+  const filesystem = options.filesystem ?? productionFilesystem;
+  const processOperations = options.process ?? productionProcess;
+  return Effect.gen(function* () {
+    const coordinator = yield* ProfileLockCoordinator;
+    const profilePath = yield* filesystem.canonicalize(options.profilePath);
+    return yield* coordinator.withPermit(
+      profilePath,
+      acquireCanonicalProfileLock(filesystem, processOperations, profilePath),
+    );
+  });
+}
+
+function acquireCanonicalProfileLock(
+  filesystem: ProfileLockFilesystem,
+  processOperations: ProfileLockProcess,
+  profilePath: string,
+): Effect.Effect<ProfileLock, ProfileLockError> {
+  return Effect.gen(function* () {
+    const runtimePath = join(profilePath, ".runtime");
+    const lockPath = join(runtimePath, "daemon.lock");
+    const takeoverPath = join(runtimePath, "daemon.lock.takeover");
+    yield* filesystem.mkdir(runtimePath);
+    const metadata: LockMetadata = {
+      schemaVersion: 1,
+      pid: processOperations.pid,
+      ownerToken: yield* processOperations.ownerToken,
+    };
+    yield* acquireLockFile(filesystem, processOperations, lockPath, takeoverPath, metadata);
+    const closing = yield* DeferredClose.make(
+      removeIfOwned(filesystem, lockPath, metadata.ownerToken),
+    );
+    return { profilePath, pid: metadata.pid, close: closing };
+  });
+}
+
+function acquireLockFile(
   filesystem: ProfileLockFilesystem,
   processOperations: ProfileLockProcess,
   lockPath: string,
   takeoverPath: string,
   metadata: LockMetadata,
-): Promise<void> {
-  try {
-    await filesystem.create(takeoverPath, `${JSON.stringify(metadata)}\n`);
-  } catch (error) {
-    if (!hasCode(error, "EEXIST")) throw error;
-    const contender = decodeMetadata(await filesystem.read(takeoverPath));
-    if (await processOperations.isAlive(contender.pid)) {
-      throw new Error(`Profile lock takeover is already in progress by PID ${contender.pid}`);
-    }
-    await removeIfOwned(filesystem, takeoverPath, contender.ownerToken);
-    return takeOverStaleLock(filesystem, processOperations, lockPath, takeoverPath, metadata);
-  }
-
-  try {
-    const existing = await readMetadataIfPresent(filesystem, lockPath);
-    if (existing !== undefined) {
-      // PID reuse can make a stale lock appear live; no portable process identity is available.
-      if (await processOperations.isAlive(existing.pid)) {
-        throw new Error(`Profile is already owned by live daemon PID ${existing.pid}`);
-      }
-      await removeIfOwned(filesystem, lockPath, existing.ownerToken);
-    }
-    await filesystem.create(lockPath, `${JSON.stringify(metadata)}\n`);
-  } finally {
-    await removeIfOwned(filesystem, takeoverPath, metadata.ownerToken);
-  }
+): Effect.Effect<void, ProfileLockError> {
+  return filesystem.create(lockPath, `${JSON.stringify(metadata)}\n`).pipe(
+    Effect.catch((error) =>
+      hasCode(error.cause, "EEXIST")
+        ? takeOverStaleLock(filesystem, processOperations, lockPath, takeoverPath, metadata)
+        : Effect.fail(error),
+    ),
+    Effect.andThen(
+      readMetadataIfPresent(filesystem, takeoverPath).pipe(
+        Effect.flatMap((takeover) => {
+          if (takeover === undefined) return Effect.void;
+          return processOperations
+            .isAlive(takeover.pid)
+            .pipe(
+              Effect.flatMap((alive) =>
+                alive && takeover.pid !== metadata.pid
+                  ? removeIfOwned(filesystem, lockPath, metadata.ownerToken).pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          profileLockError(
+                            "takeover",
+                            `Profile lock takeover is already in progress by PID ${takeover.pid}`,
+                          ),
+                        ),
+                      ),
+                    )
+                  : removeIfOwned(filesystem, takeoverPath, takeover.ownerToken),
+              ),
+            );
+        }),
+      ),
+    ),
+  );
 }
 
-async function readMetadataIfPresent(
+function takeOverStaleLock(
+  filesystem: ProfileLockFilesystem,
+  processOperations: ProfileLockProcess,
+  lockPath: string,
+  takeoverPath: string,
+  metadata: LockMetadata,
+): Effect.Effect<void, ProfileLockError> {
+  return filesystem.create(takeoverPath, `${JSON.stringify(metadata)}\n`).pipe(
+    Effect.catch((error) => {
+      if (!hasCode(error.cause, "EEXIST")) return Effect.fail(error);
+      return filesystem.read(takeoverPath).pipe(
+        Effect.flatMap(decodeMetadata),
+        Effect.flatMap((contender) =>
+          processOperations
+            .isAlive(contender.pid)
+            .pipe(
+              Effect.flatMap((alive) =>
+                alive
+                  ? Effect.fail(
+                      profileLockError(
+                        "takeover",
+                        `Profile lock takeover is already in progress by PID ${contender.pid}`,
+                      ),
+                    )
+                  : removeIfOwned(filesystem, takeoverPath, contender.ownerToken).pipe(
+                      Effect.andThen(
+                        takeOverStaleLock(
+                          filesystem,
+                          processOperations,
+                          lockPath,
+                          takeoverPath,
+                          metadata,
+                        ),
+                      ),
+                    ),
+              ),
+            ),
+        ),
+      );
+    }),
+    Effect.flatMap(() =>
+      readMetadataIfPresent(filesystem, lockPath).pipe(
+        Effect.flatMap((existing) => {
+          if (existing === undefined) return Effect.void;
+          return processOperations
+            .isAlive(existing.pid)
+            .pipe(
+              Effect.flatMap((alive) =>
+                alive
+                  ? Effect.fail(
+                      profileLockError(
+                        "acquire",
+                        `Profile is already owned by live daemon PID ${existing.pid}`,
+                      ),
+                    )
+                  : removeIfOwned(filesystem, lockPath, existing.ownerToken),
+              ),
+            );
+        }),
+        Effect.andThen(filesystem.create(lockPath, `${JSON.stringify(metadata)}\n`)),
+        Effect.onExit(() => removeIfOwned(filesystem, takeoverPath, metadata.ownerToken)),
+      ),
+    ),
+  );
+}
+
+function readMetadataIfPresent(
   filesystem: Pick<ProfileLockFilesystem, "read">,
   path: string,
-): Promise<LockMetadata | undefined> {
-  try {
-    return decodeMetadata(await filesystem.read(path));
-  } catch (error) {
-    if (hasCode(error, "ENOENT")) return undefined;
-    throw error;
-  }
+): Effect.Effect<LockMetadata | undefined, ProfileLockError> {
+  return filesystem.read(path).pipe(
+    Effect.flatMap(decodeMetadata),
+    Effect.catch((error) =>
+      hasCode(error.cause, "ENOENT")
+        ? Effect.sync((): LockMetadata | undefined => undefined)
+        : Effect.fail(error),
+    ),
+  );
 }
 
-async function removeIfOwned(
-  filesystem: ProfileLockFilesystem,
+function removeIfOwned(
+  filesystem: Pick<ProfileLockFilesystem, "read" | "remove">,
   path: string,
   ownerToken: string,
-): Promise<void> {
-  const current = await readMetadataIfPresent(filesystem, path);
-  if (current?.ownerToken === ownerToken) await filesystem.remove(path);
+): Effect.Effect<void, ProfileLockError> {
+  return readMetadataIfPresent(filesystem, path).pipe(
+    Effect.flatMap((current) =>
+      current?.ownerToken === ownerToken ? filesystem.remove(path) : Effect.void,
+    ),
+  );
 }
 
-const productionFilesystem: ProfileLockFilesystem = {
-  canonicalize: realpath,
-  async mkdir(path) {
-    await mkdir(path, { recursive: true });
-  },
-  async create(path, content) {
-    await writeFile(path, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  },
-  read: (path) => readFile(path, "utf8"),
-  async remove(path) {
-    await rm(path);
-  },
-};
+const productionFilesystem: ProfileLockFilesystem = wrapRawFilesystem(
+  rawProductionProfileLockFilesystem,
+);
 
 const productionProcess: ProfileLockProcess = {
   pid: process.pid,
-  async isAlive(pid) {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      if (hasCode(error, "ESRCH")) return false;
-      if (hasCode(error, "EPERM")) return true;
-      throw error;
-    }
+  isAlive(pid) {
+    return Effect.try({
+      try: () => {
+        process.kill(pid, 0);
+        return true;
+      },
+      catch: (cause) => profileLockError("inspect-process", "Process inspection failed", cause),
+    }).pipe(
+      Effect.catch((error) => {
+        if (hasCode(error.cause, "ESRCH")) return Effect.succeed(false);
+        if (hasCode(error.cause, "EPERM")) return Effect.succeed(true);
+        return Effect.fail(error);
+      }),
+    );
   },
-  ownerToken: () => randomBytes(32).toString("hex"),
+  ownerToken: Effect.try({
+    try: () => randomBytes(32).toString("hex"),
+    catch: (cause) => profileLockError("owner-token", "Owner token generation failed", cause),
+  }),
 };
 
-function decodeMetadata(text: string): LockMetadata {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (error) {
-    throw new Error("Malformed Profile lock metadata", { cause: error });
-  }
-  if (!isRecord(value)) throw new Error("Malformed Profile lock metadata");
-  const keys = Object.keys(value).sort();
-  if (keys.join(",") !== "ownerToken,pid,schemaVersion") {
-    throw new Error("Malformed Profile lock metadata: expected exact fields");
-  }
-  if (value.schemaVersion !== 1) throw new Error("Unsupported Profile lock schemaVersion");
-  if (!Number.isSafeInteger(value.pid) || typeof value.pid !== "number" || value.pid <= 0) {
-    throw new Error("Malformed Profile lock PID");
-  }
-  if (typeof value.ownerToken !== "string" || value.ownerToken.length === 0) {
-    throw new Error("Malformed Profile lock owner token");
-  }
-  return { schemaVersion: 1, pid: value.pid, ownerToken: value.ownerToken };
+function wrapRawFilesystem(raw: RawProfileLockFilesystem): ProfileLockFilesystem {
+  // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- This is the single Promise-to-Effect filesystem boundary.
+  const fromRaw = <A>(operation: string, run: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: (cause) => profileLockError(operation, `${operation} failed`, cause),
+    });
+  return {
+    canonicalize: (path) => fromRaw("canonicalize", () => raw.canonicalize(path)),
+    mkdir: (path) => fromRaw("mkdir", () => raw.mkdir(path)),
+    create: (path, content) => fromRaw("create", () => raw.create(path, content)),
+    read: (path) => fromRaw("read", () => raw.read(path)),
+    remove: (path) => fromRaw("remove", () => raw.remove(path)),
+  };
+}
+
+function decodeMetadata(text: string): Effect.Effect<LockMetadata, ProfileLockError> {
+  return decodeLockMetadataWire(text).pipe(
+    Effect.mapError((cause) =>
+      profileLockError("decode", "Malformed Profile lock metadata", cause),
+    ),
+    Effect.flatMap((value) => {
+      if (value.schemaVersion !== 1) {
+        return Effect.fail(profileLockError("decode", "Unsupported Profile lock schemaVersion"));
+      }
+      if (!Number.isSafeInteger(value.pid) || typeof value.pid !== "number" || value.pid <= 0) {
+        return Effect.fail(profileLockError("decode", "Malformed Profile lock PID"));
+      }
+      if (typeof value.ownerToken !== "string" || value.ownerToken.length === 0) {
+        return Effect.fail(profileLockError("decode", "Malformed Profile lock owner token"));
+      }
+      return Effect.succeed({ schemaVersion: 1, pid: value.pid, ownerToken: value.ownerToken });
+    }),
+  );
+}
+
+function profileLockError(operation: string, message: string, cause?: unknown): ProfileLockError {
+  return new ProfileLockError({ operation, message, ...(cause === undefined ? {} : { cause }) });
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -225,16 +363,22 @@ function hasCode(error: unknown, code: string): boolean {
   return isRecord(error) && error.code === code;
 }
 
-async function withGate<A>(key: string, operation: () => Promise<A>): Promise<A> {
-  const previous = acquisitionGates.get(key) ?? Promise.resolve();
-  const completion = Promise.withResolvers<void>();
-  const current = previous.then(() => completion.promise);
-  acquisitionGates.set(key, current);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    completion.resolve();
-    if (acquisitionGates.get(key) === current) acquisitionGates.delete(key);
-  }
-}
+const DeferredClose = {
+  make<E>(cleanup: Effect.Effect<void, E>): Effect.Effect<Effect.Effect<void, E>> {
+    return Effect.gen(function* () {
+      const result = yield* Deferred.make<void, E>();
+      const started = yield* Ref.make(false);
+      return yield* Effect.succeed(
+        Effect.uninterruptible(
+          Ref.modify(started, (current): readonly [boolean, boolean] => [current, true]).pipe(
+            Effect.flatMap((alreadyStarted) =>
+              alreadyStarted
+                ? Deferred.await(result)
+                : Deferred.complete(result, cleanup).pipe(Effect.andThen(Deferred.await(result))),
+            ),
+          ),
+        ),
+      );
+    });
+  },
+};

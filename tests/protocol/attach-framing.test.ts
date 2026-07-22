@@ -82,51 +82,57 @@ const canonicalEnvelopeFrame =
 // One request frame per protocol method, exercising the existing request param shapes.
 const requestFrames: ReadonlyArray<ClientRequestFrame> = [
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-1",
     method: "initialize",
     params: { client: { name: "ziggy-test", version: "1.0.0" }, features: ["modelChunks"] },
   },
-  { schemaVersion: 1, requestId: "req-2", method: "session/start", params: {} },
+  { schemaVersion: 2, requestId: "req-2", method: "session/start", params: {} },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    requestId: "req-ensure",
+    method: "session/ensure",
+    params: { sessionId: "main" },
+  },
+  {
+    schemaVersion: 2,
     requestId: "req-3",
     method: "session/resume",
     params: { sessionId: "session-a", sinceSeq: 4 },
   },
-  { schemaVersion: 1, requestId: "req-4", method: "session/list", params: {} },
+  { schemaVersion: 2, requestId: "req-4", method: "session/list", params: {} },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-5",
     method: "session/subscribe",
     params: { sessionId: "session-a", sinceSeq: 0 },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-6",
     method: "session/unsubscribe",
     params: { subscriptionId: "sub-a" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-7",
     method: "turn/start",
     params: { sessionId: "session-a", message: "next" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-8",
     method: "turn/steer",
     params: { sessionId: "session-a", expectedTurnId: "turn-a", message: "change direction" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-9",
     method: "turn/interrupt",
     params: { sessionId: "session-a", expectedTurnId: "turn-a" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-10",
     method: "approval/resolve",
     params: { sessionId: "session-a", approvalId: "approval-a", decision: "deny" },
@@ -136,73 +142,87 @@ const requestFrames: ReadonlyArray<ClientRequestFrame> = [
 // One success frame per protocol method, exercising the existing response result shapes.
 const successFrames: ReadonlyArray<ServerSuccessFrame> = [
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-1",
     method: "initialize",
     type: "success",
     result: {
-      protocolVersion: 1,
-      features: ["sessionReplay", "turnSteering", "turnInterrupt", "approvals"],
+      protocolVersion: 2,
+      features: [
+        "sessionReplay",
+        "turnSteering",
+        "turnInterrupt",
+        "approvals",
+        "stableMainSession",
+        "providerAuth",
+      ],
     },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-2",
     method: "session/start",
     type: "success",
     result: { session: sessionSummary },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    requestId: "req-ensure",
+    method: "session/ensure",
+    type: "success",
+    result: { session: { ...sessionSummary, sessionId: "main" } },
+  },
+  {
+    schemaVersion: 2,
     requestId: "req-3",
     method: "session/resume",
     type: "success",
     result: { session: sessionSummary, subscriptionId: "sub-a", replayThroughSeq: 4 },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-4",
     method: "session/list",
     type: "success",
     result: { sessions: [sessionSummary] },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-5",
     method: "session/subscribe",
     type: "success",
     result: { subscriptionId: "sub-a", replayThroughSeq: 0 },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-6",
     method: "session/unsubscribe",
     type: "success",
     result: { unsubscribed: true },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-7",
     method: "turn/start",
     type: "success",
     result: { turnId: "turn-a", disposition: "queued" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-8",
     method: "turn/steer",
     type: "success",
     result: { turnId: "turn-a" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-9",
     method: "turn/interrupt",
     type: "success",
     result: { turnId: "turn-a" },
   },
   {
-    schemaVersion: 1,
+    schemaVersion: 2,
     requestId: "req-10",
     method: "approval/resolve",
     type: "success",
@@ -226,7 +246,7 @@ const errorCodes: ReadonlyArray<ProtocolErrorCode> = [
 ];
 
 const eventFrame: ServerSessionEventFrame = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   type: "event",
   subscriptionId: "sub-a",
   event: envelope,
@@ -238,7 +258,11 @@ describe("attach framing types", () => {
       Equal<
         ClientRequestFrame["method"],
         | "initialize"
+        | "auth/login"
+        | "auth/respond"
+        | "auth/status"
         | "session/start"
+        | "session/ensure"
         | "session/resume"
         | "session/list"
         | "session/subscribe"
@@ -249,7 +273,7 @@ describe("attach framing types", () => {
         | "approval/resolve"
       >
     >();
-    expectType<Equal<ClientRequestFrame["schemaVersion"], 1>>();
+    expectType<Equal<ClientRequestFrame["schemaVersion"], 2>>();
   });
 
   test("ServerSuccessFrame is correlated by requestId and discriminates result by method", () => {
@@ -291,11 +315,83 @@ describe("attach framing types", () => {
   });
 });
 
+describe("auth protocol codec", () => {
+  test("round-trips strict login, respond, status, prompt, and metadata-only success frames", () => {
+    const requests: ReadonlyArray<ClientRequestFrame> = [
+      {
+        schemaVersion: 2,
+        requestId: "login",
+        method: "auth/login",
+        params: { providerId: "anthropic", type: "api_key" },
+      },
+      {
+        schemaVersion: 2,
+        requestId: "respond",
+        method: "auth/respond",
+        params: { loginId: "login-1", promptId: "prompt-1", value: "fixture-value" },
+      },
+      {
+        schemaVersion: 2,
+        requestId: "status",
+        method: "auth/status",
+        params: { providerId: "anthropic" },
+      },
+    ];
+    for (const frame of requests)
+      expect(decodeClientRequest(encodeClientRequest(frame))).toEqual(frame);
+    const prompt: ServerFrame = {
+      schemaVersion: 2,
+      type: "auth",
+      requestId: "login",
+      loginId: "login-1",
+      event: { kind: "secret", promptId: "prompt-1", message: "Enter key" },
+    };
+    expect(decodeServerFrame(encodeServerFrame(prompt))).toEqual(prompt);
+    const cancelled: ServerFrame = {
+      schemaVersion: 2,
+      type: "auth",
+      requestId: "login",
+      loginId: "login-1",
+      event: { kind: "prompt_cancelled", promptId: "prompt-1" },
+    };
+    expect(decodeServerFrame(encodeServerFrame(cancelled))).toEqual(cancelled);
+    expect(() =>
+      decodeServerFrame(
+        '{"schemaVersion":2,"type":"auth","requestId":"login","loginId":"login-1","event":{"kind":"prompt_cancelled","promptId":"prompt-1","value":"secret"}}\n',
+      ),
+    ).toThrow();
+    const success: ServerFrame = {
+      schemaVersion: 2,
+      requestId: "login",
+      method: "auth/login",
+      type: "success",
+      result: {
+        status: { providerId: "anthropic", configured: true, type: "api_key", source: "stored" },
+      },
+    };
+    expect(decodeServerFrame(encodeServerFrame(success))).toEqual(success);
+  });
+
+  test("rejects unknown auth types, extra fields, oversized responses, and credential-shaped status", () => {
+    const invalid = [
+      '{"schemaVersion":2,"requestId":"r","method":"auth/login","params":{"providerId":"p","type":"password"}}\n',
+      '{"schemaVersion":2,"requestId":"r","method":"auth/status","params":{"extra":true}}\n',
+      `{"schemaVersion":2,"requestId":"r","method":"auth/respond","params":{"loginId":"l","promptId":"p","value":"${"x".repeat(65_537)}"}}\n`,
+      '{"schemaVersion":2,"requestId":"r","method":"auth/status","type":"success","result":{"providers":[{"providerId":"p","configured":true,"type":"api_key","key":"secret"}]}}\n',
+    ];
+    expect(() => decodeClientRequest(invalid[0] ?? "")).toThrow();
+    expect(() => decodeClientRequest(invalid[1] ?? "")).toThrow();
+    expect(() => decodeClientRequest(invalid[2] ?? "")).toThrow();
+    expect(() => decodeServerFrame(invalid[3] ?? "")).toThrow();
+  });
+});
+
 describe("client request frame codec", () => {
   test("round-trips every protocol method with byte-stable canonical framing", () => {
     expect(requestFrames.map((frame) => frame.method)).toEqual([
       "initialize",
       "session/start",
+      "session/ensure",
       "session/resume",
       "session/list",
       "session/subscribe",
@@ -319,40 +415,43 @@ describe("client request frame codec", () => {
   test("encodes the initialize request in canonical key order", () => {
     const encoded = encodeClientRequest(requestFrameAt(requestFrames, 0));
     expect(encoded).toBe(
-      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","params":{"client":{"name":"ziggy-test","version":"1.0.0"},"features":["modelChunks"]}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"ziggy-test","version":"1.0.0"},"features":["modelChunks"]}}\n',
     );
   });
 
   test("encodes empty-param methods as params:{} and rejects extra params", () => {
     const start = requestFrameAt(requestFrames, 1);
     expect(encodeClientRequest(start)).toBe(
-      '{"schemaVersion":1,"requestId":"req-2","method":"session/start","params":{}}\n',
+      '{"schemaVersion":2,"requestId":"req-2","method":"session/start","params":{}}\n',
     );
-    const list = requestFrameAt(requestFrames, 3);
+    const list = requestFrameAt(requestFrames, 4);
     expect(encodeClientRequest(list)).toBe(
-      '{"schemaVersion":1,"requestId":"req-4","method":"session/list","params":{}}\n',
+      '{"schemaVersion":2,"requestId":"req-4","method":"session/list","params":{}}\n',
     );
   });
 
   test("rejects wrong schema version, unknown methods, invalid params, extra keys, and unsafe sequences", () => {
     const invalid: ReadonlyArray<string> = [
-      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":[]}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c"}}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":["unknown"]}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/start","params":{"extra":true}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":-1}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":1.5}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":1e400}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/subscribe","params":{"sessionId":"s","sinceSeq":9007199254740992}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"turn/start","params":{"sessionId":"s"}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"turn/steer","params":{"sessionId":"s","expectedTurnId":"t"}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"approval/resolve","params":{"sessionId":"s","approvalId":"a","decision":"later"}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/unsubscribe","params":{"subscriptionId":""}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/unknown","params":{}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":[]},"extra":true}\n',
-      '{"schemaVersion":1,"requestId":"","method":"session/start","params":{}}\n',
-      '{"schemaVersion":1,"method":"session/start","params":{}}\n',
-      '{"schemaVersion":1,"requestId":"req-1","method":"session/start"}\n',
+      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":[]}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c"}}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":["unknown"]}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":["modelChunks","modelChunks"]}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/start","params":{"extra":true}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/ensure","params":{"sessionId":"other"}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/ensure","params":{"sessionId":"main","extra":true}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":-1}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":1.5}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/resume","params":{"sessionId":"s","sinceSeq":1e400}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/subscribe","params":{"sessionId":"s","sinceSeq":9007199254740992}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"turn/start","params":{"sessionId":"s"}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"turn/steer","params":{"sessionId":"s","expectedTurnId":"t"}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"approval/resolve","params":{"sessionId":"s","approvalId":"a","decision":"later"}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/unsubscribe","params":{"subscriptionId":""}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/unknown","params":{}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","params":{"client":{"name":"c","version":"1"},"features":[]},"extra":true}\n',
+      '{"schemaVersion":2,"requestId":"","method":"session/start","params":{}}\n',
+      '{"schemaVersion":2,"method":"session/start","params":{}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"session/start"}\n',
     ];
     for (const frame of invalid) {
       expect(() => decodeClientRequest(frame)).toThrow();
@@ -372,6 +471,7 @@ describe("server frame codec", () => {
     expect(successFrames.map((frame) => frame.method)).toEqual([
       "initialize",
       "session/start",
+      "session/ensure",
       "session/resume",
       "session/list",
       "session/subscribe",
@@ -394,7 +494,7 @@ describe("server frame codec", () => {
   test("round-trips every error code in the closed union", () => {
     for (const code of errorCodes) {
       const frame: ServerErrorFrame = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         requestId: "req-err",
         type: "error",
         code,
@@ -410,14 +510,14 @@ describe("server frame codec", () => {
   test("encodes the initialize success in canonical key order", () => {
     const encoded = encodeServerFrame(successFrameAt(successFrames, 0));
     expect(encoded).toBe(
-      '{"schemaVersion":1,"requestId":"req-1","method":"initialize","type":"success","result":{"protocolVersion":1,"features":["sessionReplay","turnSteering","turnInterrupt","approvals"]}}\n',
+      '{"schemaVersion":2,"requestId":"req-1","method":"initialize","type":"success","result":{"protocolVersion":2,"features":["sessionReplay","turnSteering","turnInterrupt","approvals","stableMainSession","providerAuth"]}}\n',
     );
   });
 
   test("round-trips the Session-event frame and preserves the canonical SessionEnvelope byte-for-byte", () => {
     const encoded = encodeServerFrame(eventFrame);
     expect(encoded).toBe(
-      `{"schemaVersion":1,"type":"event","subscriptionId":"sub-a","event":${canonicalEnvelopeFrame}}\n`,
+      `{"schemaVersion":2,"type":"event","subscriptionId":"sub-a","event":${canonicalEnvelopeFrame}}\n`,
     );
     const decoded = decodeServerFrame(encoded);
     expect(decoded).toEqual(eventFrame);
@@ -441,7 +541,7 @@ describe("server frame codec", () => {
   test("rejects wrong schema version, unknown frame type, unknown method, and extra keys on server frames", () => {
     const validSuccess = encodeServerFrame(successFrameAt(successFrames, 0));
     const validError = encodeServerFrame({
-      schemaVersion: 1,
+      schemaVersion: 2,
       requestId: "req-err",
       type: "error",
       code: "invalid-params",
@@ -449,15 +549,20 @@ describe("server frame codec", () => {
     });
     const validEvent = encodeServerFrame(eventFrame);
     const invalid: ReadonlyArray<string> = [
-      validSuccess.replace('"schemaVersion":1', '"schemaVersion":2'),
+      validSuccess.replace('"schemaVersion":2', '"schemaVersion":1'),
       validSuccess.replace('"method":"initialize"', '"method":"session/unknown"'),
+      validSuccess.replace(
+        '"features":["sessionReplay"',
+        '"features":["sessionReplay","sessionReplay"',
+      ),
+      '{"schemaVersion":2,"requestId":"ensure","method":"session/ensure","type":"success","result":{"session":{"sessionId":"other","createdAt":"2026-07-19T00:00:00.000Z","lastSeq":1}}}\n',
       validSuccess.replace('"type":"success"', '"type":"unknown"'),
       `${validSuccess.slice(0, -2)},"extra":true}\n`,
       validError.replace('"code":"invalid-params"', '"code":"invented"'),
       `${validError.slice(0, -2)},"extra":true}\n`,
-      validEvent.replace('"schemaVersion":1', '"schemaVersion":2'),
+      validEvent.replace('"schemaVersion":2', '"schemaVersion":1'),
       `${validEvent.slice(0, -2)},"extra":true}\n`,
-      '{"schemaVersion":1,"requestId":"req-1","type":"event","subscriptionId":"","event":' +
+      '{"schemaVersion":2,"requestId":"req-1","type":"event","subscriptionId":"","event":' +
         canonicalEnvelopeFrame +
         "}\n",
     ];
@@ -468,7 +573,7 @@ describe("server frame codec", () => {
 
   test("rejects a server frame missing the type discriminator", () => {
     expect(() =>
-      decodeServerFrame('{"schemaVersion":1,"requestId":"req-1","method":"initialize"}\n'),
+      decodeServerFrame('{"schemaVersion":2,"requestId":"req-1","method":"initialize"}\n'),
     ).toThrow();
   });
 
@@ -484,7 +589,7 @@ describe("server frame codec", () => {
       ...successFrames,
       ...errorCodes.map(
         (code): ServerErrorFrame => ({
-          schemaVersion: 1,
+          schemaVersion: 2,
           requestId: "req-err",
           type: "error" as const,
           code,
@@ -570,7 +675,7 @@ describe("Session-envelope authority preservation", () => {
         event,
       };
       const frame: ServerSessionEventFrame = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         type: "event",
         subscriptionId: "sub-a",
         event: env,
@@ -585,7 +690,7 @@ describe("Session-envelope authority preservation", () => {
   test("rejects an event frame whose envelope has a torn/invalid seq", () => {
     const badEnvelope =
       '{"schemaVersion":1,"seq":0,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"turn-started","sessionId":"s","turnId":"t","message":"m","origin":"user"}}';
-    const frame = `{"schemaVersion":1,"type":"event","subscriptionId":"sub-a","event":${badEnvelope}}\n`;
+    const frame = `{"schemaVersion":2,"type":"event","subscriptionId":"sub-a","event":${badEnvelope}}\n`;
     expect(() => decodeServerFrame(frame)).toThrow();
   });
 });
@@ -606,7 +711,7 @@ function decodeFailure(thunk: () => unknown): ProtocolDecodeError {
 describe("server error frame correlation", () => {
   test("round-trips a correlated error with a nonempty requestId", () => {
     const frame: ServerErrorFrame = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       requestId: "req-error",
       type: "error",
       code: "invalid-params",
@@ -614,7 +719,7 @@ describe("server error frame correlation", () => {
     };
     const encoded = encodeServerFrame(frame);
     expect(encoded).toBe(
-      '{"schemaVersion":1,"requestId":"req-error","type":"error","code":"invalid-params","message":"bad params"}\n',
+      '{"schemaVersion":2,"requestId":"req-error","type":"error","code":"invalid-params","message":"bad params"}\n',
     );
     const decoded = decodeServerFrame(encoded);
     expect(decoded).toEqual(frame);
@@ -623,7 +728,7 @@ describe("server error frame correlation", () => {
 
   test("round-trips an uncorrelated error with requestId null", () => {
     const frame: ServerErrorFrame = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       requestId: null,
       type: "error",
       code: "malformed-frame",
@@ -631,7 +736,7 @@ describe("server error frame correlation", () => {
     };
     const encoded = encodeServerFrame(frame);
     expect(encoded).toBe(
-      '{"schemaVersion":1,"requestId":null,"type":"error","code":"malformed-frame","message":"not valid JSON"}\n',
+      '{"schemaVersion":2,"requestId":null,"type":"error","code":"malformed-frame","message":"not valid JSON"}\n',
     );
     const decoded = decodeServerFrame(encoded);
     expect(decoded).toEqual(frame);
@@ -641,7 +746,7 @@ describe("server error frame correlation", () => {
   test("every expanded error code round-trips with requestId null", () => {
     for (const code of errorCodes) {
       const frame: ServerErrorFrame = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         requestId: null,
         type: "error",
         code,
@@ -656,15 +761,15 @@ describe("server error frame correlation", () => {
 
   test("rejects an error frame missing requestId", () => {
     expect(() =>
-      decodeServerFrame('{"schemaVersion":1,"type":"error","code":"internal","message":"m"}\n'),
+      decodeServerFrame('{"schemaVersion":2,"type":"error","code":"internal","message":"m"}\n'),
     ).toThrow();
   });
 
   test("rejects an error frame with an invalid non-null requestId", () => {
     const invalid: ReadonlyArray<string> = [
-      '{"schemaVersion":1,"requestId":"","type":"error","code":"internal","message":"m"}\n',
-      '{"schemaVersion":1,"requestId":42,"type":"error","code":"internal","message":"m"}\n',
-      '{"schemaVersion":1,"requestId":true,"type":"error","code":"internal","message":"m"}\n',
+      '{"schemaVersion":2,"requestId":"","type":"error","code":"internal","message":"m"}\n',
+      '{"schemaVersion":2,"requestId":42,"type":"error","code":"internal","message":"m"}\n',
+      '{"schemaVersion":2,"requestId":true,"type":"error","code":"internal","message":"m"}\n',
     ];
     for (const frame of invalid) {
       expect(() => decodeServerFrame(frame)).toThrow();
@@ -683,7 +788,7 @@ describe("typed client decode failures", () => {
 
   test("missing requestId maps to malformed-frame with null requestId", () => {
     const error = decodeFailure(() =>
-      decodeClientRequest('{"schemaVersion":1,"method":"session/start","params":{}}\n'),
+      decodeClientRequest('{"schemaVersion":2,"method":"session/start","params":{}}\n'),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
     expect(error.code).toBe("malformed-frame");
@@ -694,7 +799,7 @@ describe("typed client decode failures", () => {
   test("empty-string requestId maps to malformed-frame with null requestId", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"","method":"session/start","params":{}}\n',
+        '{"schemaVersion":2,"requestId":"","method":"session/start","params":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -706,7 +811,7 @@ describe("typed client decode failures", () => {
   test("non-string requestId maps to malformed-frame with null requestId", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":42,"method":"session/start","params":{}}\n',
+        '{"schemaVersion":2,"requestId":42,"method":"session/start","params":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -718,7 +823,7 @@ describe("typed client decode failures", () => {
   test("wrong schema version with valid requestId maps to version-mismatch and recovers the id", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":2,"requestId":"req-9","method":"session/start","params":{}}\n',
+        '{"schemaVersion":1,"requestId":"req-9","method":"session/start","params":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -730,7 +835,7 @@ describe("typed client decode failures", () => {
   test("unknown method with valid requestId maps to unknown-method", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"req-9","method":"session/unknown","params":{}}\n',
+        '{"schemaVersion":2,"requestId":"req-9","method":"session/unknown","params":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -742,7 +847,7 @@ describe("typed client decode failures", () => {
   test("invalid params with valid requestId maps to invalid-params", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"req-9","method":"initialize","params":{"client":{"name":"c"}}}\n',
+        '{"schemaVersion":2,"requestId":"req-9","method":"initialize","params":{"client":{"name":"c"}}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -754,7 +859,7 @@ describe("typed client decode failures", () => {
   test("unsafe sinceSeq with valid requestId maps to unsafe-sequence", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"req-9","method":"session/resume","params":{"sessionId":"s","sinceSeq":-1}}\n',
+        '{"schemaVersion":2,"requestId":"req-9","method":"session/resume","params":{"sessionId":"s","sinceSeq":-1}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -766,7 +871,7 @@ describe("typed client decode failures", () => {
   test("extra top-level keys with valid requestId map to malformed-frame and recover the id", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"req-9","method":"session/start","params":{},"extra":true}\n',
+        '{"schemaVersion":2,"requestId":"req-9","method":"session/start","params":{},"extra":true}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -792,7 +897,7 @@ describe("typed server decode failures", () => {
 
   test("server frame with non-string type maps to malformed-frame", () => {
     const error = decodeFailure(() =>
-      decodeServerFrame('{"schemaVersion":1,"requestId":"req-1","type":42}\n'),
+      decodeServerFrame('{"schemaVersion":2,"requestId":"req-1","type":42}\n'),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
     expect(error.code).toBe("malformed-frame");
@@ -802,7 +907,7 @@ describe("typed server decode failures", () => {
   test("invalid success result maps to malformed-frame and recovers requestId", () => {
     const error = decodeFailure(() =>
       decodeServerFrame(
-        '{"schemaVersion":1,"requestId":"req-1","method":"session/start","type":"success","result":{"session":"not-an-object"}}\n',
+        '{"schemaVersion":2,"requestId":"req-1","method":"session/start","type":"success","result":{"session":"not-an-object"}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -814,7 +919,7 @@ describe("typed server decode failures", () => {
   test("missing success result keys map to malformed-frame and recover requestId", () => {
     const error = decodeFailure(() =>
       decodeServerFrame(
-        '{"schemaVersion":1,"requestId":"req-1","method":"session/start","type":"success","result":{}}\n',
+        '{"schemaVersion":2,"requestId":"req-1","method":"session/start","type":"success","result":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -826,7 +931,7 @@ describe("typed server decode failures", () => {
   test("invalid error message field maps to malformed-frame and recovers requestId", () => {
     const error = decodeFailure(() =>
       decodeServerFrame(
-        '{"schemaVersion":1,"requestId":"req-1","type":"error","code":"internal","message":42}\n',
+        '{"schemaVersion":2,"requestId":"req-1","type":"error","code":"internal","message":42}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -838,7 +943,7 @@ describe("typed server decode failures", () => {
   test("unknown error code maps to malformed-frame and recovers requestId", () => {
     const error = decodeFailure(() =>
       decodeServerFrame(
-        '{"schemaVersion":1,"requestId":"req-1","type":"error","code":"invented","message":"m"}\n',
+        '{"schemaVersion":2,"requestId":"req-1","type":"error","code":"invented","message":"m"}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -850,7 +955,7 @@ describe("typed server decode failures", () => {
   test("invalid event subscriptionId maps to malformed-frame with null requestId", () => {
     const error = decodeFailure(() =>
       decodeServerFrame(
-        `{"schemaVersion":1,"type":"event","subscriptionId":42,"event":${canonicalEnvelopeFrame}}\n`,
+        `{"schemaVersion":2,"type":"event","subscriptionId":42,"event":${canonicalEnvelopeFrame}}\n`,
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -864,7 +969,7 @@ describe("typed server decode failures", () => {
       '{"schemaVersion":1,"seq":"not-a-number","emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"turn-started","sessionId":"s","turnId":"t","message":"m","origin":"user"}}';
     const error = decodeFailure(() =>
       decodeServerFrame(
-        `{"schemaVersion":1,"type":"event","subscriptionId":"sub-a","event":${badEnvelope}}\n`,
+        `{"schemaVersion":2,"type":"event","subscriptionId":"sub-a","event":${badEnvelope}}\n`,
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
@@ -877,7 +982,7 @@ describe("typed server decode failures", () => {
 describe("client method discriminator contract", () => {
   test("non-string method maps to malformed-frame (not unknown-method)", () => {
     const error = decodeFailure(() =>
-      decodeClientRequest('{"schemaVersion":1,"requestId":"req-9","method":42,"params":{}}\n'),
+      decodeClientRequest('{"schemaVersion":2,"requestId":"req-9","method":42,"params":{}}\n'),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
     expect(error.code).toBe("malformed-frame");
@@ -887,7 +992,7 @@ describe("client method discriminator contract", () => {
 
   test("null method maps to malformed-frame (not unknown-method)", () => {
     const error = decodeFailure(() =>
-      decodeClientRequest('{"schemaVersion":1,"requestId":"req-9","method":null,"params":{}}\n'),
+      decodeClientRequest('{"schemaVersion":2,"requestId":"req-9","method":null,"params":{}}\n'),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);
     expect(error.code).toBe("malformed-frame");
@@ -898,7 +1003,7 @@ describe("client method discriminator contract", () => {
   test("syntactically valid but unregistered string method maps to unknown-method", () => {
     const error = decodeFailure(() =>
       decodeClientRequest(
-        '{"schemaVersion":1,"requestId":"req-9","method":"session/unknown","params":{}}\n',
+        '{"schemaVersion":2,"requestId":"req-9","method":"session/unknown","params":{}}\n',
       ),
     );
     expect(error).toBeInstanceOf(ProtocolDecodeError);

@@ -1,0 +1,12 @@
+ZIGGY / main                                                                     WORKING
+----------------------------------------------------------------------------------------
++--------------------------------------------------------------------------------------+
+| [APPROVAL REQUIRED]                                                                  |
+| Run `bun test tests/tui` in the Profile?                                             |
+|   APPROVE   > DENY                                                                   |
+| A approve · D deny · Enter selected · Escape dismiss                                 |
++--------------------------------------------------------------------------------------+
+----------------------------------------------------------------------------------------
+[FOCUS: APPROVAL] [ENTER SELECTS]
+> prioritize the database check
+A approve | D deny | Enter resolve | Esc dismiss | ^C detach

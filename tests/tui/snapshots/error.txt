@@ -1,0 +1,9 @@
+ZIGGY / main                                                       READY
+------------------------------------------------------------------------
+
+No messages yet. Type below and press Enter to start.
+[ERROR] Session replay stopped at a non-contiguous sequence.
+------------------------------------------------------------------------
+[FOCUS: COMPOSER] [ENTER STARTS]
+> _
+Enter start | ^P Sessions | ^C detach

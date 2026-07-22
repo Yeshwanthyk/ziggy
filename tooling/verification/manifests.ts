@@ -44,7 +44,7 @@ interface VerificationRequirement {
 export interface VerificationManifest {
   readonly schemaVersion: 1;
   readonly stage: Stage;
-  readonly status: "implemented" | "manifest-empty";
+  readonly status: "pending" | "implemented" | "manifest-empty";
   readonly predecessors: ReadonlyArray<Stage>;
   readonly scenarios: ReadonlyArray<string>;
   readonly gates: ReadonlyArray<GateName>;
@@ -88,7 +88,7 @@ export function decodeManifest(value: unknown, source = "manifest"): Verificatio
   }
   const stage = requireStage(record.stage, `${source}.stage`);
   const status = record.status;
-  if (status !== "implemented" && status !== "manifest-empty") {
+  if (status !== "pending" && status !== "implemented" && status !== "manifest-empty") {
     throw new Error(`${source}: invalid status`);
   }
   return {
@@ -131,11 +131,6 @@ export async function validateManifestRegistry(
       (manifest.scenarios.length !== 0 || manifest.gates.length !== 0)
     ) {
       throw new Error(`${manifest.stage}: manifest-empty stage cannot declare scenarios or gates`);
-    }
-    for (const requirement of manifest.requirements) {
-      if (requirement.status === "implemented" && manifest.status !== "implemented") {
-        throw new Error(`${manifest.stage}: implemented requirement requires implemented stage`);
-      }
     }
     for (const scenario of manifest.scenarios) {
       if (declaredScenarios.has(scenario)) {

@@ -1,5 +1,6 @@
 export const SESSION_SCHEMA_VERSION = 1;
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
+export const MAIN_SESSION_ID = "main";
 
 export type JsonPrimitive = boolean | null | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | ReadonlyArray<JsonValue>;
@@ -180,11 +181,33 @@ export interface SessionEnvelope {
 }
 
 export type ClientFeature = "modelChunks" | "approvalRequests";
-export type ServerFeature = "sessionReplay" | "turnSteering" | "turnInterrupt" | "approvals";
+export type ServerFeature =
+  | "sessionReplay"
+  | "turnSteering"
+  | "turnInterrupt"
+  | "approvals"
+  | "stableMainSession"
+  | "providerAuth";
+
+export const BASE_SERVER_FEATURES: ReadonlyArray<ServerFeature> = [
+  "sessionReplay",
+  "turnSteering",
+  "turnInterrupt",
+  "approvals",
+  "stableMainSession",
+];
+
+export function negotiateServerFeatures(providerAuth: boolean): ReadonlyArray<ServerFeature> {
+  return providerAuth ? [...BASE_SERVER_FEATURES, "providerAuth"] : BASE_SERVER_FEATURES;
+}
 
 export type ProtocolMethod =
   | "initialize"
+  | "auth/login"
+  | "auth/respond"
+  | "auth/status"
   | "session/start"
+  | "session/ensure"
   | "session/resume"
   | "session/list"
   | "session/subscribe"
@@ -200,8 +223,67 @@ export interface InitializeRequest {
 }
 
 export interface InitializeResponse {
-  readonly protocolVersion: 1;
+  readonly protocolVersion: 2;
   readonly features: ReadonlyArray<ServerFeature>;
+}
+
+export type AuthType = "api_key" | "oauth";
+export interface AuthStatus {
+  readonly providerId: string;
+  readonly configured: boolean;
+  readonly type?: AuthType;
+  readonly source?: string;
+}
+export interface AuthLoginRequest {
+  readonly providerId: string;
+  readonly type: AuthType;
+}
+export interface AuthLoginResponse {
+  readonly status: AuthStatus;
+}
+export interface AuthRespondRequest {
+  readonly loginId: string;
+  readonly promptId: string;
+  readonly value: string;
+}
+export interface AuthRespondResponse {
+  readonly accepted: true;
+}
+export interface AuthStatusRequest {
+  readonly providerId?: string;
+}
+export interface AuthStatusResponse {
+  readonly providers: ReadonlyArray<AuthStatus>;
+}
+
+export type AuthPromptEvent =
+  | {
+      readonly kind: "text" | "secret" | "manual_code";
+      readonly promptId: string;
+      readonly message: string;
+      readonly placeholder?: string;
+    }
+  | {
+      readonly kind: "select";
+      readonly promptId: string;
+      readonly message: string;
+      readonly options: ReadonlyArray<{
+        readonly id: string;
+        readonly label: string;
+        readonly description?: string;
+      }>;
+    };
+export type AuthNotifyEvent =
+  | { readonly kind: "info" | "progress"; readonly message: string }
+  | { readonly kind: "auth_url"; readonly url: string; readonly instructions?: string }
+  | { readonly kind: "device_code"; readonly userCode: string; readonly verificationUri: string }
+  | { readonly kind: "prompt_cancelled"; readonly promptId: string };
+export interface ServerAuthFrame {
+  readonly schemaVersion: typeof PROTOCOL_VERSION;
+  readonly type: "auth";
+  readonly requestId: string;
+  readonly loginId: string;
+  readonly event: AuthPromptEvent | AuthNotifyEvent;
 }
 
 export interface SessionSummary {
@@ -213,6 +295,14 @@ export interface SessionSummary {
 
 export type SessionStartRequest = Record<never, never>;
 export interface SessionStartResponse {
+  readonly session: SessionSummary;
+}
+
+export interface SessionEnsureRequest {
+  readonly sessionId: typeof MAIN_SESSION_ID;
+}
+
+export interface SessionEnsureResponse {
   readonly session: SessionSummary;
 }
 
@@ -331,7 +421,11 @@ type ClientRequestVariant<Method extends ProtocolMethod, Params> = ClientRequest
 /** One client→server NDJSON request frame: schema-stamped, id-correlated, method-specific params. */
 export type ClientRequestFrame =
   | ClientRequestVariant<"initialize", InitializeRequest>
+  | ClientRequestVariant<"auth/login", AuthLoginRequest>
+  | ClientRequestVariant<"auth/respond", AuthRespondRequest>
+  | ClientRequestVariant<"auth/status", AuthStatusRequest>
   | ClientRequestVariant<"session/start", SessionStartRequest>
+  | ClientRequestVariant<"session/ensure", SessionEnsureRequest>
   | ClientRequestVariant<"session/resume", SessionResumeRequest>
   | ClientRequestVariant<"session/list", SessionListRequest>
   | ClientRequestVariant<"session/subscribe", SessionSubscribeRequest>
@@ -350,7 +444,11 @@ type ServerSuccessVariant<Method extends ProtocolMethod, Result> = ClientRequest
 /** Server→client success frame correlated by requestId, echoing the method for a stateless codec. */
 export type ServerSuccessFrame =
   | ServerSuccessVariant<"initialize", InitializeResponse>
+  | ServerSuccessVariant<"auth/login", AuthLoginResponse>
+  | ServerSuccessVariant<"auth/respond", AuthRespondResponse>
+  | ServerSuccessVariant<"auth/status", AuthStatusResponse>
   | ServerSuccessVariant<"session/start", SessionStartResponse>
+  | ServerSuccessVariant<"session/ensure", SessionEnsureResponse>
   | ServerSuccessVariant<"session/resume", SessionResumeResponse>
   | ServerSuccessVariant<"session/list", SessionListResponse>
   | ServerSuccessVariant<"session/subscribe", SessionSubscribeResponse>
@@ -385,7 +483,11 @@ export interface ServerSessionEventFrame {
   readonly event: SessionEnvelope;
 }
 
-export type ServerFrame = ServerSuccessFrame | ServerErrorFrame | ServerSessionEventFrame;
+export type ServerFrame =
+  | ServerSuccessFrame
+  | ServerErrorFrame
+  | ServerSessionEventFrame
+  | ServerAuthFrame;
 
 /**
  * Typed error thrown by the attach-protocol decode path. Transport/daemon code maps a decode

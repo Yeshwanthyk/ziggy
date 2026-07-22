@@ -1,11 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  ProcessRequest,
-  ProcessResult,
-  ProcessRunner,
-} from "../../tests/testkit/boundaries.ts";
+import type { ProcessRequest, ProcessResult, ProcessRunner } from "./process.ts";
 
 const entrypoint = "packages/ziggy/src/main.ts";
 const defaultCompileTimeoutMs = 120_000;
@@ -95,6 +91,26 @@ export async function runCompileSmoke(
     requireSuccess("version", version);
     if (version.stdout.trim() !== "0.0.0") {
       throw new Error(`compiled binary emitted unexpected version: ${version.stdout.trim()}`);
+    }
+    const runtimeMode = await runner.run({
+      argv: [outfile, "--runtime-mode"],
+      cwd: root,
+      timeoutMs: timeouts.versionMs,
+    });
+    requireSuccess("runtime mode", runtimeMode);
+    if (runtimeMode.stdout.trim() !== "compiled") {
+      throw new Error(
+        `compiled binary was not recognized as compiled: ${runtimeMode.stdout.trim()}`,
+      );
+    }
+    const oauthLoaders = await runner.run({
+      argv: [outfile, "--oauth-loader-smoke"],
+      cwd: root,
+      timeoutMs: timeouts.versionMs,
+    });
+    requireSuccess("OAuth loader", oauthLoaders);
+    if (oauthLoaders.stdout.trim() !== "oauth-loaders:ok") {
+      throw new Error("compiled binary did not resolve registered OAuth loaders");
     }
   } finally {
     await rm(temporaryDirectory, { force: true, recursive: true });

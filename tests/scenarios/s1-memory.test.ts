@@ -10,6 +10,8 @@ import {
   runMemoryTool,
   type FilesystemWorld,
 } from "../../packages/core/src/index.ts";
+import { Effect } from "effect";
+import { runEffect } from "../testkit/effect.ts";
 import {
   emitVerificationObservation,
   emptyRuntimeObservations,
@@ -28,84 +30,107 @@ test("S1 Memory batches persist atomically, reject caps, and refresh only at Ses
       profilePath: profile,
       now: () => new Date(Date.parse("2026-07-19T00:00:00.000Z") + millisecond++),
       nextTemporaryId: () => `fixture-${++temporaryId}`,
-      onMemoryCommitPoint: async (point) => {
+      onMemoryCommitPoint: (point) => {
         commitPoints.push(point);
       },
     });
-    const result = await runMemoryTool({
-      world,
-      operations: [
-        { action: "add", target: "memory", content: "fixture fact" },
-        { action: "add", target: "user", content: "fixture preference" },
-      ],
-    });
-    expect(result).toMatchObject({ success: true });
-    const memoryBefore = await readFile(join(profile, "memory/MEMORY.md"), "utf8");
-    const first = await openSession({
-      world,
-      sessionId: "fixture-current",
-      baseSystemPrompt: "fixture base",
-      tools: [],
-    });
-    await expect(
+    const result = await runEffect(
       runMemoryTool({
         world,
         operations: [
-          { action: "replace", target: "memory", oldText: "fixture fact", content: "new fact" },
+          { action: "add", target: "memory", content: "fixture fact" },
+          { action: "add", target: "user", content: "fixture preference" },
         ],
       }),
+    );
+    expect(result).toMatchObject({ success: true });
+    const memoryBefore = await readFile(join(profile, "memory/MEMORY.md"), "utf8");
+    const first = await runEffect(
+      openSession({
+        world,
+        sessionId: "fixture-current",
+        baseSystemPrompt: "fixture base",
+        tools: [],
+      }),
+    );
+    await expect(
+      runEffect(
+        runMemoryTool({
+          world,
+          operations: [
+            {
+              action: "replace",
+              target: "memory",
+              oldText: "fixture fact",
+              content: "new fact",
+            },
+          ],
+        }),
+      ),
     ).resolves.toMatchObject({ success: true });
-    const reopened = await openSession({
-      world,
-      sessionId: "fixture-current",
-      baseSystemPrompt: "changed base must not replace authority",
-      tools: [],
-    });
-    const next = await openSession({
-      world,
-      sessionId: "fixture-next",
-      baseSystemPrompt: "fixture base",
-      tools: [],
-    });
+    const reopened = await runEffect(
+      openSession({
+        world,
+        sessionId: "fixture-current",
+        baseSystemPrompt: "changed base must not replace authority",
+        tools: [],
+      }),
+    );
+    const next = await runEffect(
+      openSession({
+        world,
+        sessionId: "fixture-next",
+        baseSystemPrompt: "fixture base",
+        tools: [],
+      }),
+    );
     expect(reopened).toEqual(first);
     expect(first.systemPrompt).toContain("fixture fact");
     expect(first.systemPrompt).not.toContain("new fact");
     expect(next.systemPrompt).toContain("new fact");
 
-    const overCap = await runMemoryTool({
-      world,
-      operations: [
-        {
-          action: "replace",
-          target: "memory",
-          oldText: "new fact",
-          content: "x".repeat(MEMORY_DOCUMENT_LIMIT + 1),
-        },
-      ],
-    });
+    const overCap = await runEffect(
+      runMemoryTool({
+        world,
+        operations: [
+          {
+            action: "replace",
+            target: "memory",
+            oldText: "new fact",
+            content: "x".repeat(MEMORY_DOCUMENT_LIMIT + 1),
+          },
+        ],
+      }),
+    );
     expect(overCap).toMatchObject({ success: false });
-    expect(await world.readMemory("MEMORY.md")).toBe("new fact");
+    expect(await runEffect(world.readMemory("MEMORY.md"))).toBe("new fact");
 
     const readsReached = Promise.withResolvers<void>();
     const releaseReads = Promise.withResolvers<void>();
     let concurrentReads = 0;
     const synchronizeFirstRead = (delegate: FilesystemWorld): FilesystemWorld => ({
       ...delegate,
-      async readMemoryBatch(documents) {
-        const snapshot = await delegate.readMemoryBatch(documents);
-        concurrentReads += 1;
-        if (concurrentReads === 2) {
-          readsReached.resolve();
-        }
-        await releaseReads.promise;
-        return snapshot;
+      readMemoryBatch(documents) {
+        return Effect.gen(function* () {
+          const snapshot = yield* delegate.readMemoryBatch(documents);
+          yield* Effect.sync(() => {
+            concurrentReads += 1;
+            if (concurrentReads === 2) {
+              readsReached.resolve();
+            }
+          });
+          yield* Effect.promise(() => releaseReads.promise);
+          return snapshot;
+        });
       },
     });
     const concurrent = ["concurrent alpha", "concurrent beta"].map((content) =>
-      runMemoryTool({
-        world: synchronizeFirstRead(createFilesystemWorld({ profilePath: profile })),
-        operations: [{ action: "add", target: "memory", content }],
-      }),
+      runEffect(
+        runMemoryTool({
+          world: synchronizeFirstRead(createFilesystemWorld({ profilePath: profile })),
+          operations: [{ action: "add", target: "memory", content }],
+        }),
+      ),
     );
     await readsReached.promise;
     releaseReads.resolve();
@@ -114,13 +139,13 @@ test("S1 Memory batches persist atomically, reject caps, and refresh only at Ses
       expect.objectContaining({ success: true }),
     ]);
     const concurrentEntries = new Set(
-      (await world.readMemory("MEMORY.md"))?.split(MEMORY_ENTRY_DELIMITER),
+      (await runEffect(world.readMemory("MEMORY.md")))?.split(MEMORY_ENTRY_DELIMITER),
     );
     expect(concurrentEntries).toEqual(new Set(["new fact", "concurrent alpha", "concurrent beta"]));
     const memoryAfter = await readFile(join(profile, "memory/MEMORY.md"), "utf8");
     const trace = [
-      ...(await world.readSession("fixture-current", 0)),
-      ...(await world.readSession("fixture-next", 0)),
+      ...(await runEffect(world.readSession("fixture-current", 0))),
+      ...(await runEffect(world.readSession("fixture-next", 0))),
     ];
     const faultSchedule: FaultScheduleObservation[] = commitPoints.map((point, occurrence) => ({
       boundary: "Memory-batch",

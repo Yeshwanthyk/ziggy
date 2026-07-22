@@ -1,0 +1,12 @@
+ZIGGY / main                                                                     WORKING
+----------------------------------------------------------------------------------------
++--------------------------------------------------------------------------------------+
+| [SESSIONS] All persisted Sessions                                                    |
+|   main [current]  active turn-1  #4                                                  |
+| > research-notes  idle  #12                                                          |
+| Up/Down move · Enter resume · Escape dismiss                                         |
++--------------------------------------------------------------------------------------+
+----------------------------------------------------------------------------------------
+[FOCUS: SESSIONS] [ENTER SELECTS]
+> prioritize the database check
+↑/↓ move | Enter resume | Esc dismiss | ^C detach

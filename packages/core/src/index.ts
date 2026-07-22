@@ -1,8 +1,12 @@
 export const corePackageName = "@ziggy/core";
 export * from "./memory/index.ts";
+export * from "./credentials/index.ts";
+export * from "./provider-runtime.ts";
+export * from "./oauth.ts";
 export * from "./daemon/index.ts";
 export {
   ApprovalDecisionNotAllowedError,
+  type ApprovalResolutionResult,
   createFilesystemSessionRuntime,
   createSessionRuntime,
   resumeFilesystemSession,
@@ -11,7 +15,11 @@ export {
   type CreateSessionRuntimeOptions,
   type ResumedFilesystemSession,
   type ResumeFilesystemSessionOptions,
+  InvalidSessionRuntimeInputError,
   type SessionRuntime,
+  SessionRuntimeError,
+  SessionSnapshotMismatchError,
+  SinceSeqBeyondTailError,
   SessionRuntimeClosedError,
   type SessionSubscription,
   type SessionTool,
@@ -24,6 +32,7 @@ export {
 } from "./agent/index.ts";
 export {
   createFilesystemWorld,
+  FilesystemWorldError,
   type FilesystemWorld,
   type FilesystemWorldOptions,
   MemoryBatchConflictError,

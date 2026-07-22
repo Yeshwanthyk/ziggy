@@ -9,6 +9,17 @@ export interface CanonicalEventObservation {
   readonly emittedAt: string;
   readonly eventType: string;
   readonly sessionId: string;
+  readonly turnId: string | null;
+  readonly stepId: string | null;
+  readonly origin: string | null;
+  readonly status: string | null;
+  readonly delta: string | null;
+  readonly fixtureText: string | null;
+}
+
+interface MetricObservation {
+  readonly name: string;
+  readonly value: number;
 }
 
 export interface ProviderInputObservation {
@@ -41,6 +52,7 @@ export interface RuntimeObservations {
   readonly providerInputs: ReadonlyArray<ProviderInputObservation>;
   readonly faultSchedule: ReadonlyArray<FaultScheduleObservation>;
   readonly filesystemDiffs: ReadonlyArray<FilesystemDiffObservation>;
+  readonly metrics: ReadonlyArray<MetricObservation>;
 }
 
 export function emptyRuntimeObservations(): RuntimeObservations {
@@ -49,19 +61,34 @@ export function emptyRuntimeObservations(): RuntimeObservations {
     providerInputs: [],
     faultSchedule: [],
     filesystemDiffs: [],
+    metrics: [],
   };
 }
 
 export function observeCanonicalEvents(
   envelopes: ReadonlyArray<SessionEnvelope>,
 ): ReadonlyArray<CanonicalEventObservation> {
-  return envelopes.map((envelope) => ({
-    schemaVersion: envelope.schemaVersion,
-    seq: envelope.seq,
-    emittedAt: envelope.emittedAt,
-    eventType: envelope.event.type,
-    sessionId: envelope.event.sessionId,
-  }));
+  return envelopes.map((envelope) => {
+    const event = envelope.event;
+    return {
+      schemaVersion: envelope.schemaVersion,
+      seq: envelope.seq,
+      emittedAt: envelope.emittedAt,
+      eventType: event.type,
+      sessionId: event.sessionId,
+      turnId: "turnId" in event ? event.turnId : null,
+      stepId: "stepId" in event ? event.stepId : null,
+      origin: event.type === "turn-started" ? event.origin : null,
+      status: event.type === "turn-ended" ? event.status : null,
+      delta: event.type === "model-chunk" ? event.delta : null,
+      fixtureText:
+        event.type === "turn-started" ||
+        event.type === "steer-received" ||
+        event.type === "follow-up-received"
+          ? event.message
+          : null,
+    };
+  });
 }
 
 export function observeProviderInputs(

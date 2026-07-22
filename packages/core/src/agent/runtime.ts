@@ -18,14 +18,22 @@ import type {
   TurnStatus,
 } from "@ziggy/protocol";
 import { projectProviderContext, toFinalModelResponse } from "./context.ts";
+const DEFAULT_MAX_TOOL_CALLS_PER_STEP = 32;
+const DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 4;
+const DEFAULT_STEER_MAILBOX_CAPACITY = 32;
+const DEFAULT_FOLLOW_UP_MAILBOX_CAPACITY = 32;
+
 import {
+  Cause,
   Deferred,
   Effect,
-  Exit,
   Fiber,
+  FiberSet,
   Option,
   Queue,
   Ref,
+  Result,
+  Schema,
   Scope,
   Semaphore,
   Stream,
@@ -50,7 +58,7 @@ export interface SessionTool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: JsonObject;
-  execute(input: ToolExecutionInput): Promise<JsonValue>;
+  execute(input: ToolExecutionInput): Effect.Effect<JsonValue, SessionRuntimeError>;
 }
 
 export interface ToolHookInput extends ToolExecutionInput {}
@@ -65,8 +73,14 @@ export interface SessionWorld {
    * The headless runtime relies on its owner to uphold this contract; the daemon enforces
    * one live runtime per Session when process lifecycle ownership lands.
    */
-  appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
-  readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
+  appendSession(
+    sessionId: string,
+    event: SessionEvent,
+  ): Effect.Effect<SessionEnvelope, SessionRuntimeError>;
+  readSession(
+    sessionId: string,
+    afterSeq: number,
+  ): Effect.Effect<ReadonlyArray<SessionEnvelope>, SessionRuntimeError>;
 }
 
 export interface CreateSessionRuntimeOptions<TApi extends Api> {
@@ -76,11 +90,18 @@ export interface CreateSessionRuntimeOptions<TApi extends Api> {
   readonly model: Model<TApi>;
   readonly streamSimple: StreamFunction<TApi, SimpleStreamOptions>;
   readonly cacheRetention: CacheRetention;
+  readonly reasoning?: SimpleStreamOptions["reasoning"];
   readonly nextTurnId: () => string;
   readonly nextStepId: () => string;
   readonly tools: ReadonlyArray<SessionTool>;
-  readonly beforeToolCall?: (input: ToolHookInput) => Promise<void>;
-  readonly afterToolCall?: (input: AfterToolHookInput) => Promise<ToolExecutionResult | undefined>;
+  readonly maxToolCallsPerStep?: number;
+  readonly maxConcurrentToolCalls?: number;
+  readonly steerMailboxCapacity?: number;
+  readonly followUpMailboxCapacity?: number;
+  readonly beforeToolCall?: (input: ToolHookInput) => Effect.Effect<void, SessionRuntimeError>;
+  readonly afterToolCall?: (
+    input: AfterToolHookInput,
+  ) => Effect.Effect<ToolExecutionResult | undefined, SessionRuntimeError>;
 }
 
 export interface TurnStartResult {
@@ -88,30 +109,59 @@ export interface TurnStartResult {
   readonly disposition: "started" | "queued";
 }
 
+export interface ApprovalResolutionResult {
+  readonly outcome: "resolved" | "already-resolved";
+}
+
 export interface SessionSubscription {
   readonly replayThroughSeq: number;
-  unsubscribe(): void;
+  readonly unsubscribe: Effect.Effect<void>;
 }
 
 export interface SessionRuntime {
-  startTurn(input: { readonly message: string }): Promise<TurnStartResult>;
+  startTurn(input: {
+    readonly message: string;
+  }): Effect.Effect<
+    TurnStartResult,
+    | InvalidSessionRuntimeInputError
+    | SessionRuntimeClosedError
+    | SessionRuntimeError
+    | SessionRuntimeOverloadedError
+  >;
   steer(input: {
     readonly expectedTurnId: string;
     readonly message: string;
-  }): Promise<{ readonly turnId: string }>;
-  interrupt(input: { readonly expectedTurnId: string }): Promise<{ readonly turnId: string }>;
+  }): Effect.Effect<
+    { readonly turnId: string },
+    | InvalidSessionRuntimeInputError
+    | SessionRuntimeError
+    | SessionRuntimeOverloadedError
+    | StaleTurnError
+  >;
+  interrupt(input: {
+    readonly expectedTurnId: string;
+  }): Effect.Effect<{ readonly turnId: string }, SessionRuntimeError | StaleTurnError>;
   resolveApproval(input: {
     readonly approvalId: string;
     readonly decision: ApprovalDecision;
-  }): Promise<{ readonly outcome: "resolved" | "already-resolved" }>;
-  waitForIdle(): Promise<void>;
+  }): Effect.Effect<
+    ApprovalResolutionResult,
+    ApprovalDecisionNotAllowedError | SessionRuntimeClosedError | SessionRuntimeError
+  >;
+  readonly waitForIdle: Effect.Effect<void, SessionRuntimeError>;
   subscribe(input: {
     readonly sinceSeq: number;
     readonly onReplay?: (replay: ReadonlyArray<SessionEnvelope>, replayThroughSeq: number) => void;
     readonly onReplayStart?: (replayThroughSeq: number) => void;
     readonly onEnvelope: (envelope: SessionEnvelope) => void;
-  }): Promise<SessionSubscription>;
-  close(): Promise<void>;
+  }): Effect.Effect<
+    SessionSubscription,
+    | InvalidSessionRuntimeInputError
+    | SessionRuntimeClosedError
+    | SessionRuntimeError
+    | SinceSeqBeyondTailError
+  >;
+  readonly close: Effect.Effect<void, SessionRuntimeError>;
 }
 
 interface FollowUp {
@@ -130,8 +180,10 @@ interface ActiveTurn {
 
 interface RuntimeState {
   readonly active: ActiveTurn | undefined;
-  readonly activeFiber: Fiber.Fiber<void, never> | undefined;
-  readonly idle: Deferred.Deferred<void, Error>;
+  readonly activeFiber:
+    | Fiber.Fiber<void, ProviderStreamFailure | SessionRuntimeError | SessionRuntimeOverloadedError>
+    | undefined;
+  readonly idle: Deferred.Deferred<void, SessionRuntimeError>;
   readonly closed: boolean;
 }
 
@@ -157,50 +209,89 @@ interface StepOutcome {
   readonly toolCalls: ReadonlyArray<ToolCallProjection>;
 }
 
-class ProviderStreamFailure extends Error {
-  constructor(
-    message: string,
-    readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = "ProviderStreamFailure";
+class ProviderStreamFailure extends Schema.TaggedErrorClass<ProviderStreamFailure>()(
+  "ProviderStreamFailure",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
+
+export class SessionRuntimeError extends Schema.TaggedErrorClass<SessionRuntimeError>()(
+  "SessionRuntimeError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+export class SessionRuntimeClosedError extends Schema.TaggedErrorClass<SessionRuntimeClosedError>()(
+  "SessionRuntimeClosedError",
+  {},
+) {
+  override readonly message = "Session runtime is closed";
+}
+
+export class SinceSeqBeyondTailError extends Schema.TaggedErrorClass<SinceSeqBeyondTailError>()(
+  "SinceSeqBeyondTailError",
+  { sinceSeq: Schema.Finite, durableTailSeq: Schema.Finite },
+) {
+  override get message(): string {
+    return `sinceSeq ${this.sinceSeq} exceeds durable Session tail ${this.durableTailSeq}`;
   }
 }
 
-export class SessionRuntimeClosedError extends Error {
-  constructor() {
-    super("Session runtime is closed");
-    this.name = "SessionRuntimeClosedError";
+export class StaleTurnError extends Schema.TaggedErrorClass<StaleTurnError>()("StaleTurnError", {
+  expectedTurnId: Schema.String,
+}) {
+  override get message(): string {
+    return `Expected active Turn ${this.expectedTurnId}`;
   }
 }
 
-export class StaleTurnError extends Error {
-  constructor(readonly expectedTurnId: string) {
-    super(`Expected active Turn ${expectedTurnId}`);
-    this.name = "StaleTurnError";
+export class ApprovalDecisionNotAllowedError extends Schema.TaggedErrorClass<ApprovalDecisionNotAllowedError>()(
+  "ApprovalDecisionNotAllowedError",
+  { approvalId: Schema.String, decision: Schema.Literals(["approve", "deny"]) },
+) {
+  override get message(): string {
+    return `Approval ${this.approvalId} does not allow ${this.decision}`;
   }
 }
 
-export class ApprovalDecisionNotAllowedError extends Error {
-  constructor(
-    readonly approvalId: string,
-    readonly decision: ApprovalDecision,
-  ) {
-    super(`Approval ${approvalId} does not allow ${decision}`);
-    this.name = "ApprovalDecisionNotAllowedError";
+export class InvalidSessionRuntimeInputError extends Schema.TaggedErrorClass<InvalidSessionRuntimeInputError>()(
+  "InvalidSessionRuntimeInputError",
+  { message: Schema.String },
+) {}
+
+export class SessionRuntimeOverloadedError extends Schema.TaggedErrorClass<SessionRuntimeOverloadedError>()(
+  "SessionRuntimeOverloadedError",
+  {
+    resource: Schema.Literals(["tool-calls", "steer-mailbox", "follow-up-mailbox"]),
+    capacity: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Session runtime ${this.resource} capacity ${this.capacity} is exhausted`;
   }
 }
 
-export async function createSessionRuntime<TApi extends Api>(
+export class SessionSnapshotMismatchError extends Schema.TaggedErrorClass<SessionSnapshotMismatchError>()(
+  "SessionSnapshotMismatchError",
+  {},
+) {
+  override readonly message = "Persisted Session snapshot does not match runtime snapshot";
+}
+
+export function createSessionRuntime<TApi extends Api>(
   options: CreateSessionRuntimeOptions<TApi>,
-): Promise<SessionRuntime> {
-  validateRuntimeOptions(options);
-
-  const resources = await Effect.runPromise(
-    Effect.gen(function* () {
+): Effect.Effect<
+  SessionRuntime,
+  InvalidSessionRuntimeInputError | SessionRuntimeError | SessionSnapshotMismatchError,
+  Scope.Scope
+> {
+  const acquire = Effect.gen(function* () {
+    yield* Effect.fromResult(validateRuntimeOptions(options));
+    const resources = yield* Effect.gen(function* () {
       const gate = yield* Semaphore.make(1);
-      const scope = yield* Scope.make();
-      const idle = yield* Deferred.make<void, Error>();
+      const fibers = yield* FiberSet.make<
+        void,
+        ProviderStreamFailure | SessionRuntimeError | SessionRuntimeOverloadedError
+      >();
+      const idle = yield* Deferred.make<void, SessionRuntimeError>();
       yield* Deferred.succeed(idle, undefined);
       const state = yield* Ref.make<RuntimeState>({
         active: undefined,
@@ -208,477 +299,522 @@ export async function createSessionRuntime<TApi extends Api>(
         idle,
         closed: false,
       });
-      return { gate, scope, state };
-    }),
-  );
-
-  const subscribers = new Set<Subscriber>();
-  const tools = new Map(options.tools.map((tool) => [tool.name, tool]));
-
-  const withGate = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
-    Semaphore.withPermit(resources.gate, effect);
-
-  const fromPromise = <A>(operation: () => Promise<A>): Effect.Effect<A, Error> =>
-    Effect.tryPromise({
-      try: operation,
-      catch: toError,
+      return { fibers, gate, state };
     });
 
-  const publish = (envelope: SessionEnvelope): Effect.Effect<void> =>
-    Effect.sync(() => {
-      for (const subscriber of subscribers) {
-        if (!subscriber.active) {
-          continue;
-        }
-        try {
-          subscriber.onEnvelope(envelope);
-        } catch {
-          subscriber.active = false;
-          subscribers.delete(subscriber);
-        }
-      }
-    });
+    const subscribers = new Set<Subscriber>();
+    const tools = new Map(options.tools.map((tool) => [tool.name, tool]));
+    const maxToolCallsPerStep = options.maxToolCallsPerStep ?? DEFAULT_MAX_TOOL_CALLS_PER_STEP;
+    const maxConcurrentToolCalls =
+      options.maxConcurrentToolCalls ?? DEFAULT_MAX_CONCURRENT_TOOL_CALLS;
+    const steerMailboxCapacity = options.steerMailboxCapacity ?? DEFAULT_STEER_MAILBOX_CAPACITY;
+    const followUpMailboxCapacity =
+      options.followUpMailboxCapacity ?? DEFAULT_FOLLOW_UP_MAILBOX_CAPACITY;
 
-  const appendUnlocked = (event: SessionEvent): Effect.Effect<SessionEnvelope, Error> =>
-    Effect.gen(function* () {
-      const envelope = yield* fromPromise(() =>
-        options.world.appendSession(options.sessionId, event),
+    const withGate = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+      Semaphore.withPermit(resources.gate, effect);
+
+    const publish = (envelope: SessionEnvelope): Effect.Effect<void> =>
+      Effect.forEach(
+        subscribers,
+        (subscriber) =>
+          subscriber.active
+            ? Effect.try({
+                try: () => subscriber.onEnvelope(envelope),
+                catch: () => subscriber,
+              }).pipe(
+                Effect.catch((failed) =>
+                  Effect.sync(() => {
+                    failed.active = false;
+                    subscribers.delete(failed);
+                  }),
+                ),
+              )
+            : Effect.void,
+        { discard: true },
       );
-      yield* publish(envelope);
-      return envelope;
-    });
 
-  const append = (event: SessionEvent): Effect.Effect<SessionEnvelope, Error> =>
-    withGate(appendUnlocked(event));
+    const appendUnlocked = (
+      event: SessionEvent,
+    ): Effect.Effect<SessionEnvelope, SessionRuntimeError> =>
+      Effect.gen(function* () {
+        const envelope = yield* options.world.appendSession(options.sessionId, event);
+        yield* publish(envelope);
+        return envelope;
+      });
 
-  const readAll = (): Effect.Effect<ReadonlyArray<SessionEnvelope>, Error> =>
-    withGate(fromPromise(() => options.world.readSession(options.sessionId, 0)));
+    const append = (event: SessionEvent): Effect.Effect<SessionEnvelope, SessionRuntimeError> =>
+      withGate(appendUnlocked(event));
 
-  const projectContext = (): Effect.Effect<Context, Error> =>
-    Effect.gen(function* () {
-      const envelopes = yield* readAll();
-      return projectProviderContext(envelopes);
-    });
+    const readAll = (): Effect.Effect<ReadonlyArray<SessionEnvelope>, SessionRuntimeError> =>
+      withGate(options.world.readSession(options.sessionId, 0));
 
-  const executeTool = (
-    active: ActiveTurn,
-    stepId: string,
-    call: ToolCallProjection,
-  ): Effect.Effect<ToolExecutionResult> => {
-    const input: ToolExecutionInput = {
-      sessionId: options.sessionId,
-      turnId: active.turnId,
-      stepId,
-      toolCallId: call.id,
-      toolName: call.name,
-      input: call.input,
-      signal: active.controller.signal,
-    };
-    const work: ToolWork = { call, input };
+    const projectContext = (): Effect.Effect<Context, SessionRuntimeError> =>
+      Effect.gen(function* () {
+        const envelopes = yield* readAll();
+        return yield* Effect.fromResult(projectProviderContext(envelopes)).pipe(
+          Effect.mapError(runtimeError),
+        );
+      });
 
-    const execute = Effect.gen(function* () {
-      if (active.controller.signal.aborted) {
-        return yield* Effect.interrupt;
-      }
-      const initial = yield* Effect.gen(function* () {
-        if (options.beforeToolCall !== undefined) {
-          yield* fromPromise(() => options.beforeToolCall?.(work.input) ?? Promise.resolve());
+    const executeTool = (
+      active: ActiveTurn,
+      stepId: string,
+      call: ToolCallProjection,
+    ): Effect.Effect<ToolExecutionResult> => {
+      const input: ToolExecutionInput = {
+        sessionId: options.sessionId,
+        turnId: active.turnId,
+        stepId,
+        toolCallId: call.id,
+        toolName: call.name,
+        input: call.input,
+        signal: active.controller.signal,
+      };
+      const work: ToolWork = { call, input };
+
+      const execute = Effect.gen(function* () {
+        if (active.controller.signal.aborted) {
+          return yield* Effect.interrupt;
         }
-        const tool = tools.get(work.call.name);
-        if (tool === undefined) {
+        const initial = yield* Effect.gen(function* () {
+          if (options.beforeToolCall !== undefined) {
+            yield* options.beforeToolCall(work.input);
+          }
+          const tool = tools.get(work.call.name);
+          if (tool === undefined) {
+            return {
+              output: { error: `Unknown tool: ${work.call.name}` },
+              isError: true,
+            } satisfies ToolExecutionResult;
+          }
           return {
-            output: { error: `Unknown tool: ${work.call.name}` },
-            isError: true,
+            output: yield* tool.execute(work.input),
+            isError: false,
           } satisfies ToolExecutionResult;
-        }
-        return {
-          output: yield* fromPromise(() => tool.execute(work.input)),
-          isError: false,
-        } satisfies ToolExecutionResult;
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed({
-            output: { error: error.message },
-            isError: true,
-          } satisfies ToolExecutionResult),
-        ),
-      );
-      if (options.afterToolCall === undefined) {
-        return initial;
-      }
-      const finalized = yield* fromPromise(
-        () =>
-          options.afterToolCall?.({ ...work.input, result: initial }) ?? Promise.resolve(undefined),
-      );
-      return finalized ?? initial;
-    });
-
-    return execute.pipe(
-      Effect.catch((error) =>
-        Effect.succeed({
-          output: { error: error.message },
-          isError: true,
-        }),
-      ),
-    );
-  };
-
-  const executeTools = (
-    active: ActiveTurn,
-    stepId: string,
-    calls: ReadonlyArray<ToolCallProjection>,
-  ): Effect.Effect<void, Error> =>
-    Effect.gen(function* () {
-      for (const call of calls) {
-        yield* append({
-          type: "tool-call",
-          sessionId: options.sessionId,
-          turnId: active.turnId,
-          stepId,
-          toolCallId: call.id,
-          toolName: call.name,
-          input: call.input,
-          sourceIndex: call.sourceIndex,
-        });
-      }
-
-      const results = yield* Effect.forEach(calls, (call) => executeTool(active, stepId, call), {
-        concurrency: "unbounded",
-      });
-      if (active.controller.signal.aborted) {
-        return yield* Effect.interrupt;
-      }
-      for (let index = 0; index < calls.length; index += 1) {
-        const call = calls[index];
-        const result = results[index];
-        if (call === undefined || result === undefined) {
-          return yield* Effect.die(new Error("Parallel tool execution lost source order"));
-        }
-        yield* append({
-          type: "tool-result",
-          sessionId: options.sessionId,
-          turnId: active.turnId,
-          stepId,
-          toolCallId: call.id,
-          output: result.output,
-          isError: result.isError,
-          sourceIndex: call.sourceIndex,
-        });
-      }
-    });
-
-  const runProviderStep = (
-    active: ActiveTurn,
-    stepId: string,
-  ): Effect.Effect<StepOutcome, Error | ProviderStreamFailure> =>
-    Effect.gen(function* () {
-      yield* append({
-        type: "step-started",
-        sessionId: options.sessionId,
-        turnId: active.turnId,
-        stepId,
-        provider: options.model.provider,
-        model: options.model.id,
-      });
-      const context = yield* projectContext();
-      const providerStream = yield* Effect.try({
-        try: () =>
-          options.streamSimple(options.model, context, {
-            sessionId: options.sessionId,
-            cacheRetention: options.cacheRetention,
-            signal: active.controller.signal,
-          }),
-        catch: (cause) => new ProviderStreamFailure("Provider stream construction failed", cause),
-      });
-
-      let terminal: AssistantMessageEvent | undefined;
-      const stream = Stream.fromAsyncIterable(
-        providerStream,
-        (cause) => new ProviderStreamFailure("Provider stream iteration failed", cause),
-      );
-      yield* Stream.runForEach(stream, (event) =>
-        Effect.gen(function* () {
-          if (event.type === "text_delta" || event.type === "thinking_delta") {
-            yield* append({
-              type: "model-chunk",
-              sessionId: options.sessionId,
-              turnId: active.turnId,
-              stepId,
-              contentIndex: event.contentIndex,
-              kind: event.type === "text_delta" ? "text" : "thinking",
-              delta: event.delta,
-            });
-          }
-          if (event.type === "done" || event.type === "error") {
-            if (terminal !== undefined) {
-              return yield* Effect.fail(
-                new ProviderStreamFailure("Provider stream emitted multiple terminal events"),
-              );
-            }
-            terminal = event;
-          }
-        }),
-      );
-
-      if (terminal === undefined) {
-        return yield* Effect.fail(
-          new ProviderStreamFailure("Provider stream ended without a terminal event"),
-        );
-      }
-      if (terminal.type !== "done" && terminal.type !== "error") {
-        return yield* Effect.fail(
-          new ProviderStreamFailure("Provider stream terminal state was malformed"),
-        );
-      }
-      const message = terminal.type === "done" ? terminal.message : terminal.error;
-      const response = toFinalModelResponse(message);
-      yield* append({
-        type: "model-response",
-        sessionId: options.sessionId,
-        turnId: active.turnId,
-        stepId,
-        response,
-      });
-      if (terminal.type === "error") {
-        return yield* Effect.fail(
-          new ProviderStreamFailure(
-            terminal.reason === "aborted"
-              ? "Provider stream was aborted"
-              : (terminal.error.errorMessage ?? "Provider stream failed"),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.succeed({
+              // oxlint-disable-next-line ziggy-effect/no-unknown-error-message -- typed: SessionRuntimeError.message is the tool failure contract
+              output: { error: error.message },
+              isError: true,
+            } satisfies ToolExecutionResult),
           ),
         );
-      }
-      const toolCalls = response.content
-        .filter((content) => content.type === "toolCall")
-        .map((content, sourceIndex) => ({
-          id: content.id,
-          name: content.name,
-          input: content.arguments,
-          sourceIndex,
-        }));
-      if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) {
-        return yield* Effect.fail(
-          new ProviderStreamFailure("Provider emitted duplicate tool call ids"),
-        );
-      }
-      if (response.stopReason === "toolUse" && toolCalls.length === 0) {
-        return yield* Effect.fail(
-          new ProviderStreamFailure("Provider stopped for tool use without tool calls"),
-        );
-      }
-      return { response, toolCalls };
-    });
-
-  const closeStep = (
-    active: ActiveTurn,
-    stepId: string,
-    status: TurnStatus,
-  ): Effect.Effect<void, Error> =>
-    append({
-      type: "step-ended",
-      sessionId: options.sessionId,
-      turnId: active.turnId,
-      stepId,
-      status,
-    }).pipe(Effect.asVoid);
-
-  const launchTurn = (
-    active: ActiveTurn,
-    idle: Deferred.Deferred<void, Error>,
-  ): Effect.Effect<void, Error> =>
-    Effect.gen(function* () {
-      const launch = yield* Deferred.make<void>();
-      yield* appendUnlocked({
-        type: "turn-started",
-        sessionId: options.sessionId,
-        turnId: active.turnId,
-        message: active.message,
-        origin: active.origin,
+        if (options.afterToolCall === undefined) {
+          return initial;
+        }
+        const finalized = yield* options.afterToolCall({ ...work.input, result: initial });
+        return finalized ?? initial;
       });
-      yield* Ref.set(resources.state, {
-        active,
-        activeFiber: undefined,
-        idle,
-        closed: false,
-      });
-      const fiber = yield* Effect.forkIn(
-        Deferred.await(launch).pipe(Effect.andThen(runTurn(active)), Effect.orDie),
-        resources.scope,
-        { startImmediately: true },
+
+      return execute.pipe(
+        Effect.catch((error) =>
+          Effect.succeed({
+            // oxlint-disable-next-line ziggy-effect/no-unknown-error-message -- typed: SessionRuntimeError.message is the hook failure contract
+            output: { error: error.message },
+            isError: true,
+          }),
+        ),
       );
-      yield* Ref.set(resources.state, {
-        active,
-        activeFiber: fiber,
-        idle,
-        closed: false,
-      });
-      yield* Deferred.succeed(launch, undefined);
-    });
+    };
 
-  const finishTurn = (
-    active: ActiveTurn,
-    openStepId: string | undefined,
-    completed: boolean,
-  ): Effect.Effect<void> =>
-    withGate(
+    const executeTools = (
+      active: ActiveTurn,
+      stepId: string,
+      calls: ReadonlyArray<ToolCallProjection>,
+    ): Effect.Effect<void, SessionRuntimeError> =>
       Effect.gen(function* () {
-        const status: TurnStatus = active.controller.signal.aborted
-          ? "interrupted"
-          : completed
-            ? "completed"
-            : "failed";
-        let appendError: Error | undefined;
-        const appendFinal = (event: SessionEvent): Effect.Effect<void> =>
-          appendUnlocked(event).pipe(
-            Effect.asVoid,
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                appendError ??= error;
-              }),
-            ),
-          );
-        if (openStepId !== undefined) {
-          yield* appendFinal({
-            type: "step-ended",
+        for (const call of calls) {
+          yield* append({
+            type: "tool-call",
             sessionId: options.sessionId,
             turnId: active.turnId,
-            stepId: openStepId,
-            status,
+            stepId,
+            toolCallId: call.id,
+            toolName: call.name,
+            input: call.input,
+            sourceIndex: call.sourceIndex,
           });
         }
-        yield* appendFinal({
-          type: "turn-ended",
+
+        const results = yield* Effect.forEach(calls, (call) => executeTool(active, stepId, call), {
+          concurrency: maxConcurrentToolCalls,
+        });
+        if (active.controller.signal.aborted) {
+          return yield* Effect.interrupt;
+        }
+        for (let index = 0; index < calls.length; index += 1) {
+          const call = calls[index];
+          const result = results[index];
+          if (call === undefined || result === undefined) {
+            return yield* new SessionRuntimeError({
+              message: "Parallel tool execution lost source order",
+              cause: { callCount: calls.length, resultCount: results.length, index },
+            });
+          }
+          yield* append({
+            type: "tool-result",
+            sessionId: options.sessionId,
+            turnId: active.turnId,
+            stepId,
+            toolCallId: call.id,
+            output: result.output,
+            isError: result.isError,
+            sourceIndex: call.sourceIndex,
+          });
+        }
+      });
+
+    const runProviderStep = (
+      active: ActiveTurn,
+      stepId: string,
+    ): Effect.Effect<
+      StepOutcome,
+      ProviderStreamFailure | SessionRuntimeError | SessionRuntimeOverloadedError
+    > =>
+      Effect.gen(function* () {
+        yield* append({
+          type: "step-started",
           sessionId: options.sessionId,
           turnId: active.turnId,
-          status,
+          stepId,
+          provider: options.model.provider,
+          model: options.model.id,
+        });
+        const context = yield* projectContext();
+        const providerStream = yield* Effect.try({
+          try: () =>
+            options.streamSimple(options.model, context, {
+              sessionId: options.sessionId,
+              cacheRetention: options.cacheRetention,
+              ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+              signal: active.controller.signal,
+            }),
+          catch: (cause) =>
+            new ProviderStreamFailure({
+              message: "Provider stream construction failed",
+              cause,
+            }),
         });
 
-        const state = yield* Ref.get(resources.state);
-        if (appendError !== undefined) {
-          yield* Ref.set(resources.state, {
-            active: undefined,
-            activeFiber: undefined,
-            idle: state.idle,
-            closed: true,
+        let terminal: AssistantMessageEvent | undefined;
+        const stream = Stream.fromAsyncIterable(
+          providerStream,
+          (cause) =>
+            new ProviderStreamFailure({
+              message: "Provider stream iteration failed",
+              cause,
+            }),
+        );
+        yield* Stream.runForEach(stream, (event) =>
+          Effect.gen(function* () {
+            if (event.type === "text_delta" || event.type === "thinking_delta") {
+              yield* append({
+                type: "model-chunk",
+                sessionId: options.sessionId,
+                turnId: active.turnId,
+                stepId,
+                contentIndex: event.contentIndex,
+                kind: event.type === "text_delta" ? "text" : "thinking",
+                delta: event.delta,
+              });
+            }
+            if (event.type === "done" || event.type === "error") {
+              if (terminal !== undefined) {
+                return yield* new ProviderStreamFailure({
+                  message: "Provider stream emitted multiple terminal events",
+                  cause: "multiple terminal events",
+                });
+              }
+              terminal = event;
+            }
+          }),
+        );
+
+        if (terminal === undefined) {
+          return yield* new ProviderStreamFailure({
+            message: "Provider stream ended without a terminal event",
+            cause: "missing terminal event",
           });
-          yield* Deferred.fail(state.idle, appendError);
-          return;
         }
-        const followUp = yield* Queue.poll(active.followUpMailbox);
-        if (state.closed) {
-          yield* Ref.set(resources.state, {
-            active: undefined,
-            activeFiber: undefined,
-            idle: state.idle,
-            closed: true,
+        if (terminal.type !== "done" && terminal.type !== "error") {
+          return yield* new ProviderStreamFailure({
+            message: "Provider stream terminal state was malformed",
+            cause: "malformed terminal state",
           });
-          yield* Deferred.succeed(state.idle, undefined);
-          return;
         }
-        if (Option.isSome(followUp)) {
-          const next: ActiveTurn = {
-            turnId: followUp.value.turnId,
-            message: followUp.value.message,
-            origin: "follow-up",
-            controller: new AbortController(),
-            steerMailbox: yield* Queue.unbounded<string>(),
-            followUpMailbox: active.followUpMailbox,
-          };
-          const launched = yield* Effect.result(launchTurn(next, state.idle));
-          if (launched._tag === "Failure") {
+        const message = terminal.type === "done" ? terminal.message : terminal.error;
+        const projected = yield* Effect.fromResult(toFinalModelResponse(message)).pipe(
+          Effect.mapError(runtimeError),
+        );
+        const response: FinalModelResponse =
+          terminal.type === "error"
+            ? { ...projected, errorMessage: "Provider request failed" }
+            : projected;
+        yield* append({
+          type: "model-response",
+          sessionId: options.sessionId,
+          turnId: active.turnId,
+          stepId,
+          response,
+        });
+        if (terminal.type === "error") {
+          return yield* new ProviderStreamFailure({
+            message:
+              terminal.reason === "aborted"
+                ? "Provider stream was aborted"
+                : (terminal.error.errorMessage ?? "Provider stream failed"),
+            cause: terminal.error,
+          });
+        }
+        const toolCalls = response.content
+          .filter((content) => content.type === "toolCall")
+          .map((content, sourceIndex) => ({
+            id: content.id,
+            name: content.name,
+            input: content.arguments,
+            sourceIndex,
+          }));
+        if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) {
+          return yield* new ProviderStreamFailure({
+            message: "Provider emitted duplicate tool call ids",
+            cause: "duplicate tool call ids",
+          });
+        }
+        if (response.stopReason === "toolUse" && toolCalls.length === 0) {
+          return yield* new ProviderStreamFailure({
+            message: "Provider stopped for tool use without tool calls",
+            cause: "missing tool calls",
+          });
+        }
+        if (toolCalls.length > maxToolCallsPerStep) {
+          return yield* new SessionRuntimeOverloadedError({
+            resource: "tool-calls",
+            capacity: maxToolCallsPerStep,
+          });
+        }
+        return { response, toolCalls };
+      });
+
+    const closeStep = (
+      active: ActiveTurn,
+      stepId: string,
+      status: TurnStatus,
+    ): Effect.Effect<void, SessionRuntimeError> =>
+      append({
+        type: "step-ended",
+        sessionId: options.sessionId,
+        turnId: active.turnId,
+        stepId,
+        status,
+      }).pipe(Effect.asVoid);
+
+    const launchTurn = (
+      active: ActiveTurn,
+      idle: Deferred.Deferred<void, SessionRuntimeError>,
+    ): Effect.Effect<void, SessionRuntimeError> =>
+      Effect.gen(function* () {
+        const launch = yield* Deferred.make<void>();
+        yield* appendUnlocked({
+          type: "turn-started",
+          sessionId: options.sessionId,
+          turnId: active.turnId,
+          message: active.message,
+          origin: active.origin,
+        });
+        yield* Ref.set(resources.state, {
+          active,
+          activeFiber: undefined,
+          idle,
+          closed: false,
+        });
+        const fiber = yield* FiberSet.run(
+          resources.fibers,
+          Deferred.await(launch).pipe(Effect.andThen(runTurn(active))),
+          { startImmediately: true },
+        );
+        yield* Ref.set(resources.state, {
+          active,
+          activeFiber: fiber,
+          idle,
+          closed: false,
+        });
+        yield* Deferred.succeed(launch, undefined);
+      });
+
+    const finishTurn = (
+      active: ActiveTurn,
+      openStepId: string | undefined,
+      completed: boolean,
+    ): Effect.Effect<void> =>
+      withGate(
+        Effect.gen(function* () {
+          const status: TurnStatus = active.controller.signal.aborted
+            ? "interrupted"
+            : completed
+              ? "completed"
+              : "failed";
+          let appendError: SessionRuntimeError | undefined;
+          const appendFinal = (event: SessionEvent): Effect.Effect<void> =>
+            appendUnlocked(event).pipe(
+              Effect.asVoid,
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  appendError ??= error;
+                }),
+              ),
+            );
+          if (openStepId !== undefined) {
+            yield* appendFinal({
+              type: "step-ended",
+              sessionId: options.sessionId,
+              turnId: active.turnId,
+              stepId: openStepId,
+              status,
+            });
+          }
+          yield* appendFinal({
+            type: "turn-ended",
+            sessionId: options.sessionId,
+            turnId: active.turnId,
+            status,
+          });
+
+          const state = yield* Ref.get(resources.state);
+          if (appendError !== undefined) {
             yield* Ref.set(resources.state, {
               active: undefined,
               activeFiber: undefined,
               idle: state.idle,
               closed: true,
             });
-            yield* Deferred.fail(state.idle, launched.failure);
+            yield* Deferred.fail(state.idle, appendError);
+            return;
           }
+          const followUp = yield* Queue.poll(active.followUpMailbox);
+          if (state.closed) {
+            yield* Ref.set(resources.state, {
+              active: undefined,
+              activeFiber: undefined,
+              idle: state.idle,
+              closed: true,
+            });
+            yield* Deferred.succeed(state.idle, undefined);
+            return;
+          }
+          if (Option.isSome(followUp)) {
+            const next: ActiveTurn = {
+              turnId: followUp.value.turnId,
+              message: followUp.value.message,
+              origin: "follow-up",
+              controller: new AbortController(),
+              steerMailbox: yield* Queue.dropping<string>(steerMailboxCapacity),
+              followUpMailbox: active.followUpMailbox,
+            };
+            const launched = yield* Effect.result(launchTurn(next, state.idle));
+            if (Result.isFailure(launched)) {
+              yield* Ref.set(resources.state, {
+                active: undefined,
+                activeFiber: undefined,
+                idle: state.idle,
+                closed: true,
+              });
+              yield* Deferred.fail(state.idle, launched.failure);
+            }
+            return;
+          }
+          yield* Ref.set(resources.state, {
+            active: undefined,
+            activeFiber: undefined,
+            idle: state.idle,
+            closed: false,
+          });
+          yield* Deferred.succeed(state.idle, undefined);
+        }),
+      );
+
+    function runTurn(
+      active: ActiveTurn,
+    ): Effect.Effect<
+      void,
+      ProviderStreamFailure | SessionRuntimeError | SessionRuntimeOverloadedError
+    > {
+      let openStepId: string | undefined;
+      let completed = false;
+      const turn = Effect.gen(function* () {
+        let continueTurn = true;
+        while (continueTurn) {
+          if (active.controller.signal.aborted) {
+            return yield* Effect.interrupt;
+          }
+          const stepId = options.nextStepId();
+          openStepId = stepId;
+          const outcome = yield* runProviderStep(active, stepId);
+          if (outcome.toolCalls.length > 0) {
+            yield* executeTools(active, stepId, outcome.toolCalls);
+          }
+          yield* closeStep(active, stepId, "completed");
+          openStepId = undefined;
+
+          let hasSteer = false;
+          while (Option.isSome(yield* Queue.poll(active.steerMailbox))) {
+            hasSteer = true;
+          }
+          continueTurn = outcome.response.stopReason === "toolUse" || hasSteer;
+        }
+        completed = true;
+      });
+
+      return turn.pipe(
+        Effect.ensuring(
+          Effect.suspend(() => finishTurn(active, openStepId, completed)).pipe(
+            Effect.andThen(Effect.sync(() => active.controller.abort())),
+          ),
+        ),
+      );
+    }
+
+    const initialize = withGate(
+      Effect.gen(function* () {
+        const existing = yield* options.world.readSession(options.sessionId, 0);
+        if (existing.length === 0) {
+          yield* appendUnlocked({
+            type: "session-started",
+            sessionId: options.sessionId,
+            snapshot: options.snapshot,
+          });
           return;
         }
-        yield* Ref.set(resources.state, {
-          active: undefined,
-          activeFiber: undefined,
-          idle: state.idle,
-          closed: false,
-        });
-        yield* Deferred.succeed(state.idle, undefined);
+        const starts = existing.filter((envelope) => envelope.event.type === "session-started");
+        const first = existing[0];
+        if (
+          first?.event.type !== "session-started" ||
+          starts.length !== 1 ||
+          !snapshotsEqual(first.event.snapshot, options.snapshot)
+        ) {
+          return yield* new SessionSnapshotMismatchError();
+        }
       }),
-    ).pipe(Effect.orDie);
-
-  function runTurn(active: ActiveTurn): Effect.Effect<void, Error | ProviderStreamFailure> {
-    let openStepId: string | undefined;
-    let completed = false;
-    const turn = Effect.gen(function* () {
-      let continueTurn = true;
-      while (continueTurn) {
-        if (active.controller.signal.aborted) {
-          return yield* Effect.interrupt;
-        }
-        const stepId = options.nextStepId();
-        openStepId = stepId;
-        const outcome = yield* runProviderStep(active, stepId);
-        if (outcome.toolCalls.length > 0) {
-          yield* executeTools(active, stepId, outcome.toolCalls);
-        }
-        yield* closeStep(active, stepId, "completed");
-        openStepId = undefined;
-
-        let hasSteer = false;
-        while (Option.isSome(yield* Queue.poll(active.steerMailbox))) {
-          hasSteer = true;
-        }
-        continueTurn = outcome.response.stopReason === "toolUse" || hasSteer;
-      }
-      completed = true;
-    });
-
-    return turn.pipe(
-      Effect.ensuring(
-        Effect.suspend(() => finishTurn(active, openStepId, completed)).pipe(
-          Effect.andThen(Effect.sync(() => active.controller.abort())),
-        ),
-      ),
     );
-  }
+    yield* initialize;
 
-  const initialize = withGate(
-    Effect.gen(function* () {
-      const existing = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
-      if (existing.length === 0) {
-        yield* appendUnlocked({
-          type: "session-started",
-          sessionId: options.sessionId,
-          snapshot: options.snapshot,
-        });
-        return;
-      }
-      const starts = existing.filter((envelope) => envelope.event.type === "session-started");
-      const first = existing[0];
-      if (
-        first?.event.type !== "session-started" ||
-        starts.length !== 1 ||
-        !snapshotsEqual(first.event.snapshot, options.snapshot)
-      ) {
-        return yield* Effect.fail(
-          new Error("Persisted Session snapshot does not match runtime snapshot"),
-        );
-      }
-    }),
-  );
-  await Effect.runPromise(initialize);
-
-  const startTurn = (input: { readonly message: string }): Promise<TurnStartResult> =>
-    Effect.runPromise(
+    const startTurn: SessionRuntime["startTurn"] = (input) =>
       withGate(
         Effect.gen(function* () {
-          validateMessage(input.message);
+          yield* Effect.fromResult(validateMessage(input.message));
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
-            return yield* Effect.fail(new SessionRuntimeClosedError());
+            return yield* new SessionRuntimeClosedError();
           }
           const turnId = options.nextTurnId();
           if (state.active !== undefined) {
+            if (yield* Queue.isFull(state.active.followUpMailbox)) {
+              return yield* new SessionRuntimeOverloadedError({
+                resource: "follow-up-mailbox",
+                capacity: followUpMailboxCapacity,
+              });
+            }
             yield* appendUnlocked({
               type: "follow-up-received",
               sessionId: options.sessionId,
@@ -689,38 +825,39 @@ export async function createSessionRuntime<TApi extends Api>(
               turnId,
               message: input.message,
             });
-            return { turnId, disposition: "queued" };
+            return { turnId, disposition: "queued" } satisfies TurnStartResult;
           }
 
-          const idle = yield* Deferred.make<void, Error>();
+          const idle = yield* Deferred.make<void, SessionRuntimeError>();
           const active: ActiveTurn = {
             turnId,
             message: input.message,
             origin: "user",
             controller: new AbortController(),
-            steerMailbox: yield* Queue.unbounded<string>(),
-            followUpMailbox: yield* Queue.unbounded<FollowUp>(),
+            steerMailbox: yield* Queue.dropping<string>(steerMailboxCapacity),
+            followUpMailbox: yield* Queue.dropping<FollowUp>(followUpMailboxCapacity),
           };
           yield* launchTurn(active, idle);
-          return { turnId, disposition: "started" };
+          return { turnId, disposition: "started" } satisfies TurnStartResult;
         }),
-      ),
-    );
+      );
 
-  const steer = (input: {
-    readonly expectedTurnId: string;
-    readonly message: string;
-  }): Promise<{ readonly turnId: string }> =>
-    Effect.runPromise(
+    const steer: SessionRuntime["steer"] = (input) =>
       withGate(
         Effect.gen(function* () {
-          validateMessage(input.message);
+          yield* Effect.fromResult(validateMessage(input.message));
           const state = yield* Ref.get(resources.state);
           if (
             state.active?.turnId !== input.expectedTurnId ||
             state.active.controller.signal.aborted
           ) {
-            return yield* Effect.fail(new StaleTurnError(input.expectedTurnId));
+            return yield* new StaleTurnError({ expectedTurnId: input.expectedTurnId });
+          }
+          if (yield* Queue.isFull(state.active.steerMailbox)) {
+            return yield* new SessionRuntimeOverloadedError({
+              resource: "steer-mailbox",
+              capacity: steerMailboxCapacity,
+            });
           }
           yield* appendUnlocked({
             type: "steer-received",
@@ -731,13 +868,9 @@ export async function createSessionRuntime<TApi extends Api>(
           yield* Queue.offer(state.active.steerMailbox, input.message);
           return { turnId: state.active.turnId };
         }),
-      ),
-    );
+      );
 
-  const interrupt = (input: {
-    readonly expectedTurnId: string;
-  }): Promise<{ readonly turnId: string }> =>
-    Effect.runPromise(
+    const interrupt: SessionRuntime["interrupt"] = (input) =>
       withGate(
         Effect.gen(function* () {
           const state = yield* Ref.get(resources.state);
@@ -745,7 +878,7 @@ export async function createSessionRuntime<TApi extends Api>(
             state.active?.turnId !== input.expectedTurnId ||
             state.active.controller.signal.aborted
           ) {
-            return yield* Effect.fail(new StaleTurnError(input.expectedTurnId));
+            return yield* new StaleTurnError({ expectedTurnId: input.expectedTurnId });
           }
           yield* appendUnlocked({
             type: "interrupt-received",
@@ -761,29 +894,25 @@ export async function createSessionRuntime<TApi extends Api>(
             ? Effect.succeed({ turnId })
             : Fiber.interrupt(fiber).pipe(Effect.as({ turnId })),
         ),
-      ),
-    );
+      );
 
-  const resolveApproval = (input: {
-    readonly approvalId: string;
-    readonly decision: ApprovalDecision;
-  }): Promise<{ readonly outcome: "resolved" | "already-resolved" }> =>
-    Effect.runPromise(
+    const resolveApproval: SessionRuntime["resolveApproval"] = (input) =>
       withGate(
         Effect.gen(function* () {
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
-            return yield* Effect.fail(new SessionRuntimeClosedError());
+            return yield* new SessionRuntimeClosedError();
           }
-          const durable = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
-          const pending = findPendingApproval(durable, input.approvalId);
+          const durable = yield* options.world.readSession(options.sessionId, 0);
+          const pending = yield* Effect.fromResult(findPendingApproval(durable, input.approvalId));
           if (pending === undefined) {
-            return { outcome: "already-resolved" };
+            return { outcome: "already-resolved" } satisfies ApprovalResolutionResult;
           }
           if (!pending.choices.includes(input.decision)) {
-            return yield* Effect.fail(
-              new ApprovalDecisionNotAllowedError(input.approvalId, input.decision),
-            );
+            return yield* new ApprovalDecisionNotAllowedError({
+              approvalId: input.approvalId,
+              decision: input.decision,
+            });
           }
           yield* appendUnlocked({
             type: "approval-resolved",
@@ -792,87 +921,77 @@ export async function createSessionRuntime<TApi extends Api>(
             approvalId: input.approvalId,
             decision: input.decision,
           });
-          return { outcome: "resolved" };
+          return { outcome: "resolved" } satisfies ApprovalResolutionResult;
         }),
-      ),
+      );
+
+    const waitForIdle: SessionRuntime["waitForIdle"] = withGate(Ref.get(resources.state)).pipe(
+      Effect.flatMap((state) => Deferred.await(state.idle)),
     );
 
-  const waitForIdle = (): Promise<void> =>
-    Effect.runPromise(
-      withGate(Ref.get(resources.state)).pipe(
-        Effect.flatMap((state) => Deferred.await(state.idle)),
-      ),
-    );
-
-  const subscribe = (input: {
-    readonly sinceSeq: number;
-    readonly onReplay?: (replay: ReadonlyArray<SessionEnvelope>, replayThroughSeq: number) => void;
-    readonly onReplayStart?: (replayThroughSeq: number) => void;
-    readonly onEnvelope: (envelope: SessionEnvelope) => void;
-  }): Promise<SessionSubscription> =>
-    Effect.runPromise(
+    const subscribe: SessionRuntime["subscribe"] = (input) =>
       withGate(
         Effect.gen(function* () {
-          validateSinceSeq(input.sinceSeq);
+          yield* Effect.fromResult(validateSinceSeq(input.sinceSeq));
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
-            return yield* Effect.fail(new SessionRuntimeClosedError());
+            return yield* new SessionRuntimeClosedError();
           }
-          const durable = yield* fromPromise(() => options.world.readSession(options.sessionId, 0));
+          const durable = yield* options.world.readSession(options.sessionId, 0);
+          const replayThroughSeq = durable.at(-1)?.seq ?? 0;
+          if (input.sinceSeq > replayThroughSeq) {
+            return yield* new SinceSeqBeyondTailError({
+              sinceSeq: input.sinceSeq,
+              durableTailSeq: replayThroughSeq,
+            });
+          }
           const replay = durable.filter((envelope) => envelope.seq > input.sinceSeq);
           const subscriber: Subscriber = { active: true, onEnvelope: input.onEnvelope };
-          const replayThroughSeq = durable.at(-1)?.seq ?? 0;
           const onReplay = input.onReplay;
           const onReplayStart = input.onReplayStart;
           if (onReplay !== undefined) {
             yield* Effect.try({
               try: () => onReplay(replay, replayThroughSeq),
-              catch: toError,
+              catch: runtimeError,
             });
           } else {
             if (onReplayStart !== undefined) {
               yield* Effect.try({
                 try: () => onReplayStart(replayThroughSeq),
-                catch: toError,
+                catch: runtimeError,
               });
             }
             for (const envelope of replay) {
               yield* Effect.try({
                 try: () => input.onEnvelope(envelope),
-                catch: toError,
+                catch: runtimeError,
               });
             }
           }
           subscribers.add(subscriber);
           return {
             replayThroughSeq,
-            unsubscribe() {
-              subscriber.active = false;
-              Effect.runFork(
-                withGate(
-                  Effect.sync(() => {
-                    subscribers.delete(subscriber);
-                  }),
-                ),
-              );
-            },
+            unsubscribe: withGate(
+              Effect.sync(() => {
+                subscriber.active = false;
+                subscribers.delete(subscriber);
+              }),
+            ),
           };
         }),
-      ),
-    );
+      );
 
-  const close = (): Promise<void> => {
-    const cleanup = withGate(
-      Effect.sync(() => {
-        for (const subscriber of subscribers) {
-          subscriber.active = false;
-        }
-        subscribers.clear();
-      }),
-    ).pipe(Effect.andThen(Scope.close(resources.scope, Exit.void)));
+    const close: SessionRuntime["close"] = Effect.suspend(() => {
+      const cleanup = withGate(
+        Effect.sync(() => {
+          for (const subscriber of subscribers) {
+            subscriber.active = false;
+          }
+          subscribers.clear();
+        }),
+      );
 
-    return Effect.runPromise(
-      withGate(
+      return withGate(
         Effect.gen(function* () {
           const state = yield* Ref.get(resources.state);
           if (state.closed) {
@@ -887,24 +1006,51 @@ export async function createSessionRuntime<TApi extends Api>(
         Effect.andThen(withGate(Ref.get(resources.state))),
         Effect.flatMap((state) => Deferred.await(state.idle)),
         Effect.ensuring(cleanup),
+      );
+    });
+
+    const runtime: SessionRuntime = {
+      startTurn,
+      steer,
+      interrupt,
+      resolveApproval,
+      waitForIdle,
+      subscribe,
+      close,
+    };
+    yield* Effect.addFinalizer(() =>
+      runtime.close.pipe(
+        Effect.catch((error) =>
+          Effect.logError("Session runtime finalizer failed", error).pipe(
+            Effect.andThen(Effect.failCause(Cause.die(error))),
+          ),
+        ),
       ),
     );
-  };
+    return runtime;
+  });
 
-  return { startTurn, steer, interrupt, resolveApproval, waitForIdle, subscribe, close };
+  return acquire;
 }
 
 function findPendingApproval(
   envelopes: ReadonlyArray<SessionEnvelope>,
   approvalId: string,
-): Extract<SessionEvent, { readonly type: "approval-requested" }> | undefined {
+): Result.Result<
+  Extract<SessionEvent, { readonly type: "approval-requested" }> | undefined,
+  SessionRuntimeError
+> {
   let requested: Extract<SessionEvent, { readonly type: "approval-requested" }> | undefined;
   let pending = false;
   for (const envelope of envelopes) {
     const event = envelope.event;
     if (event.type === "approval-requested" && event.approvalId === approvalId) {
       if (requested !== undefined) {
-        throw new Error(`Session contains duplicate approval ${approvalId}`);
+        return Result.fail(
+          new SessionRuntimeError({
+            message: `Session contains duplicate approval ${approvalId}`,
+          }),
+        );
       }
       requested = event;
       pending = true;
@@ -912,7 +1058,11 @@ function findPendingApproval(
     }
     if (event.type === "approval-resolved" && event.approvalId === approvalId) {
       if (requested === undefined) {
-        throw new Error(`Session resolves unknown approval ${approvalId}`);
+        return Result.fail(
+          new SessionRuntimeError({
+            message: `Session resolves unknown approval ${approvalId}`,
+          }),
+        );
       }
       pending = false;
       continue;
@@ -925,7 +1075,7 @@ function findPendingApproval(
       pending = false;
     }
   }
-  return pending ? requested : undefined;
+  return Result.succeed(pending ? requested : undefined);
 }
 
 function isJsonArray(value: JsonValue): value is ReadonlyArray<JsonValue> {
@@ -963,54 +1113,77 @@ function canonicalJson(value: JsonValue): string {
 
 function validateRuntimeOptions<TApi extends Api>(
   options: CreateSessionRuntimeOptions<TApi>,
-): void {
+): Result.Result<void, InvalidSessionRuntimeInputError> {
   if (options.sessionId.length === 0) {
-    throw new Error("sessionId must be explicit and non-empty");
+    return invalidInput("sessionId must be explicit and non-empty");
   }
   if (
     options.cacheRetention !== "none" &&
     options.cacheRetention !== "short" &&
     options.cacheRetention !== "long"
   ) {
-    throw new Error("cacheRetention must be explicit");
+    return invalidInput("cacheRetention must be explicit");
+  }
+  for (const [name, value] of [
+    ["maxToolCallsPerStep", options.maxToolCallsPerStep ?? DEFAULT_MAX_TOOL_CALLS_PER_STEP],
+    ["maxConcurrentToolCalls", options.maxConcurrentToolCalls ?? DEFAULT_MAX_CONCURRENT_TOOL_CALLS],
+    ["steerMailboxCapacity", options.steerMailboxCapacity ?? DEFAULT_STEER_MAILBOX_CAPACITY],
+    [
+      "followUpMailboxCapacity",
+      options.followUpMailboxCapacity ?? DEFAULT_FOLLOW_UP_MAILBOX_CAPACITY,
+    ],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      return invalidInput(`${name} must be a positive safe integer`);
+    }
   }
   const implementations = new Map(options.tools.map((tool) => [tool.name, tool]));
   if (implementations.size !== options.tools.length) {
-    throw new Error("Tool implementation names must be unique");
+    return invalidInput("Tool implementation names must be unique");
   }
   const frozenNames = new Set(options.snapshot.tools.map((tool) => tool.name));
   if (frozenNames.size !== options.snapshot.tools.length) {
-    throw new Error("Frozen snapshot tool names must be unique");
+    return invalidInput("Frozen snapshot tool names must be unique");
   }
   if (implementations.size !== frozenNames.size) {
-    throw new Error("Tool implementations and frozen snapshot must form an exact bijection");
+    return invalidInput("Tool implementations and frozen snapshot must form an exact bijection");
   }
   for (const frozen of options.snapshot.tools) {
     const implementation = implementations.get(frozen.name);
     if (implementation === undefined) {
-      throw new Error(`Missing tool implementation: ${frozen.name}`);
+      return invalidInput(`Missing tool implementation: ${frozen.name}`);
     }
     if (
       implementation.description !== frozen.description ||
       canonicalJson(implementation.inputSchema) !== canonicalJson(frozen.inputSchema)
     ) {
-      throw new Error(`Tool implementation differs from frozen snapshot: ${frozen.name}`);
+      return invalidInput(`Tool implementation differs from frozen snapshot: ${frozen.name}`);
     }
   }
+  return Result.succeed(undefined);
 }
 
-function validateMessage(message: string): void {
+function validateMessage(message: string): Result.Result<void, InvalidSessionRuntimeInputError> {
   if (message.length === 0) {
-    throw new Error("Turn message must be non-empty");
+    return invalidInput("Turn message must be non-empty");
   }
+  return Result.succeed(undefined);
 }
 
-function validateSinceSeq(sinceSeq: number): void {
+function validateSinceSeq(sinceSeq: number): Result.Result<void, InvalidSessionRuntimeInputError> {
   if (!Number.isSafeInteger(sinceSeq) || sinceSeq < 0) {
-    throw new Error("sinceSeq must be a non-negative safe integer");
+    return invalidInput("sinceSeq must be a non-negative safe integer");
   }
+  return Result.succeed(undefined);
 }
 
-function toError(cause: unknown): Error {
-  return cause instanceof Error ? cause : new Error(String(cause));
+function runtimeError(cause: unknown): SessionRuntimeError {
+  return new SessionRuntimeError({
+    message: "Session runtime operation failed",
+    cause,
+  });
+}
+
+function invalidInput(message: string): Result.Result<never, InvalidSessionRuntimeInputError> {
+  return Result.fail(new InvalidSessionRuntimeInputError({ message }));
 }

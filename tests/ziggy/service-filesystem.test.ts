@@ -3,10 +3,32 @@ import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  NodeServiceFilesystem,
+  NodeServiceFilesystem as EffectServiceFilesystem,
   type DefinitionExpectation,
+  type DefinitionState,
   type Ownership,
 } from "../../packages/ziggy/src/service.ts";
+import { runEffect } from "../testkit/effect.ts";
+
+class NodeServiceFilesystem {
+  private readonly filesystem = new EffectServiceFilesystem();
+
+  classify(path: string, expected: DefinitionExpectation): Promise<DefinitionState> {
+    return runEffect(this.filesystem.classify(path, expected));
+  }
+
+  create(path: string, content: string): Promise<void> {
+    return runEffect(this.filesystem.create(path, content));
+  }
+
+  replace(path: string, content: string, expected: DefinitionExpectation): Promise<void> {
+    return runEffect(this.filesystem.replace(path, content, expected));
+  }
+
+  remove(path: string, expected: DefinitionExpectation): Promise<void> {
+    return runEffect(this.filesystem.remove(path, expected));
+  }
+}
 
 const temporaryDirectories: Array<string> = [];
 const ownership: Ownership = {

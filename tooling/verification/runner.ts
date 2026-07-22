@@ -47,6 +47,7 @@ export async function runVerification(
     const manifests = await loadManifests(root);
     await validateManifestRegistry(root, manifests, scenarioRegistry);
     applicable = transitiveManifests(manifests, target === "all" ? stages : [target]);
+    assertImplementedStageFindings(applicable, options.agentFindings);
     scenarioEvidence = declaredScenarios(applicable).map((scenario) => ({
       id: scenario.id,
       file: scenario.file,
@@ -147,7 +148,7 @@ export async function runVerification(
     toolVersions: await readToolVersions(),
     phases: [...phases].sort((left, right) => left.startedAt.localeCompare(right.startedAt)),
     commands,
-    agentFindings: options.agentFindings,
+    ...(options.agentFindings === undefined ? {} : { agentFindings: options.agentFindings }),
     result: failure === undefined ? "passed" : "failed",
   };
 
@@ -170,6 +171,34 @@ export async function runVerification(
   }
 }
 
+export function assertImplementedStageFindings(
+  manifests: ReadonlyArray<VerificationManifest>,
+  findings: ReadonlyArray<AgentFindingEvidence> | undefined,
+): void {
+  const closesS3 = manifests.some(
+    (manifest) => manifest.stage === "s3" && manifest.status === "implemented",
+  );
+  if (!closesS3) return;
+  if (findings === undefined || findings.length === 0) {
+    throw new Error("implemented S3 verification requires attached independent agent findings");
+  }
+  const ids = new Set<string>();
+  for (const finding of findings) {
+    if (ids.has(finding.id)) {
+      throw new Error(`implemented S3 verification requires unique finding IDs: ${finding.id}`);
+    }
+    ids.add(finding.id);
+    if (finding.role !== "review") {
+      throw new Error("implemented S3 verification requires independent review findings only");
+    }
+    if (finding.disposition.status !== "fixed" && finding.disposition.status !== "accepted") {
+      throw new Error(
+        "implemented S3 verification requires every finding disposition to be fixed or accepted",
+      );
+    }
+  }
+}
+
 export function declaredGates(
   manifests: ReadonlyArray<VerificationManifest>,
 ): ReadonlyArray<GateName> {
@@ -189,9 +218,14 @@ export function declaredGates(
 export function manifestStatusLines(
   manifests: ReadonlyArray<VerificationManifest>,
 ): ReadonlyArray<string> {
-  return manifests
-    .filter((manifest) => manifest.status === "manifest-empty")
-    .map((manifest) => `${manifest.stage}: manifest-empty (not implemented; no behavior claimed)`);
+  return manifests.flatMap((manifest) => {
+    if (manifest.status === "manifest-empty") {
+      return [`${manifest.stage}: manifest-empty (not implemented; no behavior claimed)`];
+    }
+    return manifest.status === "pending"
+      ? [`${manifest.stage}: pending (stage closure is not claimed)`]
+      : [];
+  });
 }
 
 function declaredScenarios(manifests: ReadonlyArray<VerificationManifest>) {
@@ -332,7 +366,7 @@ if (import.meta.main) {
       arguments_.agentFindingsPath === undefined
         ? undefined
         : await readAgentFindings(root, arguments_.agentFindingsPath);
-    await runVerification(arguments_.target, { agentFindings });
+    await runVerification(arguments_.target, agentFindings === undefined ? {} : { agentFindings });
   } catch (error) {
     console.error(error instanceof Error ? error.message : "verification failed");
     process.exit(1);

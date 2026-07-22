@@ -4,6 +4,7 @@ export {
   MEMORY_DOCUMENT_LIMIT,
   MEMORY_ENTRY_DELIMITER,
   runMemoryTool,
+  MemoryToolError,
   USER_DOCUMENT_LIMIT,
   type MemoryAction,
   type MemoryTarget,

@@ -1,9 +1,12 @@
 import {
+  MAIN_SESSION_ID,
   PROTOCOL_VERSION,
+  type AuthStatus,
   type ClientFeature,
   type ClientRequestFrame,
   type ProtocolErrorCode,
   ProtocolDecodeError,
+  type ServerAuthFrame,
   type ServerErrorFrame,
   type ServerFeature,
   type ServerFrame,
@@ -153,14 +156,64 @@ function decodeClientRequestVariant(
               name: identifierValue(client.name, "client.name"),
               version: identifierValue(client.version, "client.version"),
             },
-            features: arrayValue(p.features, clientFeature, "features"),
+            features: featureSet(p.features, clientFeature, "features"),
           },
         };
       });
     }
+    case "auth/login": {
+      const p = exactParams(requestId, params, ["providerId", "type"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/login",
+        params: {
+          providerId: identifierValue(p.providerId, "providerId"),
+          type: authType(p.type),
+        },
+      }));
+    }
+    case "auth/respond": {
+      const p = exactParams(requestId, params, ["loginId", "promptId", "value"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/respond",
+        params: {
+          loginId: identifierValue(p.loginId, "loginId"),
+          promptId: identifierValue(p.promptId, "promptId"),
+          value: boundedString(p.value, "value", 65_536),
+        },
+      }));
+    }
+    case "auth/status": {
+      const p = exactParams(requestId, params, [], ["providerId"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/status",
+        params: Object.hasOwn(p, "providerId")
+          ? { providerId: identifierValue(p.providerId, "providerId") }
+          : {},
+      }));
+    }
     case "session/start": {
       const p = exactParams(requestId, params, []);
       return { schemaVersion: PROTOCOL_VERSION, requestId, method: "session/start", params: p };
+    }
+    case "session/ensure": {
+      const p = exactParams(requestId, params, ["sessionId"]);
+      return decodeFields(requestId, () => {
+        if (p.sessionId !== MAIN_SESSION_ID) {
+          throw new TypeError(`session/ensure requires sessionId ${MAIN_SESSION_ID}`);
+        }
+        return {
+          schemaVersion: PROTOCOL_VERSION,
+          requestId,
+          method: "session/ensure",
+          params: { sessionId: MAIN_SESSION_ID },
+        };
+      });
     }
     case "session/resume": {
       const p = exactParams(requestId, params, ["sessionId", "sinceSeq"]);
@@ -278,9 +331,10 @@ function exactParams(
   requestId: string,
   params: unknown,
   requiredKeys: ReadonlyArray<string>,
+  optionalKeys: ReadonlyArray<string> = [],
 ): Readonly<Record<string, unknown>> {
   try {
-    return exactRecord(params, requiredKeys);
+    return exactRecord(params, requiredKeys, optionalKeys);
   } catch (error) {
     throw decodeError("invalid-params", requestId, error);
   }
@@ -312,6 +366,8 @@ function decodeServerFrameValue(value: unknown): ServerFrame {
       return decodeServerError(record);
     case "event":
       return decodeServerEvent(record);
+    case "auth":
+      return decodeServerAuth(record);
     default:
       throw decodeError(
         "malformed-frame",
@@ -372,8 +428,39 @@ function decodeServerSuccessVariant(
         type: "success",
         result: {
           protocolVersion: PROTOCOL_VERSION,
-          features: arrayValue(r.features, serverFeature, "features"),
+          features: featureSet(r.features, serverFeature, "features"),
         },
+      };
+    }
+    case "auth/login": {
+      const r = exactRecord(result, ["status"]);
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/login",
+        type: "success",
+        result: { status: decodeAuthStatus(r.status) },
+      };
+    }
+    case "auth/respond": {
+      const r = exactRecord(result, ["accepted"]);
+      if (r.accepted !== true) throw new TypeError("accepted must be true");
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/respond",
+        type: "success",
+        result: { accepted: true },
+      };
+    }
+    case "auth/status": {
+      const r = exactRecord(result, ["providers"]);
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "auth/status",
+        type: "success",
+        result: { providers: arrayValue(r.providers, decodeAuthStatus, "providers") },
       };
     }
     case "session/start": {
@@ -384,6 +471,20 @@ function decodeServerSuccessVariant(
         method: "session/start",
         type: "success",
         result: { session: decodeSessionSummary(r.session) },
+      };
+    }
+    case "session/ensure": {
+      const r = exactRecord(result, ["session"]);
+      const session = decodeSessionSummary(r.session);
+      if (session.sessionId !== MAIN_SESSION_ID) {
+        throw new TypeError(`session/ensure response requires Session ${MAIN_SESSION_ID}`);
+      }
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "session/ensure",
+        type: "success",
+        result: { session },
       };
     }
     case "session/resume": {
@@ -539,6 +640,127 @@ function decodeServerEvent(record: Readonly<Record<string, unknown>>): ServerSes
   };
 }
 
+function decodeServerAuth(record: Readonly<Record<string, unknown>>): ServerAuthFrame {
+  const frame = exactRecord(record, ["schemaVersion", "type", "requestId", "loginId", "event"]);
+  if (frame.schemaVersion !== PROTOCOL_VERSION) {
+    throw decodeError(
+      "version-mismatch",
+      recoverRequestId(frame),
+      new TypeError("Unsupported protocol frame schema version"),
+    );
+  }
+  const event = objectRecord(frame.event);
+  const kind = event.kind;
+  if (typeof kind !== "string") throw new TypeError("Auth event kind must be a string");
+  const base: Omit<ServerAuthFrame, "event"> = {
+    schemaVersion: PROTOCOL_VERSION,
+    type: "auth",
+    requestId: identifierValue(frame.requestId, "requestId"),
+    loginId: identifierValue(frame.loginId, "loginId"),
+  };
+  if (kind === "text" || kind === "secret" || kind === "manual_code") {
+    const value = exactRecord(event, ["kind", "promptId", "message"], ["placeholder"]);
+    return {
+      ...base,
+      event: {
+        kind,
+        promptId: identifierValue(value.promptId, "promptId"),
+        message: boundedString(value.message, "message", 8_192),
+        ...(Object.hasOwn(value, "placeholder")
+          ? { placeholder: boundedString(value.placeholder, "placeholder", 2_048) }
+          : {}),
+      },
+    };
+  }
+  if (kind === "select") {
+    const value = exactRecord(event, ["kind", "promptId", "message", "options"]);
+    return {
+      ...base,
+      event: {
+        kind,
+        promptId: identifierValue(value.promptId, "promptId"),
+        message: boundedString(value.message, "message", 8_192),
+        options: arrayValue(value.options, decodeAuthOption, "options"),
+      },
+    };
+  }
+  if (kind === "info" || kind === "progress") {
+    const value = exactRecord(event, ["kind", "message"]);
+    return { ...base, event: { kind, message: boundedString(value.message, "message", 8_192) } };
+  }
+  if (kind === "auth_url") {
+    const value = exactRecord(event, ["kind", "url"], ["instructions"]);
+    return {
+      ...base,
+      event: {
+        kind,
+        url: boundedString(value.url, "url", 16_384),
+        ...(Object.hasOwn(value, "instructions")
+          ? { instructions: boundedString(value.instructions, "instructions", 8_192) }
+          : {}),
+      },
+    };
+  }
+  if (kind === "device_code") {
+    const value = exactRecord(event, ["kind", "userCode", "verificationUri"]);
+    return {
+      ...base,
+      event: {
+        kind,
+        userCode: boundedString(value.userCode, "userCode", 2_048),
+        verificationUri: boundedString(value.verificationUri, "verificationUri", 16_384),
+      },
+    };
+  }
+  if (kind === "prompt_cancelled") {
+    const value = exactRecord(event, ["kind", "promptId"]);
+    return {
+      ...base,
+      event: { kind, promptId: identifierValue(value.promptId, "promptId") },
+    };
+  }
+  throw new TypeError("Unknown auth event kind");
+}
+
+function decodeAuthOption(value: unknown): {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+} {
+  const option = exactRecord(value, ["id", "label"], ["description"]);
+  return {
+    id: identifierValue(option.id, "option.id"),
+    label: boundedString(option.label, "option.label", 2_048),
+    ...(Object.hasOwn(option, "description")
+      ? { description: boundedString(option.description, "option.description", 4_096) }
+      : {}),
+  };
+}
+
+function decodeAuthStatus(value: unknown): AuthStatus {
+  const status = exactRecord(value, ["providerId", "configured"], ["type", "source"]);
+  const configured = booleanValue(status.configured, "configured");
+  return {
+    providerId: identifierValue(status.providerId, "providerId"),
+    configured,
+    ...(Object.hasOwn(status, "type") ? { type: authType(status.type) } : {}),
+    ...(Object.hasOwn(status, "source")
+      ? { source: boundedString(status.source, "source", 2_048) }
+      : {}),
+  };
+}
+
+function boundedString(value: unknown, name: string, maximum: number): string {
+  const decoded = stringValue(value, name);
+  if (decoded.length > maximum) throw new TypeError(`${name} is too long`);
+  return decoded;
+}
+
+function authType(value: unknown): "api_key" | "oauth" {
+  if (value === "api_key" || value === "oauth") return value;
+  throw new TypeError("Unknown auth type");
+}
+
 function decodeSessionSummary(value: unknown): SessionSummary {
   const summary = exactRecord(value, ["sessionId", "createdAt", "lastSeq"], ["activeTurnId"]);
   return {
@@ -549,6 +771,18 @@ function decodeSessionSummary(value: unknown): SessionSummary {
       ? { activeTurnId: identifierValue(summary.activeTurnId, "activeTurnId") }
       : {}),
   };
+}
+
+function featureSet<Feature extends string>(
+  value: unknown,
+  decode: (item: unknown) => Feature,
+  name: string,
+): ReadonlyArray<Feature> {
+  const features = arrayValue(value, decode, name);
+  if (new Set(features).size !== features.length) {
+    throw new TypeError(`${name} must not contain duplicates`);
+  }
+  return features;
 }
 
 function clientFeature(value: unknown): ClientFeature {
@@ -563,7 +797,9 @@ function serverFeature(value: unknown): ServerFeature {
     value === "sessionReplay" ||
     value === "turnSteering" ||
     value === "turnInterrupt" ||
-    value === "approvals"
+    value === "approvals" ||
+    value === "stableMainSession" ||
+    value === "providerAuth"
   ) {
     return value;
   }

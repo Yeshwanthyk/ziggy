@@ -6,7 +6,23 @@ import type {
   SessionEvent,
 } from "../../packages/protocol/src/index.ts";
 import type { Context } from "../../packages/core/node_modules/@earendil-works/pi-ai";
-import { createSessionRuntime } from "../../packages/core/src/index.ts";
+import { Effect, Exit, Scope } from "../../packages/core/node_modules/effect/dist/index.js";
+import {
+  createSessionRuntime,
+  InvalidSessionRuntimeInputError,
+  SessionSnapshotMismatchError,
+  type ApprovalResolutionResult,
+} from "../../packages/core/src/index.ts";
+import {
+  SessionRuntimeError,
+  SessionRuntimeOverloadedError,
+  type AfterToolHookInput,
+  type SessionTool,
+  type SessionWorld,
+  type ToolExecutionInput,
+  type ToolExecutionResult,
+  type ToolHookInput,
+} from "../../packages/core/src/agent/runtime.ts";
 import { SequenceIds } from "../testkit/boundaries.ts";
 import { Barrier } from "../testkit/barrier.ts";
 import {
@@ -21,39 +37,7 @@ import {
 } from "../testkit/provider/scripted.ts";
 import { RecordingSessionWorld } from "../testkit/provider/session-world.ts";
 import { ToolScheduler } from "../testkit/tool-scheduler.ts";
-
-interface ToolExecutionInput {
-  readonly sessionId: string;
-  readonly turnId: string;
-  readonly stepId: string;
-  readonly toolCallId: string;
-  readonly toolName: string;
-  readonly input: JsonObject;
-  readonly signal: AbortSignal;
-}
-
-interface ToolExecutionResult {
-  readonly output: JsonValue;
-  readonly isError: boolean;
-}
-
-interface SessionTool {
-  readonly name: string;
-  readonly description: string;
-  readonly inputSchema: JsonObject;
-  execute(input: ToolExecutionInput): Promise<JsonValue>;
-}
-
-interface ToolHookInput extends ToolExecutionInput {}
-
-interface AfterToolHookInput extends ToolExecutionInput {
-  readonly result: ToolExecutionResult;
-}
-
-interface SessionWorld {
-  appendSession(sessionId: string, event: SessionEvent): Promise<SessionEnvelope>;
-  readSession(sessionId: string, afterSeq: number): Promise<ReadonlyArray<SessionEnvelope>>;
-}
+import { runEffect } from "../testkit/effect.ts";
 
 const SNAPSHOT = {
   systemPrompt: "You are Ziggy.\n\n<memory>fixed fact</memory>",
@@ -79,7 +63,14 @@ function createTool(
   if (frozen === undefined) {
     throw new Error(`Missing frozen tool ${name}`);
   }
-  return { ...frozen, execute };
+  return {
+    ...frozen,
+    execute: (input) =>
+      Effect.tryPromise({
+        try: () => execute(input),
+        catch: fixtureFailure("Tool fixture failed"),
+      }),
+  };
 }
 
 async function createHarness(
@@ -94,6 +85,10 @@ async function createHarness(
     ) => Promise<ToolExecutionResult | undefined>;
     readonly turnIds?: ReadonlyArray<string>;
     readonly stepIds?: ReadonlyArray<string>;
+    readonly maxToolCallsPerStep?: number;
+    readonly maxConcurrentToolCalls?: number;
+    readonly steerMailboxCapacity?: number;
+    readonly followUpMailboxCapacity?: number;
   } = {},
 ) {
   const provider = new ScriptedProvider(steps);
@@ -102,24 +97,82 @@ async function createHarness(
   const stepIds = new SequenceIds(
     options.stepIds ?? ["step-1", "step-2", "step-3", "step-4", "step-5"],
   );
-  const runtime = await createSessionRuntime({
-    sessionId: "session-a",
-    snapshot: options.snapshot ?? SNAPSHOT,
-    world,
-    model: provider.model,
-    streamSimple: provider.streamSimple,
-    cacheRetention: "long",
-    nextTurnId: () => turnIds.next(),
-    nextStepId: () => stepIds.next(),
-    tools: options.tools ?? [createTool("alpha"), createTool("beta")],
-    beforeToolCall: options.beforeToolCall,
-    afterToolCall: options.afterToolCall,
-  });
-  return { runtime, provider, world };
+  const scope = await runEffect(Scope.make());
+  const effectRuntime = await runEffect(
+    createSessionRuntime({
+      sessionId: "session-a",
+      snapshot: options.snapshot ?? SNAPSHOT,
+      world,
+      model: provider.model,
+      streamSimple: provider.streamSimple,
+      cacheRetention: "long",
+      nextTurnId: () => turnIds.next(),
+      nextStepId: () => stepIds.next(),
+      tools: options.tools ?? [createTool("alpha"), createTool("beta")],
+      ...(options.maxToolCallsPerStep === undefined
+        ? {}
+        : { maxToolCallsPerStep: options.maxToolCallsPerStep }),
+      ...(options.maxConcurrentToolCalls === undefined
+        ? {}
+        : { maxConcurrentToolCalls: options.maxConcurrentToolCalls }),
+      ...(options.steerMailboxCapacity === undefined
+        ? {}
+        : { steerMailboxCapacity: options.steerMailboxCapacity }),
+      ...(options.followUpMailboxCapacity === undefined
+        ? {}
+        : { followUpMailboxCapacity: options.followUpMailboxCapacity }),
+      ...(options.beforeToolCall === undefined
+        ? {}
+        : {
+            beforeToolCall: (input: ToolHookInput) =>
+              Effect.tryPromise({
+                try: () => options.beforeToolCall?.(input) ?? Promise.resolve(),
+                catch: fixtureFailure("beforeToolCall fixture failed"),
+              }),
+          }),
+      ...(options.afterToolCall === undefined
+        ? {}
+        : {
+            afterToolCall: (input: AfterToolHookInput) =>
+              Effect.tryPromise({
+                try: () => options.afterToolCall?.(input) ?? Promise.resolve(undefined),
+                catch: fixtureFailure("afterToolCall fixture failed"),
+              }),
+          }),
+    }).pipe(Effect.provideService(Scope.Scope, scope)),
+  );
+  const runtime = {
+    startTurn: (input: Parameters<typeof effectRuntime.startTurn>[0]) =>
+      runEffect(effectRuntime.startTurn(input)),
+    steer: (input: Parameters<typeof effectRuntime.steer>[0]) =>
+      runEffect(effectRuntime.steer(input)),
+    interrupt: (input: Parameters<typeof effectRuntime.interrupt>[0]) =>
+      runEffect(effectRuntime.interrupt(input)),
+    resolveApproval: (input: Parameters<typeof effectRuntime.resolveApproval>[0]) =>
+      runEffect(effectRuntime.resolveApproval(input)),
+    waitForIdle: () => runEffect(effectRuntime.waitForIdle),
+    subscribe: async (input: Parameters<typeof effectRuntime.subscribe>[0]) => {
+      const subscription = await runEffect(effectRuntime.subscribe(input));
+      return {
+        replayThroughSeq: subscription.replayThroughSeq,
+        unsubscribe: () => runEffect(subscription.unsubscribe),
+      };
+    },
+    close: () => runEffect(effectRuntime.close),
+  };
+  return { runtime, provider, scope, world };
 }
 
 async function events(world: SessionWorld): Promise<ReadonlyArray<SessionEvent>> {
-  return (await world.readSession("session-a", 0)).map((envelope) => envelope.event);
+  return (await runEffect(world.readSession("session-a", 0))).map((envelope) => envelope.event);
+}
+
+function fixtureFailure(message: string): (cause: unknown) => SessionRuntimeError {
+  return (cause) =>
+    new SessionRuntimeError({
+      message: cause instanceof Error ? cause.message : message,
+      cause,
+    });
 }
 
 function messages(context: Context): ReadonlyArray<{
@@ -157,6 +210,14 @@ function messages(context: Context): ReadonlyArray<{
 }
 
 describe("public Session runtime agent loop", () => {
+  test("rejects invalid Turn input with the public typed error", async () => {
+    const { runtime } = await createHarness([]);
+
+    await expect(runtime.startTurn({ message: "" })).rejects.toBeInstanceOf(
+      InvalidSessionRuntimeInputError,
+    );
+  });
+
   test("records one text Turn as the canonical append-only event trace", async () => {
     const world = new RecordingSessionWorld();
     const { runtime } = await createHarness([textStep("Hello.", 100)], { world });
@@ -167,7 +228,7 @@ describe("public Session runtime agent loop", () => {
     });
     await runtime.waitForIdle();
 
-    const envelopes = await world.readSession("session-a", 0);
+    const envelopes = await runEffect(world.readSession("session-a", 0));
     expect(envelopes.map((envelope) => envelope.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(envelopes.map((envelope) => envelope.emittedAt)).toEqual([
       "2026-07-19T00:00:00.000Z",
@@ -337,11 +398,11 @@ describe("public Session runtime agent loop", () => {
         world,
         snapshot: { ...SNAPSHOT, systemPrompt: "different prompt" },
       }),
-    ).rejects.toThrow("snapshot");
+    ).rejects.toBeInstanceOf(SessionSnapshotMismatchError);
   });
 
   test("excludes a failed Provider response from future model context", async () => {
-    const { runtime, provider } = await createHarness([
+    const { runtime, provider, world } = await createHarness([
       errorStep("unsafe partial", 100),
       textStep("recovered", 200),
     ]);
@@ -355,6 +416,13 @@ describe("public Session runtime agent loop", () => {
       { role: "user", text: "first" },
       { role: "user", text: "retry" },
     ]);
+    const failedResponse = (await events(world)).find(
+      (event) => event.type === "model-response" && event.response.stopReason === "error",
+    );
+    expect(
+      failedResponse?.type === "model-response" ? failedResponse.response.errorMessage : undefined,
+    ).toBe("Provider request failed");
+    expect(JSON.stringify(await events(world))).not.toContain("scripted failure");
   });
 
   test("executes tools concurrently but durably appends results in source order", async () => {
@@ -520,11 +588,11 @@ describe("public Session runtime agent loop", () => {
     expect(await runtime.steer({ expectedTurnId: "turn-1", message: "change direction" })).toEqual({
       turnId: "turn-1",
     });
-    const beforeStale = (await world.readSession("session-a", 0)).length;
+    const beforeStale = (await runEffect(world.readSession("session-a", 0))).length;
     await expect(
       runtime.steer({ expectedTurnId: "turn-stale", message: "wrong Turn" }),
     ).rejects.toThrow();
-    expect((await world.readSession("session-a", 0)).length).toBe(beforeStale);
+    expect((await runEffect(world.readSession("session-a", 0))).length).toBe(beforeStale);
     scheduler.complete("alpha");
     await runtime.waitForIdle();
 
@@ -622,6 +690,96 @@ describe("public Session runtime agent loop", () => {
     ]);
   });
 
+  test("rejects full follow-up and steer mailboxes before durable acceptance", async () => {
+    const firstCall = new Barrier();
+    const first = textStep("one", 100);
+    if (first.kind !== "events") throw new Error("Expected text event step");
+    const { runtime, provider, world } = await createHarness(
+      [{ ...first, barrier: firstCall }, textStep("two", 200)],
+      {
+        followUpMailboxCapacity: 1,
+        steerMailboxCapacity: 1,
+        turnIds: ["turn-1", "turn-2", "turn-3"],
+      },
+    );
+
+    await runtime.startTurn({ message: "first" });
+    await provider.waitForCalls(1);
+    await firstCall.entered;
+    await runtime.startTurn({ message: "accepted follow-up" });
+    await runtime.steer({ expectedTurnId: "turn-1", message: "accepted steer" });
+    await expect(runtime.startTurn({ message: "rejected follow-up" })).rejects.toEqual(
+      new SessionRuntimeOverloadedError({ resource: "follow-up-mailbox", capacity: 1 }),
+    );
+    await expect(
+      runtime.steer({ expectedTurnId: "turn-1", message: "rejected steer" }),
+    ).rejects.toEqual(
+      new SessionRuntimeOverloadedError({ resource: "steer-mailbox", capacity: 1 }),
+    );
+    firstCall.release();
+    await runtime.waitForIdle();
+
+    const recorded = await events(world);
+    expect(
+      recorded.filter((event) => event.type === "follow-up-received").map((event) => event.message),
+    ).toEqual(["accepted follow-up"]);
+    expect(
+      recorded.filter((event) => event.type === "steer-received").map((event) => event.message),
+    ).toEqual(["accepted steer"]);
+  });
+
+  test("bounds Provider tool-call batches and concurrent tool execution", async () => {
+    const overLimit = await createHarness(
+      [
+        toolStep(
+          [
+            { id: "call-a", name: "alpha", arguments: {} },
+            { id: "call-b", name: "beta", arguments: {} },
+          ],
+          100,
+        ),
+      ],
+      { maxToolCallsPerStep: 1 },
+    );
+    await overLimit.runtime.startTurn({ message: "too many tools" });
+    await overLimit.runtime.waitForIdle();
+    expect((await events(overLimit.world)).filter((event) => event.type === "tool-call")).toEqual(
+      [],
+    );
+
+    const firstTool = new Barrier();
+    const executions: string[] = [];
+    const alpha = createTool("alpha", async () => {
+      executions.push("alpha-entered");
+      await firstTool.wait();
+      return { ok: true };
+    });
+    const beta = createTool("beta", async () => {
+      executions.push("beta-entered");
+      return { ok: true };
+    });
+    const bounded = await createHarness(
+      [
+        toolStep(
+          [
+            { id: "call-a", name: "alpha", arguments: {} },
+            { id: "call-b", name: "beta", arguments: {} },
+          ],
+          100,
+        ),
+        textStep("done", 200),
+      ],
+      { tools: [alpha, beta], maxConcurrentToolCalls: 1 },
+    );
+    await bounded.runtime.startTurn({ message: "bounded tools" });
+    await bounded.provider.waitForCalls(1);
+    await firstTool.entered;
+    expect(executions).toEqual(["alpha-entered"]);
+    firstTool.release();
+    await bounded.runtime.waitForIdle();
+    expect(executions).toEqual(["alpha-entered", "beta-entered"]);
+  });
+
   test("interrupts only the expected active Turn and closes it as interrupted", async () => {
     const { runtime, provider, world } = await createHarness([awaitingAbortStep(100)]);
 
@@ -646,12 +804,14 @@ describe("public Session runtime agent loop", () => {
     const interruptAppend = new Barrier();
     const stored = new RecordingSessionWorld();
     const world: SessionWorld = {
-      async appendSession(sessionId, event) {
-        if (event.type === "interrupt-received") {
-          await interruptAppend.wait();
-        }
-        return stored.appendSession(sessionId, event);
-      },
+      appendSession: (sessionId, event) =>
+        (event.type === "interrupt-received"
+          ? Effect.tryPromise({
+              try: () => interruptAppend.wait(),
+              catch: fixtureFailure("Interrupt barrier failed"),
+            })
+          : Effect.void
+        ).pipe(Effect.andThen(stored.appendSession(sessionId, event))),
       readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
     };
     const { runtime, provider } = await createHarness([awaitingAbortStep(100)], { world });
@@ -674,34 +834,42 @@ describe("public Session runtime agent loop", () => {
   test("resolves a pending approval once and broadcasts the winning durable decision", async () => {
     const resolutionAppend = new Barrier();
     const stored = new RecordingSessionWorld();
-    await stored.appendSession("session-a", {
-      type: "session-started",
-      sessionId: "session-a",
-      snapshot: SNAPSHOT,
-    });
-    await stored.appendSession("session-a", {
-      type: "turn-started",
-      sessionId: "session-a",
-      turnId: "turn-approval",
-      message: "run guarded work",
-      origin: "user",
-    });
-    await stored.appendSession("session-a", {
-      type: "approval-requested",
-      sessionId: "session-a",
-      turnId: "turn-approval",
-      approvalId: "approval-1",
-      toolCallId: "call-1",
-      prompt: "Allow guarded work?",
-      choices: ["approve", "deny"],
-    });
+    await runEffect(
+      stored.appendSession("session-a", {
+        type: "session-started",
+        sessionId: "session-a",
+        snapshot: SNAPSHOT,
+      }),
+    );
+    await runEffect(
+      stored.appendSession("session-a", {
+        type: "turn-started",
+        sessionId: "session-a",
+        turnId: "turn-approval",
+        message: "run guarded work",
+        origin: "user",
+      }),
+    );
+    await runEffect(
+      stored.appendSession("session-a", {
+        type: "approval-requested",
+        sessionId: "session-a",
+        turnId: "turn-approval",
+        approvalId: "approval-1",
+        toolCallId: "call-1",
+        prompt: "Allow guarded work?",
+        choices: ["approve", "deny"],
+      }),
+    );
     const world: SessionWorld = {
-      async appendSession(sessionId, event) {
-        if (event.type === "approval-resolved") {
-          await resolutionAppend.wait();
-        }
-        return stored.appendSession(sessionId, event);
-      },
+      appendSession: (sessionId, event) =>
+        (event.type === "approval-resolved"
+          ? Effect.tryPromise({
+              try: () => resolutionAppend.wait(),
+              catch: fixtureFailure("Approval barrier failed"),
+            })
+          : Effect.void
+        ).pipe(Effect.andThen(stored.appendSession(sessionId, event))),
       readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
     };
     const { runtime } = await createHarness([], { world });
@@ -713,7 +881,8 @@ describe("public Session runtime agent loop", () => {
     const denying = runtime.resolveApproval({ approvalId: "approval-1", decision: "deny" });
     resolutionAppend.release();
 
-    await expect(approving).resolves.toEqual({ outcome: "resolved" });
+    const approvalResult: ApprovalResolutionResult = await approving;
+    expect(approvalResult).toEqual({ outcome: "resolved" });
     await expect(denying).resolves.toEqual({ outcome: "already-resolved" });
     await expect(
       runtime.resolveApproval({ approvalId: "approval-1", decision: "deny" }),
@@ -770,12 +939,14 @@ describe("public Session runtime agent loop", () => {
     const finalizing = new Barrier();
     const stored = new RecordingSessionWorld();
     const world: SessionWorld = {
-      async appendSession(sessionId, event) {
-        if (event.type === "turn-ended" && event.turnId === "turn-1") {
-          await finalizing.wait();
-        }
-        return stored.appendSession(sessionId, event);
-      },
+      appendSession: (sessionId, event) =>
+        (event.type === "turn-ended" && event.turnId === "turn-1"
+          ? Effect.tryPromise({
+              try: () => finalizing.wait(),
+              catch: fixtureFailure("Finalization barrier failed"),
+            })
+          : Effect.void
+        ).pipe(Effect.andThen(stored.appendSession(sessionId, event))),
       readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
     };
     const { runtime } = await createHarness([textStep("one", 100), textStep("two", 200)], {
@@ -828,15 +999,15 @@ describe("public Session runtime agent loop", () => {
   test("settles waitForIdle when final durable appends fail", async () => {
     const stored = new RecordingSessionWorld();
     const world: SessionWorld = {
-      async appendSession(sessionId, event) {
-        if (event.type === "turn-ended") {
-          throw new Error("disk full");
-        }
-        return stored.appendSession(sessionId, event);
-      },
+      appendSession: (sessionId, event) =>
+        event.type === "turn-ended"
+          ? Effect.fail(
+              new SessionRuntimeError({ message: "Fixture append failed", cause: "disk full" }),
+            )
+          : stored.appendSession(sessionId, event),
       readSession: (sessionId, afterSeq) => stored.readSession(sessionId, afterSeq),
     };
-    const { runtime } = await createHarness([textStep("answer", 100)], { world });
+    const { runtime, scope } = await createHarness([textStep("answer", 100)], { world });
 
     await runtime.startTurn({ message: "write it" });
     const settlement = runtime.waitForIdle().then(
@@ -846,6 +1017,7 @@ describe("public Session runtime agent loop", () => {
 
     expect(await Promise.race([settlement, Bun.sleep(100).then(() => "timeout")])).toBe("rejected");
     await expect(runtime.startTurn({ message: "must reject" })).rejects.toThrow("closed");
+    await expect(runEffect(Scope.close(scope, Exit.void))).rejects.toThrow("Fixture append failed");
   });
 
   test("close rejects new subscriptions and releases existing subscribers", async () => {
@@ -866,14 +1038,18 @@ describe("public Session runtime agent loop", () => {
     let blockRead = false;
     const world: SessionWorld = {
       appendSession: (sessionId, event) => stored.appendSession(sessionId, event),
-      async readSession(sessionId, afterSeq) {
-        const replay = await stored.readSession(sessionId, afterSeq);
-        if (blockRead) {
-          blockRead = false;
-          await replayBarrier.wait();
-        }
-        return replay;
-      },
+      readSession: (sessionId, afterSeq) =>
+        Effect.gen(function* () {
+          const replay = yield* stored.readSession(sessionId, afterSeq);
+          if (blockRead) {
+            blockRead = false;
+            yield* Effect.tryPromise({
+              try: () => replayBarrier.wait(),
+              catch: fixtureFailure("Replay barrier failed"),
+            });
+          }
+          return replay;
+        }),
     };
     const responseBarrier = new Barrier();
     const response = textStep("live", 100);
@@ -901,7 +1077,7 @@ describe("public Session runtime agent loop", () => {
     await runtime.waitForIdle();
     subscription.unsubscribe();
 
-    const durable = await stored.readSession("session-a", 0);
+    const durable = await runEffect(stored.readSession("session-a", 0));
     expect(subscription.replayThroughSeq).toBe(1);
     expect(deliveryOrder.slice(0, 2)).toEqual(["replay-through-1", "event-1"]);
     expect([...received]).toEqual([...durable]);

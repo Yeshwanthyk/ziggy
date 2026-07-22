@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test";
 import {
   createServiceController,
+  type DefinitionState,
+  type ServiceController,
   type ServiceIdentity,
+  type ServiceInput,
   type ServicePlatform,
+  type ServiceRemoveResult,
   type ServiceStatus,
 } from "../../packages/ziggy/src/service.ts";
+import { runEffect } from "./effect.ts";
 import { MemoryServiceFilesystem, ScriptedProcess, missing, ok } from "./service-manager.ts";
 
 const input = {
@@ -16,13 +21,15 @@ export function serviceManagerContract(platform: ServicePlatform): void {
   const setup = () => {
     const filesystem = new MemoryServiceFilesystem();
     const process = new ScriptedProcess();
-    const controller = createServiceController({
-      platform,
-      home: "/home/u",
-      uid: 501,
-      filesystem,
-      process,
-    });
+    const controller = promiseController(
+      createServiceController({
+        platform,
+        home: "/home/u",
+        uid: 501,
+        filesystem,
+        process,
+      }),
+    );
     return { filesystem, process, controller };
   };
 
@@ -57,13 +64,48 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     context.filesystem.mutations.length = 0;
     context.process.calls.length = 0;
     expectInspect(platform, context.process, identity, running(platform));
-    if (platform === "darwin") context.process.expect(["launchctl", "enable", identity.target]);
     const status = await context.controller.install(input);
     context.process.verifyComplete();
     expect(status.process).toBe("running");
     expect(context.filesystem.mutations).toEqual([]);
     expect(context.process.calls).toHaveLength(platform === "darwin" ? 2 : 1);
   });
+
+  if (platform === "darwin") {
+    test("darwin: explicit disabled override is preserved and blocks fresh mutation", async () => {
+      const context = setup();
+      const identity = await context.controller.identity(input);
+      context.process.expect(["launchctl", "print", identity.target], missing());
+      context.process.expect(
+        ["launchctl", "print-disabled", "gui/501"],
+        ok(`disabled services = {\n  "${identity.label}" => true\n}`),
+      );
+      await expect(context.controller.install(input)).rejects.toThrow("explicitly disabled");
+      expect(context.filesystem.mutations).toEqual([]);
+      expect(
+        context.process.calls.some((argv) => argv[1] === "enable" || argv[1] === "disable"),
+      ).toBeFalse();
+      context.process.verifyComplete();
+    });
+
+    test("darwin: remove preserves a pre-existing disabled override", async () => {
+      const context = setup();
+      const identity = await context.controller.identity(input);
+      await installFresh(platform, context, identity);
+      context.process.calls.length = 0;
+      context.process.expect(["launchctl", "print", identity.target], running(platform));
+      context.process.expect(
+        ["launchctl", "print-disabled", "gui/501"],
+        ok(`disabled services = {\n  "${identity.label}" => true\n}`),
+      );
+      context.process.expect(["launchctl", "bootout", identity.target]);
+      expect(await context.controller.remove(input)).toEqual({ kind: "removed" });
+      expect(
+        context.process.calls.some((argv) => argv[1] === "enable" || argv[1] === "disable"),
+      ).toBeFalse();
+      context.process.verifyComplete();
+    });
+  }
 
   test(`${platform}: inactive current install starts without replacing`, async () => {
     const context = setup();
@@ -73,7 +115,6 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     context.process.calls.length = 0;
     expectInspect(platform, context.process, identity, stopped(platform));
     if (platform === "darwin") {
-      context.process.expect(["launchctl", "enable", identity.target]);
       context.process.expect(["launchctl", "kickstart", identity.target]);
     } else {
       expectSystemdStart(context.process, identity, "start");
@@ -102,7 +143,6 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     expectInspect(platform, context.process, identity, running(platform));
     if (platform === "darwin") {
       context.process.expect(["launchctl", "bootout", identity.target]);
-      context.process.expect(["launchctl", "enable", identity.target]);
       context.process.expect(["launchctl", "bootstrap", "gui/501", identity.definitionPath]);
     } else {
       expectSystemdStart(context.process, identity, "restart");
@@ -168,7 +208,6 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     context.process.calls.length = 0;
     expectInspect(platform, context.process, identity, stopped(platform));
     if (platform === "darwin") {
-      context.process.expect(["launchctl", "enable", identity.target]);
       context.process.expect(["launchctl", "kickstart", identity.target]);
     } else {
       context.process.expect(["systemctl", "--user", "reset-failed", identity.target]);
@@ -191,8 +230,9 @@ export function serviceManagerContract(platform: ServicePlatform): void {
     await installFresh(platform, context, identity);
     context.process.calls.length = 0;
     expectInspect(platform, context.process, identity, running(platform));
-    if (platform === "darwin") context.process.expect(["launchctl", "bootout", identity.target]);
-    else {
+    if (platform === "darwin") {
+      context.process.expect(["launchctl", "bootout", identity.target]);
+    } else {
       context.process.expect(["systemctl", "--user", "disable", "--now", identity.target]);
       context.process.expect(["systemctl", "--user", "daemon-reload"]);
     }
@@ -227,8 +267,13 @@ export function serviceManagerContract(platform: ServicePlatform): void {
   test(`${platform}: unknown cached registration fails closed and controls are rejected`, async () => {
     const context = setup();
     const identity = await context.controller.identity(input);
-    if (platform === "darwin") context.process.expect(inspectArgv(platform, identity), missing());
-    else context.process.expect(inspectArgv(platform, identity), ok("unexpected=true\n"));
+    if (platform === "darwin") {
+      context.process.expect(inspectArgv(platform, identity), missing());
+      context.process.expect(
+        ["launchctl", "print-disabled", "gui/501"],
+        ok("disabled services = {}"),
+      );
+    } else context.process.expect(inspectArgv(platform, identity), ok("unexpected=true\n"));
     const result = await context.controller.remove(input);
     expect(result.kind).toBe(platform === "darwin" ? "absent" : "refused");
     await expect(
@@ -245,7 +290,6 @@ async function installFresh(
 ): Promise<ServiceStatus> {
   expectInspect(platform, context.process, identity, absent(platform));
   if (platform === "darwin") {
-    context.process.expect(["launchctl", "enable", identity.target]);
     context.process.expect(["launchctl", "bootstrap", "gui/501", identity.definitionPath]);
   } else {
     expectSystemdStart(context.process, identity, "start");
@@ -262,12 +306,14 @@ function createContextShape() {
   return {
     filesystem,
     process,
-    controller: createServiceController({
-      platform: "linux",
-      home: "/home/u",
-      filesystem,
-      process,
-    }),
+    controller: promiseController(
+      createServiceController({
+        platform: "linux",
+        home: "/home/u",
+        filesystem,
+        process,
+      }),
+    ),
   };
 }
 
@@ -289,6 +335,9 @@ function expectInspect(
   result: ReturnType<typeof ok>,
 ): void {
   process.expect(inspectArgv(platform, identity), result);
+  if (platform === "darwin") {
+    process.expect(["launchctl", "print-disabled", "gui/501"], ok("disabled services = {\n}"));
+  }
 }
 
 function inspectArgv(platform: ServicePlatform, identity: ServiceIdentity): ReadonlyArray<string> {
@@ -334,6 +383,28 @@ function stoppedAfterStop(platform: ServicePlatform): ReturnType<typeof ok> {
   return platform === "darwin" ? missing() : stopped(platform);
 }
 
+interface PromiseServiceController {
+  identity(input: ServiceInput): Promise<ServiceIdentity>;
+  classify(input: ServiceInput): Promise<DefinitionState>;
+  install(input: ServiceInput): Promise<ServiceStatus>;
+  start(input: ServiceInput): Promise<ServiceStatus>;
+  stop(input: ServiceInput): Promise<ServiceStatus>;
+  status(input: ServiceInput): Promise<ServiceStatus>;
+  remove(input: ServiceInput): Promise<ServiceRemoveResult>;
+}
+
+function promiseController(controller: ServiceController): PromiseServiceController {
+  return {
+    identity: (input) => runEffect(controller.identity(input)),
+    classify: (input) => runEffect(controller.classify(input)),
+    install: (input) => runEffect(controller.install(input)),
+    start: (input) => runEffect(controller.start(input)),
+    stop: (input) => runEffect(controller.stop(input)),
+    status: (input) => runEffect(controller.status(input)),
+    remove: (input) => runEffect(controller.remove(input)),
+  };
+}
+
 async function managedDefinition(
   platform: ServicePlatform,
   context: ReturnType<typeof createContextShape>,
@@ -350,11 +421,10 @@ async function managedDefinition(
   context.filesystem.files.delete(identity.definitionPath);
   expectInspect(platform, isolated, identity, absent(platform));
   if (platform === "darwin") {
-    isolated.expect(["launchctl", "enable", identity.target]);
     isolated.expect(["launchctl", "bootstrap", "gui/501", identity.definitionPath]);
   } else expectSystemdStart(isolated, identity, "start");
   expectInspect(platform, isolated, identity, running(platform));
-  await controller.install(input);
+  await runEffect(controller.install(input));
   isolated.verifyComplete();
   return context.filesystem.files.get(identity.definitionPath) ?? "";
 }

@@ -1,9 +1,143 @@
 {
   "schemaVersion": 1,
   "stage": "s3",
-  "status": "manifest-empty",
+  "status": "implemented",
   "predecessors": ["s0", "s1", "s2"],
-  "scenarios": [],
-  "gates": [],
-  "requirements": []
+  "scenarios": [
+    "s3.attach-client",
+    "s3.cli-ask",
+    "s3.cli-sessions-list",
+    "s3.compiled-cli-process",
+    "s3.compiled-daemon-lifecycle",
+    "s3.credential-authority",
+    "s3.profile-config",
+    "s3.profile-initialization",
+    "s3.provider-auth",
+    "s3.stable-main",
+    "s3.tui-protocol-face"
+  ],
+  "gates": [
+    "manifest-integrity",
+    "package-graph",
+    "lint",
+    "lint-fixtures",
+    "fmt-check",
+    "typecheck",
+    "scenarios",
+    "test",
+    "knip",
+    "compile-smoke"
+  ],
+  "requirements": [
+    {
+      "id": "s3.profile-init",
+      "status": "implemented",
+      "description": "Profile initialization creates the required private scaffold, preserves existing owner files, validates JSONC before mutation, canonicalizes aliases, converges under covered races, and installs distinct embedded Voices. Cross-process valid races, create-operation cleanup, and permission denial remain explicitly unclaimed."
+    },
+    {
+      "id": "s3.provider-auth-deterministic",
+      "status": "implemented",
+      "description": "Deterministic Provider/auth contracts cover strict Profile configuration, daemon-owned bounded credentials, model resolution, filesystem Session runtime construction, negotiated fake API-key/OAuth boundaries, compiled OAuth loading, and secret-safe evidence."
+    },
+    {
+      "id": "s3.effect-daemon-composition",
+      "status": "implemented",
+      "description": "Profile lock, Provider/auth composition, Session runtime factory, daemon kernel, attach server, interruption, and ordered finalization are scoped Effect resources with external Promise APIs isolated at named boundaries."
+    },
+    {
+      "id": "s3.stable-main",
+      "status": "implemented",
+      "description": "Attach v2 reserves main, daemon-owned session/ensure lazily creates it exactly once under concurrent real-socket Clients, and the durable Session survives daemon restart without a second existence authority."
+    },
+    {
+      "id": "s3.auth-api-key-live",
+      "status": "implemented",
+      "description": "A disposable Anthropic Profile completed the production hidden-TTY API-key login, persisted a private schema-v1 credential, and passed doctor without exposing credential material."
+    },
+    {
+      "id": "s3.auth-oauth-live",
+      "status": "implemented",
+      "description": "A fresh disposable Profile completed Ziggy's compiled production openai-codex browser OAuth flow without importing existing credential bytes, persisted a private schema-v1 refresh-capable credential, passed doctor, and returned an exact real gpt-5.6-luna response."
+    },
+    {
+      "id": "s3.doctor-auth-live",
+      "status": "implemented",
+      "description": "After the live API-key login and Codex OAuth import, doctor reported real Provider authentication state without exposing credential material."
+    },
+    {
+      "id": "s3.ask-live-response",
+      "status": "implemented",
+      "description": "A real authenticated openai-codex/gpt-5.6-luna ask ensured main, returned exit 0, streamed only ZIGGY LUNA LIVE with exactly one final newline, and emitted empty stderr."
+    },
+    {
+      "id": "s3.ask-live-persisted-ndjson",
+      "status": "implemented",
+      "description": "The live Provider Turn persisted mode-0600 sessions/main.ndjson with schema-v1 contiguous envelopes, the configured Provider/model, and a completed terminal event."
+    },
+    {
+      "id": "s3.ask-deterministic",
+      "status": "implemented",
+      "description": "A scripted Provider ask over the production Attach Client ensures main, emits only accepted Turn text with one final newline, persists exactly one complete Turn, and does not duplicate Provider work."
+    },
+    {
+      "id": "s3.ask-production-autostart",
+      "status": "implemented",
+      "description": "A compiled ask against a stopped disposable Profile crosses production probe, detached spawn, readiness handshake, and original-intent retry exactly once before the first Turn write; a barrier-controlled absent-to-stale race refuses startup."
+    },
+    {
+      "id": "s3.ask-post-write-outcome",
+      "status": "implemented",
+      "description": "A production attach-server fault after durable Turn acceptance drops the correlated response and proves exit 3, one turn-started event, one Provider call, and no resend or reconnect write."
+    },
+    {
+      "id": "s3.concurrent-sessions",
+      "status": "implemented",
+      "description": "Two Sessions run concurrent scripted Turns over separate real-socket Clients without cross-Session blocking."
+    },
+    {
+      "id": "s3.replay-cursor-safety",
+      "status": "implemented",
+      "description": "A resume cursor beyond the durable tail is rejected and cannot later receive envelopes below its requested sequence."
+    },
+    {
+      "id": "s3.native-service-smoke",
+      "status": "implemented",
+      "description": "Native launchd lifecycle is proven on this Darwin host; Linux systemd behavior is explicitly unavailable on host while deterministic unit contracts remain covered."
+    },
+    {
+      "id": "s3.tui-live-production-path",
+      "status": "implemented",
+      "description": "Deterministic controlled Providers drive ZiggyTuiComponent through the production interpreter and shared Attach Client over real Unix sockets, proving main resume, token streaming, steer, exactly-once queued follow-up, active-Turn interrupt, local-first and remote-first approval resolution, A-to-B-to-A subscription replacement with stale callback rejection, disconnect without Turn cancellation, last-applied-cursor replay/live overlap without duplication, blocked retry mutations, outcome-unknown composer retention, and quit/Ctrl+C Client cleanup without daemon interruption. Supporting interpreter contracts prove bounded serialized command execution, exact Attach calls, overload reporting, generation-safe callbacks, idempotent cleanup, and cleanup-failure propagation."
+    },
+    {
+      "id": "s3.tui-human-journey",
+      "status": "implemented",
+      "description": "A real Luna-high terminal journey proved stable-main streaming, durable steering, one queued follow-up, interruption, Ctrl+P Session picker and Escape behavior, detach, fresh replay of 883 envelopes, and reconnect from retained cursor 883 after four attempts without visible duplication. Approval and multi-Session replacement remain covered by the deterministic production-path scenario rather than this manual journey."
+    },
+    {
+      "id": "s3.tui-state-safety",
+      "status": "implemented",
+      "description": "The pure TUI projection keys output by Turn and Step, retains pending approvals independently of overlay visibility, gates mutation intents to live subscriptions, rejects stale resume generations, and renders state-correct controls and centered Session pickers."
+    },
+    {
+      "id": "s3.tui-package-boundary",
+      "status": "implemented",
+      "description": "Deterministic package-graph evidence proves packages/tui depends only on packages/protocol and its pinned terminal dependency, never core or ziggy; hosted CI remains disabled."
+    },
+    {
+      "id": "s3.sessions-list",
+      "status": "implemented",
+      "description": "Real daemon operations create all listed Sessions, main is created only through session/ensure, and a real-socket empty-Profile list returns [] without creating sessions/main.ndjson."
+    },
+    {
+      "id": "s3.compiled-exit-contract",
+      "status": "implemented",
+      "description": "Compiled processes prove exits 0, 1, 2, 3, and SIGINT 130 with exact stdout/newline behavior, bounded stderr, transport finalization, one durable Turn, deterministic stale-socket refusal, cleanup, and no daemon Turn interruption."
+    },
+    {
+      "id": "s3.verification-closure",
+      "status": "implemented",
+      "description": "Every landed deterministic Face scenario is registered with exactly one bounded schema-valid observation marker; findings-bearing verify:s3 and verify:all pass with the final consolidated resolved review findings."
+    }
+  ]
 }

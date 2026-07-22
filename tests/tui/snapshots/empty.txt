@@ -1,0 +1,8 @@
+ZIGGY / no Session                             READY · DISCONNECTED · #0
+------------------------------------------------------------------------
+
+No Session loaded. Reconnecting will restore protocol history.
+------------------------------------------------------------------------
+[FOCUS: COMPOSER] [READ ONLY]
+> _
+^P Sessions | ^C detach
