@@ -160,6 +160,43 @@ export default {
     ).rejects.toThrow("escaping import-statement");
     expect(escapingImporterCalls).toBe(0);
 
+    const computed = await createS4ExtensionFixture("tool-computed-import", {
+      skills: [],
+      tools: [{ id: "fixture", path: "tools/fixture" }],
+      files: {
+        "tools/fixture/tool.ts": `
+const modulePath = "/tmp/unsealed-computed-tool.ts";
+await import(modulePath);
+export default {
+  name: "fixture",
+  description: "Computed import Tool",
+  inputSchema: { type: "object", additionalProperties: false },
+  async execute() { return {}; },
+};
+`,
+      },
+    });
+    const computedRequirements = requireApprovalRequirements(
+      await installS4Fixture(computed.profile, computed.source, []),
+    );
+    const computedFingerprints = computedRequirements.map((requirement) => requirement.fingerprint);
+    await installS4Fixture(computed.profile, computed.source, computedFingerprints);
+    await useS4Lifecycle(computed.profile, (service) =>
+      service.enable({ extensionId: "fixture", approvals: computedFingerprints }),
+    );
+    let computedImporterCalls = 0;
+    await expect(
+      runScopedEffect(
+        loadInstalledExtensionTools(computed.profile, "0.0.0", {
+          importModule: () => {
+            computedImporterCalls += 1;
+            return Effect.succeed({});
+          },
+        }),
+      ),
+    ).rejects.toThrow("computed dynamic import");
+    expect(computedImporterCalls).toBe(0);
+
     const compiled = await runProcess(
       ["bun", "build", "--compile", "packages/ziggy/src/main.ts", "--outfile", executable],
       { cwd: repositoryRoot, timeoutMs: 120_000 },
@@ -250,6 +287,12 @@ export default {
         },
         {
           boundary: "extension-tool-import",
+          point: "computed-dynamic-import",
+          occurrence: 1,
+          outcome: "failed",
+        },
+        {
+          boundary: "extension-tool-import",
           point: "compiled-post-build-typescript",
           occurrence: 1,
           outcome: "continued",
@@ -281,6 +324,7 @@ export default {
         { name: "preapproval-imports", value: 0 },
         { name: "mutation-cutpoint-imports", value: mutationImporterCalls },
         { name: "escaping-imports", value: escapingImporterCalls },
+        { name: "computed-imports", value: computedImporterCalls },
         { name: "sealed-file-digests-matched", value: 2 },
         { name: "provider-calls", value: 0 },
         { name: "approved-tool-imports", value: 1 },
@@ -288,6 +332,7 @@ export default {
     });
     await rm(boundary.root, { recursive: true, force: true });
     await rm(escape.root, { recursive: true, force: true });
+    await rm(computed.root, { recursive: true, force: true });
     await rm(fixture.root, { recursive: true, force: true });
   } finally {
     await rm(root, { recursive: true, force: true });

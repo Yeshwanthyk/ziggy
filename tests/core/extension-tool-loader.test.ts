@@ -391,6 +391,80 @@ test("Tool loader scans executable extensionless modules without treating data a
   }
 });
 
+test("Tool loader rejects computed dynamic imports before outside evaluation", async () => {
+  const outsidePath = join(tmpdir(), `ziggy-computed-${randomUUID()}.ts`);
+  const markerPath = `${outsidePath}.marker`;
+  const fixture = await createToolFixture("computed-import", {
+    "tools/fixture/tool.ts": `
+const modulePath = ${JSON.stringify(outsidePath)};
+await import(modulePath);
+${VALID_TOOL}
+`,
+  });
+  try {
+    await writeFile(outsidePath, `await Bun.write(${JSON.stringify(markerPath)}, "before");\n`);
+    await installAndEnable(fixture.profile, fixture.source);
+    await writeFile(outsidePath, `await Bun.write(${JSON.stringify(markerPath)}, "mutated");\n`);
+    await expect(
+      runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+    ).rejects.toThrow("has a computed dynamic import");
+    expect(await Bun.file(markerPath).exists()).toBeFalse();
+  } finally {
+    await Promise.all([
+      rm(outsidePath, { force: true }),
+      rm(markerPath, { force: true }),
+      rm(fixture.root, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test("Tool loader rejects computed import syntax variants in nested executable modules", async () => {
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    ["variable", `const target = "./dependency.ts"; void import(target);`],
+    ["concatenated", `const suffix = "dependency.ts"; void import("./" + suffix);`],
+    ["parenthesized", `const target = "./dependency.ts"; void import((target));`],
+    ["template", 'const target = "dependency"; void import(`./${target}.ts`);'],
+    ["trivia", `const target = "./dependency.ts"; void import /* sealed? */ (target);`],
+  ];
+  for (const [name, computedImport] of cases) {
+    const fixture = await createToolFixture(`computed-${name}`, {
+      "tools/fixture/dependency.ts": `export const value = "sealed";\n`,
+      "tools/fixture/nested.ts": `${computedImport}\nexport const value = "nested";\n`,
+      "tools/fixture/tool.ts": `import { value } from "./nested.ts";\nvoid value;\n${VALID_TOOL}`,
+    });
+    try {
+      await installAndEnable(fixture.profile, fixture.source);
+      await expect(
+        runScopedEffect(loadInstalledExtensionTools(fixture.profile, "0.0.0")),
+      ).rejects.toThrow("module tools/fixture/nested.ts has a computed dynamic import");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("Tool loader ignores import-like comments, strings, templates, and regular expressions", async () => {
+  const fixture = await createToolFixture("import-like-data", {
+    "tools/fixture/tool.ts": `
+// import(computedLineComment)
+/* import(computedBlockComment) */
+const stringValue = "import(computedString)";
+const templateValue = \`import(computedTemplate)\`;
+const regexValue = /import\\(computedRegex\\)/;
+const localApi = { import(value) { return value; } };
+const localValue = localApi.import("local");
+void [stringValue, templateValue, regexValue, localValue];
+${VALID_TOOL}
+`,
+  });
+  try {
+    await installAndEnable(fixture.profile, fixture.source);
+    expect(await executeOnlyTool(fixture.profile)).toMatchObject({ input: {} });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("Tool loader won't resolve bare imports from an unsealed ancestor node_modules", async () => {
   const packageName = `ziggy-unsealed-${randomUUID()}`;
   const outsidePackage = join(tmpdir(), "node_modules", packageName);

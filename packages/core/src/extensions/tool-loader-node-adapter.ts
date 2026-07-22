@@ -19,6 +19,7 @@ interface ExtensionToolModuleImport {
 
 interface ExtensionToolModuleScan {
   readonly classification: "module" | "data";
+  readonly hasComputedDynamicImport: boolean;
   readonly imports: ReadonlyArray<ExtensionToolModuleImport>;
 }
 
@@ -88,12 +89,19 @@ export function scanExtensionToolModuleImports(
   bytes: Uint8Array,
 ): ExtensionToolModuleScan {
   const loader = moduleLoader(path);
-  if (loader === undefined) return { classification: "data", imports: [] };
+  if (loader === undefined) {
+    return { classification: "data", hasComputedDynamicImport: false, imports: [] };
+  }
   try {
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    const imports = new Bun.Transpiler({ loader }).scanImports(source);
+    const transpiler = new Bun.Transpiler({ loader });
+    const imports = transpiler.scanImports(source);
+    const transformed = transpiler.transformSync(source);
+    const literalDynamicImports = imports.filter((entry) => entry.kind === "dynamic-import").length;
     return {
       classification: "module",
+      hasComputedDynamicImport:
+        countDynamicImportExpressions(transformed).count !== literalDynamicImports,
       imports: imports.flatMap((entry) =>
         entry.kind === "import-statement" ||
         entry.kind === "dynamic-import" ||
@@ -103,9 +111,222 @@ export function scanExtensionToolModuleImports(
       ),
     };
   } catch (cause) {
-    if (extname(path).length === 0) return { classification: "data", imports: [] };
+    if (extname(path).length === 0) {
+      return { classification: "data", hasComputedDynamicImport: false, imports: [] };
+    }
     throw cause;
   }
+}
+
+interface DynamicImportScan {
+  readonly count: number;
+  readonly nextIndex: number;
+}
+
+function countDynamicImportExpressions(
+  source: string,
+  startIndex = 0,
+  stopAtTemplateBrace = false,
+): DynamicImportScan {
+  let count = 0;
+  let index = startIndex;
+  let braceDepth = 0;
+  let canStartRegex = true;
+  let memberAccess = false;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === undefined) break;
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      index = skipQuoted(source, index, character);
+      canStartRegex = false;
+      memberAccess = false;
+      continue;
+    }
+    if (character === "`") {
+      const template = scanTemplate(source, index + 1);
+      count += template.count;
+      index = template.nextIndex;
+      canStartRegex = false;
+      memberAccess = false;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      index = skipLineComment(source, index + 2);
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      index = skipBlockComment(source, index + 2);
+      continue;
+    }
+    if (character === "/" && canStartRegex) {
+      index = skipRegexLiteral(source, index + 1);
+      canStartRegex = false;
+      continue;
+    }
+    if (isIdentifierStart(character)) {
+      const end = skipIdentifier(source, index + 1);
+      const identifier = source.slice(index, end);
+      const openParen = skipTrivia(source, end);
+      if (
+        identifier === "import" &&
+        !memberAccess &&
+        source[openParen] === "(" &&
+        !isMethodDefinition(source, openParen)
+      ) {
+        count += 1;
+      }
+      canStartRegex = regexCanFollowIdentifier(identifier);
+      memberAccess = false;
+      index = end;
+      continue;
+    }
+    if (stopAtTemplateBrace && character === "}") {
+      if (braceDepth === 0) return { count, nextIndex: index + 1 };
+      braceDepth -= 1;
+      index += 1;
+      canStartRegex = false;
+      memberAccess = false;
+      continue;
+    }
+    if (stopAtTemplateBrace && character === "{") braceDepth += 1;
+    canStartRegex = !(
+      character === ")" ||
+      character === "]" ||
+      character === "}" ||
+      (character >= "0" && character <= "9")
+    );
+    memberAccess = character === ".";
+    index += 1;
+  }
+  return { count, nextIndex: index };
+}
+
+function isMethodDefinition(source: string, openParen: number): boolean {
+  let index = openParen + 1;
+  let depth = 1;
+  while (index < source.length && depth > 0) {
+    const character = source[index];
+    if (character === '"' || character === "'") index = skipQuoted(source, index, character);
+    else if (character === "`") index = scanTemplate(source, index + 1).nextIndex;
+    else if (source.startsWith("//", index)) index = skipLineComment(source, index + 2);
+    else if (source.startsWith("/*", index)) index = skipBlockComment(source, index + 2);
+    else {
+      if (character === "(") depth += 1;
+      else if (character === ")") depth -= 1;
+      index += 1;
+    }
+  }
+  return depth === 0 && source[skipTrivia(source, index)] === "{";
+}
+
+function scanTemplate(source: string, startIndex: number): DynamicImportScan {
+  let count = 0;
+  let index = startIndex;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === "\\") {
+      index += 2;
+      continue;
+    }
+    if (character === "`") return { count, nextIndex: index + 1 };
+    if (character === "$" && source[index + 1] === "{") {
+      const expression = countDynamicImportExpressions(source, index + 2, true);
+      count += expression.count;
+      index = expression.nextIndex;
+      continue;
+    }
+    index += 1;
+  }
+  return { count, nextIndex: index };
+}
+
+function skipQuoted(source: string, startIndex: number, quote: string): number {
+  let index = startIndex + 1;
+  while (index < source.length) {
+    if (source[index] === "\\") index += 2;
+    else if (source[index] === quote) return index + 1;
+    else index += 1;
+  }
+  return index;
+}
+
+function skipRegexLiteral(source: string, startIndex: number): number {
+  let index = startIndex;
+  let inCharacterClass = false;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === "\\") index += 2;
+    else if (character === "[") {
+      inCharacterClass = true;
+      index += 1;
+    } else if (character === "]") {
+      inCharacterClass = false;
+      index += 1;
+    } else if (character === "/" && !inCharacterClass) {
+      index += 1;
+      while (isIdentifierPart(source[index])) index += 1;
+      return index;
+    } else index += 1;
+  }
+  return index;
+}
+
+function skipLineComment(source: string, startIndex: number): number {
+  const newline = source.indexOf("\n", startIndex);
+  return newline === -1 ? source.length : newline + 1;
+}
+
+function skipBlockComment(source: string, startIndex: number): number {
+  const close = source.indexOf("*/", startIndex);
+  return close === -1 ? source.length : close + 2;
+}
+
+function skipTrivia(source: string, startIndex: number): number {
+  let index = startIndex;
+  while (index < source.length) {
+    const character = source[index];
+    if (character !== undefined && /\s/.test(character)) index += 1;
+    else if (source.startsWith("//", index)) index = skipLineComment(source, index + 2);
+    else if (source.startsWith("/*", index)) index = skipBlockComment(source, index + 2);
+    else return index;
+  }
+  return index;
+}
+
+function skipIdentifier(source: string, startIndex: number): number {
+  let index = startIndex;
+  while (isIdentifierPart(source[index])) index += 1;
+  return index;
+}
+
+function isIdentifierStart(character: string): boolean {
+  return /[A-Za-z_$]/.test(character);
+}
+
+function isIdentifierPart(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z\d_$]/.test(character);
+}
+
+function regexCanFollowIdentifier(identifier: string): boolean {
+  return [
+    "await",
+    "case",
+    "delete",
+    "do",
+    "else",
+    "in",
+    "instanceof",
+    "of",
+    "return",
+    "throw",
+    "typeof",
+    "void",
+    "yield",
+  ].includes(identifier);
 }
 
 export function isExtensionToolBuiltinModule(specifier: string): boolean {

@@ -253,7 +253,12 @@ function validateToolModule(
     try: () => scanExtensionToolModuleImports(file.path, file.bytes),
     catch: toolLoadFailure(`Failed to scan sealed Tool module ${manifest.id}/${file.path}`),
   }).pipe(
-    Effect.flatMap(({ imports }) => {
+    Effect.flatMap(({ hasComputedDynamicImport, imports }) => {
+      if (hasComputedDynamicImport) {
+        return fail(
+          `Extension Tool ${manifest.id}/${tool.id} module ${file.path} has a computed dynamic import`,
+        );
+      }
       const escaped = imports.find((entry) =>
         relativeModuleTargetEscapes(tool.path, file.path, entry.path),
       );
