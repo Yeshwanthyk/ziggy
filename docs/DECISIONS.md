@@ -40,7 +40,14 @@ See also: [NORTH-STAR.md](./NORTH-STAR.md) (vision these decisions serve), [CONS
 telegram/memory bugs already hit in production).
 **Options:** (a) fork/extend merlin, (b) start clean and treat merlin as a lessons-learned corpus.
 **Decision:** (b). Ziggy imports zero code and zero design documents from merlin. Merlin's ADRs,
-plans, and incident reports are read as evidence of what broke and why, never as a spec.
+plans, incident reports, and Extension implementations are read as evidence of capabilities and
+failure modes, never as a spec. In S4, a Merlin Extension **port** means reimplementing an accepted
+user-facing capability from scratch through the smallest existing Ziggy mechanism: an Extension
+containing Skills and/or Tools, a Blueprint, an Automation, or a Gateway. Ziggy's contracts,
+directory layout, trust tiers, state authority,
+and lifecycle always define the target. No Merlin compatibility layer, manifest dialect, runtime
+hook, or source layout is preserved, and a candidate that does not fit is deferred, merged, or
+dropped rather than widening Ziggy around it.
 **Rationale:** merlin's own docs show unresolved architectural debt (dual-write memory, coupled
 session/memory-scope keys causing the Telegram bug). Starting clean lets those lessons become
 invariants (see CONSTITUTION.md) instead of being inherited as code.
@@ -192,7 +199,9 @@ subsystem. Long-tail integrations that don't justify a maintained adapter use fl
 Section C, which recommends subprocess-only execution. Ziggy's single-user trust posture, the
 install-time approval gate, empirical Bun dynamic-import viability, and pi's production precedent
 justify one narrow in-process ABI. The boundary stays explicit and small, while markdown-first
-means most Extensions never need code at all.
+means most Extensions never need code at all. The 47 Merlin Extension packages are migration
+candidates, not architectural inputs: each receives a closed-world capability and leanness review,
+and only accepted behavior is rebuilt against this boundary.
 **Evidence:** `docs/research/extension-mechanisms.md` (full comparison across pi/openclaw/hermes/
 flue/eve), `docs/research/bun-compiled-plugin-loading.md` (what made the escape hatch technically
 sound rather than merely theoretical).
