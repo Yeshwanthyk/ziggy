@@ -16,7 +16,7 @@ and you reach it.
    Memory, and empty Session and Extension directories. The first main-dependent Client command
    asks the daemon to lazily create the Profile's stable main Session.
 3. **Mold it.** Edit `SOUL.md` in a text editor. Add Extensions — your own, or ones from the
-   maintained set (smart-memory, smart-extensions, executor). A Voice means only a starter
+   maintained set selected through the Extension review process. A Voice means only a starter
    `SOUL.md` template offered by `ziggy init`; per-Session persona pinning is not a v1 concept.
    The default install is minimal on purpose; you build up from there.
 4. **Reach it from anywhere.** The daemon is resident and is the sole process writer for

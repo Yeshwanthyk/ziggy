@@ -4,16 +4,16 @@ Ziggy remains private until the user explicitly says to make the repository publ
 
 Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install script) and the public announcement remain deferred until **v1**, which ships immediately after S6, unless separately changed. Repository visibility is a separate decision and stays private until explicitly changed by the user.
 
-| Stage | Name       | One-line goal                                                                                             | Plan                                       |
-| ----- | ---------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| S0    | Foundation | Bun workspace, tooling, Effect v4 submodule, and contract-test harness exist and pass verification        | [s0-foundation.md](plans/s0-foundation.md) |
-| S1    | Waist      | The session engine and memory subsystem work headless, against a faux provider                            | [s1-waist.md](plans/s1-waist.md)           |
-| S2    | Daemon     | Ziggy runs as a resident per-profile service with a working attach socket                                 | [s2-daemon.md](plans/s2-daemon.md)         |
-| S3    | Face       | `ziggy init` scaffolds a profile; a real TUI and CLI can talk to a real provider                          | [s3-face.md](plans/s3-face.md)             |
-| S4    | Molding    | Ziggy-native Extensions, executor, blueprints, and closed review of Merlin candidates with S4-owned ports | [s4-molding.md](plans/s4-molding.md)       |
-| S5    | Autonomy   | Automations: wake-gates, fresh-session-per-run, broadcast rules, observable as ordinary sessions          | [s5-autonomy.md](plans/s5-autonomy.md)     |
-| S6    | Reach      | First gateway (Telegram) proves the dependency-free leaf-client pattern — **v1 release line**             | [s6-reach.md](plans/s6-reach.md)           |
-| S7    | Elsewhere  | Cloudflare world adapter, GUI client, more gateways — all post-v1                                         | [s7-elsewhere.md](plans/s7-elsewhere.md)   |
+| Stage | Name       | One-line goal                                                                                      | Plan                                       |
+| ----- | ---------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| S0    | Foundation | Bun workspace, tooling, Effect v4 submodule, and contract-test harness exist and pass verification | [s0-foundation.md](plans/s0-foundation.md) |
+| S1    | Waist      | The session engine and memory subsystem work headless, against a faux provider                     | [s1-waist.md](plans/s1-waist.md)           |
+| S2    | Daemon     | Ziggy runs as a resident per-profile service with a working attach socket                          | [s2-daemon.md](plans/s2-daemon.md)         |
+| S3    | Face       | `ziggy init` scaffolds a profile; a real TUI and CLI can talk to a real provider                   | [s3-face.md](plans/s3-face.md)             |
+| S4    | Molding    | Ziggy-native Extensions, blueprints, and closed review of Merlin candidates with S4-owned ports    | [s4-molding.md](plans/s4-molding.md)       |
+| S5    | Autonomy   | Automations: wake-gates, fresh-session-per-run, broadcast rules, observable as ordinary sessions   | [s5-autonomy.md](plans/s5-autonomy.md)     |
+| S6    | Reach      | First gateway (Telegram) proves the dependency-free leaf-client pattern — **v1 release line**      | [s6-reach.md](plans/s6-reach.md)           |
+| S7    | Elsewhere  | Cloudflare world adapter, GUI client, more gateways — all post-v1                                  | [s7-elsewhere.md](plans/s7-elsewhere.md)   |
 
 ## Sequencing rules
 

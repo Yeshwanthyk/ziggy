@@ -198,9 +198,10 @@ spawn over their exact argv, permissions, content digests, and Extension version
 are digest-sealed and revalidated at every Skill load, Tool import, or subprocess execution; a
 version or content change requires reinstall and reapproval. Extensions get **no** loop hooks, no
 custom providers, no ability to register their own extensions — those
-stay core-only. `executor` (the CLI-running extension) ships as just another extension, not a core
-subsystem. Long-tail integrations that don't justify a maintained adapter use flue-style markdown
-"blueprints" the agent applies as an edit script.
+stay core-only. No Merlin candidate, including `executor`, is preselected to ship: each goes through
+the same closed migration-ledger disposition and independent review. Long-tail integrations that
+don't justify a maintained adapter use flue-style markdown "blueprints" the agent applies as an
+edit script.
 **Rationale:** This is a deliberate departure from `docs/research/extension-mechanisms.md`
 Section C, which recommends subprocess-only execution. Ziggy's single-user trust posture, the
 install-time approval gate, empirical Bun dynamic-import viability, and pi's production precedent
@@ -296,7 +297,7 @@ and Ctrl+C or quit detaches without interrupting daemon work. Reconnect uses the
 **Decision:** At S0, a Bun workspace with 4 packages — `core` (daemon, session engine, memory, loop),
 `protocol` (attach-protocol types + framing, dependency-free), `tui` (pi-tui-based client), `ziggy`
 (the CLI entrypoint / compiled binary) — plus a curated `extensions/` directory for maintained
-first-party extensions (smart-memory, smart-extensions, executor, etc.). First-party Gateways join
+first-party Extensions selected through the Extension review process. First-party Gateways join
 later, at their stages, as additional leaf workspace packages such as
 `packages/gateway-telegram`; each depends only on `protocol`.
 **Rationale:** User's explicit choice (grilling Q11, "4 packages + pi-tui"). Keeps `protocol` as

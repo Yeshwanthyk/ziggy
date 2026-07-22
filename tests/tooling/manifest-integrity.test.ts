@@ -225,7 +225,7 @@ describe("verification manifest integrity", () => {
     await expect(
       validateManifestRegistry(
         root,
-        replaceManifest(manifests, { ...s4, gates: ["test"] }),
+        replaceManifest(manifests, { ...s4, status: "manifest-empty", gates: ["test"] }),
         scenarioRegistry,
       ),
     ).rejects.toThrow("manifest-empty");

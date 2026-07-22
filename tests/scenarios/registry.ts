@@ -248,4 +248,13 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
     boundaryConfiguration:
       "temporary-profile-controlled-providers-real-unix-socket-fault-proxy-shared-attach-client-production-tui-interpreter-and-protocol-only-component",
   },
+  {
+    schemaVersion: 1,
+    id: "s4.manifest-version-compatibility",
+    stage: "s4",
+    file: "tests/scenarios/s4-manifest-version-compatibility.test.ts",
+    seed: "s4-manifest-version-v1",
+    schedule: "serial-canonical-version-range-and-strict-json-fixtures",
+    boundaryConfiguration: "dependency-free-semver-and-duplicate-key-parser",
+  },
 ];

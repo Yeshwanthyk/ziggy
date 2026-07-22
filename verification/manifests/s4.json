@@ -1,9 +1,15 @@
 {
   "schemaVersion": 1,
   "stage": "s4",
-  "status": "manifest-empty",
+  "status": "pending",
   "predecessors": ["s0", "s1", "s2", "s3"],
-  "scenarios": [],
-  "gates": [],
-  "requirements": []
+  "scenarios": ["s4.manifest-version-compatibility"],
+  "gates": ["manifest-integrity", "fmt-check", "typecheck", "scenarios"],
+  "requirements": [
+    {
+      "id": "s4.manifest-version-contract",
+      "status": "implemented",
+      "description": "Extension manifests strictly decode duplicate-free JSON, validate canonical SemVer 2 versions and Ziggy range grammar, exclude provenance claims, and expose deterministic build-aware and prerelease-clause compatibility without claiming install/load integration or S4 stage completion."
+    }
+  ]
 }
