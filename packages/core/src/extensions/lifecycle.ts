@@ -161,6 +161,8 @@ export interface ExtensionLifecycleOptions {
   ) => Effect.Effect<boolean, ExtensionLifecycleError>;
   readonly processTimeoutMs?: number;
   readonly processOutputLimitBytes?: number;
+  /** Host environment source; only manifest-declared names cross into Extension processes. */
+  readonly environment?: Readonly<Record<string, string | undefined>>;
   /** Deterministic adapter cutpoints for fault-injection tests. */
   readonly nodeHooks?: ExtensionLifecycleNodeHooks;
 }
@@ -359,6 +361,10 @@ function completeInstall(
       files: catalog,
       treeDigest,
     };
+    const setupEnvironment =
+      (manifest.setup?.steps.length ?? 0) > 0
+        ? yield* extensionProcessEnvironment(options, manifest)
+        : {};
     for (const requirement of requirements) {
       if (requirement.entryKind !== "setup") continue;
       const executable = yield* resolveExecutable(
@@ -382,6 +388,7 @@ function completeInstall(
         executable.executionPath,
         requirement.argv,
         staged.packagePath,
+        setupEnvironment,
       );
       if (result.status !== "ok") {
         return yield* lifecycleFailure(
@@ -580,6 +587,7 @@ function doctorExtension(
       executable.executionPath,
       doctor.argv,
       installed.files.rootPath,
+      yield* extensionProcessEnvironment(options, installed.manifest),
     );
     return { extension: observation(installed), ...result };
   });
@@ -1063,17 +1071,45 @@ function runProcess(
   executablePath: string,
   argv: ReadonlyArray<string>,
   cwd: string,
+  environment: Readonly<Record<string, string>>,
 ) {
   return nodeOperation("process", `Failed to run Extension process ${executablePath}`, (signal) =>
     runExtensionProcess({
       executablePath,
       argv,
       cwd,
+      environment,
       timeoutMs: options.processTimeoutMs ?? 30_000,
       outputLimitBytes: options.processOutputLimitBytes ?? 64 * 1024,
       signal,
     }),
   );
+}
+
+function extensionProcessEnvironment(
+  options: ExtensionLifecycleOptions,
+  manifest: ExtensionManifest,
+): Effect.Effect<Readonly<Record<string, string>>, ExtensionLifecycleError> {
+  const source = extensionEnvironmentSource(options);
+  const environment: Record<string, string> = {};
+  for (const name of manifest.requires.env) {
+    const value = source[name];
+    if (value === undefined) {
+      return lifecycleFailure(
+        "process-environment",
+        "extension-operation-failed",
+        `Extension ${manifest.id} requires missing environment variable ${name}`,
+      );
+    }
+    environment[name] = value;
+  }
+  return Effect.succeed(environment);
+}
+
+function extensionEnvironmentSource(
+  options: ExtensionLifecycleOptions,
+): Readonly<Record<string, string | undefined>> {
+  return options.environment ?? process.env;
 }
 
 function activate(

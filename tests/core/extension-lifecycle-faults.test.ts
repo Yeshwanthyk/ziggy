@@ -128,6 +128,7 @@ test("setup interruption kills the supervised process before later side effects"
     executablePath: executable,
     argv: [executable],
     cwd: root,
+    environment: {},
     timeoutMs: 5_000,
     outputLimitBytes: 1024,
     signal: controller.signal,

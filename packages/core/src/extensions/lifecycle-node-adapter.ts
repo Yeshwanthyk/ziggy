@@ -931,6 +931,7 @@ export async function runExtensionProcess(input: {
   readonly executablePath: string;
   readonly argv: ReadonlyArray<string>;
   readonly cwd: string;
+  readonly environment: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
   readonly outputLimitBytes: number;
   readonly signal?: AbortSignal;
@@ -938,7 +939,7 @@ export async function runExtensionProcess(input: {
 }): Promise<ExtensionProcessResult> {
   const subprocess = Bun.spawn([input.executablePath, ...input.argv.slice(1)], {
     cwd: input.cwd,
-    env: process.env,
+    env: input.environment,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

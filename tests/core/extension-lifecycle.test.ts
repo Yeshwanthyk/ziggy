@@ -109,6 +109,128 @@ test("runs approved setup and doctor without a shell and bounds output", async (
   expect(result.truncated).toBeTrue();
 });
 
+test("setup and doctor receive only exact manifest-declared environment values", async () => {
+  const fixture = await createFixture("process-environment", {
+    setup: {
+      steps: [{ argv: ["setup/verify"] }],
+      doctor: { argv: ["setup/doctor"] },
+    },
+    requiresEnv: ["DECLARED", "SECRET"],
+    secrets: ["SECRET"],
+    files: {
+      "setup/verify":
+        '#!/bin/sh\nif [ "$DECLARED" != plain-value ] || [ "$SECRET" != secret-value ]; then exit 41; fi\n/usr/bin/env | /usr/bin/grep -q "^UNDECLARED=" && exit 42\n/usr/bin/env | /usr/bin/grep -q "^PATH=" && exit 43\n/usr/bin/env | /usr/bin/grep -q "^HOME=" && exit 44\nexit 0\n',
+      "setup/doctor":
+        '#!/bin/sh\nundeclared=unset; path_value=unset; home_value=unset\n/usr/bin/env | /usr/bin/grep -q "^UNDECLARED=" && undeclared=present\n/usr/bin/env | /usr/bin/grep -q "^PATH=" && path_value=present\n/usr/bin/env | /usr/bin/grep -q "^HOME=" && home_value=present\nprintf "%s|%s|%s|%s|%s" "$DECLARED" "$SECRET" "$undeclared" "$path_value" "$home_value"\n',
+    },
+  });
+  const hostEnvironment = {
+    DECLARED: "plain-value",
+    SECRET: "secret-value",
+    UNDECLARED: "synthetic-parent-secret",
+    PATH: "/synthetic/path",
+    HOME: "/synthetic/home",
+  };
+  const requirements = approvalRequirements(await install(fixture.profile, fixture.source, []));
+  const installed = await install(
+    fixture.profile,
+    fixture.source,
+    requirements.map((entry) => entry.fingerprint),
+    { environment: hostEnvironment },
+  );
+  expect(installed.status).toBe("installed");
+  const doctor = requirements.find((entry) => entry.entryKind === "doctor");
+  expect(doctor).toBeDefined();
+  if (doctor === undefined) return;
+  const result = await lifecycle(
+    fixture.profile,
+    (service) => service.doctor({ extensionId: "fixture", approval: doctor.fingerprint }),
+    { environment: hostEnvironment },
+  );
+  expect(result.status).toBe("ok");
+  expect(result.stdout).toBe("plain-value|secret-value|unset|unset|unset");
+});
+
+test("missing required environment fails setup and doctor before spawn", async () => {
+  let spawnCount = 0;
+  const nodeHooks = {
+    checkpoint(point: string) {
+      if (point === "process-after-spawn") spawnCount += 1;
+      return Promise.resolve();
+    },
+  };
+  const setupFixture = await createFixture("missing-setup-environment", {
+    setup: { steps: [{ argv: ["setup/verify"] }] },
+    requiresEnv: ["MISSING"],
+    files: { "setup/verify": "#!/bin/sh\nexit 0\n" },
+  });
+  const setupRequirements = approvalRequirements(
+    await install(setupFixture.profile, setupFixture.source, []),
+  );
+  await expect(
+    install(
+      setupFixture.profile,
+      setupFixture.source,
+      setupRequirements.map((entry) => entry.fingerprint),
+      { environment: {}, nodeHooks },
+    ),
+  ).rejects.toThrow("MISSING");
+  expect(spawnCount).toBe(0);
+
+  const doctorFixture = await createFixture("missing-doctor-environment", {
+    setup: { steps: [], doctor: { argv: ["setup/doctor"] } },
+    requiresEnv: ["MISSING"],
+    files: { "setup/doctor": "#!/bin/sh\nexit 0\n" },
+  });
+  const doctorRequirements = approvalRequirements(
+    await install(doctorFixture.profile, doctorFixture.source, []),
+  );
+  await install(
+    doctorFixture.profile,
+    doctorFixture.source,
+    doctorRequirements.map((entry) => entry.fingerprint),
+    { environment: {}, nodeHooks },
+  );
+  const doctor = doctorRequirements.find((entry) => entry.entryKind === "doctor");
+  expect(doctor).toBeDefined();
+  if (doctor === undefined) return;
+  await expect(
+    lifecycle(
+      doctorFixture.profile,
+      (service) => service.doctor({ extensionId: "fixture", approval: doctor.fingerprint }),
+      { environment: {}, nodeHooks },
+    ),
+  ).rejects.toThrow("MISSING");
+  expect(spawnCount).toBe(0);
+});
+
+test("an empty declared environment replaces process inheritance exactly", async () => {
+  const fixture = await createFixture("empty-process-environment", {
+    setup: { steps: [], doctor: { argv: ["env"] } },
+    requiresCommands: ["env"],
+  });
+  const overrides = { commandSearchPath: "/usr/bin", environment: {} };
+  const requirements = approvalRequirements(
+    await install(fixture.profile, fixture.source, [], overrides),
+  );
+  await install(
+    fixture.profile,
+    fixture.source,
+    requirements.map((entry) => entry.fingerprint),
+    overrides,
+  );
+  const doctor = requirements.find((entry) => entry.entryKind === "doctor");
+  expect(doctor).toBeDefined();
+  if (doctor === undefined) return;
+  const result = await lifecycle(
+    fixture.profile,
+    (service) => service.doctor({ extensionId: "fixture", approval: doctor.fingerprint }),
+    overrides,
+  );
+  expect(result.status).toBe("ok");
+  expect(result.stdout).toBe("");
+});
+
 test("identical reinstall preserves enabled state, approvals, and mutable state", async () => {
   const fixture = await createFixture("reinstall", {
     tools: [{ id: "fixture", path: "tools/fixture" }],
@@ -481,6 +603,9 @@ interface FixtureOptions {
   readonly files?: Readonly<Record<string, string>>;
   readonly ziggyRequires?: string;
   readonly version?: string;
+  readonly requiresEnv?: ReadonlyArray<string>;
+  readonly requiresCommands?: ReadonlyArray<string>;
+  readonly secrets?: ReadonlyArray<string>;
 }
 
 async function createFixture(name: string, options: FixtureOptions = {}) {
@@ -502,8 +627,12 @@ async function createFixture(name: string, options: FixtureOptions = {}) {
     ...(options.tools === undefined ? {} : { tools: options.tools }),
     adapters: [],
     ...(options.setup === undefined ? {} : { setup: options.setup }),
-    requires: { env: [], commands: [], os: [] },
-    permissions: { network: false, filesystem: "none", secrets: [] },
+    requires: {
+      env: options.requiresEnv ?? [],
+      commands: options.requiresCommands ?? [],
+      os: [],
+    },
+    permissions: { network: false, filesystem: "none", secrets: options.secrets ?? [] },
     distribution: { source: "fixture", license: "MIT" },
   };
   await writeSource(source, "extension.json", `${JSON.stringify(manifest, undefined, 2)}\n`);
