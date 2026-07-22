@@ -1215,7 +1215,7 @@
         "Observed mechanism: markdown setup/edit guide with deterministic postconditions",
         "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface"
       ],
-      "deliveryStatus": "planned"
+      "deliveryStatus": "landed"
     },
     {
       "id": "imsg",
@@ -2048,7 +2048,7 @@
         "Observed mechanism: baked-in core Skill",
         "S4 already requires this; omit packaging scripts and generic upstream material"
       ],
-      "deliveryStatus": "planned"
+      "deliveryStatus": "landed"
     },
     {
       "id": "skill-curator",

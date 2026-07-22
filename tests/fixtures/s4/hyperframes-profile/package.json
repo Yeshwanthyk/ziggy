@@ -1,0 +1,7 @@
+{
+  "name": "hyperframes-fixture-profile",
+  "private": true,
+  "scripts": {
+    "test": "bun test"
+  }
+}

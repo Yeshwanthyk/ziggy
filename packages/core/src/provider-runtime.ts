@@ -17,6 +17,7 @@ import {
 import { loadInstalledExtensionSkills } from "./extensions/skill-loader.ts";
 import { loadInstalledExtensionTools } from "./extensions/tool-loader.ts";
 import { ZIGGY_VERSION } from "./product-version.ts";
+import { loadCoreSkillWriting } from "./skills/skill-writing/index.ts";
 import type { FilesystemWorld } from "./world/filesystem.ts";
 import { readProfileSoul } from "./provider-node-adapter.ts";
 
@@ -220,13 +221,16 @@ function readProfileInstructions(profilePath: string): Effect.Effect<string, Pro
       try: () => readProfileSoul(profilePath),
       catch: providerFailure("Failed to read Profile SOUL.md"),
     });
-    const skills = yield* loadInstalledExtensionSkills(profilePath, ZIGGY_VERSION).pipe(
+    const coreSkill = yield* loadCoreSkillWriting.pipe(
+      Effect.mapError(providerFailure("Failed to load baked-in skill-writing Skill")),
+    );
+    const extensionSkills = yield* loadInstalledExtensionSkills(profilePath, ZIGGY_VERSION).pipe(
       Effect.mapError(providerFailure("Failed to load installed Extension Skills")),
     );
-    const skillPrompt = skills
+    const skillPrompt = [coreSkill, ...extensionSkills]
       .map((skill) => `<skill id="${skill.id}">\n${skill.content}\n</skill>`)
       .join("\n\n");
-    return skillPrompt.length === 0 ? soul : `${soul}\n\n<skills>\n${skillPrompt}\n</skills>`;
+    return `${soul}\n\n<skills>\n${skillPrompt}\n</skills>`;
   });
 }
 

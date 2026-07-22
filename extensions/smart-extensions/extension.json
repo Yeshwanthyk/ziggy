@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "smart-extensions",
+  "version": "0.0.0",
+  "name": "Smart Extensions",
+  "description": "Scaffolding for future Extension discovery assistance; S4 provides no behavior.",
+  "ziggy": {
+    "requires": ">=0.0.0"
+  },
+  "skills": [
+    {
+      "id": "smart-extensions",
+      "path": "skills/smart-extensions"
+    }
+  ],
+  "adapters": [],
+  "requires": {
+    "env": [],
+    "commands": [],
+    "os": []
+  },
+  "permissions": {
+    "network": false,
+    "filesystem": "none",
+    "secrets": []
+  },
+  "distribution": {
+    "source": "builtin:smart-extensions",
+    "license": "MIT"
+  }
+}

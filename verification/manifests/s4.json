@@ -4,11 +4,14 @@
   "status": "pending",
   "predecessors": ["s0", "s1", "s2", "s3"],
   "scenarios": [
+    "s4.blueprint-postconditions",
+    "s4.curated-extension-scaffolds",
     "s4.extension-daemon-lifecycle",
     "s4.extension-journal-recovery",
     "s4.extension-mutation-recovery",
     "s4.extension-tool-boundary",
-    "s4.manifest-version-compatibility"
+    "s4.manifest-version-compatibility",
+    "s4.skill-writing"
   ],
   "gates": ["manifest-integrity", "extension-integrity", "fmt-check", "typecheck", "scenarios"],
   "requirements": [
@@ -41,6 +44,16 @@
       "id": "s4.extension-journal-recovery",
       "status": "implemented",
       "description": "Schema-stamped Extension publication journals recover real process death to a complete old or new generation at every durable cut point, preserve mutable-state inode identity, clean idempotently, and serialize list discovery across the package publication gap."
+    },
+    {
+      "id": "s4.blueprints-and-core-skill",
+      "status": "implemented",
+      "description": "The HyperFrames Blueprint is a versioned Markdown edit guide with stable idempotent fixture postconditions, while the conformant baked-in skill-writing Skill is validated and injected before installed Extension Skills without adding runtime authority."
+    },
+    {
+      "id": "s4.curated-extension-scaffolds",
+      "status": "implemented",
+      "description": "Smart Memory and Smart Extensions ship only strict content-only Extension scaffolds with no Tool, setup, doctor, command, environment, secret, network, filesystem, or mutable-state authority."
     }
   ]
 }

@@ -192,9 +192,14 @@ test("production Provider composition binds filesystem credentials, Models, loop
   });
   faux.setResponses([
     (context) => {
-      expect(context.systemPrompt).toContain("fixture soul");
-      expect(context.systemPrompt).toContain('<skill id="fixture">');
-      expect(context.systemPrompt).toContain("Use the fixture capability.");
+      const systemPrompt = context.systemPrompt ?? "";
+      expect(systemPrompt).toContain("fixture soul");
+      expect(systemPrompt).toContain('<skill id="skill-writing">');
+      expect(systemPrompt).toContain('<skill id="fixture">');
+      expect(systemPrompt).toContain("Use the fixture capability.");
+      expect(systemPrompt.indexOf('<skill id="skill-writing">')).toBeLessThan(
+        systemPrompt.indexOf('<skill id="fixture">'),
+      );
       return fauxAssistantMessage("fixture response");
     },
   ]);

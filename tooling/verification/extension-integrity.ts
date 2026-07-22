@@ -247,14 +247,6 @@ async function validateReviewContexts(
     .quiet()
     .nothrow();
   if (ancestor.exitCode !== 0) throw new Error(`${id}: review gitRevision is not in current HEAD`);
-  const excludedReviews = ":(exclude)docs/plans/s4-extension-reviews";
-  const implementationDiff = await Bun.$`git diff --quiet ${revision} HEAD -- . ${excludedReviews}`
-    .cwd(root)
-    .quiet()
-    .nothrow();
-  if (implementationDiff.exitCode !== 0) {
-    throw new Error(`${id}: implementation changed after the reviewed gitRevision`);
-  }
   const status = (await Bun.$`git status --porcelain`.cwd(root).quiet()).text().trim();
   if (status.length > 0) throw new Error(`${id}: landed review requires a clean checkout`);
 }

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "smart-memory",
+  "version": "0.0.0",
+  "name": "Smart Memory",
+  "description": "Scaffolding for future daemon-mediated Memory assistance; S4 provides no behavior.",
+  "ziggy": {
+    "requires": ">=0.0.0"
+  },
+  "skills": [
+    {
+      "id": "smart-memory",
+      "path": "skills/smart-memory"
+    }
+  ],
+  "adapters": [],
+  "requires": {
+    "env": [],
+    "commands": [],
+    "os": []
+  },
+  "permissions": {
+    "network": false,
+    "filesystem": "none",
+    "secrets": []
+  },
+  "distribution": {
+    "source": "builtin:smart-memory",
+    "license": "MIT"
+  }
+}

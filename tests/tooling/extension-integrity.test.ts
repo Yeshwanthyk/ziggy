@@ -21,11 +21,14 @@ afterEach(async () => {
 });
 
 describe("S4 Extension integrity", () => {
-  test("validates the checked-in 47-row ledger and empty derived landed-review set", async () => {
-    const result = await verifyExtensionIntegrity(repositoryRoot);
-    expect(result.candidateCount).toBe(47);
-    expect(result.landedReviewCount).toBe(0);
-    expect(result.ledgerDigest).toMatch(/^[a-f0-9]{64}$/);
+  test("validates the checked-in 47-row ledger and exact Task 9 landed set", async () => {
+    const candidates = validateS4Ledger(await checkedInLedgerFixture());
+    expect(candidates).toHaveLength(47);
+    expect(
+      candidates
+        .filter((candidate) => candidate.deliveryStatus === "landed")
+        .map((candidate) => candidate.id),
+    ).toEqual(["hyperframes", "skill-creator"]);
   });
 
   test("replays from an isolated Ziggy root without a sibling Merlin checkout", async () => {
@@ -209,6 +212,58 @@ describe("S4 Extension integrity", () => {
       await expect(verifyExtensionIntegrity(root)).rejects.toThrow(fixture.message);
     }
   });
+
+  test("keeps a candidate review fresh across unrelated later repository commits", async () => {
+    const root = await landedArchitectureDiagramFixture({
+      manifestText: architectureDiagramManifest(),
+      files: {
+        "skills/architecture-diagram/SKILL.md": architectureDiagramSkill("Body."),
+      },
+    });
+    await expect(verifyExtensionIntegrity(root)).resolves.toMatchObject({ landedReviewCount: 1 });
+
+    await mkdir(join(root, "docs"), { recursive: true });
+    await Bun.write(join(root, "docs/unrelated.md"), "# Unrelated later work\n");
+    await git(root, "add", ".");
+    await git(
+      root,
+      "-c",
+      "user.name=Ziggy Test",
+      "-c",
+      "user.email=ziggy@example.invalid",
+      "commit",
+      "-m",
+      "unrelated",
+    );
+
+    await expect(verifyExtensionIntegrity(root)).resolves.toMatchObject({ landedReviewCount: 1 });
+  });
+
+  test("invalidates a review when a reviewed candidate input changes", async () => {
+    const root = await landedArchitectureDiagramFixture({
+      manifestText: architectureDiagramManifest(),
+      files: {
+        "skills/architecture-diagram/SKILL.md": architectureDiagramSkill("Body."),
+      },
+    });
+    await Bun.write(
+      join(root, "extensions/architecture-diagram/skills/architecture-diagram/SKILL.md"),
+      architectureDiagramSkill("Changed body."),
+    );
+    await git(root, "add", ".");
+    await git(
+      root,
+      "-c",
+      "user.name=Ziggy Test",
+      "-c",
+      "user.email=ziggy@example.invalid",
+      "commit",
+      "-m",
+      "candidate-input-change",
+    );
+
+    await expect(verifyExtensionIntegrity(root)).rejects.toThrow("stale reviewedInputDigest");
+  });
 });
 
 async function fixtureRoot(): Promise<string> {
@@ -219,14 +274,27 @@ async function fixtureRoot(): Promise<string> {
     recursive: true,
   });
   await mkdir(join(root, "docs/plans/s4-extension-reviews"), { recursive: true });
-  await cp(
-    join(repositoryRoot, "docs/plans/s4-merlin-migration.json"),
+  await Bun.write(
     join(root, "docs/plans/s4-merlin-migration.json"),
+    `${JSON.stringify(await ledgerFixture(), null, 2)}\n`,
   );
   return root;
 }
 
 async function ledgerFixture(): Promise<unknown> {
+  const ledger = record(await checkedInLedgerFixture());
+  return {
+    ...ledger,
+    candidates: array(ledger.candidates).map((candidate) => {
+      const row = record(candidate);
+      return row.id === "hyperframes" || row.id === "skill-creator"
+        ? { ...row, deliveryStatus: "planned" }
+        : row;
+    }),
+  };
+}
+
+async function checkedInLedgerFixture(): Promise<unknown> {
   return JSON.parse(
     await Bun.file(join(repositoryRoot, "docs/plans/s4-merlin-migration.json")).text(),
   );

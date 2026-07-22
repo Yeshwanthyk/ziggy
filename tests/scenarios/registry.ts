@@ -250,6 +250,26 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
   },
   {
     schemaVersion: 1,
+    id: "s4.blueprint-postconditions",
+    stage: "s4",
+    file: "tests/scenarios/s4-blueprint-postconditions.test.ts",
+    seed: "s4-hyperframes-blueprint-v1",
+    schedule: "serial-fixture-application-reapplication-and-exact-postcondition-check",
+    boundaryConfiguration:
+      "temporary-owner-project-markdown-edit-script-no-process-launch-and-source-fixture-canary",
+  },
+  {
+    schemaVersion: 1,
+    id: "s4.curated-extension-scaffolds",
+    stage: "s4",
+    file: "tests/scenarios/s4-curated-extension-scaffolds.test.ts",
+    seed: "s4-curated-extension-scaffolds-v1",
+    schedule: "serial-static-package-schema-and-authority-inspection",
+    boundaryConfiguration:
+      "checked-in-smart-memory-and-smart-extensions-content-only-package-trees",
+  },
+  {
+    schemaVersion: 1,
     id: "s4.extension-daemon-lifecycle",
     stage: "s4",
     file: "tests/scenarios/s4-extension-daemon-lifecycle.test.ts",
@@ -297,5 +317,15 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
     seed: "s4-manifest-version-v1",
     schedule: "serial-canonical-version-range-and-strict-json-fixtures",
     boundaryConfiguration: "dependency-free-semver-and-duplicate-key-parser",
+  },
+  {
+    schemaVersion: 1,
+    id: "s4.skill-writing",
+    stage: "s4",
+    file: "tests/scenarios/s4-skill-writing.test.ts",
+    seed: "s4-core-skill-writing-v1",
+    schedule: "serial-baked-metadata-load-production-prompt-injection-and-provider-turn",
+    boundaryConfiguration:
+      "temporary-profile-static-text-import-empty-extension-set-and-faux-provider",
   },
 ];
