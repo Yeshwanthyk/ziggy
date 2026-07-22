@@ -159,8 +159,8 @@ errors.ts,result.ts}` — the `Harness`/`Adapter`/`PersistenceAdapter` "waist" c
 - **URL:** https://github.com/Effect-TS/effect
 - **Pinned ref:** tag `effect@4.0.0-beta.99`, commit `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`
   (branch `main`)
-- **Local:** to be vendored as a git submodule at `vendor/effect` in S0 (not yet added as of this
-  writing — see `plans/s0-foundation.md`)
+- **Local:** vendored as a git submodule at `vendor/effect` at the pinned commit above (see
+  `plans/s0-foundation.md`)
 - **What:** The v4-beta effect-system runtime ziggy's daemon/loop is built on.
 - **Informs:** D15, and by extension every stage that writes core runtime code (S0-S7).
 - **Read:**

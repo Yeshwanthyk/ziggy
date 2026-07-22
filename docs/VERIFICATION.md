@@ -106,7 +106,7 @@ and cleans disposable state after runtime-capability failure. The non-host platf
 
 ## Verifier commands
 
-The intended end-state root commands are:
+The current root commands are:
 
 ```text
 bun run verify:s0
@@ -116,7 +116,7 @@ bun run verify:s7
 bun run verify:all
 ```
 
-S0 creates every command and the manifest-driven runner. Before a stage exists, its verifier may
+S0 created every command and the manifest-driven runner. Before a stage exists, its verifier may
 report `not implemented` successfully only when its tracked manifest declares no behavior yet; it
 must not silently skip declared scenarios. As behavior lands, the same change updates the relevant
 scenario, stage/slice manifest, expected evidence, and plan checklist. `verify:all` is the local

@@ -15,6 +15,21 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 | S6    | Reach      | First gateway (Telegram) proves the dependency-free leaf-client pattern — **v1 release line**      | [s6-reach.md](plans/s6-reach.md)           |
 | S7    | Elsewhere  | Cloudflare world adapter, GUI client, more gateways — all post-v1                                  | [s7-elsewhere.md](plans/s7-elsewhere.md)   |
 
+## Current checkpoint
+
+Tracked verification manifests are the status authority. S0 through S3 are `implemented`; S4 is
+`pending`. The S4 Extension contract, version/manifest validation, Skill loader, daemon lifecycle,
+approval/seal recovery, compiled `defineTool` boundary, 47-row Merlin ledger, HyperFrames
+Blueprint, baked-in skill-writing Skill, and inert `smart-memory`/`smart-extensions` scaffolds are
+implemented and independently verified. The ledger currently has two landed, independently
+reviewed S4 candidates: `hyperframes` and `skill-creator`.
+
+S4 still has 33 planned S4-owned candidate rows: 14 `skill-only` and 19
+`supervised-command`. The current runtime supervises approved setup and doctor argv only; it does
+not yet expose a callable supervised-command Tool boundary. Candidate waves must either fit the
+existing Skill-only contract or wait for that generic boundary. S4 closes only after the remaining
+accepted waves and the integrated `verify:s4`, `verify:all`, and `bun run check` review pass.
+
 ## Sequencing rules
 
 1. **No stage starts before the prior stage is done.** That means its acceptance criteria pass, its deterministic verifier and all predecessor gates pass, its evidence is replayable, and its required agentic through-loop is complete. S2 depends on S1's real session engine; S3 depends on S2's real attach socket.

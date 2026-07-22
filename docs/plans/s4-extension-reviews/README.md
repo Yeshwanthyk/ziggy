@@ -8,3 +8,9 @@ has `deliveryStatus: "landed"`, targets an S4-owned Extension, core Skill, or Bl
 Reviews conform to `verification/schemas/s4-extension-review-v1.schema.json`. They are independent,
 bind a clean Git revision and canonical reviewed-input digest, set exact file/dependency/permission/
 subprocess/state/support budgets, and name registered deterministic S4 capability scenarios.
+
+At the current checkpoint the exact derived review set is `hyperframes.json` and
+`skill-creator.json`. Core-Skill reviews include the mechanism-owned production integration file
+`packages/core/src/provider-runtime.ts` in discovery, budget validation, and the reviewed-input
+digest, so removing or reordering the baked-in Skill injection invalidates the review. Unrelated
+later repository commits do not.

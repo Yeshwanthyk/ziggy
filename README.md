@@ -2,11 +2,17 @@
 
 Ziggy is a local-first personal-agent runtime; start with the [north star](docs/NORTH-STAR.md), follow the staged [roadmap](docs/ROADMAP.md), and read the repository [agent guide](AGENTS.md) before contributing.
 
-S0 Foundation, S1 Waist, S2 Daemon, and S3 Face are complete. S3 includes the shared Attach Client, CLI one-shots, Session listing, a protocol-only TUI, real API-key and browser-OAuth authentication, and a real Luna-high model/TUI journey. Hosted CI remains disabled while the repository is private; implemented-S3 verification requires a current independent findings file:
+S0 Foundation, S1 Waist, S2 Daemon, and S3 Face are complete. S3 includes the shared Attach Client, CLI one-shots, Session listing, a protocol-only TUI, real API-key and browser-OAuth authentication, and a real Luna-high model/TUI journey. Hosted CI remains disabled while the repository is private; findings-bearing verification requires a current independent findings file for the selected stage. Current S4 work uses:
 
 ```sh
-bun tooling/verification/runner.ts all --agent-findings /absolute/path/to/ziggy-s3-findings.json
+bun tooling/verification/runner.ts all --agent-findings /absolute/path/to/ziggy-s4-findings.json
 ```
+
+S4 Molding remains pending. Its strict manifest/version contract, closed Merlin ledger,
+daemon-owned local Extension lifecycle, sealed Skill/Tool loaders, crash-safe publication,
+HyperFrames Blueprint, baked-in skill-writing Skill, and content-only curated scaffolds are
+implemented and independently verified. Callable supervised runtime commands, the remaining
+accepted S4 ports, and integrated stage closure are not implemented yet.
 
 ## Provider authentication
 
