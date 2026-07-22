@@ -3,8 +3,8 @@
   "id": "hyperframes",
   "review": {
     "role": "independent",
-    "reviewedAt": "2026-07-22T20:42:00.000Z",
-    "gitRevision": "85015b74229fd20c5d9e37d18fc683a878de7508",
+    "reviewedAt": "2026-07-22T21:28:27.000Z",
+    "gitRevision": "531491fb16e738aa9f30c8ac9156ab713b8411fe",
     "reviewedInputDigest": "bb306a711c4eaac66b677f0826b4aa30c1fc5f1d72b54bafed15d42df5fb4389",
     "contexts": {
       "scout": {
@@ -16,8 +16,8 @@
         "completedAt": "2026-07-22T20:37:12.000Z"
       },
       "verifier": {
-        "id": "task-9-independent-review-remediation",
-        "startedAt": "2026-07-22T20:38:00.000Z"
+        "id": "task-9-independent-review-main-lineage-531491f",
+        "startedAt": "2026-07-22T21:25:00.000Z"
       }
     }
   },

@@ -3,8 +3,8 @@
   "id": "skill-creator",
   "review": {
     "role": "independent",
-    "reviewedAt": "2026-07-22T20:42:00.000Z",
-    "gitRevision": "85015b74229fd20c5d9e37d18fc683a878de7508",
+    "reviewedAt": "2026-07-22T21:28:27.000Z",
+    "gitRevision": "531491fb16e738aa9f30c8ac9156ab713b8411fe",
     "reviewedInputDigest": "6dcafc4f123e7f5bf111805e08547d4ab34be2e0b5b5be1ae245f067b860080d",
     "contexts": {
       "scout": {
@@ -16,8 +16,8 @@
         "completedAt": "2026-07-22T20:37:12.000Z"
       },
       "verifier": {
-        "id": "task-9-independent-review-remediation",
-        "startedAt": "2026-07-22T20:38:00.000Z"
+        "id": "task-9-independent-review-main-lineage-531491f",
+        "startedAt": "2026-07-22T21:25:00.000Z"
       }
     }
   },
