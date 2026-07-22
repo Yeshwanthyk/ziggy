@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectProfileLock, ProfileLockCoordinator } from "../../packages/core/src/index.ts";
+import type { ExtensionInstallResponse } from "../../packages/protocol/src/index.ts";
 import { Effect, Layer } from "effect";
 import {
   DaemonControlError,
@@ -14,6 +15,7 @@ import {
   serveDaemon,
   type DaemonProbeResult,
 } from "../../packages/ziggy/src/daemon.ts";
+import { runProductionExtension } from "../../packages/ziggy/src/cli-client.ts";
 import { runEffect } from "../testkit/effect.ts";
 import {
   emitVerificationObservation,
@@ -48,6 +50,158 @@ test("foreground daemon owns the Profile, serves protocol readiness, and cleans 
   expect(await runEffect(inspectProfileLock({ profilePath: profile }))).toEqual({
     state: "absent",
   });
+});
+
+test("production daemon owns the complete Extension CLI lifecycle across restart", async () => {
+  const profile = await createProfile("extension-lifecycle");
+  const source = await createProcessExtensionSource();
+  const canaryPath = join(profile, "owner-canary.txt");
+  await writeFile(canaryPath, "owner bytes\n");
+  const sourceManifestBefore = await readFile(join(source, "extension.json"));
+  const sourceDoctorBefore = await readFile(join(source, "setup", "doctor"));
+  const setupMarker = join(source, "setup-ran.txt");
+  const setupScript = `#!/bin/sh\nprintf 'setup complete\\n' > ${JSON.stringify(setupMarker)}\n`;
+  await writeFile(join(source, "setup", "install"), setupScript, { mode: 0o700 });
+
+  const firstAbort = new AbortController();
+  const firstDaemon = runProductionEffect(
+    serveDaemon({ profilePath: profile, signal: firstAbort.signal }),
+  );
+  const firstReady = await waitUntilReady(profile);
+  if (firstReady.status !== "ready") throw new Error("Fixture daemon was not ready");
+  const setup = {
+    probe: (path: string) => probeDaemon({ profilePath: path }),
+    startAbsent: () =>
+      Effect.fail(
+        new DaemonControlError({
+          operation: "unexpected-start",
+          message: "Fixture daemon must already be ready",
+        }),
+      ),
+  };
+
+  try {
+    const approval = await runEffect(
+      runProductionExtension(
+        profile,
+        { action: "install", sourcePath: source, approvals: [] },
+        setup,
+      ),
+    );
+    if (!isInstallResponse(approval)) throw new Error("Expected Extension install response");
+    expect(approval.status).toBe("approval-required");
+    if (approval.status !== "approval-required") {
+      throw new Error("Expected exact Extension approval requirements");
+    }
+    expect(approval.requirements.map((entry) => entry.entryKind).sort()).toEqual([
+      "doctor",
+      "setup",
+      "tool",
+    ]);
+    expect(await Bun.file(setupMarker).exists()).toBeFalse();
+
+    const installed = await runEffect(
+      runProductionExtension(
+        profile,
+        {
+          action: "install",
+          sourcePath: source,
+          approvals: approval.requirements.map((entry) => entry.fingerprint),
+        },
+        setup,
+      ),
+    );
+    expect(installed).toMatchObject({
+      status: "installed",
+      extension: { id: "fixture", enabled: false, health: "ready" },
+    });
+    if (!isInstallResponse(installed) || installed.status !== "installed") {
+      throw new Error("Expected installed Extension response");
+    }
+    expect(await readFile(setupMarker, "utf8")).toBe("setup complete\n");
+
+    expect(await runEffect(runProductionExtension(profile, { action: "list" }, setup))).toEqual([
+      installed.extension,
+    ]);
+    const enableApproval = await runEffect(
+      runProductionExtension(
+        profile,
+        { action: "enable", extensionId: "fixture", approvals: [] },
+        setup,
+      ),
+    );
+    if (
+      typeof enableApproval !== "object" ||
+      enableApproval === null ||
+      !("status" in enableApproval) ||
+      enableApproval.status !== "approval-required"
+    ) {
+      throw new Error("Expected enable approval requirements");
+    }
+    expect(enableApproval.status).toBe("approval-required");
+    const enabled = await runEffect(
+      runProductionExtension(
+        profile,
+        {
+          action: "enable",
+          extensionId: "fixture",
+          approvals: enableApproval.requirements.map((entry) => entry.fingerprint),
+        },
+        setup,
+      ),
+    );
+    expect(enabled).toMatchObject({
+      status: "enabled",
+      extension: { id: "fixture", enabled: true, health: "ready" },
+    });
+
+    const doctorApproval = enableApproval.requirements.find(
+      (entry) => entry.entryKind === "doctor",
+    );
+    if (doctorApproval === undefined) throw new Error("Missing doctor approval");
+    const doctor = await runEffect(
+      runProductionExtension(
+        profile,
+        { action: "doctor", extensionId: "fixture", approval: doctorApproval.fingerprint },
+        setup,
+      ),
+    );
+    expect(doctor).toMatchObject({
+      status: "ok",
+      extension: { id: "fixture", enabled: true },
+      exitCode: 0,
+      stdout: "doctor:healthy\n",
+      stderr: "",
+      truncated: false,
+    });
+
+    expect(
+      await runEffect(
+        runProductionExtension(profile, { action: "disable", extensionId: "fixture" }, setup),
+      ),
+    ).toMatchObject({ id: "fixture", enabled: false, health: "ready" });
+    expect(await readFile(canaryPath, "utf8")).toBe("owner bytes\n");
+    expect(await readFile(join(source, "extension.json"))).toEqual(sourceManifestBefore);
+    expect(await readFile(join(source, "setup", "doctor"))).toEqual(sourceDoctorBefore);
+  } finally {
+    firstAbort.abort();
+    await firstDaemon;
+  }
+
+  const secondAbort = new AbortController();
+  const secondDaemon = runProductionEffect(
+    serveDaemon({ profilePath: profile, signal: secondAbort.signal }),
+  );
+  await waitUntilReady(profile);
+  try {
+    expect(await runEffect(runProductionExtension(profile, { action: "list" }, setup))).toEqual([
+      expect.objectContaining({ id: "fixture", enabled: false, health: "ready" }),
+    ]);
+    expect(await readFile(canaryPath, "utf8")).toBe("owner bytes\n");
+  } finally {
+    secondAbort.abort();
+    await secondDaemon;
+  }
 });
 
 test("production daemon fails before readiness for unknown configured Provider and model", async () => {
@@ -336,6 +490,38 @@ async function createProfile(name: string): Promise<string> {
   return profile;
 }
 
+async function createProcessExtensionSource(): Promise<string> {
+  const source = await mkdtemp(join(tmpdir(), "ziggy-daemon-extension-source-"));
+  profiles.push(source);
+  await mkdir(join(source, "tools", "fixture"), { recursive: true });
+  await mkdir(join(source, "setup"), { recursive: true });
+  const manifest = {
+    schemaVersion: 1,
+    id: "fixture",
+    version: "1.0.0",
+    name: "Fixture",
+    description: "Production attach lifecycle fixture.",
+    ziggy: { requires: ">=0.0.0 <=9.0.0" },
+    skills: [],
+    tools: [{ id: "fixture", path: "tools/fixture" }],
+    adapters: [],
+    setup: {
+      steps: [{ argv: ["setup/install"] }],
+      doctor: { argv: ["setup/doctor"] },
+    },
+    requires: { env: [], commands: [], os: [] },
+    permissions: { network: false, filesystem: "profile", secrets: [] },
+    distribution: { source: "fixture", license: "MIT" },
+  };
+  await writeFile(join(source, "extension.json"), `${JSON.stringify(manifest, undefined, 2)}\n`);
+  await writeFile(join(source, "tools", "fixture", "tool.ts"), "export const inert = true;\n");
+  await writeFile(join(source, "setup", "install"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await writeFile(join(source, "setup", "doctor"), "#!/bin/sh\nprintf 'doctor:healthy\\n'\n", {
+    mode: 0o700,
+  });
+  return source;
+}
+
 async function waitUntilReady(profilePath: string): Promise<DaemonProbeResult> {
   let latest = await runEffect(probeDaemon({ profilePath }));
   for (let attempt = 0; attempt < 100 && latest.status !== "ready"; attempt += 1) {
@@ -344,6 +530,13 @@ async function waitUntilReady(profilePath: string): Promise<DaemonProbeResult> {
   }
   if (latest.status !== "ready") throw new Error("Fixture daemon did not become ready");
   return latest;
+}
+
+function isInstallResponse(value: unknown): value is ExtensionInstallResponse {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return (
+    "status" in value && (value.status === "approval-required" || value.status === "installed")
+  );
 }
 
 const ProductionDaemonLayer = Layer.merge(DaemonReadiness.layer, ProfileLockCoordinator.layer);

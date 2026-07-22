@@ -7,6 +7,7 @@ import {
   createDaemonKernel,
   createFilesystemWorld,
   createProviderRuntimeComposition,
+  ExtensionLifecycle,
   inspectProfileLock,
   type ProfileLockInspection,
   ProviderRuntimeError,
@@ -208,11 +209,14 @@ export function serveDaemon(options: ServeDaemonOptions) {
           createRuntime: composition.createRuntime,
         }),
         (kernel) =>
-          Effect.acquireUseRelease(
-            createAttachServer({ kernel, auth: composition.auth }),
-            () => waitForAbort(options.signal),
-            (server) => server.close,
-          ),
+          Effect.gen(function* () {
+            const extensions = yield* ExtensionLifecycle;
+            return yield* Effect.acquireUseRelease(
+              createAttachServer({ kernel, auth: composition.auth, extensions }),
+              () => waitForAbort(options.signal),
+              (server) => server.close,
+            );
+          }).pipe(Effect.provide(ExtensionLifecycle.layer({ profilePath: kernel.profilePath }))),
         (kernel) => kernel.close,
       );
     }),
