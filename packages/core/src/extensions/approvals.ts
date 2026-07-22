@@ -31,6 +31,7 @@ export const ExtensionApprovalsSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   extensionId: Schema.String,
   epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  invalidated: Schema.Boolean,
   approvals: Schema.Array(ExtensionApprovalRequirementSchema).check(
     Schema.makeFilter(approvalsAreCanonical, {
       expected: "unique approvals sorted by fingerprint",

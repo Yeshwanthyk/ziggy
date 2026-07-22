@@ -11,18 +11,26 @@ import {
 import {
   activateStagedExtension,
   cleanupStagedExtension,
+  type ExtensionLifecycleNodeHooks,
   inspectLocalExtensionSource,
+  installedExtensionMatchesSeal,
   type ExtensionProcessResult,
+  type InstalledExtensionAuthorityFiles,
   type InstalledExtensionFiles,
   listInstalledExtensionIds,
+  readInstalledExtensionAuthorityFiles,
   readInstalledExtensionFiles,
+  recoverExtensionTransactions,
   replaceExtensionAuthorityJson,
   resolveExtensionExecutable,
   runExtensionProcess,
   stageLocalExtensionPackage,
   type StagedExtensionPackage,
 } from "./lifecycle-node-adapter.ts";
-import { withExtensionLifecyclePermit } from "./lifecycle-coordinator.ts";
+import {
+  withExtensionLifecyclePermit,
+  withExtensionPublicationPermit,
+} from "./lifecycle-coordinator.ts";
 import { decodeExtensionManifestJson, type ExtensionManifest } from "./manifest.ts";
 import {
   computeTreeDigest,
@@ -153,6 +161,8 @@ export interface ExtensionLifecycleOptions {
   ) => Effect.Effect<boolean, ExtensionLifecycleError>;
   readonly processTimeoutMs?: number;
   readonly processOutputLimitBytes?: number;
+  /** Deterministic adapter cutpoints for fault-injection tests. */
+  readonly nodeHooks?: ExtensionLifecycleNodeHooks;
 }
 
 export interface ExtensionLifecycleService {
@@ -188,27 +198,40 @@ interface InstalledRecord {
   readonly approvals: ExtensionApprovals;
 }
 
+interface InstalledAuthorityRecord {
+  readonly provenance: ExtensionProvenance;
+  readonly state: ExtensionEnabledState;
+  readonly approvals: ExtensionApprovals;
+}
+
 function makeExtensionLifecycle(
   options: ExtensionLifecycleOptions,
-): Effect.Effect<ExtensionLifecycleService> {
-  return Effect.sync(() => {
-    const serialized = <Value>(
-      key: string,
-      operation: Effect.Effect<Value, ExtensionLifecycleError>,
-    ) => withExtensionLifecyclePermit(options.profilePath, key, operation);
-    const install = (request: ExtensionInstallRequest) =>
-      installExtension(options, request).pipe(
-        Effect.flatMap((prepared) => serialized(prepared.extensionId, prepared.effect)),
-      );
-    const enable = (request: ExtensionEnableRequest) =>
-      serialized(request.extensionId, enableExtension(options, request));
-    const disable = (request: ExtensionDisableRequest) =>
-      serialized(request.extensionId, disableExtension(options, request));
-    const doctor = (request: ExtensionDoctorRequest) =>
-      serialized(request.extensionId, doctorExtension(options, request));
-    const list = () => listExtensions(options, serialized);
-    return ExtensionLifecycle.of({ install, enable, disable, list, doctor });
-  });
+): Effect.Effect<ExtensionLifecycleService, ExtensionLifecycleError> {
+  return withExtensionPublicationPermit(
+    options.profilePath,
+    nodeOperation("recovery", "Failed to recover Extension transactions", () =>
+      recoverExtensionTransactions(options.profilePath),
+    ),
+  ).pipe(
+    Effect.map(() => {
+      const serialized = <Value>(
+        key: string,
+        operation: Effect.Effect<Value, ExtensionLifecycleError>,
+      ) => withExtensionLifecyclePermit(options.profilePath, key, operation);
+      const install = (request: ExtensionInstallRequest) =>
+        installExtension(options, request).pipe(
+          Effect.flatMap((prepared) => serialized(prepared.extensionId, prepared.effect)),
+        );
+      const enable = (request: ExtensionEnableRequest) =>
+        serialized(request.extensionId, enableExtension(options, request));
+      const disable = (request: ExtensionDisableRequest) =>
+        serialized(request.extensionId, disableExtension(options, request));
+      const doctor = (request: ExtensionDoctorRequest) =>
+        serialized(request.extensionId, doctorExtension(options, request));
+      const list = () => listExtensions(options, serialized);
+      return ExtensionLifecycle.of({ install, enable, disable, list, doctor });
+    }),
+  );
 }
 
 function installExtension(
@@ -237,7 +260,7 @@ function installExtension(
                     "Extension source identity changed while acquiring its lifecycle lock",
                   ),
             ),
-            Effect.ensuring(cleanupStage(staged)),
+            Effect.ensuring(cleanupStage(options, staged)),
           ),
         ),
       ),
@@ -270,23 +293,36 @@ function completeInstall(
     const catalog = files.flatMap((file) => (file === undefined ? [] : [file]));
     const treeDigest = computeTreeDigest(catalog);
     const trustTier = yield* deriveTrust(options, request, manifest, treeDigest);
-    const previous = yield* readInstalled(options, manifest.id, false);
+    let previous = yield* readInstalledAuthority(options, manifest.id);
+    const previousFiles = previous?.provenance.files;
+    const activeMatchesAuthority =
+      previousFiles !== undefined &&
+      (yield* nodeOperation("install", `Failed to inspect active Extension ${manifest.id}`, () =>
+        installedExtensionMatchesSeal(options.profilePath, manifest.id, previousFiles),
+      ));
+    if (previous !== undefined && !activeMatchesAuthority && !previous.approvals.invalidated) {
+      previous = invalidatedAuthorityRecord(previous);
+      yield* writeAuthority(options, manifest.id, "approvals.json", json(previous.approvals));
+    }
     const identical =
       previous !== undefined &&
+      activeMatchesAuthority &&
       previous.provenance.extensionVersion === manifest.version &&
       previous.provenance.treeDigest === treeDigest &&
       previous.provenance.trustTier === trustTier;
     if (
       identical &&
       previous !== undefined &&
+      !previous.approvals.invalidated &&
       previous.approvals.approvals.length === manifestExecutionEntryCount(manifest)
     ) {
-      return { status: "installed", extension: observation(previous) };
+      const installed = yield* readInstalledRequired(options, manifest.id, false);
+      return { status: "installed", extension: observation(installed) };
     }
     const epoch =
       previous === undefined
         ? 0
-        : identical
+        : previous.approvals.invalidated || identical
           ? previous.approvals.epoch
           : previous.approvals.epoch + 1;
     const requirements = yield* makeApprovalRequirements(
@@ -368,12 +404,13 @@ function completeInstall(
       schemaVersion: 1,
       extensionId: manifest.id,
       epoch,
+      invalidated: false,
       approvals: canonicalApprovals(requirements),
     };
     const state: ExtensionEnabledState = {
       schemaVersion: 1,
       extensionId: manifest.id,
-      enabled: previous?.state.enabled ?? false,
+      enabled: false,
     };
     yield* activate(options, manifest.id, staged, state, provenance, approvals);
     const installed = yield* readInstalledRequired(options, manifest.id, false);
@@ -388,6 +425,13 @@ function enableExtension(
   return Effect.gen(function* () {
     const installed = yield* readInstalledRequired(options, request.extensionId, true);
     yield* validateCompatibility(options, installed.manifest);
+    if (installed.approvals.invalidated) {
+      return yield* lifecycleFailure(
+        "enable",
+        "extension-mutated",
+        `Extension ${request.extensionId} was invalidated by immutable mutation; reinstall is required`,
+      );
+    }
     const requirements =
       installed.approvals.approvals.length === 0 &&
       manifestExecutionEntryCount(installed.manifest) > 0
@@ -408,14 +452,6 @@ function enableExtension(
         extensionId: installed.manifest.id,
         requirements,
       };
-    }
-    if (installed.approvals.approvals.length !== requirements.length) {
-      yield* writeAuthority(
-        options,
-        installed.manifest.id,
-        "approvals.json",
-        json({ ...installed.approvals, approvals: requirements }),
-      );
     }
     if (!installed.state.enabled) {
       yield* writeAuthority(
@@ -455,15 +491,30 @@ function listExtensions(
     effect: Effect.Effect<Value, ExtensionLifecycleError>,
   ) => Effect.Effect<Value, ExtensionLifecycleError>,
 ): Effect.Effect<ReadonlyArray<ExtensionObservation>, ExtensionLifecycleError> {
-  return nodeOperation("list", "Failed to list installed Extensions", () =>
-    listInstalledExtensionIds(options.profilePath),
+  return withExtensionPublicationPermit(
+    options.profilePath,
+    nodeOperation("list", "Failed to list installed Extensions", () =>
+      listInstalledExtensionIds(options.profilePath),
+    ),
   ).pipe(
     Effect.flatMap((ids) =>
       Effect.forEach(ids, (id) =>
         serialized(
           id,
-          readInstalledRequired(options, id, false).pipe(
-            Effect.map(observation),
+          inspectInstalled(options, id, true).pipe(
+            Effect.flatMap((inspection) =>
+              inspection === undefined
+                ? lifecycleFailure(
+                    "list",
+                    "extension-not-found",
+                    `Extension ${id} is not installed`,
+                  )
+                : Effect.succeed(
+                    inspection.mutated
+                      ? mutatedObservation(inspection.record)
+                      : observation(inspection.record),
+                  ),
+            ),
             Effect.catch((error) =>
               Effect.succeed<ExtensionObservation>({
                 id,
@@ -557,27 +608,50 @@ function readInstalled(
   extensionId: string,
   advanceMutation: boolean,
 ): Effect.Effect<InstalledRecord | undefined, ExtensionLifecycleError> {
-  return nodeOperation("read", `Failed to read Extension ${extensionId}`, () =>
-    readInstalledExtensionFiles(options.profilePath, extensionId),
-  ).pipe(
-    Effect.flatMap((files) => {
-      if (files === undefined) return Effect.succeed(undefined);
-      return decodeInstalled(files).pipe(
-        Effect.flatMap((record) => {
-          const sealError = validateExtensionSeal(
-            record.manifest,
-            record.provenance,
-            files.tree.files,
-          );
-          if (sealError === undefined) return Effect.succeed(record);
-          const invalid = lifecycleFailure("read", "extension-mutated", sealError);
-          return advanceMutation
-            ? advanceApprovalEpoch(options, record).pipe(Effect.andThen(invalid))
-            : invalid;
-        }),
-      );
+  return inspectInstalled(options, extensionId, advanceMutation).pipe(
+    Effect.flatMap((inspection) => {
+      if (inspection === undefined) return Effect.succeed(undefined);
+      return inspection.mutated
+        ? lifecycleFailure(
+            "read",
+            "extension-mutated",
+            `Extension ${extensionId} was invalidated by immutable mutation; reinstall is required`,
+          )
+        : Effect.succeed(inspection.record);
     }),
   );
+}
+
+interface InstalledInspection {
+  readonly record: InstalledRecord;
+  readonly mutated: boolean;
+}
+
+function inspectInstalled(
+  options: ExtensionLifecycleOptions,
+  extensionId: string,
+  advanceMutation: boolean,
+): Effect.Effect<InstalledInspection | undefined, ExtensionLifecycleError> {
+  return Effect.gen(function* () {
+    const files = yield* nodeOperation("read", `Failed to read Extension ${extensionId}`, () =>
+      readInstalledExtensionFiles(options.profilePath, extensionId),
+    );
+    if (files === undefined) return undefined;
+    const record = yield* decodeInstalled(files);
+    if (record.approvals.invalidated) {
+      return { record, mutated: true } satisfies InstalledInspection;
+    }
+    const sealError = validateExtensionSeal(record.manifest, record.provenance, files.tree.files);
+    if (sealError === undefined) {
+      return { record, mutated: false } satisfies InstalledInspection;
+    }
+    if (!advanceMutation) {
+      return yield* lifecycleFailure("read", "extension-mutated", sealError);
+    }
+    const invalidated = invalidatedRecord(record);
+    yield* advanceApprovalEpoch(options, record);
+    return { record: invalidated, mutated: true } satisfies InstalledInspection;
+  });
 }
 
 function decodeInstalled(
@@ -627,6 +701,56 @@ function decodeInstalled(
   });
 }
 
+function readInstalledAuthority(
+  options: ExtensionLifecycleOptions,
+  extensionId: string,
+): Effect.Effect<InstalledAuthorityRecord | undefined, ExtensionLifecycleError> {
+  return Effect.gen(function* () {
+    const files = yield* nodeOperation(
+      "read",
+      `Failed to read Extension authority ${extensionId}`,
+      () => readInstalledExtensionAuthorityFiles(options.profilePath, extensionId),
+    );
+    if (files === undefined) return undefined;
+    return yield* decodeInstalledAuthority(files, extensionId);
+  });
+}
+
+function decodeInstalledAuthority(
+  files: InstalledExtensionAuthorityFiles,
+  extensionId: string,
+): Effect.Effect<InstalledAuthorityRecord, ExtensionLifecycleError> {
+  return Effect.gen(function* () {
+    const provenance = yield* decodeExtensionProvenanceJson(files.provenanceJson).pipe(
+      Effect.mapError((cause) =>
+        lifecycleError("read", "extension-invalid", "Invalid Extension provenance", cause),
+      ),
+    );
+    const state = yield* decodeExtensionEnabledStateJson(files.stateJson).pipe(
+      Effect.mapError((cause) =>
+        lifecycleError("read", "extension-invalid", "Invalid Extension state", cause),
+      ),
+    );
+    const approvals = yield* decodeExtensionApprovalsJson(files.approvalsJson).pipe(
+      Effect.mapError((cause) =>
+        lifecycleError("read", "extension-invalid", "Invalid Extension approvals", cause),
+      ),
+    );
+    if (
+      provenance.extensionId !== extensionId ||
+      state.extensionId !== extensionId ||
+      approvals.extensionId !== extensionId
+    ) {
+      return yield* lifecycleFailure(
+        "read",
+        "extension-invalid",
+        "Extension authority identity mismatch",
+      );
+    }
+    return { provenance, state, approvals };
+  });
+}
+
 function approvalsMatchAuthority(
   manifest: ExtensionManifest,
   provenance: ExtensionProvenance,
@@ -640,7 +764,7 @@ function approvalsMatchAuthority(
   if (manifest.setup?.doctor !== undefined) {
     entries.set("doctor\0doctor", { argv: manifest.setup.doctor.argv });
   }
-  if (approvals.approvals.length === 0) return true;
+  if (approvals.invalidated) return approvals.approvals.length === 0;
   if (entries.size !== approvals.approvals.length) return false;
   return approvals.approvals.every((approval) => {
     const entry = entries.get(`${approval.entryKind}\0${approval.entryId}`);
@@ -851,17 +975,44 @@ function observation(installed: InstalledRecord): ExtensionObservation {
   };
 }
 
+function mutatedObservation(installed: InstalledRecord): ExtensionObservation {
+  return { ...observation(installed), enabled: false, health: "mutated" };
+}
+
+function invalidatedRecord(installed: InstalledRecord): InstalledRecord {
+  return {
+    ...installed,
+    approvals: {
+      schemaVersion: 1,
+      extensionId: installed.manifest.id,
+      epoch: installed.approvals.epoch + 1,
+      invalidated: true,
+      approvals: [],
+    },
+  };
+}
+
+function invalidatedAuthorityRecord(installed: InstalledAuthorityRecord): InstalledAuthorityRecord {
+  return {
+    ...installed,
+    approvals: {
+      schemaVersion: 1,
+      extensionId: installed.provenance.extensionId,
+      epoch: installed.approvals.epoch + 1,
+      invalidated: true,
+      approvals: [],
+    },
+  };
+}
+
 function advanceApprovalEpoch(
   options: ExtensionLifecycleOptions,
   installed: InstalledRecord,
 ): Effect.Effect<void, ExtensionLifecycleError> {
-  const invalidated: ExtensionApprovals = {
-    schemaVersion: 1,
-    extensionId: installed.manifest.id,
-    epoch: installed.approvals.epoch + 1,
-    approvals: [],
-  };
-  return writeAuthority(options, installed.manifest.id, "approvals.json", json(invalidated));
+  const invalidated = invalidatedRecord(installed).approvals;
+  return installed.approvals.invalidated
+    ? Effect.void
+    : writeAuthority(options, installed.manifest.id, "approvals.json", json(invalidated));
 }
 
 function stagePackage(options: ExtensionLifecycleOptions, sourcePath: string) {
@@ -876,8 +1027,18 @@ function inspectPackage(options: ExtensionLifecycleOptions, sourcePath: string) 
   );
 }
 
-function cleanupStage(staged: StagedExtensionPackage): Effect.Effect<void> {
-  return Effect.promise(() => cleanupStagedExtension(staged));
+function cleanupStage(
+  options: ExtensionLifecycleOptions,
+  staged: StagedExtensionPackage,
+): Effect.Effect<void> {
+  return withExtensionPublicationPermit(
+    options.profilePath,
+    Effect.promise(() =>
+      options.nodeHooks === undefined
+        ? cleanupStagedExtension(staged)
+        : cleanupStagedExtension(staged, options.nodeHooks),
+    ),
+  );
 }
 
 function resolveExecutable(
@@ -923,16 +1084,20 @@ function activate(
   provenance: ExtensionProvenance,
   approvals: ExtensionApprovals,
 ): Effect.Effect<void, ExtensionLifecycleError> {
-  return nodeOperation("activate", `Failed to activate Extension ${extensionId}`, (signal) =>
-    activateStagedExtension({
-      profilePath: options.profilePath,
-      extensionId,
-      staged,
-      stateJson: json(state),
-      provenanceJson: json(provenance),
-      approvalsJson: json(approvals),
-      signal,
-    }),
+  return withExtensionPublicationPermit(
+    options.profilePath,
+    nodeOperation("activate", `Failed to activate Extension ${extensionId}`, (signal) =>
+      activateStagedExtension({
+        profilePath: options.profilePath,
+        extensionId,
+        staged,
+        stateJson: json(state),
+        provenanceJson: json(provenance),
+        approvalsJson: json(approvals),
+        signal,
+        ...(options.nodeHooks === undefined ? {} : { hooks: options.nodeHooks }),
+      }),
+    ),
   ).pipe(Effect.uninterruptible);
 }
 

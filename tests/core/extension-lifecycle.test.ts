@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -188,26 +188,108 @@ test("detected immutable mutation invalidates approvals even after bytes are res
         approvals: requirements.map((entry) => entry.fingerprint),
       }),
     ),
-  ).rejects.toThrow("mutated");
+  ).rejects.toThrow("reinstall");
   await writeFile(toolPath, original);
   const restored = await lifecycle(fixture.profile, (service) => service.list());
   expect(restored[0]?.approvalEpoch).toBe(1);
-  const enable = await lifecycle(fixture.profile, (service) =>
-    service.enable({
-      extensionId: "fixture",
-      approvals: requirements.map((entry) => entry.fingerprint),
-    }),
-  );
-  expect(enable.status).toBe("approval-required");
-  if (enable.status !== "approval-required") return;
-  expect(enable.requirements[0]?.epoch).toBe(1);
-  const emptyBypass = await lifecycle(fixture.profile, (service) =>
-    service.enable({ extensionId: "fixture", approvals: [] }),
-  );
-  expect(emptyBypass.status).toBe("approval-required");
+  await expect(
+    lifecycle(fixture.profile, (service) =>
+      service.enable({
+        extensionId: "fixture",
+        approvals: requirements.map((entry) => entry.fingerprint),
+      }),
+    ),
+  ).rejects.toThrow("reinstall");
   const reapproval = approvalRequirements(await install(fixture.profile, fixture.source, []));
   expect(reapproval[0]?.epoch).toBe(1);
   expect(reapproval[0]?.fingerprint).not.toBe(requirements[0]?.fingerprint);
+  const reinstalled = await install(
+    fixture.profile,
+    fixture.source,
+    reapproval.map((entry) => entry.fingerprint),
+  );
+  expect(reinstalled.status).toBe("installed");
+  if (reinstalled.status !== "installed") return;
+  expect(reinstalled.extension.approvalEpoch).toBe(1);
+});
+
+test("list durably invalidates a mutated Tool exactly once before bytes are restored", async () => {
+  const fixture = await createFixture("list-mutation", {
+    tools: [{ id: "fixture", path: "tools/fixture" }],
+    skills: [],
+    files: { "tools/fixture/tool.ts": "export const value = 1;\n" },
+  });
+  const requirements = approvalRequirements(await install(fixture.profile, fixture.source, []));
+  await install(
+    fixture.profile,
+    fixture.source,
+    requirements.map((entry) => entry.fingerprint),
+  );
+  const toolPath = join(fixture.profile, "extensions", "fixture", "tools", "fixture", "tool.ts");
+  const original = await readFile(toolPath);
+  await writeFile(toolPath, "export const value = 2;\n");
+
+  const first = await lifecycle(fixture.profile, (service) => service.list());
+  expect(first[0]?.health).toBe("mutated");
+  expect(first[0]?.approvalEpoch).toBe(1);
+  const repeated = await lifecycle(fixture.profile, (service) => service.list());
+  expect(repeated[0]?.approvalEpoch).toBe(1);
+
+  await writeFile(toolPath, original);
+  const restored = await lifecycle(fixture.profile, (service) => service.list());
+  expect(restored[0]?.health).toBe("mutated");
+  expect(restored[0]?.approvalEpoch).toBe(1);
+  await expect(
+    lifecycle(fixture.profile, (service) =>
+      service.enable({
+        extensionId: "fixture",
+        approvals: requirements.map((entry) => entry.fingerprint),
+      }),
+    ),
+  ).rejects.toThrow("reinstall");
+});
+
+test("mutated reinstall starts disabled and preserves mutable state in place", async () => {
+  const fixture = await createFixture("mutated-reinstall", {
+    tools: [{ id: "fixture", path: "tools/fixture" }],
+    skills: [],
+    files: { "tools/fixture/tool.ts": "export const value = 1;\n" },
+  });
+  const initial = approvalRequirements(await install(fixture.profile, fixture.source, []));
+  await install(
+    fixture.profile,
+    fixture.source,
+    initial.map((entry) => entry.fingerprint),
+  );
+  await lifecycle(fixture.profile, (service) =>
+    service.enable({
+      extensionId: "fixture",
+      approvals: initial.map((entry) => entry.fingerprint),
+    }),
+  );
+  const mutableRoot = join(fixture.profile, ".runtime", "extensions", "fixture", "state");
+  const mutableFile = join(mutableRoot, "owner.json");
+  await mkdir(mutableRoot);
+  await writeFile(mutableFile, '{"schemaVersion":1}\n');
+  const before = await stat(mutableFile);
+  await writeFile(
+    join(fixture.profile, "extensions", "fixture", "tools", "fixture", "tool.ts"),
+    "export const value = 9;\n",
+  );
+  await lifecycle(fixture.profile, (service) => service.list());
+
+  const fresh = approvalRequirements(await install(fixture.profile, fixture.source, []));
+  expect(fresh[0]?.epoch).toBe(1);
+  const installed = await install(
+    fixture.profile,
+    fixture.source,
+    fresh.map((entry) => entry.fingerprint),
+  );
+  expect(installed.status).toBe("installed");
+  if (installed.status !== "installed") return;
+  expect(installed.extension.enabled).toBeFalse();
+  expect(await readFile(mutableFile, "utf8")).toBe('{"schemaVersion":1}\n');
+  expect((await stat(mutableFile)).ino).toBe(before.ino);
 });
 
 test("rejects invalid signatures instead of downgrading and rejects source links", async () => {
@@ -349,6 +431,43 @@ test("same-ID concurrent installs serialize to one complete observation", async 
   expect(observations.map((result) => result.status)).toEqual(["installed", "installed"]);
   const listed = await lifecycle(fixture.profile, (service) => service.list());
   expect(listed).toHaveLength(1);
+  expect(listed[0]?.health).toBe("ready");
+});
+
+test("list never observes the package publication gap during reinstall", async () => {
+  const fixture = await createFixture("list-publication");
+  await install(fixture.profile, fixture.source, []);
+  const manifestPath = join(fixture.source, "extension.json");
+  const changed = (await readFile(manifestPath, "utf8")).replace(
+    '"version": "1.0.0"',
+    '"version": "1.0.1"',
+  );
+  await writeFile(manifestPath, changed);
+
+  const reached = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const reinstalling = install(fixture.profile, fixture.source, [], {
+    nodeHooks: {
+      checkpoint(point) {
+        if (point !== "activation-after-package-backup") return Promise.resolve();
+        reached.resolve();
+        return release.promise;
+      },
+    },
+  });
+  await reached.promise;
+  let listSettled = false;
+  const listing = lifecycle(fixture.profile, (service) => service.list()).then((result) => {
+    listSettled = true;
+    return result;
+  });
+  await Bun.sleep(10);
+  expect(listSettled).toBeFalse();
+  release.resolve();
+  await reinstalling;
+  const listed = await listing;
+  expect(listed).toHaveLength(1);
+  expect(listed[0]?.version).toBe("1.0.1");
   expect(listed[0]?.health).toBe("ready");
 });
 

@@ -16,3 +16,10 @@ export function withExtensionLifecyclePermit<Value, Error, Requirements>(
   }
   return Semaphore.withPermit(gate, effect);
 }
+
+export function withExtensionPublicationPermit<Value, Error, Requirements>(
+  profilePath: string,
+  effect: Effect.Effect<Value, Error, Requirements>,
+): Effect.Effect<Value, Error, Requirements> {
+  return withExtensionLifecyclePermit(profilePath, "\0publication", effect);
+}

@@ -7,6 +7,8 @@
     "coverage/**",
     "dist/**",
     "tests/fixtures/lint/**",
+    // Executed as a real child process by the Extension crash-recovery tests.
+    "tests/fixtures/extension-lifecycle-crash-child.ts",
     "vendor/effect/**",
   ],
   "workspaces": {

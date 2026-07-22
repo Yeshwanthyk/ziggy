@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -196,6 +196,30 @@ test("rejects post-seal mutation", async () => {
   );
 });
 
+test("a detected Skill mutation remains invalid after bytes are restored until reinstall", async () => {
+  const original = skill("fixture", "Original.");
+  const profile = await createFixture("durable-mutation", {
+    files: { "skills/fixture/SKILL.md": original },
+  });
+  const skillPath = join(profile, "extensions", "fixture", "skills", "fixture", "SKILL.md");
+  await writeFile(skillPath, skill("fixture", "Mutated."));
+  await expect(runEffect(loadInstalledExtensionSkills(profile, "1.0.0"))).rejects.toThrow(
+    "mutated",
+  );
+  const approvalsPath = join(profile, ".runtime", "extensions", "fixture", "approvals.json");
+  expect(JSON.parse(await readFile(approvalsPath, "utf8"))).toMatchObject({
+    schemaVersion: 1,
+    extensionId: "fixture",
+    epoch: 1,
+    invalidated: true,
+    approvals: [],
+  });
+  await writeFile(skillPath, original);
+  await expect(runEffect(loadInstalledExtensionSkills(profile, "1.0.0"))).rejects.toThrow(
+    "reinstall",
+  );
+});
+
 test("fails closed on unexpected Extension entries, unknown files, and forged catalog kinds", async () => {
   const unexpectedEntry = await createFixture("unexpected-entry", {
     files: { "skills/fixture/SKILL.md": skill("fixture", "Body.") },
@@ -295,6 +319,16 @@ async function createFixture(name: string, options: FixtureOptions): Promise<str
       verification: { method: "none", keyId: "", signature: "" },
       files,
       treeDigest: computeTreeDigest(files),
+    }),
+  );
+  await writeFile(
+    join(authorityRoot, "approvals.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      extensionId: manifest.id,
+      epoch: 0,
+      invalidated: false,
+      approvals: [],
     }),
   );
   return profile;

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Ref } from "effect";
@@ -243,6 +243,73 @@ test("the lifecycle barrier serializes one ID while a different ID completes ind
   ]);
 });
 
+test("fresh Layer recovery resolves real process death at every durable publication phase", async () => {
+  const commonPoints: ReadonlyArray<ExtensionLifecycleNodeCheckpoint> = [
+    "activation-after-transaction-durable",
+    "activation-after-new-package-publish",
+    "activation-after-state-publish",
+    "activation-after-provenance-publish",
+    "activation-after-approvals-publish",
+    "activation-before-commit",
+    "activation-after-commit",
+    "cleanup-after-tombstone-publish",
+  ];
+  for (const point of commonPoints) {
+    const fixture = await bareFixture(`initial-crash-${point}`);
+    await crashLifecycleInstall(fixture.profile, fixture.source, point);
+    const expectedVersion =
+      point === "activation-after-commit" || point === "cleanup-after-tombstone-publish"
+        ? "1.0.0"
+        : undefined;
+    expect(await recoveredVersion(fixture.profile)).toBe(expectedVersion);
+    expect(await recoveredVersion(fixture.profile)).toBe(expectedVersion);
+    expect(await transactionArtifacts(fixture.profile)).toEqual([]);
+  }
+
+  const reinstallPoints: ReadonlyArray<ExtensionLifecycleNodeCheckpoint> = [
+    ...commonPoints,
+    "activation-after-old-package-move",
+  ];
+  for (const point of reinstallPoints) {
+    const fixture = await installedFixture(`reinstall-crash-${point}`);
+    const mutableRoot = join(fixture.profile, ".runtime", "extensions", "fixture", "state");
+    const mutableFile = join(mutableRoot, "owner.json");
+    await mkdir(mutableRoot);
+    await writeFile(mutableFile, "durable mutable state\n");
+    const inode = (await stat(mutableFile)).ino;
+    const manifestPath = join(fixture.source, "extension.json");
+    await writeFile(
+      manifestPath,
+      (await readFile(manifestPath, "utf8")).replace('"version":"1.0.0"', '"version":"1.0.1"'),
+    );
+    await crashLifecycleInstall(fixture.profile, fixture.source, point);
+    const expectedVersion =
+      point === "activation-after-commit" || point === "cleanup-after-tombstone-publish"
+        ? "1.0.1"
+        : "1.0.0";
+    expect(await recoveredVersion(fixture.profile)).toBe(expectedVersion);
+    expect(await recoveredVersion(fixture.profile)).toBe(expectedVersion);
+    expect(await readFile(mutableFile, "utf8")).toBe("durable mutable state\n");
+    expect((await stat(mutableFile)).ino).toBe(inode);
+    expect(await transactionArtifacts(fixture.profile)).toEqual([]);
+  }
+});
+
+test("recovery deletes an atomically detached transaction cleanup tombstone", async () => {
+  const fixture = await installedFixture("cleanup-tombstone");
+  const tombstone = join(
+    fixture.profile,
+    ".runtime",
+    "extensions",
+    ".transactions",
+    `.cleanup-${"a".repeat(32)}`,
+  );
+  await mkdir(tombstone, { recursive: true });
+  await writeFile(join(tombstone, "commit.json"), "partially removed committed transaction\n");
+  expect(await recoveredVersion(fixture.profile)).toBe("1.0.0");
+  expect(await Bun.file(tombstone).exists()).toBeFalse();
+});
+
 async function installedFixture(name: string) {
   const fixture = await bareFixture(name);
   await runEffect(
@@ -334,6 +401,75 @@ async function authorityTemporaryEntries(profile: string): Promise<ReadonlyArray
   return (await readdir(root)).filter(
     (entry) => entry.includes(".tmp") || entry.includes(".restore"),
   );
+}
+
+async function crashLifecycleInstall(
+  profilePath: string,
+  sourcePath: string,
+  checkpoint: ExtensionLifecycleNodeCheckpoint,
+): Promise<void> {
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      join(import.meta.dir, "..", "fixtures", "extension-lifecycle-crash-child.ts"),
+    ],
+    {
+      cwd: join(import.meta.dir, "..", ".."),
+      env: {
+        ...process.env,
+        ZIGGY_CRASH_PROFILE: profilePath,
+        ZIGGY_CRASH_SOURCE: sourcePath,
+        ZIGGY_CRASH_CHECKPOINT: checkpoint,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  try {
+    await Promise.race([
+      readUntilReady(child.stdout),
+      Bun.sleep(5_000).then(() => Promise.reject(new Error(`child missed ${checkpoint}`))),
+    ]);
+  } catch (cause) {
+    child.kill(9);
+    const stderr = await new Response(child.stderr).text();
+    throw new Error(`Crash child failed at ${checkpoint}: ${stderr}`, { cause });
+  }
+  child.kill(9);
+  await child.exited;
+}
+
+async function readUntilReady(stream: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = stream.getReader();
+  let output = "";
+  while (!output.includes("READY\n")) {
+    const next = await reader.read();
+    if (next.done) throw new Error("Crash child exited before READY");
+    output += new TextDecoder().decode(next.value);
+  }
+}
+
+async function recoveredVersion(profilePath: string): Promise<string | undefined> {
+  const observations = await runEffect(
+    Effect.gen(function* () {
+      const lifecycle = yield* ExtensionLifecycle;
+      return yield* lifecycle.list();
+    }).pipe(Effect.provide(ExtensionLifecycle.layer({ profilePath }))),
+  );
+  return observations[0]?.version;
+}
+
+async function transactionArtifacts(profilePath: string): Promise<ReadonlyArray<string>> {
+  const authorityRoot = join(profilePath, ".runtime", "extensions");
+  if (!(await Bun.file(authorityRoot).exists())) return [];
+  const entries: string[] = [];
+  for await (const path of new Bun.Glob(
+    "{.transactions/**,.quarantine-*,**/*.tmp,**/*.restore}",
+  ).scan({ cwd: authorityRoot, onlyFiles: false })) {
+    entries.push(path);
+  }
+  return entries.sort();
 }
 
 async function writeSource(root: string, path: string, contents: string): Promise<void> {

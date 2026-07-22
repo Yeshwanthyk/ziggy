@@ -5,8 +5,13 @@ import {
   readInstalledExtensionManifests,
   type InstalledExtensionManifestFile,
 } from "../provider-node-adapter.ts";
+import { decodeExtensionApprovalsJson, type ExtensionApprovals } from "./approvals.ts";
+import { replaceExtensionAuthorityJson } from "./lifecycle-node-adapter.ts";
 import { decodeExtensionManifestJson, type ExtensionManifest } from "./manifest.ts";
-import { withExtensionLifecyclePermit } from "./lifecycle-coordinator.ts";
+import {
+  withExtensionLifecyclePermit,
+  withExtensionPublicationPermit,
+} from "./lifecycle-coordinator.ts";
 import {
   decodeExtensionProvenanceJson,
   type ExtensionProvenance,
@@ -39,10 +44,13 @@ export function loadInstalledExtensionSkills(
   runningZiggyVersion: string,
 ): Effect.Effect<ReadonlyArray<LoadedExtensionSkill>, ExtensionSkillLoadError> {
   return Effect.gen(function* () {
-    const manifestFiles = yield* Effect.tryPromise({
-      try: () => readInstalledExtensionManifests(profilePath),
-      catch: loadFailure("Failed to discover installed Extensions"),
-    });
+    const manifestFiles = yield* withExtensionPublicationPermit(
+      profilePath,
+      Effect.tryPromise({
+        try: () => readInstalledExtensionManifests(profilePath),
+        catch: loadFailure("Failed to discover installed Extensions"),
+      }),
+    );
     const loaded = yield* Effect.forEach(manifestFiles, (file) =>
       withExtensionLifecyclePermit(
         profilePath,
@@ -78,6 +86,17 @@ function loadExtensionSkills(
       try: () => readExtensionAuthorityFiles(profilePath, manifest.id),
       catch: loadFailure(`Failed to read daemon-owned authority for Extension ${manifest.id}`),
     });
+    const approvals = yield* decodeExtensionApprovalsJson(authority.approvalsJson).pipe(
+      Effect.mapError(loadFailure(`Failed to decode approvals for Extension ${manifest.id}`)),
+    );
+    if (approvals.extensionId !== manifest.id) {
+      return yield* fail(`Approval identity mismatch for Extension ${manifest.id}`);
+    }
+    if (approvals.invalidated) {
+      return yield* fail(
+        `Extension ${manifest.id} was invalidated by immutable mutation; reinstall is required`,
+      );
+    }
     const state = yield* decodeExtensionEnabledStateJson(authority.stateJson).pipe(
       Effect.mapError(loadFailure(`Failed to decode enabled state for Extension ${manifest.id}`)),
     );
@@ -99,18 +118,22 @@ function loadExtensionSkills(
       try: () => readImmutableExtensionTree(file.rootPath),
       catch: loadFailure(`Failed to read immutable tree for Extension ${manifest.id}`),
     });
-    return yield* validateAndLoadSkills(manifest, provenance, tree, file.contents);
+    const sealError = validateExtensionSeal(manifest, provenance, tree.files);
+    if (sealError !== undefined) {
+      yield* invalidateExtensionApprovals(profilePath, approvals);
+      return yield* fail(
+        `${sealError}; Extension ${manifest.id} was invalidated and reinstall is required`,
+      );
+    }
+    return yield* validateAndLoadSkills(manifest, tree, file.contents);
   });
 }
 
 function validateAndLoadSkills(
   manifest: ExtensionManifest,
-  provenance: ExtensionProvenance,
   tree: ExtensionTreeSnapshot,
   discoveredManifestBytes: Uint8Array,
 ): Effect.Effect<ReadonlyArray<LoadedExtensionSkill>, ExtensionSkillLoadError> {
-  const sealed = validateExtensionSeal(manifest, provenance, tree.files);
-  if (sealed !== undefined) return fail(sealed);
   const sealedManifest = tree.files.find((file) => file.path === "extension.json");
   if (
     sealedManifest === undefined ||
@@ -121,6 +144,29 @@ function validateAndLoadSkills(
   const validation = validateExtensionPackageContent(manifest, tree);
   if (!validation.valid) return fail(validation.message);
   return Effect.succeed(validation.skills);
+}
+
+function invalidateExtensionApprovals(
+  profilePath: string,
+  approvals: ExtensionApprovals,
+): Effect.Effect<void, ExtensionSkillLoadError> {
+  const invalidated: ExtensionApprovals = {
+    schemaVersion: 1,
+    extensionId: approvals.extensionId,
+    epoch: approvals.epoch + 1,
+    invalidated: true,
+    approvals: [],
+  };
+  return Effect.tryPromise({
+    try: () =>
+      replaceExtensionAuthorityJson(
+        profilePath,
+        approvals.extensionId,
+        "approvals.json",
+        `${JSON.stringify(invalidated, undefined, 2)}\n`,
+      ),
+    catch: loadFailure(`Failed to invalidate approvals for Extension ${approvals.extensionId}`),
+  });
 }
 
 type ExtensionPackageContentValidation =

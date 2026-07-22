@@ -96,6 +96,16 @@ test("production Provider composition binds filesystem credentials, Models, loop
     JSON.stringify({ schemaVersion: 1, extensionId: "fixture", enabled: true }),
   );
   await writeFile(
+    join(profilePath, ".runtime", "extensions", "fixture", "approvals.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      extensionId: "fixture",
+      epoch: 0,
+      invalidated: false,
+      approvals: [],
+    }),
+  );
+  await writeFile(
     join(profilePath, ".runtime", "extensions", "fixture", "provenance.json"),
     JSON.stringify({
       schemaVersion: 1,

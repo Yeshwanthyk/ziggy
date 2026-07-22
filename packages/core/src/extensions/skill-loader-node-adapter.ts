@@ -18,6 +18,7 @@ export interface ExtensionTreeSnapshot {
 export interface ExtensionAuthorityFiles {
   readonly stateJson: string;
   readonly provenanceJson: string;
+  readonly approvalsJson: string;
 }
 
 export async function readExtensionAuthorityFiles(
@@ -35,6 +36,7 @@ export async function readExtensionAuthorityFiles(
   const authority = {
     stateJson: await readStableUtf8File(join(authorityRoot, "state.json")),
     provenanceJson: await readStableUtf8File(join(authorityRoot, "provenance.json")),
+    approvalsJson: await readStableUtf8File(join(authorityRoot, "approvals.json")),
   };
   const directoriesAfter = await Promise.all(authorityPaths.map(readStableDirectoryIdentity));
   for (let index = 0; index < directoriesBefore.length; index += 1) {
