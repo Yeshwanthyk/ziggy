@@ -47,6 +47,7 @@
     "gate": {
       "enum": [
         "manifest-integrity",
+        "extension-integrity",
         "package-graph",
         "lint",
         "lint-fixtures",

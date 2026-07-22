@@ -5,7 +5,8 @@ Tracked manifests are the closed-world declaration of behavior for each stage. E
 ordered transitive closures; symbolic gates come from the manifest gate allowlist and are
 executed from those declarations. The registry at `tests/scenarios/registry.ts` is bijective with
 manifest scenario IDs and uses unique, normalized, repository-contained `.test.ts` files.
-`s0` through `s3` have implemented behavior-bearing manifest entries; `s4`–`s7` remain
+`s0` through `s3` have implemented behavior-bearing manifest entries; S4 is pending with its
+implemented manifest/compatibility and closed Merlin-ledger slices; `s5`–`s7` remain
 `manifest-empty` until product behavior lands. S3 covers Profile initialization, Provider/auth,
 CLI, the shared Attach Client, Session listing, and deterministic plus manual-live TUI behavior.
 Pending requirements may be cataloged without claiming implementation. Unsupported schema versions,
@@ -15,8 +16,8 @@ fail closed.
 ## Schema boundary
 
 The harness uses exact dev dependency `ajv@8.20.0` for Draft 2020-12 meta-validation and runtime
-validation of every tracked manifest, scenario declaration, summary, result, replay document, and
-nested command-evidence record. This dependency is intentionally narrow: manifests and evidence
+validation of every tracked manifest, scenario declaration, S4 migration ledger and independent
+review, summary, result, replay document, and nested command-evidence record. This dependency is intentionally narrow: manifests and evidence
 are an external durable verification boundary, and hand-rolled partial schema checks previously
 left correctness gaps. Explicit TypeScript decoders still run after schema validation.
 
@@ -32,6 +33,12 @@ verification closed.
   predecessor closure, runs implemented gates once, and reports undeveloped stages as
   `manifest-empty` without claiming behavior.
 - `bun run verify:all` resolves all declarations and de-duplicates inherited gates and scenarios.
+
+S4 adds the `extension-integrity` gate. It validates the exact 47-row closed migration ledger and
+derives the exact review-file set from landed, S4-owned rows without reading `../merlin`. Planned
+rows intentionally have no placeholder review. When a row lands, the gate also checks independent
+context/revision freshness, reviewed-input digest, production/support budgets, permissions, and
+registered deterministic capability scenarios.
 
 The S0 manifest has separate gates for explicitly executing every registered scenario module and
 for full `bun test`, which covers unregistered supporting/unit tests. A scenario command fails on

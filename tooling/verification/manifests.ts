@@ -10,6 +10,7 @@ export type Stage = (typeof stages)[number];
 
 const gateNames = [
   "manifest-integrity",
+  "extension-integrity",
   "package-graph",
   "lint",
   "lint-fixtures",
@@ -24,6 +25,7 @@ export type GateName = (typeof gateNames)[number];
 
 export const gateCommands: Readonly<Record<GateName, ReadonlyArray<string> | null>> = {
   "manifest-integrity": null,
+  "extension-integrity": ["bun", "tooling/verification/extension-integrity.ts"],
   "package-graph": ["bun", "run", "package-graph"],
   lint: ["bun", "run", "lint"],
   "lint-fixtures": ["bun", "run", "lint:fixtures"],

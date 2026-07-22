@@ -4,12 +4,17 @@
   "status": "pending",
   "predecessors": ["s0", "s1", "s2", "s3"],
   "scenarios": ["s4.manifest-version-compatibility"],
-  "gates": ["manifest-integrity", "fmt-check", "typecheck", "scenarios"],
+  "gates": ["manifest-integrity", "extension-integrity", "fmt-check", "typecheck", "scenarios"],
   "requirements": [
     {
       "id": "s4.manifest-version-contract",
       "status": "implemented",
       "description": "Extension manifests strictly decode duplicate-free JSON, validate canonical SemVer 2 versions and Ziggy range grammar, exclude provenance claims, and expose deterministic build-aware and prerelease-clause compatibility without claiming install/load integration or S4 stage completion."
+    },
+    {
+      "id": "s4.merlin-ledger-integrity",
+      "status": "implemented",
+      "description": "The closed 47-candidate Merlin migration ledger, conditional independent-review set, review freshness and budget contract, and deterministic extension-integrity gate are checked in without requiring the sibling Merlin repository."
     }
   ]
 }

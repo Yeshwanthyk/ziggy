@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ziggy.local/verification/s4-extension-review-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "review",
+    "userOutcome",
+    "target",
+    "overlap",
+    "capabilityContract",
+    "budgets",
+    "removableMaterial",
+    "assertions",
+    "findings",
+    "disposition"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "$ref": "#/$defs/id" },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "reviewedAt", "gitRevision", "reviewedInputDigest", "contexts"],
+      "properties": {
+        "role": { "const": "independent" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "gitRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "reviewedInputDigest": { "$ref": "#/$defs/digest" },
+        "contexts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scout", "implementer", "verifier"],
+          "properties": {
+            "scout": { "$ref": "#/$defs/completedContext" },
+            "implementer": { "$ref": "#/$defs/completedContext" },
+            "verifier": { "$ref": "#/$defs/startedContext" }
+          }
+        }
+      }
+    },
+    "userOutcome": { "$ref": "#/$defs/nonEmpty" },
+    "target": { "$ref": "#/$defs/reviewTarget" },
+    "overlap": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/nonEmpty" } },
+    "capabilityContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenarioIds"],
+      "properties": {
+        "scenarioIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^s4\\.[a-z0-9-]+$" }
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "production",
+        "runtimeDependencies",
+        "permissions",
+        "subprocesses",
+        "persistedStatePaths",
+        "supportMaterial"
+      ],
+      "properties": {
+        "production": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowedFiles", "maximumLines", "lineMetric"],
+          "properties": {
+            "allowedFiles": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/repoPath" }
+            },
+            "maximumLines": { "type": "integer", "minimum": 0 },
+            "lineMetric": { "const": "physical-non-generated-text-lines-final-partial-counted" }
+          }
+        },
+        "runtimeDependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmpty" }
+        },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["network", "filesystem", "secrets", "externalAuthorities"],
+          "properties": {
+            "network": { "type": "boolean" },
+            "filesystem": { "enum": ["none", "profile", "full"] },
+            "secrets": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/nonEmpty" }
+            },
+            "externalAuthorities": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/nonEmpty" }
+            }
+          }
+        },
+        "subprocesses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["argv"],
+            "properties": {
+              "argv": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonEmpty" } }
+            }
+          }
+        },
+        "persistedStatePaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repoPath" }
+        },
+        "supportMaterial": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["files", "maximumFiles", "maximumBytes"],
+          "properties": {
+            "files": { "type": "array", "items": { "$ref": "#/$defs/support" } },
+            "maximumFiles": { "type": "integer", "minimum": 0 },
+            "maximumBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "removableMaterial": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "rationale"],
+        "properties": {
+          "path": { "$ref": "#/$defs/repoPath" },
+          "rationale": { "$ref": "#/$defs/nonEmpty" }
+        }
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lowestTrustTier",
+        "noDuplicateAuthority",
+        "noCompatibilityShim",
+        "noInactiveVendoredMaterial"
+      ],
+      "properties": {
+        "lowestTrustTier": { "type": "boolean" },
+        "noDuplicateAuthority": { "type": "boolean" },
+        "noCompatibilityShim": { "type": "boolean" },
+        "noInactiveVendoredMaterial": { "type": "boolean" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "summary",
+          "regressionScenarioId",
+          "disposition",
+          "rationale"
+        ],
+        "properties": {
+          "id": { "$ref": "#/$defs/nonEmpty" },
+          "severity": { "enum": ["error", "warning", "info"] },
+          "summary": { "$ref": "#/$defs/nonEmpty" },
+          "regressionScenarioId": {
+            "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^s4\\.[a-z0-9-]+$" }]
+          },
+          "disposition": { "enum": ["fixed", "accepted", "open"] },
+          "rationale": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonEmpty" }] }
+        }
+      }
+    },
+    "disposition": { "enum": ["accepted", "changes-required", "rejected"] }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "nonEmpty": { "type": "string", "minLength": 1 },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repoPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//)[^\\u0000]+$"
+    },
+    "completedContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "completedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmpty" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "startedContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "startedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmpty" },
+        "startedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "reviewTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mechanism", "id", "trustTier"],
+          "properties": {
+            "mechanism": { "const": "extension" },
+            "id": { "$ref": "#/$defs/id" },
+            "trustTier": { "enum": ["builtin", "verified", "community"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mechanism", "id"],
+          "properties": {
+            "mechanism": { "enum": ["core-skill", "blueprint"] },
+            "id": { "$ref": "#/$defs/id" }
+          }
+        }
+      ]
+    },
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repoPath" },
+        "kind": { "enum": ["reference", "script", "asset"] },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

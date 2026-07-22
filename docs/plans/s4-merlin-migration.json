@@ -1,0 +1,2693 @@
+{
+  "schemaVersion": 1,
+  "corpus": {
+    "relativePath": "../merlin/extensions",
+    "candidateCount": 47,
+    "regularFileCount": 175,
+    "totalBytes": 17631635,
+    "inventoryDigest": "e629623273623eb3672adbe0523a33d2bab275dcdabf8abe75cdd38a9921b791",
+    "digestAlgorithm": "sha256(ziggy-s4-merlin-inventory-v1 NUL candidateCount NUL fileCount NUL; then UTF-8 path-sorted candidateId NUL relativePath NUL kind NUL byteCount NUL sha256(file) LF records)"
+  },
+  "candidates": [
+    {
+      "id": "acp-router",
+      "capability": {
+        "userOutcome": "route coding work to a selected external coding harness",
+        "evidence": [
+          {
+            "path": "extensions/acp-router/extension.json",
+            "kind": "manifest",
+            "bytes": 430,
+            "sha256": "6886bea08c35b2be7f463be2115ed2e68286237c412bce99bf05423c0a39899a"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "codex",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `codex`"
+        },
+        {
+          "with": "coding-agent",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `codex`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "ACP-capable CLIs/runtime",
+          "rationale": "The observed Merlin capability depends on ACP-capable CLIs/runtime; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["full workspace"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "high risk: harness sessions could become competing Session/loop state"
+      },
+      "disposition": "merge",
+      "rationale": "retain routing guidance only; reject ACP runtime/session abstractions",
+      "target": {
+        "mechanism": "extension",
+        "id": "coding-agent",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "retain routing guidance only; reject ACP runtime/session abstractions"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Extension Skill constrained to supervised external coding tasks",
+        "retain routing guidance only; reject ACP runtime/session abstractions"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "agent-browser",
+      "capability": {
+        "userOutcome": "automate an authenticated browser session",
+        "evidence": [
+          {
+            "path": "extensions/agent-browser/extension.json",
+            "kind": "manifest",
+            "bytes": 2223,
+            "sha256": "6f40e1279b0a936bec6e9a10991adf3dc1b2a1ba0280b841a232f90c33ce0ce6"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "open-computer-use",
+          "relationship": "overlapping-capability",
+          "rationale": "`open-computer-use`, `peekaboo`"
+        },
+        {
+          "with": "peekaboo",
+          "relationship": "overlapping-capability",
+          "rationale": "`open-computer-use`, `peekaboo`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`agent-browser`, Chrome",
+          "rationale": "The observed Merlin capability depends on `agent-browser`, Chrome; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": ["browser credentials"],
+        "subprocesses": ["agent-browser"],
+        "externalAuthorities": ["browser credentials", "full filesystem"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: browser profile is external auth/session authority and must not shadow Ziggy Session state"
+      },
+      "disposition": "port",
+      "rationale": "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed",
+      "target": {
+        "mechanism": "extension",
+        "id": "agent-browser",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with approved setup/doctor argv",
+        "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "apple-notes",
+      "capability": {
+        "userOutcome": "manage Apple Notes from a Turn",
+        "evidence": [
+          {
+            "path": "extensions/apple-notes/extension.json",
+            "kind": "manifest",
+            "bytes": 325,
+            "sha256": "b7c2aba3ebd818faa41037deb2b961a771ed2ba5b1160844f2b4d9b63ad45f8c"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "obsidian",
+          "relationship": "overlapping-capability",
+          "rationale": "`obsidian`, Memory only semantically"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "macOS, `memo`, Notes automation access",
+          "rationale": "The observed Merlin capability depends on macOS, `memo`, Notes automation access; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": ["memo"],
+        "externalAuthorities": ["external app read/write"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Notes remains sole authority"
+      },
+      "disposition": "port",
+      "rationale": "prose command guidance; no Ziggy state",
+      "target": {
+        "mechanism": "extension",
+        "id": "apple-notes",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["prose command guidance; no Ziggy state"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension with command requirement",
+        "prose command guidance; no Ziggy state"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "apple-reminders",
+      "capability": {
+        "userOutcome": "manage Apple Reminders and lists",
+        "evidence": [
+          {
+            "path": "extensions/apple-reminders/extension.json",
+            "kind": "manifest",
+            "bytes": 341,
+            "sha256": "d23ee14f47e4e20cd7cd4702f8697dee8609551794646a18ff73d4132691e15e"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "things-mac",
+          "relationship": "overlapping-capability",
+          "rationale": "`things-mac`, S5 Automations only for Ziggy-triggered alerts"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "macOS, `remindctl`, Reminders permission",
+          "rationale": "The observed Merlin capability depends on macOS, `remindctl`, Reminders permission; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": ["remindctl"],
+        "externalAuthorities": ["external app read/write"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Reminders remains authoritative"
+      },
+      "disposition": "port",
+      "rationale": "exclude scheduling/runtime behavior; retain direct reminder operations",
+      "target": {
+        "mechanism": "extension",
+        "id": "apple-reminders",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "exclude scheduling/runtime behavior; retain direct reminder operations"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with approved setup/doctor",
+        "exclude scheduling/runtime behavior; retain direct reminder operations"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "architecture-diagram",
+      "capability": {
+        "userOutcome": "produce a standalone architecture-diagram HTML artifact",
+        "evidence": [
+          {
+            "path": "extensions/architecture-diagram/extension.json",
+            "kind": "manifest",
+            "bytes": 458,
+            "sha256": "58733b94194e92affb65b84f2946b809b4922ba30fd653885b77762b86d70517"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "none",
+          "rationale": "The observed Merlin capability depends on none; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["profile filesystem"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: artifact is owner-requested output"
+      },
+      "disposition": "port",
+      "rationale": "instructions suffice; omit templates unless independently justified",
+      "target": {
+        "mechanism": "extension",
+        "id": "architecture-diagram",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "instructions suffice; omit templates unless independently justified"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension",
+        "instructions suffice; omit templates unless independently justified"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "blogwatcher",
+      "capability": {
+        "userOutcome": "notify the user when subscribed feeds publish updates",
+        "evidence": [
+          {
+            "path": "extensions/blogwatcher/extension.json",
+            "kind": "manifest",
+            "bytes": 306,
+            "sha256": "802e0e01978f01c5125c8aa7241d33affd02565e6ff0da97e0cb1ceec6274847"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "RSS/Atom network access, optional `blogwatcher`",
+          "rationale": "The observed Merlin capability depends on RSS/Atom network access, optional `blogwatcher`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["subscription/checkpoint state"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "medium risk: feed checkpoint needs one daemon-owned authority"
+      },
+      "disposition": "defer-to-S5",
+      "rationale": "monitoring is scheduled behavior, not Extension-owned polling",
+      "target": {
+        "mechanism": "automation",
+        "id": "blogwatcher",
+        "ownerStage": "s5"
+      },
+      "excludedCapabilities": ["monitoring is scheduled behavior, not Extension-owned polling"],
+      "leannessEvidence": [
+        "Observed mechanism: Automation with a non-LLM feed wake-gate",
+        "monitoring is scheduled behavior, not Extension-owned polling"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "clawhub",
+      "capability": {
+        "userOutcome": "install and publish Skills through a remote registry",
+        "evidence": [
+          {
+            "path": "extensions/clawhub/extension.json",
+            "kind": "manifest",
+            "bytes": 304,
+            "sha256": "6291cae643bce1fb18e47d4a8d633f3c6783b0de748723722e9accfc786175c0"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "smart-extensions",
+          "relationship": "overlapping-capability",
+          "rationale": "Ziggy Extension install and future `smart-extensions`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "ClawHub CLI/registry",
+          "rationale": "The observed Merlin capability depends on ClawHub CLI/registry; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["credentials"],
+        "subprocesses": [],
+        "externalAuthorities": ["credentials", "direct Skill-tree writes"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "high risk: competing registry and installer authority"
+      },
+      "disposition": "drop",
+      "rationale": "forbidden extension-registration surface and incompatible install authority",
+      "target": null,
+      "excludedCapabilities": [
+        "forbidden extension-registration surface and incompatible install authority"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: none",
+        "forbidden extension-registration surface and incompatible install authority"
+      ],
+      "deliveryStatus": "not-applicable"
+    },
+    {
+      "id": "codex",
+      "capability": {
+        "userOutcome": "execute a coding task with Codex CLI",
+        "evidence": [
+          {
+            "path": "extensions/codex/extension.json",
+            "kind": "manifest",
+            "bytes": 268,
+            "sha256": "c20445fd8cb54aa3b577c030c2c75fb496d5d4563fc1c3ae26edd4f9d6e315ff"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "acp-router",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `acp-router`, Ziggy Codex Provider"
+        },
+        {
+          "with": "coding-agent",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `acp-router`, Ziggy Codex Provider"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Codex CLI and auth",
+          "rationale": "The observed Merlin capability depends on Codex CLI and auth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": ["codex"],
+        "externalAuthorities": ["full workspace"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "stated risk: high if CLI conversation becomes a competing loop"
+      },
+      "disposition": "merge",
+      "rationale": "one coding delegation surface; never import Codex session/loop semantics",
+      "target": {
+        "mechanism": "extension",
+        "id": "coding-agent",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "one coding delegation surface; never import Codex session/loop semantics"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: narrowly supervised coding-task Skill",
+        "one coding delegation surface; never import Codex session/loop semantics"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "coding-agent",
+      "capability": {
+        "userOutcome": "delegate a bounded coding task to an installed coding CLI",
+        "evidence": [
+          {
+            "path": "extensions/coding-agent/extension.json",
+            "kind": "manifest",
+            "bytes": 440,
+            "sha256": "5416f9dae29ccfd8a244219485087a02973bb442f1bbd06f8571e14f570a8b2e"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "acp-router",
+          "relationship": "overlapping-capability",
+          "rationale": "`codex`, `acp-router`"
+        },
+        {
+          "with": "codex",
+          "relationship": "overlapping-capability",
+          "rationale": "`codex`, `acp-router`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "selected coding CLI and its auth",
+          "rationale": "The observed Merlin capability depends on selected coding CLI and its auth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": ["claude", "codex", "opencode", "pi"],
+        "externalAuthorities": ["full workspace"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: external task state must remain tool evidence, not Ziggy Session truth"
+      },
+      "disposition": "port",
+      "rationale": "one generic capability replaces per-harness packages; no runtime hooks",
+      "target": {
+        "mechanism": "extension",
+        "id": "coding-agent",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "one generic capability replaces per-harness packages; no runtime hooks"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension using supervised commands",
+        "one generic capability replaces per-harness packages; no runtime hooks"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "diffs",
+      "capability": {
+        "userOutcome": "generate a shareable diff artifact",
+        "evidence": [
+          {
+            "path": "extensions/diffs/extension.json",
+            "kind": "manifest",
+            "bytes": 509,
+            "sha256": "4dd2ae736ab1d4f6f0f02c67ec6277453e05a0c234463b12230733fed67a9229"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "github",
+          "relationship": "overlapping-capability",
+          "rationale": "`github` PR diffs and ordinary file output"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "optional `gh`",
+          "rationale": "The observed Merlin capability depends on optional `gh`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["profile filesystem"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: artifacts are derived and disposable"
+      },
+      "disposition": "port",
+      "rationale": "avoid a bundled renderer and runtime artifact registry",
+      "target": {
+        "mechanism": "extension",
+        "id": "diffs",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["avoid a bundled renderer and runtime artifact registry"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension using existing file/command tools",
+        "avoid a bundled renderer and runtime artifact registry"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "discord",
+      "capability": {
+        "userOutcome": "exchange messages through Discord",
+        "evidence": [
+          {
+            "path": "extensions/discord/extension.json",
+            "kind": "manifest",
+            "bytes": 266,
+            "sha256": "bb0f6811dcb759f8ca04715717660a83d8e255565b534e9d223c10a28e283c9f"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "imsg",
+          "relationship": "overlapping-capability",
+          "rationale": "`slack`, `imsg`, `wacli`"
+        },
+        {
+          "with": "slack",
+          "relationship": "overlapping-capability",
+          "rationale": "`slack`, `imsg`, `wacli`"
+        },
+        {
+          "with": "wacli",
+          "relationship": "overlapping-capability",
+          "rationale": "`slack`, `imsg`, `wacli`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Discord API and credentials",
+          "rationale": "The observed Merlin capability depends on Discord API and credentials; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["messaging credentials"],
+        "subprocesses": [],
+        "externalAuthorities": ["messaging credentials"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "high risk: delivery, inbound resume and channel state belong to a Gateway"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "explicitly excluded from Extension transport authority",
+      "target": {
+        "mechanism": "gateway",
+        "id": "discord",
+        "ownerStage": "s6"
+      },
+      "excludedCapabilities": ["explicitly excluded from Extension transport authority"],
+      "leannessEvidence": [
+        "Observed mechanism: Discord Gateway",
+        "explicitly excluded from Extension transport authority"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "executor",
+      "capability": {
+        "userOutcome": "discover and invoke approved external integration tools through Executor",
+        "evidence": [
+          {
+            "path": "extensions/executor/extension.json",
+            "kind": "manifest",
+            "bytes": 2356,
+            "sha256": "664b5f8ed1edbcea5529a93ee75141c566c06393eb246c9aeb2604068fb9e76b"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "linear",
+          "relationship": "overlapping-capability",
+          "rationale": "`linear`, `mcporter`, `notion`, `web-search`"
+        },
+        {
+          "with": "mcporter",
+          "relationship": "overlapping-capability",
+          "rationale": "`linear`, `mcporter`, `notion`, `web-search`"
+        },
+        {
+          "with": "notion",
+          "relationship": "overlapping-capability",
+          "rationale": "`linear`, `mcporter`, `notion`, `web-search`"
+        },
+        {
+          "with": "web-search",
+          "relationship": "overlapping-capability",
+          "rationale": "`linear`, `mcporter`, `notion`, `web-search`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`executor` CLI and its separately managed sources/auth",
+          "rationale": "The observed Merlin capability depends on `executor` CLI and its separately managed sources/auth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["source-specific secrets"],
+        "subprocesses": ["executor"],
+        "externalAuthorities": ["source-specific secrets"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: Executor owns external auth/approval/resume state, never Ziggy Session or Memory"
+      },
+      "disposition": "port",
+      "rationale": "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required",
+      "target": {
+        "mechanism": "extension",
+        "id": "executor",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: manifest+Skill Extension with approved setup/doctor argv",
+        "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "gh-issues",
+      "capability": {
+        "userOutcome": "turn eligible GitHub issues into reviewed pull requests",
+        "evidence": [
+          {
+            "path": "extensions/gh-issues/extension.json",
+            "kind": "manifest",
+            "bytes": 341,
+            "sha256": "ceed9189c42bf6180637e9ed1ea9f1ea6b351e6296ce7bda8c9d3391d4b9b771"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "coding-agent",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`, `github-issues`, `coding-agent`"
+        },
+        {
+          "with": "github",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`, `github-issues`, `coding-agent`"
+        },
+        {
+          "with": "github-issues",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`, `github-issues`, `coding-agent`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "GitHub API, git, coding worker",
+          "rationale": "The observed Merlin capability depends on GitHub API, git, coding worker; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": ["GitHub token"],
+        "subprocesses": [],
+        "externalAuthorities": ["GitHub token", "repository write"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "high risk: watch/poll progress must be Run evidence, not extension checkpoints"
+      },
+      "disposition": "defer-to-S5",
+      "rationale": "scheduled orchestration and fresh Run ownership belong to S5",
+      "target": {
+        "mechanism": "automation",
+        "id": "gh-issues",
+        "ownerStage": "s5"
+      },
+      "excludedCapabilities": ["scheduled orchestration and fresh Run ownership belong to S5"],
+      "leannessEvidence": [
+        "Observed mechanism: Automation using GitHub and coding capabilities",
+        "scheduled orchestration and fresh Run ownership belong to S5"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "github",
+      "capability": {
+        "userOutcome": "manage GitHub issues, pull requests, runs and API resources",
+        "evidence": [
+          {
+            "path": "extensions/github/extension.json",
+            "kind": "manifest",
+            "bytes": 1205,
+            "sha256": "a7c393704171f7a9816160a6ccd051b39cc339e4e52f599aa5883c52e5e23e34"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "gh-issues",
+          "relationship": "overlapping-capability",
+          "rationale": "`github-issues`, `github-pr-triage`, `gh-issues`"
+        },
+        {
+          "with": "github-issues",
+          "relationship": "overlapping-capability",
+          "rationale": "`github-issues`, `github-pr-triage`, `gh-issues`"
+        },
+        {
+          "with": "github-pr-triage",
+          "relationship": "overlapping-capability",
+          "rationale": "`github-issues`, `github-pr-triage`, `gh-issues`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "authenticated `gh`",
+          "rationale": "The observed Merlin capability depends on authenticated `gh`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": ["GitHub credential"],
+        "subprocesses": ["gh"],
+        "externalAuthorities": ["GitHub credential", "optional workspace access"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: GitHub remains authoritative"
+      },
+      "disposition": "port",
+      "rationale": "one general GitHub surface eliminates wrappers and duplicate issue packages",
+      "target": {
+        "mechanism": "extension",
+        "id": "github",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "one general GitHub surface eliminates wrappers and duplicate issue packages"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with setup/doctor",
+        "one general GitHub surface eliminates wrappers and duplicate issue packages"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "github-issues",
+      "capability": {
+        "userOutcome": "create and triage GitHub issues",
+        "evidence": [
+          {
+            "path": "extensions/github-issues/extension.json",
+            "kind": "manifest",
+            "bytes": 416,
+            "sha256": "dbd4885e80436b7a6f9208a4aab4a4dd7d8b172b1fe7c2783ca1866f3ebeb3d8"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "gh-issues",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`, `gh-issues`"
+        },
+        {
+          "with": "github",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`, `gh-issues`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`gh` or GitHub API auth",
+          "rationale": "The observed Merlin capability depends on `gh` or GitHub API auth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["GitHub credential"],
+        "subprocesses": ["gh"],
+        "externalAuthorities": ["GitHub credential"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: GitHub remains authoritative"
+      },
+      "disposition": "merge",
+      "rationale": "capability is a strict subset of the general GitHub surface",
+      "target": {
+        "mechanism": "extension",
+        "id": "github",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["capability is a strict subset of the general GitHub surface"],
+      "leannessEvidence": [
+        "Observed mechanism: GitHub Extension Skill material",
+        "capability is a strict subset of the general GitHub surface"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "github-pr-triage",
+      "capability": {
+        "userOutcome": "identify and summarize pull requests needing attention",
+        "evidence": [
+          {
+            "path": "extensions/github-pr-triage/extension.json",
+            "kind": "manifest",
+            "bytes": 1651,
+            "sha256": "e7120a272a16b49c3d1b05d2a7e2d4e604e74a871ceec93c7d121a68e50ac5d2"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "github",
+          "relationship": "overlapping-capability",
+          "rationale": "`github`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "authenticated `gh`",
+          "rationale": "The observed Merlin capability depends on authenticated `gh`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["GitHub credential"],
+        "subprocesses": ["gh"],
+        "externalAuthorities": ["GitHub credential"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: computed triage is derived"
+      },
+      "disposition": "merge",
+      "rationale": "retain triage workflow, omit bespoke binary and CLI wrapper",
+      "target": {
+        "mechanism": "extension",
+        "id": "github",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["retain triage workflow, omit bespoke binary and CLI wrapper"],
+      "leannessEvidence": [
+        "Observed mechanism: focused Skill within the GitHub Extension",
+        "retain triage workflow, omit bespoke binary and CLI wrapper"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "gog",
+      "capability": {
+        "userOutcome": "manage Google Workspace resources from a Turn",
+        "evidence": [
+          {
+            "path": "extensions/gog/extension.json",
+            "kind": "manifest",
+            "bytes": 1743,
+            "sha256": "f883430098455445ba4c6a365a1e3a7616b4dcaab35d8f61936605dd08d22acb"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`gog`, Google OAuth",
+          "rationale": "The observed Merlin capability depends on `gog`, Google OAuth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": ["OAuth credentials"],
+        "subprocesses": ["gog"],
+        "externalAuthorities": ["OAuth credentials", "optional local file read/write"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Google services remain authoritative"
+      },
+      "disposition": "port",
+      "rationale": "one CLI covers six Workspace services without Ziggy adapters",
+      "target": {
+        "mechanism": "extension",
+        "id": "gog",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["one CLI covers six Workspace services without Ziggy adapters"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with approved setup/doctor",
+        "one CLI covers six Workspace services without Ziggy adapters"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "goplaces",
+      "capability": {
+        "userOutcome": "search and inspect Google Places",
+        "evidence": [
+          {
+            "path": "extensions/goplaces/extension.json",
+            "kind": "manifest",
+            "bytes": 327,
+            "sha256": "e2f14f25baa3a4599e9aa2a58e2916df0c0733307a2dab0b4d824d8ef8ea0984"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "weather",
+          "relationship": "overlapping-capability",
+          "rationale": "`weather`, `web-search`, Executor integrations"
+        },
+        {
+          "with": "web-search",
+          "relationship": "overlapping-capability",
+          "rationale": "`weather`, `web-search`, Executor integrations"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`goplaces`, `GOOGLE_PLACES_API_KEY`",
+          "rationale": "The observed Merlin capability depends on `goplaces`, `GOOGLE_PLACES_API_KEY`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["API secret"],
+        "subprocesses": ["goplaces"],
+        "externalAuthorities": ["API secret"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: read-only external data"
+      },
+      "disposition": "port",
+      "rationale": "stateless CLI guidance; no custom Tool",
+      "target": {
+        "mechanism": "extension",
+        "id": "goplaces",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["stateless CLI guidance; no custom Tool"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension with command/env requirements",
+        "stateless CLI guidance; no custom Tool"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "here-now",
+      "capability": {
+        "userOutcome": "publish a user-selected static artifact to here.now",
+        "evidence": [
+          {
+            "path": "extensions/here-now/extension.json",
+            "kind": "manifest",
+            "bytes": 441,
+            "sha256": "f5a613ed2d479bbe9e7ca15b98f8fd0277a0f9e49d4839910b774818f3d2ebf6"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "executor",
+          "relationship": "overlapping-capability",
+          "rationale": "generic hosting integrations and `executor`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "HTTP client, optional here.now credentials",
+          "rationale": "The observed Merlin capability depends on HTTP client, optional here.now credentials; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": ["publish token"],
+        "subprocesses": [],
+        "externalAuthorities": ["publish token", "selected file read"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "medium risk: remote site and claim token must not be shadowed in ad hoc Profile state"
+      },
+      "disposition": "port",
+      "rationale": "retain publishing only; omit bundled shell wrappers and private-drive subsystem",
+      "target": {
+        "mechanism": "extension",
+        "id": "here-now",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "retain publishing only; omit bundled shell wrappers and private-drive subsystem"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension using supervised external commands",
+        "retain publishing only; omit bundled shell wrappers and private-drive subsystem"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "humanizer",
+      "capability": {
+        "userOutcome": "revise text into a specified natural voice",
+        "evidence": [
+          {
+            "path": "extensions/humanizer/extension.json",
+            "kind": "manifest",
+            "bytes": 377,
+            "sha256": "0ced1d5b85a288a18d6abe643e4ceb212645c9f20598663f2467e6ad124a4a70"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "none",
+          "rationale": "The observed Merlin capability depends on none; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["only user-selected input/output files"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: no durable state"
+      },
+      "disposition": "port",
+      "rationale": "pure instructions; no code or assets required",
+      "target": {
+        "mechanism": "extension",
+        "id": "humanizer",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["pure instructions; no code or assets required"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension",
+        "pure instructions; no code or assets required"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "hyperframes",
+      "capability": {
+        "userOutcome": "configure a Profile/project for HTML-to-video rendering",
+        "evidence": [
+          {
+            "path": "extensions/hyperframes/extension.json",
+            "kind": "manifest",
+            "bytes": 636,
+            "sha256": "7bd1fa213c2cacb8ca0ff34b2013a42047c5b3d9035e0242f1e9b67d7e8e7db8"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "HyperFrames, Node, Chrome, FFmpeg, optional Docker",
+          "rationale": "The observed Merlin capability depends on HyperFrames, Node, Chrome, FFmpeg, optional Docker; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["full project/media filesystem", "network setup"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: compositions are owner files"
+      },
+      "disposition": "blueprint",
+      "rationale": "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface",
+      "target": {
+        "mechanism": "blueprint",
+        "id": "hyperframes",
+        "ownerStage": "s4"
+      },
+      "excludedCapabilities": [
+        "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: markdown setup/edit guide with deterministic postconditions",
+        "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "imsg",
+      "capability": {
+        "userOutcome": "exchange messages through iMessage/SMS",
+        "evidence": [
+          {
+            "path": "extensions/imsg/extension.json",
+            "kind": "manifest",
+            "bytes": 294,
+            "sha256": "c5f1abc36c95c9fdc19ed7a696ae81d2226f0e3b783c0b7bb1c25c7273315643"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "discord",
+          "relationship": "overlapping-capability",
+          "rationale": "`wacli`, `slack`, `discord`"
+        },
+        {
+          "with": "slack",
+          "relationship": "overlapping-capability",
+          "rationale": "`wacli`, `slack`, `discord`"
+        },
+        {
+          "with": "wacli",
+          "relationship": "overlapping-capability",
+          "rationale": "`wacli`, `slack`, `discord`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "macOS Messages.app and `imsg`",
+          "rationale": "The observed Merlin capability depends on macOS Messages.app and `imsg`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["attachments", "automation", "contacts", "messages database"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "high risk: history, inbound delivery and resume belong to a Gateway"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "plan explicitly classifies iMessage as a later Gateway",
+      "target": {
+        "mechanism": "gateway",
+        "id": "imsg",
+        "ownerStage": "s6"
+      },
+      "excludedCapabilities": ["plan explicitly classifies iMessage as a later Gateway"],
+      "leannessEvidence": [
+        "Observed mechanism: iMessage Gateway",
+        "plan explicitly classifies iMessage as a later Gateway"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "linear",
+      "capability": {
+        "userOutcome": "manage Linear work items and projects",
+        "evidence": [
+          {
+            "path": "extensions/linear/extension.json",
+            "kind": "manifest",
+            "bytes": 592,
+            "sha256": "c12ef0fcda49e5f3d8a65a4abaa7bc618e8000de6c59731b08cb40e81e8c9e01"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Linear API access",
+          "rationale": "The observed Merlin capability depends on Linear API access; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["Linear credential"],
+        "subprocesses": [],
+        "externalAuthorities": ["Linear credential"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Linear remains authoritative"
+      },
+      "disposition": "merge",
+      "rationale": "avoid a Python API wrapper and duplicate credential path",
+      "target": {
+        "mechanism": "extension",
+        "id": "executor",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["avoid a Python API wrapper and duplicate credential path"],
+      "leannessEvidence": [
+        "Observed mechanism: Executor-backed integration Skill",
+        "avoid a Python API wrapper and duplicate credential path"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "lossless-claw",
+      "capability": {
+        "userOutcome": "consolidate durable facts from prior Sessions",
+        "evidence": [
+          {
+            "path": "extensions/lossless-claw/extension.json",
+            "kind": "manifest",
+            "bytes": 1583,
+            "sha256": "49daa62e13683a5d150d0cc585c8e363588bceb3081ab722a8382d179f413e5c"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "session-logs",
+          "relationship": "overlapping-capability",
+          "rationale": "`session-logs`, `smart-memory`"
+        },
+        {
+          "with": "smart-memory",
+          "relationship": "overlapping-capability",
+          "rationale": "`session-logs`, `smart-memory`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Session query and Memory mutation capabilities",
+          "rationale": "The observed Merlin capability depends on Session query and Memory mutation capabilities; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["Profile Session read", "daemon-mediated Memory write"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "high risk: Merlin watermark/index and direct Memory writes create shadow authority"
+      },
+      "disposition": "defer-to-S5",
+      "rationale": "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority",
+      "target": {
+        "mechanism": "automation",
+        "id": "lossless-claw",
+        "ownerStage": "s5"
+      },
+      "excludedCapabilities": [
+        "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Automation whose Run reads Sessions and requests atomic Memory changes",
+        "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "mcporter",
+      "capability": {
+        "userOutcome": "discover and call configured MCP tools",
+        "evidence": [
+          {
+            "path": "extensions/mcporter/extension.json",
+            "kind": "manifest",
+            "bytes": 320,
+            "sha256": "ba3604a79553cf1695fbdec64be24f080bf80367e48c65aad73a86d852978c27"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "executor",
+          "relationship": "overlapping-capability",
+          "rationale": "`executor`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "MCP servers, transports and auth",
+          "rationale": "The observed Merlin capability depends on MCP servers, transports and auth; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["network/subprocess plus server-specific secrets"],
+        "subprocesses": [],
+        "externalAuthorities": ["network/subprocess plus server-specific secrets"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "medium risk: independent daemon/config would create another integration control plane"
+      },
+      "disposition": "merge",
+      "rationale": "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients",
+      "target": {
+        "mechanism": "extension",
+        "id": "executor",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Executor integration discovery/invocation surface",
+        "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "nano-pdf",
+      "capability": {
+        "userOutcome": "apply a requested edit to a PDF",
+        "evidence": [
+          {
+            "path": "extensions/nano-pdf/extension.json",
+            "kind": "manifest",
+            "bytes": 288,
+            "sha256": "b5eb28256fee840955f263c9af7313dc32f3d1345764619ccbf5349058435761"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`nano-pdf`",
+          "rationale": "The observed Merlin capability depends on `nano-pdf`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": ["nano-pdf"],
+        "externalAuthorities": ["possible model/network access", "selected PDF read/write"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: edited PDF is owner output"
+      },
+      "disposition": "port",
+      "rationale": "external CLI does the work; no wrapper or persistent state",
+      "target": {
+        "mechanism": "extension",
+        "id": "nano-pdf",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["external CLI does the work; no wrapper or persistent state"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with explicit command requirement",
+        "external CLI does the work; no wrapper or persistent state"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "notion",
+      "capability": {
+        "userOutcome": "create and manage Notion content",
+        "evidence": [
+          {
+            "path": "extensions/notion/extension.json",
+            "kind": "manifest",
+            "bytes": 276,
+            "sha256": "90073a86ec3636acfa902092c37ef4b557fe9d222524c153b4da03fa61fd949f"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Notion API and integration token",
+          "rationale": "The observed Merlin capability depends on Notion API and integration token; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["Notion secret"],
+        "subprocesses": [],
+        "externalAuthorities": ["Notion secret"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Notion remains authoritative"
+      },
+      "disposition": "merge",
+      "rationale": "avoid embedding evolving REST examples and a second secret path",
+      "target": {
+        "mechanism": "extension",
+        "id": "executor",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["avoid embedding evolving REST examples and a second secret path"],
+      "leannessEvidence": [
+        "Observed mechanism: Executor-backed integration Skill",
+        "avoid embedding evolving REST examples and a second secret path"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "obsidian",
+      "capability": {
+        "userOutcome": "search and edit an Obsidian vault",
+        "evidence": [
+          {
+            "path": "extensions/obsidian/extension.json",
+            "kind": "manifest",
+            "bytes": 299,
+            "sha256": "8af3dfbc67220b684f0fffa4ea7e59b5d18eac73f6989438ec929726a42c4015"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "qmd",
+          "relationship": "overlapping-capability",
+          "rationale": "`qmd`, Apple Notes, Memory only semantically"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "vault filesystem, optional `obsidian-cli`",
+          "rationale": "The observed Merlin capability depends on vault filesystem, optional `obsidian-cli`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["full vault filesystem", "optional app URI access"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: vault files remain owner-authoritative and are not Ziggy Memory"
+      },
+      "disposition": "port",
+      "rationale": "ordinary markdown/file operations cover most behavior",
+      "target": {
+        "mechanism": "extension",
+        "id": "obsidian",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["ordinary markdown/file operations cover most behavior"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension",
+        "ordinary markdown/file operations cover most behavior"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "onepassword",
+      "capability": {
+        "userOutcome": "retrieve or inject an explicitly requested secret through 1Password CLI",
+        "evidence": [
+          {
+            "path": "extensions/onepassword/extension.json",
+            "kind": "manifest",
+            "bytes": 441,
+            "sha256": "d1b0bf377ab396016bbe9df9d2aec9c713afbbe7fe71c096bae4b90642c07505"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`op`, 1Password app/auth, optional `tmux`",
+          "rationale": "The observed Merlin capability depends on `op`, 1Password app/auth, optional `tmux`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["secret access"],
+        "subprocesses": ["op"],
+        "externalAuthorities": ["secret access"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: 1Password stays secret authority; outputs must never become Session/Memory state"
+      },
+      "disposition": "port",
+      "rationale": "rely on `op`; retain no secret material or wrapper",
+      "target": {
+        "mechanism": "extension",
+        "id": "onepassword",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["rely on `op`; retain no secret material or wrapper"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with setup/doctor and strict secret-handling guidance",
+        "rely on `op`; retain no secret material or wrapper"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "open-computer-use",
+      "capability": {
+        "userOutcome": "operate a local desktop application",
+        "evidence": [
+          {
+            "path": "extensions/open-computer-use/extension.json",
+            "kind": "manifest",
+            "bytes": 1607,
+            "sha256": "b7c5eb299c6597d46110c0ceaa6d6b4228f581be763f16cbb7d4aa40a6497271"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "agent-browser",
+          "relationship": "overlapping-capability",
+          "rationale": "`peekaboo`, `agent-browser`"
+        },
+        {
+          "with": "peekaboo",
+          "relationship": "overlapping-capability",
+          "rationale": "`peekaboo`, `agent-browser`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`open-computer-use`, desktop helper, OS accessibility APIs",
+          "rationale": "The observed Merlin capability depends on `open-computer-use`, desktop helper, OS accessibility APIs; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": ["open-computer-use"],
+        "externalAuthorities": ["accessibility", "full desktop control", "screen recording"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: UI snapshots/indexes are ephemeral external state, never durable Ziggy truth"
+      },
+      "disposition": "port",
+      "rationale": "use upstream CLI directly; omit wrapper and persisted screenshot registry",
+      "target": {
+        "mechanism": "extension",
+        "id": "open-computer-use",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "use upstream CLI directly; omit wrapper and persisted screenshot registry"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with approved setup/doctor",
+        "use upstream CLI directly; omit wrapper and persisted screenshot registry"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "openai-whisper",
+      "capability": {
+        "userOutcome": "transcribe a local audio file offline",
+        "evidence": [
+          {
+            "path": "extensions/openai-whisper/extension.json",
+            "kind": "manifest",
+            "bytes": 313,
+            "sha256": "6df2945fdeee8a93584bf7d307435ede189a099d4972352a8ef802e9fd642fd2"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "summarize",
+          "relationship": "overlapping-capability",
+          "rationale": "`summarize`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Whisper CLI, model download/cache",
+          "rationale": "The observed Merlin capability depends on Whisper CLI, model download/cache; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": ["whisper"],
+        "externalAuthorities": ["initial network download", "selected audio/output filesystem"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: model cache is rebuildable external data"
+      },
+      "disposition": "port",
+      "rationale": "direct CLI invocation; no Provider or Tool ABI",
+      "target": {
+        "mechanism": "extension",
+        "id": "openai-whisper",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["direct CLI invocation; no Provider or Tool ABI"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension with command requirement",
+        "direct CLI invocation; no Provider or Tool ABI"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "peekaboo",
+      "capability": {
+        "userOutcome": "inspect and operate macOS desktop UI",
+        "evidence": [
+          {
+            "path": "extensions/peekaboo/extension.json",
+            "kind": "manifest",
+            "bytes": 272,
+            "sha256": "1e3c067a2815fa2e9c346d4b7ca7ae6f067966b625e5bfb81f488476fce256b4"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "open-computer-use",
+          "relationship": "overlapping-capability",
+          "rationale": "`open-computer-use`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "macOS, Peekaboo, accessibility/screen permissions",
+          "rationale": "The observed Merlin capability depends on macOS, Peekaboo, accessibility/screen permissions; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "full",
+        "secrets": [],
+        "subprocesses": ["peekaboo"],
+        "externalAuthorities": ["clipboard", "full desktop control", "screenshots"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: snapshot/config caches must remain non-authoritative"
+      },
+      "disposition": "merge",
+      "rationale": "one desktop capability; avoid two overlapping Extensions and tool catalogs",
+      "target": {
+        "mechanism": "extension",
+        "id": "open-computer-use",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "one desktop capability; avoid two overlapping Extensions and tool catalogs"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: optional macOS backend guidance in the desktop-automation Extension",
+        "one desktop capability; avoid two overlapping Extensions and tool catalogs"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "qmd",
+      "capability": {
+        "userOutcome": "search a user-selected local document corpus",
+        "evidence": [
+          {
+            "path": "extensions/qmd/extension.json",
+            "kind": "manifest",
+            "bytes": 411,
+            "sha256": "b037de16964bcb1d6af423c684e6b3f89bde0f41ee6ac4bff10aa73de60531b9"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "obsidian",
+          "relationship": "overlapping-capability",
+          "rationale": "`obsidian`, `session-logs`"
+        },
+        {
+          "with": "session-logs",
+          "relationship": "overlapping-capability",
+          "rationale": "`obsidian`, `session-logs`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Node 22, SQLite extensions, QMD models",
+          "rationale": "The observed Merlin capability depends on Node 22, SQLite extensions, QMD models; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": ["qmd"],
+        "externalAuthorities": ["corpus read", "initial model download", "local index write"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "medium risk: index must be rebuildable and never become document/Memory authority"
+      },
+      "disposition": "port",
+      "rationale": "external retrieval engine; explicitly constrain index to derived state",
+      "target": {
+        "mechanism": "extension",
+        "id": "qmd",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "external retrieval engine; explicitly constrain index to derived state"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with setup/doctor",
+        "external retrieval engine; explicitly constrain index to derived state"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "self-improving-agent",
+      "capability": {
+        "userOutcome": "propose durable behavior improvements from observed corrections and failures",
+        "evidence": [
+          {
+            "path": "extensions/self-improving-agent/extension.json",
+            "kind": "manifest",
+            "bytes": 615,
+            "sha256": "6679b164e82fe985c1ce17e65a7a12d695d1268c01cec61482e41753c5a4d554"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "skill-curator",
+          "relationship": "overlapping-capability",
+          "rationale": "Memory, SOUL.md, `smart-memory`, `skill-curator`"
+        },
+        {
+          "with": "smart-memory",
+          "relationship": "overlapping-capability",
+          "rationale": "Memory, SOUL.md, `smart-memory`, `skill-curator`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Session evidence and owner review",
+          "rationale": "The observed Merlin capability depends on Session evidence and owner review; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["Session read and proposed owner-file edits"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "high risk: `.learnings` duplicates Memory and hooks violate the v1 ABI"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "no hooks, automatic writes or shadow learning store in S4",
+      "target": {
+        "mechanism": "extension",
+        "id": "self-improving-agent",
+        "ownerStage": "s7",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["no hooks, automatic writes or shadow learning store in S4"],
+      "leannessEvidence": [
+        "Observed mechanism: future explicit proposal workflow over canonical Session/Memory/owner files",
+        "no hooks, automatic writes or shadow learning store in S4"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "session-logs",
+      "capability": {
+        "userOutcome": "search and summarize prior Ziggy Sessions",
+        "evidence": [
+          {
+            "path": "extensions/session-logs/extension.json",
+            "kind": "manifest",
+            "bytes": 319,
+            "sha256": "4b94855d179dceac8d2ad39c7bca514d2e433a8f077492fa4282377ace58ecf0"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "lossless-claw",
+          "relationship": "overlapping-capability",
+          "rationale": "`lossless-claw`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Ziggy Session format/query surface",
+          "rationale": "The observed Merlin capability depends on Ziggy Session format/query surface; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["Profile Session read-only"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: transcripts remain Session-owned and no index is required"
+      },
+      "disposition": "port",
+      "rationale": "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes",
+      "target": {
+        "mechanism": "extension",
+        "id": "session-logs",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension using read-only daemon-mediated Session access",
+        "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "skill-creator",
+      "capability": {
+        "userOutcome": "author a conformant Ziggy Skill",
+        "evidence": [
+          {
+            "path": "extensions/skill-creator/extension.json",
+            "kind": "manifest",
+            "bytes": 542,
+            "sha256": "ed676a99603d9cdafe92f89e39922e6acee35f3f64e813c891db4036f46c1dae"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Ziggy Skill/manifest schemas",
+          "rationale": "The observed Merlin capability depends on Ziggy Skill/manifest schemas; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["owner-approved Extension/Skill files"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: files are explicit authored capability definitions"
+      },
+      "disposition": "merge",
+      "rationale": "S4 already requires this; omit packaging scripts and generic upstream material",
+      "target": {
+        "mechanism": "core-skill",
+        "id": "skill-writing",
+        "ownerStage": "s4"
+      },
+      "excludedCapabilities": [
+        "S4 already requires this; omit packaging scripts and generic upstream material"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: baked-in core Skill",
+        "S4 already requires this; omit packaging scripts and generic upstream material"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "skill-curator",
+      "capability": {
+        "userOutcome": "propose reviewed improvements to installed Skills",
+        "evidence": [
+          {
+            "path": "extensions/skill-curator/extension.json",
+            "kind": "manifest",
+            "bytes": 1592,
+            "sha256": "7d78349161235b2079b99452bd61f3fc6ce85363641e7b9d555c9a13c19116ed"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "smart-extensions",
+          "relationship": "overlapping-capability",
+          "rationale": "S4 `smart-extensions` scaffold and core skill-writing Skill"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Session evidence, Extension seals and installer commands",
+          "rationale": "The observed Merlin capability depends on Session evidence, Extension seals and installer commands; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["Session read", "daemon-mediated Extension replacement"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "high risk: pins, backups, reports and direct writes create another Extension authority"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics",
+      "target": {
+        "mechanism": "extension",
+        "id": "skill-curator",
+        "ownerStage": "s7",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: future `smart-extensions` Extension",
+        "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "slack",
+      "capability": {
+        "userOutcome": "exchange messages through Slack",
+        "evidence": [
+          {
+            "path": "extensions/slack/extension.json",
+            "kind": "manifest",
+            "bytes": 301,
+            "sha256": "145552986ee0e375f434f9f50f94994db51fae003b89d2c60c1ec58a9b32469a"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "discord",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `imsg`, `wacli`"
+        },
+        {
+          "with": "imsg",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `imsg`, `wacli`"
+        },
+        {
+          "with": "wacli",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `imsg`, `wacli`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Slack API and bot/user credentials",
+          "rationale": "The observed Merlin capability depends on Slack API and bot/user credentials; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["messaging credentials"],
+        "subprocesses": [],
+        "externalAuthorities": ["messaging credentials"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "high risk: delivery and resume state belong to a Gateway"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "explicitly excluded from Extension transport authority",
+      "target": {
+        "mechanism": "gateway",
+        "id": "slack",
+        "ownerStage": "s6"
+      },
+      "excludedCapabilities": ["explicitly excluded from Extension transport authority"],
+      "leannessEvidence": [
+        "Observed mechanism: Slack Gateway",
+        "explicitly excluded from Extension transport authority"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "smart-memory",
+      "capability": {
+        "userOutcome": "propose reviewed maintenance changes to retained facts",
+        "evidence": [
+          {
+            "path": "extensions/smart-memory/extension.json",
+            "kind": "manifest",
+            "bytes": 1561,
+            "sha256": "b66b553a2a839f38d4d34791a2a6ed113a543455b655dedf35d03aaaf266a7b1"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "lossless-claw",
+          "relationship": "overlapping-capability",
+          "rationale": "`lossless-claw`, `self-improving-agent`"
+        },
+        {
+          "with": "self-improving-agent",
+          "relationship": "overlapping-capability",
+          "rationale": "`lossless-claw`, `self-improving-agent`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Session evidence and atomic Memory commands",
+          "rationale": "The observed Merlin capability depends on Session evidence and atomic Memory commands; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["Session read", "daemon-mediated Memory mutation"]
+      },
+      "stateAuthority": {
+        "owner": "ziggy",
+        "persistedPaths": [],
+        "rationale": "critical risk: Merlin directly edits Memory and adds pins/backups/suggestion state as competing authority"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "honor scaffolding-only scope; future implementation must keep Memory sole authority",
+      "target": {
+        "mechanism": "extension",
+        "id": "smart-memory",
+        "ownerStage": "s7",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "honor scaffolding-only scope; future implementation must keep Memory sole authority"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: `smart-memory` Extension scaffold in S4, behavior later",
+        "honor scaffolding-only scope; future implementation must keep Memory sole authority"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "summarize",
+      "capability": {
+        "userOutcome": "summarize or transcribe user-selected URLs and files",
+        "evidence": [
+          {
+            "path": "extensions/summarize/extension.json",
+            "kind": "manifest",
+            "bytes": 326,
+            "sha256": "518ef66ef5a3177814c47cfea265525dd973a28be2060e0b61b3b8068059468b"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "openai-whisper",
+          "relationship": "overlapping-capability",
+          "rationale": "`openai-whisper`, `web-search`"
+        },
+        {
+          "with": "web-search",
+          "relationship": "overlapping-capability",
+          "rationale": "`openai-whisper`, `web-search`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "content extraction and Ziggy’s existing Provider call",
+          "rationale": "The observed Merlin capability depends on content extraction and Ziggy’s existing Provider call; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "profile",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["selected file read"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "stated risk: low if no independent model config/history is retained"
+      },
+      "disposition": "port",
+      "rationale": "reject a second model/provider configuration; retain extraction and summarization workflow only",
+      "target": {
+        "mechanism": "extension",
+        "id": "summarize",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "reject a second model/provider configuration; retain extraction and summarization workflow only"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension using Ziggy’s loop plus approved extractors",
+        "reject a second model/provider configuration; retain extraction and summarization workflow only"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "telephony",
+      "capability": {
+        "userOutcome": "exchange calls or SMS through a phone number",
+        "evidence": [
+          {
+            "path": "extensions/telephony/extension.json",
+            "kind": "manifest",
+            "bytes": 635,
+            "sha256": "58c9daf7bc957fc49a002de62fafeb599bf1f04c91cb6c1a96407eea0e2e601d"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "Twilio/Bland/Vapi and credentials",
+          "rationale": "The observed Merlin capability depends on Twilio/Bland/Vapi and credentials; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["telephony secrets"],
+        "subprocesses": [],
+        "externalAuthorities": ["external message/call control", "telephony secrets"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "critical risk: number provisioning, inbox checkpoint and inbound delivery are Gateway state"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "reject polling scripts and home-directory credential/state files",
+      "target": {
+        "mechanism": "gateway",
+        "id": "telephony",
+        "ownerStage": "s6"
+      },
+      "excludedCapabilities": ["reject polling scripts and home-directory credential/state files"],
+      "leannessEvidence": [
+        "Observed mechanism: Telephony Gateway",
+        "reject polling scripts and home-directory credential/state files"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "things-mac",
+      "capability": {
+        "userOutcome": "manage Things 3 tasks and projects",
+        "evidence": [
+          {
+            "path": "extensions/things-mac/extension.json",
+            "kind": "manifest",
+            "bytes": 331,
+            "sha256": "725850d50e9fd7d71d392cb61c5e269e883b7244e123a0213b9f9ac52b78a5bd"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "apple-reminders",
+          "relationship": "overlapping-capability",
+          "rationale": "`apple-reminders`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "macOS, Things, `things` CLI",
+          "rationale": "The observed Merlin capability depends on macOS, Things, `things` CLI; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": ["things"],
+        "externalAuthorities": ["Full Disk Access", "Things database read", "URL-scheme writes"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: Things remains authoritative"
+      },
+      "disposition": "port",
+      "rationale": "direct CLI use; no mirrored task store",
+      "target": {
+        "mechanism": "extension",
+        "id": "things-mac",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": ["direct CLI use; no mirrored task store"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension with command/OS requirements",
+        "direct CLI use; no mirrored task store"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "tmux",
+      "capability": {
+        "userOutcome": "interact with an existing terminal session",
+        "evidence": [
+          {
+            "path": "extensions/tmux/extension.json",
+            "kind": "manifest",
+            "bytes": 396,
+            "sha256": "0abd1045ba54048c43d39e95bf2689f0b62775d8843d3a252466d954476d2492"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "coding-agent",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `onepassword`"
+        },
+        {
+          "with": "onepassword",
+          "relationship": "overlapping-capability",
+          "rationale": "`coding-agent`, `onepassword`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`tmux`",
+          "rationale": "The observed Merlin capability depends on `tmux`; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": false,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": ["tmux"],
+        "externalAuthorities": ["subprocess and terminal-session control"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: tmux state is ephemeral external process state"
+      },
+      "disposition": "port",
+      "rationale": "common commands suffice; omit helper scripts unless independently proven necessary",
+      "target": {
+        "mechanism": "extension",
+        "id": "tmux",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "common commands suffice; omit helper scripts unless independently proven necessary"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension",
+        "common commands suffice; omit helper scripts unless independently proven necessary"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "wacli",
+      "capability": {
+        "userOutcome": "exchange messages through WhatsApp",
+        "evidence": [
+          {
+            "path": "extensions/wacli/extension.json",
+            "kind": "manifest",
+            "bytes": 318,
+            "sha256": "99c0b19d1f1ec41cc0463d4c5fdf5050a8d8fdf17a2c41133a9b99bca4bfd480"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "discord",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `slack`, `imsg`"
+        },
+        {
+          "with": "imsg",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `slack`, `imsg`"
+        },
+        {
+          "with": "slack",
+          "relationship": "overlapping-capability",
+          "rationale": "`discord`, `slack`, `imsg`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "WhatsApp account, `wacli`, local message store",
+          "rationale": "The observed Merlin capability depends on WhatsApp account, `wacli`, local message store; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["auth credentials"],
+        "subprocesses": [],
+        "externalAuthorities": ["auth credentials", "contacts/messages/media"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "high risk: sync store and resume cursor belong to a Gateway"
+      },
+      "disposition": "defer-to-S6/S7",
+      "rationale": "plan explicitly classifies WhatsApp as a later Gateway",
+      "target": {
+        "mechanism": "gateway",
+        "id": "wacli",
+        "ownerStage": "s6"
+      },
+      "excludedCapabilities": ["plan explicitly classifies WhatsApp as a later Gateway"],
+      "leannessEvidence": [
+        "Observed mechanism: WhatsApp Gateway",
+        "plan explicitly classifies WhatsApp as a later Gateway"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "weather",
+      "capability": {
+        "userOutcome": "retrieve current conditions and forecasts for a location",
+        "evidence": [
+          {
+            "path": "extensions/weather/extension.json",
+            "kind": "manifest",
+            "bytes": 302,
+            "sha256": "3d9128cd319eacf490e7384d39fcc7db6fa95563b3bcef79504438bc0c7f26fe"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "goplaces",
+          "relationship": "overlapping-capability",
+          "rationale": "`goplaces`, `web-search`"
+        },
+        {
+          "with": "web-search",
+          "relationship": "overlapping-capability",
+          "rationale": "`goplaces`, `web-search`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "HTTP weather service",
+          "rationale": "The observed Merlin capability depends on HTTP weather service; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": [],
+        "subprocesses": [],
+        "externalAuthorities": ["network only"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "low risk: stateless external data"
+      },
+      "disposition": "port",
+      "rationale": "no code, secret or persisted state required",
+      "target": {
+        "mechanism": "extension",
+        "id": "weather",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": ["no code, secret or persisted state required"],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-only Extension",
+        "no code, secret or persisted state required"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "web-search",
+      "capability": {
+        "userOutcome": "retrieve fresh web results with citations",
+        "evidence": [
+          {
+            "path": "extensions/web-search/extension.json",
+            "kind": "manifest",
+            "bytes": 642,
+            "sha256": "40ee4fb5a6c87b143bdd83dfa5ef5fafac70531a35e8a821571ab6d57c0d7e58"
+          }
+        ]
+      },
+      "overlap": [
+        {
+          "with": "summarize",
+          "relationship": "overlapping-capability",
+          "rationale": "Executor/MCP discovery and `summarize`"
+        }
+      ],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "search provider or MCP source",
+          "rationale": "The observed Merlin capability depends on search provider or MCP source; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["optional provider secret"],
+        "subprocesses": [],
+        "externalAuthorities": ["optional provider secret"]
+      },
+      "stateAuthority": {
+        "owner": "none",
+        "persistedPaths": [],
+        "rationale": "low risk: results are Step evidence only"
+      },
+      "disposition": "merge",
+      "rationale": "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint",
+      "target": {
+        "mechanism": "extension",
+        "id": "executor",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
+      },
+      "excludedCapabilities": [
+        "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Executor-backed search integration",
+        "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint"
+      ],
+      "deliveryStatus": "planned"
+    },
+    {
+      "id": "xurl",
+      "capability": {
+        "userOutcome": "perform an explicitly requested X API operation",
+        "evidence": [
+          {
+            "path": "extensions/xurl/extension.json",
+            "kind": "manifest",
+            "bytes": 315,
+            "sha256": "43a04b8f327e8e95f7d8fcdfe1b8494d842194dcab2c84f570009d6a379e0558"
+          }
+        ]
+      },
+      "overlap": [],
+      "dependencies": [
+        {
+          "kind": "external",
+          "name": "`xurl`, X developer credentials",
+          "rationale": "The observed Merlin capability depends on `xurl`, X developer credentials; Ziggy will not absorb that authority."
+        }
+      ],
+      "permissions": {
+        "network": true,
+        "filesystem": "none",
+        "secrets": ["secret access"],
+        "subprocesses": ["xurl"],
+        "externalAuthorities": ["secret access", "social-account write"]
+      },
+      "stateAuthority": {
+        "owner": "external",
+        "persistedPaths": [],
+        "rationale": "medium risk: X owns posts/messages; local auth must remain external credential state"
+      },
+      "disposition": "port",
+      "rationale": "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope",
+      "target": {
+        "mechanism": "extension",
+        "id": "xurl",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
+      },
+      "excludedCapabilities": [
+        "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope"
+      ],
+      "leannessEvidence": [
+        "Observed mechanism: Skill-first Extension with setup/doctor and secret-safety rules",
+        "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope"
+      ],
+      "deliveryStatus": "planned"
+    }
+  ]
+}
