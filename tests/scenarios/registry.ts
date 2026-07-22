@@ -281,6 +281,16 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
   },
   {
     schemaVersion: 1,
+    id: "s4.extension-tool-boundary",
+    stage: "s4",
+    file: "tests/scenarios/s4-extension-tool-boundary.test.ts",
+    seed: "s4-extension-tool-boundary-v1",
+    schedule: "serial-approval-seal-snapshot-mutation-cutpoints-and-compiled-post-build-import",
+    boundaryConfiguration:
+      "temporary-profile-daemon-owned-authority-mode-0700-os-snapshots-and-compiled-ziggy",
+  },
+  {
+    schemaVersion: 1,
     id: "s4.manifest-version-compatibility",
     stage: "s4",
     file: "tests/scenarios/s4-manifest-version-compatibility.test.ts",

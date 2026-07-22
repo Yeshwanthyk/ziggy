@@ -7,6 +7,7 @@
     "s4.extension-daemon-lifecycle",
     "s4.extension-journal-recovery",
     "s4.extension-mutation-recovery",
+    "s4.extension-tool-boundary",
     "s4.manifest-version-compatibility"
   ],
   "gates": ["manifest-integrity", "extension-integrity", "fmt-check", "typecheck", "scenarios"],
@@ -30,6 +31,11 @@
       "id": "s4.extension-mutation-recovery",
       "status": "implemented",
       "description": "Tool-list and Skill-load seal failures durably invalidate approvals, restored immutable bytes remain rejected, explicit fresh approval reinstall recovers disabled without moving mutable state, and Extension processes receive only declared environment values."
+    },
+    {
+      "id": "s4.extension-tool-boundary",
+      "status": "implemented",
+      "description": "Approved compatible enabled Tools are imported only from mode-0700 scoped execution snapshots after exact authority, path, digest, and live-seal validation; ABI, identity, schema, output, collision, mutation, and compiled post-build TypeScript boundaries fail closed."
     },
     {
       "id": "s4.extension-journal-recovery",

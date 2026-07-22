@@ -31,6 +31,7 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s4.extension-daemon-lifecycle",
     "s4.extension-journal-recovery",
     "s4.extension-mutation-recovery",
+    "s4.extension-tool-boundary",
     "s4.manifest-version-compatibility",
   ]);
 
