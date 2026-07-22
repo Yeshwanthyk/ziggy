@@ -79,6 +79,20 @@ test("rejects Extension, Skill-root, and frontmatter identity mismatches", async
   );
 });
 
+test("rejects a declared Tool without its immediate entrypoint", async () => {
+  const profile = await createFixture("missing-tool", {
+    manifest: {
+      ...baseManifest,
+      skills: [],
+      tools: [{ id: "fixture", path: "tools/fixture" }],
+    },
+    files: {},
+  });
+  await expect(runEffect(loadInstalledExtensionSkills(profile, "1.0.0"))).rejects.toThrow(
+    "Missing immediate tools/fixture/tool.ts",
+  );
+});
+
 test("rejects symbolic links and hard links in immutable Extension trees", async () => {
   const symlinkProfile = await createFixture("symlink", {
     files: { "skills/fixture/SKILL.md": skill("fixture", "Body.") },

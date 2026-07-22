@@ -1,11 +1,25 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { Schema } from "effect";
+import {
+  type ExtensionManifest,
+  ExtensionManifestSchema,
+} from "../../packages/core/src/extensions/manifest.ts";
+import {
+  decodeUtf8Maybe,
+  readImmutableExtensionTree,
+} from "../../packages/core/src/extensions/skill-loader-node-adapter.ts";
+import { validateExtensionPackageContent } from "../../packages/core/src/extensions/skill-loader.ts";
 import { isStrictJson } from "../../packages/core/src/extensions/strict-json.ts";
 import { scenarioRegistry } from "../../tests/scenarios/registry.ts";
 import { loadSchemaCatalog } from "./schemas.ts";
 
 const ledgerPath = "docs/plans/s4-merlin-migration.json";
 const reviewDirectory = "docs/plans/s4-extension-reviews";
+const decodeExtensionManifest = Schema.decodeUnknownSync(ExtensionManifestSchema, {
+  errors: "all",
+  onExcessProperty: "error",
+});
 const expectedCandidateIds = [
   "acp-router",
   "agent-browser",
@@ -292,7 +306,7 @@ async function validateBudgets(
   const implementationFiles = await discoverImplementationFiles(root, candidate);
   validateImplementationFileSet(reviewedFiles, implementationFiles, id);
 
-  await validateManifestSubprocesses(root, candidate, budgets, id);
+  await validateExtensionImplementation(root, candidate, budgets, implementationFiles, id);
 }
 
 export function validateReviewBudgetContract(
@@ -405,18 +419,38 @@ async function collectRegularFiles(
   return files.sort(compareUtf8);
 }
 
-async function validateManifestSubprocesses(
+async function validateExtensionImplementation(
   root: string,
   candidate: Record<string, unknown>,
   budgets: Record<string, unknown>,
+  implementationFiles: ReadonlyArray<string>,
   id: string,
 ): Promise<void> {
   const target = record(candidate.target, `${id}.target`);
   if (target.mechanism !== "extension") return;
-  const manifestPath = `extensions/${string(target.id, `${id}.target.id`)}/extension.json`;
-  const manifest = record(
-    parseStrictJson(await Bun.file(join(root, manifestPath)).text(), manifestPath),
+  const targetId = string(target.id, `${id}.target.id`);
+  const extensionDirectory = `extensions/${targetId}`;
+  const manifestPath = `${extensionDirectory}/extension.json`;
+  const tree = await readImmutableExtensionTree(join(root, extensionDirectory));
+  const manifestFile = tree.files.find((file) => file.path === "extension.json");
+  const manifestText = manifestFile === undefined ? undefined : decodeUtf8Maybe(manifestFile.bytes);
+  if (manifestText === undefined) throw new Error(`${manifestPath}: invalid Extension manifest`);
+  const manifest = decodeLandedExtensionManifest(
+    parseStrictJson(manifestText, manifestPath),
     manifestPath,
+  );
+  if (manifest.id !== targetId) {
+    throw new Error(`${id}: Extension manifest identity differs from its ledger target`);
+  }
+  const packageValidation = validateExtensionPackageContent(manifest, tree);
+  if (!packageValidation.valid) {
+    throw new Error(`${id}: invalid Extension package content: ${packageValidation.message}`);
+  }
+  const treeFiles = tree.files.map((file) => `${extensionDirectory}/${file.path}`);
+  requireExactList(
+    treeFiles,
+    implementationFiles,
+    `${id} stable Extension tree differs from reviewed implementation files`,
   );
   const setup = manifest.setup;
   const actual: ReadonlyArray<ReadonlyArray<string>> =
@@ -433,6 +467,14 @@ async function validateManifestSubprocesses(
         `${id}: manifest setup/doctor argv is outside the reviewed subprocess budget`,
       );
     }
+  }
+}
+
+function decodeLandedExtensionManifest(value: unknown, path: string): ExtensionManifest {
+  try {
+    return decodeExtensionManifest(value);
+  } catch {
+    throw new Error(`${path}: invalid Extension manifest`);
   }
 }
 

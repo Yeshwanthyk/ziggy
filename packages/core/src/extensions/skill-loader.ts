@@ -113,30 +113,64 @@ function validateAndLoadSkills(
   ) {
     return fail("Extension manifest changed between discovery and sealed-tree validation");
   }
+  const validation = validateExtensionPackageContent(manifest, tree);
+  if (!validation.valid) return fail(validation.message);
+  return Effect.succeed(validation.skills);
+}
+
+type ExtensionPackageContentValidation =
+  | {
+      readonly valid: true;
+      readonly skills: ReadonlyArray<LoadedExtensionSkill>;
+    }
+  | {
+      readonly valid: false;
+      readonly message: string;
+    };
+
+export function validateExtensionPackageContent(
+  manifest: ExtensionManifest,
+  tree: ExtensionTreeSnapshot,
+): ExtensionPackageContentValidation {
   const directoryError = validateDirectoryLayout(manifest, tree.directories);
-  if (directoryError !== undefined) return fail(directoryError);
+  if (directoryError !== undefined) return invalidPackage(directoryError);
+  for (const file of tree.files) {
+    if (deriveFileKind(manifest, file.path) === undefined) {
+      return invalidPackage(`Unknown immutable Extension file: ${file.path}`);
+    }
+  }
 
   const filesByPath = new Map(tree.files.map((file) => [file.path, file]));
+  if (!filesByPath.has("extension.json")) return invalidPackage("Missing immediate extension.json");
   const loaded: LoadedExtensionSkill[] = [];
   for (const skill of manifest.skills) {
     const root = skill.path;
     if (posix.basename(root) !== skill.id) {
-      return fail(`Skill root basename must match Skill id ${skill.id}`);
+      return invalidPackage(`Skill root basename must match Skill id ${skill.id}`);
     }
     const skillPath = `${root}/SKILL.md`;
     const skillFile = filesByPath.get(skillPath);
-    if (skillFile === undefined) return fail(`Missing immediate ${skillPath}`);
+    if (skillFile === undefined) return invalidPackage(`Missing immediate ${skillPath}`);
     const content = decodeUtf8Maybe(skillFile.bytes);
-    if (content === undefined) return fail(`Skill content is not valid UTF-8: ${skillPath}`);
+    if (content === undefined)
+      return invalidPackage(`Skill content is not valid UTF-8: ${skillPath}`);
     const frontmatter = readSkillFrontmatter(content);
     if (frontmatter === undefined || frontmatter.name !== skill.id) {
-      return fail(`Skill frontmatter name must match Skill id ${skill.id}`);
+      return invalidPackage(`Skill frontmatter name must match Skill id ${skill.id}`);
     }
     const reachabilityError = validateSkillReachability(root, skillPath, content, filesByPath);
-    if (reachabilityError !== undefined) return fail(reachabilityError);
+    if (reachabilityError !== undefined) return invalidPackage(reachabilityError);
     loaded.push({ extensionId: manifest.id, id: skill.id, content });
   }
-  return Effect.succeed(loaded);
+  for (const tool of manifest.tools ?? []) {
+    const toolPath = `${tool.path}/tool.ts`;
+    if (!filesByPath.has(toolPath)) return invalidPackage(`Missing immediate ${toolPath}`);
+  }
+  return { valid: true, skills: loaded };
+}
+
+function invalidPackage(message: string): ExtensionPackageContentValidation {
+  return { valid: false, message };
 }
 
 function validateSeal(

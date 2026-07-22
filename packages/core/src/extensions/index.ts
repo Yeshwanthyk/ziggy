@@ -11,6 +11,7 @@ export {
   type LoadedExtensionSkill,
   loadInstalledExtensionSkills,
   sha256,
+  validateExtensionPackageContent,
 } from "./skill-loader.ts";
 export {
   decodeExtensionEnabledStateJson,
