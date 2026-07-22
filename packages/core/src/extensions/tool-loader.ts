@@ -181,6 +181,9 @@ function loadExtensionTools(
       catch: toolLoadFailure(`Failed to canonicalize Profile for Extension ${manifest.id}`),
     });
     yield* requireExactToolApprovals(canonicalProfilePath, manifest, provenance, approvals, tree);
+    if (!approvalsMatchAuthority(manifest, provenance, approvals)) {
+      return yield* fail(`Approval authority mismatch for Extension ${manifest.id}`);
+    }
 
     const prepared = yield* Effect.forEach(manifest.tools, (tool) =>
       prepareToolSnapshot(manifest.id, tool.id, tool.path, tree),
@@ -364,6 +367,39 @@ function requireExactToolApprovals(
     }
   }
   return Effect.void;
+}
+
+function approvalsMatchAuthority(
+  manifest: ExtensionManifest,
+  provenance: ExtensionProvenance,
+  approvals: ExtensionApprovals,
+): boolean {
+  const entries = new Map<string, ReadonlyArray<string>>();
+  for (const tool of manifest.tools ?? []) entries.set(`tool\0${tool.id}`, []);
+  for (const [index, step] of (manifest.setup?.steps ?? []).entries()) {
+    entries.set(`setup\0${index}`, step.argv);
+  }
+  if (manifest.setup?.doctor !== undefined) {
+    entries.set("doctor\0doctor", manifest.setup.doctor.argv);
+  }
+  return (
+    entries.size === approvals.approvals.length &&
+    approvals.approvals.every((approval) => {
+      const argv = entries.get(`${approval.entryKind}\0${approval.entryId}`);
+      return (
+        argv !== undefined &&
+        arraysEqual(approval.argv, argv) &&
+        approval.extensionId === manifest.id &&
+        approval.extensionVersion === manifest.version &&
+        approval.permissions.network === manifest.permissions.network &&
+        approval.permissions.filesystem === manifest.permissions.filesystem &&
+        arraysEqual(approval.permissions.secrets, manifest.permissions.secrets) &&
+        approval.trustTier === provenance.trustTier &&
+        approval.treeDigest === provenance.treeDigest &&
+        approval.epoch === approvals.epoch
+      );
+    })
+  );
 }
 
 function approvalRequirementsEqual(
