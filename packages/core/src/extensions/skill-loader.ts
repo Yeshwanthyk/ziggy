@@ -6,6 +6,7 @@ import {
   type InstalledExtensionManifestFile,
 } from "../provider-node-adapter.ts";
 import { decodeExtensionManifestJson, type ExtensionManifest } from "./manifest.ts";
+import { withExtensionLifecyclePermit } from "./lifecycle-coordinator.ts";
 import {
   decodeExtensionProvenanceJson,
   type ExtensionProvenance,
@@ -43,7 +44,11 @@ export function loadInstalledExtensionSkills(
       catch: loadFailure("Failed to discover installed Extensions"),
     });
     const loaded = yield* Effect.forEach(manifestFiles, (file) =>
-      loadExtensionSkills(profilePath, file, runningZiggyVersion),
+      withExtensionLifecyclePermit(
+        profilePath,
+        file.directoryName,
+        loadExtensionSkills(profilePath, file, runningZiggyVersion),
+      ),
     );
     return loaded.flat();
   });
@@ -104,7 +109,7 @@ function validateAndLoadSkills(
   tree: ExtensionTreeSnapshot,
   discoveredManifestBytes: Uint8Array,
 ): Effect.Effect<ReadonlyArray<LoadedExtensionSkill>, ExtensionSkillLoadError> {
-  const sealed = validateSeal(manifest, provenance, tree.files);
+  const sealed = validateExtensionSeal(manifest, provenance, tree.files);
   if (sealed !== undefined) return fail(sealed);
   const sealedManifest = tree.files.find((file) => file.path === "extension.json");
   if (
@@ -135,7 +140,7 @@ export function validateExtensionPackageContent(
   const directoryError = validateDirectoryLayout(manifest, tree.directories);
   if (directoryError !== undefined) return invalidPackage(directoryError);
   for (const file of tree.files) {
-    if (deriveFileKind(manifest, file.path) === undefined) {
+    if (deriveExtensionFileKind(manifest, file.path) === undefined) {
       return invalidPackage(`Unknown immutable Extension file: ${file.path}`);
     }
   }
@@ -173,7 +178,7 @@ function invalidPackage(message: string): ExtensionPackageContentValidation {
   return { valid: false, message };
 }
 
-function validateSeal(
+export function validateExtensionSeal(
   manifest: ExtensionManifest,
   provenance: ExtensionProvenance,
   files: ReadonlyArray<ExtensionFileSnapshot>,
@@ -185,7 +190,7 @@ function validateSeal(
     if (actual === undefined || expected === undefined || actual.path !== expected.path) {
       return "Provenance file catalog path mismatch";
     }
-    const kind = deriveFileKind(manifest, actual.path);
+    const kind = deriveExtensionFileKind(manifest, actual.path);
     if (kind === undefined) return `Unknown immutable Extension file: ${actual.path}`;
     if (expected.kind !== kind) return `Provenance file kind mismatch: ${actual.path}`;
     if (actual.bytes.byteLength !== expected.bytes || sha256(actual.bytes) !== expected.sha256) {
@@ -198,7 +203,10 @@ function validateSeal(
   return undefined;
 }
 
-function deriveFileKind(manifest: ExtensionManifest, path: string): string | undefined {
+export function deriveExtensionFileKind(
+  manifest: ExtensionManifest,
+  path: string,
+): string | undefined {
   if (path === "extension.json") return "manifest";
   for (const skill of manifest.skills) {
     if (path === `${skill.path}/SKILL.md`) return "skill";

@@ -6,11 +6,39 @@ export {
 } from "./manifest.ts";
 export { isZiggyVersionCompatible } from "./semver.ts";
 export {
+  canonicalApprovals,
+  decodeExtensionApprovalsJson,
+  type ExtensionApprovalRequirement,
+  ExtensionApprovalRequirementSchema,
+  type ExtensionApprovals,
+  ExtensionApprovalsSchema,
+  makeExtensionApprovalRequirement,
+} from "./approvals.ts";
+export {
+  type ExtensionBuiltinCatalogEntry,
+  type ExtensionDisableRequest,
+  type ExtensionDoctorRequest,
+  type ExtensionDoctorResult,
+  type ExtensionEnableRequest,
+  type ExtensionEnableResult,
+  type ExtensionInstallRequest,
+  type ExtensionInstallResult,
+  ExtensionLifecycle,
+  ExtensionLifecycleError,
+  type ExtensionLifecycleErrorCode,
+  type ExtensionLifecycleOptions,
+  type ExtensionLifecycleService,
+  type ExtensionObservation,
+  type ExtensionSignatureVerificationInput,
+} from "./lifecycle.ts";
+export {
   computeTreeDigest,
+  deriveExtensionFileKind,
   ExtensionSkillLoadError,
   type LoadedExtensionSkill,
   loadInstalledExtensionSkills,
   sha256,
+  validateExtensionSeal,
   validateExtensionPackageContent,
 } from "./skill-loader.ts";
 export {
