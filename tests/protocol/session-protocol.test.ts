@@ -130,6 +130,11 @@ expectType<
     | "turn/steer"
     | "turn/interrupt"
     | "approval/resolve"
+    | "extension/install"
+    | "extension/enable"
+    | "extension/disable"
+    | "extension/list"
+    | "extension/doctor"
   >
 >();
 expectType<
@@ -152,6 +157,7 @@ expectType<
         | "turnInterrupt"
         | "approvals"
         | "stableMainSession"
+        | "extensionLifecycle"
         | "providerAuth"
       >;
     }
@@ -237,6 +243,11 @@ const protocolMethods: ReadonlyArray<ProtocolMethod> = [
   "turn/steer",
   "turn/interrupt",
   "approval/resolve",
+  "extension/install",
+  "extension/enable",
+  "extension/disable",
+  "extension/list",
+  "extension/doctor",
 ];
 const initializeRequest: InitializeRequest = {
   client: { name: "ziggy-test", version: "1.0.0" },
@@ -250,6 +261,7 @@ const initializeResponse: InitializeResponse = {
     "turnInterrupt",
     "approvals",
     "stableMainSession",
+    "extensionLifecycle",
     "providerAuth",
   ],
 };
@@ -662,7 +674,7 @@ describe("canonical Session events", () => {
 });
 
 describe("attach method contracts", () => {
-  test("keeps the complete S1 method vocabulary exact", () => {
+  test("keeps the complete attach method vocabulary exact", () => {
     expect(protocolMethods).toEqual([
       "initialize",
       "session/start",
@@ -675,6 +687,11 @@ describe("attach method contracts", () => {
       "turn/steer",
       "turn/interrupt",
       "approval/resolve",
+      "extension/install",
+      "extension/enable",
+      "extension/disable",
+      "extension/list",
+      "extension/doctor",
     ]);
   });
 
@@ -691,17 +708,19 @@ describe("attach method contracts", () => {
         "turnInterrupt",
         "approvals",
         "stableMainSession",
+        "extensionLifecycle",
         "providerAuth",
       ],
     });
-    expect(negotiateServerFeatures(false)).toEqual([
+    expect(negotiateServerFeatures(false, true)).toEqual([
       "sessionReplay",
       "turnSteering",
       "turnInterrupt",
       "approvals",
       "stableMainSession",
+      "extensionLifecycle",
     ]);
-    expect(negotiateServerFeatures(true)).toEqual(initializeResponse.features);
+    expect(negotiateServerFeatures(true, true)).toEqual(initializeResponse.features);
   });
 
   test("covers every Session request and response shape", () => {

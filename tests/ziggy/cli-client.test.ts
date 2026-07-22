@@ -66,6 +66,11 @@ function clientWith(
     steerTurn: () => Effect.never,
     interruptTurn: () => Effect.never,
     resolveApproval: () => Effect.never,
+    installExtension: () => Effect.never,
+    enableExtension: () => Effect.never,
+    disableExtension: () => Effect.never,
+    listExtensions: Effect.never,
+    doctorExtension: () => Effect.never,
   };
 }
 

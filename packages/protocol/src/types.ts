@@ -187,7 +187,8 @@ export type ServerFeature =
   | "turnInterrupt"
   | "approvals"
   | "stableMainSession"
-  | "providerAuth";
+  | "providerAuth"
+  | "extensionLifecycle";
 
 export const BASE_SERVER_FEATURES: ReadonlyArray<ServerFeature> = [
   "sessionReplay",
@@ -197,8 +198,15 @@ export const BASE_SERVER_FEATURES: ReadonlyArray<ServerFeature> = [
   "stableMainSession",
 ];
 
-export function negotiateServerFeatures(providerAuth: boolean): ReadonlyArray<ServerFeature> {
-  return providerAuth ? [...BASE_SERVER_FEATURES, "providerAuth"] : BASE_SERVER_FEATURES;
+export function negotiateServerFeatures(
+  providerAuth: boolean,
+  extensionLifecycle = false,
+): ReadonlyArray<ServerFeature> {
+  const extensionFeatures: ReadonlyArray<ServerFeature> = extensionLifecycle
+    ? ["extensionLifecycle"]
+    : [];
+  const authFeatures: ReadonlyArray<ServerFeature> = providerAuth ? ["providerAuth"] : [];
+  return [...BASE_SERVER_FEATURES, ...extensionFeatures, ...authFeatures];
 }
 
 export type ProtocolMethod =
@@ -215,7 +223,12 @@ export type ProtocolMethod =
   | "turn/start"
   | "turn/steer"
   | "turn/interrupt"
-  | "approval/resolve";
+  | "approval/resolve"
+  | "extension/install"
+  | "extension/enable"
+  | "extension/disable"
+  | "extension/list"
+  | "extension/doctor";
 
 export interface InitializeRequest {
   readonly client: { readonly name: string; readonly version: string };
@@ -380,6 +393,103 @@ export interface ApprovalResolveResponse {
   readonly outcome: "resolved" | "already-resolved";
 }
 
+export type ExtensionTrustTier = "builtin" | "verified" | "community";
+export type ExtensionEntryKind = "tool" | "setup" | "doctor";
+
+export interface ExtensionApprovalRequirement {
+  readonly fingerprint: string;
+  readonly extensionId: string;
+  readonly extensionVersion: string;
+  readonly entryKind: ExtensionEntryKind;
+  readonly entryId: string;
+  readonly argv: ReadonlyArray<string>;
+  readonly permissions: {
+    readonly network: boolean;
+    readonly filesystem: "none" | "profile" | "full";
+    readonly secrets: ReadonlyArray<string>;
+  };
+  readonly executablePath: string;
+  readonly executableSha256: string;
+  readonly trustTier: ExtensionTrustTier;
+  readonly treeDigest: string;
+  readonly epoch: number;
+}
+
+export interface ExtensionObservation {
+  readonly id: string;
+  readonly version: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly trustTier: ExtensionTrustTier;
+  readonly treeDigest: string;
+  readonly approvalEpoch: number;
+  readonly health: "ready" | "mutated" | "invalid";
+  readonly message?: string;
+}
+
+export interface ExtensionInstallRequest {
+  readonly sourcePath: string;
+  readonly approvals: ReadonlyArray<string>;
+  readonly verification?: {
+    readonly keyId: string;
+    readonly signature: string;
+  };
+}
+
+export type ExtensionInstallResponse =
+  | {
+      readonly status: "approval-required";
+      readonly extensionId: string;
+      readonly requirements: ReadonlyArray<ExtensionApprovalRequirement>;
+    }
+  | { readonly status: "installed"; readonly extension: ExtensionObservation };
+
+export interface ExtensionEnableRequest {
+  readonly extensionId: string;
+  readonly approvals: ReadonlyArray<string>;
+}
+
+export type ExtensionEnableResponse =
+  | {
+      readonly status: "approval-required";
+      readonly extensionId: string;
+      readonly requirements: ReadonlyArray<ExtensionApprovalRequirement>;
+    }
+  | { readonly status: "enabled"; readonly extension: ExtensionObservation };
+
+export interface ExtensionDisableRequest {
+  readonly extensionId: string;
+}
+
+export interface ExtensionDisableResponse {
+  readonly extension: ExtensionObservation;
+}
+
+export type ExtensionListRequest = Record<never, never>;
+export interface ExtensionListResponse {
+  readonly extensions: ReadonlyArray<ExtensionObservation>;
+}
+
+export interface ExtensionDoctorRequest {
+  readonly extensionId: string;
+  readonly approval?: string;
+}
+
+export type ExtensionDoctorResponse =
+  | {
+      readonly status: "approval-required";
+      readonly extensionId: string;
+      readonly requirements: ReadonlyArray<ExtensionApprovalRequirement>;
+    }
+  | {
+      readonly status: "ok" | "failed" | "timeout";
+      readonly extension: ExtensionObservation;
+      readonly exitCode: number | null;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly truncated: boolean;
+    };
+
 /**
  * Attach-protocol NDJSON framing (S2 experiment). The codec is transport-agnostic and owns no
  * connection state, Session registry, replay ordering, or transport behavior. Frame schema
@@ -406,6 +516,15 @@ export type ProtocolErrorCode =
   | "stale-turn"
   | "overloaded"
   | "shutting-down"
+  | "extension-not-found"
+  | "extension-invalid"
+  | "extension-incompatible"
+  | "approval-required"
+  | "approval-invalid"
+  | "extension-conflict"
+  | "extension-operation-failed"
+  | "extension-timeout"
+  | "extension-mutated"
   | "internal";
 
 interface ClientRequestBase {
@@ -433,7 +552,12 @@ export type ClientRequestFrame =
   | ClientRequestVariant<"turn/start", TurnStartRequest>
   | ClientRequestVariant<"turn/steer", TurnSteerRequest>
   | ClientRequestVariant<"turn/interrupt", TurnInterruptRequest>
-  | ClientRequestVariant<"approval/resolve", ApprovalResolveRequest>;
+  | ClientRequestVariant<"approval/resolve", ApprovalResolveRequest>
+  | ClientRequestVariant<"extension/install", ExtensionInstallRequest>
+  | ClientRequestVariant<"extension/enable", ExtensionEnableRequest>
+  | ClientRequestVariant<"extension/disable", ExtensionDisableRequest>
+  | ClientRequestVariant<"extension/list", ExtensionListRequest>
+  | ClientRequestVariant<"extension/doctor", ExtensionDoctorRequest>;
 
 type ServerSuccessVariant<Method extends ProtocolMethod, Result> = ClientRequestBase & {
   readonly method: Method;
@@ -456,7 +580,12 @@ export type ServerSuccessFrame =
   | ServerSuccessVariant<"turn/start", TurnStartResponse>
   | ServerSuccessVariant<"turn/steer", TurnSteerResponse>
   | ServerSuccessVariant<"turn/interrupt", TurnInterruptResponse>
-  | ServerSuccessVariant<"approval/resolve", ApprovalResolveResponse>;
+  | ServerSuccessVariant<"approval/resolve", ApprovalResolveResponse>
+  | ServerSuccessVariant<"extension/install", ExtensionInstallResponse>
+  | ServerSuccessVariant<"extension/enable", ExtensionEnableResponse>
+  | ServerSuccessVariant<"extension/disable", ExtensionDisableResponse>
+  | ServerSuccessVariant<"extension/list", ExtensionListResponse>
+  | ServerSuccessVariant<"extension/doctor", ExtensionDoctorResponse>;
 
 /**
  * Server→client structured error frame. `requestId` is `string` when the failing request was

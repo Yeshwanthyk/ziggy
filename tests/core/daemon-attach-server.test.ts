@@ -13,6 +13,7 @@ import {
   type AttachServer,
   type DaemonKernel,
   type DaemonWorld,
+  type ExtensionLifecyclePort,
   type FilesystemWorld,
   ProfileLockCoordinator,
   SessionRuntimeError,
@@ -23,6 +24,7 @@ import {
   decodeSessionEnvelope,
   encodeClientRequest,
   type ClientRequestFrame,
+  type ExtensionObservation,
   type ServerFrame,
   type SessionEnvelope,
   type SessionEvent,
@@ -877,6 +879,93 @@ describe("Unix attach server", () => {
       await fixture.close();
     }
   });
+
+  test("dispatches Extension lifecycle intent and returns exact approvals with stable failures", async () => {
+    const digest = "a".repeat(64);
+    const extension: ExtensionObservation = {
+      id: "fixture",
+      version: "1.0.0",
+      name: "Fixture",
+      enabled: false,
+      trustTier: "community",
+      treeDigest: digest,
+      approvalEpoch: 0,
+      health: "ready",
+    };
+    const calls: string[] = [];
+    const extensions: ExtensionLifecyclePort = {
+      install: (input) =>
+        Effect.sync(() => {
+          calls.push(`install:${input.sourcePath}:${input.approvals.length}`);
+          return {
+            status: "approval-required",
+            extensionId: "fixture",
+            requirements: [
+              {
+                fingerprint: digest,
+                extensionId: "fixture",
+                extensionVersion: "1.0.0",
+                entryKind: "setup",
+                entryId: "setup-0",
+                argv: ["bin/setup"],
+                permissions: { network: false, filesystem: "profile", secrets: [] },
+                executablePath: "bin/setup",
+                executableSha256: digest,
+                trustTier: "community",
+                treeDigest: digest,
+                epoch: 0,
+              },
+            ],
+          };
+        }),
+      enable: () => Effect.fail({ _tag: "ExtensionLifecycleError", code: "approval-invalid" }),
+      disable: () => Effect.succeed(extension),
+      list: () => Effect.succeed([extension]),
+      doctor: () =>
+        Effect.succeed({
+          extension,
+          status: "ok",
+          exitCode: 0,
+          stdout: "healthy\n",
+          stderr: "",
+          truncated: false,
+        }),
+    };
+    const fixture = await memoryFixture(new ScriptedProvider([]), { extensions });
+    const peer = await SocketPeer.connect(fixture.server.socketPath);
+    try {
+      await initialize(peer, "init", true);
+      peer.send(
+        request("install", "extension/install", {
+          sourcePath: "/tmp/fixture",
+          approvals: [],
+        }),
+      );
+      expect(await response(peer, "install")).toMatchObject({
+        type: "success",
+        method: "extension/install",
+        result: {
+          status: "approval-required",
+          extensionId: "fixture",
+          requirements: [{ fingerprint: digest, argv: ["bin/setup"] }],
+        },
+      });
+      peer.send(
+        request("enable", "extension/enable", { extensionId: "fixture", approvals: [digest] }),
+      );
+      expect(await response(peer, "enable")).toEqual({
+        schemaVersion: 2,
+        requestId: "enable",
+        type: "error",
+        code: "approval-invalid",
+        message: "Extension approval fingerprint is invalid or stale",
+      });
+      expect(calls).toEqual(["install:/tmp/fixture:0"]);
+    } finally {
+      await peer.close();
+      await fixture.close();
+    }
+  });
 });
 
 afterAll(async () => {
@@ -976,6 +1065,7 @@ interface MemoryFixtureOptions {
   readonly maxPendingRequests?: number;
   readonly maxOutboundBytes?: number;
   readonly nextSessionId?: () => string;
+  readonly extensions?: ExtensionLifecyclePort;
 }
 
 async function memoryFixture(provider: ScriptedProvider, options: MemoryFixtureOptions = {}) {
@@ -1014,6 +1104,7 @@ async function memoryFixture(provider: ScriptedProvider, options: MemoryFixtureO
       kernel,
       nextSessionId: options.nextSessionId ?? (() => sessionIds.next()),
       nextSubscriptionId: () => subscriptionIds.next(),
+      ...(options.extensions === undefined ? {} : { extensions: options.extensions }),
       ...(options.maxPendingRequests === undefined
         ? {}
         : { maxPendingRequests: options.maxPendingRequests }),
@@ -1215,7 +1306,11 @@ function clientIdentity(): Extract<
   return { client: { name: "socket-test", version: "1.0.0" }, features: [] };
 }
 
-async function initialize(peer: SocketPeer, requestId: string): Promise<void> {
+async function initialize(
+  peer: SocketPeer,
+  requestId: string,
+  extensionLifecycle = false,
+): Promise<void> {
   peer.send(request(requestId, "initialize", clientIdentity()));
   expect(await response(peer, requestId)).toMatchObject({
     type: "success",
@@ -1228,6 +1323,7 @@ async function initialize(peer: SocketPeer, requestId: string): Promise<void> {
         "turnInterrupt",
         "approvals",
         "stableMainSession",
+        ...(extensionLifecycle ? ["extensionLifecycle"] : []),
       ],
     },
   });

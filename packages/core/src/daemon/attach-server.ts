@@ -12,6 +12,15 @@ import {
   PROTOCOL_VERSION,
   ProtocolDecodeError,
   type ClientRequestFrame,
+  type ExtensionDisableRequest,
+  type ExtensionDisableResponse,
+  type ExtensionDoctorRequest,
+  type ExtensionDoctorResponse,
+  type ExtensionEnableRequest,
+  type ExtensionEnableResponse,
+  type ExtensionInstallRequest,
+  type ExtensionInstallResponse,
+  type ExtensionListResponse,
   type ProtocolErrorCode,
   type ServerAuthFrame,
   type ServerErrorFrame,
@@ -32,6 +41,7 @@ const SOCKET_MODE = 0o600;
 export interface CreateAttachServerOptions<RuntimeError = never> {
   readonly kernel: DaemonKernel<RuntimeError>;
   readonly auth?: DaemonAuthService;
+  readonly extensions?: ExtensionLifecyclePort;
   readonly nextSessionId?: () => string;
   readonly nextAuthId?: () => string;
   readonly nextAuthPromptId?: () => string;
@@ -44,6 +54,42 @@ export interface CreateAttachServerOptions<RuntimeError = never> {
       request: Extract<ClientRequestFrame, { readonly method: "turn/start" }>,
     ) => boolean;
   };
+}
+
+const ExtensionLifecyclePortErrorCodeSchema = Schema.Literals([
+  "extension-not-found",
+  "extension-invalid",
+  "extension-incompatible",
+  "approval-required",
+  "approval-invalid",
+  "extension-conflict",
+  "extension-operation-failed",
+  "extension-timeout",
+  "extension-mutated",
+]);
+const ExtensionLifecyclePortErrorSchema = Schema.Struct({
+  _tag: Schema.Literal("ExtensionLifecycleError"),
+  code: ExtensionLifecyclePortErrorCodeSchema,
+});
+
+export type ExtensionLifecyclePortErrorCode = typeof ExtensionLifecyclePortErrorCodeSchema.Type;
+export type ExtensionLifecyclePortError = typeof ExtensionLifecyclePortErrorSchema.Type;
+const isExtensionLifecyclePortError = Schema.is(ExtensionLifecyclePortErrorSchema);
+
+export interface ExtensionLifecyclePort {
+  install(
+    request: ExtensionInstallRequest,
+  ): Effect.Effect<ExtensionInstallResponse, ExtensionLifecyclePortError>;
+  enable(
+    request: ExtensionEnableRequest,
+  ): Effect.Effect<ExtensionEnableResponse, ExtensionLifecyclePortError>;
+  disable(
+    request: ExtensionDisableRequest,
+  ): Effect.Effect<ExtensionDisableResponse["extension"], ExtensionLifecyclePortError>;
+  list(): Effect.Effect<ExtensionListResponse["extensions"], ExtensionLifecyclePortError>;
+  doctor(
+    request: ExtensionDoctorRequest,
+  ): Effect.Effect<ExtensionDoctorResponse, ExtensionLifecyclePortError>;
 }
 
 export interface AttachServer {
@@ -251,7 +297,10 @@ export function createAttachServer<RuntimeError>(
           type: "success",
           result: {
             protocolVersion: PROTOCOL_VERSION,
-            features: negotiateServerFeatures(options.auth !== undefined),
+            features: negotiateServerFeatures(
+              options.auth !== undefined,
+              options.extensions !== undefined,
+            ),
           },
         });
         return;
@@ -561,8 +610,77 @@ export function createAttachServer<RuntimeError>(
             });
             return;
           }
+          case "extension/install": {
+            const extensions = yield* requireExtensionLifecycle();
+            const result = yield* extensions.install(request.params);
+            sendFrame(state, {
+              schemaVersion: PROTOCOL_VERSION,
+              requestId: request.requestId,
+              method: "extension/install",
+              type: "success",
+              result,
+            });
+            return;
+          }
+          case "extension/enable": {
+            const extensions = yield* requireExtensionLifecycle();
+            const result = yield* extensions.enable(request.params);
+            sendFrame(state, {
+              schemaVersion: PROTOCOL_VERSION,
+              requestId: request.requestId,
+              method: "extension/enable",
+              type: "success",
+              result,
+            });
+            return;
+          }
+          case "extension/disable": {
+            const extensions = yield* requireExtensionLifecycle();
+            const extension = yield* extensions.disable(request.params);
+            sendFrame(state, {
+              schemaVersion: PROTOCOL_VERSION,
+              requestId: request.requestId,
+              method: "extension/disable",
+              type: "success",
+              result: { extension },
+            });
+            return;
+          }
+          case "extension/list": {
+            const extensions = yield* requireExtensionLifecycle();
+            const result = yield* extensions.list();
+            sendFrame(state, {
+              schemaVersion: PROTOCOL_VERSION,
+              requestId: request.requestId,
+              method: "extension/list",
+              type: "success",
+              result: { extensions: result },
+            });
+            return;
+          }
+          case "extension/doctor": {
+            const extensions = yield* requireExtensionLifecycle();
+            const result = yield* extensions.doctor(request.params);
+            sendFrame(state, {
+              schemaVersion: PROTOCOL_VERSION,
+              requestId: request.requestId,
+              method: "extension/doctor",
+              type: "success",
+              result,
+            });
+            return;
+          }
         }
       });
+    }
+
+    function requireExtensionLifecycle(): Effect.Effect<
+      ExtensionLifecyclePort,
+      InvalidRequestError
+    > {
+      return options.extensions === undefined
+        ? Effect.fail(new InvalidRequestError())
+        : Effect.succeed(options.extensions);
     }
 
     function getExistingRuntime(sessionId: string) {
@@ -735,6 +853,8 @@ export function createAttachServer<RuntimeError>(
         sendFrame(state, errorFrame(requestId, "overloaded", "Session runtime is overloaded"));
       } else if (Predicate.isTagged(error, "SessionRuntimeClosedError") || closing) {
         sendFrame(state, errorFrame(requestId, "shutting-down", "Daemon is shutting down"));
+      } else if (isExtensionLifecyclePortError(error)) {
+        sendFrame(state, errorFrame(requestId, error.code, extensionErrorMessage(error.code)));
       } else if (!Predicate.isTagged(error, "ConnectionDeliveryError")) {
         sendFrame(state, errorFrame(requestId, "internal", "Internal daemon error"));
       }
@@ -1077,6 +1197,29 @@ function errorFrame(
   message: string,
 ): ServerErrorFrame {
   return { schemaVersion: PROTOCOL_VERSION, requestId, type: "error", code, message };
+}
+
+function extensionErrorMessage(code: ExtensionLifecyclePortErrorCode): string {
+  switch (code) {
+    case "extension-not-found":
+      return "Extension was not found";
+    case "extension-invalid":
+      return "Extension is invalid";
+    case "extension-incompatible":
+      return "Extension is incompatible with this Ziggy version";
+    case "approval-required":
+      return "Exact Extension approval is required";
+    case "approval-invalid":
+      return "Extension approval fingerprint is invalid or stale";
+    case "extension-conflict":
+      return "Extension lifecycle operation conflicts with current state";
+    case "extension-operation-failed":
+      return "Extension lifecycle operation failed";
+    case "extension-timeout":
+      return "Extension operation timed out";
+    case "extension-mutated":
+      return "Installed Extension has mutated";
+  }
 }
 
 function eventFrame(subscriptionId: string, event: SessionEnvelope): ServerSessionEventFrame {

@@ -1,4 +1,10 @@
-import type { SessionSummary } from "@ziggy/protocol";
+import type {
+  ExtensionDoctorResponse,
+  ExtensionEnableResponse,
+  ExtensionInstallResponse,
+  ExtensionObservation,
+  SessionSummary,
+} from "@ziggy/protocol";
 import { ZIGGY_VERSION } from "@ziggy/core";
 import { Effect, Schema } from "effect";
 import {
@@ -39,6 +45,29 @@ export interface CliDaemonSetup<R = never> {
     profilePath: string,
   ) => Effect.Effect<DaemonProbeResult, DaemonControlError, R>;
 }
+
+export type ExtensionClientRequest =
+  | {
+      readonly action: "install";
+      readonly sourcePath: string;
+      readonly approvals: ReadonlyArray<string>;
+      readonly verification?: { readonly keyId: string; readonly signature: string };
+    }
+  | {
+      readonly action: "enable";
+      readonly extensionId: string;
+      readonly approvals: ReadonlyArray<string>;
+    }
+  | { readonly action: "disable"; readonly extensionId: string }
+  | { readonly action: "list" }
+  | { readonly action: "doctor"; readonly extensionId: string; readonly approval?: string };
+
+export type ExtensionClientResult =
+  | ExtensionDoctorResponse
+  | ExtensionEnableResponse
+  | ExtensionInstallResponse
+  | ExtensionObservation
+  | ReadonlyArray<ExtensionObservation>;
 
 export function prepareClientDaemon<R>(
   profilePath: string,
@@ -81,6 +110,34 @@ export function runSessionsListWithClient(
   client: AttachClient,
 ): Effect.Effect<string, AttachClientError> {
   return client.listSessions.pipe(Effect.map(formatSessionList));
+}
+
+function runExtensionWithClient(
+  client: AttachClient,
+  request: ExtensionClientRequest,
+): Effect.Effect<ExtensionClientResult, AttachClientError> {
+  switch (request.action) {
+    case "install":
+      return client.installExtension({
+        sourcePath: request.sourcePath,
+        approvals: request.approvals,
+        ...(request.verification === undefined ? {} : { verification: request.verification }),
+      });
+    case "enable":
+      return client.enableExtension({
+        extensionId: request.extensionId,
+        approvals: request.approvals,
+      });
+    case "disable":
+      return client.disableExtension(request.extensionId);
+    case "list":
+      return client.listExtensions;
+    case "doctor":
+      return client.doctorExtension({
+        extensionId: request.extensionId,
+        ...(request.approval === undefined ? {} : { approval: request.approval }),
+      });
+  }
 }
 
 export function runProductionAsk<E, SetupR, OutputR>(
@@ -132,6 +189,24 @@ export function runProductionSessionsList<R>(
         client: { name: "ziggy-sessions", version: ZIGGY_VERSION },
       });
       return yield* runSessionsListWithClient(client);
+    }),
+  );
+}
+
+export function runProductionExtension<R>(
+  profilePath: string,
+  request: ExtensionClientRequest,
+  setup: CliDaemonSetup<R>,
+): Effect.Effect<ExtensionClientResult, CliClientError, R> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const ready = yield* prepareClientDaemon(profilePath, setup);
+      const client = yield* createAttachClient({
+        transport: unixAttachTransportFactory(ready.socketPath),
+        client: { name: "ziggy-extension", version: ZIGGY_VERSION },
+        requiredFeatures: ["extensionLifecycle"],
+      });
+      return yield* runExtensionWithClient(client, request);
     }),
   );
 }

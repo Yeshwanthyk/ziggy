@@ -78,6 +78,17 @@ const envelope: SessionEnvelope = {
 
 const canonicalEnvelopeFrame =
   '{"schemaVersion":1,"seq":7,"emittedAt":"2026-07-19T00:00:00.000Z","event":{"type":"turn-started","sessionId":"session-a","turnId":"turn-a","message":"hello","origin":"user"}}';
+const digest = "a".repeat(64);
+const extension = {
+  id: "fixture",
+  version: "1.0.0",
+  name: "Fixture",
+  enabled: false,
+  trustTier: "community",
+  treeDigest: digest,
+  approvalEpoch: 0,
+  health: "ready",
+} as const;
 
 // One request frame per protocol method, exercising the existing request param shapes.
 const requestFrames: ReadonlyArray<ClientRequestFrame> = [
@@ -136,6 +147,31 @@ const requestFrames: ReadonlyArray<ClientRequestFrame> = [
     requestId: "req-10",
     method: "approval/resolve",
     params: { sessionId: "session-a", approvalId: "approval-a", decision: "deny" },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-install",
+    method: "extension/install",
+    params: { sourcePath: "/tmp/fixture", approvals: [digest] },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-enable",
+    method: "extension/enable",
+    params: { extensionId: "fixture", approvals: [digest] },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-disable",
+    method: "extension/disable",
+    params: { extensionId: "fixture" },
+  },
+  { schemaVersion: 2, requestId: "req-list-extensions", method: "extension/list", params: {} },
+  {
+    schemaVersion: 2,
+    requestId: "req-doctor-extension",
+    method: "extension/doctor",
+    params: { extensionId: "fixture", approval: digest },
   },
 ];
 
@@ -228,6 +264,48 @@ const successFrames: ReadonlyArray<ServerSuccessFrame> = [
     type: "success",
     result: { outcome: "already-resolved" },
   },
+  {
+    schemaVersion: 2,
+    requestId: "req-install",
+    method: "extension/install",
+    type: "success",
+    result: { status: "installed", extension },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-enable",
+    method: "extension/enable",
+    type: "success",
+    result: { status: "enabled", extension: { ...extension, enabled: true } },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-disable",
+    method: "extension/disable",
+    type: "success",
+    result: { extension },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-list-extensions",
+    method: "extension/list",
+    type: "success",
+    result: { extensions: [extension] },
+  },
+  {
+    schemaVersion: 2,
+    requestId: "req-doctor-extension",
+    method: "extension/doctor",
+    type: "success",
+    result: {
+      status: "ok",
+      extension,
+      exitCode: 0,
+      stdout: "healthy\n",
+      stderr: "",
+      truncated: false,
+    },
+  },
 ];
 
 const errorCodes: ReadonlyArray<ProtocolErrorCode> = [
@@ -242,6 +320,15 @@ const errorCodes: ReadonlyArray<ProtocolErrorCode> = [
   "stale-turn",
   "overloaded",
   "shutting-down",
+  "extension-not-found",
+  "extension-invalid",
+  "extension-incompatible",
+  "approval-required",
+  "approval-invalid",
+  "extension-conflict",
+  "extension-operation-failed",
+  "extension-timeout",
+  "extension-mutated",
   "internal",
 ];
 
@@ -271,6 +358,11 @@ describe("attach framing types", () => {
         | "turn/steer"
         | "turn/interrupt"
         | "approval/resolve"
+        | "extension/install"
+        | "extension/enable"
+        | "extension/disable"
+        | "extension/list"
+        | "extension/doctor"
       >
     >();
     expectType<Equal<ClientRequestFrame["schemaVersion"], 2>>();
@@ -303,6 +395,15 @@ describe("attach framing types", () => {
         | "stale-turn"
         | "overloaded"
         | "shutting-down"
+        | "extension-not-found"
+        | "extension-invalid"
+        | "extension-incompatible"
+        | "approval-required"
+        | "approval-invalid"
+        | "extension-conflict"
+        | "extension-operation-failed"
+        | "extension-timeout"
+        | "extension-mutated"
         | "internal"
       >
     >();
@@ -386,6 +487,53 @@ describe("auth protocol codec", () => {
   });
 });
 
+describe("Extension lifecycle protocol codec", () => {
+  test("round-trips exact approval requirements without executing or weakening the request", () => {
+    const requirement = {
+      fingerprint: digest,
+      extensionId: "fixture",
+      extensionVersion: "1.0.0",
+      entryKind: "setup",
+      entryId: "setup-0",
+      argv: ["bin/setup", "--deterministic"],
+      permissions: { network: false, filesystem: "profile", secrets: ["FIXTURE_TOKEN"] },
+      executablePath: "bin/setup",
+      executableSha256: digest,
+      trustTier: "community",
+      treeDigest: digest,
+      epoch: 0,
+    } as const;
+    const approvalRequired: ServerFrame = {
+      schemaVersion: 2,
+      requestId: "install",
+      method: "extension/install",
+      type: "success",
+      result: {
+        status: "approval-required",
+        extensionId: "fixture",
+        requirements: [requirement],
+      },
+    };
+    expect(decodeServerFrame(encodeServerFrame(approvalRequired))).toEqual(approvalRequired);
+  });
+
+  test("rejects loose, oversized, duplicate, malformed, and unbounded Extension values", () => {
+    const invalidRequests = [
+      '{"schemaVersion":2,"requestId":"x","method":"extension/install","params":{"sourcePath":"/tmp/x","approvals":[],"extra":true}}\n',
+      `{"schemaVersion":2,"requestId":"x","method":"extension/install","params":{"sourcePath":"${"x".repeat(4_097)}","approvals":[]}}\n`,
+      `{"schemaVersion":2,"requestId":"x","method":"extension/enable","params":{"extensionId":"fixture","approvals":["${digest}","${digest}"]}}\n`,
+      '{"schemaVersion":2,"requestId":"x","method":"extension/doctor","params":{"extensionId":"fixture","approval":"not-a-fingerprint"}}\n',
+    ];
+    for (const frame of invalidRequests) expect(() => decodeClientRequest(frame)).toThrow();
+
+    const invalidResponses = [
+      `{"schemaVersion":2,"requestId":"x","method":"extension/list","type":"success","result":{"extensions":[{"id":"fixture","version":"1.0.0","name":"Fixture","enabled":false,"trustTier":"community","treeDigest":"${digest}","approvalEpoch":0,"health":"ready","extra":true}]}}\n`,
+      `{"schemaVersion":2,"requestId":"x","method":"extension/doctor","type":"success","result":{"status":"ok","extension":{"id":"fixture","version":"1.0.0","name":"Fixture","enabled":false,"trustTier":"community","treeDigest":"${digest}","approvalEpoch":0,"health":"ready"},"exitCode":0,"stdout":"${"x".repeat(65_537)}","stderr":"","truncated":false}}\n`,
+    ];
+    for (const frame of invalidResponses) expect(() => decodeServerFrame(frame)).toThrow();
+  });
+});
+
 describe("client request frame codec", () => {
   test("round-trips every protocol method with byte-stable canonical framing", () => {
     expect(requestFrames.map((frame) => frame.method)).toEqual([
@@ -400,6 +548,11 @@ describe("client request frame codec", () => {
       "turn/steer",
       "turn/interrupt",
       "approval/resolve",
+      "extension/install",
+      "extension/enable",
+      "extension/disable",
+      "extension/list",
+      "extension/doctor",
     ]);
 
     for (const frame of requestFrames) {
@@ -480,6 +633,11 @@ describe("server frame codec", () => {
       "turn/steer",
       "turn/interrupt",
       "approval/resolve",
+      "extension/install",
+      "extension/enable",
+      "extension/disable",
+      "extension/list",
+      "extension/doctor",
     ]);
 
     for (const frame of successFrames) {

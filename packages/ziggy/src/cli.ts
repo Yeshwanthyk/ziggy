@@ -1,5 +1,6 @@
 import type { AuthStatus, AuthType } from "@ziggy/protocol";
 import { ZIGGY_VERSION } from "@ziggy/core";
+import { resolve } from "node:path";
 import { Cause, Effect, Exit, Option, Predicate, Result, Schema } from "effect";
 import { loginProvider, type AuthClientError } from "./auth-client.ts";
 import {
@@ -31,10 +32,13 @@ import { terminalAuthInteraction, type TerminalAuthError } from "./terminal-auth
 import { BunProcessManager } from "./bun-process-node-adapter.ts";
 import {
   runProductionAsk,
+  runProductionExtension,
   runProductionSessionsList,
   runProductionTui,
   type CliClientError,
   type CliDaemonSetup,
+  type ExtensionClientRequest,
+  type ExtensionClientResult,
 } from "./cli-client.ts";
 
 export { BunProcessManager } from "./bun-process-node-adapter.ts";
@@ -76,6 +80,10 @@ export interface CliDependencies<E = never, R = never> {
   ) => Effect.Effect<AuthStatus, E, R>;
   readonly ask?: (profilePath: string, prompt: string) => Effect.Effect<void, E, R>;
   readonly sessionsList?: (profilePath: string) => Effect.Effect<string, E, R>;
+  readonly extension?: (
+    profilePath: string,
+    request: ExtensionClientRequest,
+  ) => Effect.Effect<ExtensionClientResult, E, R>;
   readonly tui?: (profilePath: string) => Effect.Effect<void, E, R>;
   readonly cwd: Effect.Effect<string, E, R>;
   readonly onSignal: (
@@ -172,6 +180,18 @@ export function runCli<E, R>(argv: ReadonlyArray<string>, dependencies: CliDepen
       yield* dependencies.output(yield* dependencies.sessionsList(profilePath));
       return;
     }
+    if (command === "extension") {
+      if (dependencies.extension === undefined) {
+        return yield* new CliCompositionError({
+          operation: "extension",
+          message: "Extension lifecycle composition is not available",
+        });
+      }
+      const parsed = yield* parseExtension(argv.slice(1), yield* dependencies.cwd);
+      const result = yield* dependencies.extension(parsed.profilePath, parsed.request);
+      yield* dependencies.output(JSON.stringify(result));
+      return;
+    }
     if (command === "serve") {
       if (dependencies.serve === undefined) {
         return yield* new CliCompositionError({
@@ -232,7 +252,7 @@ export function runCli<E, R>(argv: ReadonlyArray<string>, dependencies: CliDepen
     }
     return yield* new CliUsageError({
       message:
-        "usage: ziggy init [path] [--voice NAME] | tui [--profile PATH] | ask PROMPT [--profile PATH] | sessions list [--profile PATH] | auth login PROVIDER [--type api_key|oauth] [--profile PATH] | serve [--profile PATH] | doctor [--profile PATH] | service install|start|stop|status|remove",
+        "usage: ziggy init [path] [--voice NAME] | tui [--profile PATH] | ask PROMPT [--profile PATH] | sessions list [--profile PATH] | extension install|enable|disable|list|doctor | auth login PROVIDER [--type api_key|oauth] [--profile PATH] | serve [--profile PATH] | doctor [--profile PATH] | service install|start|stop|status|remove",
     });
   });
 }
@@ -272,6 +292,131 @@ function askUsage(): Effect.Effect<never, CliUsageError> {
 function sessionsUsage(): Effect.Effect<never, CliUsageError> {
   return Effect.fail(new CliUsageError({ message: "usage: ziggy sessions list [--profile PATH]" }));
 }
+
+function parseExtension(
+  argv: ReadonlyArray<string>,
+  cwd: string,
+): Effect.Effect<
+  { readonly profilePath: string; readonly request: ExtensionClientRequest },
+  CliUsageError
+> {
+  const action = argv[0];
+  if (action === "list") {
+    return profile(argv.slice(1), cwd).pipe(
+      Effect.map((profilePath) => {
+        const request: ExtensionClientRequest = { action: "list" };
+        return { profilePath, request };
+      }),
+      Effect.mapError(() => new CliUsageError({ message: extensionUsageMessage })),
+    );
+  }
+  const subject = argv[1];
+  if (
+    (action !== "install" && action !== "enable" && action !== "disable" && action !== "doctor") ||
+    subject === undefined ||
+    subject.length === 0 ||
+    subject.startsWith("-")
+  ) {
+    return extensionUsage();
+  }
+  let profilePath = cwd;
+  let profileSupplied = false;
+  const approvals: string[] = [];
+  let verificationKey: string | undefined;
+  let signature: string | undefined;
+  for (let index = 2; index < argv.length; index += 1) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (flag === "--profile" && !profileSupplied && validFlagValue(value)) {
+      profilePath = value;
+      profileSupplied = true;
+      index += 1;
+    } else if (flag === "--approve" && validApprovalFingerprint(value)) {
+      approvals.push(value);
+      index += 1;
+    } else if (
+      flag === "--verification-key" &&
+      verificationKey === undefined &&
+      validBoundedFlagValue(value, 512)
+    ) {
+      verificationKey = value;
+      index += 1;
+    } else if (
+      flag === "--signature" &&
+      signature === undefined &&
+      validBoundedFlagValue(value, 16_384)
+    ) {
+      signature = value;
+      index += 1;
+    } else return extensionUsage();
+  }
+  if (new Set(approvals).size !== approvals.length) return extensionUsage();
+  if (action !== "install" && !isExtensionId(subject)) return extensionUsage();
+  if (action === "disable") {
+    if (approvals.length > 0 || verificationKey !== undefined || signature !== undefined) {
+      return extensionUsage();
+    }
+    return Effect.succeed({ profilePath, request: { action, extensionId: subject } });
+  }
+  if (action === "doctor") {
+    if (approvals.length > 1 || verificationKey !== undefined || signature !== undefined) {
+      return extensionUsage();
+    }
+    const approval = approvals[0];
+    return Effect.succeed({
+      profilePath,
+      request: {
+        action,
+        extensionId: subject,
+        ...(approval === undefined ? {} : { approval }),
+      },
+    });
+  }
+  if (action === "enable") {
+    if (verificationKey !== undefined || signature !== undefined) return extensionUsage();
+    return Effect.succeed({
+      profilePath,
+      request: { action, extensionId: subject, approvals },
+    });
+  }
+  if ((verificationKey === undefined) !== (signature === undefined)) return extensionUsage();
+  const sourcePath = resolve(cwd, subject);
+  if (sourcePath.length > 4_096 || sourcePath.includes("\0")) return extensionUsage();
+  return Effect.succeed({
+    profilePath,
+    request: {
+      action,
+      sourcePath,
+      approvals,
+      ...(verificationKey === undefined || signature === undefined
+        ? {}
+        : { verification: { keyId: verificationKey, signature } }),
+    },
+  });
+}
+
+function validFlagValue(value: string | undefined): value is string {
+  return value !== undefined && value.length > 0 && !value.startsWith("-");
+}
+
+function validBoundedFlagValue(value: string | undefined, maxLength: number): value is string {
+  return validFlagValue(value) && value.length <= maxLength && !value.includes("\0");
+}
+
+function isExtensionId(value: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function validApprovalFingerprint(value: string | undefined): value is string {
+  return value !== undefined && /^[0-9a-f]{64}$/.test(value);
+}
+
+function extensionUsage(): Effect.Effect<never, CliUsageError> {
+  return Effect.fail(new CliUsageError({ message: extensionUsageMessage }));
+}
+
+const extensionUsageMessage =
+  "usage: ziggy extension install SOURCE [--approve SHA256] [--verification-key KEY --signature SIGNATURE] [--profile PATH] | enable ID [--approve SHA256] [--profile PATH] | disable ID [--profile PATH] | list [--profile PATH] | doctor ID [--approve SHA256] [--profile PATH]";
 
 function parseInit(
   argv: ReadonlyArray<string>,
@@ -461,6 +606,8 @@ export const productionDependencies: Effect.Effect<
         }),
       ),
     sessionsList: (profilePath) => runProductionSessionsList(profilePath, clientDaemonSetup),
+    extension: (profilePath, request) =>
+      runProductionExtension(profilePath, request, clientDaemonSetup),
     tui: (profilePath) => runProductionTui(profilePath, clientDaemonSetup),
     authLogin: (profilePath, providerId, type) =>
       Effect.gen(function* () {

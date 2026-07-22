@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import { ZIGGY_VERSION } from "../../packages/core/src/product-version.ts";
 import { AttachOutcomeUnknownError } from "../../packages/ziggy/src/attach.ts";
+import type { ExtensionClientRequest } from "../../packages/ziggy/src/cli-client.ts";
 import {
   BunProcessManager,
   productionDependencies,
@@ -112,6 +113,84 @@ test("ask and sessions list parse strict boundaries", async () => {
   }
   expect(asks).toHaveLength(2);
   expect(lists).toHaveLength(2);
+});
+
+test("Extension commands submit exact intent and approvals without Profile writes", async () => {
+  const fake = dependencies();
+  const digest = "a".repeat(64);
+  const requests: Array<{
+    readonly profilePath: string;
+    readonly request: ExtensionClientRequest;
+  }> = [];
+  const value: CliDependencies = {
+    ...fake.value,
+    extension: (profilePath, request) =>
+      Effect.sync(() => {
+        requests.push({ profilePath, request });
+        return [];
+      }),
+  };
+
+  await runEffect(
+    runCli(
+      [
+        "extension",
+        "install",
+        "relative-source",
+        "--approve",
+        digest,
+        "--verification-key",
+        "key-1",
+        "--signature",
+        "signature-1",
+        "--profile",
+        "/profile",
+      ],
+      value,
+    ),
+  );
+  await runEffect(runCli(["extension", "enable", "fixture", "--approve", digest], value));
+  await runEffect(runCli(["extension", "disable", "fixture"], value));
+  await runEffect(runCli(["extension", "list"], value));
+  await runEffect(runCli(["extension", "doctor", "fixture", "--approve", digest], value));
+
+  expect(requests).toEqual([
+    {
+      profilePath: "/profile",
+      request: {
+        action: "install",
+        sourcePath: "/cwd/relative-source",
+        approvals: [digest],
+        verification: { keyId: "key-1", signature: "signature-1" },
+      },
+    },
+    {
+      profilePath: "/cwd",
+      request: { action: "enable", extensionId: "fixture", approvals: [digest] },
+    },
+    { profilePath: "/cwd", request: { action: "disable", extensionId: "fixture" } },
+    { profilePath: "/cwd", request: { action: "list" } },
+    {
+      profilePath: "/cwd",
+      request: { action: "doctor", extensionId: "fixture", approval: digest },
+    },
+  ]);
+
+  for (const argv of [
+    ["extension"],
+    ["extension", "install"],
+    ["extension", "install", "/source", "--approve", "wrong"],
+    ["extension", "install", "/source", "--approve", digest, "--approve", digest],
+    ["extension", "install", "/source", "--verification-key", "key-only"],
+    ["extension", "enable", "fixture", "--signature", "not-allowed"],
+    ["extension", "disable", "fixture", "--approve", digest],
+    ["extension", "doctor", "fixture", "--approve", digest, "--approve", "b".repeat(64)],
+    ["extension", "list", "extra"],
+  ]) {
+    await expect(runEffect(runCli(argv, value))).rejects.toThrow("usage: ziggy extension");
+  }
+  expect(requests).toHaveLength(5);
+  expect(fake.output).toEqual(["[]", "[]", "[]", "[]", "[]"]);
 });
 
 test("executable maps usage, known failure, unknown outcome, and local interrupt", async () => {

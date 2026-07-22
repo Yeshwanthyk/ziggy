@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import {
 } from "../../packages/protocol/src/index.ts";
 import {
   runProductionAsk,
+  runProductionExtension,
   runProductionSessionsList,
 } from "../../packages/ziggy/src/cli-client.ts";
 import type { DaemonProbeResult } from "../../packages/ziggy/src/daemon.ts";
@@ -158,6 +159,66 @@ describe("CLI real-socket lane", () => {
     expect(output).toBe(
       '[{"sessionId":"main","createdAt":"2026-07-21T00:00:00.000Z","status":"idle"},{"sessionId":"session-2","createdAt":"2026-07-21T00:00:01.000Z","status":"active"}]',
     );
+    await fixture.close();
+  });
+
+  it("installs through the real socket while the CLI Profile direct-write canary stays unchanged", async () => {
+    const digest = "a".repeat(64);
+    const fixture = await attachFixture((request, socket) => {
+      if (request.method === "initialize") {
+        sendSuccess(socket, request, {
+          protocolVersion: PROTOCOL_VERSION,
+          features: ["stableMainSession", "sessionReplay", "extensionLifecycle"],
+        });
+        return;
+      }
+      if (request.method === "extension/install") {
+        sendSuccess(socket, request, {
+          status: "approval-required",
+          extensionId: "fixture",
+          requirements: [
+            {
+              fingerprint: digest,
+              extensionId: "fixture",
+              extensionVersion: "1.0.0",
+              entryKind: "setup",
+              entryId: "setup-0",
+              argv: ["bin/setup"],
+              permissions: { network: false, filesystem: "profile", secrets: [] },
+              executablePath: "bin/setup",
+              executableSha256: digest,
+              trustTier: "community",
+              treeDigest: digest,
+              epoch: 0,
+            },
+          ],
+        });
+        return;
+      }
+      reject(socket, request);
+    });
+    const profile = await mkdtemp(join(tmpdir(), "ziggy-cli-direct-write-canary-"));
+    directories.push(profile);
+    const canaryPath = join(profile, "owner-canary.txt");
+    await writeFile(canaryPath, "owner bytes\n");
+    const beforeEntries = await readdir(profile);
+
+    const result = await runEffect(
+      runProductionExtension(
+        profile,
+        { action: "install", sourcePath: "/source/fixture", approvals: [] },
+        readySetup(fixture.socketPath),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      status: "approval-required",
+      extensionId: "fixture",
+      requirements: [{ fingerprint: digest }],
+    });
+    expect(fixture.methods).toEqual(["initialize", "extension/install"]);
+    expect(await readdir(profile)).toEqual(beforeEntries);
+    expect(await readFile(canaryPath, "utf8")).toBe("owner bytes\n");
     await fixture.close();
   });
 });

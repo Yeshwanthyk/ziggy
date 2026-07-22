@@ -3,6 +3,7 @@ import {
   MAIN_SESSION_ID,
   PROTOCOL_VERSION,
   type ClientRequestFrame,
+  type ExtensionObservation,
   type ServerFeature,
   type ServerFrame,
   type SessionEnvelope,
@@ -33,6 +34,17 @@ const mainSummary: SessionSummary = {
   sessionId: MAIN_SESSION_ID,
   createdAt: "2026-07-21T00:00:00.000Z",
   lastSeq: 0,
+};
+const extensionDigest = "a".repeat(64);
+const extensionObservation: ExtensionObservation = {
+  id: "fixture",
+  version: "1.0.0",
+  name: "Fixture",
+  enabled: false,
+  trustTier: "community",
+  treeDigest: extensionDigest,
+  approvalEpoch: 0,
+  health: "ready",
 };
 
 const envelope = (
@@ -216,6 +228,53 @@ function standardResponse(
         type: "success",
         result: { unsubscribed: true },
       };
+    case "extension/install":
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId: request.requestId,
+        method: "extension/install",
+        type: "success",
+        result: { status: "installed", extension: extensionObservation },
+      };
+    case "extension/enable":
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId: request.requestId,
+        method: "extension/enable",
+        type: "success",
+        result: { status: "enabled", extension: { ...extensionObservation, enabled: true } },
+      };
+    case "extension/disable":
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId: request.requestId,
+        method: "extension/disable",
+        type: "success",
+        result: { extension: extensionObservation },
+      };
+    case "extension/list":
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId: request.requestId,
+        method: "extension/list",
+        type: "success",
+        result: { extensions: [extensionObservation] },
+      };
+    case "extension/doctor":
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId: request.requestId,
+        method: "extension/doctor",
+        type: "success",
+        result: {
+          extension: extensionObservation,
+          status: "ok",
+          exitCode: 0,
+          stdout: "healthy\n",
+          stderr: "",
+          truncated: false,
+        },
+      };
     default:
       return {
         schemaVersion: PROTOCOL_VERSION,
@@ -304,6 +363,60 @@ describe("scoped Effect Attach Client", () => {
     );
 
     expect(result).toEqual({ ensured: mainSummary, listed: [mainSummary] });
+  });
+
+  it("sends Extension lifecycle intent only through the negotiated attach connection", async () => {
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const harness = yield* fakeFactory([
+          (request, transport) =>
+            transport.send(
+              standardResponse(request, [
+                "stableMainSession",
+                "sessionReplay",
+                "extensionLifecycle",
+              ]),
+            ),
+        ]);
+        const client = yield* clientFor(harness.factory);
+        const installed = yield* client.installExtension({
+          sourcePath: "/tmp/fixture",
+          approvals: [extensionDigest],
+        });
+        const enabled = yield* client.enableExtension({
+          extensionId: "fixture",
+          approvals: [extensionDigest],
+        });
+        const disabled = yield* client.disableExtension("fixture");
+        const listed = yield* client.listExtensions;
+        const doctor = yield* client.doctorExtension({
+          extensionId: "fixture",
+          approval: extensionDigest,
+        });
+        return {
+          installed,
+          enabled,
+          disabled,
+          listed,
+          doctor,
+          requests: harness.transports[0]?.writes,
+        };
+      }),
+    );
+
+    expect(result.installed).toEqual({ status: "installed", extension: extensionObservation });
+    expect(result.enabled).toMatchObject({ status: "enabled", extension: { enabled: true } });
+    expect(result.disabled).toEqual(extensionObservation);
+    expect(result.listed).toEqual([extensionObservation]);
+    expect(result.doctor).toMatchObject({ status: "ok", stdout: "healthy\n" });
+    expect(result.requests?.map((request) => request.method)).toEqual([
+      "initialize",
+      "extension/install",
+      "extension/enable",
+      "extension/disable",
+      "extension/list",
+      "extension/doctor",
+    ]);
   });
 
   it("rejects a concurrent request id collision without orphaning the first waiter", async () => {

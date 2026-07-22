@@ -4,6 +4,11 @@ import {
   type AuthStatus,
   type ClientFeature,
   type ClientRequestFrame,
+  type ExtensionApprovalRequirement,
+  type ExtensionDoctorResponse,
+  type ExtensionEnableResponse,
+  type ExtensionInstallResponse,
+  type ExtensionObservation,
   type ProtocolErrorCode,
   ProtocolDecodeError,
   type ServerAuthFrame,
@@ -302,6 +307,60 @@ function decodeClientRequestVariant(
         },
       }));
     }
+    case "extension/install": {
+      const p = exactParams(requestId, params, ["sourcePath", "approvals"], ["verification"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/install",
+        params: {
+          sourcePath: pathValue(p.sourcePath, "sourcePath"),
+          approvals: approvalFingerprints(p.approvals, "approvals"),
+          ...(Object.hasOwn(p, "verification")
+            ? { verification: decodeExtensionVerification(p.verification) }
+            : {}),
+        },
+      }));
+    }
+    case "extension/enable": {
+      const p = exactParams(requestId, params, ["extensionId", "approvals"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/enable",
+        params: {
+          extensionId: identifierValue(p.extensionId, "extensionId"),
+          approvals: approvalFingerprints(p.approvals, "approvals"),
+        },
+      }));
+    }
+    case "extension/disable": {
+      const p = exactParams(requestId, params, ["extensionId"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/disable",
+        params: { extensionId: identifierValue(p.extensionId, "extensionId") },
+      }));
+    }
+    case "extension/list": {
+      const p = exactParams(requestId, params, []);
+      return { schemaVersion: PROTOCOL_VERSION, requestId, method: "extension/list", params: p };
+    }
+    case "extension/doctor": {
+      const p = exactParams(requestId, params, ["extensionId"], ["approval"]);
+      return decodeFields(requestId, () => ({
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/doctor",
+        params: {
+          extensionId: identifierValue(p.extensionId, "extensionId"),
+          ...(Object.hasOwn(p, "approval")
+            ? { approval: approvalFingerprint(p.approval, "approval") }
+            : {}),
+        },
+      }));
+    }
     default:
       throw decodeError(
         "unknown-method",
@@ -577,6 +636,55 @@ function decodeServerSuccessVariant(
         result: { outcome: approvalOutcome(r.outcome) },
       };
     }
+    case "extension/install": {
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/install",
+        type: "success",
+        result: decodeExtensionInstallResponse(result),
+      };
+    }
+    case "extension/enable": {
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/enable",
+        type: "success",
+        result: decodeExtensionEnableResponse(result),
+      };
+    }
+    case "extension/disable": {
+      const r = exactRecord(result, ["extension"]);
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/disable",
+        type: "success",
+        result: { extension: decodeExtensionObservation(r.extension) },
+      };
+    }
+    case "extension/list": {
+      const r = exactRecord(result, ["extensions"]);
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/list",
+        type: "success",
+        result: {
+          extensions: boundedArray(r.extensions, decodeExtensionObservation, "extensions", 1_024),
+        },
+      };
+    }
+    case "extension/doctor": {
+      return {
+        schemaVersion: PROTOCOL_VERSION,
+        requestId,
+        method: "extension/doctor",
+        type: "success",
+        result: decodeExtensionDoctorResponse(result),
+      };
+    }
     default:
       throw decodeError(
         "unknown-method",
@@ -584,6 +692,218 @@ function decodeServerSuccessVariant(
         new TypeError(`Unknown protocol method: ${method}`),
       );
   }
+}
+
+function decodeExtensionInstallResponse(value: unknown): ExtensionInstallResponse {
+  const result = objectRecord(value);
+  if (result.status === "approval-required") return decodeExtensionApprovalResponse(result);
+  if (result.status !== "installed") throw new TypeError("Unknown Extension install status");
+  const exact = exactRecord(result, ["status", "extension"]);
+  return { status: "installed", extension: decodeExtensionObservation(exact.extension) };
+}
+
+function decodeExtensionEnableResponse(value: unknown): ExtensionEnableResponse {
+  const result = objectRecord(value);
+  if (result.status === "approval-required") return decodeExtensionApprovalResponse(result);
+  if (result.status !== "enabled") throw new TypeError("Unknown Extension enable status");
+  const exact = exactRecord(result, ["status", "extension"]);
+  return { status: "enabled", extension: decodeExtensionObservation(exact.extension) };
+}
+
+function decodeExtensionApprovalResponse(value: unknown): {
+  readonly status: "approval-required";
+  readonly extensionId: string;
+  readonly requirements: ReadonlyArray<ExtensionApprovalRequirement>;
+} {
+  const result = exactRecord(value, ["status", "extensionId", "requirements"]);
+  if (result.status !== "approval-required") {
+    throw new TypeError("Extension response status must be approval-required");
+  }
+  const requirements = boundedArray(
+    result.requirements,
+    decodeExtensionApprovalRequirement,
+    "requirements",
+    256,
+  );
+  if (requirements.length === 0) {
+    throw new TypeError("Approval requirements must not be empty");
+  }
+  return {
+    status: "approval-required",
+    extensionId: identifierValue(result.extensionId, "extensionId"),
+    requirements,
+  };
+}
+
+function decodeExtensionApprovalRequirement(value: unknown): ExtensionApprovalRequirement {
+  const requirement = exactRecord(value, [
+    "fingerprint",
+    "extensionId",
+    "extensionVersion",
+    "entryKind",
+    "entryId",
+    "argv",
+    "permissions",
+    "executablePath",
+    "executableSha256",
+    "trustTier",
+    "treeDigest",
+    "epoch",
+  ]);
+  const permissions = exactRecord(requirement.permissions, ["network", "filesystem", "secrets"]);
+  return {
+    fingerprint: approvalFingerprint(requirement.fingerprint, "fingerprint"),
+    extensionId: identifierValue(requirement.extensionId, "extensionId"),
+    extensionVersion: boundedString(requirement.extensionVersion, "extensionVersion", 128),
+    entryKind: extensionEntryKind(requirement.entryKind),
+    entryId: identifierValue(requirement.entryId, "entryId"),
+    argv: boundedArray(
+      requirement.argv,
+      (argument) => boundedString(argument, "argv entry", 8_192),
+      "argv",
+      256,
+    ),
+    permissions: {
+      network: booleanValue(permissions.network, "permissions.network"),
+      filesystem: extensionFilesystemPermission(permissions.filesystem),
+      secrets: boundedUniqueStrings(permissions.secrets, "permissions.secrets", 256, 512),
+    },
+    executablePath: pathValue(requirement.executablePath, "executablePath"),
+    executableSha256: sha256Value(requirement.executableSha256, "executableSha256"),
+    trustTier: extensionTrustTier(requirement.trustTier),
+    treeDigest: sha256Value(requirement.treeDigest, "treeDigest"),
+    epoch: nonnegativeSafeInteger(requirement.epoch, "epoch"),
+  };
+}
+
+function decodeExtensionObservation(value: unknown): ExtensionObservation {
+  const observation = exactRecord(
+    value,
+    ["id", "version", "name", "enabled", "trustTier", "treeDigest", "approvalEpoch", "health"],
+    ["message"],
+  );
+  return {
+    id: identifierValue(observation.id, "extension.id"),
+    version: boundedString(observation.version, "extension.version", 128),
+    name: boundedString(observation.name, "extension.name", 512),
+    enabled: booleanValue(observation.enabled, "extension.enabled"),
+    trustTier: extensionTrustTier(observation.trustTier),
+    treeDigest: sha256Value(observation.treeDigest, "extension.treeDigest"),
+    approvalEpoch: nonnegativeSafeInteger(observation.approvalEpoch, "extension.approvalEpoch"),
+    health: extensionHealth(observation.health),
+    ...(Object.hasOwn(observation, "message")
+      ? { message: boundedString(observation.message, "extension.message", 4_096) }
+      : {}),
+  };
+}
+
+function decodeExtensionDoctorResponse(value: unknown): ExtensionDoctorResponse {
+  const result = objectRecord(value);
+  if (result.status === "approval-required") return decodeExtensionApprovalResponse(result);
+  const exact = exactRecord(result, [
+    "extension",
+    "status",
+    "exitCode",
+    "stdout",
+    "stderr",
+    "truncated",
+  ]);
+  const status = extensionDoctorStatus(exact.status);
+  const exitCode =
+    exact.exitCode === null ? null : nonnegativeSafeInteger(exact.exitCode, "exitCode");
+  return {
+    extension: decodeExtensionObservation(exact.extension),
+    status,
+    exitCode,
+    stdout: boundedString(exact.stdout, "stdout", 65_536),
+    stderr: boundedString(exact.stderr, "stderr", 65_536),
+    truncated: booleanValue(exact.truncated, "truncated"),
+  };
+}
+
+function decodeExtensionVerification(value: unknown): {
+  readonly keyId: string;
+  readonly signature: string;
+} {
+  const verification = exactRecord(value, ["keyId", "signature"]);
+  return {
+    keyId: boundedString(verification.keyId, "verification.keyId", 512),
+    signature: boundedString(verification.signature, "verification.signature", 16_384),
+  };
+}
+
+function approvalFingerprints(value: unknown, name: string): ReadonlyArray<string> {
+  return boundedUniqueStrings(value, name, 256, 64, approvalFingerprint);
+}
+
+function boundedUniqueStrings(
+  value: unknown,
+  name: string,
+  maxItems: number,
+  maxBytes: number,
+  decode: (value: unknown, name: string, maxBytes: number) => string = boundedString,
+): ReadonlyArray<string> {
+  const values = boundedArray(
+    value,
+    (item) => decode(item, `${name} entry`, maxBytes),
+    name,
+    maxItems,
+  );
+  if (new Set(values).size !== values.length)
+    throw new TypeError(`${name} must not contain duplicates`);
+  return values;
+}
+
+function boundedArray<Value>(
+  value: unknown,
+  decode: (item: unknown) => Value,
+  name: string,
+  maxItems: number,
+): ReadonlyArray<Value> {
+  const values = arrayValue(value, decode, name);
+  if (values.length > maxItems) throw new TypeError(`${name} exceeds ${maxItems} entries`);
+  return values;
+}
+
+function pathValue(value: unknown, name: string): string {
+  const path = boundedString(value, name, 4_096);
+  if (path.includes("\0")) throw new TypeError(`${name} must not contain NUL bytes`);
+  return path;
+}
+
+function approvalFingerprint(value: unknown, name: string): string {
+  return sha256Value(value, name);
+}
+
+function sha256Value(value: unknown, name: string): string {
+  const digest = stringValue(value, name);
+  if (!/^[0-9a-f]{64}$/.test(digest)) throw new TypeError(`${name} must be a SHA-256 digest`);
+  return digest;
+}
+
+function extensionEntryKind(value: unknown): "tool" | "setup" | "doctor" {
+  if (value === "tool" || value === "setup" || value === "doctor") return value;
+  throw new TypeError("Unknown Extension approval entry kind");
+}
+
+function extensionTrustTier(value: unknown): "builtin" | "verified" | "community" {
+  if (value === "builtin" || value === "verified" || value === "community") return value;
+  throw new TypeError("Unknown Extension trust tier");
+}
+
+function extensionFilesystemPermission(value: unknown): "none" | "profile" | "full" {
+  if (value === "none" || value === "profile" || value === "full") return value;
+  throw new TypeError("Unknown Extension filesystem permission");
+}
+
+function extensionHealth(value: unknown): "ready" | "mutated" | "invalid" {
+  if (value === "ready" || value === "mutated" || value === "invalid") return value;
+  throw new TypeError("Unknown Extension health");
+}
+
+function extensionDoctorStatus(value: unknown): "ok" | "failed" | "timeout" {
+  if (value === "ok" || value === "failed" || value === "timeout") return value;
+  throw new TypeError("Unknown Extension doctor status");
 }
 
 function decodeServerError(record: Readonly<Record<string, unknown>>): ServerErrorFrame {
@@ -799,7 +1119,8 @@ function serverFeature(value: unknown): ServerFeature {
     value === "turnInterrupt" ||
     value === "approvals" ||
     value === "stableMainSession" ||
-    value === "providerAuth"
+    value === "providerAuth" ||
+    value === "extensionLifecycle"
   ) {
     return value;
   }
@@ -833,6 +1154,15 @@ function protocolErrorCode(value: unknown): ProtocolErrorCode {
     value === "stale-turn" ||
     value === "overloaded" ||
     value === "shutting-down" ||
+    value === "extension-not-found" ||
+    value === "extension-invalid" ||
+    value === "extension-incompatible" ||
+    value === "approval-required" ||
+    value === "approval-invalid" ||
+    value === "extension-conflict" ||
+    value === "extension-operation-failed" ||
+    value === "extension-timeout" ||
+    value === "extension-mutated" ||
     value === "internal"
   ) {
     return value;

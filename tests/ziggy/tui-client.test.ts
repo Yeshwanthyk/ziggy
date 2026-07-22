@@ -58,6 +58,11 @@ function fakeClient(overrides: Partial<AttachClient> = {}): AttachClient {
     steerTurn: () => Effect.succeed("turn-steered"),
     interruptTurn: () => Effect.succeed("turn-interrupted"),
     resolveApproval: () => Effect.succeed("resolved"),
+    installExtension: () => Effect.never,
+    enableExtension: () => Effect.never,
+    disableExtension: () => Effect.never,
+    listExtensions: Effect.never,
+    doctorExtension: () => Effect.never,
     ...overrides,
   };
 }

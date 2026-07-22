@@ -4,6 +4,13 @@ import {
   type ApprovalDecision,
   type ClientFeature,
   type ClientRequestFrame,
+  type ExtensionDoctorRequest,
+  type ExtensionDoctorResponse,
+  type ExtensionEnableRequest,
+  type ExtensionEnableResponse,
+  type ExtensionInstallRequest,
+  type ExtensionInstallResponse,
+  type ExtensionObservation,
   type ServerFeature,
   type ServerFrame,
   type ServerSessionEventFrame,
@@ -173,6 +180,19 @@ export interface AttachClient {
     approvalId: string,
     decision: ApprovalDecision,
   ) => Effect.Effect<"already-resolved" | "resolved", AttachClientError>;
+  readonly installExtension: (
+    request: ExtensionInstallRequest,
+  ) => Effect.Effect<ExtensionInstallResponse, AttachClientError>;
+  readonly enableExtension: (
+    request: ExtensionEnableRequest,
+  ) => Effect.Effect<ExtensionEnableResponse, AttachClientError>;
+  readonly disableExtension: (
+    extensionId: string,
+  ) => Effect.Effect<ExtensionObservation, AttachClientError>;
+  readonly listExtensions: Effect.Effect<ReadonlyArray<ExtensionObservation>, AttachClientError>;
+  readonly doctorExtension: (
+    request: ExtensionDoctorRequest,
+  ) => Effect.Effect<ExtensionDoctorResponse, AttachClientError>;
 }
 
 export interface CreateAttachClientOptions {
@@ -1177,6 +1197,75 @@ export function createAttachClient(
             ? response.result.outcome
             : yield* new AttachProtocolStateError({
                 message: "Daemon returned the wrong approval response",
+              });
+        }),
+      installExtension: (input) =>
+        Effect.gen(function* () {
+          const response = yield* request({
+            schemaVersion: PROTOCOL_VERSION,
+            requestId: yield* nextRequestId(),
+            method: "extension/install",
+            params: input,
+          });
+          return response.method === "extension/install"
+            ? response.result
+            : yield* new AttachProtocolStateError({
+                message: "Daemon returned the wrong Extension install response",
+              });
+        }),
+      enableExtension: (input) =>
+        Effect.gen(function* () {
+          const response = yield* request({
+            schemaVersion: PROTOCOL_VERSION,
+            requestId: yield* nextRequestId(),
+            method: "extension/enable",
+            params: input,
+          });
+          return response.method === "extension/enable"
+            ? response.result
+            : yield* new AttachProtocolStateError({
+                message: "Daemon returned the wrong Extension enable response",
+              });
+        }),
+      disableExtension: (extensionId) =>
+        Effect.gen(function* () {
+          const response = yield* request({
+            schemaVersion: PROTOCOL_VERSION,
+            requestId: yield* nextRequestId(),
+            method: "extension/disable",
+            params: { extensionId },
+          });
+          return response.method === "extension/disable"
+            ? response.result.extension
+            : yield* new AttachProtocolStateError({
+                message: "Daemon returned the wrong Extension disable response",
+              });
+        }),
+      listExtensions: Effect.gen(function* () {
+        const response = yield* request({
+          schemaVersion: PROTOCOL_VERSION,
+          requestId: yield* nextRequestId(),
+          method: "extension/list",
+          params: {},
+        });
+        return response.method === "extension/list"
+          ? response.result.extensions
+          : yield* new AttachProtocolStateError({
+              message: "Daemon returned the wrong Extension list response",
+            });
+      }),
+      doctorExtension: (input) =>
+        Effect.gen(function* () {
+          const response = yield* request({
+            schemaVersion: PROTOCOL_VERSION,
+            requestId: yield* nextRequestId(),
+            method: "extension/doctor",
+            params: input,
+          });
+          return response.method === "extension/doctor"
+            ? response.result
+            : yield* new AttachProtocolStateError({
+                message: "Daemon returned the wrong Extension doctor response",
               });
         }),
     };

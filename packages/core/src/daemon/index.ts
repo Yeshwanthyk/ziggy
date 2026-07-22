@@ -3,6 +3,9 @@ export {
   createAttachServer,
   type AttachServer,
   type CreateAttachServerOptions,
+  type ExtensionLifecyclePort,
+  type ExtensionLifecyclePortError,
+  type ExtensionLifecyclePortErrorCode,
 } from "./attach-server.ts";
 export {
   createDaemonKernel,
