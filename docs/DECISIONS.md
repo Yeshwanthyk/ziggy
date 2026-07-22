@@ -45,8 +45,10 @@ failure modes, never as a spec. In S4, a Merlin Extension **port** means reimple
 user-facing capability from scratch through the smallest existing Ziggy mechanism: an Extension
 containing Skills and/or Tools, a Blueprint, an Automation, or a Gateway. Ziggy's contracts,
 directory layout, trust tiers, state authority,
-and lifecycle always define the target. No Merlin compatibility layer, manifest dialect, runtime
-hook, or source layout is preserved, and a candidate that does not fit is deferred, merged, or
+and lifecycle always define the target. Reference material, scripts, and assets are reviewed and
+re-authored under a manifest-declared Ziggy Skill root; they are not copied merely because Merlin
+bundled them. No Merlin compatibility layer, manifest dialect, runtime hook, or source layout is
+preserved, and a candidate that does not fit is deferred, merged, or
 dropped rather than widening Ziggy around it.
 **Rationale:** merlin's own docs show unresolved architectural debt (dual-write memory, coupled
 session/memory-scope keys causing the Telegram bug). Starting clean lets those lessons become
@@ -190,8 +192,12 @@ escape hatch.
 **Decision:** Tiered. Default tier = declarative manifest + `SKILL.md` (Anthropic Agent Skills
 format) + CLI setup/doctor steps, no code loading required. Escape-hatch tier = exactly one
 in-process `defineTool` ABI, loaded via Bun's runtime dynamic `import()` (proven viable by D2),
-gated behind install-time user approval since it is trusted code running in-process. Extensions
-get **no** loop hooks, no custom providers, no ability to register their own extensions — those
+gated behind install-time user approval since it is trusted code running in-process. Declarative
+setup/doctor entries are structured argv, never shell strings, and receive separate approval before
+spawn over their exact argv, permissions, content digests, and Extension version. Installed trees
+are digest-sealed and revalidated at every Skill load, Tool import, or subprocess execution; a
+version or content change requires reinstall and reapproval. Extensions get **no** loop hooks, no
+custom providers, no ability to register their own extensions — those
 stay core-only. `executor` (the CLI-running extension) ships as just another extension, not a core
 subsystem. Long-tail integrations that don't justify a maintained adapter use flue-style markdown
 "blueprints" the agent applies as an edit script.

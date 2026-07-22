@@ -4,7 +4,7 @@ Stage owner: Extension system. Depends on S2 (Daemon) for the tool-call boundary
 
 ## Goal
 
-Let a profile be extended without recompiling the ziggy binary or trusting arbitrary code by default. Two tiers, sharply separated: (1) a manifest+markdown tier that needs no code execution to install skills, pin defaults, and shell out to setup/doctor commands; (2) a single narrow in-process TypeScript tool-definition ABI, loaded via Bun dynamic `import()`, gated by explicit install-time user approval. Nothing else is extensible in v1 — no loop hooks, no provider registries, no gateway adapters from third-party code.
+Let a profile be extended without recompiling the ziggy binary or trusting arbitrary code by default. Two tiers, sharply separated: (1) a manifest+markdown tier that loads no in-process code to install Skills or pin defaults, and may run only explicitly approved, supervised setup/doctor argv; (2) a single narrow in-process TypeScript Tool-definition ABI, loaded via Bun dynamic `import()`, gated by explicit install-time user approval. Nothing else is extensible in v1 — no loop hooks, no Provider registries, no Gateway adapters from third-party code.
 
 Migrate useful capabilities from `../merlin/extensions` without migrating Merlin's architecture. Every Merlin Extension is reviewed; accepted behavior is rebuilt from scratch against Ziggy's Extension contract and the smallest applicable trust tier. The migration queue never changes Ziggy's manifest, ABI, state ownership, vocabulary, or stage boundaries to accommodate how Merlin happened to implement a capability.
 
@@ -36,38 +36,44 @@ Migrate useful capabilities from `../merlin/extensions` without migrating Merlin
 schemaVersion, id, version, name, description,
 ziggy: { requires: "<semver range>" },
 defaults: { provider?, model?, thinkingLevel? },
-skills: [{ id, path }],
+skills: [{ id, path }],         // path owns SKILL.md + reviewed support material
 tools: [{ id, path }],          // only present for tier-2 extensions
 adapters: [],                    // reserved, core-only in v1 — see Non-goals
-setup: { steps: [...], doctor: "<command>" },
+setup: { steps: [{ argv: [...] }], doctor: { argv: [...] } }, // structured; never shell strings
 requires: { env: [...], commands: [...], os: [...] },
 permissions: { network: bool, filesystem: "none"|"profile"|"full", secrets: [...] },
 distribution: { source, license },
 provenance: { ... }               // signature/origin for verified tier
 ```
 
-**Directory layout** (per extension):
+**Directory layout** (per Extension):
 
 ```
 extensions/<id>/
   extension.json
-  skills/<id>/SKILL.md
+  skills/<id>/
+    SKILL.md
+    references/                    # optional, reviewed prose/data only
+    scripts/                       # optional, inert unless invoked through an approved Ziggy mechanism
+    assets/                        # optional, reviewed and referenced only
   tools/<id>/tool.ts              # tier-2 only
   setup/{verify,doctor}
   state/                          # extension-private, still under profile — no second writer authority
   provenance.json
 ```
 
-**Install flow.** `ziggy extension install <source>` copies/clones into `<profile>/extensions/<id>/`, parses (never executes) `extension.json`, runs `requires` checks, and if `tools[]` is non-empty, prompts for explicit approval before the daemon will ever `import()` that extension's tool file. Approval is recorded (so it isn't re-asked every daemon restart) but is per-extension-version — a version bump on a tier-2 extension re-triggers approval.
+Each `skills[].path` is a normalized relative directory root confined to the Extension, conventionally `skills/<id>`. It must contain an immediate `SKILL.md`; the Agent Skills frontmatter `name`, manifest Skill ID, and root-directory basename must match exactly. Absolute paths, `..`, symlinks, hardlinked files, and support material outside declared Skill roots are rejected.
+
+**Install flow.** `ziggy extension install <source>` copies/clones into `<profile>/extensions/<id>/`, parses (never executes) `extension.json`, and runs non-executable `requires` checks. Any in-process Tool or executable setup/doctor entry prompts for explicit approval before import or spawn. Subprocess approval records the exact structured argv, executable/support-file digests, declared permissions, and Extension version; shell command strings are invalid. Approval is recorded so it is not re-asked every daemon restart, but any version bump, argv/permission change, or installed-tree digest change re-triggers approval.
 
 The install is a daemon-mediated explicit command: the CLI sends the request over the attach
 protocol, and only the daemon writes the installed Extension files and daemon-owned Extension
 state. `extension.json` and structured Extension state carry schema-version stamps; human-owned
 `SKILL.md` and blueprint markdown do not.
 
-**Doctor.** `setup.doctor` is a supervised subprocess (stdout/stderr captured into the install session log), run on `ziggy extension doctor <id>` and after install; non-zero exit surfaces as a failed install, not a silent partial state.
+**Doctor.** `setup.doctor` is an optional structured argv, never a shell string. It runs as a supervised subprocess only after the exact executable content, argv, permissions, digest, and Extension version are approved. Stdout/stderr is captured into the install Session log; non-zero exit surfaces as a failed install, not a silent partial state. Install never auto-runs an unapproved doctor.
 
-**Merlin capability migration, never framework migration.** `../merlin/extensions` is a bounded evidence corpus of 47 capability packages. A port preserves only a proven user outcome. It does not preserve Merlin's manifest fields, `clis/`/`files/`/`bin/` conventions, setup machinery, state model, package boundaries, or runtime assumptions. Classification follows Ziggy's existing mechanisms and stage ownership:
+**Merlin capability migration, never framework migration.** `../merlin/extensions` is a bounded evidence corpus of 47 capability packages. A port preserves only a proven user outcome. It does not preserve Merlin's manifest fields, `clis/`/`files/`/`bin/` conventions, setup machinery, state model, package boundaries, or runtime assumptions. References, scripts, and assets receive the same treatment as code: each retained file must serve the accepted capability, be re-authored or reduced for Ziggy, live beneath the `skills[].path` declared by Ziggy's manifest, and be reachable from that Skill without path escape or a dangling link. Installer validation rejects support files outside declared Skill roots and orphan support material. Installation seals the canonical Extension tree with content digests; every Skill load, Tool import, and subprocess execution revalidates canonical confinement, link policy, and the seal. Post-install replacement or aliasing fails closed until explicit reinstall and reapproval. A bundled script gains no execution authority by existing; execution must cross an already-approved Ziggy Tool or supervised setup/doctor boundary with declared permissions. Classification follows Ziggy's existing mechanisms and stage ownership:
 
 - Skills and optional setup/doctor commands become a tier-1 Extension.
 - In-process behavior becomes a tier-2 `defineTool` Extension only when a Skill or supervised external command cannot express the capability cleanly.
@@ -76,7 +82,7 @@ state. `extension.json` and structured Extension state carry schema-version stam
 - Discord, Slack, iMessage, WhatsApp, and similar delivery surfaces are Gateway candidates for S6/S7, not Extensions with transport authority.
 - Capabilities requiring loop hooks, Provider registration, a second durable authority, or a broader ABI are deferred, merged into an existing capability, or dropped. Ziggy is not widened to make a port fit.
 
-**Per-candidate lean review.** Before an accepted S4-owned port lands, a separate Sol medium review publishes `docs/plans/s4-extension-reviews/<id>.json` under an immutable schema version. It records the single user outcome, target mechanism, Extension trust tier when applicable, overlap with Ziggy and other candidates, allowed production files, maximum production lines, exact runtime-dependency allowlist, exact permissions, allowed subprocesses, allowed persisted-state paths, removable assets/wrappers, reviewed workspace digest/revision, findings, and disposition. The review must show that the port uses the lowest trust tier, owns no duplicate durable authority, adds no compatibility shim, and contains no inactive vendored material. `verify:s4` validates the ledger and one review per accepted S4 port, measures the implementation, and fails when files/lines, dependencies, permissions, subprocesses, or persisted state exceed the reviewed budget. Increasing a budget requires a new independent review. Applicable findings become deterministic regressions before that Extension is accepted. Review happens one candidate at a time so a large migration wave cannot hide unnecessary surface.
+**Per-candidate lean review.** Before an accepted S4-owned port lands, a separate Sol medium review publishes `docs/plans/s4-extension-reviews/<id>.json` under an immutable schema version. It records the single user outcome, target mechanism, Extension trust tier when applicable, overlap with Ziggy and other candidates, allowed production files, maximum production lines, exact runtime-dependency allowlist, exact permissions, allowed subprocesses, allowed persisted-state paths, and an exact support-material allowlist containing each retained path, kind, byte count, and content digest plus aggregate file/byte limits. It also records removable assets/wrappers, reviewed workspace digest/revision, findings, and disposition. The review must show that the port uses the lowest trust tier, owns no duplicate durable authority, adds no compatibility shim, and contains no inactive vendored material. `verify:s4` validates the ledger and one review per accepted S4 port, measures the implementation, and fails when files/lines, dependencies, permissions, subprocesses, support-file paths/counts/bytes/digests, or persisted state exceed the reviewed budget. Increasing a budget requires a new independent review. Applicable findings become deterministic regressions before that Extension is accepted. Review happens one candidate at a time so a large migration wave cannot hide unnecessary surface.
 
 **Closed inventory.** These IDs are the complete initial review queue, derived from the 47 `extension.json` files directly under `../merlin/extensions`; additions require an explicit plan update rather than appearing opportunistically:
 
@@ -97,8 +103,7 @@ web-search, xurl
 
 Extend `tests/testkit` with isolated Extension fixtures, dynamic-import probes, approval records,
 version controls, supervised-subprocess fakes, and filesystem fault injection. Register malformed
-or incompatible manifests, path traversal, import-before-approval, version-bump reapproval,
-failed/partial installs, doctor timeout/failure, blueprint postconditions, and concurrent install/
+or incompatible manifests, non-directory Skill roots, missing immediate `SKILL.md`, frontmatter/ID/root mismatches, path traversal, dangling or escaping Skill references, symlink/hardlink aliases, post-install mutation, orphan support material, support scripts that attempt undeclared execution, setup/doctor shell strings, execution before exact argv/digest/permission approval, version-bump reapproval, import-before-approval, failed/partial installs, doctor timeout/failure, blueprint postconditions, and concurrent install/
 enable operations. Evidence includes parsed manifests, approval/import timelines, subprocess
 results, Profile diffs, and compiled-binary loader smoke output. A separate Sol medium agent in an
 independent run and context reviews trusted-code entry, daemon-only writes, schema stamps, path
@@ -106,12 +111,13 @@ confinement, and accidental new extensibility.
 
 ## Acceptance criteria
 
-- A markdown-only extension (skill + setup steps, no `tools/`) installs, its `SKILL.md` is visible to the agent loop, and `ziggy extension doctor` runs its doctor command and reports pass/fail — with zero in-process code ever loaded.
+- A Skill-only Extension with no Tools or executable setup installs without execution approval and becomes visible to the agent loop with zero code loaded. If it declares setup/doctor argv, installation remains non-executing until the user approves the exact argv, permissions, executable/support-file digests, and Extension version; only then may supervised doctor report pass/fail.
 - A tier-2 extension with a `tools/<id>/tool.ts` is refused execution until `ziggy extension install` records explicit approval; after approval, the daemon's dynamic `import()` loads it and the tool becomes callable in a turn.
-- Re-running install on a version-bumped tier-2 extension re-prompts for approval; a same-version reinstall does not.
+- Re-running install after an Extension version, Tool, setup/doctor argv, permissions, or sealed-tree digest change re-prompts for the affected execution approval; an identical same-version reinstall does not.
 - `executor` extension installs and runs a skill-runner invocation end-to-end using only the manifest+CLI tier (no tier-2 code required for this one).
 - The schema-v1 migration ledger contains exactly the 47 declared Merlin candidate IDs, no duplicates and no unreviewed rows. Every row records a disposition and rationale; every `port` or `merge` names its Ziggy target mechanism, and an Extension target also names its trust tier. Gateway- and Automation-shaped capabilities are deferred to their owning stages rather than smuggled into Extensions.
-- Every accepted S4 port has a schema-valid independent leanness review and deterministic capability contract. Its implementation uses Ziggy's `extension.json`, directories, approval model, and daemon-owned state without copied Merlin source, a Merlin compatibility layer, unused wrappers/assets, or an ABI expansion made solely for migration. `verify:s4` measures its files/lines, dependencies, permissions, subprocesses, and persisted-state paths against the reviewed budget and fails closed on growth.
+- Every declared Skill path is a normalized confined relative directory containing immediate `SKILL.md`; manifest ID, root basename, and Agent Skills frontmatter name match. References resolve within the sealed root, all support material is reachable and reviewed, symlinks/hardlinks are rejected, and post-install mutation fails every load/import/spawn until reinstall and reapproval.
+- Every accepted S4 port has a schema-valid independent leanness review and deterministic capability contract. Its implementation uses Ziggy's `extension.json`, directories, approval model, and daemon-owned state without copied Merlin source, a Merlin compatibility layer, unused wrappers/assets, or an ABI expansion made solely for migration. Every retained reference, script, and asset lives under a manifest-declared Skill root, is justified by the review, resolves without escape or dangling links, and remains inert unless invoked through a separately approved Ziggy execution boundary. `verify:s4` measures its files/lines, dependencies, permissions, subprocesses, support material, and persisted-state paths against the reviewed budget and fails closed on growth.
 - A blueprint fixture Profile lives under the test fixtures. After an agent applies a `blueprints/` markdown guide to that fixture, a deterministic postcondition check proves the expected files and exact content changes, with no blueprint code executed directly.
 - Manifest validation rejects an `extension.json` missing `ziggy.requires` or with an unsatisfiable range against the running daemon's version.
 - The harness, S4 plan checklist, and scenario/stage manifests include every landed Extension behavior and negative/concurrency/fault scenario; `verify:s4` and `verify:all` pass with schema-valid redacted evidence and resolved findings from verification/review by a separate Sol medium agent in an independent run and context.
@@ -146,4 +152,4 @@ For each slice, follow the `docs/VERIFICATION.md` through-loop: dedicated Sol me
 - Extension marketplace/registry service — local filesystem + manual `install <source>` only.
 - Sandboxing/process-isolation for tier-2 tool code beyond the approval gate (no seccomp/VM boundary in v1 — approval is the control, not runtime isolation; revisit if community-tier extensions become common).
 - Full behavior for `smart-memory`/`smart-extensions`; S4 ships scaffolding only, and migration review cannot override this scope boundary.
-- Merlin manifest/layout compatibility, source-level ports, bulk copying, or preserving every Merlin package merely because it exists. The closed review queue guarantees consideration, not automatic acceptance.
+- Merlin manifest/layout compatibility, source-level ports, bulk copying, blind import of references/scripts/assets, or preserving every Merlin package merely because it exists. The closed review queue guarantees consideration, not automatic acceptance.
