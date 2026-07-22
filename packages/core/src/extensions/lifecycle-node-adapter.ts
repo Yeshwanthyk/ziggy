@@ -52,6 +52,25 @@ export interface ExtensionProcessResult {
   readonly truncated: boolean;
 }
 
+export type ExtensionLifecycleNodeCheckpoint =
+  | "copy-before-directory"
+  | "copy-before-file"
+  | "copy-complete"
+  | "activation-after-package-backup"
+  | "activation-after-authority-backup"
+  | "activation-before-package-publish"
+  | "activation-after-package-publish"
+  | "activation-before-authority-publish"
+  | "activation-after-authority-publish"
+  | "authority-after-temporary-write"
+  | "authority-before-target-publish"
+  | "authority-after-target-publish"
+  | "process-after-spawn";
+
+export interface ExtensionLifecycleNodeHooks {
+  checkpoint(point: ExtensionLifecycleNodeCheckpoint): Promise<void>;
+}
+
 export async function inspectLocalExtensionSource(
   profilePath: string,
   sourcePath: string,
@@ -71,6 +90,8 @@ export async function inspectLocalExtensionSource(
 export async function stageLocalExtensionPackage(
   profilePath: string,
   sourcePath: string,
+  signal?: AbortSignal,
+  hooks?: ExtensionLifecycleNodeHooks,
 ): Promise<{
   readonly sourcePath: string;
   readonly staged: StagedExtensionPackage;
@@ -89,13 +110,16 @@ export async function stageLocalExtensionPackage(
   await mkdir(packagePath, { recursive: true, mode: 0o700 });
   try {
     for (const directory of tree.directories) {
+      await checkpoint(hooks, "copy-before-directory", signal);
       await mkdir(join(packagePath, directory), { recursive: true, mode: 0o700 });
     }
     for (const file of tree.files) {
+      await checkpoint(hooks, "copy-before-file", signal);
       const path = join(packagePath, file.path);
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await writeFile(path, file.bytes, { mode: 0o700, flag: "wx" });
     }
+    await checkpoint(hooks, "copy-complete", signal);
     const stagedTree = await readImmutableExtensionTree(packagePath);
     return {
       sourcePath: inspected.sourcePath,
@@ -193,6 +217,8 @@ export async function activateStagedExtension(input: {
   readonly stateJson: string;
   readonly provenanceJson: string;
   readonly approvalsJson: string;
+  readonly signal?: AbortSignal;
+  readonly hooks?: ExtensionLifecycleNodeHooks;
 }): Promise<void> {
   const extensionsRoot = join(input.profilePath, "extensions");
   const authoritiesRoot = join(input.profilePath, ".runtime", "extensions");
@@ -231,15 +257,21 @@ export async function activateStagedExtension(input: {
     if (previousPackage) {
       await rename(activePackage, backupPackage);
       packageBackedUp = true;
+      await checkpoint(input.hooks, "activation-after-package-backup", input.signal);
     }
     if (previousAuthority) {
       await rename(activeAuthority, backupAuthority);
       authorityBackedUp = true;
+      await checkpoint(input.hooks, "activation-after-authority-backup", input.signal);
     }
+    await checkpoint(input.hooks, "activation-before-package-publish", input.signal);
     await rename(input.staged.packagePath, activePackage);
     packageActivated = true;
+    await checkpoint(input.hooks, "activation-after-package-publish", input.signal);
+    await checkpoint(input.hooks, "activation-before-authority-publish", input.signal);
     await rename(stagedAuthority, activeAuthority);
     authorityActivated = true;
+    await checkpoint(input.hooks, "activation-after-authority-publish", input.signal);
   } catch (cause) {
     if (authorityActivated) await rm(activeAuthority, { recursive: true, force: true });
     if (packageActivated) await rm(activePackage, { recursive: true, force: true });
@@ -255,14 +287,27 @@ export async function replaceExtensionAuthorityJson(
   extensionId: string,
   name: "state.json" | "approvals.json",
   contents: string,
+  hooks?: ExtensionLifecycleNodeHooks,
 ): Promise<void> {
   const target = join(profilePath, ".runtime", "extensions", extensionId, name);
   const temporary = `${target}.${randomUUID()}.tmp`;
+  const restore = `${target}.${randomUUID()}.restore`;
+  const original = await readFile(target);
   await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+  let targetPublished = false;
   try {
+    await checkpoint(hooks, "authority-after-temporary-write");
+    await checkpoint(hooks, "authority-before-target-publish");
     await rename(temporary, target);
+    targetPublished = true;
+    await checkpoint(hooks, "authority-after-target-publish");
   } catch (cause) {
+    if (targetPublished) {
+      await writeFile(restore, original, { mode: 0o600, flag: "wx" });
+      await rename(restore, target);
+    }
     await rm(temporary, { force: true });
+    await rm(restore, { force: true });
     throw cause;
   }
 }
@@ -277,6 +322,8 @@ export async function runExtensionProcess(input: {
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly outputLimitBytes: number;
+  readonly signal?: AbortSignal;
+  readonly hooks?: ExtensionLifecycleNodeHooks;
 }): Promise<ExtensionProcessResult> {
   const subprocess = Bun.spawn([input.executablePath, ...input.argv.slice(1)], {
     cwd: input.cwd,
@@ -286,17 +333,25 @@ export async function runExtensionProcess(input: {
     stderr: "pipe",
   });
   let timedOut = false;
+  let interrupted = false;
+  const interrupt = () => {
+    interrupted = true;
+    subprocess.kill();
+  };
+  input.signal?.addEventListener("abort", interrupt, { once: true });
   const timeout = setTimeout(() => {
     timedOut = true;
     subprocess.kill();
   }, input.timeoutMs);
   try {
+    await checkpoint(input.hooks, "process-after-spawn", input.signal);
     const [exitCode, stdout, stderr] = await Promise.all([
       subprocess.exited,
       readBoundedStream(subprocess.stdout, input.outputLimitBytes),
       readBoundedStream(subprocess.stderr, input.outputLimitBytes),
     ]);
     const truncated = stdout.truncated || stderr.truncated;
+    if (interrupted) throw new Error("Extension process interrupted");
     return {
       status: timedOut ? "timeout" : exitCode === 0 ? "ok" : "failed",
       exitCode: timedOut ? null : exitCode,
@@ -306,6 +361,7 @@ export async function runExtensionProcess(input: {
     };
   } finally {
     clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", interrupt);
   }
 }
 
@@ -367,3 +423,17 @@ function hasCode(cause: unknown, code: string): boolean {
 }
 
 const isErrnoException = Schema.is(Schema.Struct({ code: Schema.String }));
+
+async function checkpoint(
+  hooks: ExtensionLifecycleNodeHooks | undefined,
+  point: ExtensionLifecycleNodeCheckpoint,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (isAborted(signal)) throw new Error(`Extension operation interrupted at ${point}`);
+  await hooks?.checkpoint(point);
+  if (isAborted(signal)) throw new Error(`Extension operation interrupted at ${point}`);
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}

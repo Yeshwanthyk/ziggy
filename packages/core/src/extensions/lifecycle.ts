@@ -865,8 +865,8 @@ function advanceApprovalEpoch(
 }
 
 function stagePackage(options: ExtensionLifecycleOptions, sourcePath: string) {
-  return nodeOperation("install", "Failed to quarantine Extension source", () =>
-    stageLocalExtensionPackage(options.profilePath, sourcePath),
+  return nodeOperation("install", "Failed to quarantine Extension source", (signal) =>
+    stageLocalExtensionPackage(options.profilePath, sourcePath, signal),
   );
 }
 
@@ -903,13 +903,14 @@ function runProcess(
   argv: ReadonlyArray<string>,
   cwd: string,
 ) {
-  return nodeOperation("process", `Failed to run Extension process ${executablePath}`, () =>
+  return nodeOperation("process", `Failed to run Extension process ${executablePath}`, (signal) =>
     runExtensionProcess({
       executablePath,
       argv,
       cwd,
       timeoutMs: options.processTimeoutMs ?? 30_000,
       outputLimitBytes: options.processOutputLimitBytes ?? 64 * 1024,
+      signal,
     }),
   );
 }
@@ -922,7 +923,7 @@ function activate(
   provenance: ExtensionProvenance,
   approvals: ExtensionApprovals,
 ): Effect.Effect<void, ExtensionLifecycleError> {
-  return nodeOperation("activate", `Failed to activate Extension ${extensionId}`, () =>
+  return nodeOperation("activate", `Failed to activate Extension ${extensionId}`, (signal) =>
     activateStagedExtension({
       profilePath: options.profilePath,
       extensionId,
@@ -930,6 +931,7 @@ function activate(
       stateJson: json(state),
       provenanceJson: json(provenance),
       approvalsJson: json(approvals),
+      signal,
     }),
   ).pipe(Effect.uninterruptible);
 }
@@ -951,7 +953,7 @@ function nodeOperation<Value>(
   operation: string,
   message: string,
   // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- named boundary converts the Node adapter Promise into a typed Effect
-  run: () => Promise<Value>,
+  run: (signal: AbortSignal) => Promise<Value>,
 ): Effect.Effect<Value, ExtensionLifecycleError> {
   return Effect.tryPromise({
     try: run,
