@@ -15,6 +15,7 @@ import {
   type CredentialStoreError,
 } from "./credentials/filesystem-store.ts";
 import { loadInstalledExtensionSkills } from "./extensions/skill-loader.ts";
+import { loadInstalledExtensionTools } from "./extensions/tool-loader.ts";
 import { ZIGGY_VERSION } from "./product-version.ts";
 import type { FilesystemWorld } from "./world/filesystem.ts";
 import { readProfileSoul } from "./provider-node-adapter.ts";
@@ -102,6 +103,10 @@ export function createProviderRuntimeComposition(
   Scope.Scope
 > {
   return Effect.gen(function* () {
+    const extensionTools = yield* loadInstalledExtensionTools(
+      options.profilePath,
+      ZIGGY_VERSION,
+    ).pipe(Effect.mapError(providerFailure("Failed to load installed Extension Tools")));
     const credentials =
       options.credentials ?? (yield* createProfileCredentialStore(options.profilePath));
     const models = options.models ?? builtinModels({ credentials });
@@ -151,7 +156,7 @@ export function createProviderRuntimeComposition(
             ...(reasoning === undefined ? {} : { reasoning }),
             nextTurnId: randomUUID,
             nextStepId: randomUUID,
-            tools: [],
+            tools: extensionTools,
           }).pipe(Effect.mapError(providerFailure("Failed to create Session runtime")));
         });
       },

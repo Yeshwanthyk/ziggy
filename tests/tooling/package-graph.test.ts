@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -131,6 +131,35 @@ describe("package graph enforcement", () => {
       await expect(collectFixture(source)).rejects.toThrow(
         "require specifier must be a static string literal",
       );
+    }
+  });
+
+  test("permits only the sealed Tool adapter's exact runtime import cutpoint", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ziggy-package-tool-import-"));
+    const adapter = join(
+      directory,
+      "packages",
+      "core",
+      "src",
+      "extensions",
+      "tool-loader-node-adapter.ts",
+    );
+    try {
+      await mkdir(join(adapter, ".."), { recursive: true });
+      await writeFile(
+        adapter,
+        "export async function load(entryPath: string) { return import(entryPath); }\n",
+      );
+      expect(await collectTypeScriptImports(directory, [adapter])).toEqual([]);
+      await writeFile(
+        adapter,
+        "export async function load(otherPath: string) { return import(otherPath); }\n",
+      );
+      await expect(collectTypeScriptImports(directory, [adapter])).rejects.toThrow(
+        "import specifier must be a static string literal",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
   });
 

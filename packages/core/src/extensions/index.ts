@@ -12,8 +12,16 @@ export {
   ExtensionApprovalRequirementSchema,
   type ExtensionApprovals,
   ExtensionApprovalsSchema,
+  invalidatedExtensionApprovals,
   makeExtensionApprovalRequirement,
 } from "./approvals.ts";
+export { defineTool, type ExtensionToolContext, type ExtensionToolDefinition } from "./tool.ts";
+export {
+  ExtensionToolLoadError,
+  type ExtensionToolLoadCutPoint,
+  type ExtensionToolLoaderOptions,
+  loadInstalledExtensionTools,
+} from "./tool-loader.ts";
 export {
   type ExtensionBuiltinCatalogEntry,
   type ExtensionDisableRequest,

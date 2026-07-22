@@ -5,7 +5,11 @@ import {
   readInstalledExtensionManifests,
   type InstalledExtensionManifestFile,
 } from "../provider-node-adapter.ts";
-import { decodeExtensionApprovalsJson, type ExtensionApprovals } from "./approvals.ts";
+import {
+  decodeExtensionApprovalsJson,
+  type ExtensionApprovals,
+  invalidatedExtensionApprovals,
+} from "./approvals.ts";
 import { replaceExtensionAuthorityJson } from "./lifecycle-node-adapter.ts";
 import { decodeExtensionManifestJson, type ExtensionManifest } from "./manifest.ts";
 import {
@@ -150,13 +154,7 @@ function invalidateExtensionApprovals(
   profilePath: string,
   approvals: ExtensionApprovals,
 ): Effect.Effect<void, ExtensionSkillLoadError> {
-  const invalidated: ExtensionApprovals = {
-    schemaVersion: 1,
-    extensionId: approvals.extensionId,
-    epoch: approvals.epoch + 1,
-    invalidated: true,
-    approvals: [],
-  };
+  const invalidated = invalidatedExtensionApprovals(approvals);
   return Effect.tryPromise({
     try: () =>
       replaceExtensionAuthorityJson(

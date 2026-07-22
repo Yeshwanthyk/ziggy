@@ -199,6 +199,7 @@ function collectModuleSpecifiers(
       }
     },
     ImportExpression(node) {
+      if (isApprovedExtensionToolRuntimeImport(sourceFile, node.source)) return;
       addStaticSpecifier(node.source, "import");
     },
     CallExpression(node) {
@@ -225,6 +226,14 @@ function collectModuleSpecifiers(
     },
   }).visit(program);
   return references;
+}
+
+function isApprovedExtensionToolRuntimeImport(sourceFile: string, source: Expression): boolean {
+  return (
+    sourceFile === "packages/core/src/extensions/tool-loader-node-adapter.ts" &&
+    source.type === "Identifier" &&
+    source.name === "entryPath"
+  );
 }
 
 export function isExactVersion(version: string): boolean {

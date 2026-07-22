@@ -98,6 +98,18 @@ export function canonicalApprovals(
   return [...approvals].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
 }
 
+export function invalidatedExtensionApprovals(approvals: ExtensionApprovals): ExtensionApprovals {
+  return approvals.invalidated
+    ? approvals
+    : {
+        schemaVersion: 1,
+        extensionId: approvals.extensionId,
+        epoch: approvals.epoch + 1,
+        invalidated: true,
+        approvals: [],
+      };
+}
+
 function approvalsAreCanonical(approvals: ReadonlyArray<ExtensionApprovalRequirement>): boolean {
   for (let index = 1; index < approvals.length; index += 1) {
     const previous = approvals[index - 1];
