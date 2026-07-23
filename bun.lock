@@ -26,6 +26,14 @@
         "effect": "4.0.0-beta.99",
       },
     },
+    "packages/gateway-telegram": {
+      "name": "@ziggy/gateway-telegram",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ziggy/protocol": "workspace:*",
+        "effect": "4.0.0-beta.99",
+      },
+    },
     "packages/protocol": {
       "name": "@ziggy/protocol",
       "version": "0.0.0",
@@ -403,6 +411,8 @@
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
 
     "@ziggy/core": ["@ziggy/core@workspace:packages/core"],
+
+    "@ziggy/gateway-telegram": ["@ziggy/gateway-telegram@workspace:packages/gateway-telegram"],
 
     "@ziggy/protocol": ["@ziggy/protocol@workspace:packages/protocol"],
 

@@ -1,0 +1,14 @@
+{
+  "name": "@ziggy/gateway-telegram",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@ziggy/protocol": "workspace:*",
+    "effect": "4.0.0-beta.99"
+  }
+}

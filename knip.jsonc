@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/knip/schema-jsonc.json",
-  "entry": ["tests/**/*.test.ts", "tooling/verification/*.ts"],
-  "project": ["tests/**/*.ts", "tooling/**/*.ts"],
+  "entry": ["packages/*/test/**/*.test.ts", "tests/**/*.test.ts", "tooling/verification/*.ts"],
+  "project": ["packages/*/test/**/*.ts", "tests/**/*.ts", "tooling/**/*.ts"],
   "ignore": [
     ".artifacts/**",
     "coverage/**",
@@ -24,6 +24,7 @@
         "effect",
       ],
     },
+    "packages/gateway-telegram": {},
     "packages/protocol": {},
     "packages/tui": {
       "ignoreDependencies": [

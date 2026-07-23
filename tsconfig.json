@@ -1,5 +1,10 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["packages/*/src/**/*.ts", "tests/**/*.ts", "tooling/**/*.ts"],
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "tests/**/*.ts",
+    "tooling/**/*.ts"
+  ],
   "exclude": ["tests/fixtures/lint/**"]
 }
