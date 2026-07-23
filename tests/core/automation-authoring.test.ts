@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import type { Context, Model } from "@earendil-works/pi-ai";
+import { stream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { readdirSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -104,6 +106,26 @@ describe("Automation definition boundary", () => {
       code: "invalid-frontmatter",
     });
   });
+
+  it("rejects YAML warnings, nested duplicate keys, and nested excess fields", async () => {
+    const invalidDefinitions = [
+      PROMPT.replace('schedule: "0 9 * * 1-5"', "schedule: !owner 0 9 * * 1-5"),
+      PROMPT.replace(
+        'schedule: "0 9 * * 1-5"',
+        'schedule: "0 9 * * 1-5"\n  schedule: "30 9 * * 1-5"',
+      ),
+      PROMPT.replace('schedule: "0 9 * * 1-5"', 'schedule: "0 9 * * 1-5"\n  extra: true'),
+    ];
+
+    for (const content of invalidDefinitions) {
+      await expect(
+        runEffect(parseAutomationDefinition("daily-inbox", content)),
+      ).rejects.toMatchObject({
+        _tag: "AutomationDefinitionError",
+        code: "invalid-frontmatter",
+      });
+    }
+  });
 });
 
 describe("Automation authoring service", () => {
@@ -158,7 +180,7 @@ describe("Automation authoring service", () => {
       await expect(
         runEffect(service.create({ id: "invalid", content: invalid })),
       ).rejects.toMatchObject({ code: "invalid-definition" });
-      await expect(readdir(join(profile, "automations"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readdir(join(profile, "automations"))).toEqual([]);
 
       const created = await runEffect(service.create({ id: "daily-inbox", content: PROMPT }));
       await expect(
@@ -221,6 +243,20 @@ describe("Automation authoring service", () => {
       expect(await readdir(join(profile, "automations"))).toEqual(["daily-inbox.md"]);
     }));
 
+  it("rolls back atomic create when temporary-link cleanup fails", () =>
+    withProfile(async (profile) => {
+      const service = await makeService(profile, (point) => {
+        if (point === "before-create-temporary-remove") {
+          throw new Error("injected temporary unlink failure");
+        }
+      });
+
+      await expect(
+        runEffect(service.create({ id: "daily-inbox", content: PROMPT })),
+      ).rejects.toMatchObject({ code: "operation-failed" });
+      expect(await readdir(join(profile, "automations"))).toEqual([]);
+    }));
+
   it("never publishes temporary bytes changed after validation", () =>
     withProfile(async (profile) => {
       let mutatePublication = false;
@@ -253,7 +289,7 @@ describe("Automation authoring service", () => {
       await expect(
         runEffect(service.create({ id: "lossy", content: lossy })),
       ).rejects.toMatchObject({ code: "invalid-definition" });
-      await expect(readdir(join(profile, "automations"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readdir(join(profile, "automations"))).toEqual([]);
 
       const created = await runEffect(service.create({ id: "daily-inbox", content: PROMPT }));
       await expect(
@@ -283,6 +319,166 @@ describe("Automation authoring service", () => {
       expect(rejected).toMatchObject({ success: false });
       expect(tool.inputSchema).not.toHaveProperty("properties.path");
     }));
+
+  it("uses one strict action-aware decoder behind a portable root object Tool schema", () =>
+    withProfile(async (profile) => {
+      const service = await makeService(profile);
+      const tool = createAutomationAuthoringTool(service);
+      expect(tool.inputSchema).toMatchObject({
+        type: "object",
+        required: ["action"],
+        properties: {
+          action: { enum: ["list", "inspect", "create", "update", "delete"] },
+          id: { minLength: 1 },
+          content: { minLength: 1 },
+          expectedRevision: { pattern: "^[a-fA-F0-9]{64}$" },
+        },
+      });
+      expect(tool.inputSchema).not.toHaveProperty("oneOf");
+
+      const invalidInputs = [
+        { action: "inspect" },
+        { action: "list", id: "daily-inbox" },
+        { action: "create", id: "", content: PROMPT },
+        { action: "create", id: "daily-inbox", content: "" },
+        { action: "update", id: "daily-inbox", content: PROMPT },
+        {
+          action: "delete",
+          id: "daily-inbox",
+          expectedRevision: "g".repeat(64),
+        },
+        {
+          action: "delete",
+          id: "daily-inbox",
+          content: PROMPT,
+          expectedRevision: "a".repeat(64),
+        },
+      ];
+      for (const input of invalidInputs) {
+        const result = await runEffect(tool.execute(toolInput(input)));
+        expect(result).toMatchObject({ success: false });
+      }
+    }));
+
+  it("preserves Automation fields through the pinned Anthropic schema conversion", () =>
+    withProfile(async (profile) => {
+      const service = await makeService(profile);
+      const tool = createAutomationAuthoringTool(service);
+      const model: Model<"anthropic-messages"> = {
+        id: "claude-test",
+        name: "Claude Test",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 100_000,
+        maxTokens: 1_024,
+      };
+      const context: Context = {
+        messages: [{ role: "user", content: "Update the Automation.", timestamp: 0 }],
+        tools: [{ name: tool.name, description: tool.description, parameters: tool.inputSchema }],
+      };
+      let payload: unknown;
+      const result = await stream(model, context, {
+        apiKey: "fixture-key",
+        cacheRetention: "none",
+        onPayload(value) {
+          payload = value;
+          throw new Error("payload captured");
+        },
+      }).result();
+
+      expect(result).toMatchObject({ stopReason: "error", errorMessage: "payload captured" });
+      expect(payload).toMatchObject({
+        tools: [
+          {
+            name: "automations",
+            input_schema: {
+              type: "object",
+              required: ["action"],
+              properties: {
+                action: {
+                  type: "string",
+                  enum: ["list", "inspect", "create", "update", "delete"],
+                },
+                id: { type: "string", minLength: 1 },
+                content: { type: "string", minLength: 1 },
+                expectedRevision: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+              },
+            },
+          },
+        ],
+      });
+    }));
+
+  it("recovers daemon temporary files left before and after atomic create publication", () =>
+    withProfile(async (profile) => {
+      const directory = join(profile, "automations");
+      await mkdir(directory);
+      const orphan = temporaryPath(directory, "orphan");
+      await writeFile(orphan, PROMPT);
+      await makeService(profile);
+      expect(await readdir(directory)).toEqual([]);
+
+      const publishedTemporary = temporaryPath(directory, "daily-inbox");
+      await writeFile(publishedTemporary, PROMPT);
+      await link(publishedTemporary, automationPath(profile));
+      const service = await makeService(profile);
+      expect(await readdir(directory)).toEqual(["daily-inbox.md"]);
+      expect((await runEffect(service.inspect("daily-inbox"))).content).toBe(PROMPT);
+    }));
+
+  it("fails closed for hardlinked definitions and suspicious crash artifacts", () =>
+    withProfile(async (profile) => {
+      const directory = join(profile, "automations");
+      await mkdir(directory);
+      await writeFile(automationPath(profile), PROMPT);
+      await link(automationPath(profile), join(directory, "alias.md"));
+      const service = await makeService(profile);
+      await expect(runEffect(service.inspect("daily-inbox"))).rejects.toMatchObject({
+        code: "operation-failed",
+      });
+    }).then(() =>
+      withProfile(async (profile) => {
+        const directory = join(profile, "automations");
+        await mkdir(directory);
+        const suspicious = temporaryPath(directory, "daily-inbox");
+        await writeFile(suspicious, PROMPT);
+        await link(suspicious, join(directory, "unrelated-link"));
+
+        await expect(makeService(profile)).rejects.toMatchObject({ code: "operation-failed" });
+        expect((await readdir(directory)).toSorted()).toEqual(
+          ["unrelated-link", suspicious.slice(directory.length + 1)].toSorted(),
+        );
+      }),
+    ));
+
+  it("does not clean up symlinked or multiply-linked daemon temporary names", () =>
+    withProfile(async (profile) => {
+      const directory = join(profile, "automations");
+      await mkdir(directory);
+      const outside = join(profile, "outside.md");
+      const suspicious = temporaryPath(directory, "daily-inbox");
+      await writeFile(outside, PROMPT);
+      await symlink(outside, suspicious);
+
+      await expect(makeService(profile)).rejects.toMatchObject({ code: "operation-failed" });
+      expect(await readFile(outside, "utf8")).toBe(PROMPT);
+    }).then(() =>
+      withProfile(async (profile) => {
+        const directory = join(profile, "automations");
+        await mkdir(directory);
+        const suspicious = temporaryPath(directory, "daily-inbox");
+        await writeFile(suspicious, PROMPT);
+        await link(suspicious, join(directory, "alias-one"));
+        await link(suspicious, join(directory, "alias-two"));
+
+        await expect(makeService(profile)).rejects.toMatchObject({ code: "operation-failed" });
+        expect(await readdir(directory)).toHaveLength(3);
+      }),
+    ));
 
   it("refuses Automation symlinks instead of exposing arbitrary files through inspect", () =>
     withProfile(async (profile) => {
@@ -324,6 +520,10 @@ function temporaryAutomationPath(profile: string): string {
   const temporary = readdirSync(directory).find((name) => name.startsWith(".daily-inbox.md."));
   if (temporary === undefined) throw new Error("Expected Automation temporary file");
   return join(directory, temporary);
+}
+
+function temporaryPath(directory: string, id: string): string {
+  return join(directory, `.${id}.md.123.${crypto.randomUUID()}.tmp`);
 }
 
 function makeService(

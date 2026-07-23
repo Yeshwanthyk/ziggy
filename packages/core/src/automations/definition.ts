@@ -1,5 +1,5 @@
 import { Cron, Effect, Result, Schema } from "effect";
-import { parse as parseYamlDocument } from "yaml";
+import { parseDocument } from "yaml";
 
 const AUTOMATION_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const AutomationIdSchema = Schema.String.check(
@@ -81,16 +81,7 @@ export function parseAutomationDefinition(
   }
   const sections = splitMarkdown(content);
   if (Result.isFailure(sections)) return Effect.fail(sections.failure);
-  const parsed = Effect.try({
-    try: () => parseYaml(sections.success.frontmatter),
-    catch: (cause) =>
-      new AutomationDefinitionError({
-        code: "invalid-frontmatter",
-        message: `Automation ${id} frontmatter is not valid YAML`,
-        cause,
-      }),
-  });
-  return parsed.pipe(
+  return parseYaml(id, sections.success.frontmatter).pipe(
     Effect.flatMap((value) => requireSupportedVersion(id, value).pipe(Effect.as(value))),
     Effect.flatMap((value) =>
       decodeFrontmatter(value).pipe(
@@ -114,8 +105,31 @@ export function parseAutomationDefinition(
   );
 }
 
-function parseYaml(source: string): unknown {
-  return parseYamlDocument(source, { strict: true, uniqueKeys: true });
+function parseYaml(id: string, source: string): Effect.Effect<unknown, AutomationDefinitionError> {
+  return Effect.try({
+    try: () => parseDocument(source, { strict: true, uniqueKeys: true }),
+    catch: invalidYaml(id),
+  }).pipe(
+    Effect.flatMap((document) => {
+      const issue = document.errors[0] ?? document.warnings[0];
+      return issue === undefined
+        ? Effect.try({ try: () => yamlDocumentToUnknown(document), catch: invalidYaml(id) })
+        : Effect.fail(invalidYaml(id)(issue));
+    }),
+  );
+}
+
+function yamlDocumentToUnknown(document: ReturnType<typeof parseDocument>): unknown {
+  return document.toJS();
+}
+
+function invalidYaml(id: string) {
+  return (cause: unknown) =>
+    new AutomationDefinitionError({
+      code: "invalid-frontmatter",
+      message: `Automation ${id} frontmatter is not strict YAML`,
+      cause,
+    });
 }
 
 function splitMarkdown(

@@ -3,8 +3,7 @@ import { Context, Effect, Layer, Schema, Semaphore } from "effect";
 import {
   createAutomationAuthoringNodeAdapter,
   type AutomationAuthoringNodeHooks,
-  isNodeAutomationConflictError,
-  isNodeAutomationNotFoundError,
+  type AutomationNodeError,
 } from "./authoring-node-adapter.ts";
 import {
   type AutomationDefinition,
@@ -47,6 +46,12 @@ export interface AutomationDeleteRequest {
   readonly expectedRevision: string;
 }
 
+/**
+ * Revisions protect cooperative edits by hashing the exact on-disk bytes. Publication revalidates
+ * bytes and bigint file identity immediately before its atomic mutation. Standard filesystem APIs
+ * cannot close the final check-to-mutation race against an uncooperative writer running as the same
+ * OS user; Profile ownership and same-UID process exclusion remain the outer security boundary.
+ */
 export interface AutomationAuthoringService {
   create(
     request: AutomationCreateRequest,
@@ -78,8 +83,8 @@ const gates = new Map<string, Semaphore.Semaphore>();
 
 export function makeAutomationAuthoring(
   options: AutomationAuthoringOptions,
-): Effect.Effect<AutomationAuthoringService> {
-  return Effect.sync(() => {
+): Effect.Effect<AutomationAuthoringService, AutomationAuthoringError> {
+  return Effect.gen(function* () {
     const profilePath = resolve(options.profilePath);
     const node = createAutomationAuthoringNodeAdapter(profilePath, options.nodeHooks);
     let gate = gates.get(profilePath);
@@ -87,8 +92,9 @@ export function makeAutomationAuthoring(
       gate = Semaphore.makeUnsafe(1);
       gates.set(profilePath, gate);
     }
+    yield* Semaphore.withPermit(gate, mapNodeError("initialize", node.initialize));
     const serialized = <Value>(operation: Effect.Effect<Value, AutomationAuthoringError>) =>
-      Semaphore.withPermit(gate, Effect.uninterruptible(operation));
+      Semaphore.withPermit(gate, operation);
     const inspect = (id: string) => serialized(inspectAutomation(node, id));
     return AutomationAuthoring.of({
       create: (request) => serialized(createAutomation(node, request)),
@@ -114,8 +120,7 @@ function createAutomation(
 ): Effect.Effect<AutomationObservation, AutomationAuthoringError> {
   return Effect.gen(function* () {
     const proposal = yield* prepareProposal("create", request.id, request.content);
-    yield* nodeOperation("create", () => node.ensureDirectory());
-    yield* nodeOperation("create", () => node.create(request.id, proposal.bytes));
+    yield* mapNodeError("create", node.create(request.id, proposal.bytes));
     return observe(proposal.definition, proposal.content, proposal.bytes);
   });
 }
@@ -128,7 +133,7 @@ function updateAutomation(
     const proposal = yield* prepareProposal("update", request.id, request.content);
     const current = yield* readCurrent(node, "update", request.id);
     yield* requireRevision("update", request.id, current, request.expectedRevision);
-    yield* nodeOperation("update", () => node.update(request.id, proposal.bytes, current));
+    yield* mapNodeError("update", node.update(request.id, proposal.bytes, current));
     return observe(proposal.definition, proposal.content, proposal.bytes);
   });
 }
@@ -141,7 +146,7 @@ function deleteAutomation(
     yield* requireValidId("delete", request.id);
     const current = yield* readCurrent(node, "delete", request.id);
     yield* requireRevision("delete", request.id, current, request.expectedRevision);
-    yield* nodeOperation("delete", () => node.delete(request.id, current));
+    yield* mapNodeError("delete", node.delete(request.id, current));
   });
 }
 
@@ -162,7 +167,7 @@ function listAutomations(
   node: NodeAdapter,
 ): Effect.Effect<ReadonlyArray<AutomationObservation>, AutomationAuthoringError> {
   return Effect.gen(function* () {
-    const names = yield* nodeOperation("list", () => node.listNames());
+    const names = yield* mapNodeError("list", node.listNames);
     const markdownNames = names.filter((name) => name.endsWith(".md"));
     return yield* Effect.forEach(markdownNames, (name) =>
       inspectAutomation(node, name.slice(0, -3)),
@@ -213,7 +218,7 @@ function readCurrent(
   operation: string,
   id: string,
 ): Effect.Effect<Uint8Array, AutomationAuthoringError> {
-  return nodeOperation(operation, () => node.read(id)).pipe(
+  return mapNodeError(operation, node.read(id)).pipe(
     Effect.flatMap((content) =>
       content === undefined
         ? Effect.fail(
@@ -293,34 +298,34 @@ function decodeUtf8(
   });
 }
 
-function nodeOperation<Value>(
+function mapNodeError<Value>(
   operation: string,
-  // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- boundary: one wrapper converts the Node adapter Promise into a typed Effect
-  run: () => Promise<Value>,
+  effect: Effect.Effect<Value, AutomationNodeError>,
 ): Effect.Effect<Value, AutomationAuthoringError> {
-  return Effect.tryPromise({
-    try: run,
-    catch: (cause) => {
-      if (isNodeAutomationConflictError(cause)) {
+  return effect.pipe(
+    Effect.mapError((cause) => {
+      if (cause.code === "conflict") {
         return new AutomationAuthoringError({
           operation,
           code: "conflict",
-          message: "Automation changed during publication",
+          message: cause.message,
+          cause,
         });
       }
-      if (isNodeAutomationNotFoundError(cause)) {
+      if (cause.code === "not-found") {
         return new AutomationAuthoringError({
           operation,
           code: "not-found",
-          message: "Automation disappeared during publication",
+          message: cause.message,
+          cause,
         });
       }
       return new AutomationAuthoringError({
         operation,
         code: "operation-failed",
-        message: `Automation ${operation} failed`,
+        message: cause.message,
         cause,
       });
-    },
-  });
+    }),
+  );
 }
