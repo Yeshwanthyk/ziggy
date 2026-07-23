@@ -1,6 +1,9 @@
 export {
   decodeExtensionManifest,
   decodeExtensionManifestJson,
+  EXTENSION_COMMAND_MAX_ARGUMENT_BYTES,
+  EXTENSION_COMMAND_MAX_ARGUMENTS,
+  type ExtensionCommand,
   type ExtensionManifest,
   ExtensionManifestSchema,
 } from "./manifest.ts";
@@ -16,6 +19,12 @@ export {
   makeExtensionApprovalRequirement,
 } from "./approvals.ts";
 export { defineTool, type ExtensionToolContext, type ExtensionToolDefinition } from "./tool.ts";
+export {
+  ExtensionCommandLoadError,
+  type ExtensionCommandInvocationCutPoint,
+  type ExtensionCommandLoaderOptions,
+  loadInstalledExtensionCommands,
+} from "./command-loader.ts";
 export {
   ExtensionToolLoadError,
   type ExtensionToolLoadCutPoint,

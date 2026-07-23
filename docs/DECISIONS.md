@@ -189,15 +189,21 @@ requiring every extension author to write TypeScript.
 **Options considered:** pure markdown/skills only (no code), pure in-process plugin API (pi-style),
 subprocess-only tools (hermes-style), a tiered model combining markdown-first with a narrow code
 escape hatch.
-**Decision:** Tiered. Default tier = declarative manifest + `SKILL.md` (Anthropic Agent Skills
-format) + CLI setup/doctor steps, no code loading required. Escape-hatch tier = exactly one
-in-process `defineTool` ABI, loaded via Bun's runtime dynamic `import()` (proven viable by D2),
-gated behind install-time user approval since it is trusted code running in-process. Declarative
-setup/doctor entries are structured argv, never shell strings, and receive separate approval before
-spawn over their exact argv, permissions, content digests, and Extension version. Installed trees
-are digest-sealed and revalidated at every Skill load, Tool import, or subprocess execution; a
-version or content change requires reinstall and reapproval. Extensions get **no** loop hooks, no
-custom providers, no ability to register their own extensions — those
+**Decision:** Three explicit capability tiers. `skills[]` is declarative content with no execution.
+Manifest-v2 `commands[]` exposes daemon-supervised subprocesses as Session Tools, with a fixed argv
+prefix, closed argument mode, explicit `extension | profile` cwd policy, bounded total argv and
+timeout, and no shell or interpolation. Approved executable bytes run from a private daemon-owned
+snapshot so a final path mutation cannot change what is spawned. `tools[]` remains the single
+in-process `defineTool` ABI, loaded via Bun's
+runtime dynamic `import()` (proven viable by D2). Both executable tiers require install-time user
+approval; Command approval binds the fixed argv prefix and disclosed dynamic-argument policy, not
+arbitrary future argv. Setup/doctor entries remain structured argv, never shell strings, and receive
+separate approval before spawn. Manifest v1 remains byte-contract compatible and cannot declare
+Commands; manifest v2 requires an explicit `commands` array and writes approval schema v2, with no
+automatic migration between versions. Installed trees are digest-sealed and revalidated at every
+Skill load, Tool import, or subprocess execution; a version or content change requires reinstall
+and reapproval. Extensions get **no** loop hooks, no custom providers, no ability to register their
+own extensions — those
 stay core-only. No Merlin candidate, including `executor`, is preselected to ship: each goes through
 the same closed migration-ledger disposition and independent review. Long-tail integrations that
 don't justify a maintained adapter use flue-style markdown "blueprints" the agent applies as an

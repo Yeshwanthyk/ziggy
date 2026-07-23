@@ -266,6 +266,12 @@ export function deriveExtensionFileKind(
     if (path === `${tool.path}/tool.ts`) return "tool";
     if (path.startsWith(`${tool.path}/`)) return "tool-dependency";
   }
+  if (
+    manifest.schemaVersion === 2 &&
+    manifest.commands.some((command) => command.argv[0] === path && path.includes("/"))
+  ) {
+    return "command";
+  }
   if (manifest.setup !== undefined && path.startsWith("setup/")) return "setup";
   return undefined;
 }
@@ -276,11 +282,18 @@ function validateDirectoryLayout(
 ): string | undefined {
   const skillRoots = new Set(manifest.skills.map((skill) => skill.path));
   const toolRoots = new Set((manifest.tools ?? []).map((tool) => tool.path));
+  const commandPaths =
+    manifest.schemaVersion === 2
+      ? manifest.commands
+          .map((command) => command.argv[0] ?? "")
+          .filter((path) => path.includes("/"))
+      : [];
   for (const directory of directories) {
     if (directory === "skills" && manifest.skills.length > 0) continue;
     if (directory === "tools" && manifest.tools !== undefined) continue;
     if (directory === "setup" && manifest.setup !== undefined) continue;
     if (skillRoots.has(directory) || toolRoots.has(directory)) continue;
+    if (commandPaths.some((path) => path.startsWith(`${directory}/`))) continue;
     const skill = manifest.skills.find((entry) => directory.startsWith(`${entry.path}/`));
     if (skill !== undefined) {
       const supportRoot = directory.slice(skill.path.length + 1).split("/")[0];

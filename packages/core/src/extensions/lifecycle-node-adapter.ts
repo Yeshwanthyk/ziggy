@@ -5,9 +5,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
+  chmod,
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   readdir,
@@ -17,6 +19,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { Result, Schema } from "effect";
 import {
@@ -324,6 +327,54 @@ export async function resolveExtensionExecutable(
     }
   }
   throw new Error(`Declared command could not be resolved: ${executable}`);
+}
+
+/** Revalidates an already-approved absolute executable without consulting PATH. */
+export async function inspectApprovedExtensionExecutable(
+  executablePath: string,
+): Promise<{ readonly sourcePath: string; readonly bytes: Uint8Array; readonly sha256: string }> {
+  if (!isAbsolute(executablePath)) throw new Error("Approved executable path must be absolute");
+  const canonical = await realpath(executablePath);
+  if (canonical !== executablePath) {
+    throw new Error("Approved executable path no longer resolves canonically");
+  }
+  const handle = await open(canonical, "r");
+  try {
+    const status = await handle.stat();
+    if (!status.isFile() || (status.mode & 0o111) === 0) {
+      throw new Error(`Extension executable is not an executable regular file: ${canonical}`);
+    }
+    const bytes = await handle.readFile();
+    return { sourcePath: canonical, bytes, sha256: sha256(bytes) };
+  } finally {
+    await handle.close();
+  }
+}
+
+export interface ExtensionCommandExecutionSnapshot {
+  readonly rootPath: string;
+  readonly executablePath: string;
+}
+
+export async function createExtensionCommandExecutionSnapshot(
+  extensionId: string,
+  commandId: string,
+  bytes: Uint8Array,
+): Promise<ExtensionCommandExecutionSnapshot> {
+  const rootPath = await mkdtemp(join(tmpdir(), `ziggy-command-${extensionId}-${commandId}-`));
+  await chmod(rootPath, 0o700);
+  const rootStatus = await stat(rootPath);
+  if ((rootStatus.mode & 0o777) !== 0o700) {
+    throw new Error(`Command snapshot root isn't private: ${rootPath}`);
+  }
+  const executablePath = join(rootPath, "command");
+  await writeFile(executablePath, bytes, { flag: "wx", mode: 0o700 });
+  await assertExecutableFile(executablePath);
+  return { rootPath, executablePath };
+}
+
+export async function removeExtensionCommandExecutionSnapshot(rootPath: string): Promise<void> {
+  await rm(rootPath, { recursive: true, force: true });
 }
 
 export async function activateStagedExtension(input: {
@@ -937,23 +988,39 @@ export async function runExtensionProcess(input: {
   readonly signal?: AbortSignal;
   readonly hooks?: ExtensionLifecycleNodeHooks;
 }): Promise<ExtensionProcessResult> {
+  if (input.signal?.aborted) throw new Error("Extension process interrupted before spawn");
   const subprocess = Bun.spawn([input.executablePath, ...input.argv.slice(1)], {
     cwd: input.cwd,
     env: input.environment,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    detached: process.platform !== "win32",
   });
   let timedOut = false;
   let interrupted = false;
+  let forceKillCompleted: Promise<void> | undefined;
+  let terminating = false;
+  const terminate = () => {
+    if (terminating) return;
+    terminating = true;
+    terminateProcessTree(subprocess.pid, () => subprocess.kill("SIGTERM"));
+    forceKillCompleted = new Promise((resolveForceKill) => {
+      setTimeout(() => {
+        forceKillProcessTree(subprocess.pid, () => subprocess.kill("SIGKILL"));
+        resolveForceKill();
+      }, 250);
+    });
+  };
   const interrupt = () => {
     interrupted = true;
-    subprocess.kill();
+    terminate();
   };
   input.signal?.addEventListener("abort", interrupt, { once: true });
+  if (input.signal?.aborted) interrupt();
   const timeout = setTimeout(() => {
     timedOut = true;
-    subprocess.kill();
+    terminate();
   }, input.timeoutMs);
   try {
     await checkpoint(input.hooks, "process-after-spawn", input.signal);
@@ -971,9 +1038,46 @@ export async function runExtensionProcess(input: {
       stderr: stderr.text,
       truncated,
     };
+  } catch (cause) {
+    terminate();
+    await subprocess.exited;
+    throw cause;
   } finally {
     clearTimeout(timeout);
+    if (forceKillCompleted !== undefined) await forceKillCompleted;
     input.signal?.removeEventListener("abort", interrupt);
+  }
+}
+
+function terminateProcessTree(pid: number, fallback: () => void): void {
+  if (process.platform === "win32") {
+    fallback();
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try {
+      fallback();
+    } catch {
+      return;
+    }
+  }
+}
+
+function forceKillProcessTree(pid: number, fallback: () => void): void {
+  if (process.platform === "win32") {
+    fallback();
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      fallback();
+    } catch {
+      return;
+    }
   }
 }
 

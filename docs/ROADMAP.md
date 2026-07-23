@@ -20,15 +20,15 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 Tracked verification manifests are the status authority. S0 through S3 are `implemented`; S4 is
 `pending`. The S4 Extension contract, version/manifest validation, Skill loader, daemon lifecycle,
 approval/seal recovery, compiled `defineTool` boundary, 47-row Merlin ledger, HyperFrames
-Blueprint, baked-in skill-writing Skill, and inert `smart-memory`/`smart-extensions` scaffolds are
-implemented and independently verified. The ledger currently has two landed, independently
-reviewed S4 candidates: `hyperframes` and `skill-creator`.
+Blueprint, baked-in skill-writing Skill, inert `smart-memory`/`smart-extensions` scaffolds, and the
+generic supervised Command boundary are implemented. The ledger currently has two landed,
+independently reviewed S4 candidates: `hyperframes` and `skill-creator`.
 
 S4 still has 33 planned S4-owned candidate rows: 14 `skill-only` and 19
-`supervised-command`. The current runtime supervises approved setup and doctor argv only; it does
-not yet expose a callable supervised-command Tool boundary. Candidate waves must either fit the
-existing Skill-only contract or wait for that generic boundary. S4 closes only after the remaining
-accepted waves and the integrated `verify:s4`, `verify:all`, and `bun run check` review pass.
+`supervised-command`. The callable, daemon-supervised Command boundary now exists; `executor` is
+the first command-based canary on the critical path, while Skill-only candidate waves can proceed
+in parallel. S4 closes only after the remaining accepted waves and the integrated `verify:s4`,
+`verify:all`, and `bun run check` review pass.
 
 ## Sequencing rules
 

@@ -30,6 +30,7 @@ test("S0 scenario declarations are stable and executable test files", async () =
     "s3.tui-protocol-face",
     "s4.blueprint-postconditions",
     "s4.curated-extension-scaffolds",
+    "s4.extension-command-boundary",
     "s4.extension-daemon-lifecycle",
     "s4.extension-journal-recovery",
     "s4.extension-mutation-recovery",

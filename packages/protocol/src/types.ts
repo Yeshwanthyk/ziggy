@@ -394,13 +394,12 @@ export interface ApprovalResolveResponse {
 }
 
 export type ExtensionTrustTier = "builtin" | "verified" | "community";
-export type ExtensionEntryKind = "tool" | "setup" | "doctor";
+export type ExtensionEntryKind = "tool" | "setup" | "doctor" | "command";
 
-export interface ExtensionApprovalRequirement {
+interface ExtensionApprovalRequirementBase {
   readonly fingerprint: string;
   readonly extensionId: string;
   readonly extensionVersion: string;
-  readonly entryKind: ExtensionEntryKind;
   readonly entryId: string;
   readonly argv: ReadonlyArray<string>;
   readonly permissions: {
@@ -414,6 +413,16 @@ export interface ExtensionApprovalRequirement {
   readonly treeDigest: string;
   readonly epoch: number;
 }
+export type ExtensionApprovalRequirement =
+  | (ExtensionApprovalRequirementBase & {
+      readonly entryKind: "tool" | "setup" | "doctor";
+    })
+  | (ExtensionApprovalRequirementBase & {
+      readonly entryKind: "command";
+      readonly argumentMode: "none" | "append";
+      readonly cwd: "extension" | "profile";
+      readonly timeoutMs: number;
+    });
 
 export interface ExtensionObservation {
   readonly id: string;

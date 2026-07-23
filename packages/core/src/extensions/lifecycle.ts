@@ -407,13 +407,24 @@ function completeInstall(
     if (postSetupSealError !== undefined) {
       return yield* lifecycleFailure("install", "extension-mutated", postSetupSealError);
     }
-    const approvals: ExtensionApprovals = {
-      schemaVersion: 1,
-      extensionId: manifest.id,
-      epoch,
-      invalidated: false,
-      approvals: canonicalApprovals(requirements),
-    };
+    const approvals: ExtensionApprovals =
+      manifest.schemaVersion === 1
+        ? {
+            schemaVersion: 1,
+            extensionId: manifest.id,
+            epoch,
+            invalidated: false,
+            approvals: canonicalApprovals(
+              requirements.filter((requirement) => requirement.entryKind !== "command"),
+            ),
+          }
+        : {
+            schemaVersion: 2,
+            extensionId: manifest.id,
+            epoch,
+            invalidated: false,
+            approvals: canonicalApprovals(requirements),
+          };
     const state: ExtensionEnabledState = {
       schemaVersion: 1,
       extensionId: manifest.id,
@@ -423,6 +434,10 @@ function completeInstall(
     const installed = yield* readInstalledRequired(options, manifest.id, false);
     return { status: "installed", extension: observation(installed) };
   });
+}
+
+function manifestCommands(manifest: ExtensionManifest) {
+  return manifest.schemaVersion === 2 ? manifest.commands : [];
 }
 
 function enableExtension(
@@ -764,8 +779,12 @@ function approvalsMatchAuthority(
   provenance: ExtensionProvenance,
   approvals: ExtensionApprovals,
 ): boolean {
+  if (approvals.schemaVersion !== manifest.schemaVersion) return false;
   const entries = new Map<string, { readonly argv: ReadonlyArray<string> }>();
   for (const tool of manifest.tools ?? []) entries.set(`tool\0${tool.id}`, { argv: [] });
+  for (const command of manifestCommands(manifest)) {
+    entries.set(`command\0${command.id}`, { argv: command.argv });
+  }
   for (const [index, step] of (manifest.setup?.steps ?? []).entries()) {
     entries.set(`setup\0${index}`, { argv: step.argv });
   }
@@ -786,7 +805,15 @@ function approvalsMatchAuthority(
       approval.permissions.network === manifest.permissions.network &&
       approval.permissions.filesystem === manifest.permissions.filesystem &&
       arraysEqual(approval.permissions.secrets, manifest.permissions.secrets) &&
-      arraysEqual(approval.argv, entry.argv)
+      arraysEqual(approval.argv, entry.argv) &&
+      (approval.entryKind !== "command" ||
+        manifestCommands(manifest).some(
+          (command) =>
+            command.id === approval.entryId &&
+            command.argumentMode === approval.argumentMode &&
+            command.cwd === approval.cwd &&
+            command.timeoutMs === approval.timeoutMs,
+        ))
     );
   });
 }
@@ -794,6 +821,7 @@ function approvalsMatchAuthority(
 function manifestExecutionEntryCount(manifest: ExtensionManifest): number {
   return (
     (manifest.tools?.length ?? 0) +
+    manifestCommands(manifest).length +
     (manifest.setup?.steps.length ?? 0) +
     (manifest.setup?.doctor === undefined ? 0 : 1)
   );
@@ -909,6 +937,32 @@ function makeApprovalRequirements(
         }),
       );
     }
+    for (const command of manifestCommands(manifest)) {
+      const executable = yield* resolveExecutable(
+        options,
+        manifest.id,
+        packagePath,
+        command.argv[0] ?? "",
+      );
+      requirements.push(
+        makeExtensionApprovalRequirement({
+          extensionId: manifest.id,
+          extensionVersion: manifest.version,
+          entryKind: "command",
+          entryId: command.id,
+          argv: command.argv,
+          argumentMode: command.argumentMode,
+          cwd: command.cwd,
+          timeoutMs: command.timeoutMs,
+          permissions: manifest.permissions,
+          executablePath: executable.approvalPath,
+          executableSha256: executable.sha256,
+          trustTier,
+          treeDigest,
+          epoch,
+        }),
+      );
+    }
     for (const [index, step] of (manifest.setup?.steps ?? []).entries()) {
       const executable = yield* resolveExecutable(
         options,
@@ -991,7 +1045,7 @@ function invalidatedRecord(installed: InstalledRecord): InstalledRecord {
   return {
     ...installed,
     approvals: {
-      schemaVersion: 1,
+      schemaVersion: installed.approvals.schemaVersion,
       extensionId: installed.manifest.id,
       epoch: installed.approvals.epoch + 1,
       invalidated: true,
@@ -1004,7 +1058,7 @@ function invalidatedAuthorityRecord(installed: InstalledAuthorityRecord): Instal
   return {
     ...installed,
     approvals: {
-      schemaVersion: 1,
+      schemaVersion: installed.approvals.schemaVersion,
       extensionId: installed.provenance.extensionId,
       epoch: installed.approvals.epoch + 1,
       invalidated: true,

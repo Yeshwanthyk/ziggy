@@ -13,6 +13,7 @@ import {
   makeExtensionApprovalRequirement,
   type ExtensionApprovals,
 } from "./approvals.ts";
+import { loadInstalledExtensionCommands } from "./command-loader.ts";
 import { replaceExtensionAuthorityJson } from "./lifecycle-node-adapter.ts";
 import {
   withExtensionLifecyclePermit,
@@ -101,10 +102,15 @@ export function loadInstalledExtensionTools(
         loadExtensionTools(profilePath, file, runningZiggyVersion, options),
       ),
     );
-    const flattened = tools.flat();
+    const commands = yield* loadInstalledExtensionCommands(profilePath, runningZiggyVersion).pipe(
+      Effect.mapError(toolLoadFailure("Failed to load installed Extension Commands")),
+    );
+    const flattened = [...tools.flat(), ...commands];
     const names = new Set(flattened.map((tool) => tool.name));
     if (names.size !== flattened.length || names.has("memory")) {
-      return yield* fail("Extension Tool names must be unique and must not collide with memory");
+      return yield* fail(
+        "Extension Session Tool names must be globally unique and must not collide with memory",
+      );
     }
     return flattened;
   });
@@ -542,6 +548,11 @@ function approvalsMatchAuthority(
 ): boolean {
   const entries = new Map<string, ReadonlyArray<string>>();
   for (const tool of manifest.tools ?? []) entries.set(`tool\0${tool.id}`, []);
+  if (manifest.schemaVersion === 2) {
+    for (const command of manifest.commands) {
+      entries.set(`command\0${command.id}`, command.argv);
+    }
+  }
   for (const [index, step] of (manifest.setup?.steps ?? []).entries()) {
     entries.set(`setup\0${index}`, step.argv);
   }
@@ -549,6 +560,7 @@ function approvalsMatchAuthority(
     entries.set("doctor\0doctor", manifest.setup.doctor.argv);
   }
   return (
+    approvals.schemaVersion === manifest.schemaVersion &&
     entries.size === approvals.approvals.length &&
     approvals.approvals.every((approval) => {
       const argv = entries.get(`${approval.entryKind}\0${approval.entryId}`);
@@ -562,7 +574,16 @@ function approvalsMatchAuthority(
         arraysEqual(approval.permissions.secrets, manifest.permissions.secrets) &&
         approval.trustTier === provenance.trustTier &&
         approval.treeDigest === provenance.treeDigest &&
-        approval.epoch === approvals.epoch
+        approval.epoch === approvals.epoch &&
+        (approval.entryKind !== "command" ||
+          (manifest.schemaVersion === 2 &&
+            manifest.commands.some(
+              (command) =>
+                command.id === approval.entryId &&
+                command.argumentMode === approval.argumentMode &&
+                command.cwd === approval.cwd &&
+                command.timeoutMs === approval.timeoutMs,
+            )))
       );
     })
   );

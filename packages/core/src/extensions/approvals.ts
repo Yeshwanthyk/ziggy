@@ -10,7 +10,7 @@ const ApprovalPermissionsSchema = Schema.Struct({
   secrets: Schema.Array(Schema.String),
 });
 
-export const ExtensionApprovalRequirementSchema = Schema.Struct({
+const ExtensionApprovalRequirementV1Schema = Schema.Struct({
   fingerprint: Sha256Schema,
   extensionId: Schema.String,
   extensionVersion: Schema.String,
@@ -24,11 +24,47 @@ export const ExtensionApprovalRequirementSchema = Schema.Struct({
   treeDigest: Sha256Schema,
   epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 });
+const ExtensionCommandApprovalRequirementSchema = Schema.Struct({
+  fingerprint: Sha256Schema,
+  extensionId: Schema.String,
+  extensionVersion: Schema.String,
+  entryKind: Schema.Literal("command"),
+  entryId: Schema.String,
+  argv: Schema.Array(Schema.String),
+  argumentMode: Schema.Literals(["none", "append"]),
+  cwd: Schema.Literals(["extension", "profile"]),
+  timeoutMs: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(300_000),
+  ),
+  permissions: ApprovalPermissionsSchema,
+  executablePath: Schema.String,
+  executableSha256: Sha256Schema,
+  trustTier: Schema.Literals(["builtin", "verified", "community"]),
+  treeDigest: Sha256Schema,
+  epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+});
+export const ExtensionApprovalRequirementSchema = Schema.Union([
+  ExtensionApprovalRequirementV1Schema,
+  ExtensionCommandApprovalRequirementSchema,
+]);
 
 export type ExtensionApprovalRequirement = typeof ExtensionApprovalRequirementSchema.Type;
 
-export const ExtensionApprovalsSchema = Schema.Struct({
+const ExtensionApprovalsV1Schema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
+  extensionId: Schema.String,
+  epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  invalidated: Schema.Boolean,
+  approvals: Schema.Array(ExtensionApprovalRequirementV1Schema).check(
+    Schema.makeFilter(approvalsAreCanonical, {
+      expected: "unique approvals sorted by fingerprint",
+    }),
+  ),
+});
+const ExtensionApprovalsV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
   extensionId: Schema.String,
   epoch: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   invalidated: Schema.Boolean,
@@ -38,6 +74,10 @@ export const ExtensionApprovalsSchema = Schema.Struct({
     }),
   ),
 });
+export const ExtensionApprovalsSchema = Schema.Union([
+  ExtensionApprovalsV1Schema,
+  ExtensionApprovalsV2Schema,
+]);
 
 export type ExtensionApprovals = typeof ExtensionApprovalsSchema.Type;
 
@@ -56,10 +96,9 @@ export function decodeExtensionApprovalsJson(input: unknown) {
   return decodeStrictJsonString(input).pipe(Effect.flatMap(decodeApprovalsJsonString));
 }
 
-export interface ApprovalFingerprintInput {
+interface ApprovalFingerprintInputBase {
   readonly extensionId: string;
   readonly extensionVersion: string;
-  readonly entryKind: ExtensionApprovalRequirement["entryKind"];
   readonly entryId: string;
   readonly argv: ReadonlyArray<string>;
   readonly permissions: ExtensionManifest["permissions"];
@@ -69,12 +108,26 @@ export interface ApprovalFingerprintInput {
   readonly treeDigest: string;
   readonly epoch: number;
 }
+export type ApprovalFingerprintInput =
+  | (ApprovalFingerprintInputBase & {
+      readonly entryKind: "tool" | "setup" | "doctor";
+    })
+  | (ApprovalFingerprintInputBase & {
+      readonly entryKind: "command";
+      readonly argumentMode: "none" | "append";
+      readonly cwd: "extension" | "profile";
+      readonly timeoutMs: number;
+    });
 
 export function makeExtensionApprovalRequirement(
   input: ApprovalFingerprintInput,
 ): ExtensionApprovalRequirement {
   const fingerprint = createHash("sha256")
-    .update("ziggy-extension-approval-v1\0")
+    .update(
+      input.entryKind === "command"
+        ? "ziggy-extension-command-approval-v2\0"
+        : "ziggy-extension-approval-v1\0",
+    )
     .update(frame(input.extensionId))
     .update(frame(input.extensionVersion))
     .update(frame(input.entryKind))
@@ -88,13 +141,18 @@ export function makeExtensionApprovalRequirement(
     .update(frame(input.trustTier))
     .update(frame(input.treeDigest))
     .update(frame(String(input.epoch)))
+    .update(
+      input.entryKind === "command"
+        ? frameArray([input.argumentMode, input.cwd, String(input.timeoutMs)])
+        : new Uint8Array(),
+    )
     .digest("hex");
   return { ...input, fingerprint };
 }
 
-export function canonicalApprovals(
-  approvals: ReadonlyArray<ExtensionApprovalRequirement>,
-): ReadonlyArray<ExtensionApprovalRequirement> {
+export function canonicalApprovals<Requirement extends ExtensionApprovalRequirement>(
+  approvals: ReadonlyArray<Requirement>,
+): ReadonlyArray<Requirement> {
   return [...approvals].sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
 }
 
@@ -102,7 +160,7 @@ export function invalidatedExtensionApprovals(approvals: ExtensionApprovals): Ex
   return approvals.invalidated
     ? approvals
     : {
-        schemaVersion: 1,
+        schemaVersion: approvals.schemaVersion,
         extensionId: approvals.extensionId,
         epoch: approvals.epoch + 1,
         invalidated: true,

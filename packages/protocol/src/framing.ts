@@ -736,6 +736,8 @@ function decodeExtensionApprovalResponse(value: unknown): {
 }
 
 function decodeExtensionApprovalRequirement(value: unknown): ExtensionApprovalRequirement {
+  const loose = objectRecord(value);
+  const kind = extensionEntryKind(loose.entryKind);
   const requirement = exactRecord(value, [
     "fingerprint",
     "extensionId",
@@ -749,13 +751,14 @@ function decodeExtensionApprovalRequirement(value: unknown): ExtensionApprovalRe
     "trustTier",
     "treeDigest",
     "epoch",
+    ...(kind === "command" ? ["argumentMode", "cwd", "timeoutMs"] : []),
   ]);
   const permissions = exactRecord(requirement.permissions, ["network", "filesystem", "secrets"]);
-  return {
+  const base = {
     fingerprint: approvalFingerprint(requirement.fingerprint, "fingerprint"),
     extensionId: identifierValue(requirement.extensionId, "extensionId"),
     extensionVersion: boundedString(requirement.extensionVersion, "extensionVersion", 128),
-    entryKind: extensionEntryKind(requirement.entryKind),
+    entryKind: kind,
     entryId: identifierValue(requirement.entryId, "entryId"),
     argv: boundedArray(
       requirement.argv,
@@ -773,6 +776,14 @@ function decodeExtensionApprovalRequirement(value: unknown): ExtensionApprovalRe
     trustTier: extensionTrustTier(requirement.trustTier),
     treeDigest: sha256Value(requirement.treeDigest, "treeDigest"),
     epoch: nonnegativeSafeInteger(requirement.epoch, "epoch"),
+  };
+  if (kind !== "command") return { ...base, entryKind: kind };
+  return {
+    ...base,
+    entryKind: "command",
+    argumentMode: commandArgumentMode(requirement.argumentMode),
+    cwd: commandCwd(requirement.cwd),
+    timeoutMs: boundedPositiveInteger(requirement.timeoutMs, "timeoutMs", 300_000),
   };
 }
 
@@ -881,9 +892,29 @@ function sha256Value(value: unknown, name: string): string {
   return digest;
 }
 
-function extensionEntryKind(value: unknown): "tool" | "setup" | "doctor" {
-  if (value === "tool" || value === "setup" || value === "doctor") return value;
+function extensionEntryKind(value: unknown): "tool" | "setup" | "doctor" | "command" {
+  if (value === "tool" || value === "setup" || value === "doctor" || value === "command") {
+    return value;
+  }
   throw new TypeError("Unknown Extension approval entry kind");
+}
+
+function commandArgumentMode(value: unknown): "none" | "append" {
+  if (value === "none" || value === "append") return value;
+  throw new TypeError("Unknown Extension Command argument mode");
+}
+
+function commandCwd(value: unknown): "extension" | "profile" {
+  if (value === "extension" || value === "profile") return value;
+  throw new TypeError("Unknown Extension Command cwd");
+}
+
+function boundedPositiveInteger(value: unknown, name: string, maximum: number): number {
+  const decoded = nonnegativeSafeInteger(value, name);
+  if (decoded < 1 || decoded > maximum) {
+    throw new TypeError(`${name} must be between 1 and ${maximum}`);
+  }
+  return decoded;
 }
 
 function extensionTrustTier(value: unknown): "builtin" | "verified" | "community" {

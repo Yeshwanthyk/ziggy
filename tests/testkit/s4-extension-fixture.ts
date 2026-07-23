@@ -13,6 +13,14 @@ import { Effect } from "effect";
 import { runEffect } from "./effect.ts";
 
 export interface S4ExtensionFixtureOptions {
+  readonly commands?: ReadonlyArray<{
+    readonly id: string;
+    readonly description: string;
+    readonly argv: ReadonlyArray<string>;
+    readonly argumentMode: "none" | "append";
+    readonly cwd: "extension" | "profile";
+    readonly timeoutMs: number;
+  }>;
   readonly skills?: ReadonlyArray<{ readonly id: string; readonly path: string }>;
   readonly tools?: ReadonlyArray<{ readonly id: string; readonly path: string }>;
   readonly setup?: {
@@ -44,7 +52,7 @@ export async function createS4ExtensionFixture(
   await mkdir(source);
   const skills = options.skills ?? [{ id: "fixture", path: "skills/fixture" }];
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: options.commands === undefined ? 1 : 2,
     id: "fixture",
     version: options.version ?? "1.0.0",
     name: "Fixture",
@@ -52,6 +60,7 @@ export async function createS4ExtensionFixture(
     ziggy: { requires: ">=0.0.0 <=9.0.0" },
     skills,
     ...(options.tools === undefined ? {} : { tools: options.tools }),
+    ...(options.commands === undefined ? {} : { commands: options.commands }),
     adapters: [],
     ...(options.setup === undefined ? {} : { setup: options.setup }),
     requires: {

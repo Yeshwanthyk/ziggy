@@ -6,10 +6,11 @@ ordered transitive closures; symbolic gates come from the manifest gate allowlis
 executed from those declarations. The registry at `tests/scenarios/registry.ts` is bijective with
 manifest scenario IDs and uses unique, normalized, repository-contained `.test.ts` files.
 `s0` through `s3` are implemented. S4 remains pending, with implemented manifest/compatibility,
-closed-ledger, daemon lifecycle, mutation recovery, approved Tool boundary, publication recovery,
-Blueprint/core Skill, and curated-scaffold slices; `s5`–`s7` remain `manifest-empty` until product
-behavior lands. S3 covers Profile initialization, Provider/auth, CLI, the shared Attach Client,
-Session listing, and deterministic plus manual-live TUI behavior.
+closed-ledger, daemon lifecycle, mutation recovery, supervised Command and approved Tool
+boundaries, publication recovery, Blueprint/core Skill, and curated-scaffold slices; `s5`–`s7`
+remain `manifest-empty` until product behavior lands. S3 covers Profile initialization,
+Provider/auth, CLI, the shared Attach Client, Session listing, and deterministic plus manual-live
+TUI behavior.
 Pending requirements may be cataloged without claiming implementation. Unsupported schema versions,
 unknown fields/stages/gates/scenarios, duplicates, invalid paths, and status/content contradictions
 fail closed.

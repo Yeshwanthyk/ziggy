@@ -7,6 +7,7 @@ import {
 } from "../../packages/protocol/src/index.ts";
 import type {
   ClientRequestFrame,
+  ExtensionApprovalRequirement,
   ProtocolErrorCode,
   ServerErrorFrame,
   ServerFrame,
@@ -515,6 +516,41 @@ describe("Extension lifecycle protocol codec", () => {
       },
     };
     expect(decodeServerFrame(encodeServerFrame(approvalRequired))).toEqual(approvalRequired);
+
+    const commandRequirement = {
+      ...requirement,
+      entryKind: "command",
+      entryId: "executor",
+      argumentMode: "append",
+      cwd: "profile",
+      timeoutMs: 30_000,
+    } satisfies ExtensionApprovalRequirement;
+    const commandApproval: ServerFrame = {
+      ...approvalRequired,
+      requestId: "command-install",
+      result: {
+        status: "approval-required",
+        extensionId: "fixture",
+        requirements: [commandRequirement],
+      },
+    };
+    expect(decodeServerFrame(encodeServerFrame(commandApproval))).toEqual(commandApproval);
+    expect(() =>
+      decodeServerFrame(
+        `${JSON.stringify({
+          ...commandApproval,
+          result: {
+            ...commandApproval.result,
+            requirements: [
+              {
+                ...commandRequirement,
+                timeoutMs: undefined,
+              },
+            ],
+          },
+        })}\n`,
+      ),
+    ).toThrow();
   });
 
   test("rejects loose, oversized, duplicate, malformed, and unbounded Extension values", () => {

@@ -270,6 +270,16 @@ export const scenarioRegistry: ReadonlyArray<ScenarioDeclaration> = [
   },
   {
     schemaVersion: 1,
+    id: "s4.extension-command-boundary",
+    stage: "s4",
+    file: "tests/scenarios/s4-extension-command-boundary.test.ts",
+    seed: "s4-extension-command-boundary-v1",
+    schedule: "serial-approval-install-enable-invoke-and-supervised-process-exit",
+    boundaryConfiguration:
+      "temporary-profile-manifest-v2-sealed-command-executable-filtered-environment-and-no-shell",
+  },
+  {
+    schemaVersion: 1,
     id: "s4.extension-daemon-lifecycle",
     stage: "s4",
     file: "tests/scenarios/s4-extension-daemon-lifecycle.test.ts",

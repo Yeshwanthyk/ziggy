@@ -19,14 +19,34 @@ const RelativePathSchema = NonEmptyStringSchema.check(
   }),
 );
 const ArgvSchema = Schema.Array(ProcessArgumentSchema).check(Schema.isNonEmpty());
+export const EXTENSION_COMMAND_MAX_ARGUMENTS = 64;
+export const EXTENSION_COMMAND_MAX_ARGUMENT_BYTES = 16 * 1024;
+const CommandArgvSchema = ArgvSchema.check(
+  Schema.makeFilter(commandArgvIsBounded, {
+    expected: `at most ${EXTENSION_COMMAND_MAX_ARGUMENTS} arguments and ${EXTENSION_COMMAND_MAX_ARGUMENT_BYTES} aggregate UTF-8 bytes`,
+  }),
+);
+const CommandTimeoutSchema = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(300_000),
+);
 
 const ExtensionResourceSchema = Schema.Struct({
   id: IdentifierSchema,
   path: RelativePathSchema,
 });
 
-const ExtensionManifestModel = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+const ExtensionCommandSchema = Schema.Struct({
+  id: IdentifierSchema,
+  description: NonEmptyStringSchema,
+  argv: CommandArgvSchema,
+  argumentMode: Schema.Literals(["none", "append"]),
+  cwd: Schema.Literals(["extension", "profile"]),
+  timeoutMs: CommandTimeoutSchema,
+});
+
+const ExtensionManifestFields = {
   id: IdentifierSchema,
   version: NonEmptyStringSchema.check(
     Schema.makeFilter(isCanonicalSemVer, { expected: "a canonical SemVer 2 version" }),
@@ -78,7 +98,18 @@ const ExtensionManifestModel = Schema.Struct({
     source: NonEmptyStringSchema,
     license: NonEmptyStringSchema,
   }),
-}).check(
+};
+
+const ExtensionManifestV1 = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  ...ExtensionManifestFields,
+});
+const ExtensionManifestV2 = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
+  ...ExtensionManifestFields,
+  commands: Schema.Array(ExtensionCommandSchema),
+});
+const ExtensionManifestModel = Schema.Union([ExtensionManifestV1, ExtensionManifestV2]).check(
   Schema.makeFilter(hasValidManifestSemantics, {
     expected: "a canonical internally consistent Extension manifest",
   }),
@@ -86,6 +117,7 @@ const ExtensionManifestModel = Schema.Struct({
 
 export const ExtensionManifestSchema = ExtensionManifestModel;
 export type ExtensionManifest = typeof ExtensionManifestSchema.Type;
+export type ExtensionCommand = typeof ExtensionCommandSchema.Type;
 
 export const decodeExtensionManifest = Schema.decodeUnknownEffect(ExtensionManifestSchema, {
   errors: "all",
@@ -112,18 +144,42 @@ function isConfinedRelativePath(path: string): boolean {
   return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-function hasValidManifestSemantics(manifest: typeof ExtensionManifestModel.Type): boolean {
+function commandArgvIsBounded(argv: ReadonlyArray<string>): boolean {
   return (
-    (manifest.skills.length > 0 || manifest.tools !== undefined) &&
+    argv.length <= EXTENSION_COMMAND_MAX_ARGUMENTS &&
+    argv.reduce((total, argument) => total + utf8Encoder.encode(argument).byteLength, 0) <=
+      EXTENSION_COMMAND_MAX_ARGUMENT_BYTES
+  );
+}
+
+function hasValidManifestSemantics(manifest: typeof ExtensionManifestModel.Type): boolean {
+  const commands = manifest.schemaVersion === 2 ? manifest.commands : [];
+  const sessionToolIds = [
+    ...(manifest.tools ?? []).map((tool) => tool.id),
+    ...commands.map((command) => command.id),
+  ];
+  return (
+    (manifest.skills.length > 0 || manifest.tools !== undefined || commands.length > 0) &&
     resourcesHaveValidIdentities(manifest.skills, "skills") &&
     (manifest.tools === undefined || resourcesHaveValidIdentities(manifest.tools, "tools")) &&
+    isStrictlySortedUnique(commands, (command) => command.id) &&
+    new Set(sessionToolIds).size === sessionToolIds.length &&
     isStrictlySortedUnique(manifest.requires.env) &&
     isStrictlySortedUnique(manifest.requires.commands) &&
     isStrictlySortedUnique(manifest.requires.os) &&
     isStrictlySortedUnique(manifest.permissions.secrets) &&
     (manifest.defaults?.model === undefined || manifest.defaults.provider !== undefined) &&
     manifest.permissions.secrets.every((secret) => manifest.requires.env.includes(secret)) &&
-    setupCommandsAreDeclared(manifest)
+    setupCommandsAreDeclared(manifest) &&
+    commands.every(
+      (command) =>
+        (isConfinedPackageExecutable(command.argv[0] ?? "") ||
+          (isBareExecutableName(command.argv[0] ?? "") &&
+            manifest.requires.commands.includes(command.argv[0] ?? ""))) &&
+        (command.cwd !== "profile" ||
+          manifest.permissions.filesystem === "profile" ||
+          manifest.permissions.filesystem === "full"),
+    )
   );
 }
 

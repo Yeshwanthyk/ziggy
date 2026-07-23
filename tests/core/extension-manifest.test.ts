@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   decodeExtensionManifest,
   decodeExtensionManifestJson,
+  type ExtensionCommand,
   type ExtensionManifest,
   isZiggyVersionCompatible,
 } from "../../packages/core/src/extensions/index.ts";
@@ -43,6 +44,43 @@ test("Extension manifest schema decodes a strict Ziggy-native manifest", async (
   expect(await runEffect(decodeExtensionManifestJson(JSON.stringify(validManifest)))).toEqual(
     validManifest,
   );
+});
+
+test("manifest v2 declares supervised Commands explicitly and keeps v1 closed", async () => {
+  const command = {
+    id: "executor",
+    description: "Runs the approved executor argv without a shell.",
+    argv: ["bin/executor", "--json"],
+    argumentMode: "append",
+    cwd: "extension",
+    timeoutMs: 5_000,
+  } satisfies ExtensionCommand;
+  const v2 = {
+    ...validManifest,
+    schemaVersion: 2,
+    commands: [command],
+  } satisfies ExtensionManifest;
+  expect(await runEffect(decodeExtensionManifest(v2))).toEqual(v2);
+  await expectManifestRejected({ ...validManifest, commands: [command] });
+  await expectManifestRejected({ ...v2, commands: [{ ...command, timeoutMs: 0 }] });
+  await expectManifestRejected({
+    ...v2,
+    commands: [{ ...command, argv: Array.from({ length: 65 }, () => "x") }],
+  });
+  await expectManifestRejected({
+    ...v2,
+    commands: [{ ...command, argv: ["bin/executor", "x".repeat(16 * 1024)] }],
+  });
+  await expectManifestRejected({ ...v2, commands: [{ ...command, argv: ["node", "--eval"] }] });
+  await expectManifestRejected({
+    ...v2,
+    tools: [{ id: "executor", path: "tools/executor" }],
+  });
+  await expectManifestRejected({
+    ...v2,
+    commands: [{ ...command, cwd: "profile" }],
+    permissions: { ...v2.permissions, filesystem: "none" },
+  });
 });
 
 test("Extension manifest schema accepts canonical SemVer versions", async () => {

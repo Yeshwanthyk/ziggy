@@ -30,8 +30,9 @@ comments, commits, and docs.
 - **Provider** — a wire adapter for one model backend (Anthropic, OpenAI, OpenAI-compatible,
   Codex subscription, etc.), supplied via pi-ai. A Provider makes single model calls; it never
   owns a loop.
-- **Extension** — an installable unit adding Skills and/or Tools to a Profile, authored by
-  default as manifest + SKILL.md, optionally with a small in-process `defineTool` escape hatch.
+- **Extension** — an installable unit adding Skills, declarative Commands, and/or Tools to a
+  Profile, authored by default as manifest + SKILL.md, optionally with a supervised subprocess
+  Command or small in-process `defineTool` escape hatch.
 - **Gateway** — a dependency-free leaf client speaking only the attach protocol, bridging ziggy
   to an outside surface (Telegram, Signal, Discord, ...).
 - **Automation** — a file with frontmatter that triggers a fresh Session run on a schedule or
@@ -50,6 +51,9 @@ comments, commits, and docs.
   whether its trigger firing actually warrants doing anything.
 - **Broadcast** — the rule set on an Automation or Gateway describing where a Run's output gets
   delivered.
+- **Command** — a manifest-declared Session Tool backed by a daemon-supervised subprocess with a
+  bounded fixed argv prefix, closed argument mode, cwd policy, and timeout. Approved bytes execute
+  from a private daemon-owned snapshot. It is neither a shell command nor in-process Extension code.
 
 If you need a new noun, check this list first. If it overlaps an existing one, reuse the
 existing one — do not invent a synonym.

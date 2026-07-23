@@ -6,6 +6,7 @@
   "scenarios": [
     "s4.blueprint-postconditions",
     "s4.curated-extension-scaffolds",
+    "s4.extension-command-boundary",
     "s4.extension-daemon-lifecycle",
     "s4.extension-journal-recovery",
     "s4.extension-mutation-recovery",
@@ -24,6 +25,11 @@
       "id": "s4.merlin-ledger-integrity",
       "status": "implemented",
       "description": "The closed 47-candidate Merlin migration ledger, conditional independent-review set, review freshness and budget contract, and deterministic extension-integrity gate are checked in without requiring the sibling Merlin repository."
+    },
+    {
+      "id": "s4.extension-command-boundary",
+      "status": "implemented",
+      "description": "Manifest-v2 Commands become Session Tools only after exact install approval, then execute through a daemon-supervised no-shell subprocess boundary with pinned executable identity, bounded fixed-plus-appended argv, explicit cwd and timeout, declared-only environment, bounded output, private approved-byte execution snapshots, structured outcomes, per-invocation authority revalidation, and TERM-to-KILL process-tree cancellation."
     },
     {
       "id": "s4.extension-daemon-lifecycle",
