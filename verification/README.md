@@ -7,7 +7,7 @@ executed from those declarations. The registry at `tests/scenarios/registry.ts` 
 manifest scenario IDs and uses unique, normalized, repository-contained `.test.ts` files.
 `s0` through `s3` are implemented. S4 remains pending, with implemented manifest/compatibility,
 closed-ledger, daemon lifecycle, mutation recovery, supervised Command and approved Tool
-boundaries, publication recovery, Blueprint/core Skill, and curated-scaffold slices; `s5`–`s7`
+boundaries, publication recovery, and legacy Blueprint/core-Skill/curated-scaffold slices; `s5`–`s7`
 remain `manifest-empty` until product behavior lands. S3 covers Profile initialization,
 Provider/auth, CLI, the shared Attach Client, Session listing, and deterministic plus manual-live
 TUI behavior.
@@ -36,11 +36,28 @@ verification closed.
   `manifest-empty` without claiming behavior.
 - `bun run verify:all` resolves all declarations and de-duplicates inherited gates and scenarios.
 
-S4 adds the `extension-integrity` gate. It validates the exact 47-row closed migration ledger and
-derives the exact review-file set from landed, S4-owned rows without reading `../merlin`. Planned
-rows intentionally have no placeholder review. When a row lands, the gate also checks independent
-context/revision freshness, reviewed-input digest, production/support budgets, permissions, and
-registered deterministic capability scenarios.
+S4 adds the `extension-integrity` gate. The settled plan requires it to validate the exact 47-row
+distribution—39 standalone S4 Extensions, five Gateways (two S6, three S7), and three drops—and derive reviews only
+from landed S4 `port` rows without reading `../merlin`. Planned rows have no placeholder review.
+When a row lands, the gate checks independent context/revision freshness, reviewed-input digest,
+production/support budgets, permissions, and registered deterministic capability scenarios. It
+must enforce the five Skill-only / 34 supervised-Command split and reject any Skill-only outcome
+that needs filesystem, network, CLI, external-application, or prior-Session-transcript access
+beyond daemon-owned primitive Session Tools.
+
+Shared S4 verification must cover the single daemon-owned Extension authoring Tool's bounded
+manifest-plus-file-map input, inspect/create/update/delete operations, strict lifecycle validation,
+existing staged atomic publication, expected current tree digests for update/delete, approval
+enforcement without self-approval, absence of a draft or second authority, and next-Session-only
+availability for newly installed or enabled Tools. Catalog assertions are incremental: candidate
+waves add and prove their own entries. No pre-content chunk may claim all packages exist; only final
+S4 closure asserts 40 bundled entries and exactly two default-enabled IDs.
+
+The current schema, review-set derivation, manifests, and scenarios still encode the superseded
+Blueprint/core-Skill architecture. This planning-only edit intentionally does not change them or
+delete stale review files. The first S4 transition slice must update those executable contracts,
+remove the HyperFrames and core-skill-writing scenarios/reviews, remove the legacy production
+surfaces, and restore `verify:s4` before candidate implementation waves begin.
 
 The S0 manifest has separate gates for explicitly executing every registered scenario module and
 for full `bun test`, which covers unregistered supporting/unit tests. A scenario command fails on

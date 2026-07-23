@@ -1,343 +1,323 @@
 # S4 — Molding (Extensions)
 
-Stage owner: Extension system. Depends on S2 (Daemon) for the tool-call boundary and S1 (Waist) for the Session/Turn loop that invokes Tools. Feeds S5 installed Skills and Extensions. No Merlin candidate is preselected for delivery; the closed migration ledger determines each disposition. Gateway implementations remain owned by S6/S7.
+Stage owner: the Extension platform and builtin Extension catalog. Depends on S1 for the
+Session/Turn loop and S2 for daemon-owned installation and execution. Feeds S5 installed Skills and
+Extensions. Gateways remain S6/S7 work.
 
 ## Goal
 
-Let a profile be extended without recompiling the ziggy binary or trusting arbitrary code by default. Three capability tiers are sharply separated: (1) declarative Skills, with no execution; (2) declarative Commands, exposed as Session Tools through an explicitly approved daemon-supervised subprocess boundary; (3) a narrow in-process TypeScript Tool-definition ABI, loaded via Bun dynamic `import()` behind explicit install-time approval. Nothing else is extensible in v1 — no loop hooks, no Provider registries, no Gateway adapters from third-party code.
+Finish Ziggy's minimal Extension system, then rebuild the accepted Merlin outcomes as standalone
+Ziggy Extensions without importing Merlin's architecture. Core owns only primitive contracts and
+runtime enforcement: manifest validation, installation, approval, sealing, discovery, supervised
+execution, and Tool registration. Capability-specific guidance and behavior live in Extensions.
 
-Migrate useful capabilities from `../merlin/extensions` without migrating Merlin's architecture. Every Merlin Extension is reviewed; accepted behavior is rebuilt from scratch against Ziggy's Extension contract and the smallest applicable trust tier. The migration queue never changes Ziggy's manifest, ABI, state ownership, vocabulary, or stage boundaries to accommodate how Merlin happened to implement a capability.
+The closed Merlin inventory has one settled distribution:
 
-## Deliverables
+- 39 standalone S4 builtin Extensions, all disposition `port`, all `planned`;
+- five leaf Gateways, all `planned`—Slack and Discord are non-blocking S6 candidates, while iMessage,
+  telephony, and WhatsApp remain S7;
+- three drops, all `not-applicable`.
 
-- `<profile>/extensions/<id>/` directory convention and `extension.json` manifest schema (Zod/Effect Schema validator in `packages/core`).
-- `SKILL.md` loader — Anthropic Agent Skills format, discovered from each installed extension's `skills/` subdirectory and exposed as ordinary skills to the agent loop.
-- Manifest-v2 `commands[]` boundary — fixed argv prefix, `none | append` argument mode,
-  `extension | profile` cwd policy, bounded total argv and timeout, declared-only environment,
-  bounded output, approved-byte execution snapshots, and daemon-owned process-tree cancellation
-  with no shell, stdin, interpolation, or runtime PATH lookup.
-- `defineTool` ABI: a minimal TS interface (name, description, input schema, `execute(input, ctx)`) that an extension's `tools/<id>/tool.ts` exports; loaded via `await import(absolutePath)` at daemon startup for approved extensions only.
-- `ziggy extension install|enable|disable|list|doctor` CLI subcommands. These are attach-protocol Clients of daemon-mediated Extension commands; the CLI never writes Extension files or state directly.
-- Trust-tier model: `builtin` (shipped in repo `extensions/`), `verified` (signed/known-provenance), `community` (unsigned, full approval friction) — manifest-parse-without-execute at install time, execution gated behind explicit approval.
-- A checked-in, schema-v1, closed-world migration ledger at `docs/plans/s4-merlin-migration.json` for all 47 packages under `../merlin/extensions`: each receives an explicit `port`, `merge`, `blueprint`, `defer-to-S5`, `defer-to-S6/S7`, or `drop` disposition with capability, overlap, dependency, permission, state-authority, target mechanism, and leanness evidence. An Extension target additionally names its trust tier. No candidate remains silently unreviewed, and no candidate—including `executor`—has a privileged proof role or predetermined disposition.
-- Accepted Merlin capabilities reimplemented against Ziggy's directory layout and manifest from scratch, in reviewable waves. Merlin source, manifests, bundled assets, CLI wrapper conventions, and runtime abstractions are evidence only and are never copied as the target structure.
-- `blueprints/` directory convention: markdown implementation guides an agent applies as an edit script against a profile or extension — not a maintained runtime adapter — for long-tail integrations.
-- The skill-writing skill: a baked-in core skill that teaches the agent (and the user) how to author a conformant `SKILL.md`.
-- Curated extension placeholders in repo `extensions/`: `smart-memory/`, `smart-extensions/` (scaffolding only in this stage; full behavior is out of scope, see Non-goals).
+There are no merge dispositions, candidate Automation targets, core-Skill targets, Blueprint
+targets, or candidate dependencies. No candidate gates another.
 
-## Current implementation checkpoint
+## Current checkpoint and mandatory transition
 
-- [x] Strict manifest/version contracts, root Ziggy version authority, sealed Skill loading, and
-      the closed 47-row migration ledger with deterministic integrity gates.
-- [x] Daemon-owned install, enable, disable, list, and doctor lifecycle with exact approvals,
-      invalidation/recovery, attach-protocol Clients, and concurrency/fault scenarios.
-- [x] Approved `defineTool` loading through private sealed snapshots with ABI, path, package-entry,
-      mutation, TOCTOU, computed-import, and compiled post-build TypeScript regressions.
-- [x] Generic supervised Command loading through explicit manifest-v2 declarations, exact approval,
-      Session Tool/provider composition, no-shell execution, bounded input/output, PATH pinning,
-      per-invocation seal/authority checks, private approved-byte snapshots, timeout, and
-      process-tree cancellation.
-- [x] HyperFrames Blueprint, baked-in skill-writing Skill, inert `smart-memory` and
-      `smart-extensions` scaffolds, and independent landed reviews for `hyperframes` and
-      `skill-creator`.
-- [ ] Implement the remaining accepted S4-owned candidates in independently reviewed waves, then
-      run integrated S4 closure. Of 33 currently planned S4 rows, 14 are `skill-only` and 19 are
-      `supervised-command`.
+The repository already contains useful S4 runtime enforcement: manifest/version checks,
+daemon-owned install/remove/enable flows, approval and seal recovery, Skill and approved Tool
+loading, compiled dynamic import, and a generic supervised Command boundary.
 
-The generic daemon-owned supervised Command boundary now exists. `executor` remains an ordinary
-planned candidate: it isn't disguised as `defineTool`, receives no candidate-specific privilege,
-and does not gate another candidate. Disjoint Command and Skill-only waves may proceed in parallel.
-The stage manifest stays `pending` until every accepted S4-owned candidate and integrated closure
-gate lands.
+It also contains superseded production and verification work: the HyperFrames Blueprint,
+baked-in core skill-writing, curated scaffold behavior, two old reviews, and scenarios/tooling that
+encode Blueprint/core-Skill targets. This planning correction intentionally does not edit or delete
+those implementation files.
 
-## Design (locked decisions)
+The first S4 implementation slice must make the architecture executable before any candidate port:
 
-**Why tiered, not one mechanism.** Research across five systems (`docs/research/extension-mechanisms.md`) showed every all-code system accumulates registry sprawl (hermes has three overlapping mechanisms) or heavy trust/scanning machinery (openclaw) to compensate for a wide default API surface. flue's insight — most "extensions" are content (skills) or build-time wiring (tools as plain objects), not runtime code — is adopted directly: default to zero code execution, and treat the one case that genuinely needs in-process code (custom tool logic beyond what a subprocess/CLI can express cleanly) as a narrow, explicitly-approved escape hatch rather than the default authoring path.
+1. Remove Blueprint production support and the HyperFrames artifact. Do not replace it with another
+   mechanism.
+2. Remove baked-in core skill-writing and any curated scaffold behavior that bypasses standalone
+   Extension delivery.
+3. Update the migration/review schemas and `extension-integrity` tooling to accept and enforce only
+   the settled 39/5/3 distribution and landed S4 `port` reviews.
+4. Delete the stale `hyperframes.json` and `skill-creator.json` reviews and remove their
+   Blueprint/core-Skill/scaffold scenarios, fixtures, registry entries, and manifest declarations.
+5. Add deterministic transition coverage and restore focused tests plus `verify:s4` before a new
+   candidate review or implementation lands.
 
-**Deliberate departure from the research recommendation.** Section C of `docs/research/extension-mechanisms.md` recommends subprocess-only executable tools. Ziggy deliberately permits the narrow in-process `defineTool` escape hatch because it has a single-user trust posture, requires install-time approval before loading code, has empirical proof that Bun dynamic imports work in compiled binaries (`docs/research/bun-compiled-plugin-loading.md`), and can point to pi's production use of in-process TypeScript Extension loading. This is an explicit trade-off, not an accidental drift from the report.
+Until that slice lands, the planning authorities and ledger are intentionally ahead of executable
+S4 verification. Do not weaken or suppress a gate to hide the mismatch.
 
-**Why the escape hatch is technically viable.** `docs/research/bun-compiled-plugin-loading.md` empirically confirms (Bun 1.3.13): absolute-path dynamic `import()` of a `.ts` file not present at compile time works inside a `bun build --compile` binary (including runtime TS transpilation), nested relative imports and `node:` builtins resolve, npm packages resolve from an adjacent `node_modules`, and `--bytecode` doesn't change any of this. So the compiled-binary constraint does not block loading trusted extension code from `<profile>/extensions/<id>/tools/`. This removed feasibility as a concern; the remaining design question was purely the trust boundary, resolved by requiring install-time approval before any `import()` of extension code runs.
+## Extension platform contract
 
-**Manifest schema (`extension.json`).** Schema v1 remains byte-contract compatible and cannot
-declare Commands. Schema v2 is the strict union arm that adds a required `commands` array, which may
-be empty. Neither version migrates automatically. Both contain only Extension-authored capability
-declarations:
+Ziggy has three Extension execution modes:
 
-```
-schemaVersion, id, version, name, description,
-ziggy: { requires: "<strict semver range>" },
-defaults?: { provider?, model?, thinkingLevel? },
-skills: [{ id, path }],
-commands: [{ id, description, argv, argumentMode: "none"|"append",
-             cwd: "extension"|"profile", timeoutMs }], # v2 only, required
-tools?: [{ id, path }],
-adapters: [],
-setup?: { steps: [{ argv: [...] }], doctor?: { argv: [...] } },
-requires: { env: [...], commands: [...], os: [...] },
-permissions: { network: bool, filesystem: "none"|"profile"|"full", secrets: [...] },
-distribution: { source, license }
-```
+- `skill-only`: declarative `SKILL.md` content; no callable Extension code;
+- `supervised-command`: a Skill plus manifest-declared Commands executed by the daemon with fixed
+  argv, closed argument mode, explicit cwd, timeout, bounded output, and approval;
+- `define-tool`: the narrow approved in-process TypeScript Tool escape hatch.
 
-Unknown fields, duplicate JSON keys, unsupported schema versions, and any package provenance or
-trust claim are invalid. `distribution.source` is informational and cannot establish trust.
-Required arrays with set semantics are unique and canonically sorted. At least one Skill, Command,
-or Tool is required; `tools`, when present, is non-empty. Skill IDs are unique; Command and Tool IDs
-are disjoint because both enter the Session Tool namespace; `memory` is reserved. Skill and Tool
-paths are exactly `skills/<id>` and `tools/<id>`. A Command executable is either a confined package
-path or a bare name declared in `requires.commands`; `cwd: "profile"` requires Profile or full
-filesystem permission. `defaults.model` requires `defaults.provider`; every
-`permissions.secrets` entry appears in `requires.env`; and every external setup/doctor executable
-appears in `requires.commands`. `adapters` is the required literal empty array. These are manifest
-semantic rules; filesystem identity and executable resolution are checked again at installation and
-every invocation boundary.
+The Merlin ports use only the first two modes. No inventory row justifies a `define-tool`.
 
-Command fixed and appended argv are bounded together at 64 entries and 16 KiB of aggregate UTF-8.
-The manifest rejects a fixed prefix that already exceeds either limit; the generated Session Tool
-advertises only the remaining append capacity and validates the combined argv again before spawn.
+An Extension is `skill-only` only when its complete accepted outcome is achievable from current
+model context plus daemon-owned primitive Session Tools. If an outcome must observe or mutate the
+filesystem, network, a CLI, an external application, or prior Session transcripts, that Extension
+must declare its own supervised Command. A candidate cannot borrow or depend on another candidate's
+Command. Independent implementation and review derive the smallest command declaration supported by
+the preserved evidence; the planning ledger does not invent exact argv.
 
-**SemVer and product-version contract.** Extension versions use canonical SemVer 2
-`major.minor.patch[-prerelease][+build]`: ASCII identifiers only, no leading zero in a numeric core
-or prerelease identifier, and build metadata ignored for precedence and equality. Ranges use only:
+Installed Extensions live under `<profile>/extensions/<id>/`. The daemon owns programmatic
+installation, enablement, removal, approvals, private executable snapshots, and Extension state.
+Manifest and machine-owned state are versioned. Skill support files remain confined to their
+declared roots and are inert unless invoked through an approved runtime boundary.
 
-```
-range      := clause { " || " clause }
-clause     := comparator { " " comparator }
-comparator := version | "=" version | ">" version | ">=" version | "<" version | "<=" version
-```
+Install and every later load/spawn/import validate compatibility, canonical paths, link policy,
+tree seals, approval identity, and exact declared authority. Version, content, argv, permission, or
+execution-boundary changes require reinstall and reapproval. Extensions get no loop hooks,
+Provider registration, Gateway adapters, direct Profile writes, or ability to install other
+Extensions.
 
-Separators are the exact ASCII strings shown. Caret, tilde, wildcard, partial, hyphen, comma,
-alternate-whitespace, and `v`-prefixed forms are rejected rather than interpreted. Numeric
-identifiers compare without lossy number conversion. A prerelease running Ziggy satisfies a clause
-only when that clause contains a prerelease comparator with the same major/minor/patch base. The
-root `package.json.version` is the sole Ziggy product-version authority and is statically embedded
-for CLI output, protocol advertisements, compatibility checks, and compiled smoke; workspace
-versions mirror it. Compatibility APIs receive the running Ziggy version explicitly. Runtime code
-never uses `Bun.version` as the product version or reads package files from a compiled executable.
-Schema decoding validates grammar only. The explicit `isZiggyVersionCompatible` API receives the
-running Ziggy version and evaluates compatibility. The daemon-mediated install boundary and every
-enable, Skill load, Tool import, or subprocess boundary reject incompatibility before execution.
-Provider-runtime composition now passes the root Ziggy version into the sealed installed-Skill,
-Command, and Tool loaders. Install, enable, Skill load, Command invocation, Tool import, and
-subprocess boundaries all reject an incompatible Extension before reading or executing its
-capability content.
+### Daemon-owned Extension authoring Tool
 
-**Immutable package and daemon-owned Extension authority:**
+S4 adds one daemon-owned Session Tool with `inspect`, `create`, `update`, and `delete` operations.
+Its create/update input is a complete bounded proposed Extension package—manifest plus file map—
+never an arbitrary path or general filesystem authority. Create and update pass through the existing
+strict install/lifecycle validation and atomically publish through the existing staged transaction.
+Update and delete require the expected current tree digest.
 
-```
-extensions/<id>/
-  extension.json
-  skills/<id>/
-    SKILL.md
-    references/                    # optional, reviewed prose/data only
-    scripts/                       # optional and inert by existence
-    assets/                        # optional, reviewed and referenced only
-  <declared-command-executable>   # manifest-v2 Command, optional
-  tools/<id>/tool.ts              # in-process escape hatch only
-  setup/{verify,doctor}
-.runtime/extensions/<id>/
-  provenance.json                 # sole installed-origin/trust/seal authority
-  state/                          # sole mutable Extension subtree
+Authority changes remain disabled or approval-required and can never self-approve. The Tool adds no
+draft database, shadow registry, or second writable authority. Because a Session's Tool snapshot is
+frozen, newly installed or enabled Tools become callable only in a subsequent Session.
+`skill-creator` and `skill-curator` remain Skill-only guidance over this primitive; neither mutates
+the Extension tree directly or owns a private installer. S4's `automation-creator` is analogous
+guidance over S5's daemon-owned Automation CRUD.
+
+## Bundled catalog and defaults
+
+The bundled catalog supports deterministic incremental entries: each candidate wave adds the entry
+for the candidate it lands. Only final S4 closure asserts all 39 rebuilt Merlin ports—including
+`skill-creator`—plus `automation-creator`, for 40 entries total. Catalog membership does not imply enablement. A new
+Profile enables exactly:
+
+- `skill-creator`, a Skill-only rebuilt Merlin port that teaches creation of conformant Ziggy
+  Extensions and Skills;
+- `automation-creator`, an additional Skill-only S4 Extension outside the 47-row inventory that
+  teaches chat-first Automation creation and editing through S5 daemon-owned mutation Tools.
+
+At final closure the other 38 rebuilt Merlin ports are installed/available through the bundled
+catalog but disabled by default. This keeps prompt and Tool surfaces bounded.
+`automation-creator` teaches the S5 contract; it does not own Automation parsing, files, scheduling,
+Run state, or Broadcast.
+
+## Closed Merlin ledger
+
+`docs/plans/s4-merlin-migration.json` is the planning authority for the exact audited corpus:
+47 candidate IDs, 175 regular files, 17,631,635 bytes, and inventory digest
+`e629623273623eb3672adbe0523a33d2bab275dcdabf8abe75cdd38a9921b791`.
+Each row preserves source-relative evidence paths, byte counts, and SHA-256 digests. Verification
+must not read `../merlin`.
+
+A port preserves only the row's evidenced user outcome. It does not preserve Merlin manifests,
+package identity beyond the settled standalone target ID, layout, setup machinery, scripts, state
+model, dependencies, runtime hooks, or source. Every retained support file must be justified by the
+independent review and reachable within a declared Skill root.
+
+### 39 S4 Extensions
+
+The five `skill-only` ports are:
+
+```text
+humanizer, self-improving-agent, skill-creator, skill-curator, smart-memory
 ```
 
-The immutable package contains no `provenance.json`, trust claim, mutable state, or second seal
-catalog. The daemon writes `.runtime/extensions/<id>/provenance.json` with schema-v1 fields
-`schemaVersion`, `extensionId`, `extensionVersion`, `source:{kind,locator}`, `trustTier`,
-`verification:{method,keyId,signature}`, sorted `files:[{path,kind,bytes,sha256}]`, and `treeDigest`.
-`builtin` requires a release-owned `(id, version, treeDigest)` catalog match; `verified` requires a
-valid Ed25519 signature from a Ziggy-trusted key over
-`UTF8("ziggy-extension-provenance-v1\\0" + id + "\\0" + version + "\\0" + treeDigest)`; all other
-valid unsigned installs are `community`. A supplied invalid signature rejects installation rather
-than downgrading trust.
-
-The file catalog seals `extension.json`, every retained Skill/support file, every Command
-executable, every Tool/setup file, and declared Tool dependencies. Each digest is raw SHA-256 with
-its byte length. Records sort by
-UTF-8 path bytes; one SHA-256 stream hashes `UTF8("ziggy-extension-tree-v1\\0")` followed for each
-record by `u32be(pathLength) || path || u32be(kindLength) || kind || u64be(bytes) || rawDigest`.
-The provenance record and mutable state are excluded. Installation validates a quarantine copy and
-atomically activates the immutable snapshot. Every Skill read, Tool import, and subprocess spawn
-rechecks canonical confinement/link identity and recomputes this seal.
-
-Mutable state exists only below `.runtime/extensions/<id>/state/`. It is daemon-owned, excluded
-from support traversal, module/executable resolution, seals, and provenance inputs, and writable
-only through an approved daemon capability. Structured state is schema-stamped and fails loud on
-mismatch; reinstall preserves it and never repairs or rewrites it automatically. Approval
-fingerprints bind Extension ID/version, exact Tool or argv entry, permissions, executable path and
-digest, trust tier, and tree digest. Command fingerprints additionally bind the fixed argv prefix,
-argument mode, cwd policy, and timeout. Any bound change invalidates the affected approval, and a
-detected immutable mutation starts a new approval epoch even if the old bytes are restored.
-Relative executables resolve only within immutable package content; bare commands resolve once at
-approval through a controlled `PATH`, recording real path and digest, with no runtime `PATH`
-lookup, shell parsing, alias following, or state resolution. Immediately before each invocation,
-the daemon reads the approved executable through one open file identity, rechecks its digest, writes
-those exact bytes to a mode-0700 private execution snapshot, and spawns only that snapshot. Direct
-mutation of the installed or external path after inspection cannot change the executed bytes.
-
-Each declared Skill is exactly `skills/<id>`, with an immediate regular `SKILL.md`; manifest ID,
-root basename, and Agent Skills frontmatter `name` match. A Skill root may otherwise contain only
-`references/`, `scripts/`, and `assets/`. Reachability scans only Markdown-body inline links and
-images of the exact forms `[label](destination)` and `![label](destination)`, with one destination
-and no title. YAML frontmatter, fenced/inline code, HTML, autolinks, reference-style links, prose
-mentions, and unsupported Markdown do not establish reachability. External scheme/authority links
-are ignored and never fetched.
-
-A local destination is a relative POSIX path with no query, fragment, empty/repeated/`.`/`..`
-component, backslash, NUL, absolute/drive prefix, malformed percent escape, or percent-decoded
-separator/escape component. It is decoded once as valid UTF-8/NFC and must remain in the same Skill
-root. Targets are regular files, never directories. Reached Markdown recurses; other files are
-leaves. Deterministic DFS rejects self/mutual cycles. Every support file must be reachable from
-`SKILL.md` and match the independent review allowlist by normalized path, kind, bytes, and SHA-256.
-Cross-Skill links, dangling/orphan files, unknown top-level roots, symlinks, hardlinks, and
-case/NFC collisions fail closed. Reachability never grants execution authority.
-
-**Install flow.** `ziggy extension install <source>` currently accepts a local Extension directory,
-copies it into quarantine, parses (never executes) `extension.json`, runs non-executable `requires`
-checks, and atomically publishes the sealed snapshot. Any in-process Tool, callable Command, or
-executable setup/doctor entry prompts for explicit approval before import or spawn. Command
-approval records the fixed structured argv prefix, argument mode, cwd policy, timeout,
-executable/support-file digests, declared permissions, and Extension version; shell command strings
-are invalid. Approval is recorded so it is not re-asked every daemon restart, but any version bump,
-bound Command setting, argv/permission change, or installed-tree digest change re-triggers approval.
-
-The install is a daemon-mediated explicit command: the CLI sends the request over the attach
-protocol, and only the daemon writes the installed Extension files and daemon-owned Extension
-state. `extension.json` and structured Extension state carry schema-version stamps; human-owned
-`SKILL.md` and blueprint markdown do not.
-
-**Doctor.** `setup.doctor` is an optional structured argv, never a shell string. It is a distinct
-post-install `extension/doctor` operation and runs as a supervised subprocess only after the exact
-executable content, argv, permissions, digest, and Extension version are approved. Bounded
-stdout/stderr returns over the daemon response; non-zero and timeout outcomes are explicit failed
-doctor results. No Session-log persistence is claimed, and install never auto-runs doctor.
-
-**Merlin capability migration, never framework migration.** `../merlin/extensions` is a bounded evidence corpus of 47 capability packages. A port preserves only a proven user outcome. It does not preserve Merlin's manifest fields, `clis/`/`files/`/`bin/` conventions, setup machinery, state model, package boundaries, or runtime assumptions. References, scripts, and assets receive the same treatment as code: each retained file must serve the accepted capability, be re-authored or reduced for Ziggy, live beneath the `skills[].path` declared by Ziggy's manifest, and be reachable from that Skill without path escape or a dangling link. Installer validation rejects support files outside declared Skill roots and orphan support material. Installation seals the canonical Extension tree with content digests; every Skill load, Tool import, and subprocess execution revalidates canonical confinement, link policy, and the seal. Post-install replacement or aliasing fails closed until explicit reinstall and reapproval. A bundled script gains no execution authority by existing; execution must cross an already-approved Ziggy Command, Tool, or supervised setup/doctor boundary with declared permissions. Classification follows Ziggy's existing mechanisms and stage ownership:
-
-- Skills and optional lifecycle-only setup/doctor argv remain the no-callable-code content tier.
-- Reusable external behavior becomes a declarative Command when fixed argv plus the closed argument
-  mode can express it cleanly.
-- In-process behavior becomes a `defineTool` Extension only when a Skill or supervised Command
-  cannot express the capability cleanly.
-- One-off integration instructions become a Blueprint, not runtime code.
-- Scheduled behavior belongs to an Automation in S5, not an Extension-owned scheduler.
-- Discord, Slack, iMessage, WhatsApp, and similar delivery surfaces are Gateway candidates for S6/S7, not Extensions with transport authority.
-- Capabilities requiring loop hooks, Provider registration, a second durable authority, or a broader ABI are deferred, merged into an existing capability, or dropped. Ziggy is not widened to make a port fit.
-
-**Per-candidate lean review and closure.** Ledger `deliveryStatus` is exact: `drop` is the only
-`not-applicable` disposition; `planned` accepts a target but claims no implementation or budget
-review; `landed` requires implementation, registered S4 capability scenarios, one fresh independent
-accepted review, and no open S4 finding. Future-stage deferrals remain planned. Exactly one review
-exists for each accepted S4-owned `port`, `merge`, or `blueprint` changing to landed—no review is
-required or permitted to imply implementation while planned. Extension trust tier is required only
-for an Extension target. `executor` is governed by the same derivation and cannot approve another
-candidate or widen Ziggy.
-
-The review records the single user outcome, target/execution mode, allowed production files and
-physical-line budget, exact runtime dependencies, permissions, subprocess argv, typed persisted
-state paths, support allowlist/digests/budgets, capability scenario IDs, findings, and assertions for
-lowest trust tier, no duplicate authority, no compatibility shim, and no inactive vendored
-material. Accepted means every assertion is true and no finding is open. Increasing any budget
-requires a new independent review.
-
-`reviewedInputDigest` is SHA-256 of recursively key-sorted canonical JSON containing
-`schemaVersion`, candidate ID, delivery status, the canonical ledger-row digest, and the
-verifier-derived sorted list of `{path,bytes,sha256}` inputs. Inputs include the ledger row,
-Extension manifest, measured production/support files, relevant package manifests, and lockfile;
-they exclude the review itself, every other review, findings input, `.artifacts`, `.git`, `vendor`,
-`node_modules`, and timestamps. This avoids a self-referential digest while making implementation,
-dependency, path, and status changes stale the review.
-
-Landed reviews have distinct scout, implementer, and verifier context IDs, with clean `HEAD`
-revision equality and ordered completion/start timestamps. S4 adds scoped findings/evidence
-versions without changing S3 replay: findings carry `scope:{stage:"s4",candidateId:string|null}`;
-current-workspace S4 closure rejects duplicate IDs, `open`/`not-applicable` dispositions, fixed
-findings without registered regressions, and accepted non-reproducible findings without rationale.
-`extension-integrity` meta-validates the schemas, exact ledger/review sets, digests, budgets,
-reachability, scenario registration, clean-checkout rule, and S4 scope while inheriting S0-S3. These
-implemented gates run under `verify:s4`; passing them proves only the currently landed set, not S4
-stage closure.
-
-**Closed inventory.** These IDs are the complete initial review queue, derived from the exact audited inventory of **47 candidates, 175 regular files, and 17,631,635 bytes**, whose canonical digest is `e629623273623eb3672adbe0523a33d2bab275dcdabf8abe75cdd38a9921b791`. The checked-in ledger carries that inventory evidence so verification never reads `../merlin`; additions require an explicit plan update rather than appearing opportunistically:
+The 34 `supervised-command` ports are:
 
 ```text
 acp-router, agent-browser, apple-notes, apple-reminders, architecture-diagram,
-blogwatcher, clawhub, codex, coding-agent, diffs, discord, executor, gh-issues,
-github, github-issues, github-pr-triage, gog, goplaces, here-now, humanizer,
-hyperframes, imsg, linear, lossless-claw, mcporter, nano-pdf, notion, obsidian,
-onepassword, open-computer-use, openai-whisper, peekaboo, qmd,
-self-improving-agent, session-logs, skill-creator, skill-curator, slack,
-smart-memory, summarize, telephony, things-mac, tmux, wacli, weather,
-web-search, xurl
+codex, coding-agent, diffs, executor, gh-issues, github, github-issues,
+github-pr-triage, gog, goplaces, here-now, linear, lossless-claw, mcporter,
+nano-pdf, notion, obsidian, onepassword, open-computer-use, openai-whisper,
+peekaboo, qmd, session-logs, summarize, things-mac, tmux, weather, web-search,
+xurl
 ```
 
-Every non-dropped row was registered as `planned`; no row initially claimed landed S4 behavior.
-The checked-in ledger is now authoritative for current delivery status: `hyperframes` and
-`skill-creator` are landed with independent reviews, while all future-stage deferrals and the
-remaining S4 implementation queue stay planned. The strict target
-union is `extension | core-skill | blueprint | automation | gateway`, with target ID, owner stage
-`s4 | s5 | s6 | s7`, and Extension trust tier/execution mode only where applicable. `core-skill`
-allows `skill-creator` to target the baked-in S4 skill-writing Skill. S7 Extension targets allow
-`self-improving-agent`, `skill-curator`, and `smart-memory` to remain Extensions rather than being
-misclassified as Gateways. Every partial migration records `excludedCapabilities`; persisted paths
-are typed `{ scope, path, authority }`; permissions explicitly type external authorities such as
-Notes, desktop accessibility, browser profiles, and external vaults; evidence entries carry exact
-source-relative path, kind, byte count, and content digest. `executor` is a tentative ordinary
-candidate with no predetermined mechanism, privileged proof role, inherited approval,
-daemon/Session authority, or exemption from independent disposition and landed review.
+Each row has disposition `port`, target mechanism `extension`, target ID equal to candidate ID,
+owner stage `s4`, trust tier `builtin`, its listed execution mode, and delivery status `planned`.
+Overlap remains evidence for keeping boundaries lean; it never authorizes a merge.
 
-**Non-extensible in v1 (core-only):** loop hooks (`beforeToolCall`/`afterToolCall` equivalents), provider registration, gateway adapters. This is a deliberate scope cut — extend it only once a proven third-party need emerges, per the constitution's minimal-trusted-surface stance.
+`gh-issues` and `lossless-claw` are supervised-Command Extensions. Neither is an Automation and
+neither owns scheduling. `skill-creator` is Skill-only and no longer a core Skill.
 
-## Verification growth
+The five Skill-only outcomes stay deliberately narrow:
 
-Extend `tests/testkit` with isolated Extension fixtures, dynamic-import probes, approval records,
-version controls, supervised-subprocess fakes, and filesystem fault injection. Register malformed
-or incompatible manifests, non-directory Skill roots, missing immediate `SKILL.md`, frontmatter/ID/root mismatches, path traversal, dangling or escaping Skill references, symlink/hardlink aliases, post-install mutation, orphan support material, support scripts that attempt undeclared execution, setup/doctor shell strings, Command ID collisions, invalid input mode/NUL/count/byte bounds, execution before fixed-prefix/digest/permission approval, runtime PATH lookup, live cancellation or timeout without descendant cleanup, version-bump reapproval, import-before-approval, failed/partial installs, doctor timeout/failure, blueprint postconditions, and concurrent install/
-enable operations. Evidence includes parsed manifests, approval/import timelines, subprocess
-results, Profile diffs, and compiled-binary loader smoke output. A separate Sol medium agent in an
-independent run and context reviews trusted-code entry, daemon-only writes, schema stamps, path
-confinement, and accidental new extensibility.
+- `humanizer` transforms text in the current chat; arbitrary file input/output is excluded.
+- `self-improving-agent` proposes from current Session context only; it cannot mine prior Sessions
+  or mutate owner files.
+- `skill-creator` creates through the daemon-owned Extension authoring Tool.
+- `skill-curator` proposes, inspects, and replaces through that same Tool; it has no direct tree
+  mutation or private installer.
+- `smart-memory` reasons over the current Session's frozen Memory snapshot and uses the existing
+  memory Tool; it cannot scan prior Sessions or reread live Memory.
 
-## Acceptance criteria
+### Five Gateway candidates
 
-- A Skill-only Extension with no Tools or executable setup installs without execution approval and becomes visible to the agent loop with zero code loaded. If it declares setup/doctor argv, installation remains non-executing until the user approves the exact argv, permissions, executable/support-file digests, and Extension version; only then may supervised doctor report pass/fail.
-- A manifest-v2 Command is absent while disabled or unapproved. Once approved and enabled, it becomes a Session Tool that executes the pinned absolute executable with its fixed argv prefix and only its declared `none | append` argument mode, explicit cwd, timeout, declared environment, bounded output, and structured result. Shell syntax stays inert; cancellation terminates the process group; every invocation revalidates compatibility, identity, exact authority, seal, and executable digest.
-- An in-process Extension with a `tools/<id>/tool.ts` is refused execution until `ziggy extension install` records explicit approval; after approval, the daemon's dynamic `import()` loads it and the Tool becomes callable in a Turn.
-- Re-running install after an Extension version, Tool, setup/doctor argv, permissions, or sealed-tree digest change re-prompts for the affected execution approval; an identical same-version reinstall does not.
-- The schema-v1 migration ledger contains exactly the 47 declared Merlin candidate IDs, no duplicates and no unreviewed rows. Every row—including `executor`—records an independently justified disposition and rationale; every `port` or `merge` names its Ziggy target mechanism, and an Extension target also names its trust tier. Gateway- and Automation-shaped capabilities are deferred to their owning stages rather than smuggled into Extensions.
-- Every declared Skill path is a normalized confined relative directory containing immediate `SKILL.md`; manifest ID, root basename, and Agent Skills frontmatter name match. References resolve within the sealed root, all support material is reachable and reviewed, symlinks/hardlinks are rejected, and post-install mutation fails every load/import/spawn until reinstall and reapproval.
-- Every landed S4 port has a schema-valid fresh independent leanness review, registered deterministic capability scenarios, and no open S4 finding; planned rows need no budget review. Its implementation uses Ziggy's `extension.json`, directories, approval model, and daemon-owned state without copied Merlin source, a Merlin compatibility layer, unused wrappers/assets, or an ABI expansion made solely for migration. Every retained reference, script, and asset lives under a manifest-declared Skill root, is justified by the review, resolves without escape or dangling links, and remains inert unless invoked through a separately approved Ziggy execution boundary. `verify:s4` measures its files/lines, dependencies, permissions, subprocesses, support material, and persisted-state paths against the reviewed budget and fails closed on growth.
-- A blueprint fixture Profile lives under the test fixtures. After an agent applies a `blueprints/` markdown guide to that fixture, a deterministic postcondition check proves the expected files and exact content changes, with no blueprint code executed directly.
-- Manifest schema decoding enforces strict required fields and cross-field invariants, rejects package provenance/trust claims, non-canonical versions/ranges, and missing `ziggy.requires`, but validates grammar only. The daemon-mediated install and every load boundary, including provider-runtime Skill and Tool composition, use `isZiggyVersionCompatible` with the explicit running Ziggy version and reject incompatible ranges, including prerelease-clause mismatches, before execution.
-- S4 remains `pending` while RED scenarios or any planned gate are not implemented. It becomes implemented only when the harness, plan checklist, and scenario/stage manifests include every landed Extension behavior and negative/concurrency/fault scenario, `extension-integrity` exists, and `verify:s4` plus `verify:all` pass with schema-valid redacted S4-scoped evidence and resolved findings from an independent Sol medium verifier.
+`discord` and `slack` remain planned with target mechanism `gateway` and owner stage `s6`. They may
+develop in parallel with Telegram but are not required to tag v1. `imsg`, `telephony`, and `wacli`
+remain planned for S7. Every candidate must be a dependency-free leaf Gateway package;
+documentation-only or Blueprint fallbacks are invalid.
 
-## References to consult
+### Three drops
 
-- `docs/research/extension-mechanisms.md` — full 5-system comparison (pi, openclaw, hermes, flue, eve); consult Section C for the subprocess-only recommendation that this plan deliberately departs from and for manifest concerns to evaluate independently.
-- `docs/research/bun-compiled-plugin-loading.md` — empirical proof the dynamic-import escape hatch works in a compiled binary.
-- pi-mono (local: `/Users/yesh/Documents/personal/reference/pi-mono`) — jiti-based TS extension loading (widest trusted surface; explicitly NOT the default here, but informs the in-process ABI shape).
-- openclaw (opensrc: `/Users/yesh/.opensrc/repos/github.com/openclaw/openclaw/main`) — manifest/registry/security-scanning machinery and trust-tier precedent (builtin/verified/community adopted from here); also the separate markdown-skills mechanism this plan folds into tier 1.
-- hermes-agent (opensrc: `/Users/yesh/.opensrc/repos/github.com/NousResearch/hermes-agent/main`) — cautionary example of registry sprawl from three overlapping mechanisms; also the trust-tier vocabulary.
-- flue (opensrc: `/Users/yesh/.opensrc/repos/github.com/withastro/flue/main`) — blueprints-as-markdown pattern; tools-as-plain-objects (no general runtime loader) pattern behind the declarative default.
-- Anthropic Agent Skills spec — for exact `SKILL.md` format compatibility (openclaw and hermes both read this format; ziggy should be byte-compatible).
-- `../merlin/extensions` — bounded evidence corpus for capability discovery and behavior-level contracts only. D1 forbids copying its code, manifests, layout, or architecture into Ziggy.
+`blogwatcher`, `clawhub`, and `hyperframes` have disposition `drop`, null targets, and status
+`not-applicable`. `blogwatcher` is not reassigned to S5. HyperFrames has no Blueprint replacement.
 
-## Suggested agent workflow
+## Review and delivery status
 
-For each slice, follow the `docs/VERIFICATION.md` through-loop: dedicated Sol medium scouting/task-decomposition run and context → red scenario → separate Sol medium implementation run and context → independent Sol medium deterministic verification/evidence/review run and context. The implementing run must not be the verifying run.
+`planned` means the target is accepted but no implementation, capability scenario, or budget review
+is claimed. `landed` requires:
 
-1. Manifest schema + validator (`packages/core`), unit-tested against valid/invalid fixtures — implementation-shaped, delegate to codex sol/medium.
-2. Define the versioned migration-ledger and per-candidate-review schemas, then build the checked-in 47-row Merlin capability ledger against the settled Ziggy manifest and ownership boundaries. Review every candidate, record its disposition, require an Extension trust tier only for Extension targets, and reject any proposed compatibility requirement before port implementation begins.
-3. `SKILL.md` discovery/loader wired into the existing skill-injection point from S1 — small, mechanical.
-4. `ziggy extension` CLI subcommands + daemon-side install/approval state persistence — implementation-shaped; test that the CLI performs no direct Profile writes.
-5. In-process `defineTool` ABI + dynamic-import loader with approval gate — higher-trust-boundary code; require a dedicated Sol medium scouting/task-decomposition run and context before implementation, then independent Sol medium verification/review in a third run and context, plus deterministic regressions for applicable findings, before merging.
-6. Generic manifest-v2 Command boundary with exact approval and supervised-process contracts; independently verify it before implementing supervised-Command candidates.
-7. Implement accepted S4-owned candidates in small waves, with one independent leanness review and deterministic capability contract per Extension. Supervised-Command and Skill-only waves may run in parallel when they own disjoint files; no candidate gates another. Defer Automation/Gateway candidates to S5/S6/S7 and remove merged/dropped candidates from the implementation queue with rationale retained.
-8. Implement accepted Blueprint candidates and the baked-in skill-writing Skill with deterministic postconditions and no new runtime authority.
-9. `smart-memory`/`smart-extensions` scaffolds only. Their migration reviews may record a later-stage disposition but cannot authorize behavior in S4.
+- a standalone implementation under the candidate's own Extension ID;
+- deterministic capability and negative-boundary scenarios;
+- one fresh independent review tied to the exact workspace inputs;
+- no open S4 finding and no unreviewed dependency, permission, subprocess, support file, or
+  persisted state.
+
+Exactly one review exists for each landed S4 `port`; planned and dropped rows have none. Reviews
+record the evidenced user outcome, execution mode, file/line/support budgets, dependencies,
+permissions, subprocess argv, state paths, scenario IDs, and assertions for lowest authority, no
+compatibility shim, and no inactive vendored material.
+
+Increasing a reviewed budget or changing a sealed behavior invalidates the review. A candidate
+cannot reuse another candidate's review, files, target ID, or delivery status even when their source
+outcomes overlap.
+
+## Implementation chunks
+
+The transition slice is chunk 0 and must land first. Chunk 1 then lands shared catalog/bootstrap and
+authoring-Tool contracts. After those shared platform contracts land, chunks 2–6 with disjoint
+Extension, catalog-entry, review, and scenario files may run in parallel. No candidate gates
+another.
+
+### Chunk 0 — remove superseded architecture and align verification
+
+Own the legacy Blueprint/core-Skill/scaffold production files plus S4 schemas, review derivation,
+stale reviews, scenarios, registry, and manifests. End with the settled ledger passing
+`extension-integrity` with zero landed candidate reviews.
+
+### Chunk 1 — catalog/bootstrap policy and Extension authoring Tool
+
+Add the bundled catalog contract, deterministic catalog discovery, and new-Profile default policy.
+Add the bounded daemon-owned Extension authoring Tool and prove its inspect/create/update/delete,
+strict validation, staged atomic publication, expected-tree-digest, approval, no-second-authority,
+and frozen-current-Session contracts. Bootstrap proof uses only entries that exist at this point; it
+must not assert that all 40 final packages already exist. This chunk owns shared catalog/default and
+authoring-Tool wiring, not candidate content.
+
+### Chunk 2 — authoring Extensions
+
+Implement `skill-creator` and `automation-creator` as separate Skill-only Extensions. Review and
+land `skill-creator` through its ledger row. Review `automation-creator` as an S4 deliverable outside
+the Merlin ledger. Add each package's own catalog entry. Prove `skill-creator` uses the Extension
+authoring Tool, `automation-creator` teaches the analogous S5 Automation CRUD contract, and neither
+has direct writes or hidden runtime authority.
+
+### Chunk 3 — remaining Skill-only ports
+
+Implement and review:
+
+```text
+humanizer, self-improving-agent, skill-curator, smart-memory
+```
+
+`skill-creator` landed in chunk 2, completing the five Skill-only ledger ports.
+
+### Chunk 4 — supervised-Command ports A
+
+Implement and review:
+
+```text
+acp-router, agent-browser, apple-notes, apple-reminders, architecture-diagram,
+codex, coding-agent, diffs, executor, gh-issues, github, github-issues
+```
+
+### Chunk 5 — supervised-Command ports B
+
+Implement and review:
+
+```text
+github-pr-triage, gog, goplaces, here-now, linear, lossless-claw, mcporter,
+nano-pdf, notion, obsidian, onepassword
+```
+
+### Chunk 6 — supervised-Command ports C
+
+Implement and review:
+
+```text
+open-computer-use, openai-whisper, peekaboo, qmd, session-logs, summarize,
+things-mac, tmux, weather, web-search, xurl
+```
+
+Each candidate owns its own Extension directory, catalog entry, scenario files, and review. Within
+or across waves, candidate work may proceed in parallel when those files are disjoint. Shared
+tooling changes belong in chunk 0 or 1, not opportunistically in a candidate port.
+
+## Local verification order
+
+For every implementation chunk:
+
+1. Format the touched files and parse every changed JSON document.
+2. Run the narrow unit/contract tests for the touched manifest, catalog, Extension, scenario, or
+   verification code.
+3. Run each new candidate's deterministic capability and negative-boundary scenarios directly.
+4. Run `extension-integrity` through the S4 runner with a current independent findings file.
+5. Run the cumulative `verify:s4`, then `verify:all`, with replayable evidence.
+6. Run `bun run check` last.
+
+Chunk 0 additionally asserts the exact 39/5/3 distribution, the 5/34 execution-mode split, the two
+S6 and three S7 Gateway IDs, the three null targets, and an empty landed-review set. Chunk 1 asserts the
+incremental catalog/bootstrap policy and Extension authoring Tool contracts. Candidate chunks assert
+target ID equals candidate ID, add only their own catalog entries, and prohibit cross-candidate
+production-file ownership. Only final S4 closure asserts 40 bundled entries and exactly two
+default-enabled IDs.
+
+## S4 acceptance criteria
+
+- No Blueprint target, schema branch, production surface, scenario, active review, or runtime
+  behavior remains. Historical and rejection text may record its removal. HyperFrames has no replacement.
+- Core injects no skill-writing content. `skill-creator` and `automation-creator` are ordinary
+  default-enabled Skill-only Extensions.
+- The daemon exposes one bounded Extension authoring Tool with inspect/create/update/delete,
+  expected-tree-digest concurrency, strict lifecycle validation, staged atomic publication,
+  approval enforcement, no draft authority, and next-Session Tool availability.
+- The ledger contains the exact preserved 47 IDs and corpus evidence with exactly 39 Extension,
+  five Gateway, and three null targets.
+- All 39 rebuilt Merlin ports are standalone `port` rows and land under their own IDs with fresh
+  reviews. The five Gateway rows retain their S6/S7 ownership. All three drops remain
+  `not-applicable`.
+- At final closure the catalog contains all 39 rebuilt Merlin ports plus `automation-creator`; a new
+  Profile enables only the two authoring Extensions.
+- No Extension gains loop, Provider, Gateway, scheduler, Automation-file, Session, or Memory
+  authority beyond existing primitive-mediated Tools.
+- Every candidate scenario, review, and budget passes independently; no candidate gates or proves
+  another.
+- `verify:s4`, `verify:all`, and `bun run check` pass with current independent findings before S4
+  is marked implemented.
+
+## References
+
+- `docs/research/extension-mechanisms.md` for the trust-boundary comparison.
+- `docs/research/bun-compiled-plugin-loading.md` for the compiled dynamic-import proof.
+- `docs/CONSTITUTION.md` for state and loop authority.
+- `../merlin/extensions` only as the already-captured source evidence corpus; never as a spec or
+  source tree to copy.
 
 ## Non-goals
 
-- Loop hooks, provider registration, or gateway adapters as third-party-extensible surfaces (core-only in v1).
-- Extension marketplace/registry service — local filesystem + manual `install <source>` only.
-- Sandboxing/process-isolation for in-process Tool code beyond the approval gate (no seccomp/VM boundary in v1 — approval is the control, not runtime isolation; revisit if community-tier extensions become common).
-- Full behavior for `smart-memory`/`smart-extensions`; S4 ships scaffolding only, and migration review cannot override this scope boundary.
-- Merlin manifest/layout compatibility, source-level ports, bulk copying, blind import of references/scripts/assets, or preserving every Merlin package merely because it exists. The closed review queue guarantees consideration, not automatic acceptance.
+- Blueprints, core capability Skills, candidate Automations, merged candidate packages, or
+  candidate-specific core changes.
+- Gateway implementation in S4.
+- An Extension marketplace or remote registry.
+- New runtime hooks, Provider registration, direct Profile mutation, or a broader Tool ABI justified
+  only by a port.
+- Copying Merlin source, manifests, layouts, scripts, assets, state, or compatibility behavior.

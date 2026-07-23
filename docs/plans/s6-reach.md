@@ -1,14 +1,21 @@
-# S6 — Reach (Telegram Gateway, v1 release line)
+# S6 — Reach (Telegram, parallel Slack/Discord, v1 release line)
 
 Stage owner: first Gateway Client and the v1 release. Depends on S2 (Daemon/attach protocol — Gateways attach as Clients), S3 (Face, for shared approval/steer UX patterns), S5 (Autonomy, for the Broadcast delivery target this stage implements the real endpoint of). This is the stage that ships **v1** (per D17: v1 lands after S6).
 
 ## Goal
 
-Reach ziggy from Telegram: a dependency-free leaf client package that attaches to the daemon over the same protocol the TUI uses, maps chats to sessions correctly, respects per-gateway memory policy, and fails closed on identity for anyone who isn't the owner. Ship this as the v1 release: binaries + install script + announcement.
+Reach Ziggy from Telegram through a dependency-free leaf Client that proves shared Gateway
+identity, routing, reconnect, and Memory-policy contracts. Slack and Discord leaf packages may
+develop in parallel against those frozen contracts and join v1 when independently green, but only
+Telegram is required to tag v1. Ship the release binaries and installer after the Telegram and
+shared daemon gates pass.
 
 ## Deliverables
 
 - `packages/gateway-telegram` (or similarly named leaf package) depending ONLY on `packages/protocol` — no dependency on `packages/core` or the daemon internals.
+- Parallel `packages/gateway-slack` and `packages/gateway-discord` candidates with the same
+  dependency direction and package-local service-message normalization. They cannot change shared
+  protocol or daemon contracts independently and do not block v1 when unfinished.
 - Long-poll (outbound) connection to Telegram's Bot API — no inbound open port required.
 - Resume-handle mapping: `(chatId, threadId?) → sessionId`, persisted by the daemon as machine-owned Profile state (e.g. `<profile>/gateways/telegram/resume-map.json` or equivalent), with a configurable per-chat vs per-peer granularity policy. The Gateway configures mappings through `session/start` and `session/resume`; the Gateway process never writes Profile files.
 - Stream/inspect-handle: separate runtime-owned handle used for `session/subscribe` replay and live-tail, kept structurally distinct from the resume handle so a reconnect or replay can never be mistaken for a new/resumed Session.
@@ -84,7 +91,10 @@ Require a dedicated Sol medium scouting/task-decomposition run and context for r
 
 ## Non-goals
 
-- Discord/Signal/imessage or any gateway beyond Telegram (S7 or blueprints).
+- Making Slack or Discord a prerequisite for the v1 tag; they join only when their own deterministic
+  and independent reviews are green.
+- `imsg`, `telephony`, `wacli`, or any other Gateway beyond the three S6 workstreams; the remaining
+  Merlin transport candidates stay S7 leaf packages with no Blueprint fallback.
 - Rich media handling beyond what's needed for basic text-first conversation (attachments/voice/etc. are DECIDE-AT-BUILD, likely deferred past v1 unless trivial).
 - Any inbound open port for Telegram (long-poll only in v1; webhook-mode Telegram is a future option, not v1).
 - GUI or WS-remote-client transport (S7).

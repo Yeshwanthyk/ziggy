@@ -42,14 +42,14 @@ telegram/memory bugs already hit in production).
 **Decision:** (b). Ziggy imports zero code and zero design documents from merlin. Merlin's ADRs,
 plans, incident reports, and Extension implementations are read as evidence of capabilities and
 failure modes, never as a spec. In S4, a Merlin Extension **port** means reimplementing an accepted
-user-facing capability from scratch through the smallest existing Ziggy mechanism: an Extension
-containing Skills and/or Tools, a Blueprint, an Automation, or a Gateway. Ziggy's contracts,
-directory layout, trust tiers, state authority,
-and lifecycle always define the target. Reference material, scripts, and assets are reviewed and
+user-facing capability from scratch through the settled owning primitive: an Extension or a
+Gateway. The closed 47-row inventory resolves to 39 standalone builtin Extensions, five deferred
+Gateways, and three drops. It has no merge, Automation, core-Skill, or Blueprint targets. Ziggy's
+contracts, directory layout, trust tiers, state authority, and lifecycle always define the target.
+Reference material, scripts, and assets are reviewed and
 re-authored under a manifest-declared Ziggy Skill root; they are not copied merely because Merlin
 bundled them. No Merlin compatibility layer, manifest dialect, runtime hook, or source layout is
-preserved, and a candidate that does not fit is deferred, merged, or
-dropped rather than widening Ziggy around it.
+preserved, and Ziggy is never widened to make a port fit.
 **Rationale:** merlin's own docs show unresolved architectural debt (dual-write memory, coupled
 session/memory-scope keys causing the Telegram bug). Starting clean lets those lessons become
 invariants (see CONSTITUTION.md) instead of being inherited as code.
@@ -204,17 +204,37 @@ automatic migration between versions. Installed trees are digest-sealed and reva
 Skill load, Tool import, or subprocess execution; a version or content change requires reinstall
 and reapproval. Extensions get **no** loop hooks, no custom providers, no ability to register their
 own extensions — those
-stay core-only. No Merlin candidate, including `executor`, is preselected to ship: each goes through
-the same closed migration-ledger disposition and independent review. Long-tail integrations that
-don't justify a maintained adapter use flue-style markdown "blueprints" the agent applies as an
-edit script.
+stay core-only. Each accepted Merlin candidate, including `executor`, ships as its own reviewed
+builtin Extension; overlap does not authorize merging package identities or implementation
+reviews. The bundled catalog contains all builtin Extensions, but a new Profile enables only
+`skill-creator` and `automation-creator` by default to keep the prompt and Tool surface small.
+`skill-creator` is an ordinary Skill-only Extension that teaches conformant Ziggy Extension and
+Skill authoring. `automation-creator` is an additional S4 Extension, outside the Merlin inventory,
+that teaches chat-first Automation creation and editing. Blueprints are not part of the target
+architecture. A Merlin port is Skill-only only when its complete accepted outcome is achievable
+from current model context plus daemon-owned primitive Session Tools. Filesystem, network, CLI,
+external-application, or prior-Session-transcript access requires that candidate's own supervised
+Command; candidates cannot borrow Commands. This yields exactly five Skill-only ports
+(`humanizer`, `self-improving-agent`, `skill-creator`, `skill-curator`, `smart-memory`) and 34
+supervised-Command ports.
+
+S4 also owns one daemon Session Tool for bounded Extension `inspect`, `create`, `update`, and
+`delete`. Create/update accept a complete proposed package—manifest plus file map, never arbitrary
+filesystem authority—and reuse strict lifecycle validation plus the existing staged atomic
+transaction. Update/delete require the expected current tree digest. Authority changes stay
+disabled or approval-required and never self-approve. There is no draft database or second
+authority. The current Session's Tool snapshot remains frozen, so newly installed or enabled Tools
+appear only in a subsequent Session. `skill-creator` and `skill-curator` are Skill-only guidance
+over this primitive, not tree writers or private installers. S4's `automation-creator` is the
+analogous guidance layer over S5's daemon-owned Automation CRUD.
 **Rationale:** This is a deliberate departure from `docs/research/extension-mechanisms.md`
 Section C, which recommends subprocess-only execution. Ziggy's single-user trust posture, the
 install-time approval gate, empirical Bun dynamic-import viability, and pi's production precedent
 justify one narrow in-process ABI. The boundary stays explicit and small, while markdown-first
 means most Extensions never need code at all. The 47 Merlin Extension packages are migration
-candidates, not architectural inputs: each receives a closed-world capability and leanness review,
-and only accepted behavior is rebuilt against this boundary.
+evidence, not architectural inputs: 39 evidenced outcomes are rebuilt as standalone builtin
+Extensions, five transport outcomes remain deferred Gateways, and `blogwatcher`, `clawhub`, and
+`hyperframes` are dropped.
 **Evidence:** `docs/research/extension-mechanisms.md` (full comparison across pi/openclaw/hermes/
 flue/eve), `docs/research/bun-compiled-plugin-loading.md` (what made the escape hatch technically
 sound rather than merely theoretical).
@@ -241,6 +261,11 @@ supposed to live (Memory), keeping there being no second durable-state authority
 `127.0.0.1`. It starts only when at least one enabled Automation has a webhook trigger. Each hook
 uses `/hooks/<name>` with its own token authentication. Remote exposure is explicitly the owner's
 own tunnel or reverse proxy, never a daemon-owned public listener.
+**Amendment — authoring authority:** S5 owns a strict Automation file schema/parser and
+daemon-mediated, validated, atomic create/update/delete operations. Those operations are callable
+through chat by the S4 `automation-creator` Extension. Direct owner edits remain supported and
+hot-reloaded. The CLI stays lean (`list`, `inspect`/`runs`, and run-now); no TUI Automation
+dashboard is required.
 **Evidence:** `docs/research/per-turn-context-and-memory.md` (wake-gate mechanism, exact source
 lines), `docs/research/openclaw-hermes.md`.
 
@@ -305,7 +330,9 @@ and Ctrl+C or quit detaches without interrupting daemon work. Reconnect uses the
 (the CLI entrypoint / compiled binary) — plus a curated `extensions/` directory for maintained
 first-party Extensions selected through the Extension review process. First-party Gateways join
 later, at their stages, as additional leaf workspace packages such as
-`packages/gateway-telegram`; each depends only on `protocol`.
+`packages/gateway-telegram`; each depends only on `protocol`. Maintained builtin Extensions ship
+in a bundled catalog; catalog membership and default enablement are separate, and only
+`skill-creator` and `automation-creator` are enabled in a new Profile.
 **Rationale:** User's explicit choice (grilling Q11, "4 packages + pi-tui"). Keeps `protocol` as
 the hub other packages/gateways depend on without pulling in `core`'s implementation weight —
 mirrors flue's proof that channel/client packages can have zero runtime dependency on the engine.
@@ -366,10 +393,15 @@ pattern, adapted to ziggy's smaller toolset goal.
 **Context:** Need a stage order an AI agent can execute hand-in-hand with the user, with a clear
 point where a v1 binary release happens.
 **Decision:** Eight stages — S0 Foundation, S1 Waist (session engine + memory), S2 Daemon
-(resident service + socket + fan-out), S3 Face (init + TUI + CLI), S4 Molding (extensions +
-blueprints), S5 Autonomy (automations + observability), S6 Reach (Telegram gateway — first leaf
-client, proves the dependency-free-client pattern), S7 Elsewhere (Cloudflare world adapter, GUI,
-more gateways). **v1 binary release ships after S6**, not after S7.
+(resident service + socket + fan-out), S3 Face (init + TUI + CLI), S4 Molding (Extension platform,
+39 rebuilt Merlin ports including `skill-creator`, plus the additional `automation-creator`, for
+40 catalog entries total; only those two authoring Extensions are default-enabled), S5 Autonomy
+(Automation platform + observability), S6 Reach (required Telegram Gateway plus non-blocking
+parallel Slack and Discord candidates), S7 Elsewhere (Cloudflare world adapter, GUI, and the
+remaining deferred leaf Gateways). Isolated later-stage implementation may begin on separate
+branches after its shared contracts are frozen, but integration, stage-status transitions, and
+release gates stay dependency-ordered. **v1 binary release ships after S6**, not after S7; Telegram
+is the required Gateway proof, while unfinished Slack or Discord work cannot delay the tag.
 **Rationale:** User's explicit choice (grilling Q13, "v1 after S6 (Recommended)") — a useful,
 reachable-from-anywhere assistant exists once one real gateway proves the client pattern; the
 Cloudflare world adapter and additional gateways/GUI are additive, not blocking.

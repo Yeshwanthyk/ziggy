@@ -8,11 +8,22 @@ S0 Foundation, S1 Waist, S2 Daemon, and S3 Face are complete. S3 includes the sh
 bun tooling/verification/runner.ts all --agent-findings /absolute/path/to/ziggy-s4-findings.json
 ```
 
-S4 Molding remains pending. Its strict manifest/version contract, closed Merlin ledger,
-daemon-owned local Extension lifecycle, sealed Skill/Tool loaders, crash-safe publication,
-HyperFrames Blueprint, baked-in skill-writing Skill, and content-only curated scaffolds are
-implemented and independently verified. Callable supervised runtime commands, the remaining
-accepted S4 ports, and integrated stage closure are not implemented yet.
+S4 Molding remains pending. The settled plan maps the closed Merlin inventory to exactly 39
+standalone S4 builtin Extensions—five Skill-only and 34 supervised-Command—five S6/S7
+Gateways, and three drops. S4 adds bounded daemon-owned Extension authoring CRUD; `skill-creator`
+guides that primitive, while `automation-creator` guides S5's Automation CRUD. Neither has direct
+filesystem authority. Candidate waves add
+their own bundled catalog entries, and only final closure asserts all 40 entries; only
+`skill-creator` and `automation-creator` are enabled in a new Profile. Existing HyperFrames
+Blueprint, baked-in skill-writing core Skill, curated scaffolds, reviews, and scenarios are legacy
+that the first S4 implementation slice will remove. This planning-only correction does not change
+that production or verification code, so executable S4 verification is intentionally transitional
+until the slice lands.
+
+Isolated S5 and Gateway implementation may proceed on branches against frozen contracts before
+their predecessor stage closes. Integration, manifest status, and release gates remain ordered.
+Telegram is the required S6 Gateway for v1; Slack and Discord are parallel S6 candidates that may
+join v1 when independently green but do not delay the tag.
 
 ## Provider authentication
 

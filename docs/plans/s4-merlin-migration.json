@@ -53,11 +53,11 @@
         "persistedPaths": [],
         "rationale": "high risk: harness sessions could become competing Session/loop state"
       },
-      "disposition": "merge",
-      "rationale": "retain routing guidance only; reject ACP runtime/session abstractions",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "coding-agent",
+        "id": "acp-router",
         "ownerStage": "s4",
         "trustTier": "builtin",
         "executionMode": "supervised-command"
@@ -66,8 +66,8 @@
         "retain routing guidance only; reject ACP runtime/session abstractions"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Extension Skill constrained to supervised external coding tasks",
-        "retain routing guidance only; reject ACP runtime/session abstractions"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -116,7 +116,7 @@
         "rationale": "medium risk: browser profile is external auth/session authority and must not shadow Ziggy Session state"
       },
       "disposition": "port",
-      "rationale": "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "agent-browser",
@@ -128,8 +128,8 @@
         "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with approved setup/doctor argv",
-        "external CLI already owns browser mechanics; no Tool ABI or bundled wrapper needed"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -173,7 +173,7 @@
         "rationale": "low risk: Notes remains sole authority"
       },
       "disposition": "port",
-      "rationale": "prose command guidance; no Ziggy state",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "apple-notes",
@@ -183,8 +183,8 @@
       },
       "excludedCapabilities": ["prose command guidance; no Ziggy state"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension with command requirement",
-        "prose command guidance; no Ziggy state"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -228,7 +228,7 @@
         "rationale": "low risk: Reminders remains authoritative"
       },
       "disposition": "port",
-      "rationale": "exclude scheduling/runtime behavior; retain direct reminder operations",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "apple-reminders",
@@ -240,8 +240,8 @@
         "exclude scheduling/runtime behavior; retain direct reminder operations"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with approved setup/doctor",
-        "exclude scheduling/runtime behavior; retain direct reminder operations"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -279,20 +279,20 @@
         "rationale": "low risk: artifact is owner-requested output"
       },
       "disposition": "port",
-      "rationale": "instructions suffice; omit templates unless independently justified",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "architecture-diagram",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
         "instructions suffice; omit templates unless independently justified"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension",
-        "instructions suffice; omit templates unless independently justified"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -329,19 +329,17 @@
         "persistedPaths": [],
         "rationale": "medium risk: feed checkpoint needs one daemon-owned authority"
       },
-      "disposition": "defer-to-S5",
-      "rationale": "monitoring is scheduled behavior, not Extension-owned polling",
-      "target": {
-        "mechanism": "automation",
-        "id": "blogwatcher",
-        "ownerStage": "s5"
-      },
-      "excludedCapabilities": ["monitoring is scheduled behavior, not Extension-owned polling"],
-      "leannessEvidence": [
-        "Observed mechanism: Automation with a non-LLM feed wake-gate",
-        "monitoring is scheduled behavior, not Extension-owned polling"
+      "disposition": "drop",
+      "rationale": "drop the candidate; feed monitoring is not reassigned to S5 or replaced by a builtin",
+      "target": null,
+      "excludedCapabilities": [
+        "drop the candidate; feed monitoring is not reassigned to S5 or replaced by a builtin"
       ],
-      "deliveryStatus": "planned"
+      "leannessEvidence": [
+        "Planned mechanism: none",
+        "drop the candidate; feed monitoring is not reassigned to S5 or replaced by a builtin"
+      ],
+      "deliveryStatus": "not-applicable"
     },
     {
       "id": "clawhub",
@@ -383,14 +381,14 @@
         "rationale": "high risk: competing registry and installer authority"
       },
       "disposition": "drop",
-      "rationale": "forbidden extension-registration surface and incompatible install authority",
+      "rationale": "drop the candidate; its registry and install authority conflict with Ziggy ownership",
       "target": null,
       "excludedCapabilities": [
-        "forbidden extension-registration surface and incompatible install authority"
+        "drop the candidate; its registry and install authority conflict with Ziggy ownership"
       ],
       "leannessEvidence": [
-        "Observed mechanism: none",
-        "forbidden extension-registration surface and incompatible install authority"
+        "Planned mechanism: none",
+        "drop the candidate; its registry and install authority conflict with Ziggy ownership"
       ],
       "deliveryStatus": "not-applicable"
     },
@@ -438,21 +436,19 @@
         "persistedPaths": [],
         "rationale": "stated risk: high if CLI conversation becomes a competing loop"
       },
-      "disposition": "merge",
-      "rationale": "one coding delegation surface; never import Codex session/loop semantics",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "coding-agent",
+        "id": "codex",
         "ownerStage": "s4",
         "trustTier": "builtin",
         "executionMode": "supervised-command"
       },
-      "excludedCapabilities": [
-        "one coding delegation surface; never import Codex session/loop semantics"
-      ],
+      "excludedCapabilities": ["Codex-owned Session/loop semantics and Merlin packaging"],
       "leannessEvidence": [
-        "Observed mechanism: narrowly supervised coding-task Skill",
-        "one coding delegation surface; never import Codex session/loop semantics"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -501,7 +497,7 @@
         "rationale": "medium risk: external task state must remain tool evidence, not Ziggy Session truth"
       },
       "disposition": "port",
-      "rationale": "one generic capability replaces per-harness packages; no runtime hooks",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "coding-agent",
@@ -509,12 +505,10 @@
         "trustTier": "builtin",
         "executionMode": "supervised-command"
       },
-      "excludedCapabilities": [
-        "one generic capability replaces per-harness packages; no runtime hooks"
-      ],
+      "excludedCapabilities": ["runtime hooks and Merlin packaging"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension using supervised commands",
-        "one generic capability replaces per-harness packages; no runtime hooks"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -558,7 +552,7 @@
         "rationale": "low risk: artifacts are derived and disposable"
       },
       "disposition": "port",
-      "rationale": "avoid a bundled renderer and runtime artifact registry",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "diffs",
@@ -568,8 +562,8 @@
       },
       "excludedCapabilities": ["avoid a bundled renderer and runtime artifact registry"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension using existing file/command tools",
-        "avoid a bundled renderer and runtime artifact registry"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -623,16 +617,18 @@
         "rationale": "high risk: delivery, inbound resume and channel state belong to a Gateway"
       },
       "disposition": "defer-to-S6/S7",
-      "rationale": "explicitly excluded from Extension transport authority",
+      "rationale": "retain as a nonblocking S6 dependency-free leaf Gateway candidate; never an Extension or Blueprint and never a v1 prerequisite",
       "target": {
         "mechanism": "gateway",
         "id": "discord",
         "ownerStage": "s6"
       },
-      "excludedCapabilities": ["explicitly excluded from Extension transport authority"],
+      "excludedCapabilities": [
+        "Extension-owned transport, direct Profile writes, and any Blueprint fallback"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Discord Gateway",
-        "explicitly excluded from Extension transport authority"
+        "Planned mechanism: nonblocking S6 leaf Gateway package speaking only the attach protocol",
+        "retain as a nonblocking S6 candidate; never an Extension, Blueprint, or v1 prerequisite"
       ],
       "deliveryStatus": "planned"
     },
@@ -691,7 +687,7 @@
         "rationale": "medium risk: Executor owns external auth/approval/resume state, never Ziggy Session or Memory"
       },
       "disposition": "port",
-      "rationale": "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "executor",
@@ -703,8 +699,8 @@
         "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required"
       ],
       "leannessEvidence": [
-        "Observed mechanism: manifest+Skill Extension with approved setup/doctor argv",
-        "bounded ordinary-candidate classification; no privileged S4 proof role and no in-process Tool required"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -757,17 +753,21 @@
         "persistedPaths": [],
         "rationale": "high risk: watch/poll progress must be Run evidence, not extension checkpoints"
       },
-      "disposition": "defer-to-S5",
-      "rationale": "scheduled orchestration and fresh Run ownership belong to S5",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
-        "mechanism": "automation",
+        "mechanism": "extension",
         "id": "gh-issues",
-        "ownerStage": "s5"
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
       },
-      "excludedCapabilities": ["scheduled orchestration and fresh Run ownership belong to S5"],
+      "excludedCapabilities": [
+        "Extension-owned scheduling or polling and Merlin package/runtime assumptions"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Automation using GitHub and coding capabilities",
-        "scheduled orchestration and fresh Run ownership belong to S5"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -821,7 +821,7 @@
         "rationale": "low risk: GitHub remains authoritative"
       },
       "disposition": "port",
-      "rationale": "one general GitHub surface eliminates wrappers and duplicate issue packages",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "github",
@@ -829,12 +829,10 @@
         "trustTier": "builtin",
         "executionMode": "supervised-command"
       },
-      "excludedCapabilities": [
-        "one general GitHub surface eliminates wrappers and duplicate issue packages"
-      ],
+      "excludedCapabilities": ["Merlin wrappers, package layout, and duplicate authority"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with setup/doctor",
-        "one general GitHub surface eliminates wrappers and duplicate issue packages"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -882,19 +880,21 @@
         "persistedPaths": [],
         "rationale": "low risk: GitHub remains authoritative"
       },
-      "disposition": "merge",
-      "rationale": "capability is a strict subset of the general GitHub surface",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "github",
+        "id": "github-issues",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
-      "excludedCapabilities": ["capability is a strict subset of the general GitHub surface"],
+      "excludedCapabilities": [
+        "Merlin packaging and authority beyond the evidenced issue workflow"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: GitHub Extension Skill material",
-        "capability is a strict subset of the general GitHub surface"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -937,19 +937,19 @@
         "persistedPaths": [],
         "rationale": "low risk: computed triage is derived"
       },
-      "disposition": "merge",
-      "rationale": "retain triage workflow, omit bespoke binary and CLI wrapper",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "github",
+        "id": "github-pr-triage",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": ["retain triage workflow, omit bespoke binary and CLI wrapper"],
       "leannessEvidence": [
-        "Observed mechanism: focused Skill within the GitHub Extension",
-        "retain triage workflow, omit bespoke binary and CLI wrapper"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -987,7 +987,7 @@
         "rationale": "low risk: Google services remain authoritative"
       },
       "disposition": "port",
-      "rationale": "one CLI covers six Workspace services without Ziggy adapters",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "gog",
@@ -997,8 +997,8 @@
       },
       "excludedCapabilities": ["one CLI covers six Workspace services without Ziggy adapters"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with approved setup/doctor",
-        "one CLI covers six Workspace services without Ziggy adapters"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1047,7 +1047,7 @@
         "rationale": "low risk: read-only external data"
       },
       "disposition": "port",
-      "rationale": "stateless CLI guidance; no custom Tool",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "goplaces",
@@ -1057,8 +1057,8 @@
       },
       "excludedCapabilities": ["stateless CLI guidance; no custom Tool"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension with command/env requirements",
-        "stateless CLI guidance; no custom Tool"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1102,7 +1102,7 @@
         "rationale": "medium risk: remote site and claim token must not be shadowed in ad hoc Profile state"
       },
       "disposition": "port",
-      "rationale": "retain publishing only; omit bundled shell wrappers and private-drive subsystem",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "here-now",
@@ -1114,15 +1114,15 @@
         "retain publishing only; omit bundled shell wrappers and private-drive subsystem"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension using supervised external commands",
-        "retain publishing only; omit bundled shell wrappers and private-drive subsystem"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
     {
       "id": "humanizer",
       "capability": {
-        "userOutcome": "revise text into a specified natural voice",
+        "userOutcome": "revise text supplied in the current chat into a specified natural voice",
         "evidence": [
           {
             "path": "extensions/humanizer/extension.json",
@@ -1142,10 +1142,10 @@
       ],
       "permissions": {
         "network": false,
-        "filesystem": "profile",
+        "filesystem": "none",
         "secrets": [],
         "subprocesses": [],
-        "externalAuthorities": ["only user-selected input/output files"]
+        "externalAuthorities": []
       },
       "stateAuthority": {
         "owner": "none",
@@ -1153,7 +1153,7 @@
         "rationale": "low risk: no durable state"
       },
       "disposition": "port",
-      "rationale": "pure instructions; no code or assets required",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "humanizer",
@@ -1161,10 +1161,12 @@
         "trustTier": "builtin",
         "executionMode": "skill-only"
       },
-      "excludedCapabilities": ["pure instructions; no code or assets required"],
+      "excludedCapabilities": [
+        "arbitrary file input/output; the accepted outcome is limited to text in current model context"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension",
-        "pure instructions; no code or assets required"
+        "Planned mechanism: standalone builtin skill-only Extension over current model context only",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1201,21 +1203,17 @@
         "persistedPaths": [],
         "rationale": "low risk: compositions are owner files"
       },
-      "disposition": "blueprint",
-      "rationale": "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface",
-      "target": {
-        "mechanism": "blueprint",
-        "id": "hyperframes",
-        "ownerStage": "s4"
-      },
+      "disposition": "drop",
+      "rationale": "drop the candidate; the long-tail toolchain has no Blueprint or other replacement",
+      "target": null,
       "excludedCapabilities": [
-        "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface"
+        "drop the candidate; the long-tail toolchain has no Blueprint or other replacement"
       ],
       "leannessEvidence": [
-        "Observed mechanism: markdown setup/edit guide with deterministic postconditions",
-        "heavy, long-tail toolchain does not justify maintained Ziggy runtime surface"
+        "Planned mechanism: none",
+        "drop the candidate; the long-tail toolchain has no Blueprint or other replacement"
       ],
-      "deliveryStatus": "landed"
+      "deliveryStatus": "not-applicable"
     },
     {
       "id": "imsg",
@@ -1267,16 +1265,18 @@
         "rationale": "high risk: history, inbound delivery and resume belong to a Gateway"
       },
       "disposition": "defer-to-S6/S7",
-      "rationale": "plan explicitly classifies iMessage as a later Gateway",
+      "rationale": "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint",
       "target": {
         "mechanism": "gateway",
         "id": "imsg",
-        "ownerStage": "s6"
+        "ownerStage": "s7"
       },
-      "excludedCapabilities": ["plan explicitly classifies iMessage as a later Gateway"],
+      "excludedCapabilities": [
+        "Extension-owned transport, direct Profile writes, and any Blueprint fallback"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: iMessage Gateway",
-        "plan explicitly classifies iMessage as a later Gateway"
+        "Planned mechanism: S7 leaf Gateway package speaking only the attach protocol",
+        "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint"
       ],
       "deliveryStatus": "planned"
     },
@@ -1313,19 +1313,21 @@
         "persistedPaths": [],
         "rationale": "low risk: Linear remains authoritative"
       },
-      "disposition": "merge",
-      "rationale": "avoid a Python API wrapper and duplicate credential path",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "executor",
+        "id": "linear",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
-      "excludedCapabilities": ["avoid a Python API wrapper and duplicate credential path"],
+      "excludedCapabilities": [
+        "the Merlin Python wrapper, duplicate credential path, and package layout"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Executor-backed integration Skill",
-        "avoid a Python API wrapper and duplicate credential path"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1373,19 +1375,21 @@
         "persistedPaths": [],
         "rationale": "high risk: Merlin watermark/index and direct Memory writes create shadow authority"
       },
-      "disposition": "defer-to-S5",
-      "rationale": "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
-        "mechanism": "automation",
+        "mechanism": "extension",
         "id": "lossless-claw",
-        "ownerStage": "s5"
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
-        "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority"
+        "Extension-owned scheduling, shadow indexes, direct Memory writes, and Merlin package/runtime assumptions"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Automation whose Run reads Sessions and requests atomic Memory changes",
-        "scheduling belongs to S5; indexes must be rebuildable and Memory remains sole fact authority"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1428,21 +1432,21 @@
         "persistedPaths": [],
         "rationale": "medium risk: independent daemon/config would create another integration control plane"
       },
-      "disposition": "merge",
-      "rationale": "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "executor",
+        "id": "mcporter",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
-        "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients"
+        "the MCPorter daemon, generated clients, and competing catalog/auth authority"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Executor integration discovery/invocation surface",
-        "one catalog/auth/approval mechanism; omit MCPorter daemon and generated clients"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1480,7 +1484,7 @@
         "rationale": "low risk: edited PDF is owner output"
       },
       "disposition": "port",
-      "rationale": "external CLI does the work; no wrapper or persistent state",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "nano-pdf",
@@ -1490,8 +1494,8 @@
       },
       "excludedCapabilities": ["external CLI does the work; no wrapper or persistent state"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with explicit command requirement",
-        "external CLI does the work; no wrapper or persistent state"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1528,19 +1532,21 @@
         "persistedPaths": [],
         "rationale": "low risk: Notion remains authoritative"
       },
-      "disposition": "merge",
-      "rationale": "avoid embedding evolving REST examples and a second secret path",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "executor",
+        "id": "notion",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
-      "excludedCapabilities": ["avoid embedding evolving REST examples and a second secret path"],
+      "excludedCapabilities": [
+        "embedded evolving REST examples, a second secret path, and Merlin packaging"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Executor-backed integration Skill",
-        "avoid embedding evolving REST examples and a second secret path"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1584,18 +1590,18 @@
         "rationale": "low risk: vault files remain owner-authoritative and are not Ziggy Memory"
       },
       "disposition": "port",
-      "rationale": "ordinary markdown/file operations cover most behavior",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "obsidian",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": ["ordinary markdown/file operations cover most behavior"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension",
-        "ordinary markdown/file operations cover most behavior"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1633,7 +1639,7 @@
         "rationale": "medium risk: 1Password stays secret authority; outputs must never become Session/Memory state"
       },
       "disposition": "port",
-      "rationale": "rely on `op`; retain no secret material or wrapper",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "onepassword",
@@ -1643,8 +1649,8 @@
       },
       "excludedCapabilities": ["rely on `op`; retain no secret material or wrapper"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with setup/doctor and strict secret-handling guidance",
-        "rely on `op`; retain no secret material or wrapper"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1693,7 +1699,7 @@
         "rationale": "medium risk: UI snapshots/indexes are ephemeral external state, never durable Ziggy truth"
       },
       "disposition": "port",
-      "rationale": "use upstream CLI directly; omit wrapper and persisted screenshot registry",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "open-computer-use",
@@ -1705,8 +1711,8 @@
         "use upstream CLI directly; omit wrapper and persisted screenshot registry"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with approved setup/doctor",
-        "use upstream CLI directly; omit wrapper and persisted screenshot registry"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1750,7 +1756,7 @@
         "rationale": "low risk: model cache is rebuildable external data"
       },
       "disposition": "port",
-      "rationale": "direct CLI invocation; no Provider or Tool ABI",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "openai-whisper",
@@ -1760,8 +1766,8 @@
       },
       "excludedCapabilities": ["direct CLI invocation; no Provider or Tool ABI"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension with command requirement",
-        "direct CLI invocation; no Provider or Tool ABI"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1804,21 +1810,21 @@
         "persistedPaths": [],
         "rationale": "medium risk: snapshot/config caches must remain non-authoritative"
       },
-      "disposition": "merge",
-      "rationale": "one desktop capability; avoid two overlapping Extensions and tool catalogs",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "open-computer-use",
+        "id": "peekaboo",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
-        "one desktop capability; avoid two overlapping Extensions and tool catalogs"
+        "the Merlin wrapper, persisted screenshot registry, and package layout"
       ],
       "leannessEvidence": [
-        "Observed mechanism: optional macOS backend guidance in the desktop-automation Extension",
-        "one desktop capability; avoid two overlapping Extensions and tool catalogs"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1867,7 +1873,7 @@
         "rationale": "medium risk: index must be rebuildable and never become document/Memory authority"
       },
       "disposition": "port",
-      "rationale": "external retrieval engine; explicitly constrain index to derived state",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "qmd",
@@ -1879,15 +1885,15 @@
         "external retrieval engine; explicitly constrain index to derived state"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with setup/doctor",
-        "external retrieval engine; explicitly constrain index to derived state"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
     {
       "id": "self-improving-agent",
       "capability": {
-        "userOutcome": "propose durable behavior improvements from observed corrections and failures",
+        "userOutcome": "propose owner-reviewed behavior improvements from corrections and failures visible in the current Session",
         "evidence": [
           {
             "path": "extensions/self-improving-agent/extension.json",
@@ -1912,35 +1918,37 @@
       "dependencies": [
         {
           "kind": "external",
-          "name": "Session evidence and owner review",
-          "rationale": "The observed Merlin capability depends on Session evidence and owner review; Ziggy will not absorb that authority."
+          "name": "current Session context and owner review",
+          "rationale": "The accepted Ziggy outcome depends only on current Session context plus owner review; prior-Session mining is excluded."
         }
       ],
       "permissions": {
         "network": false,
-        "filesystem": "profile",
+        "filesystem": "none",
         "secrets": [],
         "subprocesses": [],
-        "externalAuthorities": ["Session read and proposed owner-file edits"]
+        "externalAuthorities": ["owner review"]
       },
       "stateAuthority": {
         "owner": "ziggy",
         "persistedPaths": [],
         "rationale": "high risk: `.learnings` duplicates Memory and hooks violate the v1 ABI"
       },
-      "disposition": "defer-to-S6/S7",
-      "rationale": "no hooks, automatic writes or shadow learning store in S4",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "self-improving-agent",
-        "ownerStage": "s7",
+        "ownerStage": "s4",
         "trustTier": "builtin",
         "executionMode": "skill-only"
       },
-      "excludedCapabilities": ["no hooks, automatic writes or shadow learning store in S4"],
+      "excludedCapabilities": [
+        "prior-Session mining, owner-file mutation, hooks, automatic writes, and shadow learning stores"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: future explicit proposal workflow over canonical Session/Memory/owner files",
-        "no hooks, automatic writes or shadow learning store in S4"
+        "Planned mechanism: standalone builtin skill-only Extension over current Session context only",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -1984,27 +1992,27 @@
         "rationale": "low risk: transcripts remain Session-owned and no index is required"
       },
       "disposition": "port",
-      "rationale": "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "session-logs",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
         "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension using read-only daemon-mediated Session access",
-        "adapt the outcome to Ziggy’s schema; omit Merlin paths, jq recipes and side indexes"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
     {
       "id": "skill-creator",
       "capability": {
-        "userOutcome": "author a conformant Ziggy Skill",
+        "userOutcome": "author a conformant Ziggy Extension or Skill through the daemon-owned Extension authoring Tool",
         "evidence": [
           {
             "path": "extensions/skill-creator/extension.json",
@@ -2018,42 +2026,44 @@
       "dependencies": [
         {
           "kind": "external",
-          "name": "Ziggy Skill/manifest schemas",
-          "rationale": "The observed Merlin capability depends on Ziggy Skill/manifest schemas; Ziggy will not absorb that authority."
+          "name": "Ziggy Extension/Skill schemas and daemon-owned Extension authoring Tool",
+          "rationale": "The accepted Ziggy outcome uses the bounded daemon-owned authoring primitive rather than filesystem authority."
         }
       ],
       "permissions": {
         "network": false,
-        "filesystem": "profile",
+        "filesystem": "none",
         "secrets": [],
         "subprocesses": [],
-        "externalAuthorities": ["owner-approved Extension/Skill files"]
+        "externalAuthorities": ["daemon-mediated Extension package publication"]
       },
       "stateAuthority": {
         "owner": "none",
         "persistedPaths": [],
         "rationale": "low risk: files are explicit authored capability definitions"
       },
-      "disposition": "merge",
-      "rationale": "S4 already requires this; omit packaging scripts and generic upstream material",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
-        "mechanism": "core-skill",
-        "id": "skill-writing",
-        "ownerStage": "s4"
+        "mechanism": "extension",
+        "id": "skill-creator",
+        "ownerStage": "s4",
+        "trustTier": "builtin",
+        "executionMode": "skill-only"
       },
       "excludedCapabilities": [
-        "S4 already requires this; omit packaging scripts and generic upstream material"
+        "direct Extension-tree mutation, a private installer, generic upstream packaging material, and legacy core Skill injection"
       ],
       "leannessEvidence": [
-        "Observed mechanism: baked-in core Skill",
-        "S4 already requires this; omit packaging scripts and generic upstream material"
+        "Planned mechanism: standalone builtin skill-only guidance over the daemon-owned Extension authoring Tool",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
-      "deliveryStatus": "landed"
+      "deliveryStatus": "planned"
     },
     {
       "id": "skill-curator",
       "capability": {
-        "userOutcome": "propose reviewed improvements to installed Skills",
+        "userOutcome": "inspect, propose, and replace reviewed Extension or Skill packages through the daemon-owned Extension authoring Tool",
         "evidence": [
           {
             "path": "extensions/skill-curator/extension.json",
@@ -2067,43 +2077,43 @@
         {
           "with": "smart-extensions",
           "relationship": "overlapping-capability",
-          "rationale": "S4 `smart-extensions` scaffold and core skill-writing Skill"
+          "rationale": "legacy `smart-extensions` capability surface; overlap does not change the standalone target"
         }
       ],
       "dependencies": [
         {
           "kind": "external",
-          "name": "Session evidence, Extension seals and installer commands",
-          "rationale": "The observed Merlin capability depends on Session evidence, Extension seals and installer commands; Ziggy will not absorb that authority."
+          "name": "current Session context and daemon-owned Extension authoring Tool",
+          "rationale": "The accepted Ziggy outcome inspects and replaces bounded packages through the shared primitive; it owns no installer or tree mutation path."
         }
       ],
       "permissions": {
         "network": false,
-        "filesystem": "profile",
+        "filesystem": "none",
         "secrets": [],
         "subprocesses": [],
-        "externalAuthorities": ["Session read", "daemon-mediated Extension replacement"]
+        "externalAuthorities": ["daemon-mediated Extension inspection and replacement"]
       },
       "stateAuthority": {
         "owner": "none",
         "persistedPaths": [],
         "rationale": "high risk: pins, backups, reports and direct writes create another Extension authority"
       },
-      "disposition": "defer-to-S6/S7",
-      "rationale": "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "skill-curator",
-        "ownerStage": "s7",
+        "ownerStage": "s4",
         "trustTier": "builtin",
         "executionMode": "skill-only"
       },
       "excludedCapabilities": [
-        "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics"
+        "direct tree mutation, a private installer, prior-Session mining, and any replacement that bypasses digest checks, strict validation, or reapproval"
       ],
       "leannessEvidence": [
-        "Observed mechanism: future `smart-extensions` Extension",
-        "S4 provides scaffolding only; full mutation workflow needs seal-aware reinstall/reapproval semantics"
+        "Planned mechanism: standalone builtin skill-only guidance over the daemon-owned Extension authoring Tool",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2157,23 +2167,25 @@
         "rationale": "high risk: delivery and resume state belong to a Gateway"
       },
       "disposition": "defer-to-S6/S7",
-      "rationale": "explicitly excluded from Extension transport authority",
+      "rationale": "retain as a nonblocking S6 dependency-free leaf Gateway candidate; never an Extension or Blueprint and never a v1 prerequisite",
       "target": {
         "mechanism": "gateway",
         "id": "slack",
         "ownerStage": "s6"
       },
-      "excludedCapabilities": ["explicitly excluded from Extension transport authority"],
+      "excludedCapabilities": [
+        "Extension-owned transport, direct Profile writes, and any Blueprint fallback"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Slack Gateway",
-        "explicitly excluded from Extension transport authority"
+        "Planned mechanism: nonblocking S6 leaf Gateway package speaking only the attach protocol",
+        "retain as a nonblocking S6 candidate; never an Extension, Blueprint, or v1 prerequisite"
       ],
       "deliveryStatus": "planned"
     },
     {
       "id": "smart-memory",
       "capability": {
-        "userOutcome": "propose reviewed maintenance changes to retained facts",
+        "userOutcome": "reason over the current Session's frozen Memory snapshot and propose reviewed retained-fact changes through the existing memory Tool",
         "evidence": [
           {
             "path": "extensions/smart-memory/extension.json",
@@ -2198,37 +2210,37 @@
       "dependencies": [
         {
           "kind": "external",
-          "name": "Session evidence and atomic Memory commands",
-          "rationale": "The observed Merlin capability depends on Session evidence and atomic Memory commands; Ziggy will not absorb that authority."
+          "name": "current Session frozen Memory snapshot and existing memory Tool",
+          "rationale": "The accepted Ziggy outcome uses only the frozen snapshot already in context plus the daemon-owned Memory primitive."
         }
       ],
       "permissions": {
         "network": false,
-        "filesystem": "profile",
+        "filesystem": "none",
         "secrets": [],
         "subprocesses": [],
-        "externalAuthorities": ["Session read", "daemon-mediated Memory mutation"]
+        "externalAuthorities": ["daemon-mediated Memory mutation"]
       },
       "stateAuthority": {
         "owner": "ziggy",
         "persistedPaths": [],
         "rationale": "critical risk: Merlin directly edits Memory and adds pins/backups/suggestion state as competing authority"
       },
-      "disposition": "defer-to-S6/S7",
-      "rationale": "honor scaffolding-only scope; future implementation must keep Memory sole authority",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "smart-memory",
-        "ownerStage": "s7",
+        "ownerStage": "s4",
         "trustTier": "builtin",
         "executionMode": "skill-only"
       },
       "excludedCapabilities": [
-        "honor scaffolding-only scope; future implementation must keep Memory sole authority"
+        "prior-Session scans, live Memory rereads, shadow Memory authority, and writes outside the existing memory Tool"
       ],
       "leannessEvidence": [
-        "Observed mechanism: `smart-memory` Extension scaffold in S4, behavior later",
-        "honor scaffolding-only scope; future implementation must keep Memory sole authority"
+        "Planned mechanism: standalone builtin skill-only Extension over the frozen Memory snapshot and existing memory Tool",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2277,20 +2289,20 @@
         "rationale": "stated risk: low if no independent model config/history is retained"
       },
       "disposition": "port",
-      "rationale": "reject a second model/provider configuration; retain extraction and summarization workflow only",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "summarize",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
         "reject a second model/provider configuration; retain extraction and summarization workflow only"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension using Ziggy’s loop plus approved extractors",
-        "reject a second model/provider configuration; retain extraction and summarization workflow only"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2328,16 +2340,18 @@
         "rationale": "critical risk: number provisioning, inbox checkpoint and inbound delivery are Gateway state"
       },
       "disposition": "defer-to-S6/S7",
-      "rationale": "reject polling scripts and home-directory credential/state files",
+      "rationale": "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint",
       "target": {
         "mechanism": "gateway",
         "id": "telephony",
-        "ownerStage": "s6"
+        "ownerStage": "s7"
       },
-      "excludedCapabilities": ["reject polling scripts and home-directory credential/state files"],
+      "excludedCapabilities": [
+        "Extension-owned transport, direct Profile writes, and any Blueprint fallback"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: Telephony Gateway",
-        "reject polling scripts and home-directory credential/state files"
+        "Planned mechanism: S7 leaf Gateway package speaking only the attach protocol",
+        "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint"
       ],
       "deliveryStatus": "planned"
     },
@@ -2381,7 +2395,7 @@
         "rationale": "low risk: Things remains authoritative"
       },
       "disposition": "port",
-      "rationale": "direct CLI use; no mirrored task store",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "things-mac",
@@ -2391,8 +2405,8 @@
       },
       "excludedCapabilities": ["direct CLI use; no mirrored task store"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension with command/OS requirements",
-        "direct CLI use; no mirrored task store"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2441,20 +2455,20 @@
         "rationale": "low risk: tmux state is ephemeral external process state"
       },
       "disposition": "port",
-      "rationale": "common commands suffice; omit helper scripts unless independently proven necessary",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "tmux",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": [
         "common commands suffice; omit helper scripts unless independently proven necessary"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension",
-        "common commands suffice; omit helper scripts unless independently proven necessary"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2508,16 +2522,18 @@
         "rationale": "high risk: sync store and resume cursor belong to a Gateway"
       },
       "disposition": "defer-to-S6/S7",
-      "rationale": "plan explicitly classifies WhatsApp as a later Gateway",
+      "rationale": "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint",
       "target": {
         "mechanism": "gateway",
         "id": "wacli",
-        "ownerStage": "s6"
+        "ownerStage": "s7"
       },
-      "excludedCapabilities": ["plan explicitly classifies WhatsApp as a later Gateway"],
+      "excludedCapabilities": [
+        "Extension-owned transport, direct Profile writes, and any Blueprint fallback"
+      ],
       "leannessEvidence": [
-        "Observed mechanism: WhatsApp Gateway",
-        "plan explicitly classifies WhatsApp as a later Gateway"
+        "Planned mechanism: S7 leaf Gateway package speaking only the attach protocol",
+        "retain only as a planned S7 dependency-free leaf Gateway package; never an Extension or Blueprint"
       ],
       "deliveryStatus": "planned"
     },
@@ -2566,18 +2582,18 @@
         "rationale": "low risk: stateless external data"
       },
       "disposition": "port",
-      "rationale": "no code, secret or persisted state required",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "weather",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
       "excludedCapabilities": ["no code, secret or persisted state required"],
       "leannessEvidence": [
-        "Observed mechanism: Skill-only Extension",
-        "no code, secret or persisted state required"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2620,21 +2636,19 @@
         "persistedPaths": [],
         "rationale": "low risk: results are Step evidence only"
       },
-      "disposition": "merge",
-      "rationale": "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint",
+      "disposition": "port",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
-        "id": "executor",
+        "id": "web-search",
         "ownerStage": "s4",
         "trustTier": "builtin",
-        "executionMode": "skill-only"
+        "executionMode": "supervised-command"
       },
-      "excludedCapabilities": [
-        "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint"
-      ],
+      "excludedCapabilities": ["the bundled Go binary, dedicated wrapper, and Merlin packaging"],
       "leannessEvidence": [
-        "Observed mechanism: Executor-backed search integration",
-        "avoid a bundled Go binary and dedicated wrapper for one MCP endpoint"
+        "Planned mechanism: standalone builtin supervised-command Extension; implementation review must derive the smallest command declaration from the preserved evidence",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     },
@@ -2672,7 +2686,7 @@
         "rationale": "medium risk: X owns posts/messages; local auth must remain external credential state"
       },
       "disposition": "port",
-      "rationale": "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope",
+      "rationale": "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture",
       "target": {
         "mechanism": "extension",
         "id": "xurl",
@@ -2684,8 +2698,8 @@
         "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope"
       ],
       "leannessEvidence": [
-        "Observed mechanism: Skill-first Extension with setup/doctor and secret-safety rules",
-        "explicit API operations fit a Tool Skill; inbound delivery/resume remains out of scope"
+        "Planned mechanism: standalone builtin supervised-command Extension",
+        "rebuild the evidenced outcome as its own S4 builtin Extension; do not merge it or preserve Merlin architecture"
       ],
       "deliveryStatus": "planned"
     }

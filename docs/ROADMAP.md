@@ -10,8 +10,8 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 | S1    | Waist      | The session engine and memory subsystem work headless, against a faux provider                     | [s1-waist.md](plans/s1-waist.md)           |
 | S2    | Daemon     | Ziggy runs as a resident per-profile service with a working attach socket                          | [s2-daemon.md](plans/s2-daemon.md)         |
 | S3    | Face       | `ziggy init` scaffolds a profile; a real TUI and CLI can talk to a real provider                   | [s3-face.md](plans/s3-face.md)             |
-| S4    | Molding    | Ziggy-native Extensions, blueprints, and closed review of Merlin candidates with S4-owned ports    | [s4-molding.md](plans/s4-molding.md)       |
-| S5    | Autonomy   | Automations: wake-gates, fresh-session-per-run, broadcast rules, observable as ordinary sessions   | [s5-autonomy.md](plans/s5-autonomy.md)     |
+| S4    | Molding    | Extension platform, 39 standalone Merlin ports, and two default-enabled authoring Extensions       | [s4-molding.md](plans/s4-molding.md)       |
+| S5    | Autonomy   | Chat-authored Automations: strict files, wake-gates, fresh Runs, hot reload, and Broadcast         | [s5-autonomy.md](plans/s5-autonomy.md)     |
 | S6    | Reach      | First gateway (Telegram) proves the dependency-free leaf-client pattern — **v1 release line**      | [s6-reach.md](plans/s6-reach.md)           |
 | S7    | Elsewhere  | Cloudflare world adapter, GUI client, more gateways — all post-v1                                  | [s7-elsewhere.md](plans/s7-elsewhere.md)   |
 
@@ -19,23 +19,30 @@ Binary releases (GitHub Releases, macOS arm64 + Linux x64/arm64, curl install sc
 
 Tracked verification manifests are the status authority. S0 through S3 are `implemented`; S4 is
 `pending`. The S4 Extension contract, version/manifest validation, Skill loader, daemon lifecycle,
-approval/seal recovery, compiled `defineTool` boundary, 47-row Merlin ledger, HyperFrames
-Blueprint, baked-in skill-writing Skill, inert `smart-memory`/`smart-extensions` scaffolds, and the
-generic supervised Command boundary are implemented. The ledger currently has two landed,
-independently reviewed S4 candidates: `hyperframes` and `skill-creator`.
+approval/seal recovery, compiled `defineTool` boundary, 47-row Merlin ledger, and generic
+supervised Command boundary are implemented. The settled ledger now plans 39 standalone S4 builtin
+Extensions—five `skill-only` and 34 `supervised-command`—plus five Gateways and three drops.
+`skill-creator` and the additional `automation-creator` Extension are the only default-enabled
+builtins in a new Profile.
 
-S4 still has 33 planned S4-owned candidate rows: 14 `skill-only` and 19
-`supervised-command`. The callable, daemon-supervised Command boundary now exists, so disjoint
-Command and Skill-only candidate waves can proceed in parallel. No candidate gates another. S4
-closes only after the remaining accepted waves and the integrated `verify:s4`, `verify:all`, and
-`bun run check` review pass.
+Executable S4 verification still describes the superseded HyperFrames Blueprint, baked-in
+skill-writing core Skill, curated scaffolds, old reviews, and their scenarios. This plan-only
+correction intentionally leaves those files and legacy production code untouched. The first S4
+implementation slice removes that legacy and updates schemas, review derivation, scenarios, and
+verification before any candidate wave lands. Shared S4 platform work then adds incremental
+catalog/bootstrap policy and one bounded daemon-owned Extension authoring Tool; it accepts complete
+manifest-plus-file-map packages, reuses strict staged lifecycle publication, requires expected
+tree digests for update/delete, cannot self-approve authority, creates no second authority, and
+exposes newly enabled Tools only to subsequent Sessions. Candidate waves add their own catalog
+entries and may run in parallel when files are disjoint; only final closure asserts 40 bundled
+entries and exactly two default-enabled IDs. No candidate gates another.
 
 ## Sequencing rules
 
-1. **No stage starts before the prior stage is done.** That means its acceptance criteria pass, its deterministic verifier and all predecessor gates pass, its evidence is replayable, and its required agentic through-loop is complete. S2 depends on S1's real session engine; S3 depends on S2's real attach socket.
+1. **Implementation may fan out; integration stays ordered.** Isolated later-stage work may begin on a separate branch after its shared contracts are frozen. It cannot change predecessor-owned contracts, merge an integration slice, transition stage status, or claim release readiness until every predecessor acceptance gate passes. S5 Automation runtime and service-specific Gateway leaves may therefore develop alongside S4; S5 integration still follows S4, and S6 integration/release still follows S5.
 2. **Deterministic gates are cumulative and authoritative.** `verify:sN` includes required predecessor gates; `verify:all` is the local hard correctness gate while the repository is private. Hosted CI remains disabled until the user explicitly restores it near publication. AI verification cannot waive failures and must turn applicable findings into deterministic regression scenarios. See [VERIFICATION.md](VERIFICATION.md).
 3. **Every stage plan is self-contained.** An agent picking up `docs/plans/sN-*.md` should need only that file, `AGENTS.md` (vocabulary contract), `docs/CONSTITUTION.md` (invariants), `docs/DECISIONS.md` (locked decisions), `docs/VERIFICATION.md` (verification policy), and `docs/REFERENCES.md` (source repos) to execute — not the full chat history that produced the design.
 4. **"Done when" is reproducible, not vibes.** Acceptance criteria require manifest-registered deterministic scenarios, focused and full gates, schema-valid redacted evidence, and verification/review by a separate Sol medium agent in an independent run and context. Manual or live-integration checks may add confidence but never replace deterministic proof.
-5. **v1 is S6, not S7.** Cloudflare, GUI, and additional gateways are explicitly post-v1 scope — do not let S6 scope-creep into them.
+5. **v1 is S6, not S7.** Cloudflare, GUI, and the three S7 Gateways are explicitly post-v1 scope. Slack and Discord remain optional nonblocking S6 workstreams; do not let them delay the tag.
 
 See [docs/NORTH-STAR.md](NORTH-STAR.md) for the vision, [docs/CONSTITUTION.md](CONSTITUTION.md) for the invariants every stage must uphold, [docs/DECISIONS.md](DECISIONS.md) for the full decision log with rationale, [docs/VERIFICATION.md](VERIFICATION.md) for the cross-stage proof policy, and [docs/REFERENCES.md](REFERENCES.md) for the source repositories every design choice traces back to.

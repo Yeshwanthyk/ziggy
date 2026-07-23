@@ -11,9 +11,9 @@ The daemon that owns a Profile is the sole process writer for machine-owned stat
 `memory/`, `.runtime/`, Extension state, and Gateway resume maps. A second daemon, Client, or
 Gateway process never writes those files directly.
 
-Human-owned moldable files — `SOUL.md`, `ziggy.jsonc`, `automations/*.md`, and files applied by a
-blueprint — are edited directly by the owner on disk. The daemon reloads them and never writes
-them except when the owner invokes an explicit command whose purpose is to do so.
+Human-owned moldable files — `SOUL.md`, `ziggy.jsonc`, and `automations/*.md` — are edited directly
+by the owner on disk. The daemon reloads them and never writes them except when the owner invokes
+an explicit command whose purpose is to do so.
 
 Merlin's earlier iteration allowed enough ambiguity about who could touch profile state that
 concurrent-write corruption was a live risk instead of a structurally impossible one. One
