@@ -5,4 +5,5 @@ export {
   encodeClientRequest,
   encodeServerFrame,
 } from "./framing.ts";
+export * from "./gateway.ts";
 export * from "./types.ts";
