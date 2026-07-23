@@ -45,10 +45,10 @@ Migrate useful capabilities from `../merlin/extensions` without migrating Merlin
       `supervised-command`.
 
 The generic daemon-owned supervised Command boundary now exists. `executor` remains an ordinary
-planned candidate and becomes the first command-based canary only after this boundary's independent
-verification; it isn't disguised as `defineTool` and receives no candidate-specific privilege. The
-other 18 command-based rows may follow in reviewed waves after the canary. The stage manifest stays
-`pending` until every accepted S4-owned candidate and integrated closure gate lands.
+planned candidate: it isn't disguised as `defineTool`, receives no candidate-specific privilege,
+and does not gate another candidate. Disjoint Command and Skill-only waves may proceed in parallel.
+The stage manifest stays `pending` until every accepted S4-owned candidate and integrated closure
+gate lands.
 
 ## Design (locked decisions)
 
@@ -329,8 +329,8 @@ For each slice, follow the `docs/VERIFICATION.md` through-loop: dedicated Sol me
 3. `SKILL.md` discovery/loader wired into the existing skill-injection point from S1 — small, mechanical.
 4. `ziggy extension` CLI subcommands + daemon-side install/approval state persistence — implementation-shaped; test that the CLI performs no direct Profile writes.
 5. In-process `defineTool` ABI + dynamic-import loader with approval gate — higher-trust-boundary code; require a dedicated Sol medium scouting/task-decomposition run and context before implementation, then independent Sol medium verification/review in a third run and context, plus deterministic regressions for applicable findings, before merging.
-6. Generic manifest-v2 Command boundary with exact approval and supervised-process contracts; independently verify it before using `executor` as the first ordinary canary.
-7. Implement accepted S4-owned candidates in small waves, with one independent leanness review and deterministic capability contract per Extension. After the canary, supervised-Command waves and Skill-only waves may run in parallel when they own disjoint files. Defer Automation/Gateway candidates to S5/S6/S7 and remove merged/dropped candidates from the implementation queue with rationale retained.
+6. Generic manifest-v2 Command boundary with exact approval and supervised-process contracts; independently verify it before implementing supervised-Command candidates.
+7. Implement accepted S4-owned candidates in small waves, with one independent leanness review and deterministic capability contract per Extension. Supervised-Command and Skill-only waves may run in parallel when they own disjoint files; no candidate gates another. Defer Automation/Gateway candidates to S5/S6/S7 and remove merged/dropped candidates from the implementation queue with rationale retained.
 8. Implement accepted Blueprint candidates and the baked-in skill-writing Skill with deterministic postconditions and no new runtime authority.
 9. `smart-memory`/`smart-extensions` scaffolds only. Their migration reviews may record a later-stage disposition but cannot authorize behavior in S4.
 

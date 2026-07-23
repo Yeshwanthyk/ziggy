@@ -25,10 +25,10 @@ generic supervised Command boundary are implemented. The ledger currently has tw
 independently reviewed S4 candidates: `hyperframes` and `skill-creator`.
 
 S4 still has 33 planned S4-owned candidate rows: 14 `skill-only` and 19
-`supervised-command`. The callable, daemon-supervised Command boundary now exists; `executor` is
-the first command-based canary on the critical path, while Skill-only candidate waves can proceed
-in parallel. S4 closes only after the remaining accepted waves and the integrated `verify:s4`,
-`verify:all`, and `bun run check` review pass.
+`supervised-command`. The callable, daemon-supervised Command boundary now exists, so disjoint
+Command and Skill-only candidate waves can proceed in parallel. No candidate gates another. S4
+closes only after the remaining accepted waves and the integrated `verify:s4`, `verify:all`, and
+`bun run check` review pass.
 
 ## Sequencing rules
 
