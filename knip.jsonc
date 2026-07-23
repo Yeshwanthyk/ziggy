@@ -24,6 +24,7 @@
         "effect",
       ],
     },
+    "packages/gateway-slack": {},
     "packages/protocol": {},
     "packages/tui": {
       "ignoreDependencies": [

@@ -1,0 +1,28 @@
+export {
+  makeSlackGateway,
+  makeSlackWebApi,
+  type SlackGateway,
+  type SlackInboundAcceptance,
+  type SlackService,
+} from "./gateway.ts";
+export {
+  decodeSlackCredentials,
+  decodeSlackGatewayConfig,
+  mapSlackDelivery,
+  normalizeSlackInbound,
+  SlackConfigurationError,
+  SlackCredentialsSchema,
+  SlackDeliveryError,
+  SlackGatewayConfigSchema,
+  SlackInboundError,
+  SlackInboundPayloadSchema,
+  SlackPostMessageReceiptSchema,
+  SlackPostMessageRequestSchema,
+  slackResumeHandle,
+  type SlackCredentials,
+  type SlackGatewayConfig,
+  type SlackInboundPayload,
+  type SlackOutboundDelivery,
+  type SlackPostMessageReceipt,
+  type SlackPostMessageRequest,
+} from "./model.ts";
