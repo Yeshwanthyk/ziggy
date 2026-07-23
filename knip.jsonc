@@ -24,6 +24,10 @@
         "effect",
       ],
     },
+    "packages/gateway-discord": {
+      "entry": ["test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"],
+    },
     "packages/protocol": {},
     "packages/tui": {
       "ignoreDependencies": [

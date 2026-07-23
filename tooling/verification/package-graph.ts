@@ -6,12 +6,14 @@ import { isCanonicalSemVer } from "../../packages/core/src/extensions/semver.ts"
 
 const expectedPackageNames: Readonly<Record<string, string>> = {
   core: "@ziggy/core",
+  "gateway-discord": "@ziggy/gateway-discord",
   protocol: "@ziggy/protocol",
   tui: "@ziggy/tui",
   ziggy: "@ziggy/ziggy",
 };
 const allowedEdges: Readonly<Record<string, ReadonlyArray<string>>> = {
   "@ziggy/core": ["@ziggy/protocol"],
+  "@ziggy/gateway-discord": ["@ziggy/protocol"],
   "@ziggy/protocol": [],
   "@ziggy/tui": ["@ziggy/protocol"],
   "@ziggy/ziggy": ["@ziggy/core", "@ziggy/protocol", "@ziggy/tui"],
