@@ -97,6 +97,21 @@ const piPromise = <A>(
     catch: (cause) => providerError(profilePath, operation, cause),
   });
 
+const existingDirectory = (path: string): Promise<string | undefined> =>
+  stat(path).then(
+    (status) => (status.isDirectory() ? path : undefined),
+    (cause: unknown) => {
+      const code =
+        cause instanceof Error && "code" in cause && typeof cause.code === "string"
+          ? cause.code
+          : undefined;
+      if (code === "ENOENT") {
+        return undefined;
+      }
+      throw cause;
+    },
+  );
+
 const requireSoul = (profilePath: string) => {
   const soulPath = join(profilePath, "SOUL.md");
   return Effect.tryPromise({
@@ -341,6 +356,10 @@ const createProfileRuntime = (
     createAgentSessionRuntime(
       async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
         const memoryPrompt = await buildMemoryPrompt(profilePath, paths.documents);
+        const [skillPath, extensionPath] = await Promise.all([
+          existingDirectory(join(profilePath, "skills")),
+          existingDirectory(join(profilePath, "extensions")),
+        ]);
         const services = await createAgentSessionServices({
           cwd,
           agentDir,
@@ -348,6 +367,8 @@ const createProfileRuntime = (
             systemPrompt: soulPath,
             noExtensions: true,
             noSkills: true,
+            ...(skillPath === undefined ? {} : { additionalSkillPaths: [skillPath] }),
+            ...(extensionPath === undefined ? {} : { additionalExtensionPaths: [extensionPath] }),
             noPromptTemplates: true,
             noThemes: true,
             noContextFiles: true,
