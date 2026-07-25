@@ -49,10 +49,12 @@ Only the adapter imports Pi. Only executable entrypoints run Effects.
 ## Surface
 
 ```text
-ziggy init <name|path>     create a Profile (SOUL.md); names resolve under ~/.ziggy/profiles
-ziggy <name|path>          open the Profile in the TUI
-ziggy run <name|path> "…"  one-shot print mode against the Profile
-ziggy profiles             list known Profiles
+ziggy init <name|path>       create a Profile (SOUL.md); names resolve under ~/.ziggy/profiles
+ziggy <name|path>            open the Profile in the TUI
+ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest session
+ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
+ziggy gateway <name|path>    run the resident Telegram gateway
+ziggy profiles               list known Profiles (registry: ~/.ziggy/profiles.list)
 ```
 
 ## Primitives, in build order
