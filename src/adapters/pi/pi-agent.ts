@@ -9,6 +9,7 @@ import {
   createAgentSessionServices,
   initTheme,
   runPrintMode,
+  type AgentSessionRuntime,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Context, Effect, Layer } from "effect";
@@ -39,9 +40,19 @@ export interface PiAgentShape {
     target: ProfileTarget,
     context: ChatContext,
   ) => Effect.Effect<number, ZiggyAgentError>;
+  readonly openChat: (
+    target: ProfileTarget,
+    context: ChatContext,
+    sessionDirectory: string,
+  ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
 }
 
 export class PiAgent extends Context.Service<PiAgent, PiAgentShape>()("ziggy/PiAgent") {}
+
+export interface ChatHandle {
+  readonly prompt: (text: string) => Effect.Effect<string, ZiggyAgentError>;
+  readonly dispose: Effect.Effect<void, ZiggyAgentError>;
+}
 
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
@@ -90,7 +101,7 @@ const providerError = (
 const piPromise = <A>(
   profilePath: string,
   operation: string,
-  run: () => Promise<A>,
+  run: (signal: AbortSignal) => Promise<A>,
 ): Effect.Effect<A, ProviderConfigError | ProviderCallError> =>
   Effect.tryPromise({
     try: run,
@@ -397,6 +408,134 @@ const createProfileRuntime = (
   );
 };
 
+const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
+  const bindSession = async (): Promise<void> => {
+    const session = runtime.session;
+    await session.bindExtensions({
+      mode: "print",
+      commandContextActions: {
+        waitForIdle: () => session.waitForIdle(),
+        newSession: async (options) => runtime.newSession(options),
+        fork: async (entryId, options) => {
+          const result = await runtime.fork(entryId, options);
+          return { cancelled: result.cancelled };
+        },
+        navigateTree: async (targetId, options) => {
+          const result = await session.navigateTree(targetId, {
+            ...(options?.summarize === undefined ? {} : { summarize: options.summarize }),
+            ...(options?.customInstructions === undefined
+              ? {}
+              : { customInstructions: options.customInstructions }),
+            ...(options?.replaceInstructions === undefined
+              ? {}
+              : { replaceInstructions: options.replaceInstructions }),
+            ...(options?.label === undefined ? {} : { label: options.label }),
+          });
+          return { cancelled: result.cancelled };
+        },
+        switchSession: (sessionPath, options) => runtime.switchSession(sessionPath, options),
+        reload: () => session.reload(),
+      },
+      onError: (error) => {
+        console.error(`Extension error (${error.extensionPath}): ${error.error}`);
+      },
+    });
+  };
+
+  runtime.setRebindSession(bindSession);
+  await bindSession();
+};
+
+const promptForAssistantText = (runtime: AgentSessionRuntime, text: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const session = runtime.session;
+    let assistantText = "";
+    let assistantError: string | undefined;
+    let finished = false;
+
+    const completeAssistant = () => {
+      if (assistantError !== undefined) {
+        reject(new Error(assistantError));
+      } else {
+        resolve(assistantText);
+      }
+    };
+
+    const finish = (complete: () => void) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      unsubscribe();
+      complete();
+    };
+
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        assistantText = event.message.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("");
+        assistantError =
+          event.message.stopReason === "error" || event.message.stopReason === "aborted"
+            ? (event.message.errorMessage ?? `Request ${event.message.stopReason}`)
+            : undefined;
+      }
+
+      if (event.type === "agent_settled") {
+        finish(completeAssistant);
+      }
+    });
+
+    void session.prompt(text).then(
+      () => {
+        if (session.isIdle) {
+          finish(completeAssistant);
+        }
+      },
+      (cause: unknown) => {
+        finish(() => reject(cause));
+      },
+    );
+  });
+
+export const openChat = (
+  target: ProfileTarget,
+  context: ChatContext,
+  sessionDirectory: string,
+): Effect.Effect<ChatHandle, ZiggyAgentError> =>
+  Effect.gen(function* () {
+    const soulPath = yield* requireSoul(target.path);
+    const runtime = yield* createProfileRuntime(
+      target.path,
+      soulPath,
+      SessionManager.continueRecent(target.path, sessionDirectory),
+      context,
+      "memory-only",
+    );
+    const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
+
+    if (runtime.modelFallbackMessage !== undefined) {
+      yield* dispose.pipe(Effect.catch(() => Effect.void));
+      return yield* new ProviderConfigError({
+        profilePath: target.path,
+        operation: "select model",
+        message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
+        cause: new Error(runtime.modelFallbackMessage),
+      });
+    }
+
+    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime)).pipe(
+      Effect.tapError(() => dispose.pipe(Effect.catch(() => Effect.void))),
+    );
+
+    return {
+      prompt: (text) =>
+        piPromise(target.path, "call provider", () => promptForAssistantText(runtime, text)),
+      dispose,
+    };
+  });
+
 export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
@@ -421,4 +560,4 @@ export const openTui = (
     return 0;
   });
 
-export const PiAgentLive = Layer.succeed(PiAgent, { askOnce, openTui });
+export const PiAgentLive = Layer.succeed(PiAgent, { askOnce, openTui, openChat });

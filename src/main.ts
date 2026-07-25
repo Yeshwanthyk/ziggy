@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import { BunRuntime } from "@effect/platform-bun";
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Runtime } from "effect";
 import { PiAgentLive } from "./adapters/pi/pi-agent";
+import { TelegramApiError } from "./adapters/telegram/api";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
+import { Gateway, GatewayLive, loadGatewayConfig } from "./application/gateway";
 import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
 import {
   ProfileNotInitialized,
@@ -18,6 +20,7 @@ import {
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
+import { GatewayConfigError } from "./domain/telegram";
 
 const usage = `ziggy — a folder that is an assistant
 
@@ -25,6 +28,7 @@ usage:
   ziggy init <name|path>      create a profile (SOUL.md)
   ziggy <name|path>           open the profile in the TUI
   ziggy run [-c] <name|path> <prompt>   one-shot answer against the profile
+  ziggy gateway <name|path>   run the resident Telegram gateway
   ziggy profiles              list known profiles`;
 
 const command = process.argv[2];
@@ -69,9 +73,12 @@ const formatAgentError = (error: ZiggyAgentError): string => {
   return "provider operation failed";
 };
 
+const formatGatewayError = (error: GatewayConfigError | TelegramApiError): string => error.message;
+
 const program = Effect.gen(function* () {
   const profiles = yield* Profiles;
   const agent = yield* ZiggyAgent;
+  const gateway = yield* Gateway;
 
   switch (command) {
     case "init": {
@@ -124,6 +131,16 @@ const program = Effect.gen(function* () {
       process.exitCode = exitCode;
       return;
     }
+    case "gateway": {
+      const argument = process.argv[3];
+      if (argument === undefined) {
+        return yield* fail("usage: ziggy gateway <name|path>");
+      }
+
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      const config = yield* loadGatewayConfig(target);
+      return yield* gateway.runLoop(target, config);
+    }
     case undefined:
       console.log(usage);
       process.exitCode = 1;
@@ -135,14 +152,37 @@ const program = Effect.gen(function* () {
       return;
   }
 }).pipe(
-  Effect.catch((error: ProfileError | ZiggyAgentError) =>
+  Effect.catch((error: ProfileError | ZiggyAgentError | GatewayConfigError | TelegramApiError) =>
     fail(
       error instanceof ProfileFileSystemError || error instanceof ProfileTargetNotDirectory
         ? formatProfileError(error)
-        : formatAgentError(error),
+        : error instanceof GatewayConfigError || error instanceof TelegramApiError
+          ? formatGatewayError(error)
+          : formatAgentError(error),
     ),
   ),
-  Effect.provide(Layer.merge(ProfilesLive, ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+  Effect.provide(
+    Layer.merge(
+      ProfilesLive,
+      Layer.merge(
+        ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
+        GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+      ),
+    ),
+  ),
 );
 
-BunRuntime.runMain(program, { disableErrorReporting: true });
+BunRuntime.runMain(program, {
+  disableErrorReporting: true,
+  ...(command === "gateway"
+    ? {
+        teardown: (exit, onExit) => {
+          if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+            onExit(0);
+          } else {
+            Runtime.defaultTeardown(exit, onExit);
+          }
+        },
+      }
+    : {}),
+});
