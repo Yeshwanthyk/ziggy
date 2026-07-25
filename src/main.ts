@@ -6,6 +6,7 @@ import {
   ProfileTargetNotDirectory,
   resolveProfileTarget,
   resolveProfilesDirectory,
+  resolveProfilesRegistry,
 } from "./domain/profile";
 import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
 
@@ -15,7 +16,7 @@ usage:
   ziggy init <name|path>      create a profile (SOUL.md)
   ziggy <name|path>           open the profile in the TUI
   ziggy run <name|path> <prompt>   one-shot answer against the profile
-  ziggy profiles              list profiles in ~/.ziggy/profiles`;
+  ziggy profiles              list known profiles`;
 
 const command = process.argv[2];
 
@@ -60,6 +61,9 @@ const program = Effect.gen(function* () {
       }
 
       const result = yield* profiles.initProfile(resolveProfileTarget(argument, resolutionOptions));
+      yield* profiles
+        .registerProfile(resolveProfilesRegistry(resolutionOptions), result.path)
+        .pipe(Effect.ignore);
       console.log(
         result.created
           ? `created profile at ${result.path}`
@@ -68,7 +72,10 @@ const program = Effect.gen(function* () {
       return;
     }
     case "profiles": {
-      const listings = yield* profiles.listProfiles(resolveProfilesDirectory(resolutionOptions));
+      const listings = yield* profiles.listProfiles(
+        resolveProfilesDirectory(resolutionOptions),
+        resolveProfilesRegistry(resolutionOptions),
+      );
       if (listings.length === 0) {
         console.log("no profiles yet — try: ziggy init <name>");
         return;

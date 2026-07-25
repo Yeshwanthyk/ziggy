@@ -50,6 +50,9 @@ export const resolveZiggyHome = (options: ProfileResolutionOptions): string =>
 export const resolveProfilesDirectory = (options: ProfileResolutionOptions): string =>
   path.join(resolveZiggyHome(options), "profiles");
 
+export const resolveProfilesRegistry = (options: ProfileResolutionOptions): string =>
+  path.join(resolveZiggyHome(options), "profiles.list");
+
 export const resolveProfileTarget = (
   value: string,
   options: ProfileResolutionOptions,

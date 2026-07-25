@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer } from "effect";
 import {
@@ -22,8 +22,13 @@ export type ProfileError = ProfileFileSystemError | ProfileTargetNotDirectory;
 
 export interface ProfilesShape {
   readonly initProfile: (target: ProfileTarget) => Effect.Effect<InitializedProfile, ProfileError>;
+  readonly registerProfile: (
+    registryPath: string,
+    profilePath: string,
+  ) => Effect.Effect<void, ProfileFileSystemError>;
   readonly listProfiles: (
     profilesDirectory: string,
+    registryPath: string,
   ) => Effect.Effect<ReadonlyArray<ProfileListing>, ProfileFileSystemError>;
 }
 
@@ -75,6 +80,17 @@ const pathExists = (targetPath: string) =>
     ),
   );
 
+const readRegistry = (registryPath: string) =>
+  Effect.tryPromise({
+    try: () => readFile(registryPath, "utf8"),
+    catch: (cause) => fileSystemError("read", registryPath, cause),
+  }).pipe(
+    Effect.catchIf(
+      (error) => error.code === "ENOENT",
+      () => Effect.succeed(""),
+    ),
+  );
+
 const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, ProfileError> =>
   Effect.gen(function* () {
     const targetStatus = yield* statPath(target.path).pipe(
@@ -108,10 +124,41 @@ const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, P
     return { path: target.path, created: true };
   });
 
+const registerProfile = (
+  registryPath: string,
+  profilePath: string,
+): Effect.Effect<void, ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    const registryDirectory = path.dirname(registryPath);
+    yield* Effect.tryPromise({
+      try: () => mkdir(registryDirectory, { recursive: true }),
+      catch: (cause) => fileSystemError("create directory", registryDirectory, cause),
+    });
+
+    const registry = yield* readRegistry(registryPath);
+    const entries = registry.split("\n").filter((entry) => entry.length > 0);
+
+    if (entries.includes(profilePath)) {
+      return;
+    }
+
+    const prefix = registry.length > 0 && !registry.endsWith("\n") ? "\n" : "";
+    yield* Effect.tryPromise({
+      try: () => appendFile(registryPath, `${prefix}${profilePath}\n`, "utf8"),
+      catch: (cause) => fileSystemError("append", registryPath, cause),
+    });
+  });
+
 const listProfiles = (
   profilesDirectory: string,
+  registryPath: string,
 ): Effect.Effect<ReadonlyArray<ProfileListing>, ProfileFileSystemError> =>
   Effect.gen(function* () {
+    const registryEntries = (yield* readRegistry(registryPath))
+      .split("\n")
+      .filter((entry) => path.isAbsolute(entry))
+      .map((entry) => path.resolve(entry));
+
     const entries = yield* Effect.tryPromise({
       try: () => readdir(profilesDirectory, { withFileTypes: true }),
       catch: (cause) => fileSystemError("list", profilesDirectory, cause),
@@ -122,21 +169,44 @@ const listProfiles = (
       ),
     );
 
-    const directories = entries
+    const directoryPaths = entries
       .filter((entry) => entry.isDirectory())
-      .sort((left, right) => left.name.localeCompare(right.name));
+      .map((entry) => path.resolve(profilesDirectory, entry.name));
+    const profilePaths = [...new Set([...registryEntries, ...directoryPaths])];
 
-    const listings = yield* Effect.forEach(directories, (entry) => {
-      const profilePath = path.resolve(profilesDirectory, entry.name);
-      return pathExists(path.join(profilePath, "SOUL.md")).pipe(
-        Effect.map((hasSoul) => (hasSoul ? { name: entry.name, path: profilePath } : undefined)),
+    const listings = yield* Effect.forEach(profilePaths, (profilePath) =>
+      pathExists(path.join(profilePath, "SOUL.md")).pipe(
+        Effect.map((hasSoul) => ({
+          hasSoul,
+          listing: hasSoul ? { name: path.basename(profilePath), path: profilePath } : undefined,
+        })),
+      ),
+    );
+
+    const validRegistryEntries = registryEntries.filter((registryEntry) =>
+      listings.some(({ hasSoul, listing }) => hasSoul && listing?.path === registryEntry),
+    );
+    if (validRegistryEntries.length !== registryEntries.length) {
+      yield* Effect.tryPromise({
+        try: () =>
+          writeFile(
+            registryPath,
+            validRegistryEntries.length === 0 ? "" : `${validRegistryEntries.join("\n")}\n`,
+            "utf8",
+          ),
+        catch: (cause) => fileSystemError("write", registryPath, cause),
+      });
+    }
+
+    return listings
+      .flatMap(({ listing }) => (listing === undefined ? [] : [listing]))
+      .sort(
+        (left, right) => left.name.localeCompare(right.name) || left.path.localeCompare(right.path),
       );
-    });
-
-    return listings.filter((listing): listing is ProfileListing => listing !== undefined);
   });
 
 export const ProfilesLive = Layer.succeed(Profiles, {
   initProfile,
+  registerProfile,
   listProfiles,
 });
