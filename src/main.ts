@@ -1,6 +1,15 @@
 import { homedir } from "node:os";
 import { BunRuntime } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import { PiAgentLive } from "./adapters/pi/pi-agent";
+import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
+import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
+import {
+  ProfileNotInitialized,
+  ProviderCallError,
+  ProviderConfigError,
+  type ZiggyAgentError,
+} from "./domain/agent";
 import {
   ProfileFileSystemError,
   ProfileTargetNotDirectory,
@@ -8,7 +17,6 @@ import {
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
-import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
 
 const usage = `ziggy — a folder that is an assistant
 
@@ -50,8 +58,21 @@ const formatProfileError = (error: ProfileError): string => {
   return "profile operation failed";
 };
 
+const formatAgentError = (error: ZiggyAgentError): string => {
+  if (error instanceof ProfileNotInitialized) {
+    return error.message;
+  }
+
+  if (error instanceof ProviderConfigError || error instanceof ProviderCallError) {
+    return error.message;
+  }
+
+  return "provider operation failed";
+};
+
 const program = Effect.gen(function* () {
   const profiles = yield* Profiles;
+  const agent = yield* ZiggyAgent;
 
   switch (command) {
     case "init": {
@@ -86,8 +107,20 @@ const program = Effect.gen(function* () {
       }
       return;
     }
-    case "run":
-      return yield* notImplemented(command);
+    case "run": {
+      const argument = process.argv[3];
+      const prompt = process.argv.slice(4).join(" ");
+      if (argument === undefined || prompt.trim().length === 0) {
+        return yield* fail("usage: ziggy run <name|path> <prompt...>");
+      }
+
+      const exitCode = yield* agent.runOnce(
+        resolveProfileTarget(argument, resolutionOptions),
+        prompt,
+      );
+      process.exitCode = exitCode;
+      return;
+    }
     case undefined:
       console.log(usage);
       process.exitCode = 1;
@@ -96,8 +129,14 @@ const program = Effect.gen(function* () {
       return yield* notImplemented(command);
   }
 }).pipe(
-  Effect.catch((error: ProfileError) => fail(formatProfileError(error))),
-  Effect.provide(ProfilesLive),
+  Effect.catch((error: ProfileError | ZiggyAgentError) =>
+    fail(
+      error instanceof ProfileFileSystemError || error instanceof ProfileTargetNotDirectory
+        ? formatProfileError(error)
+        : formatAgentError(error),
+    ),
+  ),
+  Effect.provide(Layer.merge(ProfilesLive, ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
 );
 
 BunRuntime.runMain(program, { disableErrorReporting: true });
