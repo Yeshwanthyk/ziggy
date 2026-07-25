@@ -16,3 +16,5 @@ Chronological; newest at the bottom. One entry per logical block of work.
 **Scouts dispatched** (codex gpt-5.6-luna high): Pi SDK embed surface → `docs/research/pi-sdk-surface.md`; Starman reuse survey → `docs/research/starman-reuse.md`.
 
 **Operational:** e2e test profiles live under `/Users/yesh/Documents/personal/dump`. Implementation subagents: codex gpt-5.6-sol medium. Build order: scaffold → Profile → Provider → Session → Memory → Extension → Gateway+Telegram → Automation, one commit per logical block.
+
+**Scaffold shipped** (codex sol). `package.json` (exact pins), `tsconfig.json` (strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess), `src/main.ts` usage stub, `.gitignore`. Gotchas found at install: `@effect/tsgo` ships an `effect-tsgo` patcher CLI, not a `tsgo` bin — typescript@7.0.2 itself provides native `tsc`; script is `tsc --noEmit` and `effect-tsgo patch` layers Effect LS diagnostics onto the binary (re-run after fresh installs). Bun blocked protobufjs/@google/genai lifecycle scripts (transitive from Pi's gemini provider) — harmless. typecheck/lint/fmt all green.

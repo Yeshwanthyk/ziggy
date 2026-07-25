@@ -1,0 +1,25 @@
+{
+  "name": "ziggy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "ziggy": "./src/main.ts" },
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
+    "fmt": "oxfmt src"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "effect": "4.0.0-beta.99",
+    "@effect/platform-bun": "4.0.0-beta.99"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.21.0",
+    "typescript": "7.0.2",
+    "oxlint": "1.75.0",
+    "oxfmt": "0.60.0",
+    "bun-types": "1.3.14"
+  }
+}
