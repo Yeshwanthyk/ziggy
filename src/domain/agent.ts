@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { MemoryIdInvalid } from "./memory";
 
 export class ProfileNotInitialized extends Schema.TaggedErrorClass<ProfileNotInitialized>()(
   "ProfileNotInitialized",
@@ -28,4 +29,8 @@ export class ProviderCallError extends Schema.TaggedErrorClass<ProviderCallError
   },
 ) {}
 
-export type ZiggyAgentError = ProfileNotInitialized | ProviderConfigError | ProviderCallError;
+export type ZiggyAgentError =
+  | ProfileNotInitialized
+  | ProviderConfigError
+  | ProviderCallError
+  | MemoryIdInvalid;

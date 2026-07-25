@@ -10,6 +10,7 @@ import {
   ProviderConfigError,
   type ZiggyAgentError,
 } from "./domain/agent";
+import { MemoryIdInvalid } from "./domain/memory";
 import {
   ProfileFileSystemError,
   ProfileTargetNotDirectory,
@@ -58,6 +59,10 @@ const formatAgentError = (error: ZiggyAgentError): string => {
   }
 
   if (error instanceof ProviderConfigError || error instanceof ProviderCallError) {
+    return error.message;
+  }
+
+  if (error instanceof MemoryIdInvalid) {
     return error.message;
   }
 
@@ -114,6 +119,7 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(argument, resolutionOptions),
         prompt,
         continueSession,
+        { kind: "local" },
       );
       process.exitCode = exitCode;
       return;
@@ -123,7 +129,9 @@ const program = Effect.gen(function* () {
       process.exitCode = 1;
       return;
     default:
-      process.exitCode = yield* agent.openTui(resolveProfileTarget(command, resolutionOptions));
+      process.exitCode = yield* agent.openTui(resolveProfileTarget(command, resolutionOptions), {
+        kind: "local",
+      });
       return;
   }
 }).pipe(

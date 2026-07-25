@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { PiAgent } from "../adapters/pi/pi-agent";
 import type { ZiggyAgentError } from "../domain/agent";
+import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 
 export interface ZiggyAgentShape {
@@ -8,8 +9,12 @@ export interface ZiggyAgentShape {
     target: ProfileTarget,
     prompt: string,
     continueSession: boolean,
+    context: ChatContext,
   ) => Effect.Effect<number, ZiggyAgentError>;
-  readonly openTui: (target: ProfileTarget) => Effect.Effect<number, ZiggyAgentError>;
+  readonly openTui: (
+    target: ProfileTarget,
+    context: ChatContext,
+  ) => Effect.Effect<number, ZiggyAgentError>;
 }
 
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentShape>()(
@@ -21,9 +26,13 @@ export const ZiggyAgentLive = Layer.effect(
   Effect.gen(function* () {
     const piAgent = yield* PiAgent;
     return {
-      runOnce: (target: ProfileTarget, prompt: string, continueSession: boolean) =>
-        piAgent.askOnce(target, prompt, continueSession),
-      openTui: (target: ProfileTarget) => piAgent.openTui(target),
+      runOnce: (
+        target: ProfileTarget,
+        prompt: string,
+        continueSession: boolean,
+        context: ChatContext,
+      ) => piAgent.askOnce(target, prompt, continueSession, context),
+      openTui: (target: ProfileTarget, context: ChatContext) => piAgent.openTui(target, context),
     };
   }),
 );
