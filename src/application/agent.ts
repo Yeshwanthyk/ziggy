@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { PiAgent, type ChatHandle } from "../adapters/pi/pi-agent";
+import { PiAgent, type ChatHandle, type ChatSessionMode } from "../adapters/pi/pi-agent";
 import type { ZiggyAgentError } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
@@ -21,6 +21,7 @@ export interface ZiggyAgentShape {
     target: ProfileTarget,
     context: ChatContext,
     sessionDirectory: string,
+    sessionMode?: ChatSessionMode,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
 }
 
@@ -40,8 +41,12 @@ export const ZiggyAgentLive = Layer.effect(
         context: ChatContext,
       ) => piAgent.askOnce(target, prompt, continueSession, context),
       openTui: (target: ProfileTarget, context: ChatContext) => piAgent.openTui(target, context),
-      openChat: (target: ProfileTarget, context: ChatContext, sessionDirectory: string) =>
-        piAgent.openChat(target, context, sessionDirectory),
+      openChat: (
+        target: ProfileTarget,
+        context: ChatContext,
+        sessionDirectory: string,
+        sessionMode?: ChatSessionMode,
+      ) => piAgent.openChat(target, context, sessionDirectory, sessionMode),
     };
   }),
 );

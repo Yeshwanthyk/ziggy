@@ -129,7 +129,7 @@ const normalizeUpdate = (
   return undefined;
 };
 
-const chunkMessage = (text: string): ReadonlyArray<string> => {
+export const telegramMessageChunks = (text: string): ReadonlyArray<string> => {
   const characters = [...text];
   const chunks: Array<string> = [];
   for (let offset = 0; offset < characters.length; offset += TELEGRAM_MESSAGE_LIMIT) {
@@ -211,7 +211,7 @@ const makeRunLoop =
               }
 
               const reply = yield* chatState.handle.prompt(message.text);
-              for (const chunk of chunkMessage(reply)) {
+              for (const chunk of telegramMessageChunks(reply)) {
                 yield* retryTelegram(() => sendMessage(config.botToken, message.chatId, chunk));
               }
               console.log(

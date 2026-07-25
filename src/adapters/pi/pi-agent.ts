@@ -44,6 +44,7 @@ export interface PiAgentShape {
     target: ProfileTarget,
     context: ChatContext,
     sessionDirectory: string,
+    sessionMode?: ChatSessionMode,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
 }
 
@@ -53,6 +54,8 @@ export interface ChatHandle {
   readonly prompt: (text: string) => Effect.Effect<string, ZiggyAgentError>;
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
+
+export type ChatSessionMode = "continue" | "fresh";
 
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
@@ -503,13 +506,16 @@ export const openChat = (
   target: ProfileTarget,
   context: ChatContext,
   sessionDirectory: string,
+  sessionMode: ChatSessionMode = "continue",
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const runtime = yield* createProfileRuntime(
       target.path,
       soulPath,
-      SessionManager.continueRecent(target.path, sessionDirectory),
+      sessionMode === "continue"
+        ? SessionManager.continueRecent(target.path, sessionDirectory)
+        : SessionManager.create(target.path, sessionDirectory),
       context,
       "memory-only",
     );

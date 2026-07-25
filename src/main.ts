@@ -4,8 +4,14 @@ import { Cause, Effect, Exit, Layer, Runtime } from "effect";
 import { PiAgentLive } from "./adapters/pi/pi-agent";
 import { TelegramApiError } from "./adapters/telegram/api";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
+import { Automations, AutomationsLive, type AutomationError } from "./application/automations";
 import { Gateway, GatewayLive, loadGatewayConfig } from "./application/gateway";
 import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
+import {
+  AutomationFileSystemError,
+  AutomationInvalid,
+  AutomationNotFound,
+} from "./domain/automation";
 import {
   ProfileNotInitialized,
   ProviderCallError,
@@ -28,6 +34,7 @@ usage:
   ziggy init <name|path>      create a profile (SOUL.md)
   ziggy <name|path>           open the profile in the TUI
   ziggy run [-c] <name|path> <prompt>   one-shot answer against the profile
+  ziggy wake <name|path> <automation-id>   manually wake an automation
   ziggy gateway <name|path>   run the resident Telegram gateway
   ziggy profiles              list known profiles`;
 
@@ -75,9 +82,22 @@ const formatAgentError = (error: ZiggyAgentError): string => {
 
 const formatGatewayError = (error: GatewayConfigError | TelegramApiError): string => error.message;
 
+const formatAutomationError = (error: AutomationError): string => {
+  if (
+    error instanceof AutomationInvalid ||
+    error instanceof AutomationNotFound ||
+    error instanceof AutomationFileSystemError
+  ) {
+    return error.message;
+  }
+
+  return error instanceof TelegramApiError ? formatGatewayError(error) : formatAgentError(error);
+};
+
 const program = Effect.gen(function* () {
   const profiles = yield* Profiles;
   const agent = yield* ZiggyAgent;
+  const automations = yield* Automations;
   const gateway = yield* Gateway;
 
   switch (command) {
@@ -131,6 +151,16 @@ const program = Effect.gen(function* () {
       process.exitCode = exitCode;
       return;
     }
+    case "wake": {
+      const argument = process.argv[3];
+      const automationId = process.argv[4];
+      if (argument === undefined || automationId === undefined) {
+        return yield* fail("usage: ziggy wake <name|path> <automation-id>");
+      }
+
+      yield* automations.wake(resolveProfileTarget(argument, resolutionOptions), automationId);
+      return;
+    }
     case "gateway": {
       const argument = process.argv[3];
       if (argument === undefined) {
@@ -152,21 +182,36 @@ const program = Effect.gen(function* () {
       return;
   }
 }).pipe(
-  Effect.catch((error: ProfileError | ZiggyAgentError | GatewayConfigError | TelegramApiError) =>
-    fail(
-      error instanceof ProfileFileSystemError || error instanceof ProfileTargetNotDirectory
-        ? formatProfileError(error)
-        : error instanceof GatewayConfigError || error instanceof TelegramApiError
-          ? formatGatewayError(error)
-          : formatAgentError(error),
-    ),
+  Effect.catch(
+    (
+      error:
+        | ProfileError
+        | ZiggyAgentError
+        | GatewayConfigError
+        | TelegramApiError
+        | AutomationError,
+    ) =>
+      fail(
+        error instanceof ProfileFileSystemError || error instanceof ProfileTargetNotDirectory
+          ? formatProfileError(error)
+          : error instanceof AutomationInvalid ||
+              error instanceof AutomationNotFound ||
+              error instanceof AutomationFileSystemError
+            ? formatAutomationError(error)
+            : error instanceof GatewayConfigError || error instanceof TelegramApiError
+              ? formatGatewayError(error)
+              : formatAgentError(error),
+      ),
   ),
   Effect.provide(
     Layer.merge(
       ProfilesLive,
       Layer.merge(
         ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
-        GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+        Layer.merge(
+          GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+          AutomationsLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+        ),
       ),
     ),
   ),
