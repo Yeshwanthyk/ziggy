@@ -23,7 +23,7 @@ const usage = `ziggy — a folder that is an assistant
 usage:
   ziggy init <name|path>      create a profile (SOUL.md)
   ziggy <name|path>           open the profile in the TUI
-  ziggy run <name|path> <prompt>   one-shot answer against the profile
+  ziggy run [-c] <name|path> <prompt>   one-shot answer against the profile
   ziggy profiles              list known profiles`;
 
 const command = process.argv[2];
@@ -37,12 +37,6 @@ const resolutionOptions = {
 const fail = (message: string) =>
   Effect.sync(() => {
     console.error(message);
-    process.exitCode = 1;
-  });
-
-const notImplemented = (name: string) =>
-  Effect.sync(() => {
-    console.log(`not implemented: ${name}`);
     process.exitCode = 1;
   });
 
@@ -108,15 +102,18 @@ const program = Effect.gen(function* () {
       return;
     }
     case "run": {
-      const argument = process.argv[3];
-      const prompt = process.argv.slice(4).join(" ");
+      const runArguments = process.argv.slice(3);
+      const continueSession = runArguments[0] === "-c" || runArguments[0] === "--continue";
+      const argument = runArguments[continueSession ? 1 : 0];
+      const prompt = runArguments.slice(continueSession ? 2 : 1).join(" ");
       if (argument === undefined || prompt.trim().length === 0) {
-        return yield* fail("usage: ziggy run <name|path> <prompt...>");
+        return yield* fail("usage: ziggy run [-c] <name|path> <prompt...>");
       }
 
       const exitCode = yield* agent.runOnce(
         resolveProfileTarget(argument, resolutionOptions),
         prompt,
+        continueSession,
       );
       process.exitCode = exitCode;
       return;
@@ -126,7 +123,8 @@ const program = Effect.gen(function* () {
       process.exitCode = 1;
       return;
     default:
-      return yield* notImplemented(command);
+      process.exitCode = yield* agent.openTui(resolveProfileTarget(command, resolutionOptions));
+      return;
   }
 }).pipe(
   Effect.catch((error: ProfileError | ZiggyAgentError) =>

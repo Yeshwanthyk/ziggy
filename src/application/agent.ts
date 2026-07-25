@@ -7,7 +7,9 @@ export interface ZiggyAgentShape {
   readonly runOnce: (
     target: ProfileTarget,
     prompt: string,
+    continueSession: boolean,
   ) => Effect.Effect<number, ZiggyAgentError>;
+  readonly openTui: (target: ProfileTarget) => Effect.Effect<number, ZiggyAgentError>;
 }
 
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentShape>()(
@@ -19,7 +21,9 @@ export const ZiggyAgentLive = Layer.effect(
   Effect.gen(function* () {
     const piAgent = yield* PiAgent;
     return {
-      runOnce: (target: ProfileTarget, prompt: string) => piAgent.askOnce(target, prompt),
+      runOnce: (target: ProfileTarget, prompt: string, continueSession: boolean) =>
+        piAgent.askOnce(target, prompt, continueSession),
+      openTui: (target: ProfileTarget) => piAgent.openTui(target),
     };
   }),
 );
