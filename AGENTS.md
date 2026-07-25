@@ -26,6 +26,7 @@ Dependencies point inward: faces -> application -> domain.
 - Bun `1.3.13`
 
 Use `bun run typecheck`, `bun run lint`, and `bun run fmt`.
+`bun run check` — fmt + lint (incl. tooling/oxlint Effect rules) + typecheck; must pass before commit.
 
 # Effect practices
 

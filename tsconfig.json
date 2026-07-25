@@ -10,7 +10,18 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "ignoreEffectWarningsInTscExitCode": true,
+        "diagnosticSeverity": {
+          "floatingEffect": "error",
+          "missingReturnYieldStar": "error",
+          "missingStarInYieldEffectGen": "error"
+        }
+      }
+    ]
   },
   "include": ["src"]
 }

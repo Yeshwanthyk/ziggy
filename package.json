@@ -8,7 +8,8 @@
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
-    "fmt": "oxfmt src"
+    "fmt": "oxfmt src",
+    "check": "oxfmt --check src && bun run lint && bun run typecheck"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.82.0",
