@@ -82,6 +82,34 @@ describe("Profile skill curation", () => {
     );
   });
 
+  test("permits exactly one concurrent create without clobbering it", async () => {
+    const profilePath = await makeProfile();
+    const bodies = Array.from({ length: 16 }, (_, index) =>
+      skillBody("contended-skill", `Contender ${index}.`),
+    );
+
+    const results = await Promise.allSettled(
+      bodies.map((body) => writeProfileSkill(profilePath, "contended-skill", body)),
+    );
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(15);
+    expect(
+      results
+        .filter((result) => result.status === "rejected")
+        .map((result) => String(result.reason)),
+    ).toEqual(
+      Array.from(
+        { length: 15 },
+        () =>
+          'Error: Profile skill "contended-skill" already exists; set replace:true to replace it',
+      ),
+    );
+    expect(bodies).toContain(
+      await readFile(join(profilePath, "skills/contended-skill/SKILL.md"), "utf8"),
+    );
+  });
+
   test("replaces an existing Profile skill only when explicitly requested", async () => {
     const profilePath = await makeProfile();
     await seedSkill(profilePath, "existing-skill", skillBody("existing-skill", "Original."));

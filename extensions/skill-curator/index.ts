@@ -2,7 +2,7 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- The Pi boundary validates filesystem input and reports stable tool failures. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readdir, rename, rm } from "node:fs/promises";
+import { link, mkdir, open, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -151,7 +151,7 @@ const profileSkillExists = async (profilePath: string, name: string): Promise<bo
   }
 };
 
-const atomicWrite = async (targetPath: string, body: string): Promise<void> => {
+const atomicWrite = async (targetPath: string, body: string, replace: boolean): Promise<void> => {
   const temporaryPath = join(dirname(targetPath), `.${randomUUID()}.skill-curator.tmp`);
   let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
@@ -160,7 +160,16 @@ const atomicWrite = async (targetPath: string, body: string): Promise<void> => {
     await temporaryFile.sync();
     await temporaryFile.close();
     temporaryFile = undefined;
-    await rename(temporaryPath, targetPath);
+    if (replace) {
+      await rename(temporaryPath, targetPath);
+    } else {
+      await link(temporaryPath, targetPath);
+      try {
+        await rm(temporaryPath);
+      } catch {
+        // The target is already published; a stale temporary link must not turn success into failure.
+      }
+    }
   } catch (cause: unknown) {
     if (temporaryFile !== undefined) {
       try {
@@ -185,14 +194,18 @@ export const writeProfileSkill = async (
   replace = false,
 ): Promise<{ readonly name: string; readonly action: "created" | "replaced" }> => {
   validateProfileSkillBody(name, body);
-  const exists = await profileSkillExists(profilePath, name);
-  if (exists && !replace) {
-    throw new Error(`Profile skill "${name}" already exists; set replace:true to replace it`);
-  }
+  const exists = replace ? await profileSkillExists(profilePath, name) : false;
 
   const targetPath = skillFilePath(profilePath, name);
   await mkdir(join(profilePath, "skills", name), { recursive: true });
-  await atomicWrite(targetPath, body);
+  try {
+    await atomicWrite(targetPath, body, replace);
+  } catch (cause: unknown) {
+    if (!replace && errorCode(cause) === "EEXIST") {
+      throw new Error(`Profile skill "${name}" already exists; set replace:true to replace it`);
+    }
+    throw cause;
+  }
   return { name, action: exists ? "replaced" : "created" };
 };
 
