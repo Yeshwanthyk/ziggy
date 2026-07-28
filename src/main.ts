@@ -25,21 +25,6 @@ import {
   resolveProfilesRegistry,
 } from "./domain/profile";
 
-const usage = `ziggy — a folder that is an assistant
-
-usage:
-  ziggy init <name|path>      create a profile (SOUL.md)
-  ziggy auth <name|path> [provider] [--type api_key|oauth]   show or configure provider auth
-  ziggy <name|path>           open the profile in the TUI
-  ziggy run [-c] <name|path> <prompt>   one-shot answer against the profile
-  ziggy wake <name|path> <automation-id>   manually wake an automation
-  ziggy gateway <name|path>   run the resident Telegram gateway
-  ziggy discord <name|path>   run the resident Discord gateway
-  ziggy slack <name|path>   run the resident Slack gateway
-  ziggy skills list <name|path>   list installed and available Merlin skills
-  ziggy skills add <name|path> <id|path> [--force]   install a Merlin skill
-  ziggy profiles              list known profiles`;
-
 const command = process.argv[2];
 
 const resolutionOptions = {
@@ -265,8 +250,9 @@ const program = Effect.gen(function* () {
       return yield* slackGateway.runLoop(target, config);
     }
     case undefined:
-      console.log(usage);
-      process.exitCode = 1;
+      process.exitCode = yield* agent.openTui(resolveProfileTarget(".", resolutionOptions), {
+        kind: "local",
+      });
       return;
     default:
       process.exitCode = yield* agent.openTui(resolveProfileTarget(command, resolutionOptions), {
