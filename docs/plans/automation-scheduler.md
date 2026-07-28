@@ -15,6 +15,10 @@ Pi session only when admitted, prints the answer, and optionally sends it to Tel
 Build this after the Profile lease. The lease gives one resident process authority to claim
 scheduled work.
 
+Before this slice, fix the current manual-wake false success: when an automation declares
+`telegram-chat`, missing or invalid Telegram configuration must return a typed delivery failure
+after the local reply is printed. That change needs no retry or delivery state.
+
 ## Slice
 
 1. Add one optional `cron:` frontmatter field and decode it with Effect `Cron`.

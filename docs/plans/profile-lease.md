@@ -1,6 +1,6 @@
 # Profile lease
 
-## Why this is next
+## Why this slice exists
 
 Telegram, Discord, and Slack can currently run as separate resident processes for the same
 Profile. Local TUI and `run` can also open while a gateway is resident. Their session files are
