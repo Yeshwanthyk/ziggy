@@ -119,7 +119,7 @@ export const normalizeSlackMessage = (
     return {
       chatKey: `user-${message.userId}`,
       channel: message.channel,
-      context: { kind: "user", userId: message.userId },
+      context: { kind: "user", userId: "owner" },
       text: message.text,
       threadTs: message.threadTs,
     };

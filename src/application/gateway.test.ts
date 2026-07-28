@@ -4,7 +4,12 @@ import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { TelegramUpdate } from "../adapters/telegram/api";
 import type { ZiggyAgentShape } from "./agent";
-import { makeTelegramGateway, nextTelegramOffset, type TelegramTransport } from "./gateway";
+import {
+  makeTelegramGateway,
+  nextTelegramOffset,
+  normalizeTelegramUpdate,
+  type TelegramTransport,
+} from "./gateway";
 
 const update = (updateId: number, text: string): TelegramUpdate => ({
   update_id: updateId,
@@ -14,6 +19,43 @@ const update = (updateId: number, text: string): TelegramUpdate => ({
     chat: { id: 7, type: "private" },
     text,
   },
+});
+
+describe("Telegram gateway boundary", () => {
+  test("maps an owner DM to owner memory without changing its chat route", () => {
+    expect(normalizeTelegramUpdate(update(1, "hello"), 7)).toEqual({
+      chatKey: "user-7",
+      chatId: 7,
+      context: { kind: "user", userId: "owner" },
+      text: "hello",
+    });
+  });
+
+  test("rejects non-owner messages before Pi", () => {
+    expect(normalizeTelegramUpdate(update(1, "hello"), 8)).toBeUndefined();
+  });
+
+  test("keeps group memory channel-scoped", () => {
+    expect(
+      normalizeTelegramUpdate(
+        {
+          update_id: 1,
+          message: {
+            message_id: 1,
+            from: { id: 7 },
+            chat: { id: -42, type: "supergroup" },
+            text: "hello group",
+          },
+        },
+        7,
+      ),
+    ).toEqual({
+      chatKey: "group-tg42",
+      chatId: -42,
+      context: { kind: "group", groupId: "tg42" },
+      text: "hello group",
+    });
+  });
 });
 
 describe("Telegram gateway startup", () => {
@@ -27,9 +69,9 @@ describe("Telegram gateway startup", () => {
 
   test("drops the cold-start tail and processes the first new update once", async () => {
     const calls: Array<{ readonly offset: number; readonly timeout: number }> = [];
+    const openedChats: Array<{ readonly context: unknown; readonly sessionDirectory: string }> = [];
     const prompts: Array<string> = [];
     const replies: Array<string> = [];
-    let openedChats = 0;
     let poll = 0;
 
     await Effect.runPromise(
@@ -57,9 +99,9 @@ describe("Telegram gateway startup", () => {
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
           openTui: () => Effect.succeed(0),
-          openChat: () =>
+          openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {
-              openedChats += 1;
+              openedChats.push({ context, sessionDirectory });
               return {
                 prompt: (text: string) =>
                   Effect.sync(() => {
@@ -82,7 +124,12 @@ describe("Telegram gateway startup", () => {
       { offset: -1, timeout: 0 },
       { offset: 42, timeout: 30 },
     ]);
-    expect(openedChats).toBe(1);
+    expect(openedChats).toEqual([
+      {
+        context: { kind: "user", userId: "owner" },
+        sessionDirectory: "/tmp/ziggy-gateway-test/sessions/telegram/user-7",
+      },
+    ]);
     expect(prompts).toEqual(["new message"]);
     expect(replies).toEqual(["reply"]);
   });

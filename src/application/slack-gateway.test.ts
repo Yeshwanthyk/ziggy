@@ -20,11 +20,11 @@ const message = (overrides: Partial<SlackInboundMessage> = {}): SlackInboundMess
 });
 
 describe("Slack gateway boundary", () => {
-  test("maps an owner DM to person memory and preserves its thread", () => {
+  test("maps an owner DM to owner memory without changing its chat route or thread", () => {
     expect(normalizeSlackMessage(message({ threadTs: "0.9" }), "UBOT", "U123")).toEqual({
       chatKey: "user-U123",
       channel: "C123",
-      context: { kind: "user", userId: "U123" },
+      context: { kind: "user", userId: "owner" },
       text: "hello",
       threadTs: "0.9",
     });
@@ -33,6 +33,16 @@ describe("Slack gateway boundary", () => {
   test("rejects non-owner and bot messages", () => {
     expect(normalizeSlackMessage(message(), "UBOT", "U999")).toBeUndefined();
     expect(normalizeSlackMessage(message({ userId: "UBOT" }), "UBOT", "UBOT")).toBeUndefined();
+  });
+
+  test("keeps channel memory channel-scoped", () => {
+    expect(normalizeSlackMessage(message({ channelType: "channel" }), "UBOT", "U123")).toEqual({
+      chatKey: "group-slC123",
+      channel: "C123",
+      context: { kind: "group", groupId: "slC123" },
+      text: "hello",
+      threadTs: undefined,
+    });
   });
 
   test("chunks by Unicode code point at Slack's limit", () => {
@@ -123,7 +133,7 @@ describe("Slack gateway boundary", () => {
 
         expect(openedChats).toEqual([
           {
-            context: { kind: "user", userId: "U123" },
+            context: { kind: "user", userId: "owner" },
             sessionDirectory: "/tmp/ziggy-slack-gateway-test/sessions/slack/user-U123",
           },
         ]);

@@ -116,7 +116,7 @@ export const normalizeDiscordMessage = (
     return {
       chatKey: `user-${message.authorId}`,
       channelId: message.channelId,
-      context: { kind: "user", userId: message.authorId },
+      context: { kind: "user", userId: "owner" },
       text: message.content,
     };
   }

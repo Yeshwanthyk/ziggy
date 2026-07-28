@@ -22,11 +22,11 @@ const message = (overrides: Partial<DiscordInboundMessage> = {}): DiscordInbound
 });
 
 describe("Discord gateway boundary", () => {
-  test("maps an owner DM to person memory", () => {
+  test("maps an owner DM to owner memory without changing its chat route", () => {
     expect(normalizeDiscordMessage(message(), "123")).toEqual({
       chatKey: "user-123",
       channelId: "456",
-      context: { kind: "user", userId: "123" },
+      context: { kind: "user", userId: "owner" },
       text: "hello",
     });
   });
@@ -34,6 +34,15 @@ describe("Discord gateway boundary", () => {
   test("rejects non-owner and bot messages", () => {
     expect(normalizeDiscordMessage(message(), "999")).toBeUndefined();
     expect(normalizeDiscordMessage(message({ authorIsBot: true }), "123")).toBeUndefined();
+  });
+
+  test("keeps guild-channel memory channel-scoped", () => {
+    expect(normalizeDiscordMessage(message({ guildId: "789" }), "123")).toEqual({
+      chatKey: "group-dc456",
+      channelId: "456",
+      context: { kind: "group", groupId: "dc456" },
+      text: "hello",
+    });
   });
 
   test("chunks by Unicode code point at Discord's limit", () => {
@@ -100,7 +109,7 @@ describe("Discord gateway boundary", () => {
       "openSocket:token:37377",
       "next",
       "next",
-      'openChat:Test:{"kind":"user","userId":"123"}:/tmp/ziggy-discord-test/sessions/discord/user-123',
+      'openChat:Test:{"kind":"user","userId":"owner"}:/tmp/ziggy-discord-test/sessions/discord/user-123',
       "prompt:hello",
       "createMessage:token:456:hello back",
       "close",

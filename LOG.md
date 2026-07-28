@@ -66,3 +66,5 @@ Chronological; newest at the bottom. One entry per logical block of work.
 **Current-directory Profile entry.** Bare `ziggy` now opens the current working directory through the same TUI and typed Profile-initialization path as explicit Profile targets; commands and explicit names/paths are unchanged.
 
 **Local main chat and fresh memory.** TUI and `run -c` now continue the same Pi-owned main chat under `sessions/local/main/`, while plain `run` still starts a fresh root session. Profile memory moved from runtime construction into a hidden inline `before_agent_start` extension that rereads only the ChatContext-admitted files every turn; read failures produce an explicit fail-closed turn prompt instead of being swallowed by Pi's extension runner.
+
+**Owner memory across gateways.** Authenticated Telegram, Discord, and Slack owner DMs now use the canonical `owner` memory identity while retaining their transport-specific chat keys and session directories; group/channel memory and owner-only admission are unchanged.

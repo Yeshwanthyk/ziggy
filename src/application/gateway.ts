@@ -105,7 +105,7 @@ export const loadGatewayConfig = (
     );
   });
 
-const normalizeUpdate = (
+export const normalizeTelegramUpdate = (
   update: TelegramUpdate,
   ownerUserId: number,
 ): InboundMessage | undefined => {
@@ -118,7 +118,7 @@ const normalizeUpdate = (
     return {
       chatKey: `user-${message.from.id}`,
       chatId: message.chat.id,
-      context: { kind: "user", userId: String(message.from.id) },
+      context: { kind: "user", userId: "owner" },
       text: message.text,
     };
   }
@@ -263,7 +263,7 @@ export const makeTelegramGateway = (
           );
           offset = nextTelegramOffset(updates, offset);
           const messages = updates.flatMap((update) => {
-            const message = normalizeUpdate(update, config.ownerUserId);
+            const message = normalizeTelegramUpdate(update, config.ownerUserId);
             return message === undefined ? [] : [message];
           });
           yield* Effect.forEach(messages, processMessage, {
