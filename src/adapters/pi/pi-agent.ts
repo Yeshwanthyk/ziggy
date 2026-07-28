@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   InteractiveMode,
@@ -12,6 +12,7 @@ import {
   type AgentSessionRuntime,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Database } from "bun:sqlite";
 import { Context, Effect, Layer } from "effect";
 import { Type } from "typebox";
 import {
@@ -222,54 +223,53 @@ const errorCode = (cause: unknown): string | undefined =>
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const acquireMemoryLock = async (document: MemoryDocument): Promise<string> => {
-  const lockPath = `${document.absolutePath}.lock`;
-  const deadline = Date.now() + 2_000;
-  await mkdir(dirname(document.absolutePath), { recursive: true });
+interface MemoryLock {
+  readonly database: Database;
+}
 
-  while (true) {
-    let createdLock = false;
-    try {
-      const lockFile = await open(lockPath, "wx");
-      createdLock = true;
-      try {
-        await lockFile.writeFile(`${process.pid}\n`, "utf8");
-      } finally {
-        await lockFile.close();
-      }
-      return lockPath;
-    } catch (cause: unknown) {
-      if (createdLock) {
-        await unlink(lockPath).catch(() => undefined);
-        throw cause;
-      }
-      if (errorCode(cause) !== "EEXIST") {
-        throw cause;
-      }
-
-      const lockStatus = await stat(lockPath).then(
-        (status) => ({ ok: true as const, status }),
-        (statCause: unknown) => ({ ok: false as const, cause: statCause }),
-      );
-      if (!lockStatus.ok) {
-        if (errorCode(lockStatus.cause) === "ENOENT") {
-          continue;
-        }
-        throw lockStatus.cause;
-      }
-      if (Date.now() - lockStatus.status.mtimeMs > 10_000) {
-        await unlink(lockPath).catch((unlinkCause: unknown) => {
-          if (errorCode(unlinkCause) !== "ENOENT") {
-            throw unlinkCause;
-          }
-        });
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error("memory lock timed out after 2 seconds");
-      }
-      await delay(50);
+const releaseMemoryLock = (lock: MemoryLock): void => {
+  try {
+    if (lock.database.inTransaction) {
+      lock.database.exec("ROLLBACK");
     }
+  } finally {
+    lock.database.close();
+  }
+};
+
+const acquireMemoryLock = async (
+  profilePath: string,
+  document: MemoryDocument,
+): Promise<MemoryLock> => {
+  const lockPath = join(
+    profilePath,
+    ".runtime",
+    "memory-locks",
+    `${encodeURIComponent(document.relativePath)}.sqlite`,
+  );
+  const deadline = Date.now() + 2_000;
+  await mkdir(dirname(lockPath), { recursive: true });
+  const database = new Database(lockPath, { create: true });
+  database.exec("PRAGMA busy_timeout = 0");
+
+  try {
+    while (true) {
+      try {
+        database.exec("BEGIN IMMEDIATE");
+        return { database };
+      } catch (cause: unknown) {
+        if (errorCode(cause)?.startsWith("SQLITE_BUSY") !== true) {
+          throw cause;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error("memory lock timed out after 2 seconds");
+        }
+        await delay(50);
+      }
+    }
+  } catch (cause: unknown) {
+    database.close();
+    throw cause;
   }
 };
 
@@ -316,9 +316,9 @@ export const createMemoryWriteTool = (
       return toolError(target.message);
     }
 
-    let lockPath: string | undefined;
+    let lock: MemoryLock | undefined;
     try {
-      lockPath = await acquireMemoryLock(target.document);
+      lock = await acquireMemoryLock(profilePath, target.document);
       const loaded = await readMemoryDocument(target.document);
       if (!loaded.ok) {
         return toolError(`memory read failed: ${causeMessage(loaded.cause)}`);
@@ -343,12 +343,8 @@ export const createMemoryWriteTool = (
     } catch (cause: unknown) {
       return toolError(`memory write failed: ${causeMessage(cause)}`);
     } finally {
-      if (lockPath !== undefined) {
-        await unlink(lockPath).catch((cause: unknown) => {
-          if (errorCode(cause) !== "ENOENT") {
-            throw cause;
-          }
-        });
+      if (lock !== undefined) {
+        releaseMemoryLock(lock);
       }
     }
   },

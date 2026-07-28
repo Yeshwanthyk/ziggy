@@ -437,6 +437,10 @@ export const openDiscordSocket = (token: string, intents: number): DiscordSocket
       const response = await fetch(GATEWAY_BOT_URL, {
         headers: { Authorization: `Bot ${token}` },
       });
+      if (response.status === 401 || response.status === 403) {
+        fail(new DiscordSocketError(`authentication failed (HTTP ${response.status})`));
+        return;
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
