@@ -71,11 +71,11 @@ export interface ProfilesShape {
   ) => Effect.Effect<ReadonlyArray<ProfileListing>, ProfileFileSystemError>;
   readonly listSkills: (
     target: ProfileTarget,
-    merlinRoot: string,
+    repositoryRoot: string,
   ) => Effect.Effect<ProfileSkills, ProfileSkillError>;
   readonly addSkill: (
     target: ProfileTarget,
-    merlinRoot: string,
+    repositoryRoot: string,
     source: string,
     cwd: string,
     force: boolean,
@@ -171,10 +171,10 @@ const addSkillDirectories = (
     }
   });
 
-const merlinSkillCatalog = (merlinRoot: string) =>
+const repositorySkillCatalog = (repositoryRoot: string) =>
   Effect.gen(function* () {
     const catalog = new Map<string, string>();
-    const extensionsDirectory = path.join(merlinRoot, "extensions");
+    const extensionsDirectory = path.join(repositoryRoot, "extensions");
     const extensions = (yield* readDirectory(extensionsDirectory))
       .filter((entry) => entry.isDirectory())
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -186,7 +186,7 @@ const merlinSkillCatalog = (merlinRoot: string) =>
         false,
       );
     }
-    yield* addSkillDirectories(catalog, path.join(merlinRoot, "skills"), false);
+    yield* addSkillDirectories(catalog, path.join(repositoryRoot, "skills"), false);
     return catalog;
   });
 
@@ -387,11 +387,11 @@ const listInstalledSkills = (target: ProfileTarget) =>
 
 const listSkills = (
   target: ProfileTarget,
-  merlinRoot: string,
+  repositoryRoot: string,
 ): Effect.Effect<ProfileSkills, ProfileSkillError> =>
   Effect.gen(function* () {
     yield* verifyInitializedProfile(target);
-    const catalog = yield* merlinSkillCatalog(merlinRoot);
+    const catalog = yield* repositorySkillCatalog(repositoryRoot);
     const installed = yield* listInstalledSkills(target);
     return {
       installed,
@@ -402,7 +402,7 @@ const listSkills = (
   });
 
 const resolveSkillSource = (
-  merlinRoot: string,
+  repositoryRoot: string,
   source: string,
   cwd: string,
 ): Effect.Effect<{ readonly id: string; readonly sourcePath: string }, ProfileSkillError> =>
@@ -414,12 +414,12 @@ const resolveSkillSource = (
           message: `invalid skill ID '${source}'; use lowercase letters, numbers, and hyphens`,
         });
       }
-      const catalog = yield* merlinSkillCatalog(merlinRoot);
+      const catalog = yield* repositorySkillCatalog(repositoryRoot);
       const sourcePath = catalog.get(source);
       if (sourcePath === undefined) {
         return yield* new ProfileSkillNotFound({
           source,
-          message: `skill '${source}' was not found in ${merlinRoot}`,
+          message: `skill '${source}' was not found in ${repositoryRoot}`,
         });
       }
       return { id: source, sourcePath };
@@ -550,14 +550,14 @@ const copySkill = (
 
 const addSkill = (
   target: ProfileTarget,
-  merlinRoot: string,
+  repositoryRoot: string,
   source: string,
   cwd: string,
   force: boolean,
 ): Effect.Effect<InstalledSkill, ProfileSkillError> =>
   Effect.gen(function* () {
     yield* verifyInitializedProfile(target);
-    const resolved = yield* resolveSkillSource(merlinRoot, source, cwd);
+    const resolved = yield* resolveSkillSource(repositoryRoot, source, cwd);
     yield* validateSkillSource(resolved.sourcePath);
     const destinationPath = path.join(target.path, "skills", resolved.id);
     const replaced = yield* copySkill(resolved.sourcePath, destinationPath, force);

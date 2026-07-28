@@ -33,9 +33,8 @@ const resolutionOptions = {
   ziggyHome: process.env.ZIGGY_HOME,
 };
 
-const merlinRoot =
-  process.env.ZIGGY_MERLIN_ROOT ?? path.resolve(import.meta.dir, "..", "..", "merlin");
-const PiAgentLive = makePiAgentLive(merlinRoot);
+const repositoryRoot = path.resolve(import.meta.dir, "..");
+const PiAgentLive = makePiAgentLive(repositoryRoot);
 
 const fail = (message: string) =>
   Effect.sync(() => {
@@ -94,7 +93,7 @@ const program = Effect.gen(function* () {
         }
         const listing = yield* profiles.listSkills(
           resolveProfileTarget(argument, resolutionOptions),
-          merlinRoot,
+          repositoryRoot,
         );
         console.log("installed:");
         if (listing.installed.length === 0) {
@@ -123,7 +122,7 @@ const program = Effect.gen(function* () {
         }
         const installed = yield* profiles.addSkill(
           resolveProfileTarget(argument, resolutionOptions),
-          merlinRoot,
+          repositoryRoot,
           source,
           resolutionOptions.cwd,
           force,
