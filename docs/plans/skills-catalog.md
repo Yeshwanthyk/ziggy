@@ -10,11 +10,13 @@ Ziggy uses the live sibling `../merlin` checkout as its catalog.
 - `ziggy skills list <profile>` shows installed and available skills.
 - `ziggy skills add <profile> <id|path> [--force]` copies the complete skill directory.
 - Replacement is staged; an existing Profile skill is preserved unless `--force` is explicit.
-- Pi still loads skills only from `<profile>/skills`.
+- Pi directly loads Profile-local skills first, then every Merlin extension skill root, then
+  top-level Merlin skills. Profile-local declared-name collisions win.
+- Pi loads skill metadata at startup and reads full `SKILL.md` bodies on demand.
 
-The dump Profile at
-`/Users/yesh/Documents/personal/dump/ziggy-vertical-slices/pal` has `humanizer` installed. The
-installed tree matches Merlin byte-for-byte, and the real Pi TUI loaded it.
+The dump Profile at `/Users/yesh/Documents/personal/dump/ziggy-e2e/pal` loads its local
+`haiku-mode` plus the live Merlin tree. The real Pi TUI currently reports 62 unique skills from
+49 explicit roots.
 
 ## Boundary we are keeping
 
@@ -23,7 +25,8 @@ and automation wake remain memory-only. Do not widen headless tool access as par
 
 ## Next
 
-No catalog code slice is needed now.
+No catalog or activation code slice is needed now. Ziggy extensions remain skills; the one
+Ziggy-owned Pi TypeScript extension is fixed TUI integration, not a discoverable capability.
 
 Reopen this plan only when Ziggy must run without a sibling Merlin checkout. That slice should:
 
@@ -38,6 +41,7 @@ exists.
 
 ```sh
 bun test src/application/profiles.test.ts
+bun test src/adapters/pi/skill-roots.test.ts
 bun run check
-bun src/main.ts skills list /Users/yesh/Documents/personal/dump/ziggy-vertical-slices/pal
+bun src/main.ts /Users/yesh/Documents/personal/dump/ziggy-e2e/pal
 ```

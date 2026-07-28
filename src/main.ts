@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Runtime } from "effect";
-import { PiAgentLive } from "./adapters/pi/pi-agent";
+import { makePiAgentLive } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
@@ -35,6 +35,7 @@ const resolutionOptions = {
 
 const merlinRoot =
   process.env.ZIGGY_MERLIN_ROOT ?? path.resolve(import.meta.dir, "..", "..", "merlin");
+const PiAgentLive = makePiAgentLive(merlinRoot);
 
 const fail = (message: string) =>
   Effect.sync(() => {

@@ -34,6 +34,8 @@ import {
   type MemoryScope,
 } from "../../domain/memory";
 import type { ProfileTarget } from "../../domain/profile";
+import { discoverSkillRoots } from "./skill-roots";
+import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
   readonly askOnce: (
@@ -116,21 +118,6 @@ const piPromise = <A>(
     try: run,
     catch: (cause) => providerError(profilePath, operation, cause),
   });
-
-const existingDirectory = (path: string): Promise<string | undefined> =>
-  stat(path).then(
-    (status) => (status.isDirectory() ? path : undefined),
-    (cause: unknown) => {
-      const code =
-        cause instanceof Error && "code" in cause && typeof cause.code === "string"
-          ? cause.code
-          : undefined;
-      if (code === "ENOENT") {
-        return undefined;
-      }
-      throw cause;
-    },
-  );
 
 const requireSoul = (profilePath: string) => {
   const soulPath = join(profilePath, "SOUL.md");
@@ -449,6 +436,7 @@ export const askOnce = (
   prompt: string,
   continueSession: boolean,
   context: ChatContext,
+  merlinRoot: string,
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
@@ -458,6 +446,7 @@ export const askOnce = (
     );
     const runtime = yield* createProfileRuntime(
       target.path,
+      merlinRoot,
       soulPath,
       sessionManager,
       context,
@@ -501,6 +490,7 @@ export const askOnce = (
 
 const createProfileRuntime = (
   profilePath: string,
+  merlinRoot: string,
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
@@ -514,10 +504,7 @@ const createProfileRuntime = (
   return piPromise(profilePath, "create agent runtime", () =>
     createAgentSessionRuntime(
       async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-        const [skillPath, extensionPath] = await Promise.all([
-          existingDirectory(join(profilePath, "skills")),
-          existingDirectory(join(profilePath, "extensions")),
-        ]);
+        const skillRoots = await discoverSkillRoots(profilePath, merlinRoot);
         const services = await createAgentSessionServices({
           cwd,
           agentDir,
@@ -525,12 +512,14 @@ const createProfileRuntime = (
             systemPrompt: soulPath,
             noExtensions: true,
             noSkills: true,
-            ...(skillPath === undefined ? {} : { additionalSkillPaths: [skillPath] }),
-            ...(extensionPath === undefined ? {} : { additionalExtensionPaths: [extensionPath] }),
+            ...(skillRoots.length === 0 ? {} : { additionalSkillPaths: [...skillRoots] }),
             noPromptTemplates: true,
             noThemes: true,
             noContextFiles: true,
-            extensionFactories: [createProfileMemoryExtension(profilePath, paths.documents)],
+            extensionFactories: [
+              createZiggyTuiExtension(profilePath),
+              createProfileMemoryExtension(profilePath, paths.documents),
+            ],
           },
         });
         const created = await createAgentSessionFromServices({
@@ -650,12 +639,14 @@ export const openChat = (
   target: ProfileTarget,
   context: ChatContext,
   sessionDirectory: string,
+  merlinRoot: string,
   sessionMode: ChatSessionMode = "continue",
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const runtime = yield* createProfileRuntime(
       target.path,
+      merlinRoot,
       soulPath,
       sessionMode === "continue"
         ? SessionManager.continueRecent(target.path, sessionDirectory)
@@ -689,12 +680,14 @@ export const openChat = (
 export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
+  merlinRoot: string,
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const sessionManager = createLocalSessionManager(target.path, "main");
     const runtime = yield* createProfileRuntime(
       target.path,
+      merlinRoot,
       soulPath,
       sessionManager,
       context,
@@ -710,4 +703,11 @@ export const openTui = (
     return 0;
   });
 
-export const PiAgentLive = Layer.succeed(PiAgent, { askOnce, openTui, openChat });
+export const makePiAgentLive = (merlinRoot: string) =>
+  Layer.succeed(PiAgent, {
+    askOnce: (target, prompt, continueSession, context) =>
+      askOnce(target, prompt, continueSession, context, merlinRoot),
+    openTui: (target, context) => openTui(target, context, merlinRoot),
+    openChat: (target, context, sessionDirectory, sessionMode) =>
+      openChat(target, context, sessionDirectory, merlinRoot, sessionMode),
+  });
