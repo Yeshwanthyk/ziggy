@@ -7,9 +7,8 @@ bounded set of recent transport IDs. Deterministic tests cover all three complet
 inbound-to-reply loops. Phase 2's durable shared journal remains deferred until channel delivery
 is load-bearing; live external round trips still require disposable channel credentials.
 
-This plan is self-contained for a fresh agent session. It is based on the current working tree
-on `main` at `0beae56d8da5dee95c0738375b0c4b0ef65e4f52`, including uncommitted gateway work.
-Re-read the cited lines before editing because the files are currently changing.
+This plan is self-contained for a fresh agent session and was reconciled against `main` on
+2026-07-27. Re-read cited lines before editing because later changes can move anchors.
 
 ## Context
 

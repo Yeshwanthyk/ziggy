@@ -1,5 +1,10 @@
 # Profile lease implementation plan
 
+Status: planned only. Before implementation, rebase locked decisions 2–6 and Step 2 on a
+crash-safe ownership primitive. Independent review invalidated the documented `wx` stale-delete
+algorithm because concurrent reapers can delete a successor lock. Do not implement that algorithm
+verbatim; memory serialization now uses stable SQLite locks under `.runtime/memory-locks/`.
+
 ## Goal
 
 Enforce the specification invariant that once a resident channel gateway exists for a Profile,

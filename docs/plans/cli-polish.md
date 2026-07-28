@@ -1,5 +1,8 @@
 # CLI polish
 
+Status: planned only. Provider auth is already shipped separately; the four slices below remain
+independent future work.
+
 Four independent CLI gaps from the Starman coverage audit. Each section is a
 standalone implementation block and can be selected, tested, and committed without
 landing the other three. Preserve existing Profile files and keep every command

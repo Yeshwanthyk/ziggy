@@ -1,5 +1,9 @@
 # Automation scheduler implementation plan
 
+Status: planned only. Before implementation, replace the stale-file lock references below with
+the stable hidden-runtime locking approach now used by memory writes; do not copy the removed
+compare-and-delete takeover algorithm.
+
 ## Context
 
 Ziggy automations are manual-only today. `ziggy wake <name|path> <automation-id>` is the only
