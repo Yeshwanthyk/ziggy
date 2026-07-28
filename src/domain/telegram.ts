@@ -17,11 +17,3 @@ export const decodeTelegramGatewayConfigJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(TelegramGatewayConfig),
   { onExcessProperty: "error" },
 );
-
-export class GatewayConfigError extends Schema.TaggedErrorClass<GatewayConfigError>()(
-  "GatewayConfigError",
-  {
-    path: Schema.String,
-    message: Schema.String,
-  },
-) {}

@@ -1,0 +1,110 @@
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- tests are approved Effect execution boundaries */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- fake implements the adapter-owned DiscordSocket Promise contract */
+import { describe, expect, test } from "bun:test";
+import { Deferred, Effect } from "effect";
+import type { DiscordInboundMessage, DiscordSocket } from "../adapters/discord/socket";
+import type { ZiggyAgentShape } from "./agent";
+import {
+  discordMessageChunks,
+  makeDiscordGateway,
+  normalizeDiscordMessage,
+  type DiscordTransport,
+} from "./discord-gateway";
+
+const message = (overrides: Partial<DiscordInboundMessage> = {}): DiscordInboundMessage => ({
+  id: "m1",
+  channelId: "456",
+  guildId: undefined,
+  authorId: "123",
+  authorIsBot: false,
+  content: "hello",
+  ...overrides,
+});
+
+describe("Discord gateway boundary", () => {
+  test("maps an owner DM to person memory", () => {
+    expect(normalizeDiscordMessage(message(), "123")).toEqual({
+      chatKey: "user-123",
+      channelId: "456",
+      context: { kind: "user", userId: "123" },
+      text: "hello",
+    });
+  });
+
+  test("rejects non-owner and bot messages", () => {
+    expect(normalizeDiscordMessage(message(), "999")).toBeUndefined();
+    expect(normalizeDiscordMessage(message({ authorIsBot: true }), "123")).toBeUndefined();
+  });
+
+  test("chunks by Unicode code point at Discord's limit", () => {
+    const chunks = discordMessageChunks("🦆".repeat(2_001));
+    expect(chunks.map((chunk) => [...chunk].length)).toEqual([2_000, 1]);
+  });
+
+  test("runs an authorized DM through the agent and finalizes cleanly", async () => {
+    const events: Array<string> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const replied = yield* Deferred.make<void>();
+        let nextCall = 0;
+        const socket: DiscordSocket = {
+          next: () => {
+            nextCall += 1;
+            events.push("next");
+            return nextCall === 1 ? Promise.resolve(message()) : new Promise(() => {});
+          },
+          close: () => {
+            events.push("close");
+            return Promise.resolve();
+          },
+        };
+        const transport: DiscordTransport = {
+          openSocket: (token, intents) => {
+            events.push(`openSocket:${token}:${intents}`);
+            return socket;
+          },
+          createMessage: (token, channelId, text) =>
+            Effect.gen(function* () {
+              events.push(`createMessage:${token}:${channelId}:${text}`);
+              yield* Deferred.succeed(replied, undefined);
+            }),
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          openTui: () => Effect.succeed(0),
+          openChat: (target, context, sessionDirectory) =>
+            Effect.sync(() => {
+              events.push(`openChat:${target.name}:${JSON.stringify(context)}:${sessionDirectory}`);
+              return {
+                prompt: (text: string) =>
+                  Effect.sync(() => {
+                    events.push(`prompt:${text}`);
+                    return "hello back";
+                  }),
+                dispose: Effect.sync(() => {
+                  events.push("dispose");
+                }),
+              };
+            }),
+        };
+        const gateway = makeDiscordGateway(agent, transport);
+        const target = { path: "/tmp/ziggy-discord-test", name: "Test" };
+        const config = { botToken: "token", ownerUserId: "123" };
+
+        yield* Effect.raceFirst(gateway.runLoop(target, config), Deferred.await(replied));
+      }),
+    );
+
+    expect(events).toEqual([
+      "openSocket:token:37377",
+      "next",
+      "next",
+      'openChat:Test:{"kind":"user","userId":"123"}:/tmp/ziggy-discord-test/sessions/discord/user-123',
+      "prompt:hello",
+      "createMessage:token:456:hello back",
+      "close",
+      "dispose",
+    ]);
+  });
+});

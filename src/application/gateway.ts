@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
+import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
   getUpdates,
   sendMessage,
@@ -9,19 +10,31 @@ import {
 } from "../adapters/telegram/api";
 import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
 import { type ZiggyAgentError, ProfileNotInitialized } from "../domain/agent";
+import { GatewayConfigError } from "../domain/gateway";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
-import {
-  decodeTelegramGatewayConfigJson,
-  GatewayConfigError,
-  type TelegramGatewayConfig,
-} from "../domain/telegram";
+import { decodeTelegramGatewayConfigJson, type TelegramGatewayConfig } from "../domain/telegram";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
+const TELEGRAM_STARTUP_OFFSET = -1;
+const TELEGRAM_STARTUP_TIMEOUT_SECONDS = 0;
 const TELEGRAM_MESSAGE_LIMIT = 4_096;
 const MAX_RETRY_SECONDS = 30;
 
 export type GatewayError = TelegramApiError;
+
+export interface TelegramTransport {
+  readonly getUpdates: (
+    token: string,
+    offset: number,
+    timeoutSeconds: number,
+  ) => Effect.Effect<ReadonlyArray<TelegramUpdate>, TelegramApiError>;
+  readonly sendMessage: (
+    token: string,
+    chatId: number,
+    text: string,
+  ) => Effect.Effect<void, TelegramApiError>;
+}
 
 export interface GatewayShape {
   readonly runLoop: (
@@ -44,11 +57,6 @@ interface ChatState {
   handle?: ChatHandle;
 }
 
-const errorCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 const configGuidance = (configPath: string): string =>
   `create ${configPath} with {"botToken":"...","ownerUserId":123}`;
 
@@ -60,7 +68,7 @@ export const loadGatewayConfig = (
     const soulStatus = yield* Effect.tryPromise({
       try: () => stat(soulPath),
       catch: (cause) =>
-        errorCode(cause) === "ENOENT"
+        fileSystemCauseDetails(cause).code === "ENOENT"
           ? new ProfileNotInitialized({
               profilePath: target.path,
               message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
@@ -138,6 +146,9 @@ export const telegramMessageChunks = (text: string): ReadonlyArray<string> => {
   return chunks;
 };
 
+export const nextTelegramOffset = (updates: ReadonlyArray<TelegramUpdate>, fallback = 0): number =>
+  updates.reduce((nextOffset, update) => Math.max(nextOffset, update.update_id + 1), fallback);
+
 const retryTelegram = <A>(
   operation: () => Effect.Effect<A, TelegramApiError>,
 ): Effect.Effect<A, TelegramApiError> =>
@@ -175,18 +186,25 @@ const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
       state.handle === undefined
         ? Effect.void
         : state.handle.dispose.pipe(
-            Effect.catch((error) =>
+            Effect.catch((failure) =>
               Effect.sync(() => {
-                console.error(`[gateway] ${chatKey} dispose failed: ${error.message}`);
+                console.error(`[gateway] ${chatKey} dispose failed: ${failure.message}`);
               }),
             ),
           ),
     { concurrency: "unbounded", discard: true },
   );
 
-const makeRunLoop =
-  (agent: ZiggyAgentShape): GatewayShape["runLoop"] =>
-  (target, config) =>
+const liveTelegramTransport: TelegramTransport = {
+  getUpdates,
+  sendMessage,
+};
+
+export const makeTelegramGateway = (
+  agent: ZiggyAgentShape,
+  transport: TelegramTransport = liveTelegramTransport,
+): GatewayShape => ({
+  runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
@@ -212,30 +230,38 @@ const makeRunLoop =
 
               const reply = yield* chatState.handle.prompt(message.text);
               for (const chunk of telegramMessageChunks(reply)) {
-                yield* retryTelegram(() => sendMessage(config.botToken, message.chatId, chunk));
+                yield* retryTelegram(() =>
+                  transport.sendMessage(config.botToken, message.chatId, chunk),
+                );
               }
               console.log(
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((error: ZiggyAgentError | TelegramApiError) =>
+              Effect.catch((failure: ZiggyAgentError | TelegramApiError) =>
                 Effect.sync(() => {
-                  console.error(`[gateway] ${message.chatKey} failed: ${error.message}`);
+                  console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
                 }),
               ),
             ),
           );
         };
 
-        let offset = 0;
+        const startupUpdates = yield* retryTelegram(() =>
+          transport.getUpdates(
+            config.botToken,
+            TELEGRAM_STARTUP_OFFSET,
+            TELEGRAM_STARTUP_TIMEOUT_SECONDS,
+          ),
+        );
+        let offset = nextTelegramOffset(startupUpdates);
+        console.log("[gateway] pending Telegram backlog discarded");
+
         while (true) {
           const updates = yield* retryTelegram(() =>
-            getUpdates(config.botToken, offset, TELEGRAM_LONG_POLL_SECONDS),
+            transport.getUpdates(config.botToken, offset, TELEGRAM_LONG_POLL_SECONDS),
           );
-          offset = updates.reduce(
-            (nextOffset, update) => Math.max(nextOffset, update.update_id + 1),
-            offset,
-          );
+          offset = nextTelegramOffset(updates, offset);
           const messages = updates.flatMap((update) => {
             const message = normalizeUpdate(update, config.ownerUserId);
             return message === undefined ? [] : [message];
@@ -246,12 +272,13 @@ const makeRunLoop =
           });
         }
       }),
-    );
+    ),
+});
 
 export const GatewayLive = Layer.effect(
   Gateway,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
-    return { runLoop: makeRunLoop(agent) };
+    return makeTelegramGateway(agent);
   }),
 );

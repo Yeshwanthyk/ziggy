@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src",
     "fmt": "oxfmt src",
+    "test": "bun test",
     "check": "oxfmt --check src && bun run lint && bun run typecheck"
   },
   "dependencies": {

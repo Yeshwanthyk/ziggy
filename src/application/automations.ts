@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Inspectable, Layer, Option } from "effect";
+import { killProcess } from "../adapters/bun/process";
+import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { sendMessage, type TelegramApiError } from "../adapters/telegram/api";
 import {
   AutomationFileSystemError,
@@ -34,13 +36,8 @@ export class Automations extends Context.Service<Automations, AutomationsShape>(
   "ziggy/Automations",
 ) {}
 
-const causeCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 const causeMessage = (cause: unknown): string =>
-  (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
+  Inspectable.toStringUnknown(cause).replace(/\s+/g, " ").trim();
 
 const readAutomation = (target: ProfileTarget, idSource: string) =>
   Effect.gen(function* () {
@@ -49,7 +46,7 @@ const readAutomation = (target: ProfileTarget, idSource: string) =>
     const source = yield* Effect.tryPromise({
       try: () => readFile(filePath, "utf8"),
       catch: (cause) =>
-        causeCode(cause) === "ENOENT"
+        fileSystemCauseDetails(cause).code === "ENOENT"
           ? new AutomationNotFound({
               id,
               path: filePath,
@@ -96,11 +93,7 @@ const runGate = (profilePath: string, command: string): Effect.Effect<GateResult
     const exit = yield* Effect.tryPromise({
       try: (signal) => {
         const kill = () => {
-          try {
-            spawned.process.kill();
-          } catch {
-            // The process may have exited between the timeout and interruption.
-          }
+          killProcess(spawned.process);
         };
         signal.addEventListener("abort", kill, { once: true });
         return spawned.process.exited.finally(() => signal.removeEventListener("abort", kill));
@@ -136,9 +129,9 @@ const deliverTelegram = (
   Effect.gen(function* () {
     const loaded = yield* loadGatewayConfig(target).pipe(
       Effect.map((config) => ({ ok: true as const, config })),
-      Effect.catch((error) =>
+      Effect.catch((failure) =>
         Effect.sync(() => {
-          console.error(`[wake] ${id}: Telegram delivery skipped — ${error.message}`);
+          console.error(`[wake] ${id}: Telegram delivery skipped — ${failure.message}`);
           return { ok: false as const };
         }),
       ),
@@ -178,9 +171,11 @@ const makeWake =
       const reply = yield* handle.prompt(automation.prompt).pipe(
         Effect.ensuring(
           handle.dispose.pipe(
-            Effect.catch((error) =>
+            Effect.catch((failure) =>
               Effect.sync(() => {
-                console.error(`[wake] ${automation.id}: session dispose failed — ${error.message}`);
+                console.error(
+                  `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
+                );
               }),
             ),
           ),

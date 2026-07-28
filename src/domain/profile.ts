@@ -29,6 +29,30 @@ export class ProfileFileSystemError extends Schema.TaggedErrorClass<ProfileFileS
   },
 ) {}
 
+export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(
+  "ProfileSkillInvalid",
+  {
+    path: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class ProfileSkillNotFound extends Schema.TaggedErrorClass<ProfileSkillNotFound>()(
+  "ProfileSkillNotFound",
+  {
+    source: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class ProfileSkillExists extends Schema.TaggedErrorClass<ProfileSkillExists>()(
+  "ProfileSkillExists",
+  {
+    path: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 const hasPathSyntax = (value: string): boolean =>
   value.includes("/") ||
   value.includes("\\") ||

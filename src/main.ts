@@ -1,41 +1,43 @@
 import { homedir } from "node:os";
+import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Runtime } from "effect";
 import { PiAgentLive } from "./adapters/pi/pi-agent";
-import { TelegramApiError } from "./adapters/telegram/api";
+import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
-import { Automations, AutomationsLive, type AutomationError } from "./application/automations";
+import { Auth, AuthLive } from "./application/auth";
+import { Automations, AutomationsLive } from "./application/automations";
+import {
+  DiscordGateway,
+  DiscordGatewayLive,
+  loadDiscordGatewayConfig,
+} from "./application/discord-gateway";
 import { Gateway, GatewayLive, loadGatewayConfig } from "./application/gateway";
-import { Profiles, ProfilesLive, type ProfileError } from "./application/profiles";
+import { Profiles, ProfilesLive } from "./application/profiles";
 import {
-  AutomationFileSystemError,
-  AutomationInvalid,
-  AutomationNotFound,
-} from "./domain/automation";
+  loadSlackGatewayConfig,
+  SlackGateway,
+  SlackGatewayLive,
+} from "./application/slack-gateway";
 import {
-  ProfileNotInitialized,
-  ProviderCallError,
-  ProviderConfigError,
-  type ZiggyAgentError,
-} from "./domain/agent";
-import { MemoryIdInvalid } from "./domain/memory";
-import {
-  ProfileFileSystemError,
-  ProfileTargetNotDirectory,
   resolveProfileTarget,
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
-import { GatewayConfigError } from "./domain/telegram";
 
 const usage = `ziggy — a folder that is an assistant
 
 usage:
   ziggy init <name|path>      create a profile (SOUL.md)
+  ziggy auth <name|path> [provider] [--type api_key|oauth]   show or configure provider auth
   ziggy <name|path>           open the profile in the TUI
   ziggy run [-c] <name|path> <prompt>   one-shot answer against the profile
   ziggy wake <name|path> <automation-id>   manually wake an automation
   ziggy gateway <name|path>   run the resident Telegram gateway
+  ziggy discord <name|path>   run the resident Discord gateway
+  ziggy slack <name|path>   run the resident Slack gateway
+  ziggy skills list <name|path>   list installed and available Merlin skills
+  ziggy skills add <name|path> <id|path> [--force]   install a Merlin skill
   ziggy profiles              list known profiles`;
 
 const command = process.argv[2];
@@ -46,59 +48,23 @@ const resolutionOptions = {
   ziggyHome: process.env.ZIGGY_HOME,
 };
 
+const merlinRoot =
+  process.env.ZIGGY_MERLIN_ROOT ?? path.resolve(import.meta.dir, "..", "..", "merlin");
+
 const fail = (message: string) =>
   Effect.sync(() => {
     console.error(message);
     process.exitCode = 1;
   });
 
-const formatProfileError = (error: ProfileError): string => {
-  if (error instanceof ProfileTargetNotDirectory) {
-    return `profile target is not a directory: ${error.path}`;
-  }
-
-  if (error instanceof ProfileFileSystemError) {
-    return `failed to ${error.operation} ${error.path}: ${error.message}`;
-  }
-
-  return "profile operation failed";
-};
-
-const formatAgentError = (error: ZiggyAgentError): string => {
-  if (error instanceof ProfileNotInitialized) {
-    return error.message;
-  }
-
-  if (error instanceof ProviderConfigError || error instanceof ProviderCallError) {
-    return error.message;
-  }
-
-  if (error instanceof MemoryIdInvalid) {
-    return error.message;
-  }
-
-  return "provider operation failed";
-};
-
-const formatGatewayError = (error: GatewayConfigError | TelegramApiError): string => error.message;
-
-const formatAutomationError = (error: AutomationError): string => {
-  if (
-    error instanceof AutomationInvalid ||
-    error instanceof AutomationNotFound ||
-    error instanceof AutomationFileSystemError
-  ) {
-    return error.message;
-  }
-
-  return error instanceof TelegramApiError ? formatGatewayError(error) : formatAgentError(error);
-};
-
 const program = Effect.gen(function* () {
   const profiles = yield* Profiles;
   const agent = yield* ZiggyAgent;
+  const auth = yield* Auth;
   const automations = yield* Automations;
   const gateway = yield* Gateway;
+  const discordGateway = yield* DiscordGateway;
+  const slackGateway = yield* SlackGateway;
 
   switch (command) {
     case "init": {
@@ -110,7 +76,7 @@ const program = Effect.gen(function* () {
       const result = yield* profiles.initProfile(resolveProfileTarget(argument, resolutionOptions));
       yield* profiles
         .registerProfile(resolveProfilesRegistry(resolutionOptions), result.path)
-        .pipe(Effect.ignore);
+        .pipe(Effect.catch(() => Effect.void));
       console.log(
         result.created
           ? `created profile at ${result.path}`
@@ -131,6 +97,113 @@ const program = Effect.gen(function* () {
       for (const profile of listings) {
         console.log(`${profile.name}\t${profile.path}`);
       }
+      return;
+    }
+    case "skills": {
+      const action = process.argv[3];
+      const argument = process.argv[4];
+      if (action === "list") {
+        if (argument === undefined || process.argv.length !== 5) {
+          return yield* fail("usage: ziggy skills list <name|path>");
+        }
+        const listing = yield* profiles.listSkills(
+          resolveProfileTarget(argument, resolutionOptions),
+          merlinRoot,
+        );
+        console.log("installed:");
+        if (listing.installed.length === 0) {
+          console.log("(none)");
+        } else {
+          for (const skill of listing.installed) {
+            console.log(skill.id);
+          }
+        }
+        console.log("available:");
+        if (listing.available.length === 0) {
+          console.log("(none)");
+        } else {
+          for (const skill of listing.available) {
+            console.log(skill.id);
+          }
+        }
+        return;
+      }
+      if (action === "add") {
+        const source = process.argv[5];
+        const addArguments = process.argv.slice(6);
+        const force = addArguments.length === 1 && addArguments[0] === "--force";
+        if (argument === undefined || source === undefined || (addArguments.length > 0 && !force)) {
+          return yield* fail("usage: ziggy skills add <name|path> <id|path> [--force]");
+        }
+        const installed = yield* profiles.addSkill(
+          resolveProfileTarget(argument, resolutionOptions),
+          merlinRoot,
+          source,
+          resolutionOptions.cwd,
+          force,
+        );
+        console.log(
+          `${installed.replaced ? "replaced" : "installed"} ${installed.id} at ${installed.destinationPath}`,
+        );
+        return;
+      }
+      return yield* fail(`usage:
+  ziggy skills list <name|path>
+  ziggy skills add <name|path> <id|path> [--force]`);
+    }
+    case "auth": {
+      const argument = process.argv[3];
+      const providerId = process.argv[4];
+      const authArguments = process.argv.slice(5);
+      if (argument === undefined) {
+        return yield* fail("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
+      }
+      if (providerId === undefined && authArguments.length > 0) {
+        return yield* fail("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
+      }
+
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      if (providerId === undefined) {
+        const statuses = yield* auth.status(target);
+        const sorted = [...statuses].sort(
+          (left, right) =>
+            Number(right.configured !== undefined) - Number(left.configured !== undefined) ||
+            left.id.localeCompare(right.id),
+        );
+        for (const provider of sorted) {
+          const configured =
+            provider.configured === undefined
+              ? "not configured"
+              : `configured: ${provider.configured.type}${provider.configured.source === undefined ? "" : ` via ${provider.configured.source}`}`;
+          const loginTypes = [
+            ...(provider.supportsApiKeyLogin ? ["api_key"] : []),
+            ...(provider.supportsOauth ? ["oauth"] : []),
+          ];
+          const login =
+            loginTypes.length === 0 && provider.ambientOnly
+              ? "ambient env only"
+              : loginTypes.join(", ");
+          console.log(`${provider.id}\t${configured}\tlogin: ${login}`);
+        }
+        return;
+      }
+
+      let type: "api_key" | "oauth" | undefined;
+      if (authArguments.length > 0) {
+        if (
+          authArguments.length !== 2 ||
+          authArguments[0] !== "--type" ||
+          (authArguments[1] !== "api_key" && authArguments[1] !== "oauth")
+        ) {
+          return yield* fail("usage: ziggy auth <name|path> <provider> [--type api_key|oauth]");
+        }
+        type = authArguments[1];
+      }
+
+      const result = yield* auth.login(target, providerId, type, terminalAuthInteraction());
+      console.log(
+        `logged in to ${result.providerId} (${result.type})${result.source === undefined ? "" : ` via ${result.source}`}`,
+      );
       return;
     }
     case "run": {
@@ -171,6 +244,26 @@ const program = Effect.gen(function* () {
       const config = yield* loadGatewayConfig(target);
       return yield* gateway.runLoop(target, config);
     }
+    case "discord": {
+      const argument = process.argv[3];
+      if (argument === undefined) {
+        return yield* fail("usage: ziggy discord <name|path>");
+      }
+
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      const config = yield* loadDiscordGatewayConfig(target);
+      return yield* discordGateway.runLoop(target, config);
+    }
+    case "slack": {
+      const argument = process.argv[3];
+      if (argument === undefined) {
+        return yield* fail("usage: ziggy slack <name|path>");
+      }
+
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      const config = yield* loadSlackGatewayConfig(target);
+      return yield* slackGateway.runLoop(target, config);
+    }
     case undefined:
       console.log(usage);
       process.exitCode = 1;
@@ -182,35 +275,52 @@ const program = Effect.gen(function* () {
       return;
   }
 }).pipe(
-  Effect.catch(
-    (
-      error:
-        | ProfileError
-        | ZiggyAgentError
-        | GatewayConfigError
-        | TelegramApiError
-        | AutomationError,
-    ) =>
-      fail(
-        error instanceof ProfileFileSystemError || error instanceof ProfileTargetNotDirectory
-          ? formatProfileError(error)
-          : error instanceof AutomationInvalid ||
-              error instanceof AutomationNotFound ||
-              error instanceof AutomationFileSystemError
-            ? formatAutomationError(error)
-            : error instanceof GatewayConfigError || error instanceof TelegramApiError
-              ? formatGatewayError(error)
-              : formatAgentError(error),
-      ),
-  ),
+  Effect.catchTags({
+    ProfileTargetNotDirectory: (failure) =>
+      fail(`profile target is not a directory: ${failure.path}`),
+    ProfileFileSystemError: (failure) =>
+      fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
+    ProfileSkillInvalid: (failure) => fail(failure.message),
+    ProfileSkillNotFound: (failure) => fail(failure.message),
+    ProfileSkillExists: (failure) => fail(failure.message),
+    ProfileNotInitialized: (failure) => fail(failure.message),
+    ProviderConfigError: (failure) => fail(failure.message),
+    ProviderCallError: (failure) => fail(failure.message),
+    AuthProviderUnknown: (failure) => fail(failure.message),
+    AuthTypeUnsupported: (failure) => fail(failure.message),
+    AuthFlowFailed: (failure) => fail(failure.message),
+    MemoryIdInvalid: (failure) => fail(failure.message),
+    AutomationInvalid: (failure) => fail(failure.message),
+    AutomationNotFound: (failure) => fail(failure.message),
+    AutomationFileSystemError: (failure) => fail(failure.message),
+    GatewayConfigError: (failure) => fail(failure.message),
+    TelegramApiError: (failure) => fail(failure.message),
+    DiscordApiError: (failure) => fail(failure.message),
+    SlackApiError: (failure) => fail(failure.message),
+  }),
   Effect.provide(
     Layer.merge(
       ProfilesLive,
       Layer.merge(
-        ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
+        AuthLive,
         Layer.merge(
-          GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
-          AutomationsLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+          ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
+          Layer.merge(
+            GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+            Layer.merge(
+              DiscordGatewayLive.pipe(
+                Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+              ),
+              Layer.merge(
+                SlackGatewayLive.pipe(
+                  Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+                ),
+                AutomationsLive.pipe(
+                  Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     ),
@@ -219,7 +329,7 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(command === "gateway"
+  ...(command === "gateway" || command === "discord" || command === "slack"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {

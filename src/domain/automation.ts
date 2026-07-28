@@ -59,8 +59,8 @@ export class AutomationFileSystemError extends Schema.TaggedErrorClass<Automatio
   },
 ) {}
 
-const invalid = (path: string, message: string, cause: unknown = new Error(message)) =>
-  new AutomationInvalid({ path, message, cause });
+const invalid = (path: string, message: string, cause?: unknown) =>
+  new AutomationInvalid({ path, message, cause: cause ?? message });
 
 export const validateAutomationId = (id: string): Effect.Effect<AutomationId, AutomationInvalid> =>
   decodeAutomationId(id).pipe(
