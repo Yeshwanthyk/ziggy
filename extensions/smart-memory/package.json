@@ -1,0 +1,15 @@
+{
+  "name": "@ziggy/smart-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-backed maintenance workflow for Ziggy's native scoped memory.",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

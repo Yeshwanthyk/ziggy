@@ -1,0 +1,28 @@
+{
+  "name": "@ziggy/skill-curator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi tools and workflow for explicit Profile skill curation.",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint index.ts test",
+    "fmt": "oxfmt index.ts test skills"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "typebox": "1.1.38"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}
