@@ -2,10 +2,13 @@
   "name": "@ziggy/telephony",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "keywords": [
     "pi-package"
   ],
+  "type": "module",
+  "scripts": {
+    "test": "PYTHONDONTWRITEBYTECODE=1 python3 tests/default-paths.test.py"
+  },
   "pi": {
     "skills": [
       "./skills"

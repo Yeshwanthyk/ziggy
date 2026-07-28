@@ -36,7 +36,7 @@ Use that absolute `SCRIPT` path for every command below. When Ziggy installs the
 
 ## Persistent configuration
 
-By default, the helper stores data under `~/.config/ziggy/telephony/`:
+By default, the helper stores Profile-local data under `.runtime/telephony/` in the current Profile directory:
 
 - `.env` contains provider credentials and owned-number IDs.
 - `telephony_state.json` contains the default Twilio number, Vapi phone-number ID, and inbox checkpoint.

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 BASE_URL="https://here.now"
-CREDENTIALS_FILE="$HOME/.herenow/credentials"
+RUNTIME_DIR="$PWD/.runtime/here-now"
+CREDENTIALS_FILE="$RUNTIME_DIR/credentials"
 API_KEY="${HERENOW_API_KEY:-}"
 DRIVE_TOKEN="${HERENOW_DRIVE_TOKEN:-}"
 ALLOW_NON_HERENOW_BASE_URL=0
@@ -13,7 +14,7 @@ usage() {
 Usage: drive.sh [global options] <command> [args]
 
 Global options:
-  --api-key <key>        Account API key (or $HERENOW_API_KEY / ~/.herenow/credentials)
+  --api-key <key>        Account API key (or $HERENOW_API_KEY / .runtime/here-now/credentials)
   --token <drv_live_...> Drive token (or $HERENOW_DRIVE_TOKEN)
   --base-url <url>       API base (default: https://here.now)
   --allow-nonherenow-base-url
@@ -81,7 +82,7 @@ if [[ -n "$DRIVE_TOKEN" ]]; then
 elif [[ -n "$API_KEY" ]]; then
   auth_header=(-H "authorization: Bearer $API_KEY")
 else
-  die "missing credentials; set HERENOW_API_KEY, HERENOW_DRIVE_TOKEN, or ~/.herenow/credentials"
+  die "missing credentials; set HERENOW_API_KEY, HERENOW_DRIVE_TOKEN, or .runtime/here-now/credentials"
 fi
 
 compute_sha256() {

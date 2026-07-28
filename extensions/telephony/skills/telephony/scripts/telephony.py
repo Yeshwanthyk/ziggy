@@ -72,7 +72,7 @@ def _telephony_home() -> Path:
     configured = os.environ.get("ZIGGY_TELEPHONY_HOME")
     if configured:
         return Path(configured).expanduser()
-    return Path("~/.config/ziggy/telephony").expanduser()
+    return Path.cwd() / ".runtime" / "telephony"
 
 
 def _env_path() -> Path:

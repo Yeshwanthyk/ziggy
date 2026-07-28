@@ -47,7 +47,7 @@ If the docs fetch fails or times out, continue with the local skill and live API
 - Required binaries: `curl`, `file`, `jq`
 - Optional environment variable: `$HERENOW_API_KEY`
 - Optional Drive token variable: `$HERENOW_DRIVE_TOKEN`
-- Optional credentials file: `~/.herenow/credentials`
+- Optional Profile-local credentials file: `.runtime/here-now/credentials`
 - Skill helpers: `scripts/publish.sh` and `scripts/drive.sh`, resolved relative to this loaded `SKILL.md`.
 
 For commands below, set `SKILL_DIR` to the absolute directory containing this loaded `SKILL.md`.
@@ -78,7 +78,7 @@ SKILL_DIR="<absolute directory containing the loaded SKILL.md>"
 bash "$SKILL_DIR/scripts/publish.sh" {file-or-dir} --slug {slug}
 ```
 
-The script auto-loads the `claimToken` from `.herenow/state.json` when updating anonymous sites. Pass `--claim-token {token}` to override.
+The script auto-loads the `claimToken` from `.runtime/here-now/state.json` in the current Profile directory when updating anonymous sites. Pass `--claim-token {token}` to override.
 
 Authenticated updates require a saved API key.
 
@@ -105,17 +105,17 @@ The publish script reads the API key from these sources (first match wins):
 
 1. `--api-key {key}` flag (CI/scripting only — avoid in interactive use)
 2. `$HERENOW_API_KEY` environment variable
-3. `~/.herenow/credentials` file (recommended for agents)
+3. `.runtime/here-now/credentials` in the current Profile directory (recommended for agents)
 
 To store a key, write it to the credentials file:
 
 ```bash
-mkdir -p ~/.herenow && echo "{API_KEY}" > ~/.herenow/credentials && chmod 600 ~/.herenow/credentials
+mkdir -p .runtime/here-now && echo "{API_KEY}" > .runtime/here-now/credentials && chmod 600 .runtime/here-now/credentials
 ```
 
 **IMPORTANT**: After receiving an API key, save it immediately — run the command above yourself. Do not ask the user to run it manually. Avoid passing the key via CLI flags (e.g. `--api-key`) in interactive sessions; the credentials file is the preferred storage method.
 
-Never commit credentials or local state files (`~/.herenow/credentials`, `.herenow/state.json`) to source control.
+Never commit credentials or local state files (`.runtime/here-now/credentials`, `.runtime/here-now/state.json`) to source control.
 
 ## Getting an API key
 
@@ -142,12 +142,12 @@ curl -sS https://here.now/api/auth/agent/verify-code \
 5. Save the returned `apiKey` yourself (do not ask the user to do this):
 
 ```bash
-mkdir -p ~/.herenow && echo "{API_KEY}" > ~/.herenow/credentials && chmod 600 ~/.herenow/credentials
+mkdir -p .runtime/here-now && echo "{API_KEY}" > .runtime/here-now/credentials && chmod 600 .runtime/here-now/credentials
 ```
 
 ## State file
 
-After every site create/update, the script writes to `.herenow/state.json` in the working directory:
+After every site create/update, the script writes to `.runtime/here-now/state.json` in the current Profile directory:
 
 ```json
 {
@@ -163,7 +163,7 @@ After every site create/update, the script writes to `.herenow/state.json` in th
 ```
 
 Before creating or updating sites, you may check this file to find prior slugs.
-Treat `.herenow/state.json` as internal cache only.
+Treat `.runtime/here-now/state.json` as internal cache only.
 Never present this local file path as a URL, and never use it as source of truth for auth mode, expiry, or claim URL.
 
 ## What to tell the user
@@ -174,7 +174,7 @@ For published sites:
 - Read and follow `publish_result.*` lines from script stderr to determine auth mode.
 - When `publish_result.auth_mode=authenticated`: tell the user the site is **permanent** and saved to their account. No claim URL is needed.
 - When `publish_result.auth_mode=anonymous`: tell the user the site **expires in 24 hours**. Share the claim URL (if `publish_result.claim_url` is non-empty and starts with `https://`) so they can keep it permanently. Warn that claim tokens are only returned once and cannot be recovered.
-- Never tell the user to inspect `.herenow/state.json` for claim URLs or auth status.
+- Never tell the user to inspect `.runtime/here-now/state.json` for claim URLs or auth status.
 
 For Drives:
 

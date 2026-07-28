@@ -2,21 +2,14 @@
   "name": "@ziggy/self-improving-agent",
   "version": "0.1.0",
   "private": true,
+  "description": "Evidence-grounded Profile skill improvement workflow.",
+  "keywords": [
+    "pi-package"
+  ],
   "type": "module",
-  "description": "Cwd-local learning capture and skill extraction for Pi Profiles.",
-  "keywords": ["pi-package"],
-  "scripts": {
-    "test": "bun test ./test",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint index.ts test",
-    "fmt": "oxfmt index.ts test scripts skills"
-  },
   "pi": {
-    "extensions": ["./index.ts"],
-    "skills": ["./skills"]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.0",
-    "typebox": "1.1.38"
+    "skills": [
+      "./skills"
+    ]
   }
 }

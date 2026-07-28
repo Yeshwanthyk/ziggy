@@ -2,7 +2,8 @@
 set -euo pipefail
 
 BASE_URL="https://here.now"
-CREDENTIALS_FILE="$HOME/.herenow/credentials"
+RUNTIME_DIR="$PWD/.runtime/here-now"
+CREDENTIALS_FILE="$RUNTIME_DIR/credentials"
 API_KEY="${HERENOW_API_KEY:-}"
 API_KEY_SOURCE="none"
 if [[ -n "${HERENOW_API_KEY:-}" ]]; then
@@ -91,7 +92,7 @@ if [[ -z "$API_KEY" && -f "$CREDENTIALS_FILE" ]]; then
 fi
 
 BASE_URL="${BASE_URL%/}"
-STATE_DIR=".herenow"
+STATE_DIR="$RUNTIME_DIR"
 STATE_FILE="$STATE_DIR/state.json"
 
 # Safety guard: avoid accidentally sending bearer auth to arbitrary endpoints.
@@ -213,7 +214,6 @@ elif [[ -d "$TARGET" ]]; then
     rel="${f#$TARGET/}"
     [[ "$rel" == ".DS_Store" ]] && continue
     [[ "$(basename "$rel")" == ".DS_Store" ]] && continue
-    [[ "$rel" == ".herenow/fork-meta.json" ]] && continue
     sz=$(wc -c < "$f" | tr -d ' ')
     ct=$(guess_content_type "$f")
     h=$(compute_sha256 "$f")
@@ -228,18 +228,6 @@ fi
 
 file_count=$(echo "$FILES_JSON" | "$JQ_BIN" 'length')
 [[ "$file_count" -gt 0 ]] || die "no files found"
-
-# Read fork-meta.json defaults if present and no explicit flags given
-FORK_META=""
-if [[ -d "$TARGET" ]]; then
-  FORK_META_PATH="$TARGET/.herenow/fork-meta.json"
-  if [[ -f "$FORK_META_PATH" ]]; then
-    FORK_META=$(cat "$FORK_META_PATH")
-    if [[ -z "$FORKABLE" ]]; then
-      FORKABLE=$("$JQ_BIN" -r '.forkable // empty' <<< "$FORK_META" 2>/dev/null || true)
-    fi
-  fi
-fi
 
 # Build request body
 BODY=$(echo "$FILES_JSON" | "$JQ_BIN" '{files: .}')
