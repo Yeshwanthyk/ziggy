@@ -29,6 +29,30 @@ export class ProviderCallError extends Schema.TaggedErrorClass<ProviderCallError
   },
 ) {}
 
+export class AuthProviderUnknown extends Schema.TaggedErrorClass<AuthProviderUnknown>()(
+  "AuthProviderUnknown",
+  {
+    profilePath: Schema.String,
+    providerId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class AuthTypeUnsupported extends Schema.TaggedErrorClass<AuthTypeUnsupported>()(
+  "AuthTypeUnsupported",
+  {
+    providerId: Schema.String,
+    requested: Schema.Literals(["api_key", "oauth"]),
+    message: Schema.String,
+  },
+) {}
+
+export class AuthFlowFailed extends Schema.TaggedErrorClass<AuthFlowFailed>()("AuthFlowFailed", {
+  providerId: Schema.String,
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 export type ZiggyAgentError =
   | ProfileNotInitialized
   | ProviderConfigError
