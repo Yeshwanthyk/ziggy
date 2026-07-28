@@ -1,0 +1,114 @@
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
+/* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
+/* eslint-disable ziggy-effect/no-unknown-error-message -- child_process emits a typed Error at this adapter boundary. */
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+const TIMEOUT_MS = 30_000;
+const OUTPUT_LIMIT = 24 * 1024;
+const executable = fileURLToPath(new URL("./bin/diffs.py", import.meta.url));
+
+const Source = Type.Object(
+  {
+    kind: Type.Optional(
+      Type.Union([Type.Literal("pr"), Type.Literal("paste"), Type.Literal("tool")]),
+    ),
+    ref: Type.Optional(Type.String()),
+    url: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+const Parameters = Type.Object(
+  {
+    patch: Type.Optional(Type.String()),
+    before: Type.Optional(Type.String()),
+    after: Type.Optional(Type.String()),
+    path: Type.Optional(Type.String()),
+    title: Type.Optional(Type.String()),
+    mode: Type.Optional(
+      Type.Union([Type.Literal("text"), Type.Literal("file"), Type.Literal("both")]),
+    ),
+    source: Type.Optional(Source),
+  },
+  { additionalProperties: false },
+);
+
+const appendBounded = (current: string, chunk: string): string => {
+  if (Buffer.byteLength(current) >= OUTPUT_LIMIT) return current;
+  const available = OUTPUT_LIMIT - Buffer.byteLength(current);
+  return current + Buffer.from(chunk).subarray(0, available).toString();
+};
+
+const display = (value: string): string =>
+  Buffer.byteLength(value) < OUTPUT_LIMIT ? value : `${value}\n[output truncated]`;
+
+const execute = (
+  input: unknown,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn("python3", [executable], {
+      cwd,
+      env: { ...process.env, ZIGGY_PROFILE_PATH: cwd },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let cancelled = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, TIMEOUT_MS);
+    const cancel = () => {
+      cancelled = true;
+      child.kill("SIGTERM");
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout = appendBounded(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr = appendBounded(stderr, chunk);
+    });
+    child.on("error", (cause) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", cancel);
+      reject(new Error(`diffs failed to start: ${cause.message}`));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", cancel);
+      const streams = `stdout:\n${display(stdout) || "(empty)"}\nstderr:\n${display(stderr) || "(empty)"}`;
+      if (cancelled) return reject(new Error(`diffs was cancelled.\n${streams}`));
+      if (timedOut) return reject(new Error(`diffs timed out after ${TIMEOUT_MS}ms.\n${streams}`));
+      if (code !== 0)
+        return reject(new Error(`diffs exited with code ${code ?? "unknown"}.\n${streams}`));
+      resolve({ stdout: display(stdout), stderr: display(stderr) });
+    });
+    child.stdin.end(JSON.stringify(input));
+  });
+
+export default function diffs(pi: Pick<ExtensionAPI, "registerTool">): void {
+  pi.registerTool({
+    name: "diffs",
+    label: "diffs",
+    description:
+      "Render a diff artifact from a patch, before/after text, or a GitHub pull request source.",
+    parameters: Parameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
+      const result = await execute(parameters, ctx.cwd, signal);
+      const text = result.stderr
+        ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
+        : result.stdout;
+      return { content: [{ type: "text", text }], details: result };
+    },
+  });
+}

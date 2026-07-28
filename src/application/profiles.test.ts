@@ -11,14 +11,14 @@ import { Profiles, ProfilesLive, type ProfileSkillError, type ProfilesShape } fr
 const makeFixture = async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-profiles-test-"));
   const profilePath = path.join(root, "profile");
-  const merlinRoot = path.join(root, "merlin");
+  const repositoryRoot = path.join(root, "repository");
   await mkdir(profilePath, { recursive: true });
   await writeFile(path.join(profilePath, "SOUL.md"), "# Profile\n");
 
   return {
     root,
     profile: { path: profilePath, name: "Profile" },
-    merlinRoot,
+    repositoryRoot,
   };
 };
 
@@ -46,21 +46,21 @@ const useProfiles = <Value>(
 test("addSkill prefers an extension-owned skill and copies its supporting tree", async () => {
   const fixture = await makeFixture();
   try {
-    await writeSkill(path.join(fixture.merlinRoot, "skills", "github"), "top-level\n");
+    await writeSkill(path.join(fixture.repositoryRoot, "skills", "github"), "top-level\n");
     await writeSkill(
-      path.join(fixture.merlinRoot, "extensions", "github", "skills", "github"),
+      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
       "extension-owned\n",
       { "scripts/review.ts": "export const review = true;\n" },
     );
 
     const installed = await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.merlinRoot, "github", fixture.root, false),
+      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "github", fixture.root, false),
     );
 
     const destination = path.join(fixture.profile.path, "skills", "github");
     expect(installed).toEqual({
       id: "github",
-      sourcePath: path.join(fixture.merlinRoot, "extensions", "github", "skills", "github"),
+      sourcePath: path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
       destinationPath: destination,
       replaced: false,
     });
@@ -76,10 +76,10 @@ test("addSkill prefers an extension-owned skill and copies its supporting tree",
 test("addSkill refuses an existing destination without force and force replaces its whole tree", async () => {
   const fixture = await makeFixture();
   try {
-    const source = path.join(fixture.merlinRoot, "skills", "weather");
+    const source = path.join(fixture.repositoryRoot, "skills", "weather");
     await writeSkill(source, "version one\n", { "scripts/weather.ts": "v1\n" });
     await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.merlinRoot, "weather", fixture.root, false),
+      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "weather", fixture.root, false),
     );
 
     const destination = path.join(fixture.profile.path, "skills", "weather");
@@ -91,7 +91,7 @@ test("addSkill refuses an existing destination without force and force replaces 
         const profiles = yield* Profiles;
         return yield* profiles.addSkill(
           fixture.profile,
-          fixture.merlinRoot,
+          fixture.repositoryRoot,
           "weather",
           fixture.root,
           false,
@@ -108,7 +108,7 @@ test("addSkill refuses an existing destination without force and force replaces 
     expect(await readFile(path.join(destination, "stale.txt"), "utf8")).toBe("must disappear\n");
 
     const replaced = await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.merlinRoot, "weather", fixture.root, true),
+      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "weather", fixture.root, true),
     );
     expect(replaced).toEqual({
       id: "weather",
@@ -129,23 +129,23 @@ test("addSkill refuses an existing destination without force and force replaces 
 test("listSkills sorts IDs and gives extension-owned collisions precedence", async () => {
   const fixture = await makeFixture();
   try {
-    await writeSkill(path.join(fixture.merlinRoot, "skills", "zebra"), "zebra\n");
-    await writeSkill(path.join(fixture.merlinRoot, "skills", "github"), "top-level\n");
+    await writeSkill(path.join(fixture.repositoryRoot, "skills", "zebra"), "zebra\n");
+    await writeSkill(path.join(fixture.repositoryRoot, "skills", "github"), "top-level\n");
     await writeSkill(
-      path.join(fixture.merlinRoot, "extensions", "github", "skills", "github"),
+      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
       "extension-owned\n",
     );
     await writeSkill(path.join(fixture.profile.path, "skills", "zebra"), "installed\n");
     await mkdir(path.join(fixture.profile.path, "skills", "incomplete"), { recursive: true });
 
     const listing = await useProfiles((profiles) =>
-      profiles.listSkills(fixture.profile, fixture.merlinRoot),
+      profiles.listSkills(fixture.profile, fixture.repositoryRoot),
     );
 
     expect(listing.installed.map((skill) => skill.id)).toEqual(["zebra"]);
     expect(listing.available.map((skill) => skill.id)).toEqual(["github", "zebra"]);
     expect(listing.available.find((skill) => skill.id === "github")?.path).toBe(
-      path.join(fixture.merlinRoot, "extensions", "github", "skills", "github"),
+      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

@@ -1,0 +1,14 @@
+{
+  "name": "@ziggy/humanizer",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "version": "0.1.0"
+}

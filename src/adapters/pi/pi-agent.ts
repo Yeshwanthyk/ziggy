@@ -34,7 +34,7 @@ import {
   type MemoryScope,
 } from "../../domain/memory";
 import type { ProfileTarget } from "../../domain/profile";
-import { discoverSkillRoots } from "./skill-roots";
+import { discoverPiResources } from "./resources";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
@@ -436,7 +436,7 @@ export const askOnce = (
   prompt: string,
   continueSession: boolean,
   context: ChatContext,
-  merlinRoot: string,
+  repositoryRoot: string,
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
@@ -446,11 +446,10 @@ export const askOnce = (
     );
     const runtime = yield* createProfileRuntime(
       target.path,
-      merlinRoot,
+      repositoryRoot,
       soulPath,
       sessionManager,
       context,
-      "memory-only",
     );
 
     if (runtime.modelFallbackMessage !== undefined) {
@@ -490,11 +489,10 @@ export const askOnce = (
 
 const createProfileRuntime = (
   profilePath: string,
-  merlinRoot: string,
+  repositoryRoot: string,
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-  toolMode: "default" | "memory-only",
 ) => {
   const paths = memoryFilePaths(profilePath, context);
   if (!paths.ok) {
@@ -504,7 +502,7 @@ const createProfileRuntime = (
   return piPromise(profilePath, "create agent runtime", () =>
     createAgentSessionRuntime(
       async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-        const skillRoots = await discoverSkillRoots(profilePath, merlinRoot);
+        const resources = await discoverPiResources(profilePath, repositoryRoot);
         const services = await createAgentSessionServices({
           cwd,
           agentDir,
@@ -512,7 +510,12 @@ const createProfileRuntime = (
             systemPrompt: soulPath,
             noExtensions: true,
             noSkills: true,
-            ...(skillRoots.length === 0 ? {} : { additionalSkillPaths: [...skillRoots] }),
+            ...(resources.extensionPaths.length === 0
+              ? {}
+              : { additionalExtensionPaths: [...resources.extensionPaths] }),
+            ...(resources.skillPaths.length === 0
+              ? {}
+              : { additionalSkillPaths: [...resources.skillPaths] }),
             noPromptTemplates: true,
             noThemes: true,
             noContextFiles: true,
@@ -527,7 +530,6 @@ const createProfileRuntime = (
           sessionManager: runtimeSessionManager,
           ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
           customTools: [createMemoryWriteTool(profilePath, context)],
-          ...(toolMode === "memory-only" ? { tools: ["memory_write"] } : {}),
         });
         return {
           ...created,
@@ -639,20 +641,19 @@ export const openChat = (
   target: ProfileTarget,
   context: ChatContext,
   sessionDirectory: string,
-  merlinRoot: string,
+  repositoryRoot: string,
   sessionMode: ChatSessionMode = "continue",
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const runtime = yield* createProfileRuntime(
       target.path,
-      merlinRoot,
+      repositoryRoot,
       soulPath,
       sessionMode === "continue"
         ? SessionManager.continueRecent(target.path, sessionDirectory)
         : SessionManager.create(target.path, sessionDirectory),
       context,
-      "memory-only",
     );
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
 
@@ -680,18 +681,17 @@ export const openChat = (
 export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
-  merlinRoot: string,
+  repositoryRoot: string,
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const sessionManager = createLocalSessionManager(target.path, "main");
     const runtime = yield* createProfileRuntime(
       target.path,
-      merlinRoot,
+      repositoryRoot,
       soulPath,
       sessionManager,
       context,
-      "default",
     );
 
     yield* piPromise(target.path, "open interactive mode", async () => {
@@ -703,11 +703,11 @@ export const openTui = (
     return 0;
   });
 
-export const makePiAgentLive = (merlinRoot: string) =>
+export const makePiAgentLive = (repositoryRoot: string) =>
   Layer.succeed(PiAgent, {
     askOnce: (target, prompt, continueSession, context) =>
-      askOnce(target, prompt, continueSession, context, merlinRoot),
-    openTui: (target, context) => openTui(target, context, merlinRoot),
+      askOnce(target, prompt, continueSession, context, repositoryRoot),
+    openTui: (target, context) => openTui(target, context, repositoryRoot),
     openChat: (target, context, sessionDirectory, sessionMode) =>
-      openChat(target, context, sessionDirectory, merlinRoot, sessionMode),
+      openChat(target, context, sessionDirectory, repositoryRoot, sessionMode),
   });

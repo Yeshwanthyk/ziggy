@@ -1,0 +1,15 @@
+{
+  "name": "@ziggy/self-improving-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-grounded Profile skill improvement workflow.",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

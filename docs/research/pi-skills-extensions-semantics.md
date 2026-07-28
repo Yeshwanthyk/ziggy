@@ -106,24 +106,22 @@ convention list shows
 
 ## Consequence for Ziggy vocabulary
 
-Ziggy can accurately say **“Ziggy extensions are skills”** only as a
-product/domain statement: a Ziggy extension should mean a Profile-facing,
-on-demand capability/instruction package with a stable skill contract. It
-should not be presented as Pi's `ExtensionAPI` module model.
+A **Ziggy extension** is a repository-owned Pi package under
+`extensions/<id>/`. The package is the unifying distribution boundary; it may
+contain one or more progressively loaded Agent Skills, executable Pi extension
+entrypoints, or both.
 
-Reserve **Pi TypeScript extension** for Ziggy's internal integration boundary:
-the executable adapter used when Ziggy needs to shape Pi's terminal runtime
-(commands, widgets, editor/overlay, rendering, theme/status, lifecycle hooks,
-or native tool/provider registration). This is deliberately a different term
-and lifecycle from a Ziggy extension/skill. Pi TypeScript extensions are not
-literally TUI-only—they can also register tools, providers, and lifecycle
-behavior—but, in Ziggy's product vocabulary, they should remain an internal
-runtime/TUI customization mechanism rather than the user-facing extension
-model.
+The two resource lifecycles remain distinct inside the package:
 
-The safe wording is therefore: “Ziggy extensions are skills. Pi extensions are
-an internal TypeScript integration mechanism that Ziggy may use to adapt Pi's
-runtime and TUI.” That matches Pi's separate resource loader paths for
-extensions and skills
+- skills contribute metadata at startup and bodies on demand;
+- TypeScript factories execute at runtime startup and register tools, hooks,
+  commands, providers, or UI behavior.
+
+Ziggy should therefore not call a skill an extension or reserve Pi extensions
+for the TUI. Pi is the executable extension host for every face. The hidden
+TUI-shaping package is simply one internal extension whose handlers guard on
+TUI mode.
+
+This follows Pi's separate resource loader paths for extensions and skills
 (`/Users/yesh/Documents/personal/reference/pi-mono/packages/coding-agent/src/core/resource-loader.ts:403-424`)
-and avoids collapsing two incompatible loading models.
+while using the Pi package manifest as their common ownership boundary.
