@@ -450,7 +450,6 @@ export const askOnce = (
       soulPath,
       sessionManager,
       context,
-      "memory-only",
     );
 
     if (runtime.modelFallbackMessage !== undefined) {
@@ -494,7 +493,6 @@ const createProfileRuntime = (
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-  toolMode: "default" | "memory-only",
 ) => {
   const paths = memoryFilePaths(profilePath, context);
   if (!paths.ok) {
@@ -527,15 +525,11 @@ const createProfileRuntime = (
             ],
           },
         });
-        const extensionToolNames = services.resourceLoader
-          .getExtensions()
-          .extensions.flatMap((extension) => [...extension.tools.keys()]);
         const created = await createAgentSessionFromServices({
           services,
           sessionManager: runtimeSessionManager,
           ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
           customTools: [createMemoryWriteTool(profilePath, context)],
-          ...(toolMode === "memory-only" ? { tools: ["memory_write", ...extensionToolNames] } : {}),
         });
         return {
           ...created,
@@ -660,7 +654,6 @@ export const openChat = (
         ? SessionManager.continueRecent(target.path, sessionDirectory)
         : SessionManager.create(target.path, sessionDirectory),
       context,
-      "memory-only",
     );
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
 
@@ -699,7 +692,6 @@ export const openTui = (
       soulPath,
       sessionManager,
       context,
-      "default",
     );
 
     yield* piPromise(target.path, "open interactive mode", async () => {

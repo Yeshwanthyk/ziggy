@@ -9,6 +9,9 @@ Repository capabilities live under `extensions/<id>/`. Each folder is a Pi packa
 Agent Skill, executable Pi extension code, or both. Ziggy loads these packages for every Profile;
 restart a resident Ziggy process after changing executable extension code.
 
+Packages are independent. An agent may compose capabilities that are currently available, but one
+package must not require another package's tools or state in order to remain useful.
+
 Profile-local skills live under `<profile>/skills/` and take precedence over package and top-level
 skills with the same declared name.
 

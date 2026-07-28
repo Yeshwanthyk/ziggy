@@ -1,8 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createAgentSessionServices } from "@earendil-works/pi-coding-agent";
+import { basename, dirname, join, resolve } from "node:path";
+import {
+  createAgentSessionFromServices,
+  createAgentSessionServices,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { discoverPiResources } from "./resources";
 
 const temporaryPaths: Array<string> = [];
@@ -118,4 +122,153 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     loadedSkills.diagnostics.filter((diagnostic) => diagnostic.type === "collision"),
   ).toHaveLength(2);
   expect(extensionTools).toEqual(["alpha_tool"]);
+});
+
+test("the complete repository catalog loads through production paths and Pi manifests", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-pi-catalog-"));
+  temporaryPaths.push(profilePath);
+  const repositoryRoot = resolve(import.meta.dir, "../../..");
+  const extensionsRoot = join(repositoryRoot, "extensions");
+  const expectedPackages = [
+    "acp-router",
+    "agent-browser",
+    "apple-notes",
+    "apple-reminders",
+    "architecture-diagram",
+    "blogwatcher",
+    "codex",
+    "coding-agent",
+    "diffs",
+    "discord",
+    "executor",
+    "gh-issues",
+    "github",
+    "github-issues",
+    "github-pr-triage",
+    "gog",
+    "goplaces",
+    "here-now",
+    "humanizer",
+    "hyperframes",
+    "imsg",
+    "linear",
+    "lossless-claw",
+    "mcporter",
+    "nano-pdf",
+    "notion",
+    "obsidian",
+    "onepassword",
+    "open-computer-use",
+    "openai-whisper",
+    "peekaboo",
+    "pi-packages",
+    "qmd",
+    "self-improving-agent",
+    "session-logs",
+    "skill-creator",
+    "skill-curator",
+    "slack",
+    "smart-memory",
+    "summarize",
+    "telephony",
+    "things-mac",
+    "tmux",
+    "wacli",
+    "weather",
+    "web-search",
+    "xurl",
+  ];
+  const expectedTools = [
+    "agent_browser",
+    "diffs",
+    "executor_call",
+    "executor_resume",
+    "executor_tools_describe",
+    "executor_tools_search",
+    "executor_tools_sources",
+    "gh_prs",
+    "github",
+    "lcm_describe",
+    "lcm_expand_query",
+    "lcm_grep",
+    "lcm_sessions",
+    "linear",
+    "open_computer_use",
+    "skill_curator_list",
+    "skill_curator_read",
+    "skill_curator_write",
+    "web_search",
+  ];
+  const packageNames = (await readdir(extensionsRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  expect(packageNames).toEqual(expectedPackages);
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+
+  const loadCatalog = (additionalExtensionPaths: string[], additionalSkillPaths: string[]) =>
+    createAgentSessionServices({
+      cwd: profilePath,
+      agentDir: profilePath,
+      resourceLoaderOptions: {
+        systemPrompt: join(profilePath, "SOUL.md"),
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        additionalExtensionPaths,
+        additionalSkillPaths,
+      },
+    });
+  const assertCatalog = (services: Awaited<ReturnType<typeof loadCatalog>>): void => {
+    const loadedSkills = services.resourceLoader.getSkills();
+    const loadedExtensions = services.resourceLoader.getExtensions();
+    const toolNames = loadedExtensions.extensions
+      .flatMap((extension) => [...extension.tools.keys()])
+      .sort((left, right) => left.localeCompare(right));
+
+    expect(loadedExtensions.errors).toEqual([]);
+    expect(loadedSkills.diagnostics).toEqual([]);
+    expect(loadedSkills.skills).toHaveLength(57);
+    expect(toolNames).toEqual(expectedTools);
+  };
+
+  const productionResources = await discoverPiResources(profilePath, repositoryRoot);
+  expect(
+    productionResources.extensionPaths.map((extensionPath) => basename(dirname(extensionPath))),
+  ).toEqual([
+    "agent-browser",
+    "diffs",
+    "executor",
+    "github",
+    "github-pr-triage",
+    "linear",
+    "lossless-claw",
+    "open-computer-use",
+    "skill-curator",
+    "web-search",
+  ]);
+  expect(productionResources.skillPaths).toHaveLength(48);
+  const productionServices = await loadCatalog(
+    [...productionResources.extensionPaths],
+    [...productionResources.skillPaths],
+  );
+  assertCatalog(productionServices);
+  const { session } = await createAgentSessionFromServices({
+    services: productionServices,
+    sessionManager: SessionManager.inMemory(),
+  });
+  expect(session.getActiveToolNames()).toEqual(
+    expect.arrayContaining(["read", "bash", "write", ...expectedTools]),
+  );
+  session.dispose();
+
+  assertCatalog(
+    await loadCatalog(
+      packageNames.map((name) => join(extensionsRoot, name)),
+      [join(repositoryRoot, "skills")],
+    ),
+  );
 });

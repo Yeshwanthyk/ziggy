@@ -1,6 +1,6 @@
 # What ziggy is
 
-Ziggy is a folder that is an assistant: one Bun/TypeScript package wrapping the published
+Ziggy is a folder that is an assistant: one Bun/TypeScript runtime wrapping the published
 `@earendil-works/pi-coding-agent@0.82.0`. Pi owns the agent loop, providers, sessions, and TUI;
 Ziggy owns Profile policy and composition.
 
@@ -11,7 +11,8 @@ Dependencies point inward: faces -> application -> domain.
 - Faces translate CLI or UI input into application calls.
 - Application services orchestrate Effect-native capabilities and domain values.
 - Domain code owns Profile concepts, invariants, and typed failures.
-- `src/adapters/pi/` is the only code allowed to import Pi packages.
+- Core runtime code may import Pi packages only under `src/adapters/pi/`.
+- Repository-owned `extensions/*` are isolated Pi packages and may import Pi at their entrypoints.
 - Only entrypoints execute Effects. `BunRuntime.runMain` in `src/main.ts` is the only production
   execution edge.
 

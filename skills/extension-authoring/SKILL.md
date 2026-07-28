@@ -7,6 +7,8 @@ description: Create or change a repository-owned Pi extension package for Ziggy.
 
 Ziggy extension packages live at `extensions/<id>/` and use Pi's package contract directly.
 Keep each package self-contained and give it only the resources it needs.
+Do not require tools owned by another package. Agents may compose capabilities that are present,
+but each package must remain useful when every other optional package is absent.
 
 ## Package shape
 
