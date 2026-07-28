@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   InteractiveMode,
@@ -21,8 +21,10 @@ import {
   type ZiggyAgentError,
 } from "../../domain/agent";
 import {
+  applyMemoryOperations,
   codePointLength,
   memoryFilePaths,
+  renderMemoryForPrompt,
   type ChatContext,
   type MemoryDocument,
   type MemoryScope,
@@ -161,9 +163,25 @@ const requireSoul = (profilePath: string) => {
   );
 };
 
+const memoryOperationParameters = Type.Union([
+  Type.Object({
+    action: Type.Literal("add"),
+    content: Type.String(),
+  }),
+  Type.Object({
+    action: Type.Literal("replace"),
+    oldText: Type.String(),
+    content: Type.String(),
+  }),
+  Type.Object({
+    action: Type.Literal("remove"),
+    oldText: Type.String(),
+  }),
+]);
+
 const memoryWriteParameters = Type.Object({
   scope: Type.Union([Type.Literal("shared"), Type.Literal("person"), Type.Literal("group")]),
-  content: Type.String(),
+  operations: Type.Array(memoryOperationParameters),
 });
 
 const toolResult = (text: string) => ({
@@ -178,17 +196,81 @@ const atomicReplace = async (
   content: string,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly cause: unknown }> => {
   const temporaryPath = join(dirname(document.absolutePath), `.${randomUUID()}.memory-write.tmp`);
+  let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
 
-  return mkdir(dirname(document.absolutePath), { recursive: true })
-    .then(() => writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" }))
-    .then(() => rename(temporaryPath, document.absolutePath))
-    .then(
-      () => ({ ok: true as const }),
-      async (cause: unknown) => {
-        await rm(temporaryPath, { force: true }).catch(() => undefined);
-        return { ok: false as const, cause };
-      },
-    );
+  try {
+    await mkdir(dirname(document.absolutePath), { recursive: true });
+    temporaryFile = await open(temporaryPath, "wx");
+    await temporaryFile.writeFile(content, "utf8");
+    await temporaryFile.sync();
+    await temporaryFile.close();
+    temporaryFile = undefined;
+    await rename(temporaryPath, document.absolutePath);
+    return { ok: true };
+  } catch (cause: unknown) {
+    await temporaryFile?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    return { ok: false, cause };
+  }
+};
+
+const errorCode = (cause: unknown): string | undefined =>
+  cause instanceof Error && "code" in cause && typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+
+const delay = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const acquireMemoryLock = async (document: MemoryDocument): Promise<string> => {
+  const lockPath = `${document.absolutePath}.lock`;
+  const deadline = Date.now() + 2_000;
+  await mkdir(dirname(document.absolutePath), { recursive: true });
+
+  while (true) {
+    let createdLock = false;
+    try {
+      const lockFile = await open(lockPath, "wx");
+      createdLock = true;
+      try {
+        await lockFile.writeFile(`${process.pid}\n`, "utf8");
+      } finally {
+        await lockFile.close();
+      }
+      return lockPath;
+    } catch (cause: unknown) {
+      if (createdLock) {
+        await unlink(lockPath).catch(() => undefined);
+        throw cause;
+      }
+      if (errorCode(cause) !== "EEXIST") {
+        throw cause;
+      }
+
+      const lockStatus = await stat(lockPath).then(
+        (status) => ({ ok: true as const, status }),
+        (statCause: unknown) => ({ ok: false as const, cause: statCause }),
+      );
+      if (!lockStatus.ok) {
+        if (errorCode(lockStatus.cause) === "ENOENT") {
+          continue;
+        }
+        throw lockStatus.cause;
+      }
+      if (Date.now() - lockStatus.status.mtimeMs > 10_000) {
+        await unlink(lockPath).catch((unlinkCause: unknown) => {
+          if (errorCode(unlinkCause) !== "ENOENT") {
+            throw unlinkCause;
+          }
+        });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("memory lock timed out after 2 seconds");
+      }
+      await delay(50);
+    }
+  }
 };
 
 const writableMemoryDocument = (
@@ -226,29 +308,49 @@ export const createMemoryWriteTool = (
   name: "memory_write",
   label: "memory_write",
   description:
-    "Atomically replace a curated memory document. Use shared for assistant-wide facts (2200 code points), person for the current 1:1 person (1375), or group for the current group (1375). Person memory is unavailable in groups; group memory is unavailable in 1:1 chats.",
+    "Apply an all-or-nothing batch of entry-based add, replace, or remove operations to curated memory. Use shared for assistant-wide facts (2200 code points), person for the current 1:1 person (1375), or group for the current group (1375). Add is idempotent; replace/remove oldText must match exactly one entry. Person memory is unavailable in groups; group memory is unavailable in 1:1 chats.",
   parameters: memoryWriteParameters,
-  async execute(_toolCallId, { scope, content }) {
+  async execute(_toolCallId, { scope, operations }) {
     const target = writableMemoryDocument(profilePath, context, scope);
     if (!target.ok) {
       return toolError(target.message);
     }
 
-    const length = codePointLength(content);
-    if (length > target.document.cap) {
-      return toolError(
-        `memory full: ${length}/${target.document.cap} code points — trim and retry`,
+    let lockPath: string | undefined;
+    try {
+      lockPath = await acquireMemoryLock(target.document);
+      const loaded = await readMemoryDocument(target.document);
+      if (!loaded.ok) {
+        return toolError(`memory read failed: ${causeMessage(loaded.cause)}`);
+      }
+
+      const applied = applyMemoryOperations(loaded.content ?? "", operations, target.document.cap);
+      if (!applied.ok) {
+        return toolError(applied.message);
+      }
+      if (!applied.changed) {
+        return toolResult("no change");
+      }
+
+      const write = await atomicReplace(target.document, applied.content);
+      if (!write.ok) {
+        return toolError(`memory write failed: ${causeMessage(write.cause)}`);
+      }
+
+      return toolResult(
+        `applied ${operations.length} operation(s); ${codePointLength(applied.content)}/${target.document.cap} code points in ${target.document.relativePath}`,
       );
+    } catch (cause: unknown) {
+      return toolError(`memory write failed: ${causeMessage(cause)}`);
+    } finally {
+      if (lockPath !== undefined) {
+        await unlink(lockPath).catch((cause: unknown) => {
+          if (errorCode(cause) !== "ENOENT") {
+            throw cause;
+          }
+        });
+      }
     }
-
-    const write = await atomicReplace(target.document, content);
-    if (!write.ok) {
-      return toolError(`memory write failed: ${causeMessage(write.cause)}`);
-    }
-
-    return toolResult(
-      `saved ${length}/${target.document.cap} code points to ${target.document.relativePath}`,
-    );
   },
 });
 
@@ -289,7 +391,7 @@ const buildMemoryPrompt = async (
 
     const document = documents[index];
     if (result.content !== undefined && document !== undefined) {
-      sections.push(`${document.heading}\n${result.content}`);
+      sections.push(`${document.heading}\n${renderMemoryForPrompt(result.content)}`);
     }
   }
 
