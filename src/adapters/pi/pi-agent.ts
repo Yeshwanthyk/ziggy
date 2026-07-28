@@ -10,6 +10,9 @@ import {
   initTheme,
   runPrintMode,
   type AgentSessionRuntime,
+  type BeforeAgentStartEvent,
+  type BeforeAgentStartEventResult,
+  type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Database } from "bun:sqlite";
@@ -397,6 +400,50 @@ const buildMemoryPrompt = async (
   return sections.join("\n\n");
 };
 
+const memoryReadFailurePrompt = (profilePath: string, cause: unknown): string =>
+  [
+    "PROFILE MEMORY UNAVAILABLE FOR THIS TURN.",
+    `Ziggy could not read the admitted Profile memory under ${profilePath}: ${causeMessage(cause)}`,
+    "Do not claim to remember Profile facts or call memory_write this turn. Tell the user that Profile memory is unavailable.",
+  ].join("\n");
+
+export const refreshProfileMemory = async (
+  profilePath: string,
+  documents: ReadonlyArray<MemoryDocument>,
+  event: Pick<BeforeAgentStartEvent, "systemPrompt">,
+): Promise<BeforeAgentStartEventResult> => {
+  try {
+    const memoryPrompt = await buildMemoryPrompt(profilePath, documents);
+    return { systemPrompt: `${event.systemPrompt}\n\n${memoryPrompt}` };
+  } catch (cause: unknown) {
+    return {
+      systemPrompt: `${event.systemPrompt}\n\n${memoryReadFailurePrompt(profilePath, cause)}`,
+    };
+  }
+};
+
+export const createProfileMemoryExtension = (
+  profilePath: string,
+  documents: ReadonlyArray<MemoryDocument>,
+): InlineExtension => ({
+  name: "ziggy-profile-memory",
+  hidden: true,
+  factory: (pi) => {
+    pi.on("before_agent_start", (event) => refreshProfileMemory(profilePath, documents, event));
+  },
+});
+
+export const localMainSessionDirectory = (profilePath: string): string =>
+  join(profilePath, "sessions", "local", "main");
+
+export const createLocalSessionManager = (
+  profilePath: string,
+  mode: "fresh" | "main",
+): SessionManager =>
+  mode === "main"
+    ? SessionManager.continueRecent(profilePath, localMainSessionDirectory(profilePath))
+    : SessionManager.create(profilePath, join(profilePath, "sessions"));
+
 export const askOnce = (
   target: ProfileTarget,
   prompt: string,
@@ -405,10 +452,10 @@ export const askOnce = (
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
-    const sessionDirectory = join(target.path, "sessions");
-    const sessionManager = continueSession
-      ? SessionManager.continueRecent(target.path, sessionDirectory)
-      : SessionManager.create(target.path, sessionDirectory);
+    const sessionManager = createLocalSessionManager(
+      target.path,
+      continueSession ? "main" : "fresh",
+    );
     const runtime = yield* createProfileRuntime(
       target.path,
       soulPath,
@@ -467,7 +514,6 @@ const createProfileRuntime = (
   return piPromise(profilePath, "create agent runtime", () =>
     createAgentSessionRuntime(
       async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-        const memoryPrompt = await buildMemoryPrompt(profilePath, paths.documents);
         const [skillPath, extensionPath] = await Promise.all([
           existingDirectory(join(profilePath, "skills")),
           existingDirectory(join(profilePath, "extensions")),
@@ -484,7 +530,7 @@ const createProfileRuntime = (
             noPromptTemplates: true,
             noThemes: true,
             noContextFiles: true,
-            appendSystemPrompt: [memoryPrompt],
+            extensionFactories: [createProfileMemoryExtension(profilePath, paths.documents)],
           },
         });
         const created = await createAgentSessionFromServices({
@@ -646,7 +692,7 @@ export const openTui = (
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
-    const sessionManager = SessionManager.create(target.path, join(target.path, "sessions"));
+    const sessionManager = createLocalSessionManager(target.path, "main");
     const runtime = yield* createProfileRuntime(
       target.path,
       soulPath,
