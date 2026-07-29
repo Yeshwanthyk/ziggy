@@ -1,6 +1,6 @@
 # Primitive status
 
-Current Ziggy status on 2026-07-28.
+Current Ziggy status on 2026-07-29.
 
 This is a work queue, not a parity checklist. Pi remains authoritative for providers, sessions,
 compaction, branching, skills, extensions, and the TUI. Reference repositories are evidence only,
@@ -16,20 +16,11 @@ not active targets.
 | Memory | Scoped Markdown, entry operations, per-document SQLite writer locks, and fresh `before_agent_start` injection every turn. Owner DMs across Telegram, Discord, and Slack share `memory/users/owner.md`; other memory remains scoped. | Complete. Do not add a memory registry, index, or second compactor. |
 | Extension | All 47 repository-owned `extensions/<id>/` folders are Pi packages containing skills, executable extension code, or both. Profile skills load first, package skills next, and top-level skills last. All 19 package tools run in every face. One hidden internal Pi extension shapes the TUI. | Complete. Pi remains the only extension host; do not add a parallel registry or load Profile-authored executable code. |
 | Gateway | Telegram, Discord, and Slack owner-only vertical slices with scoped shutdown, persistent per-chat sessions, and bounded transport redelivery suppression. | Functionally shipped. Disposable live proofs remain credential-dependent; durable delivery state remains deferred. |
-| Automation | Manual `wake`, optional gate, fresh Pi session, stdout, and optional Telegram delivery. | Walking skeleton shipped. Truthful configured-delivery failure is the next narrow code slice; scheduling still needs one ownership decision. |
+| Automation | Manual `wake`, optional gate, fresh Pi session, stdout, and optional Telegram delivery. A configured `telegram-chat` prints the local reply before delivery; missing or invalid `telegram.json` fails as `AutomationDeliveryUnavailable`, while Telegram API failures retain their typed error. | Truthful walking skeleton shipped. Scheduling still needs one ownership decision. |
 
 ## Ordered work
 
-### 1. Configured automation delivery failure
-
-If an automation declares `telegram-chat`, missing or invalid `telegram.json` must be a typed wake
-failure after the local reply is printed. A wake without `telegram-chat` remains unchanged. Do not
-add retry, receipts, an outbox, or a run ledger.
-
-Proof: the agent runs exactly once, stdout receives the reply, and missing Telegram configuration
-returns delivery-unavailable rather than success.
-
-### 2. Decide scheduler ownership
+### 1. Decide scheduler ownership
 
 Choose the process that owns scheduled claims before implementing cron:
 
@@ -39,14 +30,14 @@ Choose the process that owns scheduled claims before implementing cron:
 The current separate Telegram, Discord, and Slack commands make a Profile-wide lease a product
 decision, not a mechanical prerequisite.
 
-### 3. Claim-before-wake scheduler
+### 2. Claim-before-wake scheduler
 
 After ownership is settled, implement only the slice in `automation-scheduler.md`: parse `cron`,
 derive one deterministic firing ID, atomically claim that firing before model or delivery work, and
 prevent overlap for the same automation. Keep definitions as Markdown and every run as a fresh Pi
 session. Do not add a general run ledger, retries, dashboards, or lifecycle state machine.
 
-### 4. Operator visibility
+### 3. Operator visibility
 
 Land `ziggy sessions <profile>`, then `ziggy doctor <profile>`, as separate read-only slices from
 `cli-polish.md`. They project Pi and Profile state; they do not create new authorities.
