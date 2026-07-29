@@ -59,6 +59,17 @@ export class AutomationFileSystemError extends Schema.TaggedErrorClass<Automatio
   },
 ) {}
 
+export class AutomationDeliveryUnavailable extends Schema.TaggedErrorClass<AutomationDeliveryUnavailable>()(
+  "AutomationDeliveryUnavailable",
+  {
+    automationId: Schema.String,
+    channel: Schema.Literal("telegram"),
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 const invalid = (path: string, message: string, cause?: unknown) =>
   new AutomationInvalid({ path, message, cause: cause ?? message });
 

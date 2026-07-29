@@ -37,14 +37,15 @@ class DefaultPathsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as profile:
             profile_path = Path(profile)
             diagnosis = self.diagnose(profile_path)
+            process_cwd = profile_path.resolve()
 
             self.assertEqual(
                 diagnosis["env_path"],
-                str(profile_path / ".runtime" / "telephony" / ".env"),
+                str(process_cwd / ".runtime" / "telephony" / ".env"),
             )
             self.assertEqual(
                 diagnosis["state_path"],
-                str(profile_path / ".runtime" / "telephony" / "telephony_state.json"),
+                str(process_cwd / ".runtime" / "telephony" / "telephony_state.json"),
             )
 
     def test_preserves_explicit_home_override(self) -> None:

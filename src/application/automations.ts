@@ -5,6 +5,7 @@ import { killProcess } from "../adapters/bun/process";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { sendMessage, type TelegramApiError } from "../adapters/telegram/api";
 import {
+  AutomationDeliveryUnavailable,
   AutomationFileSystemError,
   AutomationInvalid,
   AutomationNotFound,
@@ -22,6 +23,7 @@ export type AutomationError =
   | AutomationInvalid
   | AutomationNotFound
   | AutomationFileSystemError
+  | AutomationDeliveryUnavailable
   | ZiggyAgentError
   | TelegramApiError;
 
@@ -35,6 +37,24 @@ export interface AutomationsShape {
 export class Automations extends Context.Service<Automations, AutomationsShape>()(
   "ziggy/Automations",
 ) {}
+
+export interface AutomationDelivery {
+  readonly loadTelegramConfig: typeof loadGatewayConfig;
+  readonly sendTelegramMessage: typeof sendMessage;
+}
+
+export interface AutomationOutput {
+  readonly printReply: (reply: string) => Effect.Effect<void>;
+}
+
+const liveDelivery: AutomationDelivery = {
+  loadTelegramConfig: loadGatewayConfig,
+  sendTelegramMessage: sendMessage,
+};
+
+const liveOutput: AutomationOutput = {
+  printReply: (reply) => Effect.sync(() => console.log(reply)),
+};
 
 const causeMessage = (cause: unknown): string =>
   Inspectable.toStringUnknown(cause).replace(/\s+/g, " ").trim();
@@ -121,32 +141,38 @@ const warnGateFailure = (id: string, result: Exclude<GateResult, { readonly kind
   });
 
 const deliverTelegram = (
+  delivery: AutomationDelivery,
   target: ProfileTarget,
   id: string,
   chatId: number,
   text: string,
-): Effect.Effect<void, TelegramApiError> =>
+): Effect.Effect<void, AutomationDeliveryUnavailable | TelegramApiError> =>
   Effect.gen(function* () {
-    const loaded = yield* loadGatewayConfig(target).pipe(
-      Effect.map((config) => ({ ok: true as const, config })),
-      Effect.catch((failure) =>
-        Effect.sync(() => {
-          console.error(`[wake] ${id}: Telegram delivery skipped — ${failure.message}`);
-          return { ok: false as const };
-        }),
+    const configPath = join(target.path, "telegram.json");
+    const config = yield* delivery.loadTelegramConfig(target).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AutomationDeliveryUnavailable({
+            automationId: id,
+            channel: "telegram",
+            path: configPath,
+            message: `automation ${id} requested Telegram delivery, but ${configPath} is unavailable`,
+            cause,
+          }),
       ),
     );
-    if (!loaded.ok) {
-      return;
-    }
 
     for (const chunk of telegramMessageChunks(text)) {
-      yield* sendMessage(loaded.config.botToken, chatId, chunk);
+      yield* delivery.sendTelegramMessage(config.botToken, chatId, chunk);
     }
   });
 
 const makeWake =
-  (agent: ZiggyAgentShape): AutomationsShape["wake"] =>
+  (
+    agent: ZiggyAgentShape,
+    delivery: AutomationDelivery,
+    output: AutomationOutput,
+  ): AutomationsShape["wake"] =>
   (target, automationId) =>
     Effect.gen(function* () {
       const automation = yield* readAutomation(target, automationId);
@@ -182,16 +208,22 @@ const makeWake =
         ),
       );
 
-      console.log(reply);
+      yield* output.printReply(reply);
       if (automation.telegramChat !== undefined) {
-        yield* deliverTelegram(target, automation.id, automation.telegramChat, reply);
+        yield* deliverTelegram(delivery, target, automation.id, automation.telegramChat, reply);
       }
     });
+
+export const makeAutomations = (
+  agent: ZiggyAgentShape,
+  delivery: AutomationDelivery = liveDelivery,
+  output: AutomationOutput = liveOutput,
+): AutomationsShape => ({ wake: makeWake(agent, delivery, output) });
 
 export const AutomationsLive = Layer.effect(
   Automations,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
-    return { wake: makeWake(agent) };
+    return makeAutomations(agent);
   }),
 );

@@ -279,6 +279,7 @@ const program = Effect.gen(function* () {
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
+    AutomationDeliveryUnavailable: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
     TelegramApiError: (failure) => fail(failure.message),
     DiscordApiError: (failure) => fail(failure.message),

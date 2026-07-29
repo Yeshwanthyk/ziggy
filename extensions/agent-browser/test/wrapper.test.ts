@@ -2,7 +2,7 @@
 /* eslint-disable ziggy-effect/no-json-parse -- TypeBox validates the fake process output immediately. */
 /* eslint-disable ziggy-effect/no-try-catch-or-throw -- The guard makes failed fixture decoding fail the test. */
 /* eslint-disable ziggy-effect/no-error-constructor -- The guard makes failed fixture decoding fail the test. */
-import { chmod, mkdtemp, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test } from "bun:test";
@@ -83,6 +83,7 @@ process.stdout.write(JSON.stringify({
   expect(exitCode).toBe(0);
   expect(Check(Output, parsed)).toBe(true);
   if (!Check(Output, parsed)) throw new Error("wrapper returned an invalid response");
+  const processCwd = await realpath(profile);
   const browserProfile = join(profile, ".runtime", "agent-browser", "browser-profile");
   expect(parsed).toEqual({
     success: true,
@@ -99,7 +100,7 @@ process.stdout.write(JSON.stringify({
         "open",
         "https://example.com",
       ],
-      cwd: profile,
+      cwd: processCwd,
       profile: browserProfile,
     },
   });
