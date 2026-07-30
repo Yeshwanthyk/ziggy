@@ -4,7 +4,10 @@ import { join } from "node:path";
 export interface PiResources {
   readonly extensionPaths: ReadonlyArray<string>;
   readonly skillPaths: ReadonlyArray<string>;
+  readonly catalogSkillIds: ReadonlyArray<string>;
 }
+
+const SKILL_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const existingDirectory = (directoryPath: string): Promise<string | undefined> =>
   stat(directoryPath).then(
@@ -36,6 +39,25 @@ const existingFile = (filePath: string): Promise<string | undefined> =>
     },
   );
 
+const catalogSkillsAt = async (directoryPath: string): Promise<ReadonlyArray<string>> => {
+  const directory = await existingDirectory(directoryPath);
+  if (directory === undefined) {
+    return [];
+  }
+
+  const entries = await readdir(directory, { withFileTypes: true });
+  const candidates = entries
+    .filter((entry) => entry.isDirectory() && SKILL_ID.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const skills = await Promise.all(
+    candidates.map(async (entry) => ({
+      id: entry.name,
+      skillFile: await existingFile(join(directory, entry.name, "SKILL.md")),
+    })),
+  );
+  return skills.flatMap(({ id, skillFile }) => (skillFile === undefined ? [] : [id]));
+};
+
 export const discoverPiResources = async (
   profilePath: string,
   repositoryRoot: string,
@@ -65,15 +87,26 @@ export const discoverPiResources = async (
     existingDirectory(join(profilePath, "skills")),
     existingDirectory(join(repositoryRoot, "skills")),
   ]);
+  const catalogSkillIds = new Set<string>();
+  for (const { skillPath } of packageResources) {
+    if (skillPath === undefined) {
+      continue;
+    }
+    for (const id of await catalogSkillsAt(skillPath)) {
+      catalogSkillIds.add(id);
+    }
+  }
+  if (topLevelSkills !== undefined) {
+    for (const id of await catalogSkillsAt(topLevelSkills)) {
+      catalogSkillIds.add(id);
+    }
+  }
 
   return {
     extensionPaths: packageResources.flatMap(({ extensionPath }) =>
       extensionPath === undefined ? [] : [extensionPath],
     ),
-    skillPaths: [
-      ...(profileSkills === undefined ? [] : [profileSkills]),
-      ...packageResources.flatMap(({ skillPath }) => (skillPath === undefined ? [] : [skillPath])),
-      ...(topLevelSkills === undefined ? [] : [topLevelSkills]),
-    ],
+    skillPaths: profileSkills === undefined ? [] : [profileSkills],
+    catalogSkillIds: [...catalogSkillIds].sort((left, right) => left.localeCompare(right)),
   };
 };

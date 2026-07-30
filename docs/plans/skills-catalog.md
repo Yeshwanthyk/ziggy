@@ -8,13 +8,16 @@ Ziggy carries its capabilities as repository-owned Pi packages under `extensions
 - It may expose `skills`, an executable `index.ts`, or both.
 - Skill support files live under the owning skill directory so relative references and
   `ziggy skills add` whole-tree copies agree.
-- Pi loads Profile skills first, sorted package skill roots next, and top-level `skills/` last.
+- Pi loads only skills copied into `<profile>/skills/`; repository package and top-level skills
+  remain catalog sources until installed.
 - Pi loads skill metadata at startup and full bodies on demand.
 - Executable package factories load at runtime startup.
 - Pi's normal tools, `memory_write`, and package tools are active in TUI, print, gateway, and
   automation runtimes. Ziggy does not maintain a second tool allowlist.
 - The current catalog is 47 packages, 57 progressively loaded skills, 10 executable packages, and
   19 registered tools.
+- `/skills` in the TUI selects one available catalog skill, installs it into the Profile, and
+  reloads Pi resources immediately.
 - `ziggy skills list <profile>` shows installed and available skills.
 - `ziggy skills add <profile> <id|path> [--force]` copies one complete skill directory.
 
@@ -28,9 +31,9 @@ Packages are independent capability boundaries. Their own skills may name their 
 Ziggy core tools, but must not require tools or state owned by another optional package. Agents
 compose available capabilities at runtime.
 
-Ziggy passes extension entrypoints and skill roots separately to Pi so Profile skills retain first
-collision precedence. Package manifests declare the same roots and are proven independently by
-loading the complete catalog as package directories through Pi.
+Ziggy passes repository extension entrypoints and the Profile skill root separately to Pi. Package
+manifests still declare their bundled skill roots and are proven independently by loading the
+complete catalog as package directories through Pi.
 
 Repository extension code has full host permissions. Keep each package narrow, explicit, and
 reviewed. Generated package state belongs under `<profile>/.runtime/<id>/`; durable Profile files

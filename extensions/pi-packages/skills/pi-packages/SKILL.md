@@ -6,14 +6,17 @@ description: Understand and work with Ziggy's repository-owned Pi extension pack
 # Pi packages in Ziggy
 
 Repository capabilities live under `extensions/<id>/`. Each folder is a Pi package containing an
-Agent Skill, executable Pi extension code, or both. Ziggy loads these packages for every Profile;
-restart a resident Ziggy process after changing executable extension code.
+Agent Skill, executable Pi extension code, or both. Ziggy loads executable packages for every
+Profile, but loads only skills installed into that Profile; restart a resident Ziggy process after
+changing executable extension code.
 
 Packages are independent. An agent may compose capabilities that are currently available, but one
 package must not require another package's tools or state in order to remain useful.
 
-Profile-local skills live under `<profile>/skills/` and take precedence over package and top-level
-skills with the same declared name.
+Profile-local skills live under `<profile>/skills/` and are the only skills shown to that Profile.
+
+In the TUI, run `/skills` and select one catalog skill. Ziggy installs it into the Profile and
+reloads the skill list immediately.
 
 Use Ziggy's existing skill commands:
 

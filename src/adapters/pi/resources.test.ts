@@ -28,7 +28,7 @@ afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-test("discovers repository Pi extensions and skills in Profile-first order", async () => {
+test("discovers repository extensions and catalog IDs but loads only Profile skills", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
@@ -46,16 +46,12 @@ test("discovers repository Pi extensions and skills in Profile-first order", asy
 
   expect(resources).toEqual({
     extensionPaths: [join(betaPackage, "index.ts")],
-    skillPaths: [
-      join(profilePath, "skills"),
-      join(alphaPackage, "skills"),
-      join(betaPackage, "skills"),
-      join(repositoryRoot, "skills"),
-    ],
+    skillPaths: [join(profilePath, "skills")],
+    catalogSkillIds: ["alpha", "beta", "top"],
   });
 });
 
-test("Pi keeps Profile skill precedence while loading package extensions", async () => {
+test("Pi loads only Profile skills while keeping package extension tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
@@ -114,14 +110,18 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     .getExtensions()
     .extensions.flatMap((extension) => [...extension.tools.keys()]);
 
-  expect([...byName.keys()].sort()).toEqual(["extension-only", "shared", "top-level-only"]);
+  expect([...byName.keys()].sort()).toEqual(["shared"]);
   expect(byName.get("shared")?.filePath).toBe(
     join(profilePath, "skills", "shared-profile", "SKILL.md"),
   );
-  expect(
-    loadedSkills.diagnostics.filter((diagnostic) => diagnostic.type === "collision"),
-  ).toHaveLength(2);
+  expect(loadedSkills.diagnostics).toEqual([]);
   expect(extensionTools).toEqual(["alpha_tool"]);
+  expect(resources.catalogSkillIds).toEqual([
+    "extension-only",
+    "shared-extension",
+    "shared-top-level",
+    "top-level-only",
+  ]);
 });
 
 test("the complete repository catalog loads through production paths and Pi manifests", async () => {
@@ -222,7 +222,7 @@ test("the complete repository catalog loads through production paths and Pi mani
         additionalSkillPaths,
       },
     });
-  const assertCatalog = (services: Awaited<ReturnType<typeof loadCatalog>>): void => {
+  const assertExtensions = (services: Awaited<ReturnType<typeof loadCatalog>>): void => {
     const loadedSkills = services.resourceLoader.getSkills();
     const loadedExtensions = services.resourceLoader.getExtensions();
     const toolNames = loadedExtensions.extensions
@@ -231,7 +231,6 @@ test("the complete repository catalog loads through production paths and Pi mani
 
     expect(loadedExtensions.errors).toEqual([]);
     expect(loadedSkills.diagnostics).toEqual([]);
-    expect(loadedSkills.skills).toHaveLength(57);
     expect(toolNames).toEqual(expectedTools);
   };
 
@@ -250,12 +249,14 @@ test("the complete repository catalog loads through production paths and Pi mani
     "skill-curator",
     "web-search",
   ]);
-  expect(productionResources.skillPaths).toHaveLength(48);
+  expect(productionResources.skillPaths).toEqual([]);
+  expect(productionResources.catalogSkillIds).toHaveLength(57);
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices);
+  assertExtensions(productionServices);
+  expect(productionServices.resourceLoader.getSkills().skills).toEqual([]);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -265,10 +266,10 @@ test("the complete repository catalog loads through production paths and Pi mani
   );
   session.dispose();
 
-  assertCatalog(
-    await loadCatalog(
-      packageNames.map((name) => join(extensionsRoot, name)),
-      [join(repositoryRoot, "skills")],
-    ),
+  const manifestServices = await loadCatalog(
+    packageNames.map((name) => join(extensionsRoot, name)),
+    [join(repositoryRoot, "skills")],
   );
+  assertExtensions(manifestServices);
+  expect(manifestServices.resourceLoader.getSkills().skills).toHaveLength(57);
 });

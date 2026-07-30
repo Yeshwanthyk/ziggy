@@ -1,11 +1,30 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SessionInfoChangedEvent, SessionStartEvent } from "@earendil-works/pi-coding-agent";
-import { createZiggyTuiExtension } from "./ziggy-tui-extension";
+import {
+  registerZiggyTui,
+  type ResourcesDiscoverHandler,
+  type ZiggyCommand,
+  type ZiggyTuiExtensionOptions,
+  type ZiggyTuiHandler,
+  type ZiggyTuiPort,
+} from "./ziggy-tui-extension";
 
-type Extension = ReturnType<typeof createZiggyTuiExtension>;
-type ExtensionApi = Parameters<Extension["factory"]>[0];
-type SessionStartHandler = Parameters<ExtensionApi["on"]>[1];
-type Ui = Parameters<SessionStartHandler>[1]["ui"];
+const temporaryPaths: Array<string> = [];
+
+type CommandContext = Parameters<ZiggyCommand["handler"]>[1];
+
+interface TextComponent {
+  render(width: number): Array<string>;
+}
+
+interface LifecycleUi {
+  setTitle(title: string): void;
+  setHeader(factory: () => TextComponent): void;
+  setFooter(factory: () => TextComponent): void;
+}
 
 const sessionStartEvent: SessionStartEvent = {
   type: "session_start",
@@ -16,45 +35,80 @@ const sessionInfoChangedEvent: SessionInfoChangedEvent = {
   name: "renamed",
 };
 
+afterEach(async () => {
+  await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
+});
+
+const createExtension = (
+  profilePath: string,
+  options?: {
+    readonly catalogSkillIds?: ReadonlyArray<string>;
+    readonly profileSkillsConfiguredAtStartup?: boolean;
+    readonly installSkill?: (id: string) => Promise<{ readonly ok: boolean; readonly message: string }>;
+  },
+) =>
+  ({
+    profilePath,
+    catalogSkillIds: options?.catalogSkillIds ?? [],
+    profileSkillsConfiguredAtStartup: options?.profileSkillsConfiguredAtStartup ?? false,
+    installSkill:
+      options?.installSkill ??
+      (() => Promise.resolve({ ok: true, message: "installed" })),
+  }) satisfies ZiggyTuiExtensionOptions;
+
 const createHarness = () => {
-  type HeaderFactory = Parameters<Ui["setHeader"]>[0];
-  type FooterFactory = Parameters<Ui["setFooter"]>[0];
-
   const titles: Array<string> = [];
-  const headers: Array<HeaderFactory> = [];
-  const footers: Array<FooterFactory> = [];
+  const headers: Array<() => TextComponent> = [];
+  const footers: Array<() => TextComponent> = [];
+  const commands = new Map<string, ZiggyCommand>();
+  let sessionStart: ZiggyTuiHandler | undefined;
+  let sessionInfoChanged: ZiggyTuiHandler | undefined;
+  let resourcesDiscover: ResourcesDiscoverHandler | undefined;
 
-  const ui: Ui = {
+  const ui: LifecycleUi = {
     setTitle: (title) => titles.push(title),
     setHeader: (factory) => headers.push(factory),
     setFooter: (factory) => footers.push(factory),
   };
+  const port: ZiggyTuiPort = {
+    onSessionStart: (handler) => {
+      sessionStart = handler;
+    },
+    onSessionInfoChanged: (handler) => {
+      sessionInfoChanged = handler;
+    },
+    onResourcesDiscover: (handler) => {
+      resourcesDiscover = handler;
+    },
+    registerCommand: (name, command) => {
+      commands.set(name, command);
+    },
+  };
 
-  return { footers, headers, titles, ui };
+  return {
+    commands,
+    footers,
+    headers,
+    port,
+    resourcesDiscover: () => resourcesDiscover,
+    sessionInfoChanged: () => sessionInfoChanged,
+    sessionStart: () => sessionStart,
+    titles,
+    ui,
+  };
 };
 
 describe("Ziggy TUI extension", () => {
   test("applies the profile title, header, and footer in TUI mode", async () => {
     const profilePath = "/profiles/ziggy-dev";
-    const extension = createZiggyTuiExtension(profilePath);
+    const options = createExtension(profilePath);
     const harness = createHarness();
-    let sessionStart: Parameters<Parameters<typeof extension.factory>[0]["on"]>[1] | undefined;
-    let sessionInfoChanged:
-      | Parameters<Parameters<typeof extension.factory>[0]["on"]>[1]
-      | undefined;
+    registerZiggyTui(harness.port, options);
 
-    extension.factory({
-      on: (event, registeredHandler) => {
-        if (event === "session_start") {
-          sessionStart = registeredHandler;
-        } else {
-          sessionInfoChanged = registeredHandler;
-        }
-      },
-    });
-
+    const sessionStart = harness.sessionStart();
+    const sessionInfoChanged = harness.sessionInfoChanged();
     if (sessionStart === undefined || sessionInfoChanged === undefined) {
-      throw new Error("session_start handler was not registered");
+      throw new Error("TUI lifecycle handlers were not registered");
     }
 
     sessionStart(sessionStartEvent, { mode: "tui", ui: harness.ui });
@@ -72,22 +126,18 @@ describe("Ziggy TUI extension", () => {
   });
 
   test("does nothing outside TUI mode", async () => {
-    const extension = createZiggyTuiExtension("/profiles/ziggy-dev");
+    const options = createExtension("/profiles/ziggy-dev");
     const harness = createHarness();
-    const handlers: Array<Parameters<Parameters<typeof extension.factory>[0]["on"]>[1]> = [];
+    registerZiggyTui(harness.port, options);
 
-    extension.factory({
-      on: (_event, registeredHandler) => {
-        handlers.push(registeredHandler);
-      },
-    });
-
-    if (handlers.length !== 2) {
+    const sessionStart = harness.sessionStart();
+    const sessionInfoChanged = harness.sessionInfoChanged();
+    if (sessionStart === undefined || sessionInfoChanged === undefined) {
       throw new Error("TUI lifecycle handlers were not registered");
     }
 
-    handlers[0]?.(sessionStartEvent, { mode: "print", ui: harness.ui });
-    handlers[1]?.(sessionInfoChangedEvent, { mode: "print", ui: harness.ui });
+    sessionStart(sessionStartEvent, { mode: "print", ui: harness.ui });
+    sessionInfoChanged(sessionInfoChangedEvent, { mode: "print", ui: harness.ui });
     await Bun.sleep(1);
 
     expect(harness).toMatchObject({
@@ -95,5 +145,57 @@ describe("Ziggy TUI extension", () => {
       headers: [],
       titles: [],
     });
+  });
+
+  test("/skills installs one catalog skill and exposes it on reload", async () => {
+    const profilePath = await mkdtemp(join(tmpdir(), "ziggy-tui-skills-"));
+    temporaryPaths.push(profilePath);
+    const installed: Array<string> = [];
+    const options = createExtension(profilePath, {
+      catalogSkillIds: ["alpha", "beta"],
+      installSkill: async (id) => {
+        installed.push(id);
+        const destination = join(profilePath, "skills", id);
+        await mkdir(destination, { recursive: true });
+        await writeFile(join(destination, "SKILL.md"), `# ${id}\n`, "utf8");
+        return { ok: true, message: `installed ${id}` };
+      },
+    });
+    const harness = createHarness();
+    registerZiggyTui(harness.port, options);
+    const command = harness.commands.get("skills");
+    const resourcesDiscover = harness.resourcesDiscover();
+    if (command === undefined || resourcesDiscover === undefined) {
+      throw new Error("skills command or resources handler was not registered");
+    }
+
+    const selections: Array<ReadonlyArray<string>> = [];
+    const notifications: Array<string> = [];
+    let reloads = 0;
+    const context: CommandContext = {
+      ui: {
+        notify: (message) => notifications.push(message),
+        select: (_title, items) => {
+          selections.push(items);
+          return Promise.resolve("beta");
+        },
+      },
+      reload: () => {
+        reloads += 1;
+        return Promise.resolve();
+      },
+    };
+
+    expect(resourcesDiscover({ reason: "startup" })).toBeUndefined();
+    await command.handler("", context);
+
+    expect(installed).toEqual(["beta"]);
+    expect(selections).toEqual([["alpha", "beta"]]);
+    expect(notifications).toEqual(["Installed beta; reloading Profile skills"]);
+    expect(reloads).toBe(1);
+    expect(resourcesDiscover({ reason: "reload" })).toEqual({
+      skillPaths: [join(profilePath, "skills")],
+    });
+    expect(command.getArgumentCompletions?.("")).toEqual([{ value: "alpha", label: "alpha" }]);
   });
 });

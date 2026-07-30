@@ -503,6 +503,44 @@ const createProfileRuntime = (
     createAgentSessionRuntime(
       async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
         const resources = await discoverPiResources(profilePath, repositoryRoot);
+        const installProfileSkill = async (id: string) => {
+          try {
+            const child = Bun.spawn({
+              cmd: [
+                process.execPath,
+                join(repositoryRoot, "src", "main.ts"),
+                "skills",
+                "add",
+                profilePath,
+                id,
+              ],
+              cwd: profilePath,
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [exitCode, stdout, stderr] = await Promise.all([
+              child.exited,
+              new Response(child.stdout).text(),
+              new Response(child.stderr).text(),
+            ]);
+            const output = (exitCode === 0 ? stdout : stderr || stdout).trim();
+            return {
+              ok: exitCode === 0,
+              message:
+                output.length === 0
+                  ? exitCode === 0
+                    ? `installed ${id}`
+                    : `failed to install ${id}`
+                  : output.slice(0, 2_000),
+            };
+          } catch (cause: unknown) {
+            return {
+              ok: false,
+              message: `failed to install ${id}: ${causeMessage(cause)}`,
+            };
+          }
+        };
         const services = await createAgentSessionServices({
           cwd,
           agentDir,
@@ -520,7 +558,12 @@ const createProfileRuntime = (
             noThemes: true,
             noContextFiles: true,
             extensionFactories: [
-              createZiggyTuiExtension(profilePath),
+              createZiggyTuiExtension({
+                profilePath,
+                catalogSkillIds: resources.catalogSkillIds,
+                profileSkillsConfiguredAtStartup: resources.skillPaths.length > 0,
+                installSkill: installProfileSkill,
+              }),
               createProfileMemoryExtension(profilePath, paths.documents),
             ],
           },
