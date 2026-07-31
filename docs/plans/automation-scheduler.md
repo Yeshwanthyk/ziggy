@@ -1,66 +1,61 @@
 # Automation scheduler
 
+The scheduler shape is now selected and sliced:
+
+- `automation-frame.md` records the failure and desired outcome.
+- `automation-shaping.md` is authoritative for requirements, the dedicated Profile scheduler
+  shape, state ownership, and invariants.
+- `automation-slices.md` is authoritative for the V1-V5 build order.
+
 ## What shipped
 
-`ziggy wake <profile> <automation-id>` reads one automation file, evaluates its gate, opens a fresh
-Pi session only when admitted, prints the answer, and optionally sends it to Telegram.
+V1 adds Profile-owned Markdown definitions, `automation_list/create/update/remove`, and
+`/automations` create/list/inspect/edit/pause/resume/remove. Definitions use deterministic
+frontmatter with `version`, `name`, and `enabled`; the Markdown body remains the prompt. Existing
+manual-wake files without the new fields remain readable.
+
+`ziggy wake <profile> <automation-id>` reads the same automation file, declines disabled
+definitions, evaluates its gate, opens a fresh Pi session only when admitted, prints the answer,
+and optionally sends it to Telegram.
 
 - Gate exit 0 proceeds.
 - Gate nonzero declines before Pi construction.
 - Gate spawn failure or timeout warns and follows the existing fail-open policy.
 - Every wake gets a fresh session under `sessions/automations/<id>/`.
 
-## When to build the scheduler
+## Selected ownership
 
-Build this after the Profile lease. The lease gives one resident process authority to claim
-scheduled work.
+One dedicated scheduler process owns scheduled claims for one Profile. The TUI and channel
+gateways never own scheduling. V3 proves the scheduler in the foreground; V4 installs that exact
+command as a Profile-specific service so closing the TUI or a terminal does not stop scheduled
+work.
 
-Before this slice, fix the current manual-wake false success: when an automation declares
-`telegram-chat`, missing or invalid Telegram configuration must return a typed delivery failure
-after the local reply is printed. That change needs no retry or delivery state.
-
-## Slice
-
-1. Add one optional `cron:` frontmatter field and decode it with Effect `Cron`.
-2. Add trigger provenance: `manual` or `schedule`, with scheduled trigger IDs equal to the firing
-   instant in canonical ISO form.
-3. Start one scheduler fiber inside whichever channel gateway owns the Profile lease.
-4. Store the last claimed firing instant per automation in
-   `<profile>/.runtime/automation-schedule.json`.
-5. Atomically persist the claim before `wake`; restart does not replay a claimed slot.
-6. Prevent overlapping scheduled runs of the same automation in the resident process.
-
-A scheduled automation without a gate is declined. Manual wake keeps its current behavior.
+V1 now establishes the shared definition boundary. Build V2 receipts next so V3 can schedule the
+same runner without creating a parallel state path.
 
 ## Invariants
 
-- Exactly one lease-owning resident process schedules a Profile.
+- Exactly one dedicated scheduler process claims scheduled work for a Profile.
 - A due slot is claimed before model or delivery work.
 - Restart never replays a claimed slot.
 - A declined gate creates no Pi session.
 - One slow automation does not block unrelated automation IDs.
 - Existing automation files without `cron` keep working.
+- The local result is durable before broadcast delivery.
+- Closing the TUI has no effect on scheduler ownership.
 
 ## Focused proof
 
-Use a fake clock, fake agent, and temporary Profile:
-
-1. Parse five- and six-field cron expressions; reject invalid expressions.
-2. Claim one due slot, run it once, restart the scheduler, and prove no replay.
-3. Decline a scheduled automation without a gate before Pi construction.
-4. Prove the same automation cannot overlap while a different ID can run.
-5. Run the scheduler under each lease-owning gateway seam.
-
-Then run:
+Each vertical slice carries its focused proof in `automation-slices.md`. Then run:
 
 ```sh
 bun test
 bun run check
 ```
 
-## Not in this slice
+## Still out
 
 - One-shot schedules.
-- Run history or a job dashboard.
-- Retries of model or delivery failures.
-- A daemon, launch agent, or second executable.
+- Retries, outbox semantics, or delivery replay.
+- A general event bus or remote automation dashboard.
+- Unbounded run history.

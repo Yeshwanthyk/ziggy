@@ -35,6 +35,7 @@ import {
 } from "../../domain/memory";
 import type { ProfileTarget } from "../../domain/profile";
 import { discoverPiResources } from "./resources";
+import { createAutomationExtension } from "./automation-extension";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
@@ -554,10 +555,13 @@ const createProfileRuntime = (
             noThemes: true,
             noContextFiles: true,
             extensionFactories: [
+              createAutomationExtension(profilePath, repositoryRoot),
               createZiggyTuiExtension({
                 profilePath,
                 catalogSkillIds: resources.catalogSkillIds,
-                profileSkillsConfiguredAtStartup: resources.skillPaths.length > 0,
+                profileSkillsConfiguredAtStartup: resources.skillPaths.includes(
+                  join(profilePath, "skills"),
+                ),
                 installSkill: installProfileSkill,
               }),
               createProfileMemoryExtension(profilePath, paths.documents),

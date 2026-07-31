@@ -24,6 +24,7 @@ import {
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
+import { parseAutomationWriteInputJson } from "./domain/automation";
 
 const command = process.argv[2];
 
@@ -219,6 +220,41 @@ const program = Effect.gen(function* () {
       yield* automations.wake(resolveProfileTarget(argument, resolutionOptions), automationId);
       return;
     }
+    case "automations": {
+      const action = process.argv[3];
+      const argument = process.argv[4];
+      if (argument === undefined) {
+        return yield* fail(`usage:
+  ziggy automations list <name|path>
+  ziggy automations create <name|path> <json>
+  ziggy automations update <name|path> <json>
+  ziggy automations remove <name|path> <automation-id>`);
+      }
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      if (action === "list" && process.argv.length === 5) {
+        console.log(JSON.stringify(yield* automations.list(target)));
+        return;
+      }
+      if ((action === "create" || action === "update") && process.argv.length === 6) {
+        const input = yield* parseAutomationWriteInputJson(process.argv[5] ?? "");
+        const automation =
+          action === "create"
+            ? yield* automations.create(target, input)
+            : yield* automations.update(target, input);
+        console.log(JSON.stringify(automation));
+        return;
+      }
+      if (action === "remove" && process.argv.length === 6) {
+        yield* automations.remove(target, process.argv[5] ?? "");
+        console.log(JSON.stringify({ removed: process.argv[5] }));
+        return;
+      }
+      return yield* fail(`usage:
+  ziggy automations list <name|path>
+  ziggy automations create <name|path> <json>
+  ziggy automations update <name|path> <json>
+  ziggy automations remove <name|path> <automation-id>`);
+    }
     case "gateway": {
       const argument = process.argv[3];
       if (argument === undefined) {
@@ -277,6 +313,7 @@ const program = Effect.gen(function* () {
     AuthFlowFailed: (failure) => fail(failure.message),
     MemoryIdInvalid: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
+    AutomationExists: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
     AutomationDeliveryUnavailable: (failure) => fail(failure.message),

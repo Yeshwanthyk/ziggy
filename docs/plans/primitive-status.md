@@ -14,30 +14,22 @@ not active targets.
 | Provider | Profile-local Pi `ModelRuntime`, auth, models, and login. | Complete. Keep Pi as the only provider authority. |
 | Session | Pi JSONL. TUI and `run -c` share `sessions/local/main/`; plain `run` is fresh; each gateway chat persists; every automation run is fresh. Pi owns compaction and branching. | Complete for conversation semantics. Add only read-only operator visibility. |
 | Memory | Scoped Markdown, entry operations, per-document SQLite writer locks, and fresh `before_agent_start` injection every turn. Owner DMs across Telegram, Discord, and Slack share `memory/users/owner.md`; other memory remains scoped. | Complete. Do not add a memory registry, index, or second compactor. |
-| Extension | All 47 repository-owned `extensions/<id>/` folders are available Pi packages containing skills, executable extension code, or both. A new Profile loads no visible resources. Pi loads only Profile-added extensions; only Profile-installed skills load. `/skills` marks installed entries, multi-selects from 57 catalog skills, and reloads the TUI once after installation. One hidden internal Pi extension shapes the TUI. | Complete. Pi remains the only extension host; repository packages are catalog sources, not globally active defaults. |
+| Extension | All 47 repository-owned `extensions/<id>/` folders are available Pi packages containing skills, executable extension code, or both. A new Profile loads no user-selected resources; the internal automation policy and hidden Ziggy extensions are always admitted. Pi otherwise loads only Profile-added extensions and Profile-installed skills. `/skills` marks installed entries, multi-selects from 57 catalog skills, and reloads the TUI once after installation. | Complete. Pi remains the only extension host; repository packages are catalog sources, not globally active defaults. |
 | Gateway | Telegram, Discord, and Slack owner-only vertical slices with scoped shutdown, persistent per-chat sessions, and bounded transport redelivery suppression. | Functionally shipped. Disposable live proofs remain credential-dependent; durable delivery state remains deferred. |
-| Automation | Manual `wake`, optional gate, fresh Pi session, stdout, and optional Telegram delivery. A configured `telegram-chat` prints the local reply before delivery; missing or invalid `telegram.json` fails as `AutomationDeliveryUnavailable`, while Telegram API failures retain their typed error. | Truthful walking skeleton shipped. Scheduling still needs one ownership decision. |
+| Automation | Profile-owned Markdown definitions with deterministic frontmatter, legacy reads, typed atomic CRUD, `automation_list/create/update/remove`, and `/automations` create/list/inspect/edit/pause/resume/remove. The always-admitted automation skill routes requests directly to Ziggy. Manual `wake`, optional gate, fresh Pi session, stdout, and optional Telegram delivery remain available; disabled definitions decline before Pi. | V1 shipped. V2-V5 add receipts, scheduling, service ownership, and broadcast fan-out in that order. |
 
 ## Ordered work
 
-### 1. Decide scheduler ownership
+### 1. Automation V2-V5
 
-Choose the process that owns scheduled claims before implementing cron:
+Build `automation-slices.md` in order:
 
-- one Profile-wide resident, which means only one of the current channel commands can run; or
-- a scheduler-specific resident owner, leaving channel processes independent.
+1. Run now, durable bounded receipts, and TUI reopen/catch-up.
+2. Cron scheduling in one dedicated foreground Profile process.
+3. A Profile-specific scheduler service that survives TUI and terminal closure.
+4. Telegram, Discord, and Slack fan-out with truthful per-target receipts.
 
-The current separate Telegram, Discord, and Slack commands make a Profile-wide lease a product
-decision, not a mechanical prerequisite.
-
-### 2. Claim-before-wake scheduler
-
-After ownership is settled, implement only the slice in `automation-scheduler.md`: parse `cron`,
-derive one deterministic firing ID, atomically claim that firing before model or delivery work, and
-prevent overlap for the same automation. Keep definitions as Markdown and every run as a fresh Pi
-session. Do not add a general run ledger, retries, dashboards, or lifecycle state machine.
-
-### 3. Operator visibility
+### 2. Operator visibility
 
 Land `ziggy sessions <profile>`, then `ziggy doctor <profile>`, as separate read-only slices from
 `cli-polish.md`. They project Pi and Profile state; they do not create new authorities.
@@ -50,7 +42,7 @@ are available.
 - Canonical Profile identity or symlink rejection.
 - Durable gateway ingress/outbound journals and replay.
 - A daemon attach protocol, RPC layer, or cross-channel event bus.
-- A general automation run ledger, retries, or delivery receipts.
+- Automation retries, an outbox, delivery replay, or unbounded run history.
 - Ziggy-owned provider, session, extension, or memory registries beyond direct package discovery.
 - Extension marketplace, provenance, quarantine, update, or remote fetch.
 - Named sessions, resume picker, voice presets, and dashboards.

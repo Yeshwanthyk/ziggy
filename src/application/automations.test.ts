@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup exercises the Node filesystem adapter */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -107,6 +107,109 @@ afterEach(async () => {
   await Promise.all(
     temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
+});
+
+describe("Profile-owned automation definitions", () => {
+  test("creates, lists, updates, and removes deterministic Markdown", async () => {
+    const events: Array<string> = [];
+    const target = await makeProfile(false);
+    const service = makeAutomations(makeAgent(events), makeDelivery(events), makeOutput(events));
+
+    const created = await Effect.runPromise(
+      service.create(target, {
+        id: "kai-weather",
+        name: "Kai weather",
+        enabled: true,
+        prompt: "# Daily weather\n\nDress Kai for today.",
+      }),
+    );
+    expect(created.version).toBe(1);
+    expect(await readFile(join(target.path, "automations", "kai-weather.md"), "utf8")).toBe(
+      [
+        "---",
+        "version: 1",
+        "name: Kai weather",
+        "enabled: true",
+        "---",
+        "",
+        "# Daily weather",
+        "",
+        "Dress Kai for today.",
+        "",
+      ].join("\n"),
+    );
+
+    const listed = await Effect.runPromise(service.list(target));
+    expect(listed.automations.map((automation) => automation.id)).toEqual([
+      "daily-note",
+      "kai-weather",
+    ]);
+    expect(listed.automations[0]).toMatchObject({
+      id: "daily-note",
+      name: "Daily note",
+      enabled: true,
+    });
+
+    await Effect.runPromise(service.update(target, { ...created, enabled: false }));
+    expect(await readFile(join(target.path, "automations", "kai-weather.md"), "utf8")).toContain(
+      "enabled: false",
+    );
+    await Effect.runPromise(service.remove(target, "kai-weather"));
+    expect((await Effect.runPromise(service.list(target))).automations).toHaveLength(1);
+  });
+
+  test("reports invalid Markdown without hiding valid definitions", async () => {
+    const target = await makeProfile(false);
+    await writeFile(join(target.path, "automations", "broken.md"), "not frontmatter\n", "utf8");
+    const inventory = await Effect.runPromise(
+      makeAutomations(makeAgent([]), makeDelivery([]), makeOutput([])).list(target),
+    );
+
+    expect(inventory.automations.map((automation) => automation.id)).toEqual(["daily-note"]);
+    expect(inventory.diagnostics).toHaveLength(1);
+    expect(inventory.diagnostics[0]?.id).toBe("broken");
+  });
+
+  test("create refuses to clobber an existing definition", async () => {
+    const target = await makeProfile(false);
+    const service = makeAutomations(makeAgent([]), makeDelivery([]), makeOutput([]));
+    const original = await readFile(
+      join(target.path, "automations", "daily-note.md"),
+      "utf8",
+    );
+    const outcome = await Effect.runPromise(
+      service
+        .create(target, {
+          id: "daily-note",
+          name: "Replacement",
+          enabled: true,
+          prompt: "Overwrite the original.",
+        })
+        .pipe(
+          Effect.as("created" as const),
+          Effect.catchTag("AutomationExists", () => Effect.succeed("exists" as const)),
+        ),
+    );
+
+    expect(outcome).toBe("exists");
+    expect(await readFile(join(target.path, "automations", "daily-note.md"), "utf8")).toBe(
+      original,
+    );
+  });
+
+  test("does not run a disabled automation", async () => {
+    const events: Array<string> = [];
+    const target = await makeProfile(false);
+    const service = makeAutomations(makeAgent(events), makeDelivery(events), makeOutput(events));
+    const existing = (await Effect.runPromise(service.list(target))).automations[0];
+    expect(existing).toBeDefined();
+    if (existing === undefined) return;
+    await Effect.runPromise(service.update(target, { ...existing, enabled: false }));
+
+    await Effect.runPromise(service.wake(target, "daily-note"));
+
+    expect(events).toEqual([]);
+  });
 });
 
 describe("automation Telegram delivery", () => {

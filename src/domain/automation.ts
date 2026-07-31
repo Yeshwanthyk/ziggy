@@ -6,31 +6,76 @@ const AutomationIdSchema = Schema.String.check(
   }),
 );
 
-const TelegramChatId = Schema.Number.check(
+const AutomationNameSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      value.length >= 1 &&
+      value.length <= 120 &&
+      value === value.trim() &&
+      !value.includes("\n") &&
+      !value.includes("\r"),
+    {
+      expected: "1-120 trimmed characters on one line",
+    },
+  ),
+);
+
+const AutomationPromptSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64 * 1024),
+);
+
+const FrontmatterLineSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      value.length >= 1 &&
+      value === value.trim() &&
+      !value.includes("\n") &&
+      !value.includes("\r"),
+    { expected: "a non-empty trimmed frontmatter line" },
+  ),
+);
+
+const TelegramChatIdSchema = Schema.Finite.check(
   Schema.makeFilter(Number.isSafeInteger, { expected: "a safe integer Telegram chat ID" }),
 );
 
 const AutomationFileSchema = Schema.Struct({
   version: Schema.Literal(1),
-  gate: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
-  "telegram-chat": Schema.optional(TelegramChatId),
-  prompt: Schema.String.check(Schema.isMinLength(1)),
+  name: Schema.optional(AutomationNameSchema),
+  enabled: Schema.optional(Schema.Boolean),
+  gate: Schema.optional(FrontmatterLineSchema),
+  "telegram-chat": Schema.optional(TelegramChatIdSchema),
+  prompt: AutomationPromptSchema,
+});
+
+export const AutomationWriteInputSchema = Schema.Struct({
+  id: AutomationIdSchema,
+  name: AutomationNameSchema,
+  enabled: Schema.Boolean,
+  gate: Schema.optional(FrontmatterLineSchema),
+  telegramChat: Schema.optional(TelegramChatIdSchema),
+  prompt: AutomationPromptSchema,
 });
 
 const decodeAutomationId = Schema.decodeUnknownEffect(AutomationIdSchema);
 const decodeAutomationFile = Schema.decodeUnknownEffect(AutomationFileSchema, {
   onExcessProperty: "error",
 });
+const decodeAutomationWriteInputJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(AutomationWriteInputSchema),
+  { onExcessProperty: "error" },
+);
 
 export type AutomationId = typeof AutomationIdSchema.Type;
+export type AutomationWriteInput = typeof AutomationWriteInputSchema.Type;
 
-export interface Automation {
-  readonly id: AutomationId;
-  readonly version: 1;
-  readonly gate?: string | undefined;
-  readonly telegramChat?: number | undefined;
-  readonly prompt: string;
-}
+export const AutomationSchema = Schema.Struct({
+  ...AutomationWriteInputSchema.fields,
+  version: Schema.Literal(1),
+});
+
+export type Automation = typeof AutomationSchema.Type;
 
 export class AutomationInvalid extends Schema.TaggedErrorClass<AutomationInvalid>()(
   "AutomationInvalid",
@@ -43,6 +88,15 @@ export class AutomationInvalid extends Schema.TaggedErrorClass<AutomationInvalid
 
 export class AutomationNotFound extends Schema.TaggedErrorClass<AutomationNotFound>()(
   "AutomationNotFound",
+  {
+    id: Schema.String,
+    path: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class AutomationExists extends Schema.TaggedErrorClass<AutomationExists>()(
+  "AutomationExists",
   {
     id: Schema.String,
     path: Schema.String,
@@ -79,6 +133,28 @@ export const validateAutomationId = (id: string): Effect.Effect<AutomationId, Au
       invalid(
         id,
         `invalid automation id ${id}: use 1-80 lowercase kebab-case characters from [a-z0-9-]`,
+        cause,
+      ),
+    ),
+  );
+
+export const defaultAutomationName = (id: AutomationId): string =>
+  id
+    .split("-")
+    .filter((part) => part.length > 0)
+    .map((part, index) =>
+      index === 0 ? `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}` : part,
+    )
+    .join(" ");
+
+export const parseAutomationWriteInputJson = (
+  source: string,
+): Effect.Effect<AutomationWriteInput, AutomationInvalid> =>
+  decodeAutomationWriteInputJson(source).pipe(
+    Effect.mapError((cause) =>
+      invalid(
+        "automation input",
+        "invalid automation input: expected id, name, enabled, prompt, and optional gate or telegramChat",
         cause,
       ),
     ),
@@ -123,6 +199,8 @@ export const parseAutomationFile = (
 
       if (key === "version") {
         entries.push([key, value === "1" ? 1 : value]);
+      } else if (key === "enabled") {
+        entries.push([key, value === "true" ? true : value === "false" ? false : value]);
       } else if (key === "telegram-chat") {
         entries.push([key, /^-?\d+$/.test(value) ? Number(value) : value]);
       } else {
@@ -145,8 +223,26 @@ export const parseAutomationFile = (
     return {
       id,
       version: decoded.version,
+      name: decoded.name ?? defaultAutomationName(id),
+      enabled: decoded.enabled ?? true,
       prompt: decoded.prompt,
       ...(decoded.gate === undefined ? {} : { gate: decoded.gate }),
       ...(decoded["telegram-chat"] === undefined ? {} : { telegramChat: decoded["telegram-chat"] }),
     };
   });
+
+export const renderAutomationFile = (automation: Automation): string =>
+  [
+    "---",
+    `version: ${automation.version}`,
+    `name: ${automation.name}`,
+    `enabled: ${automation.enabled ? "true" : "false"}`,
+    ...(automation.gate === undefined ? [] : [`gate: ${automation.gate}`]),
+    ...(automation.telegramChat === undefined
+      ? []
+      : [`telegram-chat: ${automation.telegramChat}`]),
+    "---",
+    "",
+    automation.prompt.trim(),
+    "",
+  ].join("\n");

@@ -1,15 +1,19 @@
-import { readFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Context, Effect, Inspectable, Layer, Option } from "effect";
+import { Context, Effect, Inspectable, Layer, Option, Result } from "effect";
 import { killProcess } from "../adapters/bun/process";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { sendMessage, type TelegramApiError } from "../adapters/telegram/api";
 import {
   AutomationDeliveryUnavailable,
+  AutomationExists,
   AutomationFileSystemError,
   AutomationInvalid,
   AutomationNotFound,
+  type Automation,
+  type AutomationWriteInput,
   parseAutomationFile,
+  renderAutomationFile,
   validateAutomationId,
 } from "../domain/automation";
 import type { ZiggyAgentError } from "../domain/agent";
@@ -21,6 +25,7 @@ const GATE_TIMEOUT = "30 seconds";
 
 export type AutomationError =
   | AutomationInvalid
+  | AutomationExists
   | AutomationNotFound
   | AutomationFileSystemError
   | AutomationDeliveryUnavailable
@@ -28,10 +33,36 @@ export type AutomationError =
   | TelegramApiError;
 
 export interface AutomationsShape {
+  readonly list: (
+    target: ProfileTarget,
+  ) => Effect.Effect<AutomationInventory, AutomationFileSystemError>;
+  readonly create: (
+    target: ProfileTarget,
+    input: AutomationWriteInput,
+  ) => Effect.Effect<Automation, AutomationInvalid | AutomationExists | AutomationFileSystemError>;
+  readonly update: (
+    target: ProfileTarget,
+    input: AutomationWriteInput,
+  ) => Effect.Effect<Automation, AutomationInvalid | AutomationNotFound | AutomationFileSystemError>;
+  readonly remove: (
+    target: ProfileTarget,
+    automationId: string,
+  ) => Effect.Effect<void, AutomationInvalid | AutomationNotFound | AutomationFileSystemError>;
   readonly wake: (
     target: ProfileTarget,
     automationId: string,
   ) => Effect.Effect<void, AutomationError>;
+}
+
+export interface AutomationDiagnostic {
+  readonly id: string;
+  readonly path: string;
+  readonly message: string;
+}
+
+export interface AutomationInventory {
+  readonly automations: ReadonlyArray<Automation>;
+  readonly diagnostics: ReadonlyArray<AutomationDiagnostic>;
 }
 
 export class Automations extends Context.Service<Automations, AutomationsShape>()(
@@ -59,7 +90,7 @@ const liveOutput: AutomationOutput = {
 const causeMessage = (cause: unknown): string =>
   Inspectable.toStringUnknown(cause).replace(/\s+/g, " ").trim();
 
-const readAutomation = (target: ProfileTarget, idSource: string) =>
+export const readAutomation = (target: ProfileTarget, idSource: string) =>
   Effect.gen(function* () {
     const id = yield* validateAutomationId(idSource);
     const filePath = join(target.path, "automations", `${id}.md`);
@@ -79,6 +110,183 @@ const readAutomation = (target: ProfileTarget, idSource: string) =>
             }),
     });
     return yield* parseAutomationFile(id, filePath, source);
+  });
+
+const automationDirectory = (target: ProfileTarget) => join(target.path, "automations");
+const automationPath = (target: ProfileTarget, id: string) =>
+  join(automationDirectory(target), `${id}.md`);
+
+const makeList = (): AutomationsShape["list"] => (target) =>
+  Effect.gen(function* () {
+    const directory = automationDirectory(target);
+    const entries = yield* Effect.tryPromise({
+      try: () => readdir(directory, { withFileTypes: true }),
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: directory,
+          message: `could not list automations at ${directory}`,
+          cause,
+        }),
+    }).pipe(
+      Effect.catchTag("AutomationFileSystemError", (failure) =>
+        fileSystemCauseDetails(failure.cause).code === "ENOENT"
+          ? Effect.succeed([])
+          : Effect.fail(failure),
+      ),
+    );
+
+    const automations: Array<Automation> = [];
+    const diagnostics: Array<AutomationDiagnostic> = [];
+    const files = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of files) {
+      const id = entry.name.slice(0, -3);
+      const result = yield* readAutomation(target, id).pipe(Effect.result);
+      if (Result.isSuccess(result)) {
+        automations.push(result.success);
+      } else {
+        diagnostics.push({
+          id,
+          path: automationPath(target, id),
+          message: result.failure.message,
+        });
+      }
+    }
+    return { automations, diagnostics };
+  });
+
+const normalizeAutomation = (input: AutomationWriteInput): Automation => ({
+  ...input,
+  version: 1,
+});
+
+const writeNewAutomation = (target: ProfileTarget, automation: Automation) =>
+  Effect.gen(function* () {
+    const directory = automationDirectory(target);
+    const filePath = automationPath(target, automation.id);
+    const temporaryPath = join(directory, `.${automation.id}.${crypto.randomUUID()}.tmp`);
+    yield* Effect.tryPromise({
+      try: () => mkdir(directory, { recursive: true }),
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: directory,
+          message: `could not create ${directory}`,
+          cause,
+        }),
+    });
+    yield* Effect.tryPromise({
+      try: () => writeFile(temporaryPath, renderAutomationFile(automation), { mode: 0o600 }),
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: temporaryPath,
+          message: `could not write ${temporaryPath}`,
+          cause,
+        }),
+    });
+    yield* Effect.tryPromise({
+      try: () => link(temporaryPath, filePath),
+      catch: (cause) =>
+        fileSystemCauseDetails(cause).code === "EEXIST"
+          ? new AutomationExists({
+              id: automation.id,
+              path: filePath,
+              message: `automation ${automation.id} already exists at ${filePath}`,
+            })
+          : new AutomationFileSystemError({
+              path: filePath,
+              message: `could not create ${filePath}`,
+              cause,
+            }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.tryPromise({
+          try: () => rm(temporaryPath, { force: true }),
+          catch: (cause) =>
+            new AutomationFileSystemError({
+              path: temporaryPath,
+              message: `could not clean up ${temporaryPath}`,
+              cause,
+            }),
+        }).pipe(
+          Effect.catchTag("AutomationFileSystemError", (failure) =>
+            Effect.sync(() => console.error(failure.message)),
+          ),
+        ),
+      ),
+    );
+    return automation;
+  });
+
+const makeCreate = (): AutomationsShape["create"] => (target, input) =>
+  writeNewAutomation(target, normalizeAutomation(input));
+
+const makeUpdate = (): AutomationsShape["update"] => (target, input) =>
+  Effect.gen(function* () {
+    const automation = normalizeAutomation(input);
+    const filePath = automationPath(target, automation.id);
+    yield* readAutomation(target, automation.id);
+    const temporaryPath = join(
+      automationDirectory(target),
+      `.${automation.id}.${crypto.randomUUID()}.tmp`,
+    );
+    yield* Effect.tryPromise({
+      try: () => writeFile(temporaryPath, renderAutomationFile(automation), { mode: 0o600 }),
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: temporaryPath,
+          message: `could not write ${temporaryPath}`,
+          cause,
+        }),
+    });
+    yield* Effect.tryPromise({
+      try: () => rename(temporaryPath, filePath),
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: filePath,
+          message: `could not replace ${filePath}`,
+          cause,
+        }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.tryPromise({
+          try: () => rm(temporaryPath, { force: true }),
+          catch: (cause) =>
+            new AutomationFileSystemError({
+              path: temporaryPath,
+              message: `could not clean up ${temporaryPath}`,
+              cause,
+            }),
+        }).pipe(
+          Effect.catchTag("AutomationFileSystemError", (failure) =>
+            Effect.sync(() => console.error(failure.message)),
+          ),
+        ),
+      ),
+    );
+    return automation;
+  });
+
+const makeRemove = (): AutomationsShape["remove"] => (target, idSource) =>
+  Effect.gen(function* () {
+    const id = yield* validateAutomationId(idSource);
+    const filePath = automationPath(target, id);
+    yield* Effect.tryPromise({
+      try: () => rm(filePath),
+      catch: (cause) =>
+        fileSystemCauseDetails(cause).code === "ENOENT"
+          ? new AutomationNotFound({
+              id,
+              path: filePath,
+              message: `no automation ${id} at ${filePath}`,
+            })
+          : new AutomationFileSystemError({
+              path: filePath,
+              message: `could not remove ${filePath}`,
+              cause,
+            }),
+    });
   });
 
 type GateResult =
@@ -176,6 +384,10 @@ const makeWake =
   (target, automationId) =>
     Effect.gen(function* () {
       const automation = yield* readAutomation(target, automationId);
+      if (!automation.enabled) {
+        console.log(`[wake] ${automation.id}: disabled — no model call`);
+        return;
+      }
 
       if (automation.gate !== undefined) {
         const gate = yield* runGate(target.path, automation.gate);
@@ -218,7 +430,13 @@ export const makeAutomations = (
   agent: ZiggyAgentShape,
   delivery: AutomationDelivery = liveDelivery,
   output: AutomationOutput = liveOutput,
-): AutomationsShape => ({ wake: makeWake(agent, delivery, output) });
+): AutomationsShape => ({
+  list: makeList(),
+  create: makeCreate(),
+  update: makeUpdate(),
+  remove: makeRemove(),
+  wake: makeWake(agent, delivery, output),
+});
 
 export const AutomationsLive = Layer.effect(
   Automations,

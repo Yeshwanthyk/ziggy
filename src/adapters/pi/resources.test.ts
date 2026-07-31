@@ -246,8 +246,16 @@ test("the complete repository catalog loads through production paths and Pi mani
   };
 
   const productionResources = await discoverPiResources(profilePath, repositoryRoot);
-  expect(productionResources.skillPaths).toEqual([]);
+  expect(productionResources.skillPaths).toEqual([
+    join(repositoryRoot, "src", "adapters", "pi", "skills"),
+  ]);
   expect(productionResources.catalogSkillIds).toHaveLength(57);
+  const policyServices = await loadCatalog([], [...productionResources.skillPaths]);
+  expect(
+    policyServices.resourceLoader
+      .getSkills()
+      .skills.map((skill) => skill.name),
+  ).toEqual(["automation-authoring"]);
   const productionServices = await loadProduction();
   expect(productionServices.resourceLoader.getExtensions().errors).toEqual([]);
   expect(productionServices.resourceLoader.getExtensions().extensions).toEqual([]);

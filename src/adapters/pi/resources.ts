@@ -79,7 +79,8 @@ export const discoverPiResources = async (
           })),
         );
 
-  const [profileSkills, topLevelSkills] = await Promise.all([
+  const [internalSkills, profileSkills, topLevelSkills] = await Promise.all([
+    existingDirectory(join(repositoryRoot, "src", "adapters", "pi", "skills")),
     existingDirectory(join(profilePath, "skills")),
     existingDirectory(join(repositoryRoot, "skills")),
   ]);
@@ -99,7 +100,9 @@ export const discoverPiResources = async (
   }
 
   return {
-    skillPaths: profileSkills === undefined ? [] : [profileSkills],
+    skillPaths: [internalSkills, profileSkills].filter(
+      (skillPath): skillPath is string => skillPath !== undefined,
+    ),
     catalogSkillIds: [...catalogSkillIds].sort((left, right) => left.localeCompare(right)),
   };
 };
