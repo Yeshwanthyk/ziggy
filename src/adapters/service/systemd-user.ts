@@ -129,6 +129,25 @@ export const makeSystemdUserBackend = (options: SystemdUserOptions): AutomationS
               : [],
       } satisfies AutomationServiceStatus;
     }),
+  restart: (target, command) =>
+    Effect.gen(function* () {
+      const service = coordinates(target, options);
+      const desired = renderSystemdUnit(command, target.path);
+      const current = yield* options.fileSystem.readOptional(service.artifactPath);
+      const active = yield* isActive(options.commands, service.id);
+      if (current !== desired || !active) {
+        return yield* makeSystemdUserBackend(options).install(target, command);
+      }
+      const arguments_ = ["--user", "restart", service.id];
+      yield* options.commands
+        .run("systemctl", arguments_)
+        .pipe(
+          Effect.flatMap((result) =>
+            requireCommandSuccess("systemd restart", "systemctl", arguments_, result),
+          ),
+        );
+      return { backend: "systemd-user", ...service, changed: true };
+    }),
   uninstall: (target) =>
     Effect.gen(function* () {
       const service = coordinates(target, options);

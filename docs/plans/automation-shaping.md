@@ -39,7 +39,7 @@ order.
 | B2 | One hidden Ziggy Pi extension exposes Profile-bound `automation_*` tools plus `/automations`, backed by the same application service. | |
 | B3 | Every manual or scheduled run writes one bounded Markdown receipt under `<profile>/.runtime/automations/runs/`; the TUI reads the latest receipts on open. | |
 | B4 | `ziggy scheduler <profile>` is the only due-time owner, holds a crash-safe Profile scheduler lease, and enters the same claim-before-Pi runner as Run now. | |
-| B5 | A Profile-specific launchd or systemd-user service owns scheduler startup and heartbeat independently of TUI and channel processes. | |
+| B5 | An enabled scheduled definition starts its Profile-specific launchd or systemd-user service automatically; `/automations` owns explicit Start, Stop, Restart, and status controls independently of TUI lifetime and channel processes. | |
 | B6 | Delivery fans out from the locally persisted reply to typed Telegram, Discord, and Slack targets and records one outcome per target. | |
 | B7 | An always-admitted automation guidance skill and direct tool descriptions route matching requests without external capability search. | |
 

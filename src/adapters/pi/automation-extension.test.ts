@@ -163,3 +163,73 @@ test("/automations runs now through the Profile-bound CLI", async () => {
   expect(calls).toContainEqual({ action: "run", payload: "daily-note" });
   expect(notifications).toEqual(["daily-note succeeded"]);
 });
+
+test("/automations exposes scheduler start, stop, restart, and status", async () => {
+  const calls: Array<{ readonly action: string; readonly payload?: unknown }> = [];
+  const inventory = {
+    automations: [],
+    latestRuns: [],
+    nextRuns: [],
+    scheduler: { online: false },
+    diagnostics: [],
+  };
+  const cli: AutomationCli = {
+    run: async (action, payload) => {
+      calls.push({ action, ...(payload === undefined ? {} : { payload }) });
+      if (action === "scheduler-status") {
+        return {
+          backend: "launchd",
+          id: "works.earendil.ziggy.scheduler.test",
+          artifactPath: "/Users/test/Library/LaunchAgents/test.plist",
+          installed: false,
+          hostActive: false,
+          healthFresh: false,
+          diagnostics: [],
+        };
+      }
+      if (action === "scheduler-start") {
+        return {
+          backend: "launchd",
+          id: "works.earendil.ziggy.scheduler.test",
+          artifactPath: "/Users/test/Library/LaunchAgents/test.plist",
+          changed: true,
+        };
+      }
+      return inventory;
+    },
+  };
+  const selections = [
+    "⚙ Scheduler · offline",
+    "Start scheduler",
+    undefined,
+  ];
+  const notifications: Array<string> = [];
+  const schedulerOptions: Array<string> = [];
+
+  await manageAutomations(cli, {
+    ui: {
+      select: async (title, options) => {
+        if (title.startsWith("Scheduler ·")) schedulerOptions.push(...options);
+        return selections.shift();
+      },
+      input: async () => undefined,
+      editor: async () => undefined,
+      confirm: async () => false,
+      notify: (message) => notifications.push(message),
+    },
+  });
+
+  expect(calls).toEqual([
+    { action: "list" },
+    { action: "scheduler-status" },
+    { action: "scheduler-start" },
+    { action: "list" },
+  ]);
+  expect(schedulerOptions).toEqual([
+    "Start scheduler",
+    "Stop scheduler",
+    "Restart scheduler",
+    "View scheduler status",
+  ]);
+  expect(notifications).toEqual(["Scheduler started"]);
+});

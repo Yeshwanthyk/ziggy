@@ -141,6 +141,30 @@ export const makeLaunchdBackend = (options: LaunchdOptions): AutomationServiceBa
         diagnostics: [],
       } satisfies AutomationServiceStatus;
     }),
+  restart: (target, command) =>
+    Effect.gen(function* () {
+      const service = coordinates(target, options);
+      const desired = renderLaunchdPlist(service.id, command, target.path);
+      const current = yield* options.fileSystem.readOptional(service.artifactPath);
+      const active = yield* hostActive(options.commands, service.service);
+      if (current !== desired || !active) {
+        return yield* makeLaunchdBackend(options).install(target, command);
+      }
+      const arguments_ = ["kickstart", "-k", service.service];
+      yield* options.commands
+        .run("launchctl", arguments_)
+        .pipe(
+          Effect.flatMap((result) =>
+            requireCommandSuccess("launchd kickstart", "launchctl", arguments_, result),
+          ),
+        );
+      return {
+        backend: "launchd",
+        id: service.id,
+        artifactPath: service.artifactPath,
+        changed: true,
+      };
+    }),
   uninstall: (target) =>
     Effect.gen(function* () {
       const service = coordinates(target, options);

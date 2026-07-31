@@ -10,6 +10,7 @@ import type { ProfileTarget } from "../domain/profile";
 
 const SchedulerHealthSchema = Schema.Struct({
   heartbeatAt: Schema.String,
+  instanceId: Schema.optional(Schema.String),
   lastSuccessAt: Schema.optional(Schema.String),
   lastErrorAt: Schema.optional(Schema.String),
   lastError: Schema.optional(Schema.String),

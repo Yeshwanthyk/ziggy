@@ -12,7 +12,10 @@ import {
   AutomationSchedulerError,
   makeAutomationScheduler,
 } from "./application/automation-scheduler";
-import { makeAutomationServices } from "./application/automation-services";
+import {
+  ensureSchedulerForAutomation,
+  makeAutomationServices,
+} from "./application/automation-services";
 import {
   DiscordGateway,
   DiscordGatewayLive,
@@ -330,6 +333,7 @@ const program = Effect.gen(function* () {
           action === "create"
             ? yield* automations.create(target, input)
             : yield* automations.update(target, input);
+        yield* ensureSchedulerForAutomation(automationServices, target, automation);
         console.log(JSON.stringify(automation));
         return;
       }
@@ -358,13 +362,16 @@ const program = Effect.gen(function* () {
       const subject = process.argv[4];
       const argument = process.argv[5];
       if (
-        (action !== "install" && action !== "status" && action !== "uninstall") ||
+        (action !== "install" &&
+          action !== "status" &&
+          action !== "restart" &&
+          action !== "uninstall") ||
         subject !== "scheduler" ||
         argument === undefined ||
         process.argv.length !== 6
       ) {
         return yield* fail(
-          "usage: ziggy service <install|status|uninstall> scheduler <name|path>",
+          "usage: ziggy service <install|status|restart|uninstall> scheduler <name|path>",
         );
       }
       const target = resolveProfileTarget(argument, resolutionOptions);
@@ -373,6 +380,8 @@ const program = Effect.gen(function* () {
           ? yield* automationServices.install(target)
           : action === "status"
             ? yield* automationServices.status(target)
+            : action === "restart"
+              ? yield* automationServices.restart(target)
             : yield* automationServices.uninstall(target);
       console.log(JSON.stringify(result));
       return;

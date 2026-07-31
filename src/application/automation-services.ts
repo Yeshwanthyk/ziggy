@@ -9,6 +9,7 @@ import {
   type SchedulerHealthStatus,
 } from "../domain/automation-service";
 import type { ProfileTarget } from "../domain/profile";
+import type { Automation } from "../domain/automation";
 import { makeLaunchdBackend } from "../adapters/service/launchd";
 import { makeSystemdUserBackend } from "../adapters/service/systemd-user";
 import {
@@ -31,6 +32,9 @@ export interface AutomationServicesShape {
   readonly status: (
     target: ProfileTarget,
   ) => Effect.Effect<AutomationServiceStatus, AutomationServiceError>;
+  readonly restart: (
+    target: ProfileTarget,
+  ) => Effect.Effect<AutomationServiceChange, AutomationServiceError>;
   readonly uninstall: (
     target: ProfileTarget,
   ) => Effect.Effect<AutomationServiceChange, AutomationServiceError>;
@@ -102,6 +106,10 @@ export const makeAutomationServices = (
         : options.health
             .read(target)
             .pipe(Effect.flatMap((health) => backend.status(target, health))),
+    restart: (target) =>
+      backend === undefined
+        ? unsupported()
+        : backend.restart(target, schedulerCommand(options, target)),
     uninstall: (target) => (backend === undefined ? unsupported() : backend.uninstall(target)),
   };
 };
@@ -114,3 +122,12 @@ export const makeAutomationServicesLive = (
 export const supportedAutomationServicePlatform = (
   platform: string,
 ): platform is AutomationServicePlatform => platform === "darwin" || platform === "linux";
+
+export const ensureSchedulerForAutomation = (
+  services: AutomationServicesShape,
+  target: ProfileTarget,
+  automation: Automation,
+): Effect.Effect<void, AutomationServiceError> =>
+  automation.enabled && automation.schedule !== undefined
+    ? services.install(target).pipe(Effect.asVoid)
+    : Effect.void;

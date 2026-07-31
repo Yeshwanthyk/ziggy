@@ -74,16 +74,18 @@ Status: shipped 2026-07-31.
 
 User-visible demo:
 
-1. Install the Profile scheduler service.
-2. See “scheduler online” in `/automations`.
+1. Save an enabled schedule and see its Profile scheduler start automatically.
+2. Use Start, Stop, Restart, or status from `/automations` when manual control is needed.
 3. Close every Ziggy TUI and terminal.
 4. Let one run fire, then reopen the TUI and inspect its receipt.
 
-Build B5: `ziggy service install|status|uninstall scheduler <profile>` uses a Profile-specific
-launchd agent on macOS or systemd user unit on Linux. Both use exact binary/script/Profile argv and
-the V3 scheduler command; there is no second scheduler. Status keeps installed, host-active, and
-fresh heartbeat separate. Linux reports user-linger state because a disabled linger may stop work
-after logout. Other platforms remain explicit unsupported cases.
+Build B5: enabled scheduled writes reconcile a Profile-specific launchd agent on macOS or systemd
+user unit on Linux. `/automations` exposes Start, Stop, Restart, and status. The equivalent
+`ziggy service install|status|restart|uninstall scheduler <profile>` commands remain available for
+repair and diagnostics. Both backends use exact binary/script/Profile argv and the V3 scheduler
+command; there is no second scheduler. Status keeps installed, host-active, and fresh heartbeat
+separate. Linux reports user-linger state because a disabled linger may stop work after logout.
+Other platforms remain explicit unsupported cases.
 
 Proof: generated plist/unit contracts, idempotent lifecycle tests, one crash-safe scheduler lease,
 stale-heartbeat status, and uninstall without deleting definitions or receipts.
@@ -118,7 +120,7 @@ are epoch-anchored, so restart does not introduce drift.
 
 ## Definition of automation support
 
-Automation support is complete through V6. An unattended schedule is truthful only when its
-Profile scheduler reports online. Retries, replay queues, webhooks, Windows services, a general
-event bus, remote administration, multiple destinations on the same transport, and unbounded run
-history remain out.
+Automation support is complete through V6. Saving an enabled schedule starts its Profile scheduler
+by default; online health remains the truthful proof that it is running. Retries, replay queues,
+webhooks, Windows services, a general event bus, remote administration, multiple destinations on
+the same transport, and unbounded run history remain out.

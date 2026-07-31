@@ -99,12 +99,42 @@ const Inventory = Type.Object({
     }),
   ),
 });
+const SchedulerServiceStatus = Type.Object({
+  backend: Type.Union([Type.Literal("launchd"), Type.Literal("systemd-user")]),
+  id: Type.String(),
+  artifactPath: Type.String(),
+  installed: Type.Boolean(),
+  hostActive: Type.Boolean(),
+  healthFresh: Type.Boolean(),
+  heartbeatAt: Type.Optional(Type.String()),
+  linger: Type.Optional(
+    Type.Union([Type.Literal("enabled"), Type.Literal("disabled"), Type.Literal("unknown")]),
+  ),
+  diagnostics: Type.Array(Type.String()),
+});
+const SchedulerServiceChange = Type.Object({
+  backend: Type.Union([Type.Literal("launchd"), Type.Literal("systemd-user")]),
+  id: Type.String(),
+  artifactPath: Type.String(),
+  changed: Type.Boolean(),
+});
 
 type Automation = Static<typeof AutomationRecord>;
 type AutomationWriteInput = Static<typeof AutomationInput>;
 type AutomationInventory = Static<typeof Inventory>;
 type AutomationRunReceipt = Static<typeof RunReceipt>;
-type AutomationAction = "list" | "create" | "update" | "remove" | "run" | "history";
+type SchedulerStatus = Static<typeof SchedulerServiceStatus>;
+type AutomationAction =
+  | "list"
+  | "create"
+  | "update"
+  | "remove"
+  | "run"
+  | "history"
+  | "scheduler-status"
+  | "scheduler-start"
+  | "scheduler-stop"
+  | "scheduler-restart";
 
 const jsonResult = (payload: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
@@ -117,20 +147,37 @@ export interface AutomationCli {
 
 const makeAutomationCli = (repositoryRoot: string, profilePath: string): AutomationCli => ({
   run: async (action, payload) => {
-    const command = [
-      process.execPath,
-      join(repositoryRoot, "src", "main.ts"),
-      "automations",
-      action,
-      profilePath,
-      ...(payload === undefined
-        ? []
+    const serviceAction = action.startsWith("scheduler-")
+      ? action.slice("scheduler-".length)
+      : undefined;
+    const command =
+      serviceAction === undefined
+        ? [
+            process.execPath,
+            join(repositoryRoot, "src", "main.ts"),
+            "automations",
+            action,
+            profilePath,
+            ...(payload === undefined
+              ? []
+              : [
+                  action === "remove" || action === "run" || action === "history"
+                    ? String(payload)
+                    : JSON.stringify(payload),
+                ]),
+          ]
         : [
-            action === "remove" || action === "run" || action === "history"
-              ? String(payload)
-              : JSON.stringify(payload),
-          ]),
-    ];
+            process.execPath,
+            join(repositoryRoot, "src", "main.ts"),
+            "service",
+            serviceAction === "start"
+              ? "install"
+              : serviceAction === "stop"
+                ? "uninstall"
+                : serviceAction,
+            "scheduler",
+            profilePath,
+          ];
     const child = Bun.spawn({
       cmd: command,
       cwd: profilePath,
@@ -170,6 +217,19 @@ const requireRunHistory = (value: unknown): ReadonlyArray<AutomationRunReceipt> 
     throw new Error("Ziggy returned invalid automation run history");
   }
   return value;
+};
+
+const requireSchedulerStatus = (value: unknown): SchedulerStatus => {
+  if (!Check(SchedulerServiceStatus, value)) {
+    throw new Error("Ziggy returned an invalid scheduler service status");
+  }
+  return value;
+};
+
+const requireSchedulerChange = (value: unknown): void => {
+  if (!Check(SchedulerServiceChange, value)) {
+    throw new Error("Ziggy returned an invalid scheduler service change");
+  }
 };
 
 const receiptMarkdown = (receipt: AutomationRunReceipt): string =>
@@ -309,10 +369,12 @@ export const manageAutomations = async (
   for (;;) {
     const inventory = requireInventory(await cli.run("list"));
     const createLabel = "＋ Create automation";
+    const schedulerLabel = `⚙ Scheduler · ${inventory.scheduler.online ? "online" : "offline"}`;
     const selected = await context.ui.select(
       `Automations · scheduler ${inventory.scheduler.online ? "online" : "offline"}`,
       [
         createLabel,
+        schedulerLabel,
         ...inventory.automations.map((automation) => automationLabel(automation, inventory)),
       ],
     );
@@ -324,6 +386,35 @@ export const manageAutomations = async (
         await cli.run("create", created);
         context.ui.notify(`Created ${created.id}`, "info");
       }
+      continue;
+    }
+
+    if (selected === schedulerLabel) {
+      const status = requireSchedulerStatus(await cli.run("scheduler-status"));
+      const action = await context.ui.select(
+        `Scheduler · ${status.hostActive && status.healthFresh ? "online" : status.hostActive ? "starting" : "offline"}`,
+        ["Start scheduler", "Stop scheduler", "Restart scheduler", "View scheduler status"],
+      );
+      if (action === undefined) continue;
+      if (action === "View scheduler status") {
+        await context.ui.editor("Scheduler status (read-only)", JSON.stringify(status, null, 2));
+        continue;
+      }
+      const serviceAction =
+        action === "Start scheduler"
+          ? "scheduler-start"
+          : action === "Stop scheduler"
+            ? "scheduler-stop"
+            : "scheduler-restart";
+      requireSchedulerChange(await cli.run(serviceAction));
+      context.ui.notify(
+        action === "Start scheduler"
+          ? "Scheduler started"
+          : action === "Stop scheduler"
+            ? "Scheduler stopped"
+            : "Scheduler restarted",
+        "info",
+      );
       continue;
     }
 

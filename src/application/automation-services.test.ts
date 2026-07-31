@@ -9,9 +9,12 @@ import type {
   ServiceFileSystem,
 } from "../adapters/service/io";
 import { renderSystemdUnit, systemdUnit } from "../adapters/service/systemd-user";
-import type { SchedulerCommand } from "../domain/automation-service";
+import {
+  AutomationServiceUnsupportedPlatform,
+  type SchedulerCommand,
+} from "../domain/automation-service";
 import type { ProfileTarget } from "../domain/profile";
-import { makeAutomationServices } from "./automation-services";
+import { ensureSchedulerForAutomation, makeAutomationServices } from "./automation-services";
 
 const target: ProfileTarget = {
   path: "/Profiles/Kai & family",
@@ -42,8 +45,10 @@ const makeDependencies = (state: FakeState) => {
         ) {
           result = { exitCode: state.active ? 0 : 3, stdout: "", stderr: "" };
         } else if (
-          (command === "launchctl" && arguments_[0] === "bootstrap") ||
-          (command === "systemctl" && arguments_[1] === "enable")
+          (command === "launchctl" &&
+            (arguments_[0] === "bootstrap" || arguments_[0] === "kickstart")) ||
+          (command === "systemctl" &&
+            (arguments_[1] === "enable" || arguments_[1] === "restart"))
         ) {
           state.active = true;
         } else if (
@@ -146,6 +151,104 @@ describe("scheduler service lifecycle", () => {
 
     expect((await Effect.runPromise(service.uninstall(target))).changed).toBe(true);
     expect((await Effect.runPromise(service.uninstall(target))).changed).toBe(false);
+  });
+
+  test("restart uses the host-native scheduler operation", async () => {
+    const state = makeState();
+    const dependencies = makeDependencies(state);
+    const service = makeAutomationServices({
+      platform: "darwin",
+      homedir: "/Users/test",
+      uid: 501,
+      userName: "test",
+      bunPath: schedulerCommand.executable,
+      scriptPath: schedulerCommand.arguments[0],
+      health: { read: () => Effect.succeed({ fresh: false }) },
+      ...dependencies,
+    });
+
+    await Effect.runPromise(service.install(target));
+    state.calls.length = 0;
+    const restarted = await Effect.runPromise(service.restart(target));
+
+    expect(restarted.changed).toBe(true);
+    expect(state.active).toBe(true);
+    expect(state.files.get(restarted.artifactPath)).toContain("<string>scheduler</string>");
+    expect(
+      state.calls.some(([command, action]) => command === "launchctl" && action === "kickstart"),
+    ).toBe(true);
+    expect(state.calls.some(([command, action]) => command === "launchctl" && action === "bootout"))
+      .toBe(false);
+  });
+
+  test("systemd restart uses the existing user service", async () => {
+    const state = makeState();
+    const dependencies = makeDependencies(state);
+    const service = makeAutomationServices({
+      platform: "linux",
+      homedir: "/home/test",
+      uid: 1000,
+      userName: "test",
+      bunPath: "/usr/bin/bun",
+      scriptPath: "/opt/ziggy/src/main.ts",
+      health: { read: () => Effect.succeed({ fresh: false }) },
+      ...dependencies,
+    });
+
+    await Effect.runPromise(service.install(target));
+    state.calls.length = 0;
+    await Effect.runPromise(service.restart(target));
+
+    expect(state.calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "restart",
+      systemdUnit(target.path),
+    ]);
+  });
+
+  test("an enabled scheduled definition starts its Profile scheduler", async () => {
+    const calls: Array<string> = [];
+    const unused = () =>
+      Effect.fail(
+        new AutomationServiceUnsupportedPlatform({
+          platform: "test",
+          message: "unused test service operation",
+        }),
+      );
+    const service = {
+      install: () => Effect.sync(() => calls.push("install")).pipe(Effect.as({
+        backend: "launchd" as const,
+        id: "scheduler",
+        artifactPath: "/tmp/scheduler.plist",
+        changed: true,
+      })),
+      status: unused,
+      restart: unused,
+      uninstall: unused,
+    };
+
+    await Effect.runPromise(
+      ensureSchedulerForAutomation(service, target, {
+        version: 1,
+        id: "daily-weather",
+        name: "Daily weather",
+        enabled: true,
+        prompt: "Check the weather.",
+        schedule: { kind: "every", seconds: 3600 },
+      }),
+    );
+    await Effect.runPromise(
+      ensureSchedulerForAutomation(service, target, {
+        version: 1,
+        id: "manual-note",
+        name: "Manual note",
+        enabled: true,
+        prompt: "Write a note.",
+      }),
+    );
+
+    expect(calls).toEqual(["install"]);
   });
 
   test("systemd status separates installation, host activity, health, and linger", async () => {

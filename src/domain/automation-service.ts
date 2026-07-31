@@ -75,6 +75,10 @@ export interface AutomationServiceBackend {
     target: ProfileTarget,
     health: SchedulerHealthStatus,
   ) => Effect.Effect<AutomationServiceStatus, AutomationServiceError>;
+  readonly restart: (
+    target: ProfileTarget,
+    command: SchedulerCommand,
+  ) => Effect.Effect<AutomationServiceChange, AutomationServiceError>;
   readonly uninstall: (
     target: ProfileTarget,
   ) => Effect.Effect<AutomationServiceChange, AutomationServiceError>;

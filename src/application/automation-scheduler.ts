@@ -140,6 +140,7 @@ const advanceCursor = (target: ProfileTarget, automationId: string, instant: Dat
 
 const HealthSchema = Schema.Struct({
   heartbeatAt: Schema.String,
+  instanceId: Schema.optional(Schema.String),
   lastSuccessAt: Schema.optional(Schema.String),
   lastErrorAt: Schema.optional(Schema.String),
   lastError: Schema.optional(Schema.String),
@@ -158,7 +159,7 @@ const readHealth = (target: ProfileTarget) => {
   );
 };
 
-const writeHeartbeat = (target: ProfileTarget, now: Date) =>
+const writeHeartbeat = (target: ProfileTarget, now: Date, instanceId: string) =>
   Effect.gen(function* () {
     const previous = yield* readHealth(target);
     yield* atomicWrite(
@@ -166,19 +167,22 @@ const writeHeartbeat = (target: ProfileTarget, now: Date) =>
       `${JSON.stringify({
         ...previous,
         heartbeatAt: now.toISOString(),
+        instanceId,
         stoppedAt: undefined,
       })}\n`,
     );
   });
 
-const writeStoppedHealth = (target: ProfileTarget, now: Date) =>
+const writeStoppedHealth = (target: ProfileTarget, now: Date, instanceId: string) =>
   Effect.gen(function* () {
     const previous = yield* readHealth(target);
+    if (previous?.instanceId !== instanceId) return;
     yield* atomicWrite(
       healthPath(target),
       `${JSON.stringify({
         ...previous,
         heartbeatAt: now.toISOString(),
+        instanceId,
         stoppedAt: now.toISOString(),
       })}\n`,
     );
@@ -189,6 +193,7 @@ const writeHealth = (
   now: Date,
   outcome: "success" | "error",
   message?: string,
+  instanceId?: string,
 ) =>
   Effect.gen(function* () {
     const previousSuccess = (yield* readHealth(target))?.lastSuccessAt;
@@ -196,6 +201,7 @@ const writeHealth = (
       healthPath(target),
       `${JSON.stringify({
         heartbeatAt: now.toISOString(),
+        ...(instanceId === undefined ? {} : { instanceId }),
         ...(outcome === "success"
           ? { lastSuccessAt: now.toISOString() }
           : {
@@ -281,7 +287,7 @@ export const makeAutomationScheduler = (
   runner: ScheduledAutomationRunner,
   options: AutomationSchedulerOptions,
 ): AutomationSchedulerShape => {
-  const tick: AutomationSchedulerShape["tick"] = (target, now) =>
+  const tickOnce = (target: ProfileTarget, now: Date, instanceId?: string) =>
     Effect.gen(function* () {
       const automations = yield* loader.listScheduled(target);
       const outcomes = yield* Effect.forEach(
@@ -289,11 +295,11 @@ export const makeAutomationScheduler = (
         (automation) => runOne(runner, target, automation, now, options.graceSeconds),
         { concurrency: "unbounded" },
       );
-      yield* writeHealth(target, now, "success");
+      yield* writeHealth(target, now, "success", undefined, instanceId);
       return outcomes;
     }).pipe(
       Effect.tapError((failure) =>
-        writeHealth(target, now, "error", failure.message).pipe(
+        writeHealth(target, now, "error", failure.message, instanceId).pipe(
           Effect.catch((healthFailure) =>
             Effect.logWarning("could not write automation scheduler health", {
               failure: healthFailure,
@@ -303,8 +309,11 @@ export const makeAutomationScheduler = (
       ),
     );
 
+  const tick: AutomationSchedulerShape["tick"] = (target, now) => tickOnce(target, now);
+
   const runLoop: AutomationSchedulerShape["runLoop"] = (target) => {
     const path = leasePath(target);
+    const instanceId = crypto.randomUUID();
     const acquire = Effect.gen(function* () {
       yield* ensureParent(path);
       return yield* Effect.try({
@@ -333,14 +342,14 @@ export const makeAutomationScheduler = (
         const ticks = Effect.forever(
           Effect.gen(function* () {
             const now = new Date(yield* Clock.currentTimeMillis);
-            yield* tick(target, now);
+            yield* tickOnce(target, now, instanceId);
             yield* Effect.sleep(`${options.pollSeconds} seconds`);
           }),
         );
         const heartbeats = Effect.forever(
           Effect.gen(function* () {
             const now = new Date(yield* Clock.currentTimeMillis);
-            yield* writeHeartbeat(target, now);
+            yield* writeHeartbeat(target, now, instanceId);
             yield* Effect.sleep("10 seconds");
           }),
         );
@@ -353,7 +362,7 @@ export const makeAutomationScheduler = (
       Effect.ensuring(
         Clock.currentTimeMillis.pipe(
           Effect.flatMap((milliseconds) =>
-            writeStoppedHealth(target, new Date(milliseconds)),
+            writeStoppedHealth(target, new Date(milliseconds), instanceId),
           ),
           Effect.catch((failure) =>
             Effect.logWarning("could not write stopped scheduler health", { failure }),
