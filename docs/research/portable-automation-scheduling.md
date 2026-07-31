@@ -4,9 +4,8 @@ Research snapshot: 2026-07-31, Ziggy `77c05182b5f452c9be93d7e44504512c8ed416c6`,
 Hermes Agent `5835201de19b099d76b8e4c64afe8af90c98af05`, and OpenClaw
 `184c13d01ced6d89fd4f166564f6fa2c2dd43a87`.
 
-This is prospective decision input. The shipped local shape remains authoritative in
-[`automation-scheduler.md`](../plans/automation-scheduler.md) and
-[`automation-slices.md`](../plans/automation-slices.md).
+This is prospective decision input. The current local contract is
+[`automations.md`](../automations.md); implementation and focused tests remain authoritative.
 
 ## Decision
 
@@ -54,7 +53,7 @@ Ziggy has one Profile-owned automation system, not a sketch:
 
 The present limitations are deliberate: no Windows host service, webhook ingress, retry/outbox,
 delivery replay, remote administration, or unbounded history
-([shipped plan](../plans/automation-scheduler.md)). Local unattended work also inherits machine
+([current contract](../automations.md)). Local unattended work also inherits machine
 availability: a launch agent is user-context work, and Apple documents that per-user launchd starts
 at login and terminates its agents at logout ([Apple launchd guide](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)); on Linux,
 systemd explicitly requires user lingering to keep the user manager alive after logout

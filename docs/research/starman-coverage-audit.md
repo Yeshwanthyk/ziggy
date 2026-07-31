@@ -1,5 +1,9 @@
 # Starman coverage audit — domain/feature list
 
+Historical snapshot. Its automation rows predate the shipped scheduler, claims, receipts, and TUI
+management surface; use [`automations.md`](../automations.md) for current automation behavior.
+Other comparisons remain scoped to the commits named below.
+
 Comparison of shipped Ziggy (`main` @ 2255e48, all seven primitives) against Starman
 (`/Users/yesh/code/personal/starman`), assimilated from six codex sweeps over every Starman
 package plus Ziggy's full source. Reference columns for OpenClaw and Hermes-Agent

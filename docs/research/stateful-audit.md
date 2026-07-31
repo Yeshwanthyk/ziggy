@@ -1,5 +1,9 @@
 # Ziggy stateful-system audit
 
+Historical snapshot. Its automation findings predate the shipped scheduler, claims, receipts, and
+TUI management surface; use [`automations.md`](../automations.md) for current automation behavior.
+The non-automation findings remain evidence scoped to the audited commit below.
+
 Audit target: `main` at `2255e48a071514030232af3f04c4bbea3c0728ee`. I read all 2,156 lines under `src/`, `docs/research/minimal-ziggy-scout.md`, `docs/research/pi-sdk-surface.md`, the installed Pi 0.82.0 declarations, and behavior-critical source from Pi reference snapshot `8eef62ed3ea62d646a7fad92fa583fc8d71fec17`.
 
 Pi `src/...` citations below are relative to `/Users/yesh/Documents/personal/reference/pi-mono/packages/coding-agent`; installed declaration citations are relative to this Ziggy checkout.
