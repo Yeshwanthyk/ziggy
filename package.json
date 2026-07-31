@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "ziggy": "./src/main.ts" },
+  "bin": {
+    "ziggy": "./src/main.ts"
+  },
   "scripts": {
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
@@ -15,8 +17,9 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.82.0",
-    "effect": "4.0.0-beta.99",
-    "@effect/platform-bun": "4.0.0-beta.99"
+    "@earendil-works/pi-tui": "0.82.0",
+    "@effect/platform-bun": "4.0.0-beta.99",
+    "effect": "4.0.0-beta.99"
   },
   "devDependencies": {
     "@effect/tsgo": "0.21.0",

@@ -147,7 +147,7 @@ describe("Ziggy TUI extension", () => {
     });
   });
 
-  test("/skills installs one catalog skill and exposes it on reload", async () => {
+  test("/skills installs multiple catalog skills and exposes them on one reload", async () => {
     const profilePath = await mkdtemp(join(tmpdir(), "ziggy-tui-skills-"));
     temporaryPaths.push(profilePath);
     const installed: Array<string> = [];
@@ -169,15 +169,15 @@ describe("Ziggy TUI extension", () => {
       throw new Error("skills command or resources handler was not registered");
     }
 
-    const selections: Array<ReadonlyArray<string>> = [];
+    const selections: Array<ReadonlyArray<{ readonly id: string; readonly installed: boolean }>> = [];
     const notifications: Array<string> = [];
     let reloads = 0;
     const context: CommandContext = {
       ui: {
         notify: (message) => notifications.push(message),
-        select: (_title, items) => {
+        selectSkills: (items) => {
           selections.push(items);
-          return Promise.resolve("beta");
+          return Promise.resolve(["alpha", "beta"]);
         },
       },
       reload: () => {
@@ -189,13 +189,20 @@ describe("Ziggy TUI extension", () => {
     expect(resourcesDiscover({ reason: "startup" })).toBeUndefined();
     await command.handler("", context);
 
-    expect(installed).toEqual(["beta"]);
-    expect(selections).toEqual([["alpha", "beta"]]);
-    expect(notifications).toEqual(["Installed beta; reloading Profile skills"]);
+    expect(installed).toEqual(["alpha", "beta"]);
+    expect(selections).toEqual([
+      [
+        { id: "alpha", installed: false },
+        { id: "beta", installed: false },
+      ],
+    ]);
+    expect(notifications).toEqual([
+      "Installed 2 skills: alpha, beta; reloading Profile skills",
+    ]);
     expect(reloads).toBe(1);
     expect(resourcesDiscover({ reason: "reload" })).toEqual({
       skillPaths: [join(profilePath, "skills")],
     });
-    expect(command.getArgumentCompletions?.("")).toEqual([{ value: "alpha", label: "alpha" }]);
+    expect(command.getArgumentCompletions?.("")).toBeNull();
   });
 });

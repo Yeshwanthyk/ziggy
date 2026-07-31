@@ -15,8 +15,9 @@ package must not require another package's tools or state in order to remain use
 
 Profile-local skills live under `<profile>/skills/` and are the only skills shown to that Profile.
 
-In the TUI, run `/skills` and select one catalog skill. Ziggy installs it into the Profile and
-reloads the skill list immediately.
+In the TUI, run `/skills`. Installed catalog skills are marked. Use Up/Down to move, Space to select
+multiple available skills, Enter to install them, or Escape to cancel. Ziggy reloads the Profile
+skill list once after installation.
 
 Use Ziggy's existing skill commands:
 

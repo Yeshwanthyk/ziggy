@@ -16,8 +16,8 @@ Ziggy carries its capabilities as repository-owned Pi packages under `extensions
   automation runtimes. Ziggy does not maintain a second tool allowlist.
 - The current catalog is 47 packages, 57 progressively loaded skills, 10 executable packages, and
   19 registered tools.
-- `/skills` in the TUI selects one available catalog skill, installs it into the Profile, and
-  reloads Pi resources immediately.
+- `/skills` in the TUI marks installed catalog skills, supports selecting multiple available skills
+  with Space, installs the selection into the Profile on Enter, and reloads Pi resources once.
 - `ziggy skills list <profile>` shows installed and available skills.
 - `ziggy skills add <profile> <id|path> [--force]` copies one complete skill directory.
 

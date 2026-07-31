@@ -5,6 +5,10 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import {
+  SkillMultiSelectComponent,
+  type SkillSelectionItem,
+} from "./skill-multi-select";
 
 interface TextComponent {
   invalidate(): void;
@@ -25,7 +29,9 @@ interface ZiggyTuiContext {
 export interface ZiggyCommandContext {
   readonly ui: {
     readonly notify: (message: string, level?: "info" | "warning" | "error") => void;
-    readonly select: (title: string, items: Array<string>) => Promise<string | undefined>;
+    readonly selectSkills: (
+      items: ReadonlyArray<SkillSelectionItem>,
+    ) => Promise<ReadonlyArray<string> | undefined>;
   };
   readonly reload: () => Promise<void>;
 }
@@ -120,7 +126,7 @@ export const registerZiggyTui = (
   });
 
   pi.registerCommand("skills", {
-    description: "Install a skill into this Profile",
+    description: "Install skills into this Profile",
     getArgumentCompletions: (argumentPrefix) => {
       const matches = availableSkills()
         .filter((id) => id.startsWith(argumentPrefix))
@@ -128,30 +134,62 @@ export const registerZiggyTui = (
       return matches.length === 0 ? null : matches;
     },
     handler: async (args, context) => {
-      const requested = args.trim();
+      const requested = [
+        ...new Set(
+          args
+            .trim()
+            .split(/[\s,]+/)
+            .filter((id) => id.length > 0),
+        ),
+      ];
       const selected =
         requested.length > 0
           ? requested
-          : await context.ui.select("Add a skill to this Profile", availableSkills());
+          : await context.ui.selectSkills(
+              catalogSkillIds.map((id) => ({ id, installed: isInstalled(id) })),
+            );
       if (selected === undefined) {
         return;
       }
-      if (!catalogSkillIds.includes(selected)) {
-        context.ui.notify(`Unknown skill: ${selected}`, "error");
-        return;
-      }
-      if (isInstalled(selected)) {
-        context.ui.notify(`${selected} is already installed`, "info");
+      if (selected.length === 0) {
+        context.ui.notify("No skills selected", "info");
         return;
       }
 
-      const result = await installSkill(selected);
-      if (!result.ok) {
-        context.ui.notify(result.message, "error");
+      const unknown = selected.filter((id) => !catalogSkillIds.includes(id));
+      if (unknown.length > 0) {
+        context.ui.notify(`Unknown skills: ${unknown.join(", ")}`, "error");
         return;
       }
 
-      context.ui.notify(`Installed ${selected}; reloading Profile skills`, "info");
+      const pending = selected.filter((id) => !isInstalled(id));
+      if (pending.length === 0) {
+        context.ui.notify("Selected skills are already installed", "info");
+        return;
+      }
+
+      const installed: Array<string> = [];
+      const failures: Array<string> = [];
+      for (const id of pending) {
+        const result = await installSkill(id);
+        if (result.ok) {
+          installed.push(id);
+        } else {
+          failures.push(result.message);
+        }
+      }
+
+      if (failures.length > 0) {
+        context.ui.notify(failures.join("\n"), "error");
+      }
+      if (installed.length === 0) {
+        return;
+      }
+
+      context.ui.notify(
+        `Installed ${installed.length} skill${installed.length === 1 ? "" : "s"}: ${installed.join(", ")}; reloading Profile skills`,
+        "info",
+      );
       await context.reload();
     },
   });
@@ -168,7 +206,31 @@ export const createZiggyTuiExtension = (options: ZiggyTuiExtensionOptions) =>
           onSessionInfoChanged: (handler) => pi.on("session_info_changed", handler),
           onResourcesDiscover: (handler) =>
             pi.on("resources_discover", (event) => handler(event)),
-          registerCommand: (name, command) => pi.registerCommand(name, command),
+          registerCommand: (name, command) =>
+            pi.registerCommand(name, {
+              ...command,
+              handler: (args, context) =>
+                command.handler(args, {
+                  reload: () => context.reload(),
+                  ui: {
+                    notify: (message, level) => context.ui.notify(message, level),
+                    selectSkills: (items) =>
+                      context.ui.custom((tui, theme, _keybindings, done) => {
+                        return new SkillMultiSelectComponent(
+                          items,
+                          () => tui.requestRender(),
+                          done,
+                          {
+                            accent: (text) => theme.fg("accent", text),
+                            bold: (text) => theme.bold(text),
+                            dim: (text) => theme.fg("dim", text),
+                            success: (text) => theme.fg("success", text),
+                          },
+                        );
+                      }),
+                  },
+                }),
+            }),
         },
         options,
       );
