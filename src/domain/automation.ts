@@ -1,4 +1,9 @@
 import { Effect, Schema } from "effect";
+import {
+  parseAutomationScheduleFields,
+  renderAutomationScheduleFields,
+  validateAutomationSchedule,
+} from "./automation-schedule";
 
 const AutomationIdSchema = Schema.String.check(
   Schema.makeFilter((value) => /^[a-z0-9-]+$/.test(value) && value.length <= 80, {
@@ -40,12 +45,49 @@ const TelegramChatIdSchema = Schema.Finite.check(
   Schema.makeFilter(Number.isSafeInteger, { expected: "a safe integer Telegram chat ID" }),
 );
 
+const ChannelIdSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      value.length >= 1 &&
+      value.length <= 128 &&
+      value === value.trim() &&
+      !value.includes("\n") &&
+      !value.includes("\r"),
+    { expected: "a non-empty trimmed channel ID" },
+  ),
+);
+
+const AutomationScheduleSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("cron"),
+    expression: FrontmatterLineSchema,
+    timezone: FrontmatterLineSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("at"),
+    instant: FrontmatterLineSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("every"),
+    seconds: Schema.Finite.check(
+      Schema.makeFilter(
+        (value) => Number.isSafeInteger(value) && value > 0,
+        { expected: "a positive safe integer number of seconds" },
+      ),
+    ),
+  }),
+]);
+
 const AutomationFileSchema = Schema.Struct({
   version: Schema.Literal(1),
   name: Schema.optional(AutomationNameSchema),
   enabled: Schema.optional(Schema.Boolean),
   gate: Schema.optional(FrontmatterLineSchema),
   "telegram-chat": Schema.optional(TelegramChatIdSchema),
+  "discord-channel": Schema.optional(ChannelIdSchema),
+  "slack-channel": Schema.optional(ChannelIdSchema),
+  schedule: Schema.optional(FrontmatterLineSchema),
+  timezone: Schema.optional(FrontmatterLineSchema),
   prompt: AutomationPromptSchema,
 });
 
@@ -55,6 +97,9 @@ export const AutomationWriteInputSchema = Schema.Struct({
   enabled: Schema.Boolean,
   gate: Schema.optional(FrontmatterLineSchema),
   telegramChat: Schema.optional(TelegramChatIdSchema),
+  discordChannel: Schema.optional(ChannelIdSchema),
+  slackChannel: Schema.optional(ChannelIdSchema),
+  schedule: Schema.optional(AutomationScheduleSchema),
   prompt: AutomationPromptSchema,
 });
 
@@ -107,17 +152,6 @@ export class AutomationExists extends Schema.TaggedErrorClass<AutomationExists>(
 export class AutomationFileSystemError extends Schema.TaggedErrorClass<AutomationFileSystemError>()(
   "AutomationFileSystemError",
   {
-    path: Schema.String,
-    message: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {}
-
-export class AutomationDeliveryUnavailable extends Schema.TaggedErrorClass<AutomationDeliveryUnavailable>()(
-  "AutomationDeliveryUnavailable",
-  {
-    automationId: Schema.String,
-    channel: Schema.Literal("telegram"),
     path: Schema.String,
     message: Schema.String,
     cause: Schema.Defect(),
@@ -219,6 +253,14 @@ export const parseAutomationFile = (
         invalid(filePath, `invalid automation ${id}: frontmatter or body failed validation`, cause),
       ),
     );
+    const schedule = yield* parseAutomationScheduleFields({
+      ...(decoded.schedule === undefined ? {} : { schedule: decoded.schedule }),
+      ...(decoded.timezone === undefined ? {} : { timezone: decoded.timezone }),
+    }).pipe(
+      Effect.mapError((cause) =>
+        invalid(filePath, `invalid automation ${id}: schedule failed validation`, cause),
+      ),
+    );
 
     return {
       id,
@@ -228,6 +270,13 @@ export const parseAutomationFile = (
       prompt: decoded.prompt,
       ...(decoded.gate === undefined ? {} : { gate: decoded.gate }),
       ...(decoded["telegram-chat"] === undefined ? {} : { telegramChat: decoded["telegram-chat"] }),
+      ...(decoded["discord-channel"] === undefined
+        ? {}
+        : { discordChannel: decoded["discord-channel"] }),
+      ...(decoded["slack-channel"] === undefined
+        ? {}
+        : { slackChannel: decoded["slack-channel"] }),
+      ...(schedule === undefined ? {} : { schedule }),
     };
   });
 
@@ -241,8 +290,25 @@ export const renderAutomationFile = (automation: Automation): string =>
     ...(automation.telegramChat === undefined
       ? []
       : [`telegram-chat: ${automation.telegramChat}`]),
+    ...(automation.discordChannel === undefined
+      ? []
+      : [`discord-channel: ${automation.discordChannel}`]),
+    ...(automation.slackChannel === undefined ? [] : [`slack-channel: ${automation.slackChannel}`]),
+    ...(automation.schedule === undefined ? [] : renderAutomationScheduleFields(automation.schedule)),
     "---",
     "",
     automation.prompt.trim(),
     "",
   ].join("\n");
+
+export const validateAutomationWriteInput = (
+  input: AutomationWriteInput,
+): Effect.Effect<AutomationWriteInput, AutomationInvalid> =>
+  input.schedule === undefined
+    ? Effect.succeed(input)
+    : validateAutomationSchedule(input.schedule).pipe(
+        Effect.map((schedule) => ({ ...input, schedule })),
+        Effect.mapError((cause) =>
+          invalid("automation input", "invalid automation schedule", cause),
+        ),
+      );

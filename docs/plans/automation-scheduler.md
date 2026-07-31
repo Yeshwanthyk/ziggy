@@ -1,61 +1,35 @@
 # Automation scheduler
 
-The scheduler shape is now selected and sliced:
+`automation-shaping.md` owns requirements and state; `automation-slices.md` owns the shipped
+vertical slices.
 
-- `automation-frame.md` records the failure and desired outcome.
-- `automation-shaping.md` is authoritative for requirements, the dedicated Profile scheduler
-  shape, state ownership, and invariants.
-- `automation-slices.md` is authoritative for the V1-V5 build order.
+## Shipped runtime
 
-## What shipped
-
-V1 adds Profile-owned Markdown definitions, `automation_list/create/update/remove`, and
-`/automations` create/list/inspect/edit/pause/resume/remove. Definitions use deterministic
-frontmatter with `version`, `name`, and `enabled`; the Markdown body remains the prompt. Existing
-manual-wake files without the new fields remain readable.
-
-`ziggy wake <profile> <automation-id>` reads the same automation file, declines disabled
-definitions, evaluates its gate, opens a fresh Pi session only when admitted, prints the answer,
-and optionally sends it to Telegram.
-
-- Gate exit 0 proceeds.
-- Gate nonzero declines before Pi construction.
-- Gate spawn failure or timeout warns and follows the existing fail-open policy.
-- Every wake gets a fresh session under `sessions/automations/<id>/`.
-
-## Selected ownership
-
-One dedicated scheduler process owns scheduled claims for one Profile. The TUI and channel
-gateways never own scheduling. V3 proves the scheduler in the foreground; V4 installs that exact
-command as a Profile-specific service so closing the TUI or a terminal does not stop scheduled
-work.
-
-V1 now establishes the shared definition boundary. Build V2 receipts next so V3 can schedule the
-same runner without creating a parallel state path.
+- Human-owned definitions stay in `automations/<id>.md`.
+- `ziggy automations run` and `ziggy scheduler` enter one claim-before-Pi runner.
+- Receipts are clean Markdown under `.runtime/automations/runs/<id>/`, capped at 50.
+- One SQLite lease owns due-time evaluation for a Profile. Different automation IDs may run
+  concurrently; one ID cannot overlap itself.
+- Cron/timezone, one-shot `at`, and fixed-second `every` schedules share one engine.
+- Restart or sleep admits one latest catch-up inside 15 minutes and records older work as skipped.
+- Scheduler heartbeat runs independently of model work.
+- launchd on macOS and systemd user services on Linux invoke the same foreground scheduler command.
+- `/automations` shows scheduler online/offline, next run, latest status, Run now, and run history.
+- Local output is durable before optional Telegram, Discord, or Slack delivery, with independent
+  target outcomes.
 
 ## Invariants
 
-- Exactly one dedicated scheduler process claims scheduled work for a Profile.
-- A due slot is claimed before model or delivery work.
-- Restart never replays a claimed slot.
-- A declined gate creates no Pi session.
-- One slow automation does not block unrelated automation IDs.
-- Existing automation files without `cron` keep working.
-- The local result is durable before broadcast delivery.
-- Closing the TUI has no effect on scheduler ownership.
-
-## Focused proof
-
-Each vertical slice carries its focused proof in `automation-slices.md`. Then run:
-
-```sh
-bun test
-bun run check
-```
+- A firing receipt is claimed before model or delivery side effects.
+- A deterministic scheduled firing ID cannot be claimed twice.
+- Crashed SQLite leases release with the process.
+- A stale running receipt becomes unknown without automatic retry.
+- Closing the TUI never stops or owns scheduled work.
+- Missing or failed delivery never erases a successful local result.
 
 ## Still out
 
-- One-shot schedules.
-- Retries, outbox semantics, or delivery replay.
-- A general event bus or remote automation dashboard.
+- Retries, outboxes, and delivery replay.
+- Webhooks, Windows services, and remote administration.
+- Multiple destinations on the same transport.
 - Unbounded run history.

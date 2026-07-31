@@ -7,6 +7,12 @@ import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
 import { Automations, AutomationsLive } from "./application/automations";
+import { schedulerHealthStatus } from "./application/automation-health";
+import {
+  AutomationSchedulerError,
+  makeAutomationScheduler,
+} from "./application/automation-scheduler";
+import { makeAutomationServices } from "./application/automation-services";
 import {
   DiscordGateway,
   DiscordGatewayLive,
@@ -51,6 +57,64 @@ const program = Effect.gen(function* () {
   const gateway = yield* Gateway;
   const discordGateway = yield* DiscordGateway;
   const slackGateway = yield* SlackGateway;
+  const scheduler = makeAutomationScheduler(
+    {
+      listScheduled: (target) =>
+        automations.list(target).pipe(
+          Effect.map((inventory) =>
+            inventory.automations.flatMap((automation) =>
+              automation.schedule === undefined
+                ? []
+                : [
+                    {
+                      id: automation.id,
+                      enabled: automation.enabled,
+                      schedule: automation.schedule,
+                    },
+                  ],
+            ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new AutomationSchedulerError({
+                operation: "list automations",
+                path: target.path,
+                message: `could not list scheduled automations for ${target.path}`,
+                cause,
+              }),
+          ),
+        ),
+    },
+    {
+      runScheduled: (target, automationId, trigger) =>
+        automations.run(target, automationId, trigger).pipe(
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new AutomationSchedulerError({
+                operation: "run automation",
+                path: target.path,
+                automationId,
+                message: `scheduled automation ${automationId} failed`,
+                cause,
+              }),
+          ),
+        ),
+    },
+    {
+      graceSeconds: 15 * 60,
+      pollSeconds: 10,
+    },
+  );
+  const automationServices = makeAutomationServices({
+    platform: process.platform,
+    homedir: homedir(),
+    uid: process.getuid?.() ?? 0,
+    userName: process.env.USER ?? "",
+    bunPath: process.execPath,
+    scriptPath: path.join(repositoryRoot, "src", "main.ts"),
+    health: { read: schedulerHealthStatus },
+  });
 
   switch (command) {
     case "init": {
@@ -217,7 +281,19 @@ const program = Effect.gen(function* () {
         return yield* fail("usage: ziggy wake <name|path> <automation-id>");
       }
 
-      yield* automations.wake(resolveProfileTarget(argument, resolutionOptions), automationId);
+      const receipt = yield* automations.wake(
+        resolveProfileTarget(argument, resolutionOptions),
+        automationId,
+      );
+      if (receipt.localOutput !== undefined) {
+        console.log(receipt.localOutput);
+      }
+      if (
+        receipt.status !== "succeeded" ||
+        receipt.deliveries.some((delivery) => delivery.status === "failed")
+      ) {
+        process.exitCode = 1;
+      }
       return;
     }
     case "automations": {
@@ -228,11 +304,24 @@ const program = Effect.gen(function* () {
   ziggy automations list <name|path>
   ziggy automations create <name|path> <json>
   ziggy automations update <name|path> <json>
-  ziggy automations remove <name|path> <automation-id>`);
+  ziggy automations remove <name|path> <automation-id>
+  ziggy automations run <name|path> <automation-id>
+  ziggy automations history <name|path> <automation-id>`);
       }
       const target = resolveProfileTarget(argument, resolutionOptions);
       if (action === "list" && process.argv.length === 5) {
         console.log(JSON.stringify(yield* automations.list(target)));
+        return;
+      }
+      if (action === "run" && process.argv.length === 6) {
+        const receipt = yield* automations.run(target, process.argv[5] ?? "", {
+          kind: "manual",
+        });
+        console.log(JSON.stringify(receipt));
+        return;
+      }
+      if (action === "history" && process.argv.length === 6) {
+        console.log(JSON.stringify(yield* automations.history(target, process.argv[5] ?? "")));
         return;
       }
       if ((action === "create" || action === "update") && process.argv.length === 6) {
@@ -253,7 +342,40 @@ const program = Effect.gen(function* () {
   ziggy automations list <name|path>
   ziggy automations create <name|path> <json>
   ziggy automations update <name|path> <json>
-  ziggy automations remove <name|path> <automation-id>`);
+  ziggy automations remove <name|path> <automation-id>
+  ziggy automations run <name|path> <automation-id>
+  ziggy automations history <name|path> <automation-id>`);
+    }
+    case "scheduler": {
+      const argument = process.argv[3];
+      if (argument === undefined || process.argv.length !== 4) {
+        return yield* fail("usage: ziggy scheduler <name|path>");
+      }
+      return yield* scheduler.runLoop(resolveProfileTarget(argument, resolutionOptions));
+    }
+    case "service": {
+      const action = process.argv[3];
+      const subject = process.argv[4];
+      const argument = process.argv[5];
+      if (
+        (action !== "install" && action !== "status" && action !== "uninstall") ||
+        subject !== "scheduler" ||
+        argument === undefined ||
+        process.argv.length !== 6
+      ) {
+        return yield* fail(
+          "usage: ziggy service <install|status|uninstall> scheduler <name|path>",
+        );
+      }
+      const target = resolveProfileTarget(argument, resolutionOptions);
+      const result =
+        action === "install"
+          ? yield* automationServices.install(target)
+          : action === "status"
+            ? yield* automationServices.status(target)
+            : yield* automationServices.uninstall(target);
+      console.log(JSON.stringify(result));
+      return;
     }
     case "gateway": {
       const argument = process.argv[3];
@@ -316,7 +438,14 @@ const program = Effect.gen(function* () {
     AutomationExists: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
-    AutomationDeliveryUnavailable: (failure) => fail(failure.message),
+    AutomationRunInvalid: (failure) => fail(failure.message),
+    AutomationReceiptFileSystemError: (failure) => fail(failure.message),
+    AutomationReceiptNotFound: (failure) => fail(failure.message),
+    AutomationReceiptAlreadyClaimed: (failure) => fail(failure.message),
+    AutomationSchedulerError: (failure) => fail(failure.message),
+    AutomationServiceUnsupportedPlatform: (failure) => fail(failure.message),
+    AutomationServiceCommandError: (failure) => fail(failure.message),
+    AutomationServiceFileSystemError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
     TelegramApiError: (failure) => fail(failure.message),
     DiscordApiError: (failure) => fail(failure.message),
@@ -353,7 +482,10 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(command === "gateway" || command === "discord" || command === "slack"
+  ...(command === "gateway" ||
+  command === "discord" ||
+  command === "slack" ||
+  command === "scheduler"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {

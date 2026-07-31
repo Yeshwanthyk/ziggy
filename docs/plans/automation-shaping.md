@@ -37,9 +37,9 @@ order.
 | --- | --- | :---: |
 | B1 | `AutomationStore` owns typed Markdown definitions under `<profile>/automations/`; all CLI, tools, TUI, and scheduler calls use it. | |
 | B2 | One hidden Ziggy Pi extension exposes Profile-bound `automation_*` tools plus `/automations`, backed by the same application service. | |
-| B3 | Every manual or scheduled run writes one bounded receipt under `<profile>/.runtime/automations/runs/`; the TUI reads receipts and watches for changes. | |
-| B4 | `ziggy scheduler <profile>` is the only scheduled-claim owner, holds a Profile scheduler lease, claims before `wake`, and runs different automation IDs concurrently. | |
-| B5 | A Profile-specific service install owns scheduler startup and heartbeat independently of TUI and channel processes. | |
+| B3 | Every manual or scheduled run writes one bounded Markdown receipt under `<profile>/.runtime/automations/runs/`; the TUI reads the latest receipts on open. | |
+| B4 | `ziggy scheduler <profile>` is the only due-time owner, holds a crash-safe Profile scheduler lease, and enters the same claim-before-Pi runner as Run now. | |
+| B5 | A Profile-specific launchd or systemd-user service owns scheduler startup and heartbeat independently of TUI and channel processes. | |
 | B6 | Delivery fans out from the locally persisted reply to typed Telegram, Discord, and Slack targets and records one outcome per target. | |
 | B7 | An always-admitted automation guidance skill and direct tool descriptions route matching requests without external capability search. | |
 
@@ -96,7 +96,7 @@ Yoko: it creates a second product authority and cannot truthfully deliver into Z
 | N1 | Automation store | Application service atomically reads and writes typed Profile Markdown definitions | U1, U2, N4 |
 | N2 | Automation runner | Claims a manual or scheduled trigger, opens one fresh Pi session, and persists the local result before delivery | N3, N5 |
 | N3 | Receipt store | Atomically persists bounded run state, local output, and per-target delivery outcomes | U1, U2, U7 |
-| N4 | Dedicated scheduler | Holds one Profile lease, derives due firings, claims before N2, and publishes heartbeat/status | U1, N2 |
+| N4 | Dedicated scheduler | Holds one Profile lease, derives due firings, calls N2, and publishes heartbeat/status | U1, N2 |
 | N5 | Delivery fan-out | Sends the persisted reply to each explicit channel target and updates only that target's receipt outcome | N3 |
 | N6 | Automation Pi surface | Always-admitted guidance plus Profile-bound tools translate natural language into N1/N2 calls | N1, N2 |
 
@@ -120,11 +120,11 @@ Definitions are authoritative under `automations/`. Claim state and bounded rece
 state under `.runtime/automations/`. The TUI displays projections of those stores plus live
 scheduler status; it never owns execution.
 
-The scheduler claims a canonical `(automation ID, scheduled instant)` before starting Pi. A claimed
-firing is at-most-once and is not replayed after restart. A crash after claim leaves an interrupted
-receipt for the TUI instead of silently retrying. The local reply is persisted before any broadcast.
-Each delivery target can succeed or fail independently, and partial delivery is never reported as
-full success.
+The shared runner claims a canonical `(automation ID, scheduled instant)` before starting Pi.
+A claimed firing is at-most-once and is not replayed after restart. Stale running receipts become
+unknown without retry. Restart or sleep catches up at most one latest firing inside 15 minutes and
+records older work as skipped. The local reply is persisted before any broadcast. Each delivery
+target can succeed or fail independently, and partial delivery is never reported as full success.
 
 Global shell/filesystem confinement is a separate Profile-security workstream. This shape enforces
 the narrower automation invariant: its tools derive the active Profile from runtime context and

@@ -26,7 +26,13 @@ test("automation tools are active without Profile-installed extensions", async (
   temporaryPaths.push(profilePath);
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
   const cli: AutomationCli = {
-    run: async () => ({ automations: [], diagnostics: [] }),
+    run: async () => ({
+      automations: [],
+      latestRuns: [],
+      nextRuns: [],
+      scheduler: { online: false },
+      diagnostics: [],
+    }),
   };
   const services = await createAgentSessionServices({
     cwd: profilePath,
@@ -54,6 +60,7 @@ test("automation tools are active without Profile-installed extensions", async (
     "automation_create",
     "automation_update",
     "automation_remove",
+    "automation_run",
   ]);
   expect(
     services.resourceLoader
@@ -71,13 +78,19 @@ test("/automations creates through the same Profile-bound CLI", async () => {
       calls.push({ action, ...(payload === undefined ? {} : { payload }) });
       if (action === "list") {
         listCount += 1;
-        return { automations: [], diagnostics: [] };
+        return {
+          automations: [],
+          latestRuns: [],
+          nextRuns: [],
+          scheduler: { online: false },
+          diagnostics: [],
+        };
       }
       return payload;
     },
   };
   const selections = ["＋ Create automation", undefined];
-  const inputs = ["kai-weather", "Kai weather"];
+  const inputs = ["kai-weather", "Kai weather", "", "", "", ""];
   await manageAutomations(cli, {
     ui: {
       select: async () => selections.shift(),
@@ -98,4 +111,55 @@ test("/automations creates through the same Profile-bound CLI", async () => {
       prompt: "# Weather\n\nDress Kai.",
     },
   });
+});
+
+test("/automations runs now through the Profile-bound CLI", async () => {
+  const calls: Array<{ readonly action: string; readonly payload?: unknown }> = [];
+  const inventory = {
+    automations: [
+      {
+        id: "daily-note",
+        name: "Daily note",
+        enabled: true,
+        prompt: "Write it.",
+        version: 1,
+      },
+    ],
+    latestRuns: [],
+    nextRuns: [],
+    scheduler: { online: false },
+    diagnostics: [],
+  };
+  const receipt = {
+    version: 1,
+    runId: "run-one",
+    automationId: "daily-note",
+    trigger: "manual",
+    status: "succeeded",
+    claimedAt: "2026-07-30T12:00:00.000Z",
+    finishedAt: "2026-07-30T12:00:01.000Z",
+    localOutput: "done",
+    deliveries: [],
+  };
+  const cli: AutomationCli = {
+    run: async (action, payload) => {
+      calls.push({ action, ...(payload === undefined ? {} : { payload }) });
+      return action === "run" ? receipt : inventory;
+    },
+  };
+  const selections = ["● Daily note  (daily-note)", "Run now", undefined];
+  const notifications: Array<string> = [];
+
+  await manageAutomations(cli, {
+    ui: {
+      select: async () => selections.shift(),
+      input: async () => undefined,
+      editor: async () => undefined,
+      confirm: async () => false,
+      notify: (message) => notifications.push(message),
+    },
+  });
+
+  expect(calls).toContainEqual({ action: "run", payload: "daily-note" });
+  expect(notifications).toEqual(["daily-note succeeded"]);
 });
