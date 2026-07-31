@@ -2,7 +2,6 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface PiResources {
-  readonly extensionPaths: ReadonlyArray<string>;
   readonly skillPaths: ReadonlyArray<string>;
   readonly catalogSkillIds: ReadonlyArray<string>;
 }
@@ -74,9 +73,6 @@ export const discoverPiResources = async (
       ? []
       : await Promise.all(
           packages.map(async (extensionPackage) => ({
-            extensionPath: await existingFile(
-              join(extensionsPath, extensionPackage.name, "index.ts"),
-            ),
             skillPath: await existingDirectory(
               join(extensionsPath, extensionPackage.name, "skills"),
             ),
@@ -103,9 +99,6 @@ export const discoverPiResources = async (
   }
 
   return {
-    extensionPaths: packageResources.flatMap(({ extensionPath }) =>
-      extensionPath === undefined ? [] : [extensionPath],
-    ),
     skillPaths: profileSkills === undefined ? [] : [profileSkills],
     catalogSkillIds: [...catalogSkillIds].sort((left, right) => left.localeCompare(right)),
   };

@@ -546,11 +546,7 @@ const createProfileRuntime = (
           agentDir,
           resourceLoaderOptions: {
             systemPrompt: soulPath,
-            noExtensions: true,
             noSkills: true,
-            ...(resources.extensionPaths.length === 0
-              ? {}
-              : { additionalExtensionPaths: [...resources.extensionPaths] }),
             ...(resources.skillPaths.length === 0
               ? {}
               : { additionalSkillPaths: [...resources.skillPaths] }),

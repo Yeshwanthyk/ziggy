@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
@@ -28,7 +28,7 @@ afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-test("discovers repository extensions and catalog IDs but loads only Profile skills", async () => {
+test("discovers repository catalog IDs but admits only Profile skills", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
@@ -45,35 +45,36 @@ test("discovers repository extensions and catalog IDs but loads only Profile ski
   const resources = await discoverPiResources(profilePath, repositoryRoot);
 
   expect(resources).toEqual({
-    extensionPaths: [join(betaPackage, "index.ts")],
     skillPaths: [join(profilePath, "skills")],
     catalogSkillIds: ["alpha", "beta", "top"],
   });
 });
 
-test("Pi loads only Profile skills while keeping package extension tools", async () => {
+test("Pi loads only Profile-added extensions and skills", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
   const repositoryRoot = join(root, "ziggy");
-  const extensionPackage = join(repositoryRoot, "extensions", "alpha");
+  const extensionPackage = join(profilePath, "extensions", "alpha");
+  const catalogPackage = join(repositoryRoot, "extensions", "alpha");
   const topLevelSkills = join(repositoryRoot, "skills");
 
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
   await writeSkill(join(profilePath, "skills", "shared-profile"), "shared", "profile winner");
   await writeSkill(
-    join(extensionPackage, "skills", "shared-extension"),
+    join(catalogPackage, "skills", "shared-extension"),
     "shared",
     "extension loser",
   );
   await writeSkill(
-    join(extensionPackage, "skills", "extension-only"),
+    join(catalogPackage, "skills", "extension-only"),
     "extension-only",
     "extension only",
   );
   await writeSkill(join(topLevelSkills, "shared-top-level"), "shared", "top-level loser");
   await writeSkill(join(topLevelSkills, "top-level-only"), "top-level-only", "top level only");
+  await mkdir(extensionPackage, { recursive: true });
   await writeFile(
     join(extensionPackage, "index.ts"),
     [
@@ -95,12 +96,10 @@ test("Pi loads only Profile skills while keeping package extension tools", async
     agentDir: profilePath,
     resourceLoaderOptions: {
       systemPrompt: join(profilePath, "SOUL.md"),
-      noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      additionalExtensionPaths: [...resources.extensionPaths],
       additionalSkillPaths: [...resources.skillPaths],
     },
   });
@@ -222,6 +221,18 @@ test("the complete repository catalog loads through production paths and Pi mani
         additionalSkillPaths,
       },
     });
+  const loadProduction = () =>
+    createAgentSessionServices({
+      cwd: profilePath,
+      agentDir: profilePath,
+      resourceLoaderOptions: {
+        systemPrompt: join(profilePath, "SOUL.md"),
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+      },
+    });
   const assertExtensions = (services: Awaited<ReturnType<typeof loadCatalog>>): void => {
     const loadedSkills = services.resourceLoader.getSkills();
     const loadedExtensions = services.resourceLoader.getExtensions();
@@ -235,35 +246,17 @@ test("the complete repository catalog loads through production paths and Pi mani
   };
 
   const productionResources = await discoverPiResources(profilePath, repositoryRoot);
-  expect(
-    productionResources.extensionPaths.map((extensionPath) => basename(dirname(extensionPath))),
-  ).toEqual([
-    "agent-browser",
-    "diffs",
-    "executor",
-    "github",
-    "github-pr-triage",
-    "linear",
-    "lossless-claw",
-    "open-computer-use",
-    "skill-curator",
-    "web-search",
-  ]);
   expect(productionResources.skillPaths).toEqual([]);
   expect(productionResources.catalogSkillIds).toHaveLength(57);
-  const productionServices = await loadCatalog(
-    [...productionResources.extensionPaths],
-    [...productionResources.skillPaths],
-  );
-  assertExtensions(productionServices);
+  const productionServices = await loadProduction();
+  expect(productionServices.resourceLoader.getExtensions().errors).toEqual([]);
+  expect(productionServices.resourceLoader.getExtensions().extensions).toEqual([]);
   expect(productionServices.resourceLoader.getSkills().skills).toEqual([]);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
   });
-  expect(session.getActiveToolNames()).toEqual(
-    expect.arrayContaining(["read", "bash", "write", ...expectedTools]),
-  );
+  expect(session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
   session.dispose();
 
   const manifestServices = await loadCatalog(
