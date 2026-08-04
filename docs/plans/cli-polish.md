@@ -8,55 +8,48 @@ credentials in the Profile.
 
 ## Next 1: sessions
 
-Add:
+Implement Chunk 1 from [`openclaw-hermes-primitives.md`](./openclaw-hermes-primitives.md):
 
 ```text
-ziggy sessions <profile>
+ziggy sessions <profile> [--json]
 ```
 
-The command is read-only. It lists root TUI/run sessions plus Telegram, Discord, Slack, and
-automation session leaves. Each output row contains:
-
-```text
-<profile-relative-jsonl-path>  <created-iso>  <entry-count>
-```
-
-Keep Pi imports in `src/adapters/pi/sessions.ts`. Use `SessionManager.list` once per known leaf
-directory, open each session only for metadata, sort by relative path, and never print transcript
-content.
+The command recursively discovers session leaf directories without following directory symlinks,
+refuses symlinked `.jsonl` files, and invokes pinned Pi `SessionManager.listAll(customDirectory)`
+once per leaf. It projects only session ID, relative path, created/modified timestamps, and message
+count; Pi's transcript-derived preview fields never leave the adapter.
 
 Acceptance:
 
 - Missing session directories print `no sessions`.
-- Every valid JSONL appears once.
-- Output reveals no prompts or replies.
-- Malformed or unreadable sessions return a typed failure.
+- Every Pi-readable regular JSONL appears once, newest-first with a stable path tie-break, regardless of header-cwd spelling.
+- Text and JSON reveal no prompts, replies, or transcript previews.
+- Regular files for which Pi cannot build metadata produce a typed failure; tolerated lines remain Pi policy.
+- Directory symlinks are ignored and `.jsonl` file symlinks fail before Pi reads the leaf.
 
 ## Next 2: doctor
 
-Add:
+Implement Chunk 2 from [`openclaw-hermes-primitives.md`](./openclaw-hermes-primitives.md):
 
 ```text
-ziggy doctor <profile>
+ziggy doctor <profile> [--json]
 ```
 
-The command is read-only and reports `ok`, `warn`, or `error` for:
+The command is read-only and reports stable check codes with `ok`, `warn`, or `error` for Profile
+initialization/readability, optional channel config decoding, session metadata, and automation
+parsing.
 
-- `SOUL.md` and Profile readability;
-- provider auth availability;
-- Telegram, Discord, and Slack config decoding;
-- memory files and caps;
-- automation parsing;
-- installed skill shape.
-
-Reuse existing decoders and auth status. Do not duplicate validation or repair files.
+Reuse existing local config/automation decoders and the session projection. Do not call
+`Auth.status` (Pi may create or refresh credential files), call a provider, poll Telegram, open
+Discord/Slack, load executable extensions, test skill binaries, migrate config, or repair files.
+Skill requirement/shape diagnosis remains out because Ziggy does not own a skill parser.
 
 Acceptance:
 
-- Exit 0 when there are no errors.
+- Exit 0 when there are no errors; absent optional channels are not errors.
 - Exit nonzero when any check is an error.
 - Never print secrets or transcript content.
-- Stable output order makes failures easy to diff.
+- Text and JSON expose the same stable codes, severities, and order.
 
 ## Later
 
