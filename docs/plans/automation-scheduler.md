@@ -12,19 +12,21 @@ Pi session only when admitted, prints the answer, and optionally sends it to Tel
 
 ## When to build the scheduler
 
-Build this after the Profile lease. The lease gives one resident process authority to claim
-scheduled work.
+Keep this deferred until automatic triggers are a concrete product requirement. Manual `wake` has
+no competing dispatcher, and configured Telegram delivery already fails truthfully after printing
+the local result.
 
-Before this slice, fix the current manual-wake false success: when an automation declares
-`telegram-chat`, missing or invalid Telegram configuration must return a typed delivery failure
-after the local reply is printed. That change needs no retry or delivery state.
+Do not couple scheduling to the optional face-scoped channel lease. Choose a scheduler-specific
+resident owner when this slice is accepted; that keeps Telegram, Discord, and Slack independently
+runnable and avoids a Profile-wide gateway authority.
 
 ## Slice
 
 1. Add one optional `cron:` frontmatter field and decode it with Effect `Cron`.
 2. Add trigger provenance: `manual` or `schedule`, with scheduled trigger IDs equal to the firing
    instant in canonical ISO form.
-3. Start one scheduler fiber inside whichever channel gateway owns the Profile lease.
+3. Run one scheduler-specific resident for the Profile; do not hide scheduling inside an arbitrary
+   channel gateway.
 4. Store the last claimed firing instant per automation in
    `<profile>/.runtime/automation-schedule.json`.
 5. Atomically persist the claim before `wake`; restart does not replay a claimed slot.
@@ -34,7 +36,7 @@ A scheduled automation without a gate is declined. Manual wake keeps its current
 
 ## Invariants
 
-- Exactly one lease-owning resident process schedules a Profile.
+- Exactly one scheduler-specific resident process schedules a Profile.
 - A due slot is claimed before model or delivery work.
 - Restart never replays a claimed slot.
 - A declined gate creates no Pi session.
@@ -49,7 +51,7 @@ Use a fake clock, fake agent, and temporary Profile:
 2. Claim one due slot, run it once, restart the scheduler, and prove no replay.
 3. Decline a scheduled automation without a gate before Pi construction.
 4. Prove the same automation cannot overlap while a different ID can run.
-5. Run the scheduler under each lease-owning gateway seam.
+5. Prove a second scheduler owner is refused while channel residents remain independent.
 
 Then run:
 

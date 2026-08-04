@@ -121,6 +121,33 @@ const sessions = SessionManager.create(cwd, "/var/lib/my-wrapper/sessions");
 For non-persistent operation use `SessionManager.inMemory(cwd)`; it passes an empty
 session directory and `persist = false` (`:1567-1569`).
 
+The pinned `0.82.0` package also exposes read-only metadata listing APIs:
+
+```ts
+static list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]>
+static listAll(sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]>
+```
+
+`SessionInfo` contains `path`, `id`, `cwd`, optional name/parent path, `created`,
+`modified`, and `messageCount`, plus transcript-derived `firstMessage` and
+`allMessagesText`. A Ziggy operator projection must map only the metadata fields and
+must never expose those two transcript fields.
+
+Both methods inspect only direct `.jsonl` children for a custom directory and silently
+omit files for which Pi cannot build metadata. `list(cwd, customDirectory)` additionally
+filters by the normalized header `cwd`, so it can hide an otherwise Pi-readable old,
+imported, or alternate-path-spelling session. Use `listAll(customDirectory)` for
+Profile inventory. Pi intentionally skips malformed non-header lines, so Ziggy must
+not claim stricter JSONL validation. Recursive inventory should discover leaf
+directories without following directory symlinks, refuse symlinked `.jsonl` files
+before invoking Pi for that leaf, call `listAll` for each safe leaf, and compare
+regular discovered paths with returned paths to detect metadata omissions. Refs:
+pinned source [`SessionInfo`](https://github.com/earendil-works/pi/blob/083e61621276bff9f6faefab87ce07fcd98734e2/packages/coding-agent/src/core/session-manager.ts#L174-L188),
+[tolerant line parsing](https://github.com/earendil-works/pi/blob/083e61621276bff9f6faefab87ce07fcd98734e2/packages/coding-agent/src/core/session-manager.ts#L498-L524),
+[metadata construction and error omission](https://github.com/earendil-works/pi/blob/083e61621276bff9f6faefab87ce07fcd98734e2/packages/coding-agent/src/core/session-manager.ts#L687-L764),
+[direct-directory listing](https://github.com/earendil-works/pi/blob/083e61621276bff9f6faefab87ce07fcd98734e2/packages/coding-agent/src/core/session-manager.ts#L811-L840),
+and [`list`/`listAll` behavior](https://github.com/earendil-works/pi/blob/083e61621276bff9f6faefab87ce07fcd98734e2/packages/coding-agent/src/core/session-manager.ts#L1631-L1708).
+
 ## 4. DefaultResourceLoader
 
 Exact options type:

@@ -1,6 +1,6 @@
 # Primitive status
 
-Current Ziggy status on 2026-07-29.
+Current Ziggy status on 2026-08-04.
 
 This is a work queue, not a parity checklist. Pi remains authoritative for providers, sessions,
 compaction, branching, skills, extensions, and the TUI. Reference repositories are evidence only,
@@ -20,27 +20,28 @@ not active targets.
 
 ## Ordered work
 
-### 1. Decide scheduler ownership
+### 1. Session visibility
 
-Choose the process that owns scheduled claims before implementing cron:
+Land `ziggy sessions <profile> [--json]` as the first read-only slice in
+`openclaw-hermes-primitives.md`. Pinned Pi `0.82.0` exposes
+`SessionManager.listAll(customDirectory)`; Ziggy can recurse its known Profile tree and project only
+ID/path/timestamps/message count without parsing JSONL or exposing transcript previews.
 
-- one Profile-wide resident, which means only one of the current channel commands can run; or
-- a scheduler-specific resident owner, leaving channel processes independent.
+### 2. Narrow doctor
 
-The current separate Telegram, Discord, and Slack commands make a Profile-wide lease a product
-decision, not a mechanical prerequisite.
+Land `ziggy doctor <profile> [--json]` as a read-only composition of Profile readability,
+channel-config, automation, and session checks. It does not call `Auth.status`, because Pi auth
+checks may create/refresh credentials, and performs no network calls, repairs, migrations,
+extension loading, or skill-requirement parsing.
 
-### 2. Claim-before-wake scheduler
+### 3. Duplicate-resident decision
 
-After ownership is settled, implement only the slice in `automation-scheduler.md`: parse `cron`,
-derive one deterministic firing ID, atomically claim that firing before model or delivery work, and
-prevent overlap for the same automation. Keep definitions as Markdown and every run as a fresh Pi
-session. Do not add a general run ledger, retries, dashboards, or lifecycle state machine.
+If duplicate channel consumers are a real operator risk, add only a face-scoped lease keyed by
+`(Profile, telegram|discord|slack)`. Do not add a Profile-wide lease: the shipped channel commands
+are independent and must remain able to run together. TUI, `run`, and `wake` remain unaffected.
 
-### 3. Operator visibility
-
-Land `ziggy sessions <profile>`, then `ziggy doctor <profile>`, as separate read-only slices from
-`cli-polish.md`. They project Pi and Profile state; they do not create new authorities.
+Scheduling stays deferred until an automatic trigger is a concrete product requirement. Its first
+slice must still atomically claim a deterministic trigger occurrence before model or delivery work.
 
 Live Telegram, Discord, and Slack proofs can run beside this queue whenever disposable credentials
 are available.
@@ -48,6 +49,8 @@ are available.
 ## Explicitly deferred
 
 - Canonical Profile identity or symlink rejection.
+- Profile-wide resident ownership while channels are separate commands.
+- Graceful-drain lifecycle state before interrupted work has a promised outcome.
 - Durable gateway ingress/outbound journals and replay.
 - A daemon attach protocol, RPC layer, or cross-channel event bus.
 - A general automation run ledger, retries, or delivery receipts.
