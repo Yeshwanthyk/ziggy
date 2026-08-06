@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "./cause";
 
-const ExtensionId = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-);
+const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const Selection = Schema.Struct({ extensions: Schema.Array(ExtensionId) });
 const Manifest = Schema.Struct({
   name: Schema.String,
@@ -61,6 +59,12 @@ const status = (targetPath: string) =>
     catch: (cause) => fsError("inspect", targetPath, cause),
   });
 
+const physicalPath = (targetPath: string) =>
+  Effect.tryPromise({
+    try: () => realpath(targetPath),
+    catch: (cause) => fsError("resolve", targetPath, cause),
+  });
+
 const frontmatterScalar = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
   return trimmed !== undefined &&
@@ -103,7 +107,9 @@ const declaredSkills = (declaredPath: string) =>
         Effect.flatMap((text) => {
           const metadata = parseFrontmatter(text);
           return metadata === undefined
-            ? Effect.fail(invalid(skillFile, `declared skill has invalid frontmatter: ${skillFile}`))
+            ? Effect.fail(
+                invalid(skillFile, `declared skill has invalid frontmatter: ${skillFile}`),
+              )
             : Effect.succeed(metadata);
         }),
         Effect.catchIf(
@@ -117,6 +123,7 @@ const declaredSkills = (declaredPath: string) =>
 
 const resolveDeclaredPath = (
   packagePath: string,
+  physicalPackagePath: string,
   declared: string,
   resource: "extension" | "skill",
 ) =>
@@ -131,13 +138,30 @@ const resolveDeclaredPath = (
         `invalid declared ${resource} path '${declared}'`,
       );
     }
-    const resourceStatus = yield* status(resolved).pipe(
+    const physicalResourcePath = yield* physicalPath(resolved).pipe(
       Effect.catchIf(
         (error) => error.code === "ENOENT",
-        () => Effect.fail(invalid(resolved, `declared ${resource} path does not exist: ${resolved}`)),
+        () =>
+          Effect.fail(invalid(resolved, `declared ${resource} path does not exist: ${resolved}`)),
       ),
     );
-    if (resource === "extension" ? !resourceStatus.isFile() : !resourceStatus.isFile() && !resourceStatus.isDirectory()) {
+    const relativePhysicalPath = path.relative(physicalPackagePath, physicalResourcePath);
+    if (
+      relativePhysicalPath === ".." ||
+      relativePhysicalPath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativePhysicalPath)
+    ) {
+      return yield* invalid(
+        path.join(packagePath, "package.json"),
+        `declared ${resource} path escapes its package: '${declared}'`,
+      );
+    }
+    const resourceStatus = yield* status(resolved);
+    if (
+      resource === "extension"
+        ? !resourceStatus.isFile()
+        : !resourceStatus.isFile() && !resourceStatus.isDirectory()
+    ) {
       return yield* invalid(resolved, `declared ${resource} path has the wrong type: ${resolved}`);
     }
     return resolved;
@@ -145,7 +169,10 @@ const resolveDeclaredPath = (
 
 export const scanExtensionShelf = (
   repositoryRoot: string,
-): Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionInvalid | ProfileFileSystemError> =>
+): Effect.Effect<
+  ReadonlyArray<ExtensionPackage>,
+  ProfileExtensionInvalid | ProfileFileSystemError
+> =>
   Effect.gen(function* () {
     const shelfPath = path.join(repositoryRoot, "extensions");
     const entries = yield* Effect.tryPromise({
@@ -172,11 +199,12 @@ export const scanExtensionShelf = (
           if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || manifest.name !== `@ziggy/${id}`) {
             return yield* invalid(manifestPath, `extension manifest name must be '@ziggy/${id}'`);
           }
+          const physicalPackagePath = yield* physicalPath(packagePath);
           const extensionPaths = yield* Effect.forEach(manifest.pi.extensions ?? [], (declared) =>
-            resolveDeclaredPath(packagePath, declared, "extension"),
+            resolveDeclaredPath(packagePath, physicalPackagePath, declared, "extension"),
           );
           const skillPaths = yield* Effect.forEach(manifest.pi.skills ?? [], (declared) =>
-            resolveDeclaredPath(packagePath, declared, "skill"),
+            resolveDeclaredPath(packagePath, physicalPackagePath, declared, "skill"),
           );
           const skills = (yield* Effect.forEach(skillPaths, declaredSkills)).flat();
           const description = manifest.description?.trim() || skills[0]?.description;
@@ -217,7 +245,9 @@ export const readExtensionSelection = (
       text === undefined
         ? Effect.succeed<ReadonlyArray<string>>([])
         : decodeSelection(text, { onExcessProperty: "error" }).pipe(
-            Effect.mapError((cause) => invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause)),
+            Effect.mapError((cause) =>
+              invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause),
+            ),
             Effect.flatMap(({ extensions }) => {
               const unique = new Set(extensions);
               const known = new Set(shelf.filter((item) => !item.required).map((item) => item.id));

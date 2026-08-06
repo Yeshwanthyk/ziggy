@@ -1,10 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import {
-  readExtensionSelection,
-  scanExtensionShelf,
-} from "../fs/profile-extensions";
+import { readExtensionSelection, scanExtensionShelf } from "../fs/profile-extensions";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
 
@@ -13,23 +10,52 @@ export interface PiResources {
   readonly skillPaths: ReadonlyArray<string>;
 }
 
-const existingDirectory = (directoryPath: string) =>
+const inspectPath = (targetPath: string) =>
   Effect.tryPromise({
-    try: () => stat(directoryPath),
+    try: () => stat(targetPath),
     catch: (cause) => {
       const details = fileSystemCauseDetails(cause);
       return new ProfileFileSystemError({
         operation: "inspect",
-        path: directoryPath,
+        path: targetPath,
         message: details.message,
         code: details.code,
       });
     },
-  }).pipe(
+  });
+
+const existingDirectory = (directoryPath: string) =>
+  inspectPath(directoryPath).pipe(
     Effect.map((status) => (status.isDirectory() ? directoryPath : undefined)),
     Effect.catchIf(
       (error) => error.code === "ENOENT",
       () => Effect.succeed(undefined),
+    ),
+  );
+
+const requiredFile = (filePath: string) =>
+  inspectPath(filePath).pipe(
+    Effect.catchIf(
+      (error) => error.code === "ENOENT",
+      () =>
+        Effect.fail(
+          new ProfileExtensionInvalid({
+            path: filePath,
+            message: `required skill does not exist: ${filePath}`,
+            cause: undefined,
+          }),
+        ),
+    ),
+    Effect.flatMap((status) =>
+      status.isFile()
+        ? Effect.succeed(filePath)
+        : Effect.fail(
+            new ProfileExtensionInvalid({
+              path: filePath,
+              message: `required skill has the wrong type: ${filePath}`,
+              cause: undefined,
+            }),
+          ),
     ),
   );
 
@@ -50,12 +76,15 @@ export const discoverPiResources = (
       });
     }
     const profileSkills = yield* existingDirectory(join(profilePath, "skills"));
+    const extensionAuthoringSkill = yield* requiredFile(
+      join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
+    );
     return {
       extensionPaths: [required, ...selected].flatMap((item) => item.extensionPaths),
       skillPaths: [
         ...(profileSkills === undefined ? [] : [profileSkills]),
         ...required.skillPaths,
-        join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
+        extensionAuthoringSkill,
         ...selected.flatMap((item) => item.skillPaths),
       ],
     };

@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
@@ -29,7 +29,10 @@ const writeSkill = async (
 const writePackage = async (
   packagePath: string,
   id: string,
-  resources: { readonly extensions?: ReadonlyArray<string>; readonly skills?: ReadonlyArray<string> },
+  resources: {
+    readonly extensions?: ReadonlyArray<string>;
+    readonly skills?: ReadonlyArray<string>;
+  },
 ) => {
   await mkdir(packagePath, { recursive: true });
   await writeFile(
@@ -199,6 +202,68 @@ test("selection decoding fails closed for malformed, duplicate, reserved, and un
       }),
     ).toBe(true);
   }
+});
+
+test("missing or wrong-type mandatory extension-authoring skill fails closed", async () => {
+  for (const state of ["missing", "directory"] as const) {
+    const root = await mkdtemp(join(tmpdir(), "ziggy-pi-mandatory-"));
+    temporaryPaths.push(root);
+    const profilePath = join(root, "profile");
+    const repositoryRoot = join(root, "ziggy");
+    const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+    const authoringSkillPath = join(repositoryRoot, "skills", "extension-authoring", "SKILL.md");
+    await mkdir(profilePath, { recursive: true });
+    await writeSkill(join(requiredPackage, "skills", "required"), "required", "required");
+    await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+    if (state === "directory") await mkdir(authoringSkillPath, { recursive: true });
+
+    const result = await Effect.runPromise(
+      discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+    );
+
+    expect(
+      Result.match(result, {
+        onFailure: (error) =>
+          Predicate.isTagged(error, "ProfileExtensionInvalid") && error.path === authoringSkillPath,
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
+  }
+});
+
+test("manifest-declared symlinks cannot escape their package", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-symlink-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const repositoryRoot = join(root, "ziggy");
+  const alphaPackage = join(repositoryRoot, "extensions", "alpha");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+  const externalSkills = join(root, "external-skills");
+  await mkdir(profilePath, { recursive: true });
+  await writeSkill(externalSkills, "external", "must not load");
+  await mkdir(alphaPackage, { recursive: true });
+  await symlink(externalSkills, join(alphaPackage, "skills"), "dir");
+  await writePackage(alphaPackage, "alpha", { skills: ["./skills"] });
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required");
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writeSkill(
+    join(repositoryRoot, "skills", "extension-authoring"),
+    "extension-authoring",
+    "authoring",
+  );
+
+  const result = await Effect.runPromise(
+    discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+  );
+
+  expect(
+    Result.match(result, {
+      onFailure: (error) =>
+        Predicate.isTagged(error, "ProfileExtensionInvalid") &&
+        error.message === "declared skill path escapes its package: './skills'",
+      onSuccess: () => false,
+    }),
+  ).toBe(true);
 });
 
 test("the complete repository catalog loads through production paths and Pi manifests", async () => {
