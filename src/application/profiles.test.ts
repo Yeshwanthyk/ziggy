@@ -1,12 +1,12 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup exercises the Node filesystem adapter */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- test cleanup requires finally around temporary directories */
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect, Predicate, Result } from "effect";
 import { expect, test } from "bun:test";
-import { Profiles, ProfilesLive, type ProfileSkillError, type ProfilesShape } from "./profiles";
+import { Profiles, ProfilesLive, type ProfilesShape } from "./profiles";
 
 const makeFixture = async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-profiles-test-"));
@@ -34,8 +34,8 @@ const writeSkill = async (skillPath: string, body: string, assets: Record<string
   );
 };
 
-const useProfiles = <Value>(
-  operation: (profiles: ProfilesShape) => Effect.Effect<Value, ProfileSkillError>,
+const useProfiles = <Value, Error>(
+  operation: (profiles: ProfilesShape) => Effect.Effect<Value, Error>,
 ): Promise<Value> =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -121,6 +121,117 @@ test("addSkill refuses an existing destination without force and force replaces 
     await expect(readFile(path.join(destination, "stale.txt"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("extension catalog is offline, sorted, and falls back to declared skill metadata", async () => {
+  const fixture = await makeFixture();
+  try {
+    const alpha = path.join(fixture.repositoryRoot, "extensions", "alpha");
+    const beta = path.join(fixture.repositoryRoot, "extensions", "beta");
+    const required = path.join(fixture.repositoryRoot, "extensions", "pi-packages");
+    await writeSkill(
+      path.join(alpha, "skills", "alpha"),
+      "---\nname: alpha-skill\ndescription: Alpha fallback.\n---\n",
+    );
+    await writeFile(
+      path.join(alpha, "package.json"),
+      JSON.stringify({ name: "@ziggy/alpha", pi: { skills: ["./skills"] } }),
+    );
+    await mkdir(beta, { recursive: true });
+    await writeFile(path.join(beta, "explode.ts"), 'throw new Error("must not import")\n');
+    await writeFile(
+      path.join(beta, "package.json"),
+      JSON.stringify({
+        name: "@ziggy/beta",
+        description: "Beta code.",
+        pi: { extensions: ["./explode.ts"] },
+      }),
+    );
+    await writeSkill(
+      path.join(required, "skills", "required"),
+      "---\nname: required\ndescription: Required.\n---\n",
+    );
+    await writeFile(
+      path.join(required, "package.json"),
+      JSON.stringify({
+        name: "@ziggy/pi-packages",
+        description: "Package controls.",
+        pi: { skills: ["./skills"] },
+      }),
+    );
+
+    const catalog = await useProfiles((profiles) => profiles.listExtensions(fixture.repositoryRoot));
+    expect(catalog.map((item) => [item.id, item.kind, item.required])).toEqual([
+      ["alpha", "skill", false],
+      ["beta", "code", false],
+      ["pi-packages", "skill", true],
+    ]);
+    expect(catalog[0]?.description).toBe("Alpha fallback.");
+    expect((await useProfiles((profiles) => profiles.showExtension(fixture.repositoryRoot, "beta"))).extensionPaths).toEqual([
+      path.join(beta, "explode.ts"),
+    ]);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("extension selection writes canonically and preserves bytes on no-op or invalid input", async () => {
+  const fixture = await makeFixture();
+  try {
+    for (const id of ["alpha", "beta", "pi-packages"]) {
+      const packagePath = path.join(fixture.repositoryRoot, "extensions", id);
+      await writeSkill(
+        path.join(packagePath, "skills", id),
+        `---\nname: ${id}\ndescription: ${id} skill.\n---\n`,
+      );
+      await writeFile(
+        path.join(packagePath, "package.json"),
+        JSON.stringify({
+          name: `@ziggy/${id}`,
+          description: `${id} package`,
+          pi: { skills: ["./skills"] },
+        }),
+      );
+    }
+    const selectionPath = path.join(fixture.profile.path, "extensions.json");
+    expect(
+      (await useProfiles((profiles) =>
+        profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta"),
+      )).changed,
+    ).toBe(true);
+    await useProfiles((profiles) =>
+      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+    );
+    const canonical = '{\n  "extensions": [\n    "alpha",\n    "beta"\n  ]\n}\n';
+    expect(await readFile(selectionPath, "utf8")).toBe(canonical);
+    expect(
+      (await useProfiles((profiles) =>
+        profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+      )).changed,
+    ).toBe(false);
+    expect(await readFile(selectionPath, "utf8")).toBe(canonical);
+    await useProfiles((profiles) =>
+      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "beta"),
+    );
+    await useProfiles((profiles) =>
+      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+    );
+    expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
+
+    await writeFile(selectionPath, '{"extensions":["alpha","alpha"]}\n');
+    const invalidBytes = await readFile(selectionPath, "utf8");
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const profiles = yield* Profiles;
+        return yield* profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta");
+      }).pipe(Effect.provide(ProfilesLive), Effect.result),
+    );
+    expect(Result.match(result, { onFailure: Predicate.isTagged("ProfileExtensionInvalid"), onSuccess: () => false })).toBe(true);
+    expect(await readFile(selectionPath, "utf8")).toBe(invalidBytes);
+    expect((await readdir(fixture.profile.path)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

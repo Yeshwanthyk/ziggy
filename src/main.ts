@@ -136,6 +136,56 @@ const program = Effect.gen(function* () {
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]`);
     }
+    case "extensions": {
+      const action = process.argv[3];
+      if (action === "list" && process.argv.length === 4) {
+        const extensions = yield* profiles.listExtensions(repositoryRoot);
+        for (const extension of extensions) {
+          console.log(
+            `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.description}`,
+          );
+        }
+        return;
+      }
+      if (action === "show" && process.argv[4] !== undefined && process.argv.length === 5) {
+        const extension = yield* profiles.showExtension(repositoryRoot, process.argv[4]);
+        console.log(`id\t${extension.id}`);
+        console.log(`kind\t${extension.kind}`);
+        console.log(`status\t${extension.required ? "required" : "optional"}`);
+        console.log(`description\t${extension.description}`);
+        console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
+        for (const skill of extension.skills) {
+          console.log(`skill\t${skill.name} — ${skill.description}`);
+        }
+        for (const extensionPath of extension.extensionPaths) {
+          console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
+        }
+        return;
+      }
+      if (
+        (action === "add" || action === "remove") &&
+        process.argv[4] !== undefined &&
+        process.argv[5] !== undefined &&
+        process.argv.length === 6
+      ) {
+        const target = resolveProfileTarget(process.argv[4], resolutionOptions);
+        const result = yield* (action === "add"
+          ? profiles.addExtension(target, repositoryRoot, process.argv[5])
+          : profiles.removeExtension(target, repositoryRoot, process.argv[5]));
+        if (!result.changed) {
+          console.log(`${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`);
+          return;
+        }
+        console.log(`${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`);
+        console.log("reopen the Profile or restart its Ziggy process to apply the change");
+        return;
+      }
+      return yield* fail(`usage:
+  ziggy extensions list
+  ziggy extensions show <id>
+  ziggy extensions add <name|path> <id>
+  ziggy extensions remove <name|path> <id>`);
+    }
     case "auth": {
       const argument = process.argv[3];
       const providerId = process.argv[4];
@@ -266,6 +316,7 @@ const program = Effect.gen(function* () {
       fail(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>
       fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
+    ProfileExtensionInvalid: (failure) => fail(failure.message),
     ProfileSkillInvalid: (failure) => fail(failure.message),
     ProfileSkillNotFound: (failure) => fail(failure.message),
     ProfileSkillExists: (failure) => fail(failure.message),

@@ -1,3 +1,4 @@
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import {
   createAgentSessionServices,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { Effect, Predicate, Result } from "effect";
 import { discoverPiResources } from "./resources";
 
 const temporaryPaths: Array<string> = [];
@@ -24,6 +26,21 @@ const writeSkill = async (
   );
 };
 
+const writePackage = async (
+  packagePath: string,
+  id: string,
+  resources: { readonly extensions?: ReadonlyArray<string>; readonly skills?: ReadonlyArray<string> },
+) => {
+  await mkdir(packagePath, { recursive: true });
+  await writeFile(
+    join(packagePath, "package.json"),
+    `${JSON.stringify({ name: `@ziggy/${id}`, description: `${id} package`, pi: resources }, null, 2)}\n`,
+  );
+};
+
+const resolveResources = (profilePath: string, repositoryRoot: string) =>
+  Effect.runPromise(discoverPiResources(profilePath, repositoryRoot));
+
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -36,21 +53,31 @@ test("discovers repository Pi extensions and skills in Profile-first order", asy
   const alphaPackage = join(repositoryRoot, "extensions", "alpha");
   const betaPackage = join(repositoryRoot, "extensions", "beta");
 
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
   await writeSkill(join(profilePath, "skills", "profile"), "profile", "profile skill");
   await writeSkill(join(alphaPackage, "skills", "alpha"), "alpha", "alpha skill");
   await writeSkill(join(betaPackage, "skills", "beta"), "beta", "beta skill");
-  await writeSkill(join(repositoryRoot, "skills", "top"), "top", "top-level skill");
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required skill");
+  await writeSkill(
+    join(repositoryRoot, "skills", "extension-authoring"),
+    "extension-authoring",
+    "authoring skill",
+  );
+  await writePackage(alphaPackage, "alpha", { skills: ["./skills"] });
+  await writePackage(betaPackage, "beta", { extensions: ["./index.ts"], skills: ["./skills"] });
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
   await writeFile(join(betaPackage, "index.ts"), "export default function () {}\n", "utf8");
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["beta"]}\n');
 
-  const resources = await discoverPiResources(profilePath, repositoryRoot);
+  const resources = await resolveResources(profilePath, repositoryRoot);
 
   expect(resources).toEqual({
     extensionPaths: [join(betaPackage, "index.ts")],
     skillPaths: [
       join(profilePath, "skills"),
-      join(alphaPackage, "skills"),
+      join(requiredPackage, "skills"),
+      join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
       join(betaPackage, "skills"),
-      join(repositoryRoot, "skills"),
     ],
   });
 });
@@ -61,6 +88,7 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
   const profilePath = join(root, "profile");
   const repositoryRoot = join(root, "ziggy");
   const extensionPackage = join(repositoryRoot, "extensions", "alpha");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
   const topLevelSkills = join(repositoryRoot, "skills");
 
   await mkdir(profilePath, { recursive: true });
@@ -76,8 +104,13 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     "extension-only",
     "extension only",
   );
-  await writeSkill(join(topLevelSkills, "shared-top-level"), "shared", "top-level loser");
-  await writeSkill(join(topLevelSkills, "top-level-only"), "top-level-only", "top level only");
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required only");
+  await writeSkill(
+    join(topLevelSkills, "extension-authoring"),
+    "extension-authoring",
+    "top level only",
+  );
+  await writeSkill(join(topLevelSkills, "ambient"), "ambient", "must not load");
   await writeFile(
     join(extensionPackage, "index.ts"),
     [
@@ -92,8 +125,14 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     ].join("\n"),
     "utf8",
   );
+  await writePackage(extensionPackage, "alpha", {
+    extensions: ["./index.ts"],
+    skills: ["./skills"],
+  });
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
-  const resources = await discoverPiResources(profilePath, repositoryRoot);
+  const resources = await resolveResources(profilePath, repositoryRoot);
   const services = await createAgentSessionServices({
     cwd: profilePath,
     agentDir: profilePath,
@@ -114,14 +153,52 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     .getExtensions()
     .extensions.flatMap((extension) => [...extension.tools.keys()]);
 
-  expect([...byName.keys()].sort()).toEqual(["extension-only", "shared", "top-level-only"]);
+  expect([...byName.keys()].sort()).toEqual([
+    "extension-authoring",
+    "extension-only",
+    "required",
+    "shared",
+  ]);
   expect(byName.get("shared")?.filePath).toBe(
     join(profilePath, "skills", "shared-profile", "SKILL.md"),
   );
   expect(
     loadedSkills.diagnostics.filter((diagnostic) => diagnostic.type === "collision"),
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   expect(extensionTools).toEqual(["alpha_tool"]);
+});
+
+test("selection decoding fails closed for malformed, duplicate, reserved, and unknown values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-invalid-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const repositoryRoot = join(root, "ziggy");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+  const alphaPackage = join(repositoryRoot, "extensions", "alpha");
+  await mkdir(profilePath, { recursive: true });
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required");
+  await writeSkill(join(alphaPackage, "skills", "alpha"), "alpha", "alpha");
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writePackage(alphaPackage, "alpha", { skills: ["./skills"] });
+
+  for (const content of [
+    "{",
+    '{"wrong":[]}',
+    '{"extensions":["alpha","alpha"]}',
+    '{"extensions":["pi-packages"]}',
+    '{"extensions":["unknown"]}',
+  ]) {
+    await writeFile(join(profilePath, "extensions.json"), content);
+    const result = await Effect.runPromise(
+      discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+    );
+    expect(
+      Result.match(result, {
+        onFailure: Predicate.isTagged("ProfileExtensionInvalid"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
+  }
 });
 
 test("the complete repository catalog loads through production paths and Pi manifests", async () => {
@@ -222,7 +299,10 @@ test("the complete repository catalog loads through production paths and Pi mani
         additionalSkillPaths,
       },
     });
-  const assertCatalog = (services: Awaited<ReturnType<typeof loadCatalog>>): void => {
+  const assertCatalog = (
+    services: Awaited<ReturnType<typeof loadCatalog>>,
+    skillCount: number,
+  ): void => {
     const loadedSkills = services.resourceLoader.getSkills();
     const loadedExtensions = services.resourceLoader.getExtensions();
     const toolNames = loadedExtensions.extensions
@@ -231,11 +311,15 @@ test("the complete repository catalog loads through production paths and Pi mani
 
     expect(loadedExtensions.errors).toEqual([]);
     expect(loadedSkills.diagnostics).toEqual([]);
-    expect(loadedSkills.skills).toHaveLength(57);
+    expect(loadedSkills.skills).toHaveLength(skillCount);
     expect(toolNames).toEqual(expectedTools);
   };
 
-  const productionResources = await discoverPiResources(profilePath, repositoryRoot);
+  await writeFile(
+    join(profilePath, "extensions.json"),
+    `${JSON.stringify({ extensions: packageNames.filter((name) => name !== "pi-packages") }, null, 2)}\n`,
+  );
+  const productionResources = await resolveResources(profilePath, repositoryRoot);
   expect(
     productionResources.extensionPaths.map((extensionPath) => basename(dirname(extensionPath))),
   ).toEqual([
@@ -255,7 +339,7 @@ test("the complete repository catalog loads through production paths and Pi mani
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices);
+  assertCatalog(productionServices, 49);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -270,5 +354,6 @@ test("the complete repository catalog loads through production paths and Pi mani
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
+    57,
   );
 });

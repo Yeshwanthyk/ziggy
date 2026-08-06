@@ -29,6 +29,15 @@ export class ProfileFileSystemError extends Schema.TaggedErrorClass<ProfileFileS
   },
 ) {}
 
+export class ProfileExtensionInvalid extends Schema.TaggedErrorClass<ProfileExtensionInvalid>()(
+  "ProfileExtensionInvalid",
+  {
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.UndefinedOr(Schema.Defect()),
+  },
+) {}
+
 export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(
   "ProfileSkillInvalid",
   {

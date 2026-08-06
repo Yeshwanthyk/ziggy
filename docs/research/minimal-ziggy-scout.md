@@ -21,7 +21,7 @@ The one Pi-importing adapter constructs a runtime per Profile:
 1. Resolve `profilePath`; use it as both Pi `cwd` and `agentDir`.
 2. `SessionManager.create(profilePath, join(profilePath, "sessions"))` — Pi supports a custom session directory; its JSONL is already append-only, tree-structured, versioned.
 3. `createAgentSessionServices({ cwd: profilePath, agentDir: profilePath, resourceLoaderOptions })` → `createAgentSessionFromServices(...)` → `createAgentSessionRuntime(...)`.
-4. `DefaultResourceLoader` with `systemPrompt: join(profilePath, "SOUL.md")`; set `noExtensions`, `noSkills`, `noPromptTemplates`, `noThemes`, `noContextFiles`, then explicitly admit sorted repository package entrypoints and skill roots. Profile-local skills load first, package skills next, and top-level repository skills last. No accidental global/project discovery or Profile-authored TypeScript extensions.
+4. Before constructing Pi, decode `<profile>/extensions.json` (missing means no optional packages), validate the complete repository shelf from each package's `package.json#pi`, and close over the resolved paths. Keep Pi discovery disabled. Skills load Profile-local first, required `pi-packages` second, required `extension-authoring` third, then selected optional packages in ID order. Executable paths come only from required or selected package manifests. Selection changes apply only to a newly opened runtime or restarted resident process.
 5. Use Pi's `ModelRuntime` and `SettingsManager` pointed at Profile-local `auth.json`, `models.json`, and settings. No Ziggy provider or session formats.
 
 See `docs/research/pi-sdk-surface.md` for exact signatures.
@@ -55,6 +55,10 @@ ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest sess
 ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
 ziggy gateway <name|path>    run the resident Telegram gateway
 ziggy profiles               list known Profiles (registry: ~/.ziggy/profiles.list)
+ziggy extensions list        inspect the offline package shelf
+ziggy extensions show <id>   inspect one package without importing its code
+ziggy extensions add <profile> <id>      select an optional package
+ziggy extensions remove <profile> <id>   unselect an optional package
 ```
 
 ## Primitives, in build order
@@ -65,7 +69,7 @@ Each primitive ships with one walking-skeleton proof before the next begins.
 2. **Provider** — Pi's provider/model/auth vocabulary unchanged; a Provider never owns a loop. *Proof:* one non-persistent, no-tools prompt via `SessionManager.inMemory()` returns streamed text or a typed config/provider error.
 3. **Session** — Pi's Profile-local `SessionManager`; client-neutral prompt/steer/abort/events. *Proof:* one TUI turn, exit, resume the same JSONL session via CLI print. TUI and CLI are in-process owners for now (Pi has no cross-process session lock).
 4. **Memory** — retained facts separate from transcripts, all plain markdown in the Profile. `MEMORY.md` is assistant-wide; `memory/users/<id>.md` is per-person and loaded only in 1:1 contexts; `memory/groups/<id>.md` is shared per group and is the only extra memory loaded in group contexts — individual user memories never leak into groups. Capped, reject-on-overflow, never silent truncation. *Proof:* a Ziggy-owned Pi tool atomically replaces a bounded memory doc mid-chat; the next session sees the fact via prompt context; transcript untouched. A session-recall package may build a disposable projection of Pi JSONL, but it is never a second memory or compaction authority.
-5. **Extension** — each `extensions/<id>/` folder is a Pi package containing skills, executable extension code, or both. Pi receives Profile-local skills first, sorted package skill roots next, and top-level repository skills last; full `SKILL.md` bodies load on demand. Executable package factories load at runtime startup, and every registered package tool is admitted in TUI, print runs, gateway chats, and automations. *Proof:* Profile skill collisions win, package tools are present in every face, nothing ambient leaks in, and the hidden TUI extension still shapes only terminal chrome.
+5. **Extension** — each `extensions/<id>/` folder is a shelf package containing skills, executable extension code, or both. `<profile>/extensions.json` is the sole optional-package selection authority; `pi-packages` and `extension-authoring` remain mandatory. Selection admits the package as one manifest-declared unit, with Profile-local skill precedence and no ambient resources. All faces share this resolver through one Profile runtime construction path. *Proof:* missing and invalid selections fail closed as specified, collisions favor Profile skills, selected package tools load from direct paths, list/show stay offline, and atomic add/remove changes only the selection file.
 6. **Gateway** — first resident process; first channel is Telegram, with embedded `ZiggyAgent` in-process. Channel adapters are thin: receive message, resolve context (1:1 vs group) for memory admission, invoke the core, deliver the reply. *Proof:* one owner-authorized Telegram message in, one reply out; gateway exclusively owns live sessions.
 7. **Automation** — file-authored triggers with a cheap wake-gate; a run gets a fresh session. *Proof:* gate false → zero model calls; gate true → fresh session + one result through the existing delivery face.
 

@@ -26,7 +26,7 @@ Use this manifest for a skill-only package:
 
 ```json
 {
-  "name": "ziggy-extension-example",
+  "name": "@ziggy/example",
   "private": true,
   "type": "module",
   "keywords": ["pi-package"],
@@ -53,9 +53,11 @@ Export one Pi `ExtensionFactory` from `index.ts`. Register tools with `pi.regist
 TypeBox parameters and bounded text results. Resolve package files from `import.meta.url`, while
 tool subprocesses run in the Profile cwd supplied by Pi.
 
-Do not create a second manifest, registry, alias layer, installer, or tool allowlist. Ziggy
-discovers sorted `extensions/*/index.ts` files and package skill roots; Pi loads them. All
-registered tools must be usable from TUI, print runs, gateway chats, and automations.
+Do not create a second manifest, registry, alias layer, installer, or tool allowlist. Ziggy admits
+only paths declared by `pi.extensions` and `pi.skills`. The package is available for Profile
+selection with `ziggy extensions add <profile> example`; reopening that Profile or restarting its
+resident Ziggy process activates the change. All registered tools must be usable from TUI, print
+runs, gateway chats, and automations when the package is selected.
 
 ## Skills
 

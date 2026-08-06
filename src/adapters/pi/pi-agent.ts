@@ -493,58 +493,59 @@ const createProfileRuntime = (
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-) => {
-  const paths = memoryFilePaths(profilePath, context);
-  if (!paths.ok) {
-    return Effect.fail(paths.error);
-  }
+) =>
+  Effect.gen(function* () {
+    const paths = memoryFilePaths(profilePath, context);
+    if (!paths.ok) {
+      return yield* paths.error;
+    }
+    const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
-  return piPromise(profilePath, "create agent runtime", () =>
-    createAgentSessionRuntime(
-      async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-        const resources = await discoverPiResources(profilePath, repositoryRoot);
-        const services = await createAgentSessionServices({
-          cwd,
-          agentDir,
-          resourceLoaderOptions: {
-            systemPrompt: soulPath,
-            noExtensions: true,
-            noSkills: true,
-            ...(resources.extensionPaths.length === 0
-              ? {}
-              : { additionalExtensionPaths: [...resources.extensionPaths] }),
-            ...(resources.skillPaths.length === 0
-              ? {}
-              : { additionalSkillPaths: [...resources.skillPaths] }),
-            noPromptTemplates: true,
-            noThemes: true,
-            noContextFiles: true,
-            extensionFactories: [
-              createZiggyTuiExtension(profilePath),
-              createProfileMemoryExtension(profilePath, paths.documents),
-            ],
-          },
-        });
-        const created = await createAgentSessionFromServices({
-          services,
-          sessionManager: runtimeSessionManager,
-          ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-          customTools: [createMemoryWriteTool(profilePath, context)],
-        });
-        return {
-          ...created,
-          services,
-          diagnostics: services.diagnostics,
-        };
-      },
-      {
-        cwd: profilePath,
-        agentDir: profilePath,
-        sessionManager,
-      },
-    ),
-  );
-};
+    return yield* piPromise(profilePath, "create agent runtime", () =>
+      createAgentSessionRuntime(
+        async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
+          const services = await createAgentSessionServices({
+            cwd,
+            agentDir,
+            resourceLoaderOptions: {
+              systemPrompt: soulPath,
+              noExtensions: true,
+              noSkills: true,
+              ...(resources.extensionPaths.length === 0
+                ? {}
+                : { additionalExtensionPaths: [...resources.extensionPaths] }),
+              ...(resources.skillPaths.length === 0
+                ? {}
+                : { additionalSkillPaths: [...resources.skillPaths] }),
+              noPromptTemplates: true,
+              noThemes: true,
+              noContextFiles: true,
+              extensionFactories: [
+                createZiggyTuiExtension(profilePath),
+                createProfileMemoryExtension(profilePath, paths.documents),
+              ],
+            },
+          });
+          const created = await createAgentSessionFromServices({
+            services,
+            sessionManager: runtimeSessionManager,
+            ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
+            customTools: [createMemoryWriteTool(profilePath, context)],
+          });
+          return {
+            ...created,
+            services,
+            diagnostics: services.diagnostics,
+          };
+        },
+        {
+          cwd: profilePath,
+          agentDir: profilePath,
+          sessionManager,
+        },
+      ),
+    );
+  });
 
 const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
   const bindSession = async (): Promise<void> => {
