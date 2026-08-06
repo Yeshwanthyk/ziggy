@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Cron, DateTime, Effect, Option, Result, Schema } from "effect";
 
 const AutomationIdSchema = Schema.String.check(
@@ -56,7 +57,9 @@ const targetFromSource = (source: string): AutomationTarget | undefined => {
   }
   const discord = /^discord:channel:([1-9][0-9]*)$/.exec(source);
   if (discord?.[1] !== undefined) return { _tag: "discord", target: source, channelId: discord[1] };
-  const slack = /^slack:channel:([CDG][A-Z0-9]{8,})(?::thread:([1-9][0-9]*\.[0-9]{6}))?$/.exec(source);
+  const slack = /^slack:channel:([CDG][A-Z0-9]{8,})(?::thread:([1-9][0-9]*\.[0-9]{6}))?$/.exec(
+    source,
+  );
   return slack?.[1] === undefined
     ? undefined
     : {
@@ -125,7 +128,16 @@ export type AutomationTargetOutcome =
       readonly category: AutomationDeliveryFailureCategory;
       readonly retriable: boolean;
     };
+export type AutomationTrigger =
+  | { readonly kind: "manual-force" }
+  | {
+      readonly kind: "scheduled";
+      readonly scheduledFor: string;
+      readonly scheduleFingerprint: string;
+    };
+
 export type AutomationRunOutcome =
+  | { readonly kind: "skipped-busy" }
   | { readonly kind: "declined"; readonly reason: "gate-nonzero"; readonly exitCode: number }
   | {
       readonly kind: "executed";
@@ -134,13 +146,68 @@ export type AutomationRunOutcome =
         | { readonly kind: "resolution-failed"; readonly category: AutomationResolutionCategory };
     };
 
+const Millis = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+// oxfmt-ignore
+export const AutomationScheduleRecord = Schema.Struct({ automationId: Schema.String, definitionState: Schema.Literals(["valid", "invalid", "deleted"]), scheduleFingerprint: Schema.NullOr(Schema.String), nextScheduledAtMs: Schema.NullOr(Millis), definitionObservedAtMs: Millis, definitionError: Schema.NullOr(Schema.String) });
+export type AutomationScheduleRecord = typeof AutomationScheduleRecord.Type;
+// oxfmt-ignore
+export const AutomationTargetProjection = Schema.Struct({ ordinal: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), target: Schema.String, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(Schema.String), retriable: Schema.NullOr(Schema.Boolean) });
+export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
+// oxfmt-ignore
+export const AutomationRunProjection = Schema.Struct({ runId: Schema.String, automationId: Schema.String, trigger: Schema.Literals(["manual-force", "scheduled"]), state: Schema.Literals(["claimed", "running", "completed", "failed", "skipped-gate", "skipped-busy", "missed", "unknown"]), scheduleFingerprint: Schema.NullOr(Schema.String), scheduledForMs: Schema.NullOr(Millis), missedThroughMs: Schema.NullOr(Millis), recordedAtMs: Millis, startedAtMs: Schema.NullOr(Millis), finishedAtMs: Schema.NullOr(Millis), localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(Schema.String), gateExitCode: Schema.NullOr(Schema.Finite.check(Schema.isInt())), targets: Schema.Array(AutomationTargetProjection) });
+export type AutomationRunProjection = typeof AutomationRunProjection.Type;
+// oxfmt-ignore
+export interface AutomationStatusProjection { readonly profilePath: string; readonly observedAtMs: number; readonly heartbeatAtMs: number | null; readonly lastTickAtMs: number | null; readonly lastTickStatus: "ok" | "error" | null; readonly lastTickError: string | null; readonly schedules: ReadonlyArray<AutomationScheduleRecord>; readonly activeRunCount: number; readonly latestRun: AutomationRunProjection | null; readonly latestErrorRun: AutomationRunProjection | null }
+
+// oxfmt-ignore
+export class AutomationDatabaseError extends Schema.TaggedErrorClass<AutomationDatabaseError>()("AutomationDatabaseError", { operation: Schema.String, path: Schema.String, message: Schema.String, cause: Schema.Defect() }) {}
+// oxfmt-ignore
+export class AutomationSchedulerError extends Schema.TaggedErrorClass<AutomationSchedulerError>()("AutomationSchedulerError", { operation: Schema.String, message: Schema.String, cause: Schema.Defect() }) {}
+// oxfmt-ignore
+export class AutomationProjectionError extends Schema.TaggedErrorClass<AutomationProjectionError>()("AutomationProjectionError", { operation: Schema.String, path: Schema.String, message: Schema.String, cause: Schema.Defect() }) {}
+
+const sorted = (values: ReadonlySet<number>) => [...values].sort((left, right) => left - right);
+// oxfmt-ignore
+export const automationScheduleFingerprint = (automation: Automation): string => {
+  const fields = automation.schedule.cronSource.trim().split(/\s+/u);
+  const day = fields[fields.length - 3] ?? "";
+  const weekday = fields[fields.length - 1] ?? "";
+  const cron = automation.schedule.cron;
+  const and = (day.startsWith("*") || weekday.startsWith("*")) && cron.days.size !== 0 && cron.weekdays.size !== 0;
+  return createHash("sha256").update(JSON.stringify({ version: automation.version, timezone: automation.schedule.timezone, seconds: sorted(cron.seconds), minutes: sorted(cron.minutes), hours: sorted(cron.hours), days: sorted(cron.days), months: sorted(cron.months), weekdays: sorted(cron.weekdays), and })).digest("hex");
+};
+
+export const scheduledRunId = (automationId: string, scheduledForMs: number): string =>
+  `scheduled:${automationId}:${new Date(scheduledForMs).toISOString()}`;
+export const manualRunId = (uuid: string): string => `manual:${uuid.toLowerCase()}`;
+export const missedRunId = (
+  automationId: string,
+  fingerprint: string,
+  firstMs: number,
+  lastMs: number,
+): string =>
+  `missed:${automationId}:${fingerprint}:${new Date(firstMs).toISOString()}:${new Date(lastMs).toISOString()}`;
+export const boundAutomationText = (value: string): string =>
+  [
+    ...value
+      .replace(/\p{Cc}+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim(),
+  ]
+    .slice(0, 160)
+    .join("");
+
 const invalid = (path: string, message: string, cause?: unknown) =>
   new AutomationInvalid({ path, message, cause: cause ?? message });
 
 export const validateAutomationId = (id: string): Effect.Effect<AutomationId, AutomationInvalid> =>
   decodeAutomationId(id).pipe(
     Effect.mapError((cause) =>
-      invalid(id, `invalid automation id ${id}: use 1-80 lowercase kebab-case characters from [a-z0-9-]`, cause),
+      invalid(
+        id,
+        `invalid automation id ${id}: use 1-80 lowercase kebab-case characters from [a-z0-9-]`,
+        cause,
+      ),
     ),
   );
 export type AutomationId = typeof AutomationIdSchema.Type;
@@ -165,9 +232,16 @@ const parseBroadcast = (id: string, path: string, source: string) =>
     const tokens: Array<AutomationBroadcastToken> = [];
     for (const token of source.split(",")) {
       if (token === "none") {
-        return yield* invalid(path, `invalid automation ${id}: none must be the whole broadcast value`);
+        return yield* invalid(
+          path,
+          `invalid automation ${id}: none must be the whole broadcast value`,
+        );
       }
-      tokens.push(token === "origin" || token === "all" ? token : yield* parseAutomationTarget(id, path, token));
+      tokens.push(
+        token === "origin" || token === "all"
+          ? token
+          : yield* parseAutomationTarget(id, path, token),
+      );
     }
     return tokens;
   });
@@ -179,42 +253,91 @@ export const parseAutomationFile = (
 ): Effect.Effect<Automation, AutomationInvalid> =>
   Effect.gen(function* () {
     const lines = source.replaceAll("\r\n", "\n").split("\n");
-    if (lines[0] !== "---") return yield* invalid(filePath, `invalid automation ${id}: frontmatter must start with ---`);
+    if (lines[0] !== "---")
+      return yield* invalid(filePath, `invalid automation ${id}: frontmatter must start with ---`);
     const end = lines.indexOf("---", 1);
-    if (end === -1) return yield* invalid(filePath, `invalid automation ${id}: frontmatter must end with ---`);
+    if (end === -1)
+      return yield* invalid(filePath, `invalid automation ${id}: frontmatter must end with ---`);
 
     const entries: Array<readonly [string, unknown]> = [];
     const keys = new Set<string>();
     for (const line of lines.slice(1, end)) {
       const separator = line.indexOf(":");
-      if (separator <= 0) return yield* invalid(filePath, `invalid automation ${id}: expected one key: value per line`);
+      if (separator <= 0)
+        return yield* invalid(
+          filePath,
+          `invalid automation ${id}: expected one key: value per line`,
+        );
       const key = line.slice(0, separator);
       const rawValue = line.slice(separator + 1);
       const value = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
-      if (key !== key.trim() || keys.has(key)) return yield* invalid(filePath, `invalid automation ${id}: invalid or duplicate key ${key.trim()}`);
-      if (key === "telegram-chat") return yield* invalid(filePath, `invalid automation ${id}: telegram-chat is no longer supported; use broadcast: telegram:chat:<chat-id>`);
-      if (key === "prompt") return yield* invalid(filePath, `invalid automation ${id}: prompt belongs in the Markdown body`);
+      if (key !== key.trim() || keys.has(key))
+        return yield* invalid(
+          filePath,
+          `invalid automation ${id}: invalid or duplicate key ${key.trim()}`,
+        );
+      if (key === "telegram-chat")
+        return yield* invalid(
+          filePath,
+          `invalid automation ${id}: telegram-chat is no longer supported; use broadcast: telegram:chat:<chat-id>`,
+        );
+      if (key === "prompt")
+        return yield* invalid(
+          filePath,
+          `invalid automation ${id}: prompt belongs in the Markdown body`,
+        );
       keys.add(key);
       entries.push([key, key === "version" && value.trim() === "1" ? 1 : value]);
     }
-    const prompt = lines.slice(end + 1).join("\n").trim();
-    const decoded = yield* decodeAutomationFile(Object.fromEntries([...entries, ["prompt", prompt]])).pipe(
-      Effect.mapError((cause) => invalid(filePath, `invalid automation ${id}: frontmatter or body failed validation`, cause)),
+    const prompt = lines
+      .slice(end + 1)
+      .join("\n")
+      .trim();
+    const decoded = yield* decodeAutomationFile(
+      Object.fromEntries([...entries, ["prompt", prompt]]),
+    ).pipe(
+      Effect.mapError((cause) =>
+        invalid(filePath, `invalid automation ${id}: frontmatter or body failed validation`, cause),
+      ),
     );
-    if ([decoded.cron, decoded.timezone, decoded.broadcast, decoded.gate, decoded.origin].some((value) => value !== undefined && value !== value.trim())) {
-      return yield* invalid(filePath, `invalid automation ${id}: frontmatter values must not have leading or trailing whitespace`);
+    if (
+      [decoded.cron, decoded.timezone, decoded.broadcast, decoded.gate, decoded.origin].some(
+        (value) => value !== undefined && value !== value.trim(),
+      )
+    ) {
+      return yield* invalid(
+        filePath,
+        `invalid automation ${id}: frontmatter values must not have leading or trailing whitespace`,
+      );
     }
-    if (/^[+-]\d{2}:\d{2}$/.test(decoded.timezone) || Option.isNone(DateTime.zoneMakeNamed(decoded.timezone))) {
-      return yield* invalid(filePath, `invalid automation ${id}: timezone must be a named IANA timezone`);
+    if (
+      /^[+-]\d{2}:\d{2}$/.test(decoded.timezone) ||
+      Option.isNone(DateTime.zoneMakeNamed(decoded.timezone))
+    ) {
+      return yield* invalid(
+        filePath,
+        `invalid automation ${id}: timezone must be a named IANA timezone`,
+      );
     }
     const cron = Cron.parse(decoded.cron, decoded.timezone);
-    if (Result.isFailure(cron)) return yield* invalid(filePath, `invalid automation ${id}: invalid cron`, cron.failure);
+    if (Result.isFailure(cron))
+      return yield* invalid(filePath, `invalid automation ${id}: invalid cron`, cron.failure);
     const broadcast = yield* parseBroadcast(id, filePath, decoded.broadcast);
-    const origin = decoded.origin === undefined ? undefined : yield* parseAutomationTarget(id, filePath, decoded.origin);
-    if (broadcast.includes("origin") && origin === undefined) return yield* invalid(filePath, `invalid automation ${id}: broadcast origin requires an origin field`);
+    const origin =
+      decoded.origin === undefined
+        ? undefined
+        : yield* parseAutomationTarget(id, filePath, decoded.origin);
+    if (broadcast.includes("origin") && origin === undefined)
+      return yield* invalid(
+        filePath,
+        `invalid automation ${id}: broadcast origin requires an origin field`,
+      );
     return {
-      id, version: 1, schedule: { cronSource: decoded.cron, timezone: decoded.timezone, cron: cron.success },
-      broadcast, prompt: decoded.prompt,
+      id,
+      version: 1,
+      schedule: { cronSource: decoded.cron, timezone: decoded.timezone, cron: cron.success },
+      broadcast,
+      prompt: decoded.prompt,
       ...(decoded.gate === undefined ? {} : { gate: decoded.gate }),
       ...(origin === undefined ? {} : { origin }),
     };

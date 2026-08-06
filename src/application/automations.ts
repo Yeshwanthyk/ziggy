@@ -1,24 +1,33 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Context, Effect, Layer, Option, Predicate, Result } from "effect";
+import { Clock, Context, Effect, Layer, Match, Option, Predicate, Result } from "effect";
 import { liveAutomationGate, type AutomationGate } from "../adapters/bun/automation-gate";
+import {
+  automationRunStore,
+  makeLiveManualRunId,
+  type AutomationRunStore,
+  type RunTerminal,
+} from "../adapters/bun/automation-sqlite";
 import { createMessage, DiscordApiError } from "../adapters/discord/api";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { postMessage, SlackApiError } from "../adapters/slack/api";
 import { sendMessage, TelegramApiError } from "../adapters/telegram/api";
 import {
   type Automation,
+  AutomationDatabaseError,
   AutomationFileSystemError,
   AutomationGateFailed,
   AutomationInvalid,
   AutomationNotFound,
   type AutomationDeliveryFailureCategory,
   type AutomationRunOutcome,
+  type AutomationTrigger,
   type AutomationTarget,
   type AutomationTargetOutcome,
   decodeBroadcastsFileJson,
   parseAutomationFile,
   parseAutomationTarget,
+  scheduledRunId,
   validateAutomationId,
 } from "../domain/automation";
 import type { ZiggyAgentError } from "../domain/agent";
@@ -33,16 +42,19 @@ export type AutomationError =
   | AutomationNotFound
   | AutomationFileSystemError
   | AutomationGateFailed
+  | AutomationDatabaseError
   | ZiggyAgentError;
 
 export interface AutomationsShape {
   readonly run: (
     target: ProfileTarget,
     automationId: string,
-    trigger: { readonly kind: "manual-force" },
+    trigger: AutomationTrigger,
   ) => Effect.Effect<AutomationRunOutcome, AutomationError>;
 }
-export class Automations extends Context.Service<Automations, AutomationsShape>()("ziggy/Automations") {}
+export class Automations extends Context.Service<Automations, AutomationsShape>()(
+  "ziggy/Automations",
+) {}
 
 export interface AutomationCapabilities {
   readonly gate: AutomationGate;
@@ -74,15 +86,26 @@ const readAutomation = (target: ProfileTarget, idSource: string) =>
       try: () => readFile(filePath, "utf8"),
       catch: (cause) =>
         fileSystemCauseDetails(cause).code === "ENOENT"
-          ? new AutomationNotFound({ id, path: filePath, message: `no automation ${id} at ${filePath}` })
-          : new AutomationFileSystemError({ path: filePath, message: `could not read automation ${id} at ${filePath}`, cause }),
+          ? new AutomationNotFound({
+              id,
+              path: filePath,
+              message: `no automation ${id} at ${filePath}`,
+            })
+          : new AutomationFileSystemError({
+              path: filePath,
+              message: `could not read automation ${id} at ${filePath}`,
+              cause,
+            }),
     });
     return yield* parseAutomationFile(id, filePath, source);
   });
 
 type TargetResolution =
   | { readonly ok: true; readonly targets: ReadonlyArray<AutomationTarget> }
-  | { readonly ok: false; readonly category: "broadcasts-unreadable" | "broadcasts-invalid" | "all-empty" };
+  | {
+      readonly ok: false;
+      readonly category: "broadcasts-unreadable" | "broadcasts-invalid" | "all-empty";
+    };
 
 const resolveTargets = (
   target: ProfileTarget,
@@ -116,9 +139,11 @@ const resolveTargets = (
     for (const token of automation.broadcast) {
       const additions =
         token === "origin"
-          ? automation.origin === undefined ? [] : [automation.origin]
+          ? automation.origin === undefined
+            ? []
+            : [automation.origin]
           : token === "all"
-            ? homes ?? []
+            ? (homes ?? [])
             : [token];
       for (const addition of additions) {
         if (!seen.has(addition.target)) {
@@ -130,19 +155,27 @@ const resolveTargets = (
     return { ok: true, targets: resolved };
   });
 
-type DeliveryFailure = { readonly category: AutomationDeliveryFailureCategory; readonly retriable: boolean };
+type DeliveryFailure = {
+  readonly category: AutomationDeliveryFailureCategory;
+  readonly retriable: boolean;
+};
 const apiFailure = (error: TelegramApiError | DiscordApiError | SlackApiError): DeliveryFailure => {
   switch (error.reason) {
     case "network":
     case "gateway":
-    case "socket": return { category: "transport", retriable: error.retriable };
-    case "authentication": return { category: "authentication", retriable: error.retriable };
-    case "rate-limited": return { category: "rate-limited", retriable: error.retriable };
+    case "socket":
+      return { category: "transport", retriable: error.retriable };
+    case "authentication":
+      return { category: "authentication", retriable: error.retriable };
+    case "rate-limited":
+      return { category: "rate-limited", retriable: error.retriable };
     case "invalid-response":
-    case "decode": return { category: "invalid-response", retriable: error.retriable };
+    case "decode":
+      return { category: "invalid-response", retriable: error.retriable };
     case "server":
     case "rejected":
-    case "api": return { category: "remote", retriable: error.retriable };
+    case "api":
+      return { category: "remote", retriable: error.retriable };
   }
 };
 
@@ -154,55 +187,200 @@ const deliver = (
 ): Effect.Effect<AutomationTargetOutcome> => {
   const operation: Effect.Effect<void, DeliveryFailure> = Effect.gen(function* () {
     if (Predicate.isTagged("telegram")(target)) {
-      const config = yield* capabilities.loadTelegramConfig(profile).pipe(
-        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-      );
-      for (const chunk of telegramMessageChunks(reply)) yield* capabilities.sendTelegram(config.botToken, target.chatId, chunk).pipe(Effect.mapError(apiFailure));
+      const config = yield* capabilities
+        .loadTelegramConfig(profile)
+        .pipe(
+          Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
+        );
+      for (const chunk of telegramMessageChunks(reply))
+        yield* capabilities
+          .sendTelegram(config.botToken, target.chatId, chunk)
+          .pipe(Effect.mapError(apiFailure));
       return;
     }
     if (Predicate.isTagged("discord")(target)) {
-      const config = yield* capabilities.loadDiscordConfig(profile).pipe(
-        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-      );
-      for (const chunk of discordMessageChunks(reply)) yield* capabilities.sendDiscord(config.botToken, target.channelId, chunk).pipe(Effect.mapError(apiFailure));
+      const config = yield* capabilities
+        .loadDiscordConfig(profile)
+        .pipe(
+          Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
+        );
+      for (const chunk of discordMessageChunks(reply))
+        yield* capabilities
+          .sendDiscord(config.botToken, target.channelId, chunk)
+          .pipe(Effect.mapError(apiFailure));
       return;
     }
-    const config = yield* capabilities.loadSlackConfig(profile).pipe(
-      Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-    );
-    for (const chunk of slackMessageChunks(reply)) yield* capabilities.sendSlack(config.botToken, target.channelId, chunk, target.threadTs).pipe(Effect.mapError(apiFailure));
+    const config = yield* capabilities
+      .loadSlackConfig(profile)
+      .pipe(
+        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
+      );
+    for (const chunk of slackMessageChunks(reply))
+      yield* capabilities
+        .sendSlack(config.botToken, target.channelId, chunk, target.threadTs)
+        .pipe(Effect.mapError(apiFailure));
   });
   return operation.pipe(
     Effect.as<AutomationTargetOutcome>({ target: target.target, status: "delivered" }),
-    Effect.catch((failure) => Effect.succeed({ target: target.target, status: "failed", ...failure } as const)),
+    Effect.catch((failure) =>
+      Effect.succeed({ target: target.target, status: "failed", ...failure } as const),
+    ),
   );
 };
+
+// oxfmt-ignore
+export interface AutomationRunRuntime { readonly store: AutomationRunStore; readonly now: Effect.Effect<number>; readonly makeManualRunId: () => string }
+const liveRunRuntime: AutomationRunRuntime = {
+  store: automationRunStore,
+  now: Clock.currentTimeMillis,
+  makeManualRunId: makeLiveManualRunId,
+};
+
+// oxfmt-ignore
+const failedCategory = (error: AutomationError): string => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid", AutomationNotFound: () => "AutomationNotFound", AutomationFileSystemError: () => "AutomationFileSystemError", AutomationGateFailed: (failure) => `AutomationGateFailed:${failure.reason}`, AutomationDatabaseError: () => "AutomationDatabaseError", ProfileNotInitialized: () => "ProfileNotInitialized", ProviderConfigError: () => "ProviderConfigError", ProviderCallError: () => "ProviderCallError", MemoryIdInvalid: () => "MemoryIdInvalid", ProfileExtensionInvalid: () => "ProfileExtensionInvalid", ProfileFileSystemError: () => "ProfileFileSystemError" }));
 
 export const makeAutomations = (
   agent: ZiggyAgentShape,
   capabilities: AutomationCapabilities = liveCapabilities,
+  runtime: AutomationRunRuntime = liveRunRuntime,
 ): AutomationsShape => ({
-  run: (target, automationId, _trigger) =>
+  run: (target, automationIdSource, trigger) =>
     Effect.gen(function* () {
-      const automation = yield* readAutomation(target, automationId);
-      if (automation.gate !== undefined) {
-        const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
-        if (gate.kind === "declined") return { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode };
+      const automationId = yield* validateAutomationId(automationIdSource);
+      const admittedAt = yield* runtime.now;
+      const runId =
+        trigger.kind === "manual-force"
+          ? runtime.makeManualRunId()
+          : scheduledRunId(automationId, Date.parse(trigger.scheduledFor));
+      if (trigger.kind === "manual-force") {
+        const admission = yield* runtime.store.admitManual(
+          target.path,
+          automationId,
+          runId,
+          admittedAt,
+        );
+        if (admission === "skipped-busy") return { kind: "skipped-busy" };
       }
-      const handle = yield* agent.openChat(target, { kind: "local" }, join(target.path, "sessions", "automations", automation.id), "fresh");
-      const reply = yield* handle.prompt(automation.prompt).pipe(
-        Effect.ensuring(handle.dispose.pipe(Effect.catch((failure) => Effect.sync(() => console.error(`[wake] ${automation.id}: session dispose failed — ${failure.message}`))))),
+      const fingerprint = trigger.kind === "scheduled" ? trigger.scheduleFingerprint : null;
+      yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint);
+
+      const finish = (
+        terminal: Omit<RunTerminal, "atMs">,
+        targets: ReadonlyArray<AutomationTargetOutcome> = [],
+      ) =>
+        Effect.flatMap(runtime.now, (atMs) =>
+          runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets),
+        );
+
+      const execute = Effect.gen(function* () {
+        const automation = yield* readAutomation(target, automationId);
+        if (trigger.kind === "scheduled" && automation.gate === undefined) {
+          yield* finish({
+            state: "skipped-gate",
+            localCompleted: false,
+            failureCategory: "gate-missing",
+            gateExitCode: null,
+          });
+          return { kind: "declined", reason: "gate-nonzero", exitCode: 1 } as const;
+        }
+        if (automation.gate !== undefined) {
+          const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
+          if (gate.kind === "declined") {
+            yield* finish({
+              state: "skipped-gate",
+              localCompleted: false,
+              failureCategory: "gate-nonzero",
+              gateExitCode: gate.exitCode,
+            });
+            return { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode } as const;
+          }
+        }
+        const handle = yield* agent.openChat(
+          target,
+          { kind: "local" },
+          join(target.path, "sessions", "automations", automation.id),
+          "fresh",
+        );
+        const reply = yield* handle
+          .prompt(automation.prompt)
+          .pipe(
+            Effect.ensuring(
+              handle.dispose.pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() =>
+                    console.error(
+                      `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        yield* capabilities.printReply(reply);
+        const resolution = yield* resolveTargets(target, automation);
+        if (!resolution.ok) {
+          yield* finish({
+            state: "failed",
+            localCompleted: true,
+            failureCategory: resolution.category,
+            gateExitCode: null,
+          });
+          return {
+            kind: "executed",
+            delivery: { kind: "resolution-failed", category: resolution.category },
+          } as const;
+        }
+        const outcomes: Array<AutomationTargetOutcome> = [];
+        for (const destination of resolution.targets)
+          outcomes.push(yield* deliver(capabilities, target, destination, reply));
+        const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
+        yield* finish(
+          firstFailure === undefined
+            ? {
+                state: "completed",
+                localCompleted: true,
+                failureCategory: null,
+                gateExitCode: null,
+              }
+            : {
+                state: "failed",
+                localCompleted: true,
+                failureCategory: firstFailure.category,
+                gateExitCode: null,
+              },
+          outcomes,
+        );
+        return { kind: "executed", delivery: { kind: "resolved", targets: outcomes } } as const;
+      });
+
+      return yield* execute.pipe(
+        Effect.catch((error) =>
+          finish({
+            state: "failed",
+            localCompleted: false,
+            failureCategory: failedCategory(error),
+            gateExitCode: null,
+          }).pipe(
+            Effect.catch(() => Effect.void),
+            Effect.andThen(Effect.fail(error)),
+          ),
+        ),
+        Effect.onInterrupt(() =>
+          finish({
+            state: "failed",
+            localCompleted: false,
+            failureCategory: "interrupted",
+            gateExitCode: null,
+          }).pipe(Effect.catch(() => Effect.void)),
+        ),
       );
-      yield* capabilities.printReply(reply);
-      const resolution = yield* resolveTargets(target, automation);
-      if (!resolution.ok) return { kind: "executed", delivery: { kind: "resolution-failed", category: resolution.category } };
-      const outcomes: Array<AutomationTargetOutcome> = [];
-      for (const destination of resolution.targets) outcomes.push(yield* deliver(capabilities, target, destination, reply));
-      return { kind: "executed", delivery: { kind: "resolved", targets: outcomes } };
     }),
 });
 
-export const AutomationsLive = Layer.effect(Automations, Effect.gen(function* () {
-  const agent = yield* ZiggyAgent;
-  return makeAutomations(agent);
-}));
+export const AutomationsLive = Layer.effect(
+  Automations,
+  Effect.gen(function* () {
+    const agent = yield* ZiggyAgent;
+    return makeAutomations(agent);
+  }),
+);

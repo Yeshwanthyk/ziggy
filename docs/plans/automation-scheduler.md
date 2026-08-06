@@ -274,8 +274,9 @@ partial unique index is the final duplicate barrier. A DST fold produces two dif
 instants and therefore two different identities.
 
 A missed row represents every cron occurrence for its fingerprint from `scheduled_for_ms` through
-`missed_through_ms`, inclusive. It deliberately stores neither a count nor one row per slot.
-`Cron.prev` finds the last elapsed occurrence without enumerating a long outage.
+`missed_through_ms`, inclusive. It deliberately stores neither a count nor one row per slot. The
+parsed cron matches the current whole-second instant or uses `Cron.prev` to find the last elapsed
+occurrence without enumerating a long outage.
 
 ## Definition reconciliation
 
@@ -320,8 +321,8 @@ never captures a definition copy.
 4. Discover and decode every definition outside SQLite.
 5. Read current schedule rows, compute reconciliation and missed proposals outside SQLite, then use
    one short immediate compare-and-set transaction to reconcile definitions. For every unchanged
-   valid cursor at or before `startupAt`, insert one inclusive missed range through
-   `Cron.prev(cron, startupAt + 1ms)` and advance to `Cron.next(cron, startupAt)`, the first strict
+   valid cursor at or before `startupAt`, insert one inclusive missed range through the cron occurrence at `startupAt` when it matches, or
+   `Cron.prev(cron, startupAt)` otherwise, and advance to `Cron.next(cron, startupAt)`, the first strict
    future occurrence.
 6. In that same reconciliation commit, write heartbeat and `last_tick_status = 'ok'` at
    `startupAt`.
@@ -589,8 +590,9 @@ Production changes are limited to:
 
 1. `src/domain/automation.ts` — trigger, attempt outcome, persisted projection schemas, fingerprint
    and run-ID helpers, scheduler/database tagged errors.
-2. `src/adapters/bun/automation-sqlite.ts` — schema version 1, bracketed connections, short
-   transactions, startup/reconcile/claim/transition operations, and read-only snapshots.
+2. `src/adapters/bun/automation-sqlite.ts` — scheduler filesystem inspection, schema version 1,
+   bracketed connections, short transactions, startup/reconcile/claim/transition operations, and
+   read-only snapshots.
 3. `src/application/automations.ts` — one recorded run operation around the existing executor,
    scheduled gate requirement, terminal mapping, and target-row persistence.
 4. `src/application/automation-scheduler.ts` — definition discovery, reconciliation decisions,
