@@ -196,6 +196,10 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
         }),
       );
     }
+    const brokenPackage = path.join(fixture.repositoryRoot, "extensions", "broken");
+    await mkdir(brokenPackage, { recursive: true });
+    await writeFile(path.join(brokenPackage, "package.json"), "{");
+
     const selectionPath = path.join(fixture.profile.path, "extensions.json");
     expect(
       (await useProfiles((profiles) =>

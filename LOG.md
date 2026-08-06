@@ -98,3 +98,5 @@ Chronological; newest at the bottom. One entry per logical block of work.
 **Profile-selected extension packages.** Added offline shelf list/show and atomic Profile add/remove commands backed only by canonical `extensions.json`. Runtime composition now validates manifests and selections before Pi starts, keeps `pi-packages` plus `extension-authoring` mandatory, admits only selected package resources, and captures paths for the runtime lifetime. Focused tests cover fail-closed decoding, precedence, offline metadata, no-op byte preservation, canonical replacement, direct imports, and all 19 tools.
 
 **Profile extension resource hardening.** Runtime discovery now rejects a missing or wrong-type mandatory `extension-authoring` skill and manifest-declared symlinks that physically escape their package.
+
+**Optional package isolation.** Runtime construction now reads the Profile selection first and validates only `pi-packages` plus selected packages. Full-shelf scanning remains limited to offline catalog commands and repository proofs, so an unfinished or broken unselected package cannot block unrelated Profiles.

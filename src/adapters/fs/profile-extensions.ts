@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { lstat, open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
@@ -167,6 +167,70 @@ const resolveDeclaredPath = (
     return resolved;
   });
 
+export const readExtensionPackage = (
+  repositoryRoot: string,
+  id: string,
+): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    const packagePath = path.join(repositoryRoot, "extensions", id);
+    const manifestPath = path.join(packagePath, "package.json");
+    const packageStatus = yield* Effect.tryPromise({
+      try: () => lstat(packagePath),
+      catch: (cause) => fsError("inspect", packagePath, cause),
+    }).pipe(
+      Effect.catchIf(
+        (error) => error.code === "ENOENT",
+        () => Effect.fail(invalid(manifestPath, `unknown extension '${id}'`)),
+      ),
+    );
+    if (!packageStatus.isDirectory() || packageStatus.isSymbolicLink()) {
+      return yield* invalid(packagePath, `extension '${id}' is not a physical shelf directory`);
+    }
+    const manifest = yield* readText(manifestPath).pipe(
+      Effect.catchIf(
+        (error) => error.code === "ENOENT",
+        () => Effect.fail(invalid(manifestPath, `unknown extension '${id}'`)),
+      ),
+      Effect.flatMap((text) => decodeManifest(text)),
+      Effect.mapError((cause) =>
+        Predicate.isTagged(cause, "ProfileExtensionInvalid") ||
+        Predicate.isTagged(cause, "ProfileFileSystemError")
+          ? cause
+          : invalid(manifestPath, `invalid extension manifest: ${manifestPath}`, cause),
+      ),
+    );
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || manifest.name !== `@ziggy/${id}`) {
+      return yield* invalid(manifestPath, `extension manifest name must be '@ziggy/${id}'`);
+    }
+    const physicalPackagePath = yield* physicalPath(packagePath);
+    const extensionPaths = yield* Effect.forEach(manifest.pi.extensions ?? [], (declared) =>
+      resolveDeclaredPath(packagePath, physicalPackagePath, declared, "extension"),
+    );
+    const skillPaths = yield* Effect.forEach(manifest.pi.skills ?? [], (declared) =>
+      resolveDeclaredPath(packagePath, physicalPackagePath, declared, "skill"),
+    );
+    const skills = (yield* Effect.forEach(skillPaths, declaredSkills)).flat();
+    const description = manifest.description?.trim() || skills[0]?.description;
+    if (description === undefined) {
+      return yield* invalid(manifestPath, `extension '${id}' has no description`);
+    }
+    const hasSkills = skillPaths.length > 0;
+    const hasCode = extensionPaths.length > 0;
+    if (!hasSkills && !hasCode) {
+      return yield* invalid(manifestPath, `extension '${id}' declares no Pi resources`);
+    }
+    return {
+      id,
+      description: description.replace(/\s+/g, " ").trim(),
+      packagePath,
+      extensionPaths,
+      skillPaths,
+      skills,
+      kind: hasSkills && hasCode ? "skill+code" : hasSkills ? "skill" : "code",
+      required: id === "pi-packages",
+    };
+  });
+
 export const scanExtensionShelf = (
   repositoryRoot: string,
 ): Effect.Effect<
@@ -179,61 +243,16 @@ export const scanExtensionShelf = (
       try: () => readdir(shelfPath, { withFileTypes: true }),
       catch: (cause) => fsError("list", shelfPath, cause),
     });
-    const packages = yield* Effect.forEach(
+    return yield* Effect.forEach(
       entries
         .filter((entry) => entry.isDirectory())
         .sort((left, right) => left.name.localeCompare(right.name)),
-      (entry) =>
-        Effect.gen(function* () {
-          const id = entry.name;
-          const packagePath = path.join(shelfPath, id);
-          const manifestPath = path.join(packagePath, "package.json");
-          const manifest = yield* readText(manifestPath).pipe(
-            Effect.flatMap((text) => decodeManifest(text)),
-            Effect.mapError((cause) =>
-              Predicate.isTagged(cause, "ProfileFileSystemError")
-                ? cause
-                : invalid(manifestPath, `invalid extension manifest: ${manifestPath}`, cause),
-            ),
-          );
-          if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || manifest.name !== `@ziggy/${id}`) {
-            return yield* invalid(manifestPath, `extension manifest name must be '@ziggy/${id}'`);
-          }
-          const physicalPackagePath = yield* physicalPath(packagePath);
-          const extensionPaths = yield* Effect.forEach(manifest.pi.extensions ?? [], (declared) =>
-            resolveDeclaredPath(packagePath, physicalPackagePath, declared, "extension"),
-          );
-          const skillPaths = yield* Effect.forEach(manifest.pi.skills ?? [], (declared) =>
-            resolveDeclaredPath(packagePath, physicalPackagePath, declared, "skill"),
-          );
-          const skills = (yield* Effect.forEach(skillPaths, declaredSkills)).flat();
-          const description = manifest.description?.trim() || skills[0]?.description;
-          if (description === undefined) {
-            return yield* invalid(manifestPath, `extension '${id}' has no description`);
-          }
-          const hasSkills = skillPaths.length > 0;
-          const hasCode = extensionPaths.length > 0;
-          if (!hasSkills && !hasCode) {
-            return yield* invalid(manifestPath, `extension '${id}' declares no Pi resources`);
-          }
-          return {
-            id,
-            description: description.replace(/\s+/g, " ").trim(),
-            packagePath,
-            extensionPaths,
-            skillPaths,
-            skills,
-            kind: hasSkills && hasCode ? "skill+code" : hasSkills ? "skill" : "code",
-            required: id === "pi-packages",
-          } satisfies ExtensionPackage;
-        }),
+      (entry) => readExtensionPackage(repositoryRoot, entry.name),
     );
-    return packages;
   });
 
 export const readExtensionSelection = (
   profilePath: string,
-  shelf: ReadonlyArray<ExtensionPackage>,
 ): Effect.Effect<ReadonlyArray<string>, ProfileExtensionInvalid | ProfileFileSystemError> => {
   const selectionPath = path.join(profilePath, "extensions.json");
   return readText(selectionPath).pipe(
@@ -249,16 +268,12 @@ export const readExtensionSelection = (
               invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause),
             ),
             Effect.flatMap(({ extensions }) => {
-              const unique = new Set(extensions);
-              const known = new Set(shelf.filter((item) => !item.required).map((item) => item.id));
               const problem =
-                unique.size !== extensions.length
+                new Set(extensions).size !== extensions.length
                   ? "extension selection contains duplicate IDs"
                   : extensions.includes("pi-packages")
                     ? "extension selection cannot include reserved ID 'pi-packages'"
-                    : extensions.find((id) => !known.has(id)) === undefined
-                      ? undefined
-                      : `unknown extension '${extensions.find((id) => !known.has(id))}'`;
+                    : undefined;
               return problem === undefined
                 ? Effect.succeed([...extensions].sort())
                 : Effect.fail(invalid(selectionPath, problem));

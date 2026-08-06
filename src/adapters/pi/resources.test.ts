@@ -85,6 +85,34 @@ test("discovers repository Pi extensions and skills in Profile-first order", asy
   });
 });
 
+test("an unselected broken package does not block runtime discovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-unselected-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const repositoryRoot = join(root, "ziggy");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+  const brokenPackage = join(repositoryRoot, "extensions", "broken");
+
+  await mkdir(profilePath, { recursive: true });
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required skill");
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writeSkill(
+    join(repositoryRoot, "skills", "extension-authoring"),
+    "extension-authoring",
+    "authoring skill",
+  );
+  await mkdir(brokenPackage, { recursive: true });
+  await writeFile(join(brokenPackage, "package.json"), "{");
+
+  expect(await resolveResources(profilePath, repositoryRoot)).toEqual({
+    extensionPaths: [],
+    skillPaths: [
+      join(requiredPackage, "skills"),
+      join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
+    ],
+  });
+});
+
 test("Pi keeps Profile skill precedence while loading package extensions", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
@@ -231,6 +259,41 @@ test("missing or wrong-type mandatory extension-authoring skill fails closed", a
   }
 });
 
+test("a selected package must be a physical shelf directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-package-symlink-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const repositoryRoot = join(root, "ziggy");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+  const externalPackage = join(root, "external-alpha");
+
+  await mkdir(profilePath, { recursive: true });
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required");
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writeSkill(join(externalPackage, "skills", "alpha"), "alpha", "alpha");
+  await writePackage(externalPackage, "alpha", { skills: ["./skills"] });
+  await symlink(externalPackage, join(repositoryRoot, "extensions", "alpha"), "dir");
+  await writeSkill(
+    join(repositoryRoot, "skills", "extension-authoring"),
+    "extension-authoring",
+    "authoring",
+  );
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
+
+  const result = await Effect.runPromise(
+    discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+  );
+
+  expect(
+    Result.match(result, {
+      onFailure: (error) =>
+        Predicate.isTagged(error, "ProfileExtensionInvalid") &&
+        error.message === "extension 'alpha' is not a physical shelf directory",
+      onSuccess: () => false,
+    }),
+  ).toBe(true);
+});
+
 test("manifest-declared symlinks cannot escape their package", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-symlink-"));
   temporaryPaths.push(root);
@@ -251,6 +314,7 @@ test("manifest-declared symlinks cannot escape their package", async () => {
     "extension-authoring",
     "authoring",
   );
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
   const result = await Effect.runPromise(
     discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),

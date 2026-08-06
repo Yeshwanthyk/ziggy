@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
+  readExtensionPackage,
   readExtensionSelection,
   replaceExtensionSelection,
   scanExtensionShelf,
@@ -658,15 +659,7 @@ const mutateExtension = (
 ): Effect.Effect<ProfileExtensionMutation, ProfileExtensionError> =>
   Effect.gen(function* () {
     yield* verifyExtensionProfile(target);
-    const shelf = yield* scanExtensionShelf(repositoryRoot);
-    const extension = shelf.find((item) => item.id === id);
-    if (extension === undefined) {
-      return yield* new ProfileExtensionInvalid({
-        path: path.join(repositoryRoot, "extensions", id),
-        message: `unknown extension '${id}'`,
-        cause: undefined,
-      });
-    }
+    const extension = yield* readExtensionPackage(repositoryRoot, id);
     if (extension.required) {
       return yield* new ProfileExtensionInvalid({
         path: extension.packagePath,
@@ -674,20 +667,15 @@ const mutateExtension = (
         cause: undefined,
       });
     }
-    const current = yield* readExtensionSelection(target.path, shelf);
+    const current = yield* readExtensionSelection(target.path);
+    yield* Effect.forEach(current, (selectedId) =>
+      readExtensionPackage(repositoryRoot, selectedId),
+    );
     const alreadySelected = current.includes(id);
     if (alreadySelected === selected) {
       return { id, profilePath: target.path, changed: false, selected };
     }
     const next = selected ? [...current, id].sort() : current.filter((item) => item !== id);
-    const known = new Set(shelf.filter((item) => !item.required).map((item) => item.id));
-    if (next.some((item) => !known.has(item))) {
-      return yield* new ProfileExtensionInvalid({
-        path: path.join(target.path, "extensions.json"),
-        message: "next extension selection is invalid",
-        cause: undefined,
-      });
-    }
     yield* replaceExtensionSelection(target.path, next);
     return { id, profilePath: target.path, changed: true, selected };
   });

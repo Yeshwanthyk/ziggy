@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { readExtensionSelection, scanExtensionShelf } from "../fs/profile-extensions";
+import { readExtensionPackage, readExtensionSelection } from "../fs/profile-extensions";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
 
@@ -64,17 +64,11 @@ export const discoverPiResources = (
   repositoryRoot: string,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
   Effect.gen(function* () {
-    const shelf = yield* scanExtensionShelf(repositoryRoot);
-    const selectedIds = yield* readExtensionSelection(profilePath, shelf);
-    const selected = shelf.filter((item) => selectedIds.includes(item.id));
-    const required = shelf.find((item) => item.id === "pi-packages");
-    if (required === undefined) {
-      return yield* new ProfileExtensionInvalid({
-        path: join(repositoryRoot, "extensions", "pi-packages"),
-        message: "required extension 'pi-packages' is absent from the shelf",
-        cause: undefined,
-      });
-    }
+    const selectedIds = yield* readExtensionSelection(profilePath);
+    const required = yield* readExtensionPackage(repositoryRoot, "pi-packages");
+    const selected = yield* Effect.forEach(selectedIds, (id) =>
+      readExtensionPackage(repositoryRoot, id),
+    );
     const profileSkills = yield* existingDirectory(join(profilePath, "skills"));
     const extensionAuthoringSkill = yield* requiredFile(
       join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
