@@ -24,6 +24,7 @@ import {
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
+import { renderAutomationOutcome } from "./faces/automation-cli";
 
 const command = process.argv[2];
 
@@ -262,11 +263,18 @@ const program = Effect.gen(function* () {
     case "wake": {
       const argument = process.argv[3];
       const automationId = process.argv[4];
-      if (argument === undefined || automationId === undefined) {
+      if (argument === undefined || automationId === undefined || process.argv.length !== 5) {
         return yield* fail("usage: ziggy wake <name|path> <automation-id>");
       }
 
-      yield* automations.wake(resolveProfileTarget(argument, resolutionOptions), automationId);
+      const outcome = yield* automations.run(
+        resolveProfileTarget(argument, resolutionOptions),
+        automationId,
+        { kind: "manual-force" },
+      );
+      const rendered = renderAutomationOutcome(outcome);
+      for (const line of rendered.stderr) console.error(line);
+      process.exitCode = rendered.exitCode;
       return;
     }
     case "gateway": {
@@ -330,7 +338,7 @@ const program = Effect.gen(function* () {
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
-    AutomationDeliveryUnavailable: (failure) => fail(failure.message),
+    AutomationGateFailed: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
     TelegramApiError: (failure) => fail(failure.message),
     DiscordApiError: (failure) => fail(failure.message),

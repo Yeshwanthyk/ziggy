@@ -1,63 +1,70 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Context, Effect, Inspectable, Layer, Option } from "effect";
-import { killProcess } from "../adapters/bun/process";
+import { Context, Effect, Layer, Option, Predicate, Result } from "effect";
+import { liveAutomationGate, type AutomationGate } from "../adapters/bun/automation-gate";
+import { createMessage, DiscordApiError } from "../adapters/discord/api";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
-import { sendMessage, type TelegramApiError } from "../adapters/telegram/api";
+import { postMessage, SlackApiError } from "../adapters/slack/api";
+import { sendMessage, TelegramApiError } from "../adapters/telegram/api";
 import {
-  AutomationDeliveryUnavailable,
+  type Automation,
   AutomationFileSystemError,
+  AutomationGateFailed,
   AutomationInvalid,
   AutomationNotFound,
+  type AutomationDeliveryFailureCategory,
+  type AutomationRunOutcome,
+  type AutomationTarget,
+  type AutomationTargetOutcome,
+  decodeBroadcastsFileJson,
   parseAutomationFile,
+  parseAutomationTarget,
   validateAutomationId,
 } from "../domain/automation";
 import type { ZiggyAgentError } from "../domain/agent";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ZiggyAgentShape } from "./agent";
+import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
 import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
-
-const GATE_TIMEOUT = "30 seconds";
+import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
 
 export type AutomationError =
   | AutomationInvalid
   | AutomationNotFound
   | AutomationFileSystemError
-  | AutomationDeliveryUnavailable
-  | ZiggyAgentError
-  | TelegramApiError;
+  | AutomationGateFailed
+  | ZiggyAgentError;
 
 export interface AutomationsShape {
-  readonly wake: (
+  readonly run: (
     target: ProfileTarget,
     automationId: string,
-  ) => Effect.Effect<void, AutomationError>;
+    trigger: { readonly kind: "manual-force" },
+  ) => Effect.Effect<AutomationRunOutcome, AutomationError>;
 }
+export class Automations extends Context.Service<Automations, AutomationsShape>()("ziggy/Automations") {}
 
-export class Automations extends Context.Service<Automations, AutomationsShape>()(
-  "ziggy/Automations",
-) {}
-
-export interface AutomationDelivery {
-  readonly loadTelegramConfig: typeof loadGatewayConfig;
-  readonly sendTelegramMessage: typeof sendMessage;
-}
-
-export interface AutomationOutput {
+export interface AutomationCapabilities {
+  readonly gate: AutomationGate;
   readonly printReply: (reply: string) => Effect.Effect<void>;
+  readonly loadTelegramConfig: typeof loadGatewayConfig;
+  readonly loadDiscordConfig: typeof loadDiscordGatewayConfig;
+  readonly loadSlackConfig: typeof loadSlackGatewayConfig;
+  readonly sendTelegram: typeof sendMessage;
+  readonly sendDiscord: typeof createMessage;
+  readonly sendSlack: typeof postMessage;
 }
 
-const liveDelivery: AutomationDelivery = {
-  loadTelegramConfig: loadGatewayConfig,
-  sendTelegramMessage: sendMessage,
-};
-
-const liveOutput: AutomationOutput = {
+const liveCapabilities: AutomationCapabilities = {
+  gate: liveAutomationGate,
   printReply: (reply) => Effect.sync(() => console.log(reply)),
+  loadTelegramConfig: loadGatewayConfig,
+  loadDiscordConfig: loadDiscordGatewayConfig,
+  loadSlackConfig: loadSlackGatewayConfig,
+  sendTelegram: sendMessage,
+  sendDiscord: createMessage,
+  sendSlack: postMessage,
 };
-
-const causeMessage = (cause: unknown): string =>
-  Inspectable.toStringUnknown(cause).replace(/\s+/g, " ").trim();
 
 const readAutomation = (target: ProfileTarget, idSource: string) =>
   Effect.gen(function* () {
@@ -67,163 +74,135 @@ const readAutomation = (target: ProfileTarget, idSource: string) =>
       try: () => readFile(filePath, "utf8"),
       catch: (cause) =>
         fileSystemCauseDetails(cause).code === "ENOENT"
-          ? new AutomationNotFound({
-              id,
-              path: filePath,
-              message: `no automation ${id} at ${filePath}`,
-            })
-          : new AutomationFileSystemError({
-              path: filePath,
-              message: `could not read automation ${id} at ${filePath}`,
-              cause,
-            }),
+          ? new AutomationNotFound({ id, path: filePath, message: `no automation ${id} at ${filePath}` })
+          : new AutomationFileSystemError({ path: filePath, message: `could not read automation ${id} at ${filePath}`, cause }),
     });
     return yield* parseAutomationFile(id, filePath, source);
   });
 
-type GateResult =
-  | { readonly kind: "exit"; readonly exitCode: number }
-  | { readonly kind: "failed"; readonly cause: unknown }
-  | { readonly kind: "timeout" };
+type TargetResolution =
+  | { readonly ok: true; readonly targets: ReadonlyArray<AutomationTarget> }
+  | { readonly ok: false; readonly category: "broadcasts-unreadable" | "broadcasts-invalid" | "all-empty" };
 
-const runGate = (profilePath: string, command: string): Effect.Effect<GateResult> =>
-  Effect.gen(function* () {
-    const spawned = yield* Effect.try({
-      try: () =>
-        Bun.spawn(["/bin/sh", "-c", command], {
-          cwd: profilePath,
-          env: {
-            PATH: process.env.PATH ?? "/usr/bin:/bin",
-            HOME: process.env.HOME ?? "",
-          },
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
-        }),
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.map((process) => ({ ok: true as const, process })),
-      Effect.catch((cause) => Effect.succeed({ ok: false as const, cause })),
-    );
-
-    if (!spawned.ok) {
-      return { kind: "failed", cause: spawned.cause };
-    }
-
-    const exit = yield* Effect.tryPromise({
-      try: (signal) => {
-        const kill = () => {
-          killProcess(spawned.process);
-        };
-        signal.addEventListener("abort", kill, { once: true });
-        return spawned.process.exited.finally(() => signal.removeEventListener("abort", kill));
-      },
-      catch: (cause) => cause,
-    }).pipe(
-      Effect.timeoutOption(GATE_TIMEOUT),
-      Effect.map(
-        Option.match({
-          onNone: (): GateResult => ({ kind: "timeout" }),
-          onSome: (exitCode): GateResult => ({ kind: "exit", exitCode }),
-        }),
-      ),
-      Effect.catch((cause) => Effect.succeed<GateResult>({ kind: "failed", cause })),
-    );
-
-    return exit;
-  });
-
-const warnGateFailure = (id: string, result: Exclude<GateResult, { readonly kind: "exit" }>) =>
-  Effect.sync(() => {
-    const detail =
-      result.kind === "timeout" ? `timed out after ${GATE_TIMEOUT}` : causeMessage(result.cause);
-    console.error(`[wake] ${id}: gate failed (${detail}) — proceeding`);
-  });
-
-const deliverTelegram = (
-  delivery: AutomationDelivery,
+const resolveTargets = (
   target: ProfileTarget,
-  id: string,
-  chatId: number,
-  text: string,
-): Effect.Effect<void, AutomationDeliveryUnavailable | TelegramApiError> =>
+  automation: Automation,
+): Effect.Effect<TargetResolution> =>
   Effect.gen(function* () {
-    const configPath = join(target.path, "telegram.json");
-    const config = yield* delivery.loadTelegramConfig(target).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AutomationDeliveryUnavailable({
-            automationId: id,
-            channel: "telegram",
-            path: configPath,
-            message: `automation ${id} requested Telegram delivery, but ${configPath} is unavailable`,
-            cause,
-          }),
-      ),
-    );
-
-    for (const chunk of telegramMessageChunks(text)) {
-      yield* delivery.sendTelegramMessage(config.botToken, chatId, chunk);
+    let homes: ReadonlyArray<AutomationTarget> | undefined;
+    if (automation.broadcast.includes("all")) {
+      const path = join(target.path, "broadcasts.json");
+      const sourceResult = yield* Effect.tryPromise({
+        try: () => readFile(path, "utf8"),
+        catch: fileSystemCauseDetails,
+      }).pipe(Effect.result);
+      if (Result.isFailure(sourceResult) && sourceResult.failure.code !== "ENOENT") {
+        return { ok: false, category: "broadcasts-unreadable" };
+      }
+      const source = Result.isSuccess(sourceResult) ? sourceResult.success : '{"targets":[]}';
+      const decoded = yield* decodeBroadcastsFileJson(source).pipe(Effect.option);
+      if (Option.isNone(decoded)) return { ok: false, category: "broadcasts-invalid" };
+      const parsed: Array<AutomationTarget> = [];
+      for (const value of decoded.value.targets) {
+        const item = yield* parseAutomationTarget(automation.id, path, value).pipe(Effect.option);
+        if (Option.isNone(item)) return { ok: false, category: "broadcasts-invalid" };
+        parsed.push(item.value);
+      }
+      homes = parsed;
+      if (homes.length === 0) return { ok: false, category: "all-empty" };
     }
+    const resolved: Array<AutomationTarget> = [];
+    const seen = new Set<string>();
+    for (const token of automation.broadcast) {
+      const additions =
+        token === "origin"
+          ? automation.origin === undefined ? [] : [automation.origin]
+          : token === "all"
+            ? homes ?? []
+            : [token];
+      for (const addition of additions) {
+        if (!seen.has(addition.target)) {
+          seen.add(addition.target);
+          resolved.push(addition);
+        }
+      }
+    }
+    return { ok: true, targets: resolved };
   });
 
-const makeWake =
-  (
-    agent: ZiggyAgentShape,
-    delivery: AutomationDelivery,
-    output: AutomationOutput,
-  ): AutomationsShape["wake"] =>
-  (target, automationId) =>
-    Effect.gen(function* () {
-      const automation = yield* readAutomation(target, automationId);
+type DeliveryFailure = { readonly category: AutomationDeliveryFailureCategory; readonly retriable: boolean };
+const apiFailure = (error: TelegramApiError | DiscordApiError | SlackApiError): DeliveryFailure => {
+  switch (error.reason) {
+    case "network":
+    case "gateway":
+    case "socket": return { category: "transport", retriable: error.retriable };
+    case "authentication": return { category: "authentication", retriable: error.retriable };
+    case "rate-limited": return { category: "rate-limited", retriable: error.retriable };
+    case "invalid-response":
+    case "decode": return { category: "invalid-response", retriable: error.retriable };
+    case "server":
+    case "rejected":
+    case "api": return { category: "remote", retriable: error.retriable };
+  }
+};
 
-      if (automation.gate !== undefined) {
-        const gate = yield* runGate(target.path, automation.gate);
-        if (gate.kind === "exit" && gate.exitCode !== 0) {
-          console.log(`[wake] ${automation.id}: gate declined — no model call`);
-          return;
-        }
-        if (gate.kind !== "exit") {
-          yield* warnGateFailure(automation.id, gate);
-        }
-      }
-
-      const handle = yield* agent.openChat(
-        target,
-        { kind: "local" },
-        join(target.path, "sessions", "automations", automation.id),
-        "fresh",
+const deliver = (
+  capabilities: AutomationCapabilities,
+  profile: ProfileTarget,
+  target: AutomationTarget,
+  reply: string,
+): Effect.Effect<AutomationTargetOutcome> => {
+  const operation: Effect.Effect<void, DeliveryFailure> = Effect.gen(function* () {
+    if (Predicate.isTagged("telegram")(target)) {
+      const config = yield* capabilities.loadTelegramConfig(profile).pipe(
+        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
       );
-      const reply = yield* handle.prompt(automation.prompt).pipe(
-        Effect.ensuring(
-          handle.dispose.pipe(
-            Effect.catch((failure) =>
-              Effect.sync(() => {
-                console.error(
-                  `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
-                );
-              }),
-            ),
-          ),
-        ),
+      for (const chunk of telegramMessageChunks(reply)) yield* capabilities.sendTelegram(config.botToken, target.chatId, chunk).pipe(Effect.mapError(apiFailure));
+      return;
+    }
+    if (Predicate.isTagged("discord")(target)) {
+      const config = yield* capabilities.loadDiscordConfig(profile).pipe(
+        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
       );
-
-      yield* output.printReply(reply);
-      if (automation.telegramChat !== undefined) {
-        yield* deliverTelegram(delivery, target, automation.id, automation.telegramChat, reply);
-      }
-    });
+      for (const chunk of discordMessageChunks(reply)) yield* capabilities.sendDiscord(config.botToken, target.channelId, chunk).pipe(Effect.mapError(apiFailure));
+      return;
+    }
+    const config = yield* capabilities.loadSlackConfig(profile).pipe(
+      Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
+    );
+    for (const chunk of slackMessageChunks(reply)) yield* capabilities.sendSlack(config.botToken, target.channelId, chunk, target.threadTs).pipe(Effect.mapError(apiFailure));
+  });
+  return operation.pipe(
+    Effect.as<AutomationTargetOutcome>({ target: target.target, status: "delivered" }),
+    Effect.catch((failure) => Effect.succeed({ target: target.target, status: "failed", ...failure } as const)),
+  );
+};
 
 export const makeAutomations = (
   agent: ZiggyAgentShape,
-  delivery: AutomationDelivery = liveDelivery,
-  output: AutomationOutput = liveOutput,
-): AutomationsShape => ({ wake: makeWake(agent, delivery, output) });
+  capabilities: AutomationCapabilities = liveCapabilities,
+): AutomationsShape => ({
+  run: (target, automationId, _trigger) =>
+    Effect.gen(function* () {
+      const automation = yield* readAutomation(target, automationId);
+      if (automation.gate !== undefined) {
+        const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
+        if (gate.kind === "declined") return { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode };
+      }
+      const handle = yield* agent.openChat(target, { kind: "local" }, join(target.path, "sessions", "automations", automation.id), "fresh");
+      const reply = yield* handle.prompt(automation.prompt).pipe(
+        Effect.ensuring(handle.dispose.pipe(Effect.catch((failure) => Effect.sync(() => console.error(`[wake] ${automation.id}: session dispose failed — ${failure.message}`))))),
+      );
+      yield* capabilities.printReply(reply);
+      const resolution = yield* resolveTargets(target, automation);
+      if (!resolution.ok) return { kind: "executed", delivery: { kind: "resolution-failed", category: resolution.category } };
+      const outcomes: Array<AutomationTargetOutcome> = [];
+      for (const destination of resolution.targets) outcomes.push(yield* deliver(capabilities, target, destination, reply));
+      return { kind: "executed", delivery: { kind: "resolved", targets: outcomes } };
+    }),
+});
 
-export const AutomationsLive = Layer.effect(
-  Automations,
-  Effect.gen(function* () {
-    const agent = yield* ZiggyAgent;
-    return makeAutomations(agent);
-  }),
-);
+export const AutomationsLive = Layer.effect(Automations, Effect.gen(function* () {
+  const agent = yield* ZiggyAgent;
+  return makeAutomations(agent);
+}));
