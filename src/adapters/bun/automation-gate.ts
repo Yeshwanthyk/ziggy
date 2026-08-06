@@ -23,14 +23,26 @@ export interface AutomationGateHost {
 }
 
 const liveHost: AutomationGateHost = {
-  spawn: (profilePath, command) =>
-    Bun.spawn(["/bin/sh", "-c", command], {
+  spawn: (profilePath, command) => {
+    const child = Bun.spawn(["/bin/sh", "-c", command], {
       cwd: profilePath,
+      detached: true,
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
-    }),
+    });
+    return {
+      exited: child.exited,
+      kill: () => {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          killProcess(child);
+        }
+      },
+    };
+  },
 };
 
 export const makeAutomationGate = (
@@ -41,7 +53,14 @@ export const makeAutomationGate = (
     Effect.gen(function* () {
       const child = yield* Effect.try({
         try: () => host.spawn(profilePath, command),
-        catch: (cause) => new AutomationGateFailed({ automationId, command, reason: "spawn", message: `automation ${automationId} gate could not start`, cause }),
+        catch: (cause) =>
+          new AutomationGateFailed({
+            automationId,
+            command,
+            reason: "spawn",
+            message: `automation ${automationId} gate could not start`,
+            cause,
+          }),
       });
       const exit = yield* Effect.tryPromise({
         try: (signal) => {
@@ -51,11 +70,23 @@ export const makeAutomationGate = (
         },
         catch: (cause) => {
           killProcess(child);
-          return new AutomationGateFailed({ automationId, command, reason: "wait", message: `automation ${automationId} gate failed while waiting for exit`, cause });
+          return new AutomationGateFailed({
+            automationId,
+            command,
+            reason: "wait",
+            message: `automation ${automationId} gate failed while waiting for exit`,
+            cause,
+          });
         },
       }).pipe(Effect.timeoutOption(timeout));
       if (Option.isNone(exit)) {
-        return yield* new AutomationGateFailed({ automationId, command, reason: "timeout", message: `automation ${automationId} gate timed out after ${timeout}`, cause: `gate timed out after ${timeout}` });
+        return yield* new AutomationGateFailed({
+          automationId,
+          command,
+          reason: "timeout",
+          message: `automation ${automationId} gate timed out after ${timeout}`,
+          cause: `gate timed out after ${timeout}`,
+        });
       }
       return exit.value === 0 ? { kind: "passed" } : { kind: "declined", exitCode: exit.value };
     }),
