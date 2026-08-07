@@ -126,6 +126,30 @@ class TestPackageSkillSecurity(TestCase):
 
         self.assertIsNone(result)
 
+    def test_write_failure_preserves_existing_final_archive(self):
+        skill_dir = self.create_skill("atomic-skill")
+        out_dir = self.temp_dir / "out"
+        out_dir.mkdir()
+        skill_file = out_dir / "atomic-skill.skill"
+        original = b"previous-final-archive"
+        skill_file.write_bytes(original)
+        original_write = zipfile.ZipFile.write
+        writes = 0
+
+        def fail_on_second_write(archive, *args, **kwargs):
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise OSError("injected archive write failure")
+            return original_write(archive, *args, **kwargs)
+
+        with patch.object(zipfile.ZipFile, "write", new=fail_on_second_write):
+            result = package_skill(str(skill_dir), str(out_dir))
+
+        self.assertIsNone(result)
+        self.assertEqual(skill_file.read_bytes(), original)
+        self.assertEqual(list(out_dir.glob(".atomic-skill.*.skill.tmp")), [])
+
     def test_allows_nested_regular_files(self):
         skill_dir = self.create_skill("nested-skill")
         nested = skill_dir / "lib" / "helpers"
