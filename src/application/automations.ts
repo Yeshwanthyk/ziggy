@@ -308,27 +308,25 @@ export const makeAutomations = (
             };
           }
         }
-        const handle = yield* agent.openChat(
-          target,
-          { kind: "local" },
-          join(target.path, "sessions", "automations", automation.id),
-          "fresh",
-        );
-        const reply = yield* handle
-          .prompt(automation.prompt)
-          .pipe(
-            Effect.ensuring(
-              handle.dispose.pipe(
-                Effect.catch((failure) =>
-                  Effect.sync(() =>
-                    console.error(
-                      `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
-                    ),
+        const reply = yield* Effect.acquireUseRelease(
+          agent.openChat(
+            target,
+            { kind: "local" },
+            join(target.path, "sessions", "automations", automation.id),
+            "fresh",
+          ),
+          (handle) => handle.prompt(automation.prompt),
+          (handle) =>
+            handle.dispose.pipe(
+              Effect.catch((failure) =>
+                Effect.sync(() =>
+                  console.error(
+                    `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
                   ),
                 ),
               ),
             ),
-          );
+        );
         yield* capabilities.printReply(reply);
         const resolution = yield* resolveTargets(target, automation);
         if (!resolution.ok) {
@@ -372,14 +370,6 @@ export const makeAutomations = (
 
       return yield* Effect.uninterruptibleMask((restore) =>
         restore(execute).pipe(
-          Effect.onInterrupt(() =>
-            finish({
-              state: "failed",
-              localCompleted: false,
-              failureCategory: "interrupted",
-              gateExitCode: null,
-            }).pipe(Effect.catch(() => Effect.void)),
-          ),
           Effect.catch((error) =>
             finish({
               state: "failed",
@@ -390,6 +380,14 @@ export const makeAutomations = (
           ),
           Effect.flatMap((intent) =>
             finish(intent.terminal, intent.targets).pipe(Effect.as(intent.outcome)),
+          ),
+          Effect.onInterrupt(() =>
+            finish({
+              state: "failed",
+              localCompleted: false,
+              failureCategory: "interrupted",
+              gateExitCode: null,
+            }),
           ),
         ),
       );

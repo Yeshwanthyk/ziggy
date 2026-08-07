@@ -3,11 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { BeforeAgentStartEventResult } from "@earendil-works/pi-coding-agent";
+import { ProviderCallError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
 import {
   createLocalSessionManager,
   createProfileMemoryExtension,
   localMainSessionDirectory,
+  providerError,
   refreshProfileMemory,
 } from "./pi-agent";
 
@@ -40,6 +42,21 @@ const invokeMemoryHandler = async (
 
   return (systemPrompt) => refreshProfileMemory(profilePath, paths.documents, { systemPrompt });
 };
+
+describe("Pi provider failure classification", () => {
+  test("misleading vendor wording remains a provider call failure with stable copy", () => {
+    const cause = new Error("authentication failed because auth.json has no credential");
+
+    expect(providerError("/profile", "call provider", cause)).toEqual(
+      new ProviderCallError({
+        profilePath: "/profile",
+        operation: "call provider",
+        message: "provider request failed",
+        cause,
+      }),
+    );
+  });
+});
 
 describe("Profile memory refresh", () => {
   test("the same handler observes disk changes on successive turns", async () => {

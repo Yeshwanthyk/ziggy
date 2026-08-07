@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Fiber, Option } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option } from "effect";
 import {
   automationRunStore,
   commitScheduleTick,
@@ -466,6 +466,7 @@ describe("automation run", () => {
     await Effect.runPromise(Fiber.interrupt(fiber));
 
     expect(finishCalls).toBe(1);
+    expect(events.at(-1)).toBe("dispose");
     expect(terminal).toEqual({
       state: "failed",
       atMs: 1_000,
@@ -479,6 +480,39 @@ describe("automation run", () => {
       failureCategory: "interrupted",
       finishedAtMs: 1_000,
     });
+  });
+
+  test("an interrupted run preserves terminal publication failure in its exit", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const databaseFailure = new AutomationDatabaseError({
+      operation: "finish run",
+      path: target.path,
+      message: "injected interrupted terminal write failure",
+      cause: "fixture",
+    });
+    let finishCalls = 0;
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      finish: () => {
+        finishCalls += 1;
+        return Effect.fail(databaseFailure);
+      },
+    };
+    const fiber = Effect.runFork(
+      harness(events, {
+        store,
+        promptEffect: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      }).run(target, "daily-note", { kind: "manual-force" }),
+    );
+    await Effect.runPromise(Deferred.await(entered));
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    const exit = await Effect.runPromise(Fiber.await(fiber));
+
+    expect(finishCalls).toBe(1);
+    expect(exit).toEqual(Exit.fail(databaseFailure));
   });
 
   test("interruption during terminal publication waits for the one truthful terminal attempt", async () => {

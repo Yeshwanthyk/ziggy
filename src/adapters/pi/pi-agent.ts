@@ -68,22 +68,7 @@ export type ChatSessionMode = "continue" | "fresh";
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
 
-const isProviderConfigFailure = (cause: unknown): boolean => {
-  const message = causeMessage(cause).toLowerCase();
-  return [
-    "no model",
-    "no api key",
-    "no authentication method",
-    "provider is not configured",
-    "auth.json",
-    "models.json",
-    "settings.json",
-    "credential",
-    "authentication failed",
-  ].some((fragment) => message.includes(fragment));
-};
-
-const providerError = (
+export const providerError = (
   profilePath: string,
   operation: string,
   cause: unknown,
@@ -92,7 +77,7 @@ const providerError = (
     return cause;
   }
 
-  if (operation !== "call provider" || isProviderConfigFailure(cause)) {
+  if (operation !== "call provider") {
     return new ProviderConfigError({
       profilePath,
       operation,
@@ -104,7 +89,7 @@ const providerError = (
   return new ProviderCallError({
     profilePath,
     operation,
-    message: `provider request failed: ${causeMessage(cause)}`,
+    message: "provider request failed",
     cause,
   });
 };
