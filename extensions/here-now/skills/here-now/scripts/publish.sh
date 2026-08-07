@@ -21,6 +21,8 @@ FORKABLE=""
 SPA_MODE=""
 FROM_DRIVE=""
 DRIVE_VERSION=""
+CURL_CONNECT_TIMEOUT_SECONDS="${HERENOW_CONNECT_TIMEOUT_SECONDS:-10}"
+CURL_MAX_TIME_SECONDS="${HERENOW_MAX_TIME_SECONDS:-120}"
 
 usage() {
   cat <<'USAGE'
@@ -41,11 +43,22 @@ Options:
   --base-url <url>        API base (default: https://here.now)
   --allow-nonherenow-base-url
                          Allow auth requests to non-default API base URL
+
+Environment:
+  HERENOW_CONNECT_TIMEOUT_SECONDS  Curl connect timeout (default: 10)
+  HERENOW_MAX_TIME_SECONDS          Curl request timeout (default: 120)
 USAGE
   exit 1
 }
 
 die() { echo "error: $1" >&2; exit 1; }
+
+[[ "$CURL_CONNECT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "HERENOW_CONNECT_TIMEOUT_SECONDS must be a positive integer"
+[[ "$CURL_MAX_TIME_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "HERENOW_MAX_TIME_SECONDS must be a positive integer"
+CURL_ARGS=(
+  --connect-timeout "$CURL_CONNECT_TIMEOUT_SECONDS"
+  --max-time "$CURL_MAX_TIME_SECONDS"
+)
 
 if command -v jq >/dev/null 2>&1; then
   JQ_BIN="$(command -v jq)"
@@ -129,7 +142,7 @@ if [[ -n "$FROM_DRIVE" ]]; then
   fi
 
   echo "publishing from Drive..." >&2
-  RESPONSE=$(curl -sS -X POST "$BASE_URL/api/v1/publish/from-drive" \
+  RESPONSE=$(curl "${CURL_ARGS[@]}" -sS -X POST "$BASE_URL/api/v1/publish/from-drive" \
     -H "authorization: Bearer $API_KEY" \
     -H "x-herenow-client: $CLIENT_HEADER_VALUE" \
     -H "content-type: application/json" \
@@ -288,7 +301,7 @@ CLIENT_ARGS=(-H "x-herenow-client: $CLIENT_HEADER_VALUE")
 
 # Step 1: Create/update publish
 echo "creating publish ($file_count files)..." >&2
-RESPONSE=$(curl -sS -X "$METHOD" "$URL" \
+RESPONSE=$(curl "${CURL_ARGS[@]}" -sS -X "$METHOD" "$URL" \
   "${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"}" \
   "${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}" \
   -H "content-type: application/json" \
@@ -338,7 +351,7 @@ for i in $(seq 0 $((UPLOAD_COUNT - 1))); do
   ct_args=()
   [[ -n "$upload_ct" ]] && ct_args=(-H "Content-Type: $upload_ct")
 
-  http_code=$(curl -sS -o /dev/null -w "%{http_code}" -X PUT "$upload_url" \
+  http_code=$(curl "${CURL_ARGS[@]}" -sS -o /dev/null -w "%{http_code}" -X PUT "$upload_url" \
     "${ct_args[@]+"${ct_args[@]}"}" \
     --data-binary "@$local_file")
 
@@ -352,7 +365,7 @@ done
 
 # Step 3: Finalize
 echo "finalizing..." >&2
-FIN_RESPONSE=$(curl -sS -X POST "$FINALIZE_URL" \
+FIN_RESPONSE=$(curl "${CURL_ARGS[@]}" -sS -X POST "$FINALIZE_URL" \
   "${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"}" \
   "${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}" \
   -H "content-type: application/json" \

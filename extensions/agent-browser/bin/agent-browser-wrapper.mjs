@@ -9,6 +9,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const OUTPUT_LIMIT = 64 * 1024;
+const TERMINATION_GRACE_MS = 500;
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -174,10 +175,35 @@ const child = spawn("agent-browser", args, {
     AGENT_BROWSER_SESSION: session,
     AGENT_BROWSER_PROFILE: browserProfile,
   },
+  detached: process.platform !== "win32",
 });
 
+let terminationStarted = false;
+let escalation;
+function signalChildTree(signal) {
+  if (child.pid === undefined) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if its process group has already changed or exited.
+    }
+  }
+  child.kill(signal);
+}
+function terminateChild() {
+  if (terminationStarted) return;
+  terminationStarted = true;
+  signalChildTree("SIGTERM");
+  escalation = setTimeout(() => signalChildTree("SIGKILL"), TERMINATION_GRACE_MS);
+  escalation.unref();
+}
+function cleanupTermination() {
+  if (escalation !== undefined) clearTimeout(escalation);
+}
 for (const event of ["SIGINT", "SIGTERM"]) {
-  process.once(event, () => child.kill(event));
+  process.once(event, terminateChild);
 }
 
 let stdout = "";
@@ -189,6 +215,7 @@ child.stderr.on("data", (chunk) => {
   stderr = appendBounded(stderr, chunk);
 });
 child.on("error", (error) => {
+  cleanupTermination();
   process.stdout.write(
     `${JSON.stringify({
       success: false,
@@ -201,6 +228,7 @@ child.on("error", (error) => {
   process.exit(1);
 });
 child.on("exit", (code) => {
+  cleanupTermination();
   process.stdout.write(
     `${JSON.stringify({
       success: code === 0,
