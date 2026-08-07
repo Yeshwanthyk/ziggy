@@ -117,10 +117,9 @@ const decodeVersion = Schema.decodeUnknownSync(Schema.NullOr(VersionRow), {
 const decodeMaster = Schema.decodeUnknownSync(Schema.Array(MasterRow), {
   onExcessProperty: "error",
 });
-const decodeScheduleMutations = Schema.decodeUnknownSync(
-  Schema.Array(AutomationScheduleMutation),
-  { onExcessProperty: "error" },
-);
+const decodeScheduleMutations = Schema.decodeUnknownSync(Schema.Array(AutomationScheduleMutation), {
+  onExcessProperty: "error",
+});
 const decodeRunCompletion = Schema.decodeUnknownSync(AutomationRunCompletion, {
   onExcessProperty: "error",
 });
@@ -265,102 +264,98 @@ export const commitScheduleTick = (
   mutations: ReadonlyArray<ScheduleMutation>,
   ownerPid: number = process.pid,
 ) =>
-  withWritable(
-    profilePath,
-    "commit tick",
-    (db): ScheduleCommitResult => {
-      const validatedMutations = decodeScheduleMutations(mutations);
-      return db
-        .transaction(() => {
-          const current = new Map(
-            decodeSchedules(db.query(scheduleQuery).all()).map((row) => [row.automationId, row]),
-          );
-          if (
-            validatedMutations.some((mutation) =>
-              mutation.expected === null
-                ? current.has(mutation.next.automationId)
-                : !sameSchedule(current.get(mutation.next.automationId), mutation.expected),
-            )
-          ) {
-            return { stale: true, claimed: [] };
-          }
-          const claimed: Array<{
-            automationId: string;
-            runId: string;
-            scheduledForMs: number;
-            scheduleFingerprint: string;
-          }> = [];
-          for (const mutation of validatedMutations) {
-            const row = mutation.next;
-            db.query(`INSERT INTO automation_schedule VALUES (?,?,?,?,?,?) ON CONFLICT(automation_id) DO UPDATE SET
+  withWritable(profilePath, "commit tick", (db): ScheduleCommitResult => {
+    const validatedMutations = decodeScheduleMutations(mutations);
+    return db
+      .transaction(() => {
+        const current = new Map(
+          decodeSchedules(db.query(scheduleQuery).all()).map((row) => [row.automationId, row]),
+        );
+        if (
+          validatedMutations.some((mutation) =>
+            mutation.expected === null
+              ? current.has(mutation.next.automationId)
+              : !sameSchedule(current.get(mutation.next.automationId), mutation.expected),
+          )
+        ) {
+          return { stale: true, claimed: [] };
+        }
+        const claimed: Array<{
+          automationId: string;
+          runId: string;
+          scheduledForMs: number;
+          scheduleFingerprint: string;
+        }> = [];
+        for (const mutation of validatedMutations) {
+          const row = mutation.next;
+          db.query(`INSERT INTO automation_schedule VALUES (?,?,?,?,?,?) ON CONFLICT(automation_id) DO UPDATE SET
         definition_state=excluded.definition_state, schedule_fingerprint=excluded.schedule_fingerprint,
         next_scheduled_at_ms=excluded.next_scheduled_at_ms, definition_observed_at_ms=excluded.definition_observed_at_ms,
         definition_error=excluded.definition_error`).run(
-              row.automationId,
-              row.definitionState,
-              row.scheduleFingerprint,
-              row.nextScheduledAtMs,
-              row.definitionObservedAtMs,
-              row.definitionError,
-            );
-            const occurrence = mutation.occurrence;
-            if (occurrence === undefined) continue;
-            if (occurrence.kind === "missed") {
-              db.query(`INSERT INTO automation_run
+            row.automationId,
+            row.definitionState,
+            row.scheduleFingerprint,
+            row.nextScheduledAtMs,
+            row.definitionObservedAtMs,
+            row.definitionError,
+          );
+          const occurrence = mutation.occurrence;
+          if (occurrence === undefined) continue;
+          if (occurrence.kind === "missed") {
+            db.query(`INSERT INTO automation_run
                 (run_id,automation_id,trigger,state,owner_pid,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
                 VALUES (?,?,?, ?,NULL,?,?,?,?,?,?,0,NULL,NULL)`).run(
-                occurrence.runId,
-                row.automationId,
-                "scheduled",
-                "missed",
-                occurrence.scheduleFingerprint,
-                occurrence.scheduledForMs,
-                occurrence.missedThroughMs,
-                atMs,
-                null,
-                atMs,
-              );
-              continue;
-            }
-            const busy =
-              db
-                .query(
-                  "SELECT 1 FROM automation_run WHERE automation_id=? AND state IN ('claimed','running') LIMIT 1",
-                )
-                .get(row.automationId) !== null;
-            const state = busy ? "skipped-busy" : "claimed";
-            db.query(`INSERT INTO automation_run
-              (run_id,automation_id,trigger,state,owner_pid,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
-              VALUES (?,?,?,?,?,?,?,NULL,?,NULL,?,0,NULL,NULL)`).run(
               occurrence.runId,
               row.automationId,
               "scheduled",
-              state,
-              busy ? null : ownerPid,
+              "missed",
               occurrence.scheduleFingerprint,
               occurrence.scheduledForMs,
+              occurrence.missedThroughMs,
               atMs,
-              busy ? atMs : null,
+              null,
+              atMs,
             );
-            if (!busy)
-              claimed.push({
-                automationId: row.automationId,
-                runId: occurrence.runId,
-                scheduledForMs: occurrence.scheduledForMs,
-                scheduleFingerprint: occurrence.scheduleFingerprint,
-              });
+            continue;
           }
-          db.query(`INSERT INTO scheduler_state(singleton,heartbeat_at_ms,last_tick_at_ms,last_tick_status,last_tick_error)
+          const busy =
+            db
+              .query(
+                "SELECT 1 FROM automation_run WHERE automation_id=? AND state IN ('claimed','running') LIMIT 1",
+              )
+              .get(row.automationId) !== null;
+          const state = busy ? "skipped-busy" : "claimed";
+          db.query(`INSERT INTO automation_run
+              (run_id,automation_id,trigger,state,owner_pid,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
+              VALUES (?,?,?,?,?,?,?,NULL,?,NULL,?,0,NULL,NULL)`).run(
+            occurrence.runId,
+            row.automationId,
+            "scheduled",
+            state,
+            busy ? null : ownerPid,
+            occurrence.scheduleFingerprint,
+            occurrence.scheduledForMs,
+            atMs,
+            busy ? atMs : null,
+          );
+          if (!busy)
+            claimed.push({
+              automationId: row.automationId,
+              runId: occurrence.runId,
+              scheduledForMs: occurrence.scheduledForMs,
+              scheduleFingerprint: occurrence.scheduleFingerprint,
+            });
+        }
+        db.query(`INSERT INTO scheduler_state(singleton,heartbeat_at_ms,last_tick_at_ms,last_tick_status,last_tick_error)
       VALUES(1,?,?, 'ok',NULL) ON CONFLICT(singleton) DO UPDATE SET heartbeat_at_ms=excluded.heartbeat_at_ms,
       last_tick_at_ms=excluded.last_tick_at_ms,last_tick_status='ok',last_tick_error=NULL`).run(
-            atMs,
-            atMs,
-          );
-          return { stale: false, claimed };
-        })
-        .immediate();
-    },
-  );
+          atMs,
+          atMs,
+        );
+        return { stale: false, claimed };
+      })
+      .immediate();
+  });
 
 export const recordDefinitionTickFailure = (profilePath: string, atMs: number) =>
   withWritable(profilePath, "record tick error", (db) =>
@@ -480,9 +475,7 @@ export const discoverAutomationSources = (
         cause,
       }),
   }).pipe(
-    Effect.catch((failure) =>
-      missing(failure.cause) ? Effect.succeed([]) : Effect.fail(failure),
-    ),
+    Effect.catch((failure) => (missing(failure.cause) ? Effect.succeed([]) : Effect.fail(failure))),
     Effect.map((items) =>
       items
         .filter((item) => item.name.endsWith(".md") && item.isFile())
@@ -500,15 +493,16 @@ export const discoverAutomationSources = (
         }).pipe(
           Effect.result,
           Effect.tap(() => runtime.afterRead(path)),
-          Effect.map((result): AutomationSourceObservation =>
-            Result.isSuccess(result)
-              ? { idSource, path, source: result.success, error: null }
-              : {
-                  idSource,
-                  path,
-                  source: null,
-                  error: `could not read automation ${idSource} at ${path}`,
-                },
+          Effect.map(
+            (result): AutomationSourceObservation =>
+              Result.isSuccess(result)
+                ? { idSource, path, source: result.success, error: null }
+                : {
+                    idSource,
+                    path,
+                    source: null,
+                    error: `could not read automation ${idSource} at ${path}`,
+                  },
           ),
         );
       }),

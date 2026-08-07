@@ -159,9 +159,7 @@ const liveSchedulerRuntime: AutomationSchedulerRuntime = {
   afterWorkerRegistered: () => Effect.void,
 };
 
-type RestoreInterruptibility = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R>;
+type RestoreInterruptibility = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 type RegisterClaims = (
   result: ScheduleCommitResult,
   restore: RestoreInterruptibility,

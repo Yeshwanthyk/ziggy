@@ -220,14 +220,12 @@ export const makeSlackGateway = (
       Effect.gen(function* () {
         const bot = yield* transport.authTest(config.botToken);
         const chats = new Map<string, ChatState>();
-        const socket = yield* transport.openSocket(config.appToken).pipe(
-          Effect.mapError(socketFailure),
-        );
+        const socket = yield* transport
+          .openSocket(config.appToken)
+          .pipe(Effect.mapError(socketFailure));
         yield* Effect.addFinalizer(() =>
           socket.close.pipe(
-            Effect.catch((failure) =>
-              Effect.logWarning("Slack socket close failed", { failure }),
-            ),
+            Effect.catch((failure) => Effect.logWarning("Slack socket close failed", { failure })),
             Effect.andThen(disposeChats(chats)),
           ),
         );

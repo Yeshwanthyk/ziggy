@@ -123,8 +123,7 @@ const AutomationDeliveryFailureCategorySchema = Schema.Literals([
   "remote",
   "invalid-response",
 ]);
-export type AutomationDeliveryFailureCategory =
-  typeof AutomationDeliveryFailureCategorySchema.Type;
+export type AutomationDeliveryFailureCategory = typeof AutomationDeliveryFailureCategorySchema.Type;
 export const AutomationTargetOutcome = Schema.Union([
   Schema.Struct({ target: CanonicalTargetString, status: Schema.Literal("delivered") }),
   Schema.Struct({
@@ -165,8 +164,20 @@ const ScheduleFingerprint = Schema.String.check(
 export const AutomationScheduleRecord = Schema.Struct({ automationId: Schema.String, definitionState: Schema.Literals(["valid", "invalid", "deleted"]), scheduleFingerprint: Schema.NullOr(ScheduleFingerprint), nextScheduledAtMs: Schema.NullOr(Millis), definitionObservedAtMs: Millis, definitionError: Schema.NullOr(Schema.String) }).check(Schema.makeFilter((value) => (value.definitionState === "valid" && value.scheduleFingerprint !== null && value.nextScheduledAtMs !== null && value.definitionError === null) || (value.definitionState === "invalid" && value.definitionError !== null) || (value.definitionState === "deleted" && value.nextScheduledAtMs === null && value.definitionError === null), { expected: "a structurally consistent automation schedule record" }));
 export type AutomationScheduleRecord = typeof AutomationScheduleRecord.Type;
 const AutomationScheduleOccurrence = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("due"), runId: NonEmpty, scheduledForMs: Millis, missedThroughMs: Schema.Null, scheduleFingerprint: ScheduleFingerprint }),
-  Schema.Struct({ kind: Schema.Literal("missed"), runId: NonEmpty, scheduledForMs: Millis, missedThroughMs: Millis, scheduleFingerprint: ScheduleFingerprint }),
+  Schema.Struct({
+    kind: Schema.Literal("due"),
+    runId: NonEmpty,
+    scheduledForMs: Millis,
+    missedThroughMs: Schema.Null,
+    scheduleFingerprint: ScheduleFingerprint,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("missed"),
+    runId: NonEmpty,
+    scheduledForMs: Millis,
+    missedThroughMs: Millis,
+    scheduleFingerprint: ScheduleFingerprint,
+  }),
 ]);
 // oxfmt-ignore
 export const AutomationScheduleMutation = Schema.Struct({ expected: Schema.NullOr(AutomationScheduleRecord), next: AutomationScheduleRecord, occurrence: Schema.optional(AutomationScheduleOccurrence) }).check(Schema.makeFilter((value) => value.occurrence === undefined || (value.next.definitionState === "valid" && value.next.automationId.length > 0 && value.next.scheduleFingerprint === value.occurrence.scheduleFingerprint && (value.occurrence.kind === "due" || value.occurrence.missedThroughMs >= value.occurrence.scheduledForMs)), { expected: "a schedule mutation whose occurrence matches its valid schedule" }));
@@ -175,21 +186,61 @@ export type AutomationScheduleMutation = typeof AutomationScheduleMutation.Type;
 export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, target: CanonicalTargetString, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(AutomationDeliveryFailureCategorySchema), retriable: Schema.NullOr(Schema.Boolean) }).check(Schema.makeFilter((value) => (value.status === "delivered" && value.failureCategory === null && value.retriable === null) || (value.status === "failed" && value.failureCategory !== null && value.retriable !== null), { expected: "a structurally consistent automation target outcome" }));
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 const AutomationRunFailureCategory = Schema.Literals([
-  "broadcasts-unreadable", "broadcasts-invalid", "all-empty",
-  "configuration", "authentication", "rate-limited", "transport", "remote", "invalid-response",
-  "AutomationInvalid", "AutomationNotFound", "AutomationFileSystemError",
-  "AutomationGateFailed:spawn", "AutomationGateFailed:wait", "AutomationGateFailed:timeout",
-  "AutomationDatabaseError", "ProfileNotInitialized", "ProviderConfigError", "ProviderCallError",
-  "MemoryIdInvalid", "ProfileExtensionInvalid", "ProfileFileSystemError", "interrupted",
-  "gate-missing", "gate-nonzero", "process-start",
+  "broadcasts-unreadable",
+  "broadcasts-invalid",
+  "all-empty",
+  "configuration",
+  "authentication",
+  "rate-limited",
+  "transport",
+  "remote",
+  "invalid-response",
+  "AutomationInvalid",
+  "AutomationNotFound",
+  "AutomationFileSystemError",
+  "AutomationGateFailed:spawn",
+  "AutomationGateFailed:wait",
+  "AutomationGateFailed:timeout",
+  "AutomationDatabaseError",
+  "ProfileNotInitialized",
+  "ProviderConfigError",
+  "ProviderCallError",
+  "MemoryIdInvalid",
+  "ProfileExtensionInvalid",
+  "ProfileFileSystemError",
+  "interrupted",
+  "gate-missing",
+  "gate-nonzero",
+  "process-start",
 ]);
-const resolutionFailureCategories: ReadonlySet<string> = new Set(["broadcasts-unreadable", "broadcasts-invalid", "all-empty"]);
-const deliveryFailureCategories: ReadonlySet<string> = new Set(["configuration", "authentication", "rate-limited", "transport", "remote", "invalid-response"]);
+const resolutionFailureCategories: ReadonlySet<string> = new Set([
+  "broadcasts-unreadable",
+  "broadcasts-invalid",
+  "all-empty",
+]);
+const deliveryFailureCategories: ReadonlySet<string> = new Set([
+  "configuration",
+  "authentication",
+  "rate-limited",
+  "transport",
+  "remote",
+  "invalid-response",
+]);
 const executionFailureCategories: ReadonlySet<string> = new Set([
-  "AutomationInvalid", "AutomationNotFound", "AutomationFileSystemError",
-  "AutomationGateFailed:spawn", "AutomationGateFailed:wait", "AutomationGateFailed:timeout",
-  "AutomationDatabaseError", "ProfileNotInitialized", "ProviderConfigError", "ProviderCallError",
-  "MemoryIdInvalid", "ProfileExtensionInvalid", "ProfileFileSystemError", "interrupted",
+  "AutomationInvalid",
+  "AutomationNotFound",
+  "AutomationFileSystemError",
+  "AutomationGateFailed:spawn",
+  "AutomationGateFailed:wait",
+  "AutomationGateFailed:timeout",
+  "AutomationDatabaseError",
+  "ProfileNotInitialized",
+  "ProviderConfigError",
+  "ProviderCallError",
+  "MemoryIdInvalid",
+  "ProfileExtensionInvalid",
+  "ProfileFileSystemError",
+  "interrupted",
 ]);
 // oxfmt-ignore
 export const AutomationRunTerminal = Schema.Struct({ state: Schema.Literals(["completed", "failed", "skipped-gate"]), atMs: Millis, localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(AutomationRunFailureCategory), gateExitCode: Schema.NullOr(Integer) }).check(Schema.makeFilter((value) => {

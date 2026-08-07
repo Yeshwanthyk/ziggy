@@ -5,13 +5,12 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { makeSlackApi } from "./api";
 
 const clientFrom = (response: () => Response): HttpClient.HttpClient =>
-  HttpClient.make((request) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, response())),
-  );
+  HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response())));
 
 describe("Slack HTTP adapter", () => {
   test("decodes connections.open and sends the app token through the adapter", async () => {
-    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+      [];
     const client = HttpClient.make((request) => {
       requests.push({
         url: request.url,
@@ -37,13 +36,9 @@ describe("Slack HTTP adapter", () => {
   });
 
   test("classifies HTTP authentication and rate-limit responses", async () => {
-    const unauthorized = makeSlackApi(
-      clientFrom(() => new Response("", { status: 401 })),
-    );
+    const unauthorized = makeSlackApi(clientFrom(() => new Response("", { status: 401 })));
     const limited = makeSlackApi(
-      clientFrom(
-        () => new Response("", { status: 429, headers: { "retry-after": "7" } }),
-      ),
+      clientFrom(() => new Response("", { status: 429, headers: { "retry-after": "7" } })),
     );
 
     const [auth, rateLimit] = await Effect.runPromise(

@@ -31,8 +31,7 @@ class FakeSlackConnection implements SlackSocketConnection {
     }
   };
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
-  onMessage = (listener: (data: unknown) => void) =>
-    this.add(this.messageListeners, listener);
+  onMessage = (listener: (data: unknown) => void) => this.add(this.messageListeners, listener);
   onError = (listener: () => void) => {
     if (this.errorRegistrationThrows) throw new Error("listener registration failed");
     return this.add(this.errorListeners, listener);
@@ -70,7 +69,10 @@ const apiFailure = (reason: SlackApiError["reason"]): SlackApiError =>
 
 const dependencies = (
   overrides: Partial<SlackSocketDependencies> = {},
-): { readonly value: SlackSocketDependencies; readonly connections: Array<FakeSlackConnection> } => {
+): {
+  readonly value: SlackSocketDependencies;
+  readonly connections: Array<FakeSlackConnection>;
+} => {
   const connections: Array<FakeSlackConnection> = [];
   return {
     connections,
@@ -152,9 +154,7 @@ describe("Slack socket Effect boundary", () => {
           connection?.emitMessage("{");
           connection?.emitMessage(envelope("1"));
           const message = yield* socket.next;
-          expect(connection?.sent).toEqual([
-            JSON.stringify({ envelope_id: "envelope-1" }),
-          ]);
+          expect(connection?.sent).toEqual([JSON.stringify({ envelope_id: "envelope-1" })]);
           return message;
         }),
       ),

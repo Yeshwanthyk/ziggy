@@ -45,4 +45,3 @@ export default {
     "no-unsafe-typescript-syntax": rule,
   },
 };
-

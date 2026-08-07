@@ -3,7 +3,6 @@
 /* eslint-disable ziggy-effect/no-error-constructor -- HTTP and protocol failures terminate this executable boundary. */
 /* eslint-disable ziggy-effect/no-json-parse -- TypeBox validates every parsed unknown value immediately. */
 /* eslint-disable ziggy-effect/no-instanceof-error -- The executable normalizes unknown top-level failures for stderr-safe output. */
-/* eslint-disable ziggy-effect/no-unknown-error-message -- The executable normalizes unknown top-level failures for stderr-safe output. */
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 

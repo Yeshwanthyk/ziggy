@@ -93,7 +93,12 @@ describe("Pi prompt cancellation", () => {
 
     await Effect.runPromise(Fiber.interrupt(fiber));
 
-    expect({ promptStarted, listenerPresent: listener !== undefined, unsubscribes, aborts }).toEqual({
+    expect({
+      promptStarted,
+      listenerPresent: listener !== undefined,
+      unsubscribes,
+      aborts,
+    }).toEqual({
       promptStarted: true,
       listenerPresent: false,
       unsubscribes: 1,

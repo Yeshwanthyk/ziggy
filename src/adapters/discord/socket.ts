@@ -12,10 +12,7 @@ export interface DiscordInboundMessage {
   readonly content: string;
 }
 
-const SocketCloseCode = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(0),
-);
+const SocketCloseCode = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
 export class DiscordSocketError extends Schema.TaggedErrorClass<DiscordSocketError>()(
   "DiscordSocketError",
@@ -399,18 +396,14 @@ export const openDiscordSocket = (
                   try {
                     remove();
                   } catch (cause) {
-                    dependencies.reportCleanupFailure(
-                      error("close", "connection", false, cause),
-                    );
+                    dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
                 if (connection.readyState() < SOCKET_CLOSING) {
                   try {
                     connection.close();
                   } catch (cause) {
-                    dependencies.reportCleanupFailure(
-                      error("close", "connection", false, cause),
-                    );
+                    dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
               }),
@@ -490,9 +483,7 @@ export const openDiscordSocket = (
       Effect.gen(function* () {
         const decoded = yield* decodeGatewayFrameJson(text).pipe(Effect.result);
         if (Result.isFailure(decoded)) {
-          yield* terminalFailure(
-            error("receive", "malformed-frame", false, decoded.failure),
-          );
+          yield* terminalFailure(error("receive", "malformed-frame", false, decoded.failure));
           return;
         }
         if (failed || current?.connection !== connection) {
@@ -574,9 +565,7 @@ export const openDiscordSocket = (
         const bootstrap = yield* dependencies.getGatewayBot(token).pipe(Effect.result);
         if (Result.isFailure(bootstrap)) {
           if (bootstrap.failure.reason === "authentication") {
-            yield* terminalFailure(
-              error("connect", "authentication", false, bootstrap.failure),
-            );
+            yield* terminalFailure(error("connect", "authentication", false, bootstrap.failure));
           } else {
             const delay = reconnectDelayMs;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
@@ -593,10 +582,7 @@ export const openDiscordSocket = (
         );
       });
 
-    const processCommand = (
-      command: Command,
-    ): Effect.Effect<void, DiscordSocketError> => {
-      // oxlint-disable-next-line ziggy-effect/no-manual-tag-check -- adapter-owned command union, not an error tag.
+    const processCommand = (command: Command): Effect.Effect<void, DiscordSocketError> => {
       switch (command._tag) {
         case "Connect":
           return connect(command.mode);
@@ -634,10 +620,7 @@ export const openDiscordSocket = (
       }
     };
 
-    const supervisor = Queue.take(commands).pipe(
-      Effect.flatMap(processCommand),
-      Effect.forever,
-    );
+    const supervisor = Queue.take(commands).pipe(Effect.flatMap(processCommand), Effect.forever);
     yield* supervisor.pipe(Effect.forkScoped);
     yield* Queue.offer(commands, { _tag: "Connect", mode: "fresh" });
 
@@ -655,12 +638,7 @@ export const openDiscordSocket = (
         }
         return Queue.clear(inbound).pipe(
           Effect.orElseSucceed(() => []),
-          Effect.andThen(
-            Queue.fail(
-              inbound,
-              error("close", "closed", false, new Error("closed")),
-            ),
-          ),
+          Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
           Effect.andThen(Queue.shutdown(commands)),
           Effect.asVoid,
         );
@@ -709,12 +687,7 @@ export const openDiscordSocket = (
 
       return Queue.clear(inbound).pipe(
         Effect.orElseSucceed(() => []),
-        Effect.andThen(
-          Queue.fail(
-            inbound,
-            error("close", "closed", false, new Error("closed")),
-          ),
-        ),
+        Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
         Effect.andThen(Queue.shutdown(commands)),
         Effect.andThen(waitForClose),
       );
@@ -722,9 +695,7 @@ export const openDiscordSocket = (
 
     yield* Effect.addFinalizer(() =>
       close.pipe(
-        Effect.catch((failure) =>
-          Effect.logWarning("Discord socket cleanup failed", { failure }),
-        ),
+        Effect.catch((failure) => Effect.logWarning("Discord socket cleanup failed", { failure })),
       ),
     );
 

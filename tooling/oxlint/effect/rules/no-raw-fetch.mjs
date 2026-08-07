@@ -9,12 +9,9 @@ import {
 const message =
   "Do not call raw fetch in Ziggy domain code. Route HTTP through Effect HttpClient or an explicit adapter boundary. Skill: effect-raw-fetch-boundary.";
 
+// Standalone extension executables own their own process/HTTP boundaries; this core rule checks src only.
 const checkedPrefixes = ["src/"];
-const approvedRawFetchAdapters = new Set([
-  "src/adapters/discord/api.ts",
-  "src/adapters/discord/socket.ts",
-  "src/adapters/telegram/api.ts",
-]);
+const approvedRawFetchAdapters = new Set(["src/adapters/telegram/api.ts"]);
 
 const shouldCheck = (filename) => {
   const normalized = toRepoRelative(filename);

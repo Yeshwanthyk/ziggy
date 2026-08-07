@@ -163,16 +163,19 @@ test("extension catalog is offline, sorted, and falls back to declared skill met
       }),
     );
 
-    const catalog = await useProfiles((profiles) => profiles.listExtensions(fixture.repositoryRoot));
+    const catalog = await useProfiles((profiles) =>
+      profiles.listExtensions(fixture.repositoryRoot),
+    );
     expect(catalog.map((item) => [item.id, item.kind, item.required])).toEqual([
       ["alpha", "skill", false],
       ["beta", "code", false],
       ["pi-packages", "skill", true],
     ]);
     expect(catalog[0]?.description).toBe("Alpha fallback.");
-    expect((await useProfiles((profiles) => profiles.showExtension(fixture.repositoryRoot, "beta"))).extensionPaths).toEqual([
-      path.join(beta, "explode.ts"),
-    ]);
+    expect(
+      (await useProfiles((profiles) => profiles.showExtension(fixture.repositoryRoot, "beta")))
+        .extensionPaths,
+    ).toEqual([path.join(beta, "explode.ts")]);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -202,9 +205,11 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
 
     const selectionPath = path.join(fixture.profile.path, "extensions.json");
     expect(
-      (await useProfiles((profiles) =>
-        profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta"),
-      )).changed,
+      (
+        await useProfiles((profiles) =>
+          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta"),
+        )
+      ).changed,
     ).toBe(true);
     await useProfiles((profiles) =>
       profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
@@ -212,9 +217,11 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
     const canonical = '{\n  "extensions": [\n    "alpha",\n    "beta"\n  ]\n}\n';
     expect(await readFile(selectionPath, "utf8")).toBe(canonical);
     expect(
-      (await useProfiles((profiles) =>
-        profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
-      )).changed,
+      (
+        await useProfiles((profiles) =>
+          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+        )
+      ).changed,
     ).toBe(false);
     expect(await readFile(selectionPath, "utf8")).toBe(canonical);
     await useProfiles((profiles) =>
@@ -233,9 +240,16 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
         return yield* profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta");
       }).pipe(Effect.provide(ProfilesLive), Effect.result),
     );
-    expect(Result.match(result, { onFailure: Predicate.isTagged("ProfileExtensionInvalid"), onSuccess: () => false })).toBe(true);
+    expect(
+      Result.match(result, {
+        onFailure: Predicate.isTagged("ProfileExtensionInvalid"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
     expect(await readFile(selectionPath, "utf8")).toBe(invalidBytes);
-    expect((await readdir(fixture.profile.path)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    expect((await readdir(fixture.profile.path)).filter((name) => name.endsWith(".tmp"))).toEqual(
+      [],
+    );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

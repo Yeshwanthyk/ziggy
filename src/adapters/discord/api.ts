@@ -1,9 +1,5 @@
 import { Effect, Schema } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
@@ -138,9 +134,7 @@ const request = (
     HttpClientRequest.setHeader("Authorization", `Bot ${token}`),
   );
   if (options?.body !== undefined) {
-    outgoing = outgoing.pipe(
-      HttpClientRequest.bodyText(options.body, "application/json"),
-    );
+    outgoing = outgoing.pipe(HttpClientRequest.bodyText(options.body, "application/json"));
   }
 
   return client.execute(outgoing).pipe(
@@ -219,9 +213,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
 
 export type DiscordApi = ReturnType<typeof makeDiscordApi>;
 
-const withLiveClient = <A, E>(
-  use: (api: DiscordApi) => Effect.Effect<A, E>,
-): Effect.Effect<A, E> =>
+const withLiveClient = <A, E>(use: (api: DiscordApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     return yield* use(makeDiscordApi(client));

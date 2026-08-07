@@ -168,10 +168,10 @@ const acquire = (
         Effect.catch((failure) =>
           failure.details.code === "ENOENT"
             ? Effect.void
-            : (runtime.reportCleanupFailure ?? liveRuntime.reportCleanupFailure)?.(
+            : ((runtime.reportCleanupFailure ?? liveRuntime.reportCleanupFailure)?.(
                 candidate,
                 failure.cause,
-              ) ?? Effect.void,
+              ) ?? Effect.void),
         ),
       ),
     ),

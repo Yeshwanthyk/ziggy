@@ -7,11 +7,11 @@
   "scripts": {
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src extensions",
-    "fmt": "oxfmt src \"extensions/**/*.ts\" \"extensions/**/*.mjs\"",
+    "lint": "oxlint src extensions tooling",
+    "fmt": "oxfmt \"src/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\"",
     "test": "bun test ./src ./extensions && bun run test:helpers",
     "test:helpers": "bun run --cwd extensions/here-now test && bun run --cwd extensions/telephony test && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s extensions/skill-creator/skills/skill-creator/scripts -p 'test_*.py'",
-    "check": "oxfmt --check src \"extensions/**/*.ts\" \"extensions/**/*.mjs\" && bun run lint && bun run typecheck"
+    "check": "oxfmt --check \"src/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" && bun run lint && bun run typecheck"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.82.0",

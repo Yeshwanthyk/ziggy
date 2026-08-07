@@ -689,8 +689,7 @@ export const ProfilesLive = Layer.succeed(Profiles, {
   addSkill,
   listExtensions,
   showExtension,
-  addExtension: (target, repositoryRoot, id) =>
-    mutateExtension(target, repositoryRoot, id, true),
+  addExtension: (target, repositoryRoot, id) => mutateExtension(target, repositoryRoot, id, true),
   removeExtension: (target, repositoryRoot, id) =>
     mutateExtension(target, repositoryRoot, id, false),
 });

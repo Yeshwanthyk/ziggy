@@ -36,8 +36,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
     }
   };
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
-  onMessage = (listener: (data: unknown) => void) =>
-    this.add(this.messageListeners, listener);
+  onMessage = (listener: (data: unknown) => void) => this.add(this.messageListeners, listener);
   onError = (listener: () => void) => {
     if (this.errorRegistrationThrows) throw new Error("listener registration failed");
     return this.add(this.errorListeners, listener);
@@ -82,7 +81,10 @@ const apiFailure = (reason: DiscordApiError["reason"]): DiscordApiError =>
 
 const dependencies = (
   overrides: Partial<DiscordSocketDependencies> = {},
-): { readonly value: DiscordSocketDependencies; readonly connections: Array<FakeDiscordConnection> } => {
+): {
+  readonly value: DiscordSocketDependencies;
+  readonly connections: Array<FakeDiscordConnection>;
+} => {
   const connections: Array<FakeDiscordConnection> = [];
   return {
     connections,

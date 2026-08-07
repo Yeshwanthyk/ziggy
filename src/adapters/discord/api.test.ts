@@ -1,17 +1,11 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- tests are approved Effect execution boundaries */
 import { describe, expect, test } from "bun:test";
 import { Effect, Fiber, Result } from "effect";
-import {
-  HttpClient,
-  HttpClientError,
-  HttpClientResponse,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http";
 import { makeDiscordApi } from "./api";
 
 const clientFrom = (response: () => Response): HttpClient.HttpClient =>
-  HttpClient.make((request) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, response())),
-  );
+  HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response())));
 
 describe("Discord HTTP adapter", () => {
   test("classifies rate limits from status, header, and body", async () => {

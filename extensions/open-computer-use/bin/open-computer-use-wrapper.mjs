@@ -3,7 +3,6 @@
 /* eslint-disable ziggy-effect/no-try-catch-or-throw -- This executable converts parse, image, cleanup, and process failures into JSON exit responses. */
 /* eslint-disable ziggy-effect/no-json-parse -- The Pi tool validates input with its exact TypeBox schema before this executable. */
 /* eslint-disable ziggy-effect/no-promise-catch -- This executable converts its stdin rejection into a process exit response. */
-/* eslint-disable ziggy-effect/no-unknown-error-message -- This executable normalizes process-boundary failures for JSON output. */
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";

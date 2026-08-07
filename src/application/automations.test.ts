@@ -458,9 +458,7 @@ describe("automation run", () => {
       store,
       promptEffect: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
     });
-    const fiber = Effect.runFork(
-      service.run(target, "daily-note", { kind: "manual-force" }),
-    );
+    const fiber = Effect.runFork(service.run(target, "daily-note", { kind: "manual-force" }));
     await Effect.runPromise(Deferred.await(entered));
 
     await Effect.runPromise(Fiber.interrupt(fiber));

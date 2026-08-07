@@ -1,9 +1,5 @@
 import { Effect, Schema } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-} from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
@@ -134,9 +130,16 @@ const classifyHttpFailure = (
   token: string,
 ): SlackApiError => {
   if (response.status === 401 || response.status === 403) {
-    return apiError(operation, "authentication", false, new Error(`HTTP ${response.status}`), token, {
-      status: response.status,
-    });
+    return apiError(
+      operation,
+      "authentication",
+      false,
+      new Error(`HTTP ${response.status}`),
+      token,
+      {
+        status: response.status,
+      },
+    );
   }
   if (response.status === 429) {
     const retryAfterSeconds = retryAfterHeader(response.retryAfterHeader);
@@ -240,12 +243,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
-  postMessage: (
-    token: string,
-    channel: string,
-    text: string,
-    threadTs?: string,
-  ) =>
+  postMessage: (token: string, channel: string, text: string, threadTs?: string) =>
     jsonRequest(client, token, "postMessage", "chat.postMessage", {
       channel,
       text,
@@ -294,9 +292,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
 
 export type SlackApi = ReturnType<typeof makeSlackApi>;
 
-const withLiveClient = <A, E>(
-  use: (api: SlackApi) => Effect.Effect<A, E>,
-): Effect.Effect<A, E> =>
+const withLiveClient = <A, E>(use: (api: SlackApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     return yield* use(makeSlackApi(client));

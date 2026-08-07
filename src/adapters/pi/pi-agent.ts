@@ -248,9 +248,7 @@ const releaseMemoryDatabase = (database: Database, path: string): Effect.Effect<
       database.close();
     },
     catch: (cause) => new MemoryWriteIoError({ operation: "lock", path, cause }),
-  }).pipe(
-    Effect.catch((failure) => logMemoryCleanupFailure("release lock", path, failure.cause)),
-  );
+  }).pipe(Effect.catch((failure) => logMemoryCleanupFailure("release lock", path, failure.cause)));
 
 const withMemoryLock = <A, E>(
   profilePath: string,
@@ -258,7 +256,9 @@ const withMemoryLock = <A, E>(
   use: Effect.Effect<A, E>,
 ): Effect.Effect<A, E | MemoryWriteIoError> => {
   const lockPath = memoryLockPath(profilePath, document);
-  return memoryIo("lock", dirname(lockPath), () => mkdir(dirname(lockPath), { recursive: true })).pipe(
+  return memoryIo("lock", dirname(lockPath), () =>
+    mkdir(dirname(lockPath), { recursive: true }),
+  ).pipe(
     Effect.andThen(
       Effect.acquireUseRelease(
         Effect.try({
@@ -343,11 +343,7 @@ export const createMemoryWriteTool = (
       target.document,
       Effect.gen(function* () {
         const loaded = yield* readMemoryDocument(target.document);
-        const applied = applyMemoryOperations(
-          loaded ?? "",
-          operations,
-          target.document.cap,
-        );
+        const applied = applyMemoryOperations(loaded ?? "", operations, target.document.cap);
         if (!applied.ok) return toolError(applied.message);
         if (!applied.changed) return toolResult("no change");
         yield* atomicReplace(target.document, applied.content);
@@ -399,9 +395,7 @@ const buildMemoryPrompt = (
   ).pipe(
     Effect.map((loaded) => {
       const sections = loaded.flatMap(({ document, content }) =>
-        content === undefined
-          ? []
-          : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
+        content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
       );
       sections.push(
         "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",

@@ -1,10 +1,6 @@
 import { Duration, Effect, Option } from "effect";
 import { AutomationGateFailed } from "../../domain/automation";
-import {
-  killProcess,
-  type KillableProcess,
-  type ReportSignalFailure,
-} from "./process";
+import { killProcess, type KillableProcess, type ReportSignalFailure } from "./process";
 
 interface GateProcess {
   readonly exited: Promise<number>;
@@ -53,8 +49,7 @@ const liveHost: AutomationGateHost = {
     });
     return {
       exited: child.exited,
-      kill: () =>
-        killGateProcessGroup(() => process.kill(-child.pid, "SIGKILL"), child),
+      kill: () => killGateProcessGroup(() => process.kill(-child.pid, "SIGKILL"), child),
     };
   },
 };

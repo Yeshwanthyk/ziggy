@@ -88,9 +88,7 @@ const MessageSchema = Schema.Struct({
   thread_ts: Schema.optional(Schema.String),
 });
 
-const decodeEnvelopeJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(SocketEnvelopeSchema),
-);
+const decodeEnvelopeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(SocketEnvelopeSchema));
 const decodeEventsPayload = Schema.decodeUnknownEffect(EventsPayloadSchema);
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
 
@@ -196,9 +194,7 @@ export const openSlackSocket = (
       }
     };
 
-    const terminalFailure = (
-      failure: SlackSocketError,
-    ): Effect.Effect<void, SlackSocketError> =>
+    const terminalFailure = (failure: SlackSocketError): Effect.Effect<void, SlackSocketError> =>
       Effect.gen(function* () {
         if (stopped || failed) {
           return;
@@ -314,18 +310,14 @@ export const openSlackSocket = (
                   try {
                     remove();
                   } catch (cause) {
-                    dependencies.reportCleanupFailure(
-                      error("close", "connection", false, cause),
-                    );
+                    dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
                 if (connection.readyState() < SOCKET_CLOSING) {
                   try {
                     connection.close();
                   } catch (cause) {
-                    dependencies.reportCleanupFailure(
-                      error("close", "connection", false, cause),
-                    );
+                    dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
               }),
@@ -409,9 +401,7 @@ export const openSlackSocket = (
         const bootstrap = yield* dependencies.connectionsOpen(appToken).pipe(Effect.result);
         if (Result.isFailure(bootstrap)) {
           if (bootstrap.failure.reason === "authentication") {
-            yield* terminalFailure(
-              error("connect", "authentication", false, bootstrap.failure),
-            );
+            yield* terminalFailure(error("connect", "authentication", false, bootstrap.failure));
           } else {
             const delay = reconnectDelayMs;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
@@ -429,7 +419,6 @@ export const openSlackSocket = (
       });
 
     const processCommand = (command: Command): Effect.Effect<void, SlackSocketError> => {
-      // oxlint-disable-next-line ziggy-effect/no-manual-tag-check -- adapter-owned command union, not an error tag.
       switch (command._tag) {
         case "Connect":
           return connect();
@@ -475,12 +464,7 @@ export const openSlackSocket = (
         }
         return Queue.clear(inbound).pipe(
           Effect.orElseSucceed(() => []),
-          Effect.andThen(
-            Queue.fail(
-              inbound,
-              error("close", "closed", false, new Error("closed")),
-            ),
-          ),
+          Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
           Effect.andThen(Queue.shutdown(commands)),
           Effect.asVoid,
         );
@@ -525,12 +509,7 @@ export const openSlackSocket = (
 
       return Queue.clear(inbound).pipe(
         Effect.orElseSucceed(() => []),
-        Effect.andThen(
-          Queue.fail(
-            inbound,
-            error("close", "closed", false, new Error("closed")),
-          ),
-        ),
+        Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
         Effect.andThen(Queue.shutdown(commands)),
         Effect.andThen(waitForClose),
       );
@@ -538,9 +517,7 @@ export const openSlackSocket = (
 
     yield* Effect.addFinalizer(() =>
       close.pipe(
-        Effect.catch((failure) =>
-          Effect.logWarning("Slack socket cleanup failed", { failure }),
-        ),
+        Effect.catch((failure) => Effect.logWarning("Slack socket cleanup failed", { failure })),
       ),
     );
 

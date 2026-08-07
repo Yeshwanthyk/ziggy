@@ -96,15 +96,16 @@ describe("gateway owner", () => {
     const host: GatewayOwnerRuntime = {
       ...runtime(),
       removeCandidate: () => Promise.reject(cleanupFailure),
-      reportCleanupFailure: (path, cause) =>
-        Effect.sync(() => reported.push({ path, cause })),
+      reportCleanupFailure: (path, cause) => Effect.sync(() => reported.push({ path, cause })),
     };
 
     await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
 
     expect(reported).toHaveLength(1);
     expect(reported[0]?.cause).toBe(cleanupFailure);
-    expect((await readdir(join(profile.path, ".runtime"))).filter((name) => name.endsWith(".candidate"))).toHaveLength(1);
+    expect(
+      (await readdir(join(profile.path, ".runtime"))).filter((name) => name.endsWith(".candidate")),
+    ).toHaveLength(1);
   });
 
   test("release never removes a valid foreign owner", async () => {
