@@ -108,3 +108,7 @@ Chronological; newest at the bottom. One entry per logical block of work.
 **Durable automation scheduler engine.** Added the Profile-local schema-v1 scheduler ledger, recorded manual and scheduled runs, transactional cursor claims, missed-range and startup recovery, a scoped 60-second-capped timer, and read-only `automations status`/`runs` projections. Scheduled execution remains dormant until the Gateway hosts the engine in Slice 4.
 
 **Slice 3 automation correctness correction.** Added local PID ownership and dead-owner-only recovery, one truthful terminal persistence attempt, absolute scan-failure re-arming, completion-ordered latest errors, and fail-closed persisted projection decoding. Focused and full repository proofs pass.
+
+**Unified resident Gateway.** Composed one Profile-owned `ziggy gateway` host for the automation scheduler and configured channels, with typed channel isolation, scheduler-fatal supervision, scoped shutdown, owner contention, and SIGINT lock cleanup. Focused and CLI subprocess proofs pass.
+
+**External E2E lifecycle correction.** Recovered proven-dead automation owners before manual admission and on every resident scheduler scan, kept live owners untouched, and propagated fatal lifecycle database failures through scheduler supervision while preserving truthful terminal writes and no replay. Focused lifecycle and real-process loopback proofs pass.
