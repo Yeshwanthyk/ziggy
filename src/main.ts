@@ -8,18 +8,11 @@ import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
-import {
-  DiscordGateway,
-  DiscordGatewayLive,
-  loadDiscordGatewayConfig,
-} from "./application/discord-gateway";
-import { Gateway, GatewayLive, loadGatewayConfig } from "./application/gateway";
+import { DiscordGatewayLive } from "./application/discord-gateway";
+import { GatewayLive } from "./application/gateway";
 import { Profiles, ProfilesLive } from "./application/profiles";
-import {
-  loadSlackGatewayConfig,
-  SlackGateway,
-  SlackGatewayLive,
-} from "./application/slack-gateway";
+import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { SlackGatewayLive } from "./application/slack-gateway";
 import {
   resolveProfileTarget,
   resolveProfilesDirectory,
@@ -42,6 +35,23 @@ const resolutionOptions = {
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 const PiAgentLive = makePiAgentLive(repositoryRoot);
+const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
+const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
+const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
+const ResidentProvided = ResidentGatewayLive.pipe(
+  Layer.provide(
+    Layer.merge(
+      SchedulerProvided,
+      Layer.merge(
+        GatewayLive.pipe(Layer.provide(AgentLive)),
+        Layer.merge(
+          DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
+          SlackGatewayLive.pipe(Layer.provide(AgentLive)),
+        ),
+      ),
+    ),
+  ),
+);
 
 const fail = (message: string) =>
   Effect.sync(() => {
@@ -55,9 +65,7 @@ const program = Effect.gen(function* () {
   const auth = yield* Auth;
   const automations = yield* Automations;
   const automationScheduler = yield* AutomationScheduler;
-  const gateway = yield* Gateway;
-  const discordGateway = yield* DiscordGateway;
-  const slackGateway = yield* SlackGateway;
+  const residentGateway = yield* ResidentGateway;
 
   switch (command) {
     case "init": {
@@ -314,34 +322,20 @@ const program = Effect.gen(function* () {
     }
     case "gateway": {
       const argument = process.argv[3];
-      if (argument === undefined) {
+      if (argument === undefined || process.argv.length !== 4) {
         return yield* fail("usage: ziggy gateway <name|path>");
       }
 
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadGatewayConfig(target);
-      return yield* gateway.runLoop(target, config);
+      return yield* residentGateway.run(resolveProfileTarget(argument, resolutionOptions));
     }
-    case "discord": {
-      const argument = process.argv[3];
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy discord <name|path>");
-      }
-
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadDiscordGatewayConfig(target);
-      return yield* discordGateway.runLoop(target, config);
-    }
-    case "slack": {
-      const argument = process.argv[3];
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy slack <name|path>");
-      }
-
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadSlackGatewayConfig(target);
-      return yield* slackGateway.runLoop(target, config);
-    }
+    case "discord":
+      return yield* fail(
+        "ziggy discord is no longer a resident command; use: ziggy gateway <name|path>",
+      );
+    case "slack":
+      return yield* fail(
+        "ziggy slack is no longer a resident command; use: ziggy gateway <name|path>",
+      );
     case undefined:
       process.exitCode = yield* agent.openTui(resolveProfileTarget(".", resolutionOptions), {
         kind: "local",
@@ -376,10 +370,9 @@ const program = Effect.gen(function* () {
     AutomationGateFailed: (failure) => fail(failure.message),
     AutomationDatabaseError: (failure) => fail(failure.message),
     AutomationProjectionError: (failure) => fail(failure.message),
+    AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
-    TelegramApiError: (failure) => fail(failure.message),
-    DiscordApiError: (failure) => fail(failure.message),
-    SlackApiError: (failure) => fail(failure.message),
+    GatewayOwnerError: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.merge(
@@ -402,13 +395,7 @@ const program = Effect.gen(function* () {
                   AutomationsLive.pipe(
                     Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
                   ),
-                  AutomationSchedulerLive.pipe(
-                    Layer.provide(
-                      AutomationsLive.pipe(
-                        Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
-                      ),
-                    ),
-                  ),
+                  Layer.merge(SchedulerProvided, ResidentProvided),
                 ),
               ),
             ),
@@ -421,7 +408,7 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(command === "gateway" || command === "discord" || command === "slack"
+  ...(command === "gateway"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {

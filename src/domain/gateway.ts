@@ -7,3 +7,14 @@ export class GatewayConfigError extends Schema.TaggedErrorClass<GatewayConfigErr
     message: Schema.String,
   },
 ) {}
+
+export class GatewayOwnerError extends Schema.TaggedErrorClass<GatewayOwnerError>()(
+  "GatewayOwnerError",
+  {
+    reason: Schema.Literals(["held", "stale", "unreadable", "filesystem"]),
+    path: Schema.String,
+    pid: Schema.UndefinedOr(Schema.Finite),
+    message: Schema.String,
+    cause: Schema.UndefinedOr(Schema.Defect()),
+  },
+) {}
