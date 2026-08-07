@@ -20,6 +20,7 @@ const inspectPath = (targetPath: string) =>
         path: targetPath,
         message: details.message,
         code: details.code,
+        cause,
       });
     },
   });

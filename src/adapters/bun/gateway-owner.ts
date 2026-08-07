@@ -41,6 +41,8 @@ export interface GatewayOwnerRuntime {
   readonly now: () => Date;
   readonly pidIsAlive: (pid: number) => boolean;
   readonly afterLinkConflict?: (path: string) => Effect.Effect<void>;
+  readonly removeCandidate?: (path: string) => Promise<void>;
+  readonly reportCleanupFailure?: (path: string, cause: unknown) => Effect.Effect<void>;
 }
 
 const liveRuntime: GatewayOwnerRuntime = {
@@ -55,6 +57,9 @@ const liveRuntime: GatewayOwnerRuntime = {
       return fileSystemCauseDetails(cause).code !== "ESRCH";
     }
   },
+  removeCandidate: unlink,
+  reportCleanupFailure: (path, cause) =>
+    Effect.logWarning("Gateway owner candidate cleanup failed", { path, cause }),
 };
 
 export const gatewayOwnerPath = (target: ProfileTarget): string =>
@@ -154,7 +159,23 @@ const acquire = (
       finalMissingCause = inspection.cause;
     }
     return yield* unreadableError(path, finalMissingCause);
-  }).pipe(Effect.ensuring(Effect.promise(() => unlink(candidate).catch(() => undefined))));
+  }).pipe(
+    Effect.ensuring(
+      Effect.tryPromise({
+        try: () => (runtime.removeCandidate ?? unlink)(candidate),
+        catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
+      }).pipe(
+        Effect.catch((failure) =>
+          failure.details.code === "ENOENT"
+            ? Effect.void
+            : (runtime.reportCleanupFailure ?? liveRuntime.reportCleanupFailure)?.(
+                candidate,
+                failure.cause,
+              ) ?? Effect.void,
+        ),
+      ),
+    ),
+  );
 };
 
 const release = (handle: GatewayOwnerHandle): Effect.Effect<void> =>

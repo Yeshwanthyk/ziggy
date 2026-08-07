@@ -42,6 +42,7 @@ const validateProfile = (target: ProfileTarget) =>
           : new GatewayConfigError({
               path: soulPath,
               message: `could not inspect ${soulPath}`,
+              cause,
             }),
     });
     if (!status.isFile()) {
@@ -61,7 +62,9 @@ const configPresent = (path: string): Effect.Effect<boolean, GatewayConfigError>
     Effect.catch((cause) =>
       cause.code === "ENOENT"
         ? Effect.succeed(false)
-        : Effect.fail(new GatewayConfigError({ path, message: `could not inspect ${path}` })),
+        : Effect.fail(
+            new GatewayConfigError({ path, message: `could not inspect ${path}`, cause }),
+          ),
     ),
   );
 

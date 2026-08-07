@@ -1,6 +1,10 @@
 import { Duration, Effect, Option } from "effect";
 import { AutomationGateFailed } from "../../domain/automation";
-import { killProcess } from "./process";
+import {
+  killProcess,
+  type KillableProcess,
+  type ReportSignalFailure,
+} from "./process";
 
 interface GateProcess {
   readonly exited: Promise<number>;
@@ -22,6 +26,21 @@ export interface AutomationGateHost {
   readonly spawn: (profilePath: string, command: string) => GateProcess;
 }
 
+export const killGateProcessGroup = (
+  groupKill: () => void,
+  child: KillableProcess,
+  report: ReportSignalFailure = (cause) =>
+    console.error("automation gate process-group cleanup failed", cause),
+): void => {
+  try {
+    groupKill();
+    return;
+  } catch (cause) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) report(cause);
+  }
+  killProcess(child, report);
+};
+
 const liveHost: AutomationGateHost = {
   spawn: (profilePath, command) => {
     const child = Bun.spawn(["/bin/sh", "-c", command], {
@@ -34,13 +53,8 @@ const liveHost: AutomationGateHost = {
     });
     return {
       exited: child.exited,
-      kill: () => {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          killProcess(child);
-        }
-      },
+      kill: () =>
+        killGateProcessGroup(() => process.kill(-child.pid, "SIGKILL"), child),
     };
   },
 };

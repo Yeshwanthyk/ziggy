@@ -76,6 +76,7 @@ export const loadGatewayConfig = (
           : new GatewayConfigError({
               path: soulPath,
               message: `could not inspect ${soulPath}`,
+              cause,
             }),
     });
     if (!soulStatus.isFile()) {
@@ -88,18 +89,20 @@ export const loadGatewayConfig = (
     const configPath = join(target.path, "telegram.json");
     const source = yield* Effect.tryPromise({
       try: () => readFile(configPath, "utf8"),
-      catch: () =>
+      catch: (cause) =>
         new GatewayConfigError({
           path: configPath,
           message: configGuidance(configPath),
+          cause,
         }),
     });
     return yield* decodeTelegramGatewayConfigJson(source).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new GatewayConfigError({
             path: configPath,
             message: configGuidance(configPath),
+            cause,
           }),
       ),
     );

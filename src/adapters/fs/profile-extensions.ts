@@ -41,6 +41,7 @@ const fsError = (operation: string, targetPath: string, cause: unknown) => {
     path: targetPath,
     message: details.message,
     code: details.code,
+    cause,
   });
 };
 
@@ -302,12 +303,26 @@ export const replaceExtensionSelection = (profilePath: string, ids: ReadonlyArra
         catch: (cause) => fsError("write or rename", selectionPath, cause),
       }),
     (handle) =>
-      Effect.tryPromise({
-        try: async () => {
-          await handle.close().catch(() => undefined);
-          await rm(temporaryPath, { force: true });
-        },
-        catch: (cause) => fsError("remove", temporaryPath, cause),
-      }).pipe(Effect.catch(() => Effect.void)),
+      Effect.all(
+        [
+          Effect.tryPromise({
+            try: () => handle.close(),
+            catch: (cause) => fsError("close", temporaryPath, cause),
+          }),
+          Effect.tryPromise({
+            try: () => rm(temporaryPath),
+            catch: (cause) => fsError("remove", temporaryPath, cause),
+          }).pipe(
+            Effect.catch((failure) =>
+              failure.code === "ENOENT" ? Effect.void : Effect.fail(failure),
+            ),
+          ),
+        ],
+        { concurrency: "unbounded", discard: true },
+      ).pipe(
+        Effect.catch((failure) =>
+          Effect.logWarning("Profile extension cleanup failed", { failure }),
+        ),
+      ),
   );
 };

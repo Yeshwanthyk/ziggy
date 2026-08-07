@@ -4,7 +4,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Duration, Effect, Fiber } from "effect";
-import { makeAutomationGate, type AutomationGateHost } from "./automation-gate";
+import {
+  killGateProcessGroup,
+  makeAutomationGate,
+  type AutomationGateHost,
+} from "./automation-gate";
 
 const failure = (host: AutomationGateHost, timeout: Duration.Input = "30 seconds") =>
   Effect.runPromise(
@@ -58,6 +62,26 @@ describe("automation gate", () => {
       command: "check",
       message: "automation daily gate failed while waiting for exit",
     });
+  });
+
+  test("reports both non-benign group and fallback signal failures", () => {
+    const failures: Array<unknown> = [];
+    const groupFailure = Object.assign(new Error("group denied"), { code: "EPERM" });
+    const childFailure = Object.assign(new Error("child denied"), { code: "EPERM" });
+
+    killGateProcessGroup(
+      () => {
+        throw groupFailure;
+      },
+      {
+        kill: () => {
+          throw childFailure;
+        },
+      },
+      (cause) => failures.push(cause),
+    );
+
+    expect(failures).toEqual([groupFailure, childFailure]);
   });
 
   test("kills the child on timeout", async () => {

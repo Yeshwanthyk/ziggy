@@ -23,14 +23,22 @@ export const isLocalProcessAlive = makeLocalProcessAlive((pid, signal) =>
   process.kill(pid, signal),
 );
 
-interface KillableProcess {
+export interface KillableProcess {
   readonly kill: () => void;
 }
 
-export const killProcess = (process: KillableProcess): void => {
+export type ReportSignalFailure = (cause: unknown) => void;
+
+const reportLiveSignalFailure: ReportSignalFailure = (cause) =>
+  console.error("process cleanup signal failed", cause);
+
+export const killProcess = (
+  process: KillableProcess,
+  report: ReportSignalFailure = reportLiveSignalFailure,
+): void => {
   try {
     process.kill();
-  } catch {
-    // The process may have exited between the timeout and interruption.
+  } catch (cause) {
+    if (Option.getOrUndefined(decodeProcessSignalError(cause))?.code !== "ESRCH") report(cause);
   }
 };

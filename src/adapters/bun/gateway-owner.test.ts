@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Result } from "effect";
@@ -87,6 +87,24 @@ describe("gateway owner", () => {
     await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
 
     expect(conflicts).toBe(1);
+  });
+
+  test("reports an unexpected candidate cleanup failure without failing owner release", async () => {
+    const profile = await target();
+    const cleanupFailure = Object.assign(new Error("cleanup denied"), { code: "EPERM" });
+    const reported: Array<{ readonly path: string; readonly cause: unknown }> = [];
+    const host: GatewayOwnerRuntime = {
+      ...runtime(),
+      removeCandidate: () => Promise.reject(cleanupFailure),
+      reportCleanupFailure: (path, cause) =>
+        Effect.sync(() => reported.push({ path, cause })),
+    };
+
+    await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.cause).toBe(cleanupFailure);
+    expect((await readdir(join(profile.path, ".runtime"))).filter((name) => name.endsWith(".candidate"))).toHaveLength(1);
   });
 
   test("release never removes a valid foreign owner", async () => {

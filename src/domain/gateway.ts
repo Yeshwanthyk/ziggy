@@ -5,6 +5,7 @@ export class GatewayConfigError extends Schema.TaggedErrorClass<GatewayConfigErr
   {
     path: Schema.String,
     message: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {}
 

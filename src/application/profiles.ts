@@ -133,6 +133,7 @@ const fileSystemError = (
     path: targetPath,
     message: details.message,
     code: details.code,
+    cause,
   });
 };
 

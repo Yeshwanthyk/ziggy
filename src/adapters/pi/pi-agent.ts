@@ -697,9 +697,12 @@ export const openChat = (
       context,
     );
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
+    const disposeBestEffort = dispose.pipe(
+      Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+    );
 
     if (runtime.modelFallbackMessage !== undefined) {
-      yield* dispose.pipe(Effect.catch(() => Effect.void));
+      yield* disposeBestEffort;
       return yield* new ProviderConfigError({
         profilePath: target.path,
         operation: "select model",
@@ -709,7 +712,7 @@ export const openChat = (
     }
 
     yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime)).pipe(
-      Effect.tapError(() => dispose.pipe(Effect.catch(() => Effect.void))),
+      Effect.tapError(() => disposeBestEffort),
     );
 
     return {

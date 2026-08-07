@@ -75,30 +75,34 @@ export const loadDiscordGatewayConfig = (
             fileSystemCauseDetails(cause).code === "ENOENT"
               ? `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`
               : `could not inspect ${soulPath}`,
+          cause,
         }),
     });
     if (!soulStatus.isFile()) {
       return yield* new GatewayConfigError({
         path: soulPath,
         message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
+        cause: "SOUL.md is not a file",
       });
     }
 
     const configPath = join(target.path, "discord.json");
     const source = yield* Effect.tryPromise({
       try: () => readFile(configPath, "utf8"),
-      catch: () =>
+      catch: (cause) =>
         new GatewayConfigError({
           path: configPath,
           message: configGuidance(configPath),
+          cause,
         }),
     });
     return yield* decodeDiscordGatewayConfigJson(source).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new GatewayConfigError({
             path: configPath,
             message: configGuidance(configPath),
+            cause,
           }),
       ),
     );
