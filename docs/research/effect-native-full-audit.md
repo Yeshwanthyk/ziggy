@@ -2,23 +2,21 @@
 
 Date: 2026-08-06
 
-Updated: 2026-08-07 — commits `7e41cfd..2bd88da`
+Historical baseline: 2026-08-07 — commits `7e41cfd..2bd88da`. Current adjudication: HEAD `d8718c1`.
 
 ## Conclusion
 
 Ziggy is **not yet Effect-native throughout its core architecture**.
 
-The domain model is mostly sound and `src/main.ts` is correctly the only production Effect execution edge, but application services still adapt Node/Bun/Pi Promises themselves, Discord and Slack expose Promise-shaped socket clients, and multiple adapters own raw fetch, callback, timer, and cleanup lifecycles manually. The new scheduler and resident Gateway use scopes and SQLite transactions well, but introduce interruption-sensitive publication windows and owner identity/file-protocol races that outrank most style-level Effect cleanup. The custom lint suite does not prove architectural correctness because it broadly exempts `src/adapters/**`, recognizes only narrow Promise surface names, and contradicts the repository's raw-fetch skill.
+The domain model is mostly sound and `src/main.ts` remains the only production Effect execution edge. This report's baseline findings are historical: the scheduler publication windows, chat acquisition gap, Pi memory Promise island, application automation/config filesystem reads, and Promise-shaped Discord/Slack socket contracts were corrected in the subsequent commits listed below. The remaining architectural pressure is narrower: Profile workflow filesystem ownership, concrete adapter selection in application composition, PID-only recovery identity, the Gateway pathname protocol, and deliberately low-confidence lint heuristics. The raw-fetch rule now matches the written Telegram-only policy.
 
-The current checkout contains **124 tracked code-like files** with `.ts`, `.mjs`, `.py`, or `.sh` extensions (excluding `vendor/effect`). The original eight scouts inspected the whole repository; four additional read-only scouts inspected all nine commits after the audit, their 21 changed files, the durable scheduler state machine, resident Gateway lifetime, tests, and the pinned Effect submodule.
+The current checkout contains **122 tracked code-like files** with `.ts`, `.mjs`, `.py`, or `.sh` extensions (excluding `vendor/effect`). This adjudication inspects the seven commits after the historical audit, current tests and scans, and the pinned Effect submodule; it does not repeat the original repository-wide inventory.
 
-### Current verification snapshot
+### Historical verification snapshot
 
-- Reviewed HEAD: `2bd88da` (`docs: record gateway lifecycle completion`).
-- `bun run test`: **passed** — 136 Bun tests plus all shell/Python helper suites.
-- `bun run typecheck`: **passed** with Effect Language Service suggestions.
-- `bun run check`: **passed**.
-- `git diff --check 7e41cfd..2bd88da`: **passed**.
+- Historical reviewed HEAD: `2bd88da` (`docs: record gateway lifecycle completion`).
+- Historical `bun run test`, `bun run typecheck`, `bun run check`, and `git diff --check 7e41cfd..2bd88da`: **passed**.
+- Current verification and dispositions are recorded in **Current HEAD adjudication** below.
 
 The earlier snapshot at `70adab8` remains the baseline for findings 1–10. The recent-commit addendum below updates that baseline for the durable automation scheduler, SQLite ledger, resident Gateway, Profile owner record, process-group gate termination, new CLI projections, and lifecycle recovery.
 
@@ -865,3 +863,32 @@ The remaining extension executables were inspected and classified as intentional
 13. **Move remaining Profile filesystem mechanics** from application to focused adapters, including Gateway and automation config/definition reads.
 14. **Shrink the Pi memory Promise island**, preserve structured causes, and repair smaller schema/type ownership issues.
 15. Address standalone extension reliability/security findings separately; do not mix them into the core Effect migration.
+
+## Current HEAD adjudication — d8718c1
+
+This section supersedes the historical action order above. It is deliberately a disposition, not a
+second repository-wide audit.
+
+| Item | Current evidence | Disposition |
+|---|---|---|
+| Scheduler publication and chat lifetime | `automation-scheduler.ts` wraps commit plus registration in `Effect.uninterruptibleMask`, restoring interruption only in registered workers. `automations.ts` uses `Effect.acquireUseRelease` for chat and one uninterruptible terminal publication path. Tests cover commit interruption, immediate cleanup, terminal interruption, and terminal-write failure. | **Keep.** The mechanism matches pinned `Effect.ts:7362-7366`, `6677-6681`, and `8642-8657`. |
+| Durable process-instance identity | Scheduler and Gateway recovery still use PID liveness. `isLocalProcessAlive` treats only `ESRCH` as dead and remains conservative for unknown signal errors; the focused test proves that policy. There is no portable current process-start identity capability or migration contract. | **Defer.** PID reuse is a real theoretical ambiguity, but adding an OS-specific start token or a second registry without a live collision witness would be a larger authority change. Keep fail-closed recovery and document that PID is evidence, not identity. |
+| Gateway handoff and release | Acquisition retries the complete `EEXIST → inspect → ENOENT → link` sequence twice (`gateway-owner.ts`), with a deterministic handoff test. Release still performs read/compare/unlink; the foreign-record test proves the normal replacement-before-read case, not an adversarial mid-release replacement. | **Narrow-document.** The internal contender protocol is bounded and fail-closed. A truly conditional unlink needs a different lock authority (for example a directory/OS lock), not a safe local patch to pathname unlink; no current actor replaces a held record mid-release. |
+| Application filesystem and concrete adapter selection | Automation definitions/broadcasts and Gateway config now live under `src/adapters/fs/`. `src/application/profiles.ts` remains a direct Node filesystem workflow, and application services still select concrete Bun/FS/channel/Pi adapters. | **Defer.** The remaining Profile workflow has one implementation and no current failure or test-isolation pressure that justifies a generic Layer family. Do not call this fully Effect-capability-independent. |
+| Cleanup observability | Candidate-file cleanup, process-group signaling, Pi memory/runtime cleanup, and socket close cleanup report unexpected failures; only `ENOENT` is benign in the new candidate path. Database close and Profile staging cleanup remain best-effort host finalizers. | **Keep current policy; defer expansion.** Existing logs preserve operational evidence. Add typed propagation only when a deterministic close failure or an operator recovery path exists. |
+| Write-side schema/type ownership | `AutomationScheduleMutation`, `AutomationRunTerminal`, and `AutomationRunCompletion` are domain-owned schemas; the SQLite boundary decodes mutation and completion inputs before transactions. `ScheduleCommitResult` and capability interfaces are transient contracts, not persisted shapes. | **Keep.** The original weak-write finding is closed without adding a schema for an internal return value. |
+| Pi memory, prompt, and resources | Memory lock/write/read/prompt composition is Effect-shaped through the Pi callback bridge. Runtime disposal is scoped/best-effort logged, prompt interruption uses `Effect.callback`, and resource stats remain a single Pi/filesystem adapter bridge. Required Pi Promise callbacks remain at the edge. | **Keep.** Pinned `Effect.ts:1166-1206` explicitly supports callback registration cleanup; no second loop or resource authority is warranted. |
+| Discord/Slack sockets | Both expose `next`/`close` as Effects, use bounded dropping queues, scope heartbeat/reconnect supervisors, clean partial listener acquisition, and bound close callbacks. Focused tests cover partial acquisition, pending receive, close timeout, and cleanup reporting. | **Keep.** This is the intended callback boundary under pinned `Effect.ts:1166-1206`; `Queue.dropping`/`shutdown` are available at `Queue.ts:562`, `1114`. |
+| Lint and tooling | `bun run lint` checks `src`, `extensions`, and `tooling`; `bun run check` formats those same code-like trees. The old low-confidence Promise-client and heuristic rules were removed. Raw fetch now approves only `src/adapters/telegram/api.ts`, matching the raw-fetch skill. Adapter exemptions remain intentional for host callback/Promise mechanics. | **Keep reduced policy.** A fixture harness and deeper type-provenance rules would be a new tooling project, contrary to the minimal architecture; current coverage is explicit, not proof of every architectural invariant. |
+| TypeScript Effect suggestions | Current `bun run typecheck` is exit-0 with five non-fatal suggestions: two `Effect.succeed(undefined)` cases whose exact `string | undefined` contract rejects `Effect.void`, two `Effect.catch(() => Effect.void)` cases retained because the repository lint policy rejects `Effect.ignore`, and one rollback-preserving `Effect.catch` in `profiles.ts` where `Effect.mapError` would not preserve rollback. Finite Schema suggestions were corrected. | **Narrow-document.** The remaining suggestions are semantically intentional; do not distort value types or remove rollback to make the diagnostic list empty. |
+| Scheduler plan and audit accuracy | `docs/plans/automation-scheduler.md` is explicitly marked a historical Slice 3 freeze. This report now labels its old snapshot and records current HEAD `d8718c1`, seven-commit dispositions, and the current 122-file count. | **Keep documentation correction.** Current source and this adjudication supersede the historical action list. |
+
+### Focused current proof
+
+- `bun run typecheck` passes (exit 0; five informational Effect suggestions described above).
+- The existing focused witnesses cover scheduler claim registration, terminal publication, gateway
+  handoff, socket partial acquisition/close cleanup, Pi memory interruption, and persisted write
+  validation; no duplicate test harness or new external credential proof was added.
+- The pinned source used for the adjudication is `vendor/effect` commit
+  `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`: `Effect.ts:1166-1206, 6677-6681, 7362-7366,
+  8642-8657`; `Schema.ts:1368-1375, 12981-12997`; and `Queue.ts:562, 1114`.

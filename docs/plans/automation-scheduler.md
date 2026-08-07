@@ -1,4 +1,9 @@
-# Automation scheduler — Slice 3
+# Automation scheduler — Slice 3 freeze (historical)
+
+> This is the Slice 3 design freeze, not the current production specification. Slice 4 now
+> hosts this engine inside `ziggy gateway`, with resident Profile ownership and configured
+> channel branches. Use the current source and `docs/research/effect-native-full-audit.md` for
+> present behavior; the historical statements below preserve the Slice 3 boundary and proof.
 
 ## Orientation
 
@@ -12,13 +17,14 @@ both kinds of attempt around the existing gate, Pi, print, resolution, and deliv
 scheduled claim commits with its cursor advance before the operation starts. No gate, Pi, channel,
 or filesystem effect runs in a SQLite transaction.
 
-This slice deliberately has no production host. It exposes a scoped Effect engine that Slice 4
-will start inside the one resident Gateway owner. The engine is still demonstrable in this slice:
-its fake-clock tests run the real SQLite adapter and a fake `Automations` service, while the live
-manual CLI proves the shared recorder. There is no temporary daemon or scheduler command.
+At the Slice 3 freeze, this slice deliberately had no production host. Slice 4 subsequently
+starts the scoped Effect engine inside the one resident Gateway owner. The historical proof
+shape remains useful: fake-clock tests run the real SQLite adapter and a fake `Automations`
+service, while the live manual CLI proves the shared recorder. There is no temporary daemon or
+scheduler-specific OS service.
 
-**Readiness: ready.** The missing Gateway host does not block focused proof or require a temporary
-host. Production scheduled work remains dormant until Slice 4 calls the engine.
+**Slice 3 readiness: ready (historical).** The missing Gateway host no longer describes the
+current runtime; `ziggy gateway` is the resident host and scheduled work is active there.
 
 ## Settled scope
 
@@ -34,8 +40,8 @@ This slice includes:
 - read-only `automations status` and `automations runs` projections;
 - fake-clock and real-SQLite proof.
 
-This slice does not start the scheduler from `gateway`, `discord`, `slack`, or any other production
-command. Slice 4 supplies the single resident Gateway owner.
+At the Slice 3 freeze this slice did not start the scheduler from `gateway`, `discord`, `slack`,
+or any other production command. Slice 4 supplies the single resident Gateway owner.
 
 ## Authorities
 

@@ -292,7 +292,7 @@ const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, P
     const targetStatus = yield* statPath(target.path).pipe(
       Effect.catchIf(
         (error) => error.code === "ENOENT",
-        () => Effect.succeed(undefined),
+        () => Effect.void,
       ),
     );
 

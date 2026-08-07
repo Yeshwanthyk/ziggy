@@ -40,7 +40,7 @@ export class MemoryIdInvalid extends Schema.TaggedErrorClass<MemoryIdInvalid>()(
 export class MemoryOperationInvalid extends Schema.TaggedErrorClass<MemoryOperationInvalid>()(
   "MemoryOperationInvalid",
   {
-    operation: Schema.Number,
+    operation: Schema.Finite,
     action: Schema.Literals(["add", "replace", "remove"]),
     message: Schema.String,
   },
@@ -49,17 +49,17 @@ export class MemoryOperationInvalid extends Schema.TaggedErrorClass<MemoryOperat
 export class MemoryEntryMatchInvalid extends Schema.TaggedErrorClass<MemoryEntryMatchInvalid>()(
   "MemoryEntryMatchInvalid",
   {
-    operation: Schema.Number,
+    operation: Schema.Finite,
     action: Schema.Literals(["replace", "remove"]),
     oldText: Schema.String,
-    matches: Schema.Number,
+    matches: Schema.Finite,
     message: Schema.String,
   },
 ) {}
 
 export class MemoryFull extends Schema.TaggedErrorClass<MemoryFull>()("MemoryFull", {
-  used: Schema.Number,
-  cap: Schema.Number,
+  used: Schema.Finite,
+  cap: Schema.Finite,
   message: Schema.String,
 }) {}
 

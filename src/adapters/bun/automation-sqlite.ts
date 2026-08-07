@@ -241,7 +241,7 @@ export const recoverAutomationRuns = (
       .immediate();
   });
 
-export type ScheduleMutation = typeof AutomationScheduleMutation.Type;
+export type ScheduleMutation = AutomationScheduleMutation;
 // oxfmt-ignore
 export interface ScheduleCommitResult { readonly stale: boolean; readonly claimed: ReadonlyArray<{ readonly automationId: string; readonly runId: string; readonly scheduledForMs: number; readonly scheduleFingerprint: string }> }
 

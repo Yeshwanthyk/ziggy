@@ -30,7 +30,7 @@ const existingDirectory = (directoryPath: string) =>
     Effect.map((status) => (status.isDirectory() ? directoryPath : undefined)),
     Effect.catchIf(
       (error) => error.code === "ENOENT",
-      () => Effect.succeed(undefined),
+      () => Effect.void,
     ),
   );
 

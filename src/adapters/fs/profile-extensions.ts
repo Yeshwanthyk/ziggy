@@ -259,7 +259,7 @@ export const readExtensionSelection = (
   return readText(selectionPath).pipe(
     Effect.catchIf(
       (error) => error.code === "ENOENT",
-      () => Effect.succeed(undefined),
+      () => Effect.void,
     ),
     Effect.flatMap((text) =>
       text === undefined

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-const TelegramUserId = Schema.Number.check(
+const TelegramUserId = Schema.Finite.check(
   Schema.makeFilter((value) => Number.isSafeInteger(value) && value > 0, {
     expected: "a positive safe integer Telegram user ID",
   }),
