@@ -1,7 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { loadTelegramConfigFile } from "../adapters/fs/gateway-config";
 import {
   getUpdates,
   sendMessage,
@@ -9,11 +8,10 @@ import {
   type TelegramUpdate,
 } from "../adapters/telegram/api";
 import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
-import { type ZiggyAgentError, ProfileNotInitialized } from "../domain/agent";
-import { GatewayConfigError } from "../domain/gateway";
+import type { ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
-import { decodeTelegramGatewayConfigJson, type TelegramGatewayConfig } from "../domain/telegram";
+import type { TelegramGatewayConfig } from "../domain/telegram";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 const TELEGRAM_STARTUP_OFFSET = -1;
@@ -57,53 +55,7 @@ interface ChatState {
   handle?: ChatHandle;
 }
 
-const configGuidance = (configPath: string): string =>
-  `create ${configPath} with {"botToken":"...","ownerUserId":123}`;
-
-export const loadGatewayConfig = (
-  target: ProfileTarget,
-): Effect.Effect<TelegramGatewayConfig, ProfileNotInitialized | GatewayConfigError> =>
-  Effect.gen(function* () {
-    const soulPath = join(target.path, "SOUL.md");
-    const soulStatus = yield* Effect.tryPromise({
-      try: () => stat(soulPath),
-      catch: (cause) =>
-        fileSystemCauseDetails(cause).code === "ENOENT"
-          ? new ProfileNotInitialized({
-              profilePath: target.path,
-              message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-            })
-          : new GatewayConfigError({
-              path: soulPath,
-              message: `could not inspect ${soulPath}`,
-            }),
-    });
-    if (!soulStatus.isFile()) {
-      return yield* new ProfileNotInitialized({
-        profilePath: target.path,
-        message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-      });
-    }
-
-    const configPath = join(target.path, "telegram.json");
-    const source = yield* Effect.tryPromise({
-      try: () => readFile(configPath, "utf8"),
-      catch: () =>
-        new GatewayConfigError({
-          path: configPath,
-          message: configGuidance(configPath),
-        }),
-    });
-    return yield* decodeTelegramGatewayConfigJson(source).pipe(
-      Effect.mapError(
-        () =>
-          new GatewayConfigError({
-            path: configPath,
-            message: configGuidance(configPath),
-          }),
-      ),
-    );
-  });
+export const loadGatewayConfig = loadTelegramConfigFile;
 
 export const normalizeTelegramUpdate = (
   update: TelegramUpdate,

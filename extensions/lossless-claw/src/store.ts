@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { Option, Predicate, Schema } from "effect";
 
@@ -223,34 +223,22 @@ const boundedText = (value: string, maximum: number = MAX_SNIPPET_CHARS): string
 const discoverSessionFiles = (profile: string): ReadonlyArray<DiscoveredFile> => {
   const sessionsRoot = join(profile, "sessions");
   const paths: string[] = [];
-  const visitedDirectories = new Set<string>();
 
   const visit = (directory: string): void => {
-    const directoryMetadata = statSync(directory);
-    const directoryIdentity = `${directoryMetadata.dev}:${directoryMetadata.ino}`;
-    if (visitedDirectories.has(directoryIdentity)) {
-      return;
-    }
-    visitedDirectories.add(directoryIdentity);
-
     for (const child of readdirSync(directory, { withFileTypes: true })) {
       const childPath = join(directory, child.name);
+      if (child.isSymbolicLink()) {
+        continue;
+      }
       if (child.isDirectory()) {
         visit(childPath);
       } else if (child.isFile() && child.name.endsWith(".jsonl")) {
         paths.push(childPath);
-      } else if (existsSync(childPath)) {
-        const targetMetadata = statSync(childPath);
-        if (targetMetadata.isDirectory()) {
-          visit(childPath);
-        } else if (targetMetadata.isFile() && child.name.endsWith(".jsonl")) {
-          paths.push(childPath);
-        }
       }
     }
   };
 
-  if (!existsSync(sessionsRoot)) {
+  if (!existsSync(sessionsRoot) || lstatSync(sessionsRoot).isSymbolicLink()) {
     return [];
   }
   visit(sessionsRoot);

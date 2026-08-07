@@ -16,7 +16,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Database } from "bun:sqlite";
-import { Context, Effect, Layer } from "effect";
+import { Clock, Context, Effect, Layer, Result, Schema } from "effect";
 import { Type } from "typebox";
 import {
   ProfileNotInitialized,
@@ -68,22 +68,7 @@ export type ChatSessionMode = "continue" | "fresh";
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
 
-const isProviderConfigFailure = (cause: unknown): boolean => {
-  const message = causeMessage(cause).toLowerCase();
-  return [
-    "no model",
-    "no api key",
-    "no authentication method",
-    "provider is not configured",
-    "auth.json",
-    "models.json",
-    "settings.json",
-    "credential",
-    "authentication failed",
-  ].some((fragment) => message.includes(fragment));
-};
-
-const providerError = (
+export const providerError = (
   profilePath: string,
   operation: string,
   cause: unknown,
@@ -92,7 +77,7 @@ const providerError = (
     return cause;
   }
 
-  if (operation !== "call provider" || isProviderConfigFailure(cause)) {
+  if (operation !== "call provider") {
     return new ProviderConfigError({
       profilePath,
       operation,
@@ -104,7 +89,7 @@ const providerError = (
   return new ProviderCallError({
     profilePath,
     operation,
-    message: `provider request failed: ${causeMessage(cause)}`,
+    message: "provider request failed",
     cause,
   });
 };
@@ -182,85 +167,134 @@ const toolResult = (text: string) => ({
 
 const toolError = (message: string) => toolResult(`ERROR: ${message}`);
 
-const atomicReplace = async (
-  document: MemoryDocument,
-  content: string,
-): Promise<{ readonly ok: true } | { readonly ok: false; readonly cause: unknown }> => {
-  const temporaryPath = join(dirname(document.absolutePath), `.${randomUUID()}.memory-write.tmp`);
-  let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
+class MemoryWriteIoError extends Schema.TaggedErrorClass<MemoryWriteIoError>()(
+  "MemoryWriteIoError",
+  {
+    operation: Schema.Literals(["lock", "read", "write"]),
+    path: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
 
-  try {
-    await mkdir(dirname(document.absolutePath), { recursive: true });
-    temporaryFile = await open(temporaryPath, "wx");
-    await temporaryFile.writeFile(content, "utf8");
-    await temporaryFile.sync();
-    await temporaryFile.close();
-    temporaryFile = undefined;
-    await rename(temporaryPath, document.absolutePath);
-    return { ok: true };
-  } catch (cause: unknown) {
-    await temporaryFile?.close().catch(() => undefined);
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
-    return { ok: false, cause };
-  }
-};
+const memoryIo = <A>(
+  operation: MemoryWriteIoError["operation"],
+  path: string,
+  run: (signal: AbortSignal) => PromiseLike<A>,
+): Effect.Effect<A, MemoryWriteIoError> =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) => new MemoryWriteIoError({ operation, path, cause }),
+  });
 
 const errorCode = (cause: unknown): string | undefined =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
     ? cause.code
     : undefined;
 
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+const logMemoryCleanupFailure = (operation: string, path: string, cause: unknown) =>
+  Effect.logWarning("Pi memory cleanup failed", { operation, path, cause });
 
-interface MemoryLock {
-  readonly database: Database;
-}
+const removeTemporaryMemoryFile = (path: string): Effect.Effect<void> =>
+  memoryIo("write", path, () => rm(path)).pipe(
+    Effect.catch((failure) =>
+      errorCode(failure.cause) === "ENOENT"
+        ? Effect.void
+        : logMemoryCleanupFailure("remove temporary file", path, failure.cause),
+    ),
+  );
 
-const releaseMemoryLock = (lock: MemoryLock): void => {
-  try {
-    if (lock.database.inTransaction) {
-      lock.database.exec("ROLLBACK");
-    }
-  } finally {
-    lock.database.close();
-  }
+const atomicReplace = (
+  document: MemoryDocument,
+  content: string,
+): Effect.Effect<void, MemoryWriteIoError> => {
+  const temporaryPath = join(dirname(document.absolutePath), `.${randomUUID()}.memory-write.tmp`);
+  const publish = Effect.gen(function* () {
+    yield* memoryIo("write", dirname(document.absolutePath), () =>
+      mkdir(dirname(document.absolutePath), { recursive: true }),
+    );
+    yield* Effect.acquireUseRelease(
+      memoryIo("write", temporaryPath, () => open(temporaryPath, "wx")),
+      (temporaryFile) =>
+        memoryIo("write", temporaryPath, async () => {
+          await temporaryFile.writeFile(content, "utf8");
+          await temporaryFile.sync();
+        }),
+      (temporaryFile) =>
+        memoryIo("write", temporaryPath, () => temporaryFile.close()).pipe(
+          Effect.catch((failure) =>
+            logMemoryCleanupFailure("close temporary file", temporaryPath, failure.cause),
+          ),
+        ),
+    );
+    yield* memoryIo("write", document.absolutePath, () =>
+      rename(temporaryPath, document.absolutePath),
+    );
+  });
+  return publish.pipe(Effect.ensuring(removeTemporaryMemoryFile(temporaryPath)));
 };
 
-const acquireMemoryLock = async (
-  profilePath: string,
-  document: MemoryDocument,
-): Promise<MemoryLock> => {
-  const lockPath = join(
+const memoryLockPath = (profilePath: string, document: MemoryDocument): string =>
+  join(
     profilePath,
     ".runtime",
     "memory-locks",
     `${encodeURIComponent(document.relativePath)}.sqlite`,
   );
-  const deadline = Date.now() + 2_000;
-  await mkdir(dirname(lockPath), { recursive: true });
-  const database = new Database(lockPath, { create: true });
-  database.exec("PRAGMA busy_timeout = 0");
 
-  try {
-    while (true) {
-      try {
-        database.exec("BEGIN IMMEDIATE");
-        return { database };
-      } catch (cause: unknown) {
-        if (errorCode(cause)?.startsWith("SQLITE_BUSY") !== true) {
-          throw cause;
-        }
-        if (Date.now() >= deadline) {
-          throw new Error("memory lock timed out after 2 seconds");
-        }
-        await delay(50);
-      }
-    }
-  } catch (cause: unknown) {
-    database.close();
-    throw cause;
-  }
+const releaseMemoryDatabase = (database: Database, path: string): Effect.Effect<void> =>
+  Effect.try({
+    try: () => {
+      if (database.inTransaction) database.exec("ROLLBACK");
+      database.close();
+    },
+    catch: (cause) => new MemoryWriteIoError({ operation: "lock", path, cause }),
+  }).pipe(Effect.catch((failure) => logMemoryCleanupFailure("release lock", path, failure.cause)));
+
+const withMemoryLock = <A, E>(
+  profilePath: string,
+  document: MemoryDocument,
+  use: Effect.Effect<A, E>,
+): Effect.Effect<A, E | MemoryWriteIoError> => {
+  const lockPath = memoryLockPath(profilePath, document);
+  return memoryIo("lock", dirname(lockPath), () =>
+    mkdir(dirname(lockPath), { recursive: true }),
+  ).pipe(
+    Effect.andThen(
+      Effect.acquireUseRelease(
+        Effect.try({
+          try: () => {
+            const database = new Database(lockPath, { create: true });
+            database.exec("PRAGMA busy_timeout = 0");
+            return database;
+          },
+          catch: (cause) => new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
+        }),
+        (database) =>
+          Effect.gen(function* () {
+            const deadline = (yield* Clock.currentTimeMillis) + 2_000;
+            while (true) {
+              const acquired = yield* Effect.try({
+                try: () => database.exec("BEGIN IMMEDIATE"),
+                catch: (cause) =>
+                  new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
+              }).pipe(Effect.result);
+              if (Result.isSuccess(acquired)) break;
+              if (errorCode(acquired.failure.cause)?.startsWith("SQLITE_BUSY") !== true)
+                return yield* acquired.failure;
+              if ((yield* Clock.currentTimeMillis) >= deadline)
+                return yield* new MemoryWriteIoError({
+                  operation: "lock",
+                  path: lockPath,
+                  cause: "memory lock timed out after 2 seconds",
+                });
+              yield* Effect.sleep("50 millis");
+            }
+            return yield* use;
+          }),
+        (database) => releaseMemoryDatabase(database, lockPath),
+      ),
+    ),
+  );
 };
 
 const writableMemoryDocument = (
@@ -300,92 +334,75 @@ export const createMemoryWriteTool = (
   description:
     "Apply an all-or-nothing batch of entry-based add, replace, or remove operations to curated memory. Use shared for assistant-wide facts (2200 code points), person for the current 1:1 person (1375), or group for the current group (1375). Add is idempotent; replace/remove oldText must match exactly one entry. Person memory is unavailable in groups; group memory is unavailable in 1:1 chats.",
   parameters: memoryWriteParameters,
-  async execute(_toolCallId, { scope, operations }) {
+  execute(_toolCallId, { scope, operations }, signal) {
     const target = writableMemoryDocument(profilePath, context, scope);
-    if (!target.ok) {
-      return toolError(target.message);
-    }
+    if (!target.ok) return Promise.resolve(toolError(target.message));
 
-    let lock: MemoryLock | undefined;
-    try {
-      lock = await acquireMemoryLock(profilePath, target.document);
-      const loaded = await readMemoryDocument(target.document);
-      if (!loaded.ok) {
-        return toolError(`memory read failed: ${causeMessage(loaded.cause)}`);
-      }
-
-      const applied = applyMemoryOperations(loaded.content ?? "", operations, target.document.cap);
-      if (!applied.ok) {
-        return toolError(applied.message);
-      }
-      if (!applied.changed) {
-        return toolResult("no change");
-      }
-
-      const write = await atomicReplace(target.document, applied.content);
-      if (!write.ok) {
-        return toolError(`memory write failed: ${causeMessage(write.cause)}`);
-      }
-
-      return toolResult(
-        `applied ${operations.length} operation(s); ${codePointLength(applied.content)}/${target.document.cap} code points in ${target.document.relativePath}`,
-      );
-    } catch (cause: unknown) {
-      return toolError(`memory write failed: ${causeMessage(cause)}`);
-    } finally {
-      if (lock !== undefined) {
-        releaseMemoryLock(lock);
-      }
-    }
+    const program = withMemoryLock(
+      profilePath,
+      target.document,
+      Effect.gen(function* () {
+        const loaded = yield* readMemoryDocument(target.document);
+        const applied = applyMemoryOperations(loaded ?? "", operations, target.document.cap);
+        if (!applied.ok) return toolError(applied.message);
+        if (!applied.changed) return toolResult("no change");
+        yield* atomicReplace(target.document, applied.content);
+        return toolResult(
+          `applied ${operations.length} operation(s); ${codePointLength(applied.content)}/${target.document.cap} code points in ${target.document.relativePath}`,
+        );
+      }),
+    ).pipe(
+      Effect.catch((failure) =>
+        Effect.succeed(
+          toolError(failure.operation === "read" ? "memory read failed" : "memory write failed"),
+        ),
+      ),
+    );
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the single adapter bridge.
+    return Effect.runPromise(program, { signal });
   },
 });
 
 const readMemoryDocument = (
   document: MemoryDocument,
-): Promise<
-  | { readonly ok: true; readonly content: string | undefined }
-  | { readonly ok: false; readonly cause: unknown }
-> =>
-  readFile(document.absolutePath, "utf8").then(
-    (content) => ({ ok: true, content: content.trim().length === 0 ? undefined : content }),
-    (cause: unknown) => {
-      const code =
-        cause instanceof Error && "code" in cause && typeof cause.code === "string"
-          ? cause.code
-          : undefined;
-      return code === "ENOENT" ? { ok: true, content: undefined } : { ok: false, cause };
-    },
+): Effect.Effect<string | undefined, MemoryWriteIoError> =>
+  memoryIo("read", document.absolutePath, (signal) =>
+    readFile(document.absolutePath, { encoding: "utf8", signal }),
+  ).pipe(
+    Effect.map((content) => (content.trim().length === 0 ? undefined : content)),
+    Effect.catch((failure) =>
+      errorCode(failure.cause) === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(failure),
+    ),
   );
 
-const buildMemoryPrompt = async (
+const buildMemoryPrompt = (
   profilePath: string,
   documents: ReadonlyArray<MemoryDocument>,
-): Promise<string> => {
-  const loaded = await Promise.all(documents.map(readMemoryDocument));
-  const sections: Array<string> = [];
-
-  for (const [index, result] of loaded.entries()) {
-    if (!result.ok) {
-      const document = documents[index];
-      throw new ProviderConfigError({
-        profilePath,
-        operation: "read memory",
-        message: `could not read ${document?.absolutePath ?? profilePath}`,
-        cause: result.cause,
-      });
-    }
-
-    const document = documents[index];
-    if (result.content !== undefined && document !== undefined) {
-      sections.push(`${document.heading}\n${renderMemoryForPrompt(result.content)}`);
-    }
-  }
-
-  sections.push(
-    "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
+): Effect.Effect<string, ProviderConfigError> =>
+  Effect.forEach(documents, (document) =>
+    readMemoryDocument(document).pipe(
+      Effect.mapError(
+        (failure) =>
+          new ProviderConfigError({
+            profilePath,
+            operation: "read memory",
+            message: `could not read ${document.absolutePath}`,
+            cause: failure.cause,
+          }),
+      ),
+      Effect.map((content) => ({ document, content })),
+    ),
+  ).pipe(
+    Effect.map((loaded) => {
+      const sections = loaded.flatMap(({ document, content }) =>
+        content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
+      );
+      sections.push(
+        "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
+      );
+      return sections.join("\n\n");
+    }),
   );
-  return sections.join("\n\n");
-};
 
 const memoryReadFailurePrompt = (profilePath: string, cause: unknown): string =>
   [
@@ -394,19 +411,23 @@ const memoryReadFailurePrompt = (profilePath: string, cause: unknown): string =>
     "Do not claim to remember Profile facts or call memory_write this turn. Tell the user that Profile memory is unavailable.",
   ].join("\n");
 
-export const refreshProfileMemory = async (
+export const refreshProfileMemory = (
   profilePath: string,
   documents: ReadonlyArray<MemoryDocument>,
   event: Pick<BeforeAgentStartEvent, "systemPrompt">,
 ): Promise<BeforeAgentStartEventResult> => {
-  try {
-    const memoryPrompt = await buildMemoryPrompt(profilePath, documents);
-    return { systemPrompt: `${event.systemPrompt}\n\n${memoryPrompt}` };
-  } catch (cause: unknown) {
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n${memoryReadFailurePrompt(profilePath, cause)}`,
-    };
-  }
+  const program = buildMemoryPrompt(profilePath, documents).pipe(
+    Effect.match({
+      onFailure: (cause) => ({
+        systemPrompt: `${event.systemPrompt}\n\n${memoryReadFailurePrompt(profilePath, cause)}`,
+      }),
+      onSuccess: (memoryPrompt) => ({
+        systemPrompt: `${event.systemPrompt}\n\n${memoryPrompt}`,
+      }),
+    }),
+  );
+  // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi permits a Promise-returning before_agent_start callback; this is the single adapter bridge.
+  return Effect.runPromise(program);
 };
 
 export const createProfileMemoryExtension = (
@@ -493,58 +514,59 @@ const createProfileRuntime = (
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-) => {
-  const paths = memoryFilePaths(profilePath, context);
-  if (!paths.ok) {
-    return Effect.fail(paths.error);
-  }
+) =>
+  Effect.gen(function* () {
+    const paths = memoryFilePaths(profilePath, context);
+    if (!paths.ok) {
+      return yield* paths.error;
+    }
+    const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
-  return piPromise(profilePath, "create agent runtime", () =>
-    createAgentSessionRuntime(
-      async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-        const resources = await discoverPiResources(profilePath, repositoryRoot);
-        const services = await createAgentSessionServices({
-          cwd,
-          agentDir,
-          resourceLoaderOptions: {
-            systemPrompt: soulPath,
-            noExtensions: true,
-            noSkills: true,
-            ...(resources.extensionPaths.length === 0
-              ? {}
-              : { additionalExtensionPaths: [...resources.extensionPaths] }),
-            ...(resources.skillPaths.length === 0
-              ? {}
-              : { additionalSkillPaths: [...resources.skillPaths] }),
-            noPromptTemplates: true,
-            noThemes: true,
-            noContextFiles: true,
-            extensionFactories: [
-              createZiggyTuiExtension(profilePath),
-              createProfileMemoryExtension(profilePath, paths.documents),
-            ],
-          },
-        });
-        const created = await createAgentSessionFromServices({
-          services,
-          sessionManager: runtimeSessionManager,
-          ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-          customTools: [createMemoryWriteTool(profilePath, context)],
-        });
-        return {
-          ...created,
-          services,
-          diagnostics: services.diagnostics,
-        };
-      },
-      {
-        cwd: profilePath,
-        agentDir: profilePath,
-        sessionManager,
-      },
-    ),
-  );
-};
+    return yield* piPromise(profilePath, "create agent runtime", () =>
+      createAgentSessionRuntime(
+        async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
+          const services = await createAgentSessionServices({
+            cwd,
+            agentDir,
+            resourceLoaderOptions: {
+              systemPrompt: soulPath,
+              noExtensions: true,
+              noSkills: true,
+              ...(resources.extensionPaths.length === 0
+                ? {}
+                : { additionalExtensionPaths: [...resources.extensionPaths] }),
+              ...(resources.skillPaths.length === 0
+                ? {}
+                : { additionalSkillPaths: [...resources.skillPaths] }),
+              noPromptTemplates: true,
+              noThemes: true,
+              noContextFiles: true,
+              extensionFactories: [
+                createZiggyTuiExtension(profilePath),
+                createProfileMemoryExtension(profilePath, paths.documents),
+              ],
+            },
+          });
+          const created = await createAgentSessionFromServices({
+            services,
+            sessionManager: runtimeSessionManager,
+            ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
+            customTools: [createMemoryWriteTool(profilePath, context)],
+          });
+          return {
+            ...created,
+            services,
+            diagnostics: services.diagnostics,
+          };
+        },
+        {
+          cwd: profilePath,
+          agentDir: profilePath,
+          sessionManager,
+        },
+      ),
+    );
+  });
 
 const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
   const bindSession = async (): Promise<void> => {
@@ -584,31 +606,34 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
   await bindSession();
 };
 
-const promptForAssistantText = (runtime: AgentSessionRuntime, text: string): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const session = runtime.session;
+type PromptSession = Pick<
+  AgentSessionRuntime["session"],
+  "abort" | "isIdle" | "prompt" | "subscribe"
+>;
+
+export const promptForAssistantText = (
+  profilePath: string,
+  session: PromptSession,
+  text: string,
+): Effect.Effect<string, ProviderConfigError | ProviderCallError> =>
+  Effect.callback((resume) => {
     let assistantText = "";
     let assistantError: string | undefined;
     let finished = false;
+    let unsubscribe: () => void = () => undefined;
 
-    const completeAssistant = () => {
-      if (assistantError !== undefined) {
-        reject(new Error(assistantError));
-      } else {
-        resolve(assistantText);
-      }
-    };
-
-    const finish = (complete: () => void) => {
-      if (finished) {
-        return;
-      }
+    const finish = (result: Effect.Effect<string, ProviderConfigError | ProviderCallError>) => {
+      if (finished) return;
       finished = true;
       unsubscribe();
-      complete();
+      resume(result);
     };
+    const completeAssistant = () =>
+      assistantError === undefined
+        ? Effect.succeed(assistantText)
+        : Effect.fail(providerError(profilePath, "call provider", new Error(assistantError)));
 
-    const unsubscribe = session.subscribe((event) => {
+    unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
         assistantText = event.message.content
           .filter((content) => content.type === "text")
@@ -619,21 +644,31 @@ const promptForAssistantText = (runtime: AgentSessionRuntime, text: string): Pro
             ? (event.message.errorMessage ?? `Request ${event.message.stopReason}`)
             : undefined;
       }
-
-      if (event.type === "agent_settled") {
-        finish(completeAssistant);
-      }
+      if (event.type === "agent_settled") finish(completeAssistant());
     });
 
     void session.prompt(text).then(
       () => {
-        if (session.isIdle) {
-          finish(completeAssistant);
-        }
+        if (session.isIdle) finish(completeAssistant());
       },
-      (cause: unknown) => {
-        finish(() => reject(cause));
-      },
+      (cause: unknown) => finish(Effect.fail(providerError(profilePath, "call provider", cause))),
+    );
+
+    return Effect.sync(() => {
+      if (finished) return false;
+      finished = true;
+      unsubscribe();
+      return true;
+    }).pipe(
+      Effect.flatMap((shouldAbort) =>
+        shouldAbort
+          ? piPromise(profilePath, "abort agent session", () => session.abort()).pipe(
+              Effect.catch((failure) =>
+                Effect.logWarning("Pi prompt interruption cleanup failed", { failure }),
+              ),
+            )
+          : Effect.void,
+      ),
     );
   });
 
@@ -656,9 +691,12 @@ export const openChat = (
       context,
     );
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
+    const disposeBestEffort = dispose.pipe(
+      Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+    );
 
     if (runtime.modelFallbackMessage !== undefined) {
-      yield* dispose.pipe(Effect.catch(() => Effect.void));
+      yield* disposeBestEffort;
       return yield* new ProviderConfigError({
         profilePath: target.path,
         operation: "select model",
@@ -668,12 +706,11 @@ export const openChat = (
     }
 
     yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime)).pipe(
-      Effect.tapError(() => dispose.pipe(Effect.catch(() => Effect.void))),
+      Effect.tapError(() => disposeBestEffort),
     );
 
     return {
-      prompt: (text) =>
-        piPromise(target.path, "call provider", () => promptForAssistantText(runtime, text)),
+      prompt: (text) => promptForAssistantText(target.path, runtime.session, text),
       dispose,
     };
   });

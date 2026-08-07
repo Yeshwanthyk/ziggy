@@ -12,9 +12,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import * as path from "node:path";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Predicate } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
+  readExtensionPackage,
+  readExtensionSelection,
+  replaceExtensionSelection,
+  scanExtensionShelf,
+  type ExtensionPackage,
+} from "../adapters/fs/profile-extensions";
+import {
+  ProfileExtensionInvalid,
   ProfileFileSystemError,
   ProfileSkillExists,
   ProfileSkillInvalid,
@@ -57,7 +65,20 @@ export type ProfileSkillError =
   | ProfileSkillInvalid
   | ProfileSkillNotFound;
 
-export type ProfileError = ProfileFileSystemError | ProfileTargetNotDirectory | ProfileSkillError;
+export type ProfileExtensionError = ProfileExtensionInvalid | ProfileFileSystemError;
+
+export interface ProfileExtensionMutation {
+  readonly id: string;
+  readonly profilePath: string;
+  readonly changed: boolean;
+  readonly selected: boolean;
+}
+
+export type ProfileError =
+  | ProfileFileSystemError
+  | ProfileTargetNotDirectory
+  | ProfileSkillError
+  | ProfileExtensionInvalid;
 
 export interface ProfilesShape {
   readonly initProfile: (target: ProfileTarget) => Effect.Effect<InitializedProfile, ProfileError>;
@@ -80,6 +101,23 @@ export interface ProfilesShape {
     cwd: string,
     force: boolean,
   ) => Effect.Effect<InstalledSkill, ProfileSkillError>;
+  readonly listExtensions: (
+    repositoryRoot: string,
+  ) => Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionError>;
+  readonly showExtension: (
+    repositoryRoot: string,
+    id: string,
+  ) => Effect.Effect<ExtensionPackage, ProfileExtensionError>;
+  readonly addExtension: (
+    target: ProfileTarget,
+    repositoryRoot: string,
+    id: string,
+  ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
+  readonly removeExtension: (
+    target: ProfileTarget,
+    repositoryRoot: string,
+    id: string,
+  ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
 }
 
 export class Profiles extends Context.Service<Profiles, ProfilesShape>()("ziggy/Profiles") {}
@@ -95,6 +133,7 @@ const fileSystemError = (
     path: targetPath,
     message: details.message,
     code: details.code,
+    cause,
   });
 };
 
@@ -253,7 +292,7 @@ const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, P
     const targetStatus = yield* statPath(target.path).pipe(
       Effect.catchIf(
         (error) => error.code === "ENOENT",
-        () => Effect.succeed(undefined),
+        () => Effect.void,
       ),
     );
 
@@ -569,10 +608,88 @@ const addSkill = (
     };
   });
 
+const listExtensions = (repositoryRoot: string) => scanExtensionShelf(repositoryRoot);
+
+const showExtension = (
+  repositoryRoot: string,
+  id: string,
+): Effect.Effect<ExtensionPackage, ProfileExtensionError> =>
+  Effect.gen(function* () {
+    const shelf = yield* scanExtensionShelf(repositoryRoot);
+    const extension = shelf.find((item) => item.id === id);
+    return extension === undefined
+      ? yield* new ProfileExtensionInvalid({
+          path: path.join(repositoryRoot, "extensions", id),
+          message: `unknown extension '${id}'`,
+          cause: undefined,
+        })
+      : extension;
+  });
+
+const verifyExtensionProfile = (target: ProfileTarget) =>
+  lstatPath(path.join(target.path, "SOUL.md")).pipe(
+    Effect.flatMap((status) =>
+      status.isFile()
+        ? Effect.void
+        : Effect.fail(
+            new ProfileExtensionInvalid({
+              path: target.path,
+              message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
+              cause: undefined,
+            }),
+          ),
+    ),
+    Effect.catchIf(
+      (error) => Predicate.isTagged(error, "ProfileFileSystemError") && error.code === "ENOENT",
+      () =>
+        Effect.fail(
+          new ProfileExtensionInvalid({
+            path: target.path,
+            message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
+            cause: undefined,
+          }),
+        ),
+    ),
+  );
+
+const mutateExtension = (
+  target: ProfileTarget,
+  repositoryRoot: string,
+  id: string,
+  selected: boolean,
+): Effect.Effect<ProfileExtensionMutation, ProfileExtensionError> =>
+  Effect.gen(function* () {
+    yield* verifyExtensionProfile(target);
+    const extension = yield* readExtensionPackage(repositoryRoot, id);
+    if (extension.required) {
+      return yield* new ProfileExtensionInvalid({
+        path: extension.packagePath,
+        message: "required extension 'pi-packages' cannot be added or removed",
+        cause: undefined,
+      });
+    }
+    const current = yield* readExtensionSelection(target.path);
+    yield* Effect.forEach(current, (selectedId) =>
+      readExtensionPackage(repositoryRoot, selectedId),
+    );
+    const alreadySelected = current.includes(id);
+    if (alreadySelected === selected) {
+      return { id, profilePath: target.path, changed: false, selected };
+    }
+    const next = selected ? [...current, id].sort() : current.filter((item) => item !== id);
+    yield* replaceExtensionSelection(target.path, next);
+    return { id, profilePath: target.path, changed: true, selected };
+  });
+
 export const ProfilesLive = Layer.succeed(Profiles, {
   initProfile,
   registerProfile,
   listProfiles,
   listSkills,
   addSkill,
+  listExtensions,
+  showExtension,
+  addExtension: (target, repositoryRoot, id) => mutateExtension(target, repositoryRoot, id, true),
+  removeExtension: (target, repositoryRoot, id) =>
+    mutateExtension(target, repositoryRoot, id, false),
 });

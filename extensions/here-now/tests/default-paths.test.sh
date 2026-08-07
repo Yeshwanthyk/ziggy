@@ -11,7 +11,8 @@ PROFILE_DIR="$TEST_DIR/profile"
 HOME_DIR="$TEST_DIR/home"
 FAKE_BIN="$TEST_DIR/bin"
 CURL_LOG="$TEST_DIR/curl.log"
-mkdir -p "$PROFILE_DIR/.runtime/here-now" "$HOME_DIR/.herenow" "$FAKE_BIN"
+TMPDIR="$TEST_DIR/tmp"
+mkdir -p "$PROFILE_DIR/.runtime/here-now" "$HOME_DIR/.herenow" "$FAKE_BIN" "$TMPDIR"
 printf '%s\n' "profile-api-key" > "$PROFILE_DIR/.runtime/here-now/credentials"
 printf '%s\n' "home-api-key" > "$HOME_DIR/.herenow/credentials"
 printf '%s\n' "<h1>Profile site</h1>" > "$PROFILE_DIR/index.html"
@@ -60,7 +61,7 @@ fi
 EOF
 chmod +x "$FAKE_BIN/curl"
 
-export CURL_LOG
+export CURL_LOG TMPDIR
 export HOME="$HOME_DIR"
 export PATH="$FAKE_BIN:$PATH"
 unset HERENOW_API_KEY HERENOW_DRIVE_TOKEN
@@ -79,3 +80,38 @@ unset HERENOW_API_KEY HERENOW_DRIVE_TOKEN
 
 grep -q 'authorization:\\ Bearer\\ profile-api-key' "$CURL_LOG"
 ! grep -q 'home-api-key' "$CURL_LOG"
+[[ "$(wc -l < "$CURL_LOG" | tr -d ' ')" -eq "$(grep -c -- '--connect-timeout 10 --max-time 120' "$CURL_LOG")" ]]
+
+cat > "$FAKE_BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+max_time=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == "--max-time" ]]; then
+    max_time="$argument"
+  fi
+  previous="$argument"
+done
+if [[ -z "$max_time" ]]; then
+  sleep 5
+  exit 99
+fi
+sleep "$max_time"
+exit 28
+EOF
+chmod +x "$FAKE_BIN/curl"
+
+started=$(date +%s)
+set +e
+(
+  cd "$PROFILE_DIR"
+  HERENOW_CONNECT_TIMEOUT_SECONDS=1 HERENOW_MAX_TIME_SECONDS=1 \
+    bash "$DRIVE_SCRIPT" default >/dev/null 2>&1
+)
+hanging_status=$?
+set -e
+elapsed=$(($(date +%s) - started))
+[[ "$hanging_status" -ne 0 ]]
+[[ "$elapsed" -lt 4 ]]
+[[ -z "$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]

@@ -1,5 +1,4 @@
-/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- tests are approved Effect execution boundaries */
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- fake implements the adapter-owned DiscordSocket Promise contract */
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary, ziggy-effect/no-native-promise-ownership -- tests are approved execution boundaries */
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { DiscordInboundMessage, DiscordSocket } from "../adapters/discord/socket";
@@ -58,21 +57,21 @@ describe("Discord gateway boundary", () => {
         const replied = yield* Deferred.make<void>();
         let nextCall = 0;
         const socket: DiscordSocket = {
-          next: () => {
+          next: Effect.suspend(() => {
             nextCall += 1;
             events.push("next");
-            return nextCall === 1 ? Promise.resolve(message()) : new Promise(() => {});
-          },
-          close: () => {
+            return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
+          }),
+          close: Effect.sync(() => {
             events.push("close");
-            return Promise.resolve();
-          },
+          }),
         };
         const transport: DiscordTransport = {
-          openSocket: (token, intents) => {
-            events.push(`openSocket:${token}:${intents}`);
-            return socket;
-          },
+          openSocket: (token, intents) =>
+            Effect.sync(() => {
+              events.push(`openSocket:${token}:${intents}`);
+              return socket;
+            }),
           createMessage: (token, channelId, text) =>
             Effect.gen(function* () {
               events.push(`createMessage:${token}:${channelId}:${text}`);

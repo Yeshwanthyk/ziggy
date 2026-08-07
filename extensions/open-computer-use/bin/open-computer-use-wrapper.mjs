@@ -3,13 +3,13 @@
 /* eslint-disable ziggy-effect/no-try-catch-or-throw -- This executable converts parse, image, cleanup, and process failures into JSON exit responses. */
 /* eslint-disable ziggy-effect/no-json-parse -- The Pi tool validates input with its exact TypeBox schema before this executable. */
 /* eslint-disable ziggy-effect/no-promise-catch -- This executable converts its stdin rejection into a process exit response. */
-/* eslint-disable ziggy-effect/no-unknown-error-message -- This executable normalizes process-boundary failures for JSON output. */
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
 const OUTPUT_LIMIT = 14 * 1024;
 const CAPTURE_LIMIT = 64 * 1024;
+const TERMINATION_GRACE_MS = 500;
 const TRUNCATION_HINT = "re-run get_app_state with a narrower target";
 const IMAGE_KEY_RE = /^(screenshot|image|png|data)$/i;
 
@@ -298,12 +298,47 @@ const tempFiles = [];
 fs.mkdirSync(screenshotDirectory, { recursive: true });
 fs.mkdirSync(tempDirectory, { recursive: true });
 
+function cleanupTempFiles() {
+  for (const file of tempFiles.splice(0)) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
 const child = spawn("open-computer-use", commandFor(input, tempDirectory, tempFiles), {
   cwd: profilePath,
   env: process.env,
+  detached: process.platform !== "win32",
 });
+let terminationStarted = false;
+let escalation;
+function signalChildTree(signal) {
+  if (child.pid === undefined) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if its process group has already changed or exited.
+    }
+  }
+  child.kill(signal);
+}
+function terminateChild() {
+  if (terminationStarted) return;
+  terminationStarted = true;
+  signalChildTree("SIGTERM");
+  escalation = setTimeout(() => signalChildTree("SIGKILL"), TERMINATION_GRACE_MS);
+  escalation.unref();
+}
+function cleanupTermination() {
+  if (escalation !== undefined) clearTimeout(escalation);
+}
 for (const event of ["SIGINT", "SIGTERM"]) {
-  process.once(event, () => child.kill(event));
+  process.once(event, terminateChild);
 }
 
 let stdout = "";
@@ -315,6 +350,8 @@ child.stderr.on("data", (chunk) => {
   stderr = appendBounded(stderr, chunk);
 });
 child.on("error", (error) => {
+  cleanupTermination();
+  cleanupTempFiles();
   const message =
     error?.code === "ENOENT"
       ? "open-computer-use is not installed"
@@ -329,13 +366,8 @@ child.on("error", (error) => {
   process.exit(1);
 });
 child.on("exit", (code) => {
-  for (const file of tempFiles) {
-    try {
-      fs.unlinkSync(file);
-    } catch {
-      // Best-effort cleanup.
-    }
-  }
+  cleanupTermination();
+  cleanupTempFiles();
   const state = { profilePath, screenshotDirectory, screenshots: [] };
   const cleaned = replaceImages(parseOutput(stdout), state);
   const response = truncateLargeText({

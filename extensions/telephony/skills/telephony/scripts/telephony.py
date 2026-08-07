@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -125,10 +126,41 @@ def _load_state(path: Path | None = None) -> dict[str, Any]:
     return {"version": STATE_VERSION}
 
 
+def _atomic_write_private(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.chmod(0o600)
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+            descriptor = -1
+            temporary_file.write(contents)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+        path.chmod(0o600)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def _save_state(state: dict[str, Any], path: Path | None = None) -> Path:
     state_file = path or _state_path()
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _atomic_write_private(state_file, json.dumps(state, indent=2, sort_keys=True) + "\n")
     return state_file
 
 
@@ -168,7 +200,7 @@ def _upsert_env_file(updates: dict[str, str], env_path: Path | None = None) -> P
         if key not in seen:
             new_lines.append(f"{key}={_quote_env_value(str(value))}")
 
-    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+    _atomic_write_private(path, "\n".join(new_lines).rstrip() + "\n")
     return path
 
 

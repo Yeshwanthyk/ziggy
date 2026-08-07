@@ -2,8 +2,9 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- The Pi boundary validates filesystem input and reports stable tool failures. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
 import { randomUUID } from "node:crypto";
-import { link, mkdir, open, readdir, rename, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -62,6 +63,79 @@ const errorCode = (cause: unknown): string | undefined =>
 const skillFilePath = (profilePath: string, name: string): string =>
   join(profilePath, "skills", name, "SKILL.md");
 
+type SkillDirectory = {
+  readonly path: string;
+  readonly realPath: string;
+};
+
+const assertContained = (root: string, candidate: string): void => {
+  const remainder = relative(root, candidate);
+  if (
+    remainder === ".." ||
+    remainder.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+    isAbsolute(remainder)
+  ) {
+    throw new Error("Profile skill path escapes the Profile");
+  }
+};
+
+const checkedDirectory = async (
+  directoryPath: string,
+  containmentRoot: string,
+): Promise<SkillDirectory> => {
+  const metadata = await lstat(directoryPath);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`Profile skill path must be a regular directory: ${directoryPath}`);
+  }
+  const canonicalPath = await realpath(directoryPath);
+  assertContained(containmentRoot, canonicalPath);
+  return { path: directoryPath, realPath: canonicalPath };
+};
+
+const checkedSkillsRoot = async (
+  profilePath: string,
+  create: boolean,
+): Promise<SkillDirectory | undefined> => {
+  const profileRoot = await realpath(profilePath);
+  const skillsPath = join(profilePath, "skills");
+  if (create) {
+    try {
+      await mkdir(skillsPath);
+    } catch (cause: unknown) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+    }
+  }
+  try {
+    return await checkedDirectory(skillsPath, profileRoot);
+  } catch (cause: unknown) {
+    if (!create && errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+const checkedSkillDirectory = async (
+  profilePath: string,
+  name: string,
+  create: boolean,
+): Promise<SkillDirectory | undefined> => {
+  const skillsRoot = await checkedSkillsRoot(profilePath, create);
+  if (skillsRoot === undefined) return undefined;
+  const skillPath = join(skillsRoot.path, name);
+  if (create) {
+    try {
+      await mkdir(skillPath);
+    } catch (cause: unknown) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+    }
+  }
+  try {
+    return await checkedDirectory(skillPath, skillsRoot.realPath);
+  } catch (cause: unknown) {
+    if (!create && errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
 const validateSkillName = (name: string): void => {
   if (!Check(SkillName, name)) {
     throw new Error(
@@ -71,7 +145,11 @@ const validateSkillName = (name: string): void => {
 };
 
 const readBoundedText = async (filePath: string): Promise<string> => {
-  const file = await open(filePath, "r");
+  const metadata = await lstat(filePath);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`Profile SKILL.md must be a regular file: ${filePath}`);
+  }
+  const file = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const buffer = Buffer.alloc(MAX_SKILL_BYTES + 1);
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
@@ -111,24 +189,27 @@ export const readProfileSkill = async (
   name: string,
 ): Promise<{ readonly skill: ProfileSkill; readonly body: string }> => {
   validateSkillName(name);
-  const body = await readBoundedText(skillFilePath(profilePath, name));
+  const skillDirectory = await checkedSkillDirectory(profilePath, name, false);
+  if (skillDirectory === undefined) {
+    throw new Error(`Profile skill "${name}" does not exist`);
+  }
+  const targetPath = skillFilePath(profilePath, name);
+  const canonicalTarget = await realpath(targetPath);
+  assertContained(skillDirectory.realPath, canonicalTarget);
+  const body = await readBoundedText(targetPath);
   return { skill: validateProfileSkillBody(name, body), body };
 };
 
 export const listProfileSkills = async (
   profilePath: string,
 ): Promise<ReadonlyArray<ProfileSkill>> => {
-  let entries;
-  try {
-    entries = await readdir(join(profilePath, "skills"), { withFileTypes: true });
-  } catch (cause: unknown) {
-    if (errorCode(cause) === "ENOENT") return [];
-    throw cause;
-  }
+  const skillsRoot = await checkedSkillsRoot(profilePath, false);
+  if (skillsRoot === undefined) return [];
+  const entries = await readdir(skillsRoot.path, { withFileTypes: true });
 
   const skills: ProfileSkill[] = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!Check(SkillName, entry.name)) continue;
+    if (!Check(SkillName, entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
     try {
       const { skill } = await readProfileSkill(profilePath, entry.name);
       skills.push(skill);
@@ -140,10 +221,12 @@ export const listProfileSkills = async (
   return skills;
 };
 
-const profileSkillExists = async (profilePath: string, name: string): Promise<boolean> => {
+const profileSkillExists = async (targetPath: string): Promise<boolean> => {
   try {
-    const file = await open(skillFilePath(profilePath, name), "r");
-    await file.close();
+    const metadata = await lstat(targetPath);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new Error(`Profile SKILL.md must be a regular file: ${targetPath}`);
+    }
     return true;
   } catch (cause: unknown) {
     if (errorCode(cause) === "ENOENT") return false;
@@ -151,7 +234,12 @@ const profileSkillExists = async (profilePath: string, name: string): Promise<bo
   }
 };
 
-const atomicWrite = async (targetPath: string, body: string, replace: boolean): Promise<void> => {
+const atomicWrite = async (
+  targetPath: string,
+  body: string,
+  replace: boolean,
+  verifyParent: () => Promise<SkillDirectory | undefined>,
+): Promise<void> => {
   const temporaryPath = join(dirname(targetPath), `.${randomUUID()}.skill-curator.tmp`);
   let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
@@ -160,6 +248,11 @@ const atomicWrite = async (targetPath: string, body: string, replace: boolean): 
     await temporaryFile.sync();
     await temporaryFile.close();
     temporaryFile = undefined;
+    const parent = await verifyParent();
+    if (parent === undefined) {
+      throw new Error("Profile skill directory disappeared during write");
+    }
+    assertContained(parent.realPath, await realpath(temporaryPath));
     if (replace) {
       await rename(temporaryPath, targetPath);
     } else {
@@ -194,12 +287,17 @@ export const writeProfileSkill = async (
   replace = false,
 ): Promise<{ readonly name: string; readonly action: "created" | "replaced" }> => {
   validateProfileSkillBody(name, body);
-  const exists = replace ? await profileSkillExists(profilePath, name) : false;
-
+  const skillDirectory = await checkedSkillDirectory(profilePath, name, true);
+  if (skillDirectory === undefined) {
+    throw new Error("Profile skill directory could not be created");
+  }
   const targetPath = skillFilePath(profilePath, name);
-  await mkdir(join(profilePath, "skills", name), { recursive: true });
+  const exists = replace ? await profileSkillExists(targetPath) : false;
+
   try {
-    await atomicWrite(targetPath, body, replace);
+    await atomicWrite(targetPath, body, replace, () =>
+      checkedSkillDirectory(profilePath, name, false),
+    );
   } catch (cause: unknown) {
     if (!replace && errorCode(cause) === "EEXIST") {
       throw new Error(`Profile skill "${name}" already exists; set replace:true to replace it`);

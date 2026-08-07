@@ -1,14 +1,14 @@
 import { Effect, Schema } from "effect";
 
-const TelegramId = Schema.Number.check(
+const TelegramId = Schema.Finite.check(
   Schema.makeFilter(Number.isSafeInteger, { expected: "a safe integer Telegram ID" }),
 );
-const HttpStatus = Schema.Number.check(
+const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(100),
   Schema.isLessThanOrEqualTo(599),
 );
-const RetryAfterSeconds = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const RetryAfterSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 const TelegramUser = Schema.Struct({
   id: TelegramId,
   username: Schema.optional(Schema.String),
@@ -72,8 +72,8 @@ export class TelegramApiError extends Schema.TaggedErrorClass<TelegramApiError>(
       "invalid-response",
     ]),
     retriable: Schema.Boolean,
-    status: Schema.optional(Schema.Number),
-    retryAfterSeconds: Schema.optional(Schema.Number),
+    status: Schema.optional(Schema.Finite),
+    retryAfterSeconds: Schema.optional(Schema.Finite),
     message: Schema.String,
     cause: Schema.Defect(),
   },

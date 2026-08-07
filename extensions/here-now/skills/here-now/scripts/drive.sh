@@ -8,6 +8,8 @@ API_KEY="${HERENOW_API_KEY:-}"
 DRIVE_TOKEN="${HERENOW_DRIVE_TOKEN:-}"
 ALLOW_NON_HERENOW_BASE_URL=0
 MAX_FILE_BYTES=$((500 * 1024 * 1024))
+CURL_CONNECT_TIMEOUT_SECONDS="${HERENOW_CONNECT_TIMEOUT_SECONDS:-10}"
+CURL_MAX_TIME_SECONDS="${HERENOW_MAX_TIME_SECONDS:-120}"
 
 usage() {
   cat <<'USAGE'
@@ -18,6 +20,10 @@ Global options:
   --token <drv_live_...> Drive token (or $HERENOW_DRIVE_TOKEN)
   --base-url <url>       API base (default: https://here.now)
   --allow-nonherenow-base-url
+
+Environment:
+  HERENOW_CONNECT_TIMEOUT_SECONDS  Curl connect timeout (default: 10)
+  HERENOW_MAX_TIME_SECONDS          Curl request timeout (default: 120)
 
 Commands:
   create [name] [--default]
@@ -38,6 +44,20 @@ USAGE
 }
 
 die() { echo "error: $1" >&2; exit 1; }
+
+[[ "$CURL_CONNECT_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "HERENOW_CONNECT_TIMEOUT_SECONDS must be a positive integer"
+[[ "$CURL_MAX_TIME_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "HERENOW_MAX_TIME_SECONDS must be a positive integer"
+CURL_ARGS=(
+  --connect-timeout "$CURL_CONNECT_TIMEOUT_SECONDS"
+  --max-time "$CURL_MAX_TIME_SECONDS"
+)
+TEMP_RESPONSE_FILES=()
+cleanup_temp_responses() {
+  if [[ "${#TEMP_RESPONSE_FILES[@]}" -gt 0 ]]; then
+    rm -f "${TEMP_RESPONSE_FILES[@]}"
+  fi
+}
+trap cleanup_temp_responses EXIT
 
 if command -v jq >/dev/null 2>&1; then
   JQ_BIN="$(command -v jq)"
@@ -118,11 +138,12 @@ api_json() {
   local body="${1:-}"
   local tmp
   tmp=$(mktemp)
+  TEMP_RESPONSE_FILES+=("$tmp")
   local code
   if [[ -n "$body" ]]; then
-    code=$(curl -sS -o "$tmp" -w "%{http_code}" -X "$method" "$url" "${auth_header[@]}" -H "content-type: application/json" -d "$body")
+    code=$(curl "${CURL_ARGS[@]}" -sS -o "$tmp" -w "%{http_code}" -X "$method" "$url" "${auth_header[@]}" -H "content-type: application/json" -d "$body")
   else
-    code=$(curl -sS -o "$tmp" -w "%{http_code}" -X "$method" "$url" "${auth_header[@]}")
+    code=$(curl "${CURL_ARGS[@]}" -sS -o "$tmp" -w "%{http_code}" -X "$method" "$url" "${auth_header[@]}")
   fi
   if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
     local err
@@ -213,7 +234,7 @@ put_file() {
   upload=$(api_json POST "$BASE_URL/api/v1/drives/$id/files/uploads" "$body")
   upload_url=$(echo "$upload" | "$JQ_BIN" -r '.uploadUrl')
   upload_id=$(echo "$upload" | "$JQ_BIN" -r '.uploadId')
-  http_code=$(curl -sS -o /dev/null -w "%{http_code}" -X PUT "$upload_url" -H "Content-Type: $ct" --data-binary "@$local_file")
+  http_code=$(curl "${CURL_ARGS[@]}" -sS -o /dev/null -w "%{http_code}" -X PUT "$upload_url" -H "Content-Type: $ct" --data-binary "@$local_file")
   [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]] || die "upload failed for $path (HTTP $http_code)"
   api_json POST "$BASE_URL/api/v1/drives/$id/files/finalize" "$("$JQ_BIN" -n --arg u "$upload_id" '{uploadId:$u}')" | "$JQ_BIN" .
 }
@@ -247,7 +268,7 @@ case "$CMD" in
   cat)
     [[ $# -eq 2 ]] || die "usage: drive.sh cat <drive> <path>"
     id=$(resolve_drive "$1")
-    curl -fsS "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$2")" "${auth_header[@]}"
+    curl "${CURL_ARGS[@]}" -fsS "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$2")" "${auth_header[@]}"
     ;;
   put)
     [[ $# -ge 2 ]] || die "usage: drive.sh put <drive> <path> --from <local-file>"
@@ -322,7 +343,7 @@ case "$CMD" in
           echo "download $p -> $out"
         else
           mkdir -p "$(dirname "$out")"
-          curl -fsS "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$p")" "${auth_header[@]}" -o "$out"
+          curl "${CURL_ARGS[@]}" -fsS "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$p")" "${auth_header[@]}" -o "$out"
         fi
         total=$((total + 1))
       done < <(echo "$files" | "$JQ_BIN" -r '.files[].path')
@@ -349,7 +370,7 @@ case "$CMD" in
     else
       meta=$(file_meta "$id" "$path")
       etag=$(echo "$meta" | "$JQ_BIN" -r '.etag')
-      curl -fsS -X DELETE "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$path")" "${auth_header[@]}" -H "If-Match: $etag" | "$JQ_BIN" .
+      curl "${CURL_ARGS[@]}" -fsS -X DELETE "$BASE_URL/api/v1/drives/$id/files/$(urlenc_path "$path")" "${auth_header[@]}" -H "If-Match: $etag" | "$JQ_BIN" .
     fi
     ;;
   share)

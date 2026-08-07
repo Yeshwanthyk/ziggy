@@ -1,29 +1,29 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer, Runtime } from "effect";
+import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
 import { makePiAgentLive } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
+import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
-import {
-  DiscordGateway,
-  DiscordGatewayLive,
-  loadDiscordGatewayConfig,
-} from "./application/discord-gateway";
-import { Gateway, GatewayLive, loadGatewayConfig } from "./application/gateway";
+import { DiscordGatewayLive } from "./application/discord-gateway";
+import { GatewayLive } from "./application/gateway";
 import { Profiles, ProfilesLive } from "./application/profiles";
-import {
-  loadSlackGatewayConfig,
-  SlackGateway,
-  SlackGatewayLive,
-} from "./application/slack-gateway";
+import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { SlackGatewayLive } from "./application/slack-gateway";
 import {
   resolveProfileTarget,
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
+import { validateAutomationId } from "./domain/automation";
+import {
+  renderAutomationOutcome,
+  renderAutomationRuns,
+  renderAutomationStatus,
+} from "./faces/automation-cli";
 
 const command = process.argv[2];
 
@@ -35,6 +35,23 @@ const resolutionOptions = {
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 const PiAgentLive = makePiAgentLive(repositoryRoot);
+const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
+const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
+const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
+const ResidentProvided = ResidentGatewayLive.pipe(
+  Layer.provide(
+    Layer.merge(
+      SchedulerProvided,
+      Layer.merge(
+        GatewayLive.pipe(Layer.provide(AgentLive)),
+        Layer.merge(
+          DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
+          SlackGatewayLive.pipe(Layer.provide(AgentLive)),
+        ),
+      ),
+    ),
+  ),
+);
 
 const fail = (message: string) =>
   Effect.sync(() => {
@@ -47,9 +64,8 @@ const program = Effect.gen(function* () {
   const agent = yield* ZiggyAgent;
   const auth = yield* Auth;
   const automations = yield* Automations;
-  const gateway = yield* Gateway;
-  const discordGateway = yield* DiscordGateway;
-  const slackGateway = yield* SlackGateway;
+  const automationScheduler = yield* AutomationScheduler;
+  const residentGateway = yield* ResidentGateway;
 
   switch (command) {
     case "init": {
@@ -136,6 +152,60 @@ const program = Effect.gen(function* () {
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]`);
     }
+    case "extensions": {
+      const action = process.argv[3];
+      if (action === "list" && process.argv.length === 4) {
+        const extensions = yield* profiles.listExtensions(repositoryRoot);
+        for (const extension of extensions) {
+          console.log(
+            `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.description}`,
+          );
+        }
+        return;
+      }
+      if (action === "show" && process.argv[4] !== undefined && process.argv.length === 5) {
+        const extension = yield* profiles.showExtension(repositoryRoot, process.argv[4]);
+        console.log(`id\t${extension.id}`);
+        console.log(`kind\t${extension.kind}`);
+        console.log(`status\t${extension.required ? "required" : "optional"}`);
+        console.log(`description\t${extension.description}`);
+        console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
+        for (const skill of extension.skills) {
+          console.log(`skill\t${skill.name} — ${skill.description}`);
+        }
+        for (const extensionPath of extension.extensionPaths) {
+          console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
+        }
+        return;
+      }
+      if (
+        (action === "add" || action === "remove") &&
+        process.argv[4] !== undefined &&
+        process.argv[5] !== undefined &&
+        process.argv.length === 6
+      ) {
+        const target = resolveProfileTarget(process.argv[4], resolutionOptions);
+        const result = yield* action === "add"
+          ? profiles.addExtension(target, repositoryRoot, process.argv[5])
+          : profiles.removeExtension(target, repositoryRoot, process.argv[5]);
+        if (!result.changed) {
+          console.log(
+            `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
+          );
+          return;
+        }
+        console.log(
+          `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`,
+        );
+        console.log("reopen the Profile or restart its Ziggy process to apply the change");
+        return;
+      }
+      return yield* fail(`usage:
+  ziggy extensions list
+  ziggy extensions show <id>
+  ziggy extensions add <name|path> <id>
+  ziggy extensions remove <name|path> <id>`);
+    }
     case "auth": {
       const argument = process.argv[3];
       const providerId = process.argv[4];
@@ -209,46 +279,63 @@ const program = Effect.gen(function* () {
       process.exitCode = exitCode;
       return;
     }
+    case "automations": {
+      const action = process.argv[3];
+      const argument = process.argv[4];
+      if (action === "status" && argument !== undefined && process.argv.length === 5) {
+        const status = yield* automationScheduler.status(
+          resolveProfileTarget(argument, resolutionOptions),
+        );
+        console.log(renderAutomationStatus(status));
+        return;
+      }
+      if (action === "runs" && argument !== undefined && process.argv.length <= 6) {
+        const automationId =
+          process.argv[5] === undefined ? undefined : yield* validateAutomationId(process.argv[5]);
+        const runs = yield* automationScheduler.runs(
+          resolveProfileTarget(argument, resolutionOptions),
+          automationId,
+        );
+        console.log(renderAutomationRuns(runs, yield* Clock.currentTimeMillis));
+        return;
+      }
+      return yield* fail(
+        `usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]`,
+      );
+    }
     case "wake": {
       const argument = process.argv[3];
       const automationId = process.argv[4];
-      if (argument === undefined || automationId === undefined) {
+      if (argument === undefined || automationId === undefined || process.argv.length !== 5) {
         return yield* fail("usage: ziggy wake <name|path> <automation-id>");
       }
 
-      yield* automations.wake(resolveProfileTarget(argument, resolutionOptions), automationId);
+      const outcome = yield* automations.run(
+        resolveProfileTarget(argument, resolutionOptions),
+        automationId,
+        { kind: "manual-force" },
+      );
+      const rendered = renderAutomationOutcome(outcome);
+      for (const line of rendered.stderr) console.error(line);
+      process.exitCode = rendered.exitCode;
       return;
     }
     case "gateway": {
       const argument = process.argv[3];
-      if (argument === undefined) {
+      if (argument === undefined || process.argv.length !== 4) {
         return yield* fail("usage: ziggy gateway <name|path>");
       }
 
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadGatewayConfig(target);
-      return yield* gateway.runLoop(target, config);
+      return yield* residentGateway.run(resolveProfileTarget(argument, resolutionOptions));
     }
-    case "discord": {
-      const argument = process.argv[3];
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy discord <name|path>");
-      }
-
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadDiscordGatewayConfig(target);
-      return yield* discordGateway.runLoop(target, config);
-    }
-    case "slack": {
-      const argument = process.argv[3];
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy slack <name|path>");
-      }
-
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      const config = yield* loadSlackGatewayConfig(target);
-      return yield* slackGateway.runLoop(target, config);
-    }
+    case "discord":
+      return yield* fail(
+        "ziggy discord is no longer a resident command; use: ziggy gateway <name|path>",
+      );
+    case "slack":
+      return yield* fail(
+        "ziggy slack is no longer a resident command; use: ziggy gateway <name|path>",
+      );
     case undefined:
       process.exitCode = yield* agent.openTui(resolveProfileTarget(".", resolutionOptions), {
         kind: "local",
@@ -266,6 +353,7 @@ const program = Effect.gen(function* () {
       fail(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>
       fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
+    ProfileExtensionInvalid: (failure) => fail(failure.message),
     ProfileSkillInvalid: (failure) => fail(failure.message),
     ProfileSkillNotFound: (failure) => fail(failure.message),
     ProfileSkillExists: (failure) => fail(failure.message),
@@ -279,11 +367,12 @@ const program = Effect.gen(function* () {
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
-    AutomationDeliveryUnavailable: (failure) => fail(failure.message),
+    AutomationGateFailed: (failure) => fail(failure.message),
+    AutomationDatabaseError: (failure) => fail(failure.message),
+    AutomationProjectionError: (failure) => fail(failure.message),
+    AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
-    TelegramApiError: (failure) => fail(failure.message),
-    DiscordApiError: (failure) => fail(failure.message),
-    SlackApiError: (failure) => fail(failure.message),
+    GatewayOwnerError: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.merge(
@@ -302,8 +391,11 @@ const program = Effect.gen(function* () {
                 SlackGatewayLive.pipe(
                   Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
                 ),
-                AutomationsLive.pipe(
-                  Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+                Layer.merge(
+                  AutomationsLive.pipe(
+                    Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+                  ),
+                  Layer.merge(SchedulerProvided, ResidentProvided),
                 ),
               ),
             ),
@@ -316,7 +408,7 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(command === "gateway" || command === "discord" || command === "slack"
+  ...(command === "gateway"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {

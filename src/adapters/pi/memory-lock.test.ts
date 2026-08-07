@@ -78,6 +78,35 @@ describe("memory_write locking", () => {
     );
   });
 
+  test("interruption while waiting for the lock closes the waiting database", async () => {
+    const profilePath = await temporaryProfile();
+    const lockPath = memoryLockPath(profilePath, "MEMORY.md");
+    await mkdir(join(profilePath, ".runtime", "memory-locks"), { recursive: true });
+    const holder = new Database(lockPath, { create: true });
+    holder.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+    const controller = new AbortController();
+    const tool = createMemoryWriteTool(profilePath, { kind: "local" });
+    const pending = tool.execute(
+      "interrupted",
+      { scope: "shared", operations: [{ action: "add", content: "must not persist" }] },
+      controller.signal,
+      undefined,
+      Object.create(null),
+    );
+    await Bun.sleep(75);
+
+    controller.abort();
+    await expect(pending).rejects.toBeDefined();
+    holder.exec("ROLLBACK");
+    holder.close();
+
+    expectMemoryLockAvailable(profilePath, "MEMORY.md");
+    await expect(readFile(join(profilePath, "MEMORY.md"), "utf8")).rejects.toHaveProperty(
+      "code",
+      "ENOENT",
+    );
+  });
+
   test("overflow leaves the document untouched", async () => {
     const profilePath = await temporaryProfile();
     const memoryPath = join(profilePath, "MEMORY.md");

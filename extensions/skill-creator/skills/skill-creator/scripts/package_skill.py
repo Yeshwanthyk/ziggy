@@ -10,7 +10,9 @@ Example:
     python3 package_skill.py skills/my-skill ./dist
 """
 
+import os
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -74,9 +76,16 @@ def package_skill(skill_path, output_dir=None):
 
     EXCLUDED_DIRS = {".git", ".svn", ".hg", "__pycache__", "node_modules"}
 
-    # Create the .skill file (zip format)
+    # Create the .skill file (zip format) beside the final path, publishing only on success.
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output_path,
+        prefix=f".{skill_name}.",
+        suffix=".skill.tmp",
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
     try:
-        with zipfile.ZipFile(skill_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
+        with zipfile.ZipFile(temporary_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             # Walk through the skill directory
             for file_path in skill_path.rglob("*"):
                 # Security: never follow or package symlinks.
@@ -91,10 +100,9 @@ def package_skill(skill_path, output_dir=None):
                 if file_path.is_file():
                     resolved_file = file_path.resolve()
                     if not _is_within(resolved_file, skill_path):
-                        print(f"[ERROR] File escapes skill root: {file_path}")
-                        return None
-                    # If output lives under skill_path, avoid writing archive into itself.
-                    if resolved_file == skill_filename.resolve():
+                        raise RuntimeError(f"File escapes skill root: {file_path}")
+                    # If output lives under skill_path, avoid writing archives into themselves.
+                    if resolved_file in {skill_filename.resolve(), temporary_path.resolve()}:
                         print(f"[WARN] Skipping output archive: {file_path}")
                         continue
 
@@ -103,10 +111,12 @@ def package_skill(skill_path, output_dir=None):
                     zipf.write(file_path, arcname)
                     print(f"  Added: {arcname}")
 
+        os.replace(temporary_path, skill_filename)
         print(f"\n[OK] Successfully packaged skill to: {skill_filename}")
         return skill_filename
 
     except Exception as e:
+        temporary_path.unlink(missing_ok=True)
         print(f"[ERROR] Error creating .skill file: {e}")
         return None
 

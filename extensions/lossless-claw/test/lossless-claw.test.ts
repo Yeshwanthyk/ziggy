@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -138,6 +138,20 @@ describe("Lossless Claw session projection", () => {
       activeOnly: true,
     });
     expect(abandoned).toEqual([]);
+  });
+
+  test("does not index sessions reached through an external directory symlink", () => {
+    const profile = createProfile();
+    const outside = createProfile();
+    writeSession(outside, "outside.jsonl", [
+      header("outside-session"),
+      userMessage("outside-entry", null, "2026-07-01T00:01:00.000Z", "outside-secret-marker"),
+    ]);
+    mkdirSync(join(profile, "sessions"), { recursive: true });
+    symlinkSync(join(outside, "sessions"), join(profile, "sessions", "linked"), "dir");
+
+    expect(listProfileSessions(profile)).toEqual([]);
+    expect(searchProfileSessions(profile, { query: "outside-secret-marker" })).toEqual([]);
   });
 
   test("transactionally replaces changed files and removes deleted projections", () => {

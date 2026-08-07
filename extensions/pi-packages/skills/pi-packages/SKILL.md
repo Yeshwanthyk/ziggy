@@ -1,28 +1,32 @@
 ---
 name: pi-packages
-description: Understand and work with Ziggy's repository-owned Pi extension packages and Profile skills.
+description: Inspect and select Ziggy's repository-owned Pi extension packages for a Profile.
 ---
 
 # Pi packages in Ziggy
 
 Repository capabilities live under `extensions/<id>/`. Each folder is a Pi package containing an
-Agent Skill, executable Pi extension code, or both. Ziggy loads these packages for every Profile;
-restart a resident Ziggy process after changing executable extension code.
+Agent Skill, executable Pi extension code, or both. `pi-packages` itself and the top-level
+`extension-authoring` skill are required; all other packages are optional per Profile.
 
-Packages are independent. An agent may compose capabilities that are currently available, but one
-package must not require another package's tools or state in order to remain useful.
-
-Profile-local skills live under `<profile>/skills/` and take precedence over package and top-level
-skills with the same declared name.
-
-Use Ziggy's existing skill commands:
+Inspect the offline shelf without executing package code:
 
 ```bash
-ziggy skills list <profile>
-ziggy skills add <profile> <skill-id>
-ziggy skills add <profile> <skill-id> --force
+ziggy extensions list
+ziggy extensions show <id>
 ```
 
-`skills add` copies the complete skill folder into the Profile. It does not install executable
-code or mutate a tool registry. To create or change an executable package, read the
-`extension-authoring` skill and edit `extensions/<id>/` in the Ziggy repository.
+Select or unselect an optional package as one unit:
+
+```bash
+ziggy extensions add <name|path> <id>
+ziggy extensions remove <name|path> <id>
+```
+
+These commands change only `<profile>/extensions.json`; they do not copy, install, delete, or load
+package code. Reopen the Profile or restart its resident Ziggy process after a real selection
+change. Required `pi-packages` cannot be added or removed.
+
+Profile-local skills still take precedence over required and selected package skills with the same
+declared name. To create or change a package, read the `extension-authoring` skill and edit its
+folder under `extensions/`.
