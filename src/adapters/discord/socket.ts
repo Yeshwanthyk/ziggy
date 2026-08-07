@@ -62,6 +62,7 @@ export interface DiscordSocketDependencies {
   readonly inboundCapacity: number;
   readonly commandCapacity: number;
   readonly closeTimeout: Duration.Input;
+  readonly reportCleanupFailure: (failure: DiscordSocketError) => void;
 }
 
 type ConnectMode = "auto" | "fresh" | "resume";
@@ -197,6 +198,8 @@ const liveDependencies: DiscordSocketDependencies = {
   inboundCapacity: 256,
   commandCapacity: 256,
   closeTimeout: Duration.seconds(2),
+  reportCleanupFailure: (failure) =>
+    console.error(`[discord] socket cleanup failed: ${failure.message}`),
 };
 
 export const openDiscordSocket = (
@@ -245,8 +248,8 @@ export const openDiscordSocket = (
       if (attached.connection.readyState() < SOCKET_CLOSING) {
         try {
           attached.connection.close();
-        } catch {
-          // A later reconnect or bounded close owns observable completion.
+        } catch (cause) {
+          dependencies.reportCleanupFailure(error("close", "connection", false, cause));
         }
       }
     };
@@ -356,32 +359,66 @@ export const openDiscordSocket = (
     };
 
     const attachSocket = (url: string): Effect.Effect<void, DiscordSocketError> =>
-      Effect.gen(function* () {
-        const socketUrl = yield* gatewaySocketUrl(url);
-        const connection = yield* Effect.try({
-          try: () => dependencies.connect(socketUrl),
-          catch: (cause) => error("connect", "connection", true, cause),
-        });
-        const removers = [
-          connection.onMessage((data) => {
-            if (typeof data === "string") {
-              offerCommand({ _tag: "Frame", connection, text: data });
-            }
-          }),
-          connection.onError(() => offerCommand({ _tag: "SocketError", connection })),
-          connection.onClose((code) =>
-            offerCommand({ _tag: "SocketClosed", connection, code }),
-          ),
-        ];
-        current = {
-          connection,
-          removeListeners: () => {
-            for (const remove of removers) {
-              remove();
-            }
-          },
-        };
-      });
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const socketUrl = yield* gatewaySocketUrl(url);
+          const connection = yield* Effect.try({
+            try: () => dependencies.connect(socketUrl),
+            catch: (cause) => error("connect", "connection", true, cause),
+          });
+          const removers: Array<() => void> = [];
+          const attached = yield* Effect.try({
+            try: () => {
+              removers.push(
+                connection.onMessage((data) => {
+                  if (typeof data === "string") {
+                    offerCommand({ _tag: "Frame", connection, text: data });
+                  }
+                }),
+              );
+              removers.push(
+                connection.onError(() => offerCommand({ _tag: "SocketError", connection })),
+              );
+              removers.push(
+                connection.onClose((code) =>
+                  offerCommand({ _tag: "SocketClosed", connection, code }),
+                ),
+              );
+              return {
+                connection,
+                removeListeners: () => {
+                  for (const remove of removers) remove();
+                },
+              } satisfies AttachedSocket;
+            },
+            catch: (cause) => error("connect", "connection", true, cause),
+          }).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                for (const remove of removers) {
+                  try {
+                    remove();
+                  } catch (cause) {
+                    dependencies.reportCleanupFailure(
+                      error("close", "connection", false, cause),
+                    );
+                  }
+                }
+                if (connection.readyState() < SOCKET_CLOSING) {
+                  try {
+                    connection.close();
+                  } catch (cause) {
+                    dependencies.reportCleanupFailure(
+                      error("close", "connection", false, cause),
+                    );
+                  }
+                }
+              }),
+            ),
+          );
+          current = attached;
+        }),
+      );
 
     const handleDispatch = (
       connection: DiscordSocketConnection,

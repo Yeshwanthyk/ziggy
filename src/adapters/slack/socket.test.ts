@@ -15,6 +15,8 @@ class FakeSlackConnection implements SlackSocketConnection {
   readonly messageListeners = new Set<(data: unknown) => void>();
   readonly errorListeners = new Set<() => void>();
   readonly closeListeners = new Set<() => void>();
+  closeThrows = false;
+  errorRegistrationThrows = false;
   removedListeners = 0;
 
   readyState = () => this.state;
@@ -22,6 +24,7 @@ class FakeSlackConnection implements SlackSocketConnection {
     this.sent.push(data);
   };
   close = () => {
+    if (this.closeThrows) throw new Error("close failed");
     this.state = 3;
     for (const listener of this.closeListeners) {
       listener();
@@ -30,13 +33,20 @@ class FakeSlackConnection implements SlackSocketConnection {
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
   onMessage = (listener: (data: unknown) => void) =>
     this.add(this.messageListeners, listener);
-  onError = (listener: () => void) => this.add(this.errorListeners, listener);
+  onError = (listener: () => void) => {
+    if (this.errorRegistrationThrows) throw new Error("listener registration failed");
+    return this.add(this.errorListeners, listener);
+  };
   onClose = (listener: () => void) => this.add(this.closeListeners, listener);
 
   emitMessage(data: string) {
     for (const listener of this.messageListeners) {
       listener(data);
     }
+  }
+
+  emitError() {
+    for (const listener of this.errorListeners) listener();
   }
 
   private add<A>(listeners: Set<A>, listener: A): () => void {
@@ -75,6 +85,7 @@ const dependencies = (
       inboundCapacity: 8,
       commandCapacity: 32,
       closeTimeout: Duration.seconds(1),
+      reportCleanupFailure: () => undefined,
       ...overrides,
     },
   };
@@ -197,6 +208,54 @@ describe("Slack socket Effect boundary", () => {
     );
 
     expect(received.ts).toBe("2");
+  });
+
+  test("listener registration failure rolls back the partial connection", async () => {
+    const fixture = dependencies({
+      connect: () => {
+        const connection = new FakeSlackConnection();
+        connection.errorRegistrationThrows = true;
+        fixture.connections.push(connection);
+        return connection;
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+        }),
+      ),
+    );
+
+    expect(fixture.connections[0]?.state).toBe(3);
+    expect(fixture.connections[0]?.removedListeners).toBe(1);
+  });
+
+  test("reconnect close failures are reported after listeners detach", async () => {
+    const cleanupFailures: Array<string> = [];
+    const fixture = dependencies({
+      reportCleanupFailure: (failure) => cleanupFailures.push(failure.reason),
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          if (connection === undefined) return;
+          connection.closeThrows = true;
+          connection.emitError();
+          yield* yieldToSupervisor;
+          connection.closeThrows = false;
+        }),
+      ),
+    );
+
+    expect(cleanupFailures).toEqual(["connection"]);
+    expect(fixture.connections[0]?.removedListeners).toBeGreaterThanOrEqual(3);
   });
 
   test("fails fast on inbound overflow and cleans up listeners with the scope", async () => {

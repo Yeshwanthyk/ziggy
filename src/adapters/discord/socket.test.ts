@@ -17,6 +17,8 @@ class FakeDiscordConnection implements DiscordSocketConnection {
   readonly errorListeners = new Set<() => void>();
   readonly closeListeners = new Set<(code: number) => void>();
   closeCompletes = true;
+  closeThrows = false;
+  errorRegistrationThrows = false;
   removedListeners = 0;
 
   readyState = () => this.state;
@@ -24,6 +26,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
     this.sent.push(data);
   };
   close = () => {
+    if (this.closeThrows) throw new Error("close failed");
     if (!this.closeCompletes) {
       return;
     }
@@ -35,13 +38,20 @@ class FakeDiscordConnection implements DiscordSocketConnection {
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
   onMessage = (listener: (data: unknown) => void) =>
     this.add(this.messageListeners, listener);
-  onError = (listener: () => void) => this.add(this.errorListeners, listener);
+  onError = (listener: () => void) => {
+    if (this.errorRegistrationThrows) throw new Error("listener registration failed");
+    return this.add(this.errorListeners, listener);
+  };
   onClose = (listener: (code: number) => void) => this.add(this.closeListeners, listener);
 
   emitMessage(data: string) {
     for (const listener of this.messageListeners) {
       listener(data);
     }
+  }
+
+  emitError() {
+    for (const listener of this.errorListeners) listener();
   }
 
   emitClose(code: number) {
@@ -88,6 +98,7 @@ const dependencies = (
       inboundCapacity: 8,
       commandCapacity: 32,
       closeTimeout: Duration.seconds(1),
+      reportCleanupFailure: () => undefined,
       ...overrides,
     },
   };
@@ -240,6 +251,54 @@ describe("Discord socket Effect boundary", () => {
     );
 
     expect(Result.isFailure(result) && result.failure.reason).toBe("queue-overflow");
+  });
+
+  test("listener registration failure rolls back the partial connection", async () => {
+    const fixture = dependencies({
+      connect: () => {
+        const connection = new FakeDiscordConnection();
+        connection.errorRegistrationThrows = true;
+        fixture.connections.push(connection);
+        return connection;
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+        }),
+      ),
+    );
+
+    expect(fixture.connections[0]?.state).toBe(3);
+    expect(fixture.connections[0]?.removedListeners).toBe(1);
+  });
+
+  test("reconnect close failures are reported after listeners detach", async () => {
+    const cleanupFailures: Array<string> = [];
+    const fixture = dependencies({
+      reportCleanupFailure: (failure) => cleanupFailures.push(failure.reason),
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          if (connection === undefined) return;
+          connection.closeThrows = true;
+          connection.emitError();
+          yield* yieldToSupervisor;
+          connection.closeThrows = false;
+        }),
+      ),
+    );
+
+    expect(cleanupFailures).toEqual(["connection"]);
+    expect(fixture.connections[0]?.removedListeners).toBeGreaterThanOrEqual(3);
   });
 
   test("close is bounded and scope cleanup removes listeners", async () => {
