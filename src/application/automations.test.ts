@@ -8,12 +8,14 @@ import { Effect } from "effect";
 import {
   automationRunStore,
   commitScheduleTick,
+  makeAutomationRunStore,
   readAutomationRuns,
   recoverAutomationRuns,
   type AutomationRunStore,
   type RunTerminal,
 } from "../adapters/bun/automation-sqlite";
 import { TelegramApiError } from "../adapters/telegram/api";
+import { ProviderCallError } from "../domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
@@ -47,6 +49,7 @@ const harness = (
   options: {
     readonly gateExit?: number;
     readonly telegramFailure?: TelegramApiError;
+    readonly promptFailure?: ProviderCallError;
     readonly store?: AutomationRunStore;
   } = {},
 ) => {
@@ -58,10 +61,13 @@ const harness = (
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
         return {
           prompt: (prompt) =>
-            Effect.sync(() => {
-              events.push(`prompt:${prompt}`);
-              return "local reply";
-            }),
+            Effect.sync(() => events.push(`prompt:${prompt}`)).pipe(
+              Effect.andThen(
+                options.promptFailure === undefined
+                  ? Effect.succeed("local reply")
+                  : Effect.fail(options.promptFailure),
+              ),
+            ),
           dispose: Effect.sync(() => {
             events.push("dispose");
           }),
@@ -158,6 +164,43 @@ describe("automation run", () => {
         targets: [],
       },
     ]);
+  });
+
+  test("recovers a dead owner before manual admission", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const child = Bun.spawn([process.execPath, "-e", ""], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const deadStore = makeAutomationRunStore(child.pid);
+    await child.exited;
+    const orphanId = "manual:00000000-0000-4000-8000-000000000002";
+    await Effect.runPromise(deadStore.admitManual(target.path, "daily-note", orphanId, 100));
+    await Effect.runPromise(deadStore.start(target.path, orphanId, 110, null));
+
+    const liveId = "manual:00000000-0000-4000-8000-000000000003";
+    const liveStore = makeAutomationRunStore(process.pid);
+    await Effect.runPromise(liveStore.admitManual(target.path, "live", liveId, 200));
+
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+    const persisted = Object.fromEntries(
+      (await Effect.runPromise(readAutomationRuns(target.path))).map((item) => [
+        item.runId,
+        { state: item.state, failureCategory: item.failureCategory },
+      ]),
+    );
+    expect(persisted).toMatchObject({
+      [orphanId]: { state: "unknown", failureCategory: "process-start" },
+      [liveId]: { state: "claimed", failureCategory: null },
+      "manual:00000000-0000-4000-8000-000000000001": {
+        state: "completed",
+        failureCategory: null,
+      },
+    });
   });
 
   test("a nonzero gate declines before Pi", async () => {
@@ -343,6 +386,55 @@ describe("automation run", () => {
       failureCategory: "process-start",
       finishedAtMs: 2_000,
       targets: [],
+    });
+  });
+
+  test("surfaces terminal database failure over the execution failure", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const providerFailure = new ProviderCallError({
+      profilePath: target.path,
+      operation: "prompt",
+      message: "injected provider failure",
+      cause: "fixture",
+    });
+    const databaseFailure = new AutomationDatabaseError({
+      operation: "finish run",
+      path: target.path,
+      message: "injected terminal write failure",
+      cause: "fixture",
+    });
+    let finishCalls = 0;
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      finish: () => {
+        finishCalls += 1;
+        return Effect.fail(databaseFailure);
+      },
+    };
+
+    const result = await Effect.runPromise(
+      harness(events, { promptFailure: providerFailure, store })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: (outcome) => outcome,
+          }),
+        ),
+    );
+    expect(result).toBe(databaseFailure);
+    expect(finishCalls).toBe(1);
+    expect(events).toEqual([
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      "prompt:Write the daily note.",
+      "dispose",
+    ]);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "running",
+      localCompleted: false,
+      failureCategory: null,
+      finishedAtMs: null,
     });
   });
 

@@ -1,4 +1,4 @@
-import { Clock, Context, Cron, Duration, Effect, Layer, Result } from "effect";
+import { Clock, Context, Cron, Deferred, Duration, Effect, Layer, Result } from "effect";
 import {
   commitScheduleTick,
   discoverAutomationSources,
@@ -14,6 +14,7 @@ import {
 } from "../adapters/bun/automation-sqlite";
 import {
   type Automation,
+  AutomationDatabaseError,
   AutomationProjectionError,
   AutomationSchedulerError,
   type AutomationId,
@@ -149,6 +150,7 @@ type ScanResult =
 
 const scan = (target: ProfileTarget, atMs: number, startup: boolean) =>
   Effect.gen(function* () {
+    yield* recoverAutomationRuns(target.path, atMs);
     const observations = yield* discover(target).pipe(Effect.result);
     if (Result.isFailure(observations)) {
       yield* recordDefinitionTickFailure(target.path, atMs);
@@ -176,11 +178,11 @@ export const makeAutomationScheduler = (
       Effect.gen(function* () {
         const startupAt = yield* Clock.currentTimeMillis;
         yield* initializeAutomationDatabase(target.path);
-        yield* recoverAutomationRuns(target.path, startupAt);
         let initial = yield* scan(target, startupAt, true);
         while (initial.kind === "committed" && initial.result.stale)
           initial = yield* scan(target, yield* Clock.currentTimeMillis, true);
         let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
+        const fatal = yield* Deferred.make<never, AutomationDatabaseError>();
 
         const cycle = Effect.gen(function* () {
           const schedules = yield* readScheduleRecords(target.path);
@@ -207,15 +209,21 @@ export const makeAutomationScheduler = (
           retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
           if (scanResult.kind === "committed")
             for (const claim of scanResult.result.claimed)
-              yield* Effect.forkScoped(
-                automations.run(target, claim.automationId, {
+              yield* automations
+                .run(target, claim.automationId, {
                   kind: "scheduled",
                   scheduledFor: new Date(claim.scheduledForMs).toISOString(),
                   scheduleFingerprint: claim.scheduleFingerprint,
-                }),
-              );
+                })
+                .pipe(
+                  Effect.catchTag("AutomationDatabaseError", (failure) =>
+                    Deferred.fail(fatal, failure).pipe(Effect.asVoid),
+                  ),
+                  Effect.catch(() => Effect.void),
+                  Effect.forkScoped,
+                );
         });
-        return yield* Effect.forever(cycle);
+        return yield* Effect.raceFirst(Effect.forever(cycle), Deferred.await(fatal));
       }).pipe(Effect.mapError((cause) => schedulerFailure("run", cause))),
     );
 

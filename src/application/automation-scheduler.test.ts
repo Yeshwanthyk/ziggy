@@ -4,15 +4,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Fiber } from "effect";
+import { Clock, Deferred, Effect, Fiber } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import {
+  automationRunStore,
   commitScheduleTick,
   makeAutomationRunStore,
   readAutomationRuns,
   readAutomationStatus,
   readScheduleRecords,
 } from "../adapters/bun/automation-sqlite";
+import { AutomationDatabaseError } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
 import { type AutomationCapabilities, type AutomationsShape, makeAutomations } from "./automations";
@@ -194,6 +196,49 @@ describe("automation scheduler engine", () => {
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
+  test("recovers a dead owner during an ordinary scheduler cycle", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const child = Bun.spawn([process.execPath, "-e", ""], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const deadStore = makeAutomationRunStore(child.pid);
+    await child.exited;
+    const dispatched: Array<string> = [];
+    const scheduler = makeAutomationScheduler({
+      run: (_target, automationId) =>
+        Effect.sync(() => dispatched.push(automationId)).pipe(Effect.andThen(Effect.never)),
+    });
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const fiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+
+        const orphanId = "manual:00000000-0000-4000-8000-000000000001";
+        yield* deadStore.admitManual(target.path, "daily", orphanId, start + 10);
+        yield* deadStore.start(target.path, orphanId, start + 20, null);
+        yield* TestClock.adjust(60_000);
+        yield* awaitHeartbeat(target, start + 60_000);
+        yield* awaitDispatches(dispatched, 1);
+
+        expect(dispatched).toEqual(["daily"]);
+        expect(
+          (yield* readAutomationRuns(target.path)).map((item) => [
+            item.runId,
+            item.state,
+            item.failureCategory,
+          ]),
+        ).toEqual([
+          ["scheduled:daily:2026-01-01T00:01:00.000Z", "claimed", null],
+          [orphanId, "unknown", "process-start"],
+        ]);
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
   test("definition scan failures re-arm from each failure event despite an overdue cursor", async () => {
     const target = await profile([]);
     await Effect.runPromise(
@@ -252,6 +297,65 @@ describe("automation scheduler engine", () => {
           lastTickStatus: "error",
         });
         yield* Fiber.interrupt(fiber);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
+  test("fails the scheduler when a dispatched run cannot persist lifecycle state", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const databaseFailure = new AutomationDatabaseError({
+      operation: "start run",
+      path: target.path,
+      message: "injected lifecycle write failure",
+      cause: "fixture",
+    });
+    const agent: ZiggyAgentShape = {
+      runOnce: () => Effect.succeed(0),
+      openTui: () => Effect.succeed(0),
+      openChat: () =>
+        Effect.succeed({
+          prompt: () => Effect.never,
+          dispose: Effect.void,
+        }),
+    };
+    const capabilities: AutomationCapabilities = {
+      gate: { run: () => Effect.succeed({ kind: "passed" }) },
+      printReply: () => Effect.void,
+      loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
+      loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
+      loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
+      sendTelegram: () => Effect.void,
+      sendDiscord: () => Effect.void,
+      sendSlack: () => Effect.void,
+    };
+    const automations = makeAutomations(agent, capabilities, {
+      store: { ...automationRunStore, start: () => Effect.fail(databaseFailure) },
+      now: Clock.currentTimeMillis,
+      makeManualRunId: () => "manual:00000000-0000-4000-8000-000000000001",
+    });
+    const scheduler = makeAutomationScheduler(automations);
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const fiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        yield* TestClock.adjust(60_000);
+        const result = yield* Fiber.join(fiber).pipe(Effect.result);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "AutomationSchedulerError",
+            operation: "run",
+            cause: databaseFailure,
+          },
+        });
+        const before = yield* readAutomationRuns(target.path);
+        expect(before.map((item) => [item.state, item.failureCategory])).toEqual([
+          ["claimed", null],
+        ]);
+        yield* TestClock.adjust(60_000);
+        expect(yield* readAutomationRuns(target.path)).toEqual(before);
       }),
     );
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));

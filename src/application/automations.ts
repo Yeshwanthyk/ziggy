@@ -259,6 +259,7 @@ export const makeAutomations = (
           ? runtime.makeManualRunId()
           : scheduledRunId(automationId, Date.parse(trigger.scheduledFor));
       if (trigger.kind === "manual-force") {
+        yield* runtime.store.recover(target.path, admittedAt);
         const admission = yield* runtime.store.admitManual(
           target.path,
           automationId,
@@ -376,10 +377,7 @@ export const makeAutomations = (
             localCompleted: false,
             failureCategory: failedCategory(error),
             gateExitCode: null,
-          }).pipe(
-            Effect.catch(() => Effect.void),
-            Effect.andThen(Effect.fail(error)),
-          ),
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
         Effect.onInterrupt(() =>
           finish({

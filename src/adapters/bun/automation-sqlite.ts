@@ -368,11 +368,12 @@ export const recordDefinitionTickFailure = (profilePath: string, atMs: number) =
   );
 
 // oxfmt-ignore
-export interface AutomationRunStore { readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>) => Effect.Effect<void, AutomationDatabaseError> }
+export interface AutomationRunStore { readonly recover: (profilePath: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>) => Effect.Effect<void, AutomationDatabaseError> }
 // oxfmt-ignore
 export interface RunTerminal { readonly state: "completed" | "failed" | "skipped-gate"; readonly atMs: number; readonly localCompleted: boolean; readonly failureCategory: string | null; readonly gateExitCode: number | null }
 
 export const makeAutomationRunStore = (ownerPid: number): AutomationRunStore => ({
+  recover: (profilePath, atMs) => recoverAutomationRuns(profilePath, atMs),
   admitManual: (profilePath, automationId, runId, atMs) =>
     withWritable(profilePath, "admit manual run", (db) =>
       db
