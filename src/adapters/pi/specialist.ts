@@ -38,6 +38,15 @@ import { promptForAssistantText } from "./pi-agent";
 import type { PiResources } from "./resources";
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export const DISCUSSION_MIN_AGENTS = 2;
+export const DISCUSSION_MAX_AGENTS = 4;
+export const DISCUSSION_MAX_ROUNDS = 2;
+export const DISCUSSION_TOPIC_MAX_CODE_POINTS = 2_000;
+export const DISCUSSION_ANSWER_MAX_CODE_POINTS = 2_000;
+export const DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS = 8_000;
+export const DISCUSSION_PROMPT_MAX_CODE_POINTS = 12_000;
+
 const thinkingSchema = Type.Union([
   Type.Literal("off"),
   Type.Literal("minimal"),
@@ -101,6 +110,56 @@ export type SpecialistRunResult = Omit<Static<typeof specialistResultSchema>, "u
   readonly usage: Usage;
 };
 export type SpecialistToolDetails = Static<typeof specialistToolDetailsSchema>;
+
+export const discussionParameters = Type.Object(
+  {
+    topic: Type.String({ minLength: 1 }),
+    agents: Type.Array(Type.String({ minLength: 1 }), {
+      minItems: DISCUSSION_MIN_AGENTS,
+      maxItems: DISCUSSION_MAX_AGENTS,
+    }),
+    rounds: Type.Optional(Type.Union([Type.Literal(1), Type.Literal(2)])),
+  },
+  { additionalProperties: false },
+);
+
+export const agentDiscussParameters = discussionParameters;
+
+const discussionParticipantSchema = Type.Object({
+  agent: Type.String(),
+  provider: Type.String(),
+  model: Type.String(),
+  thinking: thinkingSchema,
+  tools: Type.Array(Type.String()),
+  answer: Type.String(),
+  usage: specialistUsageSchema,
+});
+
+const discussionRoundSchema = Type.Object({
+  round: Type.Union([Type.Literal(1), Type.Literal(2)]),
+  participants: Type.Array(discussionParticipantSchema),
+});
+
+const discussionResultSchema = Type.Object({
+  topic: Type.String(),
+  rounds: Type.Array(discussionRoundSchema),
+  usage: specialistUsageSchema,
+});
+
+export const discussionToolDetailsSchema = Type.Object({
+  result: Type.Optional(discussionResultSchema),
+  error: Type.Optional(Type.String()),
+});
+
+export type AgentDiscussionInput = Static<typeof discussionParameters>;
+export type AgentDiscussionParticipant = Omit<
+  Static<typeof discussionParticipantSchema>,
+  "usage"
+> & { readonly usage: Usage };
+export type AgentDiscussionResult = Omit<Static<typeof discussionResultSchema>, "usage"> & {
+  readonly usage: Usage;
+};
+export type AgentDiscussionToolDetails = Static<typeof discussionToolDetailsSchema>;
 
 export type SpecialistRunnerError =
   | SpecialistAgentNotFound
@@ -276,31 +335,36 @@ const zeroUsage = (): Usage => ({
   },
 });
 
-const addUsage = (total: Usage, usage: Usage): Usage => {
-  total.input += usage.input;
-  total.output += usage.output;
-  total.cacheRead += usage.cacheRead;
-  total.cacheWrite += usage.cacheWrite;
-  total.totalTokens += usage.totalTokens;
-  total.cost.input += usage.cost.input;
-  total.cost.output += usage.cost.output;
-  total.cost.cacheRead += usage.cost.cacheRead;
-  total.cost.cacheWrite += usage.cost.cacheWrite;
-  total.cost.total += usage.cost.total;
-  if (usage.cacheWrite1h !== undefined)
-    total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
-  if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
-  return total;
-};
+/** Add Pi usage without mutating either caller-owned value. */
+export const addUsage = (left: Usage, right: Usage): Usage => ({
+  input: left.input + right.input,
+  output: left.output + right.output,
+  cacheRead: left.cacheRead + right.cacheRead,
+  cacheWrite: left.cacheWrite + right.cacheWrite,
+  ...(left.cacheWrite1h === undefined && right.cacheWrite1h === undefined
+    ? {}
+    : { cacheWrite1h: (left.cacheWrite1h ?? 0) + (right.cacheWrite1h ?? 0) }),
+  ...(left.reasoning === undefined && right.reasoning === undefined
+    ? {}
+    : { reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0) }),
+  totalTokens: left.totalTokens + right.totalTokens,
+  cost: {
+    input: left.cost.input + right.cost.input,
+    output: left.cost.output + right.cost.output,
+    cacheRead: left.cost.cacheRead + right.cost.cacheRead,
+    cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
+    total: left.cost.total + right.cost.total,
+  },
+});
 
 /** Aggregate only public Pi message usage; tool-result usage is intentionally included. */
 export const usageFromMessages = (messages: ReadonlyArray<AgentMessage>): Usage => {
-  const usage = zeroUsage();
+  let usage = zeroUsage();
   for (const message of messages) {
     if (!("role" in message)) continue;
-    if (message.role === "assistant") addUsage(usage, message.usage);
+    if (message.role === "assistant") usage = addUsage(usage, message.usage);
     else if (message.role === "toolResult" && message.usage !== undefined)
-      addUsage(usage, message.usage);
+      usage = addUsage(usage, message.usage);
   }
   return usage;
 };
@@ -308,9 +372,117 @@ export const usageFromMessages = (messages: ReadonlyArray<AgentMessage>): Usage 
 const blockedSpecialistTool = (name: string): boolean =>
   name === "memory_write" ||
   name === "agent_run" ||
+  name === "agent_discuss" ||
   name === "discussion" ||
   name.startsWith("discussion_") ||
   name.startsWith("discussion-");
+
+/** Truncate by Unicode code point so bounded prompts never split a surrogate pair. */
+export const truncateDiscussionText = (text: string, maxCodePoints: number): string => {
+  const codePoints = Array.from(text);
+  return codePoints.length <= maxCodePoints
+    ? text
+    : `${codePoints.slice(0, Math.max(0, maxCodePoints - 3)).join("")}...`;
+};
+
+const compareDiscussionAgents = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const compactDiscussionTopic = (topic: string): string =>
+  truncateDiscussionText(topic.replace(/\s+/g, " ").trim(), 72);
+
+const discussionRoundPrompt = (
+  topic: string,
+  agent: string,
+  position: number,
+  totalAgents: number,
+  priorOutputs?: string,
+): string => {
+  const role = `Role: you are the ${position + 1}${position === 0 ? "st" : position === 1 ? "nd" : position === 2 ? "rd" : "th"} participant, the ${agent} specialist, in a group discussion of ${totalAgents} Profile agents. Reason only from the topic and any bounded peer answers below; do not use tools or claim to have performed research or edits.`;
+  const prior =
+    priorOutputs === undefined
+      ? ""
+      : `\n\nBounded first-round answers from the group:\n${priorOutputs}`;
+  return truncateDiscussionText(
+    [
+      "We need a bounded multi-view discussion.",
+      `Topic: ${truncateDiscussionText(topic, DISCUSSION_TOPIC_MAX_CODE_POINTS)}`,
+      role,
+      "Give a concise answer for the core model to synthesize. Identify disagreements or uncertainty when useful.",
+      prior,
+    ].join("\n\n"),
+    DISCUSSION_PROMPT_MAX_CODE_POINTS,
+  );
+};
+
+const boundedPriorOutputs = (participants: ReadonlyArray<AgentDiscussionParticipant>): string =>
+  truncateDiscussionText(
+    participants
+      .map(
+        (participant) =>
+          `[${participant.agent}]\n${truncateDiscussionText(participant.answer, DISCUSSION_ANSWER_MAX_CODE_POINTS)}`,
+      )
+      .join("\n\n"),
+    DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS,
+  );
+
+const discussionParticipant = (result: SpecialistRunResult): AgentDiscussionParticipant => ({
+  agent: result.agent,
+  provider: result.provider,
+  model: result.model,
+  thinking: result.thinking,
+  tools: [...result.tools],
+  answer: truncateDiscussionText(result.answer, DISCUSSION_ANSWER_MAX_CODE_POINTS),
+  usage: result.usage,
+});
+
+const runDiscussion = (
+  runner: SpecialistRunner,
+  input: AgentDiscussionInput,
+  signal?: AbortSignal,
+): Effect.Effect<AgentDiscussionResult, SpecialistRunnerError> =>
+  Effect.gen(function* () {
+    const agents = [...input.agents].sort(compareDiscussionAgents);
+    const topic = truncateDiscussionText(input.topic, DISCUSSION_TOPIC_MAX_CODE_POINTS);
+    const roundCount = input.rounds ?? 1;
+    const rounds: Array<Static<typeof discussionRoundSchema>> = [];
+    let combinedUsage = zeroUsage();
+    let priorOutputs: string | undefined;
+
+    const roundOrder: ReadonlyArray<1 | 2> = roundCount === 1 ? [1] : [1, 2];
+    for (const round of roundOrder) {
+      const participants: AgentDiscussionParticipant[] = [];
+      for (const [position, agent] of agents.entries()) {
+        const result = yield* runner.run(
+          {
+            agent,
+            prompt: discussionRoundPrompt(topic, agent, position, agents.length, priorOutputs),
+            allowedTools: [],
+          },
+          signal,
+        );
+        const participant = discussionParticipant(result);
+        participants.push(participant);
+        combinedUsage = addUsage(combinedUsage, participant.usage);
+      }
+      rounds.push({ round, participants });
+      if (round === 1 && roundCount === 2) priorOutputs = boundedPriorOutputs(participants);
+    }
+
+    return { topic, rounds, usage: combinedUsage };
+  });
+
+const discussionTranscript = (result: AgentDiscussionResult): string =>
+  result.rounds
+    .flatMap((round) => [
+      `Round ${round.round}`,
+      ...round.participants.flatMap((participant) => [
+        `${participant.agent} — ${participant.provider}/${participant.model} (${participant.thinking})`,
+        participant.answer,
+        "",
+      ]),
+    ])
+    .join("\n");
 
 export const selectSpecialist = (
   options: Pick<MakeSpecialistRunnerOptions, "profilePath" | "agents">,
@@ -515,7 +687,7 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
   name: "agent_run",
   label: "agent_run",
   description:
-    "Run one named Profile specialist in an isolated in-memory child session. The specialist cannot use memory_write or agent_run. Use only for focused delegation; the child answer is returned here.",
+    "Run one named Profile specialist in an isolated in-memory child session. The specialist cannot use memory_write, agent_run, or agent_discuss. Use only for focused delegation; the child answer is returned here.",
   promptSnippet: "agent_run(agent, prompt) — delegate one focused task",
   parameters: agentRunParameters,
   executionMode: "sequential",
@@ -544,6 +716,117 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
       return new Text("agent_run ✕ invalid result", 0, 0);
     }
     return new Text(renderAgentRunResult(result.details, options.expanded), 0, 0);
+  },
+});
+
+const discussionTextResult = (
+  text: string,
+  details: AgentDiscussionToolDetails,
+  usage?: Usage,
+): AgentToolResult<AgentDiscussionToolDetails> => ({
+  content: [{ type: "text" as const, text }],
+  details,
+  ...(usage === undefined ? {} : { usage }),
+});
+
+const discussionCallRounds = (input: AgentDiscussionInput): 1 | 2 => input.rounds ?? 1;
+
+export const renderAgentDiscussCall = (input: AgentDiscussionInput): string =>
+  `agent_discuss → ${[...input.agents].sort(compareDiscussionAgents).join(", ")} · ${discussionCallRounds(input)} round${discussionCallRounds(input) === 1 ? "" : "s"}: ${compactDiscussionTopic(input.topic)}`;
+
+export const renderAgentDiscussResult = (
+  details: AgentDiscussionToolDetails,
+  expanded: boolean,
+): string => {
+  if (details.error !== undefined) return `agent_discuss ✕ ${details.error}`;
+  const discussion = details.result;
+  if (discussion === undefined) return "agent_discuss ✕ no result";
+  const participants = [
+    ...new Set(discussion.rounds.flatMap((round) => round.participants.map((p) => p.agent))),
+  ];
+  const calls = discussion.rounds.reduce((count, round) => count + round.participants.length, 0);
+  if (!expanded) {
+    return `agent_discuss ← ${participants.join(", ")} · ${discussion.rounds.length} round${discussion.rounds.length === 1 ? "" : "s"} · ${calls} model calls · ${compactUsage(discussion.usage)}`;
+  }
+  return truncateDiscussionText(
+    [
+      `agent_discuss ← ${participants.join(", ")}`,
+      `rounds: ${discussion.rounds.length}`,
+      `model calls: ${calls}`,
+      `usage: ${discussion.usage.input} in · ${discussion.usage.output} out · ${compactUsage(discussion.usage)}`,
+      "",
+      discussionTranscript(discussion),
+    ].join("\n"),
+    DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS,
+  );
+};
+
+export type AgentDiscussTool = Omit<ToolDefinition, "execute"> & {
+  execute(
+    toolCallId: string,
+    input: unknown,
+    signal?: AbortSignal,
+    onUpdate?: AgentToolUpdateCallback<unknown>,
+    context?: ExtensionContext,
+  ): Promise<AgentToolResult<unknown>>;
+};
+
+export const createAgentDiscussTool = (runner: SpecialistRunner): AgentDiscussTool => ({
+  name: "agent_discuss",
+  label: "agent_discuss",
+  description:
+    "Run a bounded 1-2 round discussion among 2-4 named Profile specialists. Discussion children have no tools and only reason over the topic and bounded prior answers; synthesize the final answer yourself.",
+  promptSnippet: "agent_discuss(topic, agents, rounds) — compare multiple specialists",
+  parameters: discussionParameters,
+  executionMode: "sequential",
+  execute(_toolCallId, rawInput, signal) {
+    if (!Value.Check(discussionParameters, rawInput)) {
+      return Promise.resolve(
+        discussionTextResult("ERROR: invalid agent_discuss input", { error: "invalid input" }),
+      );
+    }
+    if (new Set(rawInput.agents).size !== rawInput.agents.length) {
+      return Promise.resolve(
+        discussionTextResult("ERROR: agent_discuss requires unique Profile agent ids", {
+          error: "agent ids must be unique",
+        }),
+      );
+    }
+    const program = runDiscussion(runner, rawInput, signal).pipe(
+      Effect.match({
+        onFailure: (failure) =>
+          discussionTextResult(`ERROR: ${failure.message}`, { error: failure.message }),
+        onSuccess: (result) => {
+          const transcript = truncateDiscussionText(
+            discussionTranscript(result),
+            DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS,
+          );
+          return discussionTextResult(
+            [
+              "Bounded specialist discussion transcript:",
+              transcript,
+              "",
+              "Synthesize the final answer to the user's topic from this transcript. Do not call another discussion or specialist provider.",
+            ].join("\n"),
+            { result },
+            result.usage,
+          );
+        },
+      }),
+    );
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
+    return Effect.runPromise(program, { signal });
+  },
+  renderCall: (rawInput) => {
+    if (!Value.Check(discussionParameters, rawInput))
+      return new Text("agent_discuss (invalid input)", 0, 0);
+    return new Text(renderAgentDiscussCall(rawInput), 0, 0);
+  },
+  renderResult: (result, options) => {
+    if (!Value.Check(discussionToolDetailsSchema, result.details)) {
+      return new Text("agent_discuss ✕ invalid result", 0, 0);
+    }
+    return new Text(renderAgentDiscussResult(result.details, options.expanded), 0, 0);
   },
 });
 

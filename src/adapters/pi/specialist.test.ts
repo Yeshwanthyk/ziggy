@@ -8,8 +8,16 @@ import { Type } from "typebox";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
+  DISCUSSION_ANSWER_MAX_CODE_POINTS,
+  DISCUSSION_PROMPT_MAX_CODE_POINTS,
+  addUsage,
   agentRunParameters,
+  createAgentDiscussTool,
   createAgentRunTool,
+  discussionParameters,
+  discussionToolDetailsSchema,
+  renderAgentDiscussCall,
+  renderAgentDiscussResult,
   renderAgentRunCall,
   renderAgentRunResult,
   selectSpecialist,
@@ -50,6 +58,35 @@ const invoke = async (
   input: unknown,
   signal?: AbortSignal,
 ) => tool.execute("call-1", input, signal);
+
+const discussionUsage = (value: number) => ({
+  input: value,
+  output: value + 1,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: value + value + 1,
+  cost: {
+    input: value / 1000,
+    output: (value + 1) / 1000,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: (value * 2 + 1) / 1000,
+  },
+});
+
+const discussionChildResult = (
+  agent: string,
+  answer: string,
+  value: number,
+): SpecialistRunResult => ({
+  answer,
+  agent,
+  provider: "test-provider",
+  model: "test-model",
+  thinking: "off",
+  tools: [],
+  usage: discussionUsage(value),
+});
 
 const makeModel = (
   provider: string,
@@ -430,6 +467,183 @@ describe("agent_run TUI tool", () => {
       reasoning: 2,
       totalTokens: 44,
       cost: { input: 6, output: 8, cacheRead: 10, cacheWrite: 12, total: 36 },
+    });
+  });
+});
+
+describe("agent_discuss TUI tool", () => {
+  test("publishes a strict bounded schema and rejects duplicates", async () => {
+    const calls: unknown[] = [];
+    const runner: SpecialistRunner = {
+      run: (request) => {
+        calls.push(request);
+        return Effect.succeed(discussionChildResult(request.agent, "answer", 1));
+      },
+    };
+    expect(
+      Value.Check(discussionParameters, {
+        topic: "topic",
+        agents: ["one", "two"],
+        rounds: 1,
+        extra: true,
+      }),
+    ).toBe(false);
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: "topic",
+      agents: ["one", "one"],
+    });
+    expect(calls).toHaveLength(0);
+    expect(response).toEqual({
+      content: [{ type: "text", text: "ERROR: agent_discuss requires unique Profile agent ids" }],
+      details: { error: "agent ids must be unique" },
+    });
+  });
+
+  test("runs sorted participants in one round with no child tools", async () => {
+    const calls: Array<{ agent: string; prompt: string; allowedTools?: ReadonlyArray<string> }> =
+      [];
+    const runner: SpecialistRunner = {
+      run: (request) => {
+        calls.push(request);
+        return Effect.succeed(discussionChildResult(request.agent, `${request.agent} says yes`, 2));
+      },
+    };
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: "Should we choose tea?",
+      agents: ["zeta", "alpha"],
+    });
+    expect(calls.map((call) => call.agent)).toEqual(["alpha", "zeta"]);
+    expect(calls.every((call) => call.allowedTools?.length === 0)).toBe(true);
+    expect(
+      calls.every(
+        (call) => call.prompt.includes("Role:") && call.prompt.includes("Should we choose tea?"),
+      ),
+    ).toBe(true);
+    expect(response.usage).toEqual({
+      input: 4,
+      output: 6,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 10,
+      cost: { input: 0.004, output: 0.006, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+    });
+    const content = response.content[0];
+    expect(content?.type === "text" ? content.text : "").toContain("Synthesize the final answer");
+  });
+
+  test("runs two bounded rounds and wires the same bounded prior transcript to every second turn", async () => {
+    const calls: Array<{ agent: string; prompt: string; allowedTools?: ReadonlyArray<string> }> =
+      [];
+    const longAnswer = "🙂".repeat(DISCUSSION_ANSWER_MAX_CODE_POINTS + 100);
+    const runner: SpecialistRunner = {
+      run: (request) => {
+        calls.push(request);
+        return Effect.succeed(discussionChildResult(request.agent, longAnswer, 1));
+      },
+    };
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: "x".repeat(5_000),
+      agents: ["beta", "alpha"],
+      rounds: 2,
+    });
+    expect(calls.map((call) => call.agent)).toEqual(["alpha", "beta", "alpha", "beta"]);
+    expect(
+      calls.every((call) => Array.from(call.prompt).length <= DISCUSSION_PROMPT_MAX_CODE_POINTS),
+    ).toBe(true);
+    expect(calls[2]?.prompt).toContain("[alpha]");
+    expect(calls[2]?.prompt).toContain("[beta]");
+    expect(calls[2]?.prompt.split("Bounded first-round answers from the group:\n")[1]).toBe(
+      calls[3]?.prompt.split("Bounded first-round answers from the group:\n")[1],
+    );
+    expect(Value.Check(discussionToolDetailsSchema, response.details)).toBe(true);
+    if (!Value.Check(discussionToolDetailsSchema, response.details)) {
+      throw new Error("expected discussion details");
+    }
+    expect(response.details.result?.rounds).toHaveLength(2);
+    expect(
+      response.details.result?.rounds
+        .flatMap((round) => round.participants)
+        .every(
+          (participant) =>
+            Array.from(participant.answer).length <= DISCUSSION_ANSWER_MAX_CODE_POINTS,
+        ),
+    ).toBe(true);
+    expect(response.usage?.totalTokens).toBe(12);
+  });
+
+  test("stops on the first typed runner failure", async () => {
+    let calls = 0;
+    const runner: SpecialistRunner = {
+      run: (request) => {
+        calls += 1;
+        return request.agent === "alpha"
+          ? Effect.fail(
+              new SpecialistModelUnsupported({
+                profilePath: "/profile",
+                providerId: "test",
+                modelId: "missing",
+                message: "model failed",
+              }),
+            )
+          : Effect.succeed(discussionChildResult(request.agent, "answer", 1));
+      },
+    };
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: "topic",
+      agents: ["alpha", "beta"],
+      rounds: 2,
+    });
+    expect(calls).toBe(1);
+    expect(response).toEqual({
+      content: [{ type: "text", text: "ERROR: model failed" }],
+      details: { error: "model failed" },
+    });
+  });
+
+  test("propagates cancellation to every child runner", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const runner: SpecialistRunner = {
+      run: (_request, signal) => {
+        receivedSignal = signal;
+        return Effect.never;
+      },
+    };
+    const promise = createAgentDiscussTool(runner).execute(
+      "call",
+      { topic: "topic", agents: ["alpha", "beta"] },
+      controller.signal,
+    );
+    controller.abort();
+    await expect(promise).rejects.toBeDefined();
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
+  test("renders participants, rounds, model calls, usage, and a newline transcript", () => {
+    const details = {
+      result: {
+        topic: "topic",
+        rounds: [
+          {
+            round: 1 as const,
+            participants: [discussionChildResult("alpha", "first\nline", 2)],
+          },
+        ],
+        usage: discussionUsage(2),
+      },
+    };
+    expect(renderAgentDiscussCall({ topic: "topic", agents: ["beta", "alpha"] })).toContain(
+      "alpha, beta",
+    );
+    expect(renderAgentDiscussResult(details, false)).toContain("1 model calls");
+    expect(renderAgentDiscussResult(details, true)).toContain("first\nline");
+    expect(addUsage(discussionUsage(1), discussionUsage(2))).toEqual({
+      input: 3,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 8,
+      cost: { input: 0.003, output: 0.005, cacheRead: 0, cacheWrite: 0, total: 0.008 },
     });
   });
 });

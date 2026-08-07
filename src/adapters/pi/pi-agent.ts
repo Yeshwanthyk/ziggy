@@ -37,7 +37,12 @@ import {
 import type { ProfileAgent, ProfileTarget } from "../../domain/profile";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources } from "./resources";
-import { createAgentRunTool, makeSpecialistRunner, type SpecialistParent } from "./specialist";
+import {
+  createAgentDiscussTool,
+  createAgentRunTool,
+  makeSpecialistRunner,
+  type SpecialistParent,
+} from "./specialist";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
@@ -572,7 +577,9 @@ const createProfileRuntime = (
             : undefined;
           const customTools: Array<ToolDefinition> = [
             createMemoryWriteTool(profilePath, context),
-            ...(specialistRunner === undefined ? [] : [createAgentRunTool(specialistRunner)]),
+            ...(specialistRunner === undefined
+              ? []
+              : [createAgentRunTool(specialistRunner), createAgentDiscussTool(specialistRunner)]),
           ];
           const created = await createAgentSessionFromServices({
             services,

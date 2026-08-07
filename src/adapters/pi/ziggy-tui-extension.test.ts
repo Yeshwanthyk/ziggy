@@ -272,6 +272,7 @@ describe("Ziggy TUI extension", () => {
     );
     expect(JSON.stringify(guidance)).toMatch(/Researches carefully/);
     expect(JSON.stringify(guidance)).toMatch(/one specialist clearly matches/);
+    expect(JSON.stringify(guidance)).toMatch(/agent_discuss/);
   });
 
   test("does not add specialist guidance outside TUI", () => {
@@ -299,6 +300,17 @@ describe("Ziggy TUI extension", () => {
         { mode: "print" },
       ),
     ).toEqual({ systemPrompt: "base" });
+    expect(
+      beforeStart(
+        {
+          type: "before_agent_start",
+          prompt: "task",
+          systemPrompt: "base",
+          systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+        },
+        { mode: "print" },
+      ).systemPrompt,
+    ).not.toContain("agent_discuss");
   });
 
   test("does not register Profile specialist commands when specialist admission is disabled", () => {
