@@ -1,11 +1,25 @@
+// oxlint-disable ziggy/no-unsafe-typescript-syntax
 import { describe, expect, test } from "bun:test";
-import type { SessionInfoChangedEvent, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  BeforeAgentStartEvent,
+  InputEvent,
+  SessionInfoChangedEvent,
+  SessionStartEvent,
+} from "@earendil-works/pi-coding-agent";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 type Extension = ReturnType<typeof createZiggyTuiExtension>;
 type ExtensionApi = Parameters<Extension["factory"]>[0];
-type SessionStartHandler = Parameters<ExtensionApi["on"]>[1];
-type Ui = Parameters<SessionStartHandler>[1]["ui"];
+type TestProvider = {
+  getSuggestions(...args: ReadonlyArray<unknown>): Promise<unknown>;
+  applyCompletion(...args: ReadonlyArray<unknown>): unknown;
+};
+type Ui = {
+  setTitle(title: string): void;
+  setHeader(factory: () => { invalidate(): void; render(width: number): string[] }): void;
+  setFooter(factory: () => { invalidate(): void; render(width: number): string[] }): void;
+  addAutocompleteProvider(factory: (current: TestProvider) => TestProvider): void;
+};
 
 const sessionStartEvent: SessionStartEvent = {
   type: "session_start",
@@ -26,15 +40,17 @@ const createHarness = () => {
   type RegisterCommand = ExtensionApi["registerCommand"];
   type CommandOptions = Parameters<RegisterCommand>[1];
   const notifications: Array<string> = [];
+  const autocompleteFactories: Array<Parameters<Ui["addAutocompleteProvider"]>[0]> = [];
   const commands: Array<{ readonly name: string; readonly options: CommandOptions }> = [];
 
   const ui: Ui = {
     setTitle: (title) => titles.push(title),
     setHeader: (factory) => headers.push(factory),
     setFooter: (factory) => footers.push(factory),
+    addAutocompleteProvider: (factory) => autocompleteFactories.push(factory),
   };
 
-  return { commands, footers, headers, notifications, titles, ui };
+  return { autocompleteFactories, commands, footers, headers, notifications, titles, ui };
 };
 
 describe("Ziggy TUI extension", () => {
@@ -42,17 +58,18 @@ describe("Ziggy TUI extension", () => {
     const profilePath = "/profiles/ziggy-dev";
     const extension = createZiggyTuiExtension(profilePath);
     const harness = createHarness();
-    let sessionStart: Parameters<Parameters<typeof extension.factory>[0]["on"]>[1] | undefined;
-    let sessionInfoChanged:
-      | Parameters<Parameters<typeof extension.factory>[0]["on"]>[1]
-      | undefined;
+    let sessionStart!: (event: SessionStartEvent, context: { mode: "tui"; ui: Ui }) => void;
+    let sessionInfoChanged!: (
+      event: SessionInfoChangedEvent,
+      context: { mode: "tui"; ui: Ui },
+    ) => void;
 
     extension.factory({
       on: (event, registeredHandler) => {
         if (event === "session_start") {
-          sessionStart = registeredHandler;
-        } else {
-          sessionInfoChanged = registeredHandler;
+          sessionStart = registeredHandler as typeof sessionStart;
+        } else if (event === "session_info_changed") {
+          sessionInfoChanged = registeredHandler as typeof sessionInfoChanged;
         }
       },
       registerCommand: (name, options) => harness.commands.push({ name, options }),
@@ -86,11 +103,23 @@ describe("Ziggy TUI extension", () => {
   test("does nothing outside TUI mode", async () => {
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev");
     const harness = createHarness();
-    const handlers: Array<Parameters<Parameters<typeof extension.factory>[0]["on"]>[1]> = [];
+    const handlers: Array<
+      (
+        event: SessionStartEvent | SessionInfoChangedEvent,
+        context: { mode: "print"; ui: Ui },
+      ) => void
+    > = [];
 
     extension.factory({
-      on: (_event, registeredHandler) => {
-        handlers.push(registeredHandler);
+      on: (event, registeredHandler) => {
+        if (event === "session_start" || event === "session_info_changed") {
+          handlers.push(
+            registeredHandler as unknown as (
+              event: SessionStartEvent | SessionInfoChangedEvent,
+              context: { mode: "print"; ui: Ui },
+            ) => void,
+          );
+        }
       },
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
@@ -140,6 +169,136 @@ describe("Ziggy TUI extension", () => {
     expect(harness.notifications).toEqual([
       "Profile agents:\n- research-helper — Researches carefully",
     ]);
+  });
+
+  test("autocompletes only leading Profile agent ids with descriptions", async () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
+      { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
+      { id: "code-helper", version: 1, description: "Writes code", body: "" },
+    ]);
+    const harness = createHarness();
+    // The provider is installed by the TUI session lifecycle, not at extension load time.
+    const sessionHandlers: Array<
+      (
+        event: SessionStartEvent,
+        context: Parameters<Ui["setHeader"]>[0] extends never ? never : { mode: "tui"; ui: Ui },
+      ) => void
+    > = [];
+    extension.factory({
+      on: (event, handler) => {
+        if (event === "session_start")
+          sessionHandlers.push(handler as (typeof sessionHandlers)[number]);
+      },
+      registerCommand: () => undefined,
+    });
+    sessionHandlers[0]?.(sessionStartEvent, { mode: "tui", ui: harness.ui });
+    const provider = harness.autocompleteFactories[0]?.({
+      getSuggestions: async () => ({ items: [], prefix: "" }),
+      applyCompletion: (...args: ReadonlyArray<unknown>) => args,
+    });
+    if (provider === undefined) throw new Error("autocomplete provider was not registered");
+    const suggestions = await provider.getSuggestions(["@research"], 0, 9, {
+      signal: new AbortController().signal,
+    });
+    expect(suggestions).toEqual({
+      prefix: "@research",
+      items: [
+        {
+          value: "@research-helper",
+          label: "@research-helper",
+          description: "Researches carefully",
+        },
+      ],
+    });
+    expect(
+      await provider.getSuggestions(["help @research"], 0, 14, {
+        signal: new AbortController().signal,
+      }),
+    ).toEqual({ items: [], prefix: "" });
+  });
+
+  test("rejects unknown leading agents and adds valid selection guidance", () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
+      { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
+    ]);
+    const notifications: string[] = [];
+    let inputHandler:
+      | ((
+          event: InputEvent,
+          context: {
+            mode: "tui";
+            ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+          },
+        ) => { action: string; text?: string })
+      | undefined;
+    let beforeStart:
+      | ((event: BeforeAgentStartEvent, context: { mode: "tui" }) => { systemPrompt: string })
+      | undefined;
+    extension.factory({
+      on: (event, handler) => {
+        if (event === "input") inputHandler = handler as typeof inputHandler;
+        if (event === "before_agent_start") beforeStart = handler as typeof beforeStart;
+      },
+      registerCommand: () => undefined,
+    });
+    if (inputHandler === undefined || beforeStart === undefined)
+      throw new Error("handlers missing");
+    const context = {
+      mode: "tui" as const,
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    expect(
+      inputHandler({ type: "input", text: "@missing do this", source: "interactive" }, context),
+    ).toEqual({ action: "handled" });
+    expect(notifications[0]).toContain("Use /agents");
+    expect(
+      inputHandler({ type: "input", text: "@Missing do this", source: "interactive" }, context),
+    ).toEqual({ action: "handled" });
+    const transformed = inputHandler(
+      { type: "input", text: "@research-helper do this", source: "interactive" },
+      context,
+    );
+    expect(transformed.action).toBe("transform");
+    expect(transformed.text).toContain("@research-helper do this");
+    expect(transformed.text).toContain("call agent_run");
+    const guidance = beforeStart(
+      {
+        type: "before_agent_start",
+        prompt: "task",
+        systemPrompt: "base",
+        systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+      },
+      context,
+    );
+    expect(JSON.stringify(guidance)).toMatch(/Researches carefully/);
+    expect(JSON.stringify(guidance)).toMatch(/one specialist clearly matches/);
+  });
+
+  test("does not add specialist guidance outside TUI", () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
+      { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
+    ]);
+    let beforeStart:
+      | ((event: BeforeAgentStartEvent, context: { mode: "print" }) => { systemPrompt: string })
+      | undefined;
+    extension.factory({
+      on: (event, handler) => {
+        if (event === "before_agent_start") beforeStart = handler as typeof beforeStart;
+      },
+      registerCommand: () => undefined,
+    });
+    if (beforeStart === undefined) throw new Error("before_agent_start handler missing");
+    expect(
+      beforeStart(
+        {
+          type: "before_agent_start",
+          prompt: "task",
+          systemPrompt: "base",
+          systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+        },
+        { mode: "print" },
+      ),
+    ).toEqual({ systemPrompt: "base" });
   });
 
   test("does not register Profile specialist commands when specialist admission is disabled", () => {
