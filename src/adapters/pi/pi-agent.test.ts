@@ -1,14 +1,20 @@
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { BeforeAgentStartEventResult } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionEventListener,
+  BeforeAgentStartEventResult,
+} from "@earendil-works/pi-coding-agent";
+import { Effect, Fiber } from "effect";
 import { ProviderCallError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
 import {
   createLocalSessionManager,
   createProfileMemoryExtension,
   localMainSessionDirectory,
+  promptForAssistantText,
   providerError,
   refreshProfileMemory,
 } from "./pi-agent";
@@ -55,6 +61,44 @@ describe("Pi provider failure classification", () => {
         cause,
       }),
     );
+  });
+});
+
+describe("Pi prompt cancellation", () => {
+  test("interruption aborts the prompt and removes its session listener", async () => {
+    let listener: AgentSessionEventListener | undefined;
+    let promptStarted = false;
+    let unsubscribes = 0;
+    let aborts = 0;
+    const session: Parameters<typeof promptForAssistantText>[1] = {
+      isIdle: false,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+          unsubscribes += 1;
+        };
+      },
+      prompt: () => {
+        promptStarted = true;
+        return new Promise(() => undefined);
+      },
+      abort: () => {
+        aborts += 1;
+        return Promise.resolve();
+      },
+    };
+    const fiber = Effect.runFork(promptForAssistantText("/profile", session, "hello"));
+    await Effect.runPromise(Effect.yieldNow);
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect({ promptStarted, listenerPresent: listener !== undefined, unsubscribes, aborts }).toEqual({
+      promptStarted: true,
+      listenerPresent: false,
+      unsubscribes: 1,
+      aborts: 1,
+    });
   });
 });
 
