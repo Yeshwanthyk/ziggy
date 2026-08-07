@@ -11,8 +11,13 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+  getSupportedThinkingLevels,
+  type Api,
+  type Model,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
 import { Value } from "typebox/value";
@@ -26,6 +31,7 @@ import {
   SpecialistProviderUnsupported,
   SpecialistRunFailed,
   SpecialistThinkingUnsupported,
+  SpecialistToolUnsupported,
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { promptForAssistantText } from "./pi-agent";
@@ -42,27 +48,37 @@ const thinkingSchema = Type.Union([
   Type.Literal("max"),
 ]);
 
+/** The public tool deliberately exposes no policy controls. */
 export const agentRunParameters = Type.Object(
   {
     agent: Type.String({ minLength: 1 }),
     prompt: Type.String({ minLength: 1 }),
-    provider: Type.Optional(Type.String({ minLength: 1 })),
-    model: Type.Optional(Type.String({ minLength: 1 })),
-    thinking: Type.Optional(thinkingSchema),
-    tools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   },
   { additionalProperties: false },
 );
 
 export type AgentRunInput = Static<typeof agentRunParameters>;
 
+/** Internal callers can only reduce the Profile agent's declared tool set. */
+export type SpecialistRunRequest = AgentRunInput & {
+  readonly allowedTools?: ReadonlyArray<string>;
+};
+
 const specialistUsageSchema = Type.Object({
   input: Type.Number(),
   output: Type.Number(),
   cacheRead: Type.Number(),
   cacheWrite: Type.Number(),
-  total: Type.Number(),
-  cost: Type.Number(),
+  cacheWrite1h: Type.Optional(Type.Number()),
+  reasoning: Type.Optional(Type.Number()),
+  totalTokens: Type.Number(),
+  cost: Type.Object({
+    input: Type.Number(),
+    output: Type.Number(),
+    cacheRead: Type.Number(),
+    cacheWrite: Type.Number(),
+    total: Type.Number(),
+  }),
 });
 
 const specialistResultSchema = Type.Object({
@@ -80,8 +96,10 @@ const specialistToolDetailsSchema = Type.Object({
   error: Type.Optional(Type.String()),
 });
 
-export type SpecialistUsage = Static<typeof specialistUsageSchema>;
-export type SpecialistRunResult = Static<typeof specialistResultSchema>;
+export type SpecialistUsage = Usage;
+export type SpecialistRunResult = Omit<Static<typeof specialistResultSchema>, "usage"> & {
+  readonly usage: Usage;
+};
 export type SpecialistToolDetails = Static<typeof specialistToolDetailsSchema>;
 
 export type SpecialistRunnerError =
@@ -90,19 +108,30 @@ export type SpecialistRunnerError =
   | SpecialistModelUnsupported
   | SpecialistAuthUnavailable
   | SpecialistThinkingUnsupported
+  | SpecialistToolUnsupported
   | SpecialistRunFailed
   | ProviderConfigError
   | ProviderCallError;
 
 export interface SpecialistRunner {
   readonly run: (
-    input: AgentRunInput,
+    request: SpecialistRunRequest,
     signal?: AbortSignal,
   ) => Effect.Effect<SpecialistRunResult, SpecialistRunnerError>;
 }
 
-export interface SpecialistParent {
+export interface SpecialistSelectionParent {
   readonly session: Pick<AgentSession, "model" | "thinkingLevel" | "getAllTools">;
+  readonly services: {
+    readonly modelRuntime: {
+      readonly getProvider: (providerId: string) => unknown;
+      readonly getModel: (providerId: string, modelId: string) => Model<Api> | undefined;
+      readonly hasConfiguredAuth: (providerId: string) => boolean;
+    };
+  };
+}
+
+export interface SpecialistParent extends SpecialistSelectionParent {
   readonly services: AgentSessionServices;
   readonly resources: PiResources;
 }
@@ -180,9 +209,19 @@ const childRuntime = (
     catch: (cause) => specialistFailure(options.profilePath, "create child runtime", cause),
   });
 
+export interface SpecialistChildRuntime {
+  readonly session: {
+    readonly model: Model<Api> | undefined;
+    readonly thinkingLevel: ThinkingLevel;
+    readonly getActiveToolNames: () => ReadonlyArray<string>;
+    readonly messages: ReadonlyArray<AgentMessage>;
+  };
+  readonly dispose: () => Promise<void>;
+}
+
 const disposeChild = (
   profilePath: string,
-  runtime: AgentSessionRuntime,
+  runtime: SpecialistChildRuntime,
 ): Effect.Effect<void, never> =>
   Effect.tryPromise({
     try: () => runtime.dispose(),
@@ -196,19 +235,87 @@ const disposeChild = (
     ),
   );
 
-const usageFromStats = (stats: ReturnType<AgentSession["getSessionStats"]>): SpecialistUsage => ({
-  input: stats.tokens.input,
-  output: stats.tokens.output,
-  cacheRead: stats.tokens.cacheRead,
-  cacheWrite: stats.tokens.cacheWrite,
-  total: stats.tokens.total,
-  cost: stats.cost,
+export const useSpecialistChild = <Runtime extends SpecialistChildRuntime, E>(
+  profilePath: string,
+  acquire: Effect.Effect<Runtime, E>,
+  selected: {
+    readonly agent: ProfileAgent;
+    readonly model: Model<Api>;
+  },
+  answer: (runtime: Runtime) => Effect.Effect<string, ProviderConfigError | ProviderCallError>,
+): Effect.Effect<SpecialistRunResult, E | ProviderConfigError | ProviderCallError> =>
+  Effect.acquireUseRelease(
+    acquire,
+    (child) =>
+      answer(child).pipe(
+        Effect.map((text) => ({
+          answer: text,
+          agent: selected.agent.id,
+          provider: child.session.model?.provider ?? selected.model.provider,
+          model: child.session.model?.id ?? selected.model.id,
+          thinking: child.session.thinkingLevel,
+          tools: [...child.session.getActiveToolNames()],
+          usage: usageFromMessages(child.session.messages),
+        })),
+      ),
+    (child) => disposeChild(profilePath, child),
+  );
+
+const zeroUsage = (): Usage => ({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
 });
 
-const selectSpecialist = (
-  options: MakeSpecialistRunnerOptions,
-  input: AgentRunInput,
-  parent: SpecialistParent,
+const addUsage = (total: Usage, usage: Usage): Usage => {
+  total.input += usage.input;
+  total.output += usage.output;
+  total.cacheRead += usage.cacheRead;
+  total.cacheWrite += usage.cacheWrite;
+  total.totalTokens += usage.totalTokens;
+  total.cost.input += usage.cost.input;
+  total.cost.output += usage.cost.output;
+  total.cost.cacheRead += usage.cost.cacheRead;
+  total.cost.cacheWrite += usage.cost.cacheWrite;
+  total.cost.total += usage.cost.total;
+  if (usage.cacheWrite1h !== undefined)
+    total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
+  if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
+  return total;
+};
+
+/** Aggregate only public Pi message usage; tool-result usage is intentionally included. */
+export const usageFromMessages = (messages: ReadonlyArray<AgentMessage>): Usage => {
+  const usage = zeroUsage();
+  for (const message of messages) {
+    if (!("role" in message)) continue;
+    if (message.role === "assistant") addUsage(usage, message.usage);
+    else if (message.role === "toolResult" && message.usage !== undefined)
+      addUsage(usage, message.usage);
+  }
+  return usage;
+};
+
+const blockedSpecialistTool = (name: string): boolean =>
+  name === "memory_write" ||
+  name === "agent_run" ||
+  name === "discussion" ||
+  name.startsWith("discussion_") ||
+  name.startsWith("discussion-");
+
+export const selectSpecialist = (
+  options: Pick<MakeSpecialistRunnerOptions, "profilePath" | "agents">,
+  request: SpecialistRunRequest,
+  parent: SpecialistSelectionParent,
 ): Effect.Effect<
   {
     readonly agent: ProfileAgent;
@@ -221,19 +328,21 @@ const selectSpecialist = (
   | SpecialistModelUnsupported
   | SpecialistAuthUnavailable
   | SpecialistThinkingUnsupported
+  | SpecialistToolUnsupported
 > =>
   Effect.gen(function* () {
-    const agent = options.agents.find((candidate) => candidate.id === input.agent);
+    const agent = options.agents.find((candidate) => candidate.id === request.agent);
     if (agent === undefined) {
       return yield* new SpecialistAgentNotFound({
         profilePath: options.profilePath,
-        agentId: input.agent,
-        message: `unknown Profile agent: ${input.agent}`,
+        agentId: request.agent,
+        message: `unknown Profile agent: ${request.agent}`,
       });
     }
 
     const parentModel = parent.session.model;
-    const providerId = input.provider ?? agent.provider ?? parentModel?.provider;
+    // Profile metadata is authoritative when present; the parent is only a fallback.
+    const providerId = agent.provider ?? parentModel?.provider;
     if (providerId === undefined) {
       return yield* new SpecialistProviderUnsupported({
         profilePath: options.profilePath,
@@ -250,7 +359,7 @@ const selectSpecialist = (
       });
     }
 
-    const modelId = input.model ?? agent.model ?? parentModel?.id;
+    const modelId = agent.model ?? parentModel?.id;
     if (modelId === undefined) {
       return yield* new SpecialistModelUnsupported({
         profilePath: options.profilePath,
@@ -276,11 +385,8 @@ const selectSpecialist = (
       });
     }
 
-    const thinking = input.thinking ?? agent.thinking ?? parent.session.thinkingLevel;
-    const supportsThinking =
-      thinking === "off" ||
-      (model.reasoning === true && model.thinkingLevelMap?.[thinking] !== null);
-    if (!supportsThinking) {
+    const thinking = agent.thinking ?? parent.session.thinkingLevel;
+    if (!getSupportedThinkingLevels(model).includes(thinking)) {
       return yield* new SpecialistThinkingUnsupported({
         profilePath: options.profilePath,
         providerId,
@@ -290,23 +396,41 @@ const selectSpecialist = (
       });
     }
 
-    const availableTools = new Set(
-      parent.session
-        .getAllTools()
-        .map((tool) => tool.name)
-        .filter((name) => name !== "memory_write" && name !== "agent_run"),
-    );
-    const declaredTools = input.tools ?? agent.tools ?? [];
-    const agentTools = agent.tools === undefined ? undefined : new Set(agent.tools);
-    const tools = declaredTools.filter(
-      (name) => availableTools.has(name) && (agentTools === undefined || agentTools.has(name)),
-    );
+    const availableTools = new Set(parent.session.getAllTools().map((tool) => tool.name));
+    const declaredTools = agent.tools ?? [];
+    const validateTool = (name: string): Effect.Effect<string, SpecialistToolUnsupported> => {
+      const supported = availableTools.has(name) && !blockedSpecialistTool(name);
+      return supported
+        ? Effect.succeed(name)
+        : Effect.fail(
+            new SpecialistToolUnsupported({
+              profilePath: options.profilePath,
+              agentId: agent.id,
+              toolName: name,
+              message: `tool is unavailable to Profile agent ${agent.id}: ${name}`,
+            }),
+          );
+    };
+    // Validate the file's whole declaration even when an internal caller narrows it.
+    for (const name of declaredTools) yield* validateTool(name);
+    const tools = request.allowedTools === undefined ? declaredTools : request.allowedTools;
+    for (const name of tools) {
+      yield* validateTool(name);
+      if (!declaredTools.includes(name)) {
+        return yield* new SpecialistToolUnsupported({
+          profilePath: options.profilePath,
+          agentId: agent.id,
+          toolName: name,
+          message: `tool is outside the Profile agent allowlist: ${name}`,
+        });
+      }
+    }
 
-    return { agent, model, thinking, tools };
+    return { agent, model, thinking, tools: [...new Set(tools)] };
   });
 
 export const makeSpecialistRunner = (options: MakeSpecialistRunnerOptions): SpecialistRunner => ({
-  run: (input, _signal) => {
+  run: (request, _signal) => {
     const parent = options.parent();
     if (parent === undefined) {
       return Effect.fail(
@@ -320,32 +444,19 @@ export const makeSpecialistRunner = (options: MakeSpecialistRunnerOptions): Spec
     }
 
     return Effect.gen(function* () {
-      const selected = yield* selectSpecialist(options, input, parent);
-      const runtime = yield* childRuntime(
-        options,
-        parent,
-        selected.agent,
-        selected.model,
-        selected.thinking,
-        selected.tools,
-      );
-      return yield* Effect.acquireUseRelease(
-        Effect.succeed(runtime),
-        (child) =>
-          promptForAssistantText(options.profilePath, child.session, input.prompt).pipe(
-            Effect.map((answer) => ({
-              answer,
-              agent: selected.agent.id,
-              provider: child.session.model?.provider ?? selected.model.provider,
-              model: child.session.model?.id ?? selected.model.id,
-              thinking: child.session.thinkingLevel,
-              tools: child.session
-                .getActiveToolNames()
-                .filter((name) => name !== "memory_write" && name !== "agent_run"),
-              usage: usageFromStats(child.session.getSessionStats()),
-            })),
-          ),
-        (child) => disposeChild(options.profilePath, child),
+      const selected = yield* selectSpecialist(options, request, parent);
+      return yield* useSpecialistChild(
+        options.profilePath,
+        childRuntime(
+          options,
+          parent,
+          selected.agent,
+          selected.model,
+          selected.thinking,
+          selected.tools,
+        ),
+        selected,
+        (runtime) => promptForAssistantText(options.profilePath, runtime.session, request.prompt),
       );
     });
   },
@@ -354,9 +465,11 @@ export const makeSpecialistRunner = (options: MakeSpecialistRunnerOptions): Spec
 const textResult = (
   text: string,
   details: SpecialistToolDetails,
+  usage?: Usage,
 ): AgentToolResult<SpecialistToolDetails> => ({
   content: [{ type: "text" as const, text }],
   details,
+  ...(usage === undefined ? {} : { usage }),
 });
 
 const compactPrompt = (prompt: string): string => {
@@ -365,7 +478,7 @@ const compactPrompt = (prompt: string): string => {
 };
 
 const compactUsage = (usage: SpecialistUsage): string =>
-  `${usage.total} tok${usage.cost === 0 ? "" : ` · $${usage.cost.toFixed(4)}`}`;
+  `${usage.totalTokens} tok${usage.cost.total === 0 ? "" : ` · $${usage.cost.total.toFixed(4)}`}`;
 
 export const renderAgentRunCall = (input: Pick<AgentRunInput, "agent" | "prompt">): string =>
   `agent_run → ${input.agent}: ${compactPrompt(input.prompt)}`;
@@ -385,7 +498,7 @@ export const renderAgentRunResult = (details: SpecialistToolDetails, expanded: b
     `usage: ${specialist.usage.input} in · ${specialist.usage.output} out · ${compactUsage(specialist.usage)}`,
     "",
     specialist.answer,
-  ].join("\\n");
+  ].join("\n");
 };
 
 export type AgentRunTool = Omit<ToolDefinition, "execute"> & {
@@ -403,8 +516,7 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
   label: "agent_run",
   description:
     "Run one named Profile specialist in an isolated in-memory child session. The specialist cannot use memory_write or agent_run. Use only for focused delegation; the child answer is returned here.",
-  promptSnippet:
-    "agent_run(agent, prompt, provider?, model?, thinking?, tools?) — delegate one focused task",
+  promptSnippet: "agent_run(agent, prompt) — delegate one focused task",
   parameters: agentRunParameters,
   executionMode: "sequential",
   execute(_toolCallId, rawInput, signal) {
@@ -416,7 +528,7 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
     const program = runner.run(rawInput, signal).pipe(
       Effect.match({
         onFailure: (failure) => textResult(`ERROR: ${failure.message}`, { error: failure.message }),
-        onSuccess: (result) => textResult(result.answer, { result }),
+        onSuccess: (result) => textResult(result.answer, { result }, result.usage),
       }),
     );
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
