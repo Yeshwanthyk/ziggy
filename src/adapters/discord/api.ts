@@ -1,4 +1,9 @@
 import { Effect, Schema } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+} from "effect/unstable/http";
 
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
@@ -120,33 +125,37 @@ const classifyFailure = (
 };
 
 const request = (
+  client: HttpClient.HttpClient,
   token: string,
   operation: DiscordApiOperation,
   url: string,
   options?: {
-    readonly method?: string;
+    readonly method?: "GET" | "POST";
     readonly body?: string;
   },
-): Effect.Effect<RawResponse, DiscordApiError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(url, {
-        method: options?.method ?? "GET",
-        headers: {
-          Authorization: `Bot ${token}`,
-          ...(options?.body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        ...(options?.body === undefined ? {} : { body: options.body }),
-        signal,
-      });
-      return {
-        status: response.status,
-        body: await response.text(),
-        retryAfterHeader: response.headers.get("Retry-After") ?? undefined,
-      };
-    },
-    catch: (cause) => apiError(operation, "network", true, cause, token),
-  });
+): Effect.Effect<RawResponse, DiscordApiError> => {
+  let outgoing = HttpClientRequest.make(options?.method ?? "GET")(url).pipe(
+    HttpClientRequest.setHeader("Authorization", `Bot ${token}`),
+  );
+  if (options?.body !== undefined) {
+    outgoing = outgoing.pipe(
+      HttpClientRequest.bodyText(options.body, "application/json"),
+    );
+  }
+
+  return client.execute(outgoing).pipe(
+    Effect.flatMap((response) =>
+      response.text.pipe(
+        Effect.map((body) => ({
+          status: response.status,
+          body,
+          retryAfterHeader: response.headers["retry-after"],
+        })),
+      ),
+    ),
+    Effect.mapError((cause) => apiError(operation, "network", true, cause, token)),
+  );
+};
 
 const retryAfter = (response: RawResponse): Effect.Effect<number | undefined, never> =>
   decodeRateLimitResponse(response.body).pipe(
@@ -172,42 +181,60 @@ const ensureSuccess = (
   return Effect.fail(classifyFailure(operation, response.status, token));
 };
 
-export const getGatewayBot = (
-  token: string,
-): Effect.Effect<{ readonly url: string }, DiscordApiError> =>
-  request(token, "getGatewayBot", "https://discord.com/api/v10/gateway/bot").pipe(
-    Effect.flatMap((response) => ensureSuccess(token, "getGatewayBot", response)),
-    Effect.flatMap((response) =>
-      decodeGatewayBotResponse(response.body).pipe(
-        Effect.mapError((cause) =>
-          apiError("getGatewayBot", "invalid-response", false, cause, token, {
-            status: response.status,
-          }),
+export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
+  getGatewayBot: (token: string) =>
+    request(client, token, "getGatewayBot", "https://discord.com/api/v10/gateway/bot").pipe(
+      Effect.flatMap((response) => ensureSuccess(token, "getGatewayBot", response)),
+      Effect.flatMap((response) =>
+        decodeGatewayBotResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("getGatewayBot", "invalid-response", false, cause, token, {
+              status: response.status,
+            }),
+          ),
         ),
       ),
     ),
-  );
+  createMessage: (token: string, channelId: string, text: string) =>
+    request(
+      client,
+      token,
+      "createMessage",
+      `https://discord.com/api/v10/channels/${encodeURIComponent(channelId)}/messages`,
+      { method: "POST", body: JSON.stringify({ content: text }) },
+    ).pipe(
+      Effect.flatMap((response) => ensureSuccess(token, "createMessage", response)),
+      Effect.flatMap((response) =>
+        decodeCreateMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("createMessage", "invalid-response", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+        ),
+      ),
+      Effect.asVoid,
+    ),
+});
+
+export type DiscordApi = ReturnType<typeof makeDiscordApi>;
+
+const withLiveClient = <A, E>(
+  use: (api: DiscordApi) => Effect.Effect<A, E>,
+): Effect.Effect<A, E> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    return yield* use(makeDiscordApi(client));
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
+export const getGatewayBot = (
+  token: string,
+): Effect.Effect<{ readonly url: string }, DiscordApiError> =>
+  withLiveClient((api) => api.getGatewayBot(token));
 
 export const createMessage = (
   token: string,
   channelId: string,
   text: string,
 ): Effect.Effect<void, DiscordApiError> =>
-  request(
-    token,
-    "createMessage",
-    `https://discord.com/api/v10/channels/${encodeURIComponent(channelId)}/messages`,
-    { method: "POST", body: JSON.stringify({ content: text }) },
-  ).pipe(
-    Effect.flatMap((response) => ensureSuccess(token, "createMessage", response)),
-    Effect.flatMap((response) =>
-      decodeCreateMessageResponse(response.body).pipe(
-        Effect.mapError((cause) =>
-          apiError("createMessage", "invalid-response", false, cause, token, {
-            status: response.status,
-          }),
-        ),
-      ),
-    ),
-    Effect.asVoid,
-  );
+  withLiveClient((api) => api.createMessage(token, channelId, text));

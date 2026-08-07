@@ -1,11 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
+import type * as Scope from "effect/Scope";
 import { authTest, postMessage, SlackApiError } from "../adapters/slack/api";
 import {
   type SlackInboundMessage,
   type SlackSocket,
-  normalizeSlackSocketError,
+  type SlackSocketError,
   openSlackSocket,
 } from "../adapters/slack/socket";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
@@ -23,7 +24,9 @@ export type SlackGatewayError = SlackApiError;
 
 export interface SlackTransport {
   readonly authTest: (token: string) => Effect.Effect<{ readonly userId: string }, SlackApiError>;
-  readonly openSocket: (appToken: string) => SlackSocket;
+  readonly openSocket: (
+    appToken: string,
+  ) => Effect.Effect<SlackSocket, SlackSocketError, Scope.Scope>;
   readonly postMessage: (
     token: string,
     channel: string,
@@ -189,16 +192,14 @@ const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
     { concurrency: "unbounded", discard: true },
   );
 
-const socketFailure = (cause: unknown): SlackApiError => {
-  const socketError = normalizeSlackSocketError(cause);
-  return new SlackApiError({
+const socketFailure = (socketError: SlackSocketError): SlackApiError =>
+  new SlackApiError({
     operation: "socket",
     reason: "socket",
     retriable: false,
     message: socketError.message,
     cause: socketError,
   });
-};
 
 const liveSlackTransport: SlackTransport = {
   authTest,
@@ -215,9 +216,16 @@ export const makeSlackGateway = (
       Effect.gen(function* () {
         const bot = yield* transport.authTest(config.botToken);
         const chats = new Map<string, ChatState>();
-        const socket = yield* Effect.sync(() => transport.openSocket(config.appToken));
+        const socket = yield* transport.openSocket(config.appToken).pipe(
+          Effect.mapError(socketFailure),
+        );
         yield* Effect.addFinalizer(() =>
-          Effect.promise(() => socket.close()).pipe(Effect.andThen(disposeChats(chats))),
+          socket.close.pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Slack socket close failed", { failure }),
+            ),
+            Effect.andThen(disposeChats(chats)),
+          ),
         );
 
         const processMessage = (message: InboundMessage) => {
@@ -258,10 +266,7 @@ export const makeSlackGateway = (
         };
 
         while (true) {
-          const inbound = yield* Effect.tryPromise({
-            try: () => socket.next(),
-            catch: socketFailure,
-          });
+          const inbound = yield* socket.next.pipe(Effect.mapError(socketFailure));
           const message = normalizeSlackMessage(inbound, bot.userId, config.ownerUserId);
           if (message !== undefined) {
             yield* processMessage(message).pipe(Effect.forkScoped);

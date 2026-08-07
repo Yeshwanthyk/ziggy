@@ -70,29 +70,26 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const replied = yield* Deferred.make<void>();
-        // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- SlackSocket is a native adapter contract.
-        const inbound = Promise.resolve(message({ threadTs: "0.9" }));
-        // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- SlackSocket is a native adapter contract.
-        const pending = new Promise<SlackInboundMessage>(() => {});
+        const inbound = Effect.succeed(message({ threadTs: "0.9" }));
+        const pending: Effect.Effect<SlackInboundMessage> = Effect.never;
         const transport: SlackTransport = {
           authTest: (token) => {
             expect(token).toBe("bot-token");
             return Effect.succeed({ userId: "UBOT" });
           },
-          openSocket: (appToken) => {
-            expect(appToken).toBe("app-token");
-            return {
-              next: () => {
-                nextCall += 1;
-                return nextCall === 1 ? inbound : pending;
-              },
-              close: () => {
-                socketClosed = true;
-                // oxlint-disable-next-line ziggy-effect/no-native-promise-ownership -- SlackSocket is a native adapter contract.
-                return Promise.resolve();
-              },
-            };
-          },
+          openSocket: (appToken) =>
+            Effect.sync(() => {
+              expect(appToken).toBe("app-token");
+              return {
+                next: Effect.suspend(() => {
+                  nextCall += 1;
+                  return nextCall === 1 ? inbound : pending;
+                }),
+                close: Effect.sync(() => {
+                  socketClosed = true;
+                }),
+              };
+            }),
           postMessage: (token, channel, text, threadTs) =>
             Effect.gen(function* () {
               posts.push({ token, channel, text, threadTs });

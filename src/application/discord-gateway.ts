@@ -1,13 +1,14 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
+import type * as Scope from "effect/Scope";
 import { createMessage, DiscordApiError } from "../adapters/discord/api";
 import {
   type DiscordInboundMessage,
   type DiscordSocket,
+  type DiscordSocketError,
   openDiscordSocket,
 } from "../adapters/discord/socket";
-import { normalizeDiscordSocketError } from "../adapters/discord/socket-error";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { type ZiggyAgentError } from "../domain/agent";
 import { decodeDiscordGatewayConfigJson, type DiscordGatewayConfig } from "../domain/discord";
@@ -23,7 +24,10 @@ const MAX_RETRY_SECONDS = 30;
 export type DiscordGatewayError = DiscordApiError;
 
 export interface DiscordTransport {
-  readonly openSocket: (token: string, intents: number) => DiscordSocket;
+  readonly openSocket: (
+    token: string,
+    intents: number,
+  ) => Effect.Effect<DiscordSocket, DiscordSocketError, Scope.Scope>;
   readonly createMessage: (
     token: string,
     channelId: string,
@@ -186,16 +190,14 @@ const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
     { concurrency: "unbounded", discard: true },
   );
 
-const socketFailure = (cause: unknown): DiscordApiError => {
-  const socketError = normalizeDiscordSocketError(cause);
-  return new DiscordApiError({
+const socketFailure = (socketError: DiscordSocketError): DiscordApiError =>
+  new DiscordApiError({
     operation: "gateway",
     reason: "gateway",
     retriable: false,
     message: socketError.message,
     cause: socketError,
   });
-};
 
 const liveDiscordTransport: DiscordTransport = {
   openSocket: openDiscordSocket,
@@ -210,11 +212,16 @@ export const makeDiscordGateway = (
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
-        const socket = yield* Effect.sync(() =>
-          transport.openSocket(config.botToken, DISCORD_INTENTS),
-        );
+        const socket = yield* transport
+          .openSocket(config.botToken, DISCORD_INTENTS)
+          .pipe(Effect.mapError(socketFailure));
         yield* Effect.addFinalizer(() =>
-          Effect.promise(() => socket.close()).pipe(Effect.andThen(disposeChats(chats))),
+          socket.close.pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Discord socket close failed", { failure }),
+            ),
+            Effect.andThen(disposeChats(chats)),
+          ),
         );
 
         const processMessage = (message: InboundMessage) => {
@@ -255,10 +262,7 @@ export const makeDiscordGateway = (
         };
 
         while (true) {
-          const inbound = yield* Effect.tryPromise({
-            try: () => socket.next(),
-            catch: socketFailure,
-          });
+          const inbound = yield* socket.next.pipe(Effect.mapError(socketFailure));
           const message = normalizeDiscordMessage(inbound, config.ownerUserId);
           if (message !== undefined) {
             yield* processMessage(message).pipe(Effect.forkScoped);

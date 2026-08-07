@@ -1,4 +1,9 @@
 import { Effect, Schema } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+} from "effect/unstable/http";
 
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
@@ -14,6 +19,10 @@ const PostMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   ts: Schema.String,
 });
+const ConnectionsOpenSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  url: Schema.String,
+});
 const SlackFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
@@ -25,8 +34,11 @@ const decodeAuthTestResponse = Schema.decodeUnknownEffect(
 const decodePostMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([PostMessageSuccess, SlackFailure])),
 );
+const decodeConnectionsOpenResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([ConnectionsOpenSuccess, SlackFailure])),
+);
 
-export type SlackApiOperation = "authTest" | "postMessage" | "socket";
+export type SlackApiOperation = "authTest" | "postMessage" | "connectionsOpen" | "socket";
 export type SlackApiErrorReason =
   | "network"
   | "server"
@@ -37,7 +49,7 @@ export type SlackApiErrorReason =
   | "socket";
 
 export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("SlackApiError", {
-  operation: Schema.Literals(["authTest", "postMessage", "socket"]),
+  operation: Schema.Literals(["authTest", "postMessage", "connectionsOpen", "socket"]),
   reason: Schema.Literals([
     "network",
     "server",
@@ -67,6 +79,7 @@ const AUTH_ERRORS = new Set([
   "token_expired",
   "not_authed",
   "missing_scope",
+  "forbidden_team",
 ]);
 
 const redact = (value: string, token: string): string =>
@@ -120,6 +133,11 @@ const classifyHttpFailure = (
   response: RawResponse,
   token: string,
 ): SlackApiError => {
+  if (response.status === 401 || response.status === 403) {
+    return apiError(operation, "authentication", false, new Error(`HTTP ${response.status}`), token, {
+      status: response.status,
+    });
+  }
   if (response.status === 429) {
     const retryAfterSeconds = retryAfterHeader(response.retryAfterHeader);
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
@@ -138,30 +156,44 @@ const classifyHttpFailure = (
 };
 
 const request = (
+  client: HttpClient.HttpClient,
+  token: string,
+  operation: SlackApiOperation,
+  method: string,
+  options: {
+    readonly body: string;
+    readonly contentType: string;
+  },
+): Effect.Effect<RawResponse, SlackApiError> => {
+  const outgoing = HttpClientRequest.post(`https://slack.com/api/${method}`).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.bodyText(options.body, options.contentType),
+  );
+
+  return client.execute(outgoing).pipe(
+    Effect.flatMap((response) =>
+      response.text.pipe(
+        Effect.map((body) => ({
+          status: response.status,
+          body,
+          retryAfterHeader: response.headers["retry-after"],
+        })),
+      ),
+    ),
+    Effect.mapError((cause) => apiError(operation, "network", true, cause, token)),
+  );
+};
+
+const jsonRequest = (
+  client: HttpClient.HttpClient,
   token: string,
   operation: SlackApiOperation,
   method: string,
   body: object,
 ): Effect.Effect<RawResponse, SlackApiError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      // oxlint-disable-next-line ziggy-effect/no-raw-fetch -- Slack's required adapter boundary uses global fetch.
-      const response = await fetch(`https://slack.com/api/${method}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify(body),
-        signal,
-      });
-      return {
-        status: response.status,
-        body: await response.text(),
-        retryAfterHeader: response.headers.get("Retry-After") ?? undefined,
-      };
-    },
-    catch: (cause) => apiError(operation, "network", true, cause, token),
+  request(client, token, operation, method, {
+    body: JSON.stringify(body),
+    contentType: "application/json; charset=utf-8",
   });
 
 const ensureHttpSuccess = (
@@ -191,24 +223,89 @@ const slackFailure = (
   });
 };
 
-export const authTest = (
-  token: string,
-): Effect.Effect<{ readonly userId: string }, SlackApiError> =>
-  request(token, "authTest", "auth.test", {}).pipe(
-    Effect.flatMap((response) => ensureHttpSuccess(token, "authTest", response)),
-    Effect.flatMap((response) =>
-      decodeAuthTestResponse(response.body).pipe(
-        Effect.mapError((cause) =>
-          apiError("authTest", "decode", false, cause, token, { status: response.status }),
-        ),
-        Effect.flatMap((envelope) =>
-          envelope.ok
-            ? Effect.succeed({ userId: envelope.user_id })
-            : Effect.fail(slackFailure(token, "authTest", envelope.error, response.status)),
+export const makeSlackApi = (client: HttpClient.HttpClient) => ({
+  authTest: (token: string) =>
+    jsonRequest(client, token, "authTest", "auth.test", {}).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "authTest", response)),
+      Effect.flatMap((response) =>
+        decodeAuthTestResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("authTest", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.succeed({ userId: envelope.user_id })
+              : Effect.fail(slackFailure(token, "authTest", envelope.error, response.status)),
+          ),
         ),
       ),
     ),
-  );
+  postMessage: (
+    token: string,
+    channel: string,
+    text: string,
+    threadTs?: string,
+  ) =>
+    jsonRequest(client, token, "postMessage", "chat.postMessage", {
+      channel,
+      text,
+      ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "postMessage", response)),
+      Effect.flatMap((response) =>
+        decodePostMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("postMessage", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "postMessage", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  connectionsOpen: (token: string) =>
+    request(client, token, "connectionsOpen", "apps.connections.open", {
+      body: "",
+      contentType: "application/x-www-form-urlencoded",
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "connectionsOpen", response)),
+      Effect.flatMap((response) =>
+        decodeConnectionsOpenResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("connectionsOpen", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.succeed({ url: envelope.url })
+              : Effect.fail(
+                  slackFailure(token, "connectionsOpen", envelope.error, response.status),
+                ),
+          ),
+        ),
+      ),
+    ),
+});
+
+export type SlackApi = ReturnType<typeof makeSlackApi>;
+
+const withLiveClient = <A, E>(
+  use: (api: SlackApi) => Effect.Effect<A, E>,
+): Effect.Effect<A, E> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    return yield* use(makeSlackApi(client));
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
+export const authTest = (
+  token: string,
+): Effect.Effect<{ readonly userId: string }, SlackApiError> =>
+  withLiveClient((api) => api.authTest(token));
 
 export const postMessage = (
   token: string,
@@ -216,22 +313,9 @@ export const postMessage = (
   text: string,
   threadTs?: string,
 ): Effect.Effect<void, SlackApiError> =>
-  request(token, "postMessage", "chat.postMessage", {
-    channel,
-    text,
-    ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
-  }).pipe(
-    Effect.flatMap((response) => ensureHttpSuccess(token, "postMessage", response)),
-    Effect.flatMap((response) =>
-      decodePostMessageResponse(response.body).pipe(
-        Effect.mapError((cause) =>
-          apiError("postMessage", "decode", false, cause, token, { status: response.status }),
-        ),
-        Effect.flatMap((envelope) =>
-          envelope.ok
-            ? Effect.void
-            : Effect.fail(slackFailure(token, "postMessage", envelope.error, response.status)),
-        ),
-      ),
-    ),
-  );
+  withLiveClient((api) => api.postMessage(token, channel, text, threadTs));
+
+export const connectionsOpen = (
+  token: string,
+): Effect.Effect<{ readonly url: string }, SlackApiError> =>
+  withLiveClient((api) => api.connectionsOpen(token));
