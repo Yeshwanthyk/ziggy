@@ -1,894 +1,232 @@
-# Effect-native full-repository audit
+# Effect-native full-repository audit — current adjudication
 
-Date: 2026-08-06
+Date: 2026-08-07
 
-Historical baseline: 2026-08-07 — commits `7e41cfd..2bd88da`. Current adjudication: HEAD `d8718c1`.
+Reviewed implementation HEAD: `ec13a93` (implementation baseline `d8718c1`; `ec13a93` adds the
+finite-Schema corrections and the first documentation adjudication). The closeout after this review
+changes tracked documentation only.
 
 ## Conclusion
 
-Ziggy is **not yet Effect-native throughout its core architecture**.
+Ziggy is now **Effect-native at the shipped core execution, cancellation, publication, and resource
+boundaries** that motivated this audit. The old Pi-auth Promise leak, scheduler publication races,
+unbracketed automation chat, coarse automation scan, Promise-shaped Discord/Slack sockets, raw-fetch
+policy conflict, weak automation writes, and silent cleanup paths were corrected by
+`11554fc..d8718c1`. `src/main.ts` remains the only production orchestration execution edge;
+`Effect.runPromise` remains only in required Pi callback bridges and tests.
 
-The domain model is mostly sound and `src/main.ts` remains the only production Effect execution edge. This report's baseline findings are historical: the scheduler publication windows, chat acquisition gap, Pi memory Promise island, application automation/config filesystem reads, and Promise-shaped Discord/Slack socket contracts were corrected in the subsequent commits listed below. The remaining architectural pressure is narrower: Profile workflow filesystem ownership, concrete adapter selection in application composition, PID-only recovery identity, the Gateway pathname protocol, and deliberately low-confidence lint heuristics. The raw-fetch rule now matches the written Telegram-only policy.
+This is not a claim that every host dependency is capability-injected. Four boundaries remain
+explicit:
 
-The current checkout contains **122 tracked code-like files** with `.ts`, `.mjs`, `.py`, or `.sh` extensions (excluding `vendor/effect`). This adjudication inspects the seven commits after the historical audit, current tests and scans, and the pinned Effect submodule; it does not repeat the original repository-wide inventory.
+1. PID liveness is conservative evidence, not durable process-instance identity — **deferred** until
+   a reproducible PID-reuse collision makes a portable identity/migration contract necessary.
+2. Gateway release is read/compare/unlink and cannot guarantee conditional unlink against an
+   adversarial external pathname replacement during release — **narrow-documented** because the
+   current bounded contender protocol has no such actor.
+3. `src/application/profiles.ts` still owns the large Profile/skill filesystem workflow, and
+   application composition still selects concrete adapters — **deferred** until a second
+   implementation or real test-isolation pressure appears.
+4. Five Effect Language Service suggestions are intentionally retained because the proposed
+   replacements change exact value types, violate repository lint policy, or remove rollback —
+   **narrow-documented**, with `bun run typecheck` still exiting 0.
 
-### Historical verification snapshot
+The checkout has **122 tracked code-like files**: 84 TypeScript, 21 MJS, 11 Python, and 6 shell
+files. Core `src` contains **38 production TypeScript files** and **24 TypeScript test files**. The
+pinned Effect source is `vendor/effect` commit
+`6184a7dc53cb9310e299b65ad6d6c712c2cbf202` (`effect@4.0.0-beta.99`).
 
-- Historical reviewed HEAD: `2bd88da` (`docs: record gateway lifecycle completion`).
-- Historical `bun run test`, `bun run typecheck`, `bun run check`, and `git diff --check 7e41cfd..2bd88da`: **passed**.
-- Current verification and dispositions are recorded in **Current HEAD adjudication** below.
+## Verification snapshot
 
-The earlier snapshot at `70adab8` remains the baseline for findings 1–10. The recent-commit addendum below updates that baseline for the durable automation scheduler, SQLite ledger, resident Gateway, Profile owner record, process-group gate termination, new CLI projections, and lifecycle recovery.
+- Workflow focused proof: **62 passed, 0 failed** for the adjudicated scheduler/run/SQLite/Gateway/
+  Pi/socket witnesses; no duplicate harness was added.
+- Independent workflow state proof: **41 passed, 0 failed** across automation SQLite, Gateway
+  ownership, scheduler, and automation runs.
+- Independent workflow core proof: **72 passed, 0 failed** across scheduler, automation runs,
+  SQLite, Gateway ownership/gate, Pi memory/prompt, and Discord/Slack sockets.
+- Closeout `bun run test`: **182 Bun tests passed, 0 failed**, followed by all Here Now, telephony,
+  and skill-creator helper suites passing.
+- Closeout `bun run check`: **passed** (format check, lint, and typecheck). Typecheck emitted the five
+  informational suggestions recorded below and exited 0.
+- Closeout `git diff --check`: **passed**.
 
-## Recent-commit addendum: durable scheduler and resident Gateway
+## Commits adjudicated since `c7335bd`
 
-### Scope
-
-Nine commits landed after audit commit `7e41cfd`:
-
-| Commit | Change | Audit effect |
+| Commit | Current effect | Proof retained |
 |---|---|---|
-| `cbd6512` | Terminate automation gate process groups | Strengthens timeout/interruption cleanup; swallowed signaling failure remains. |
-| `bfc6650` | Freeze scheduler Slice 3 plan | Useful historical design, but now stale after Slice 4 composition. |
-| `dbf9f0b` | Durable automation scheduler engine | Adds SQLite authority, scheduler service, lifecycle recorder, projections, CLI, and new Effect boundaries. |
-| `287ae00` | Slice 3 correctness correction | Prevents recovery of owners considered alive and hardens lifecycle writes; PID reuse remains ambiguous. |
-| `e7c4ba1` | Projection invariants | Strengthens read-side Schema validation and completion ordering. |
-| `ccf459e` | Resident Gateway composition | Adds one resident owner, scheduler/channel supervision, and shutdown ownership. |
-| `4ae4f7a` | Dangling-config fail-closed behavior | Correctly blocks all runtime work before ownership, but extends application filesystem ownership. |
-| `317f176` | Run lifecycle recovery | Improves dead-owner recovery and truthful terminal failure handling; interruption publication gaps remain. |
-| `2bd88da` | Lifecycle completion log | Documents the slice but does not update the frozen scheduler plan or this audit. |
-
-The delta changes 21 files and adds 4,764 lines. `LOG.md` records the slice history, and `docs/plans/automation-scheduler.md` is the changed design document assessed below. Four new production surfaces require explicit classification:
-
-- `src/adapters/bun/automation-sqlite.ts`
-- `src/adapters/bun/gateway-owner.ts`
-- `src/application/automation-scheduler.ts`
-- `src/application/resident-gateway.ts`
-
-**Complete 21-file delta**
-
-| File | Disposition in this report |
-|---|---|
-| `LOG.md` | Commit history; new audit entry appended without changing the existing operator-projections entry. |
-| `docs/plans/automation-scheduler.md` | New stale-spec finding L. |
-| `src/adapters/bun/automation-gate.ts` | Keep process-group termination; action J for signaling-failure observability. |
-| `src/adapters/bun/automation-gate.test.ts` | Keep real process-group proof; add deterministic group/fallback failure cases. |
-| `src/adapters/bun/automation-sqlite.ts` | New authority; findings A, D, G, H, K and lower-priority close policy. |
-| `src/adapters/bun/automation-sqlite.test.ts` | Strong transaction/schema proofs; add instance-identity and invalid-write proofs. |
-| `src/adapters/bun/gateway-owner.ts` | Findings D, E, F, I and runtime-throw observation. |
-| `src/adapters/bun/gateway-owner.test.ts` | Strong exclusion/release proof; add PID reuse, handoff, TOCTOU, cleanup cases. |
-| `src/adapters/bun/process.ts` | Existing swallowed-kill finding remains and now affects process-group fallback. |
-| `src/application/automation-scheduler.ts` | Findings A and G; scoped worker ownership is otherwise sound. |
-| `src/application/automation-scheduler.test.ts` | Strong TestClock/concurrency proof; missing commit-to-fork interruption case. |
-| `src/application/automations.ts` | Findings B, C, G; prior application filesystem finding remains. |
-| `src/application/automations.test.ts` | Prior unsafe tree helper is gone; add interruption/publication and chat-bracket proofs. |
-| `src/application/resident-gateway.ts` | Finding G; extends application filesystem/cause-preservation findings. |
-| `src/application/resident-gateway.test.ts` | Strong supervision/preflight proof; strengthen exact failure assertions and SIGTERM. |
-| `src/domain/automation.ts` | Finding K and schema/type ownership re-evaluation; persisted read schemas are a strength. |
-| `src/domain/automation.test.ts` | Keep parsing/fingerprint proofs. |
-| `src/domain/gateway.ts` | Existing `GatewayConfigError` cause gap remains; `GatewayOwnerError` is structured. |
-| `src/faces/automation-cli.ts` | Keep pure bounded projection rendering. |
-| `src/faces/automation-cli.test.ts` | Keep exact deterministic rendering/projection proofs. |
-| `src/main.ts` | Sole execution edge remains; distributed CLI/env decoding finding grows. |
-
-### Authoritative state and transition map
-
-**Authorities**
-
-- `.runtime/automation-scheduler.sqlite` owns schedule cursors, occurrence claims, run lifecycle, target outcomes, and scheduler heartbeat evidence.
-- `.runtime/gateway-owner.lock` is the Profile's resident-process exclusion marker.
-- automation Markdown remains the definition authority; SQLite stores observations and run truth, not a second editable definition.
-- `automations status` and `runs` are read-only projections over SQLite plus current observation time.
-
-| Transition | Actor | Guard | Atomic write/publication | Recovery/proof |
-|---|---|---|---|---|
-| Reconcile definitions | scheduler | Profile definition scan completed | schedule rows and tick state | invalid/unreadable definitions become explicit state; scan failure re-arms at 60s |
-| Claim occurrence | SQLite adapter | expected schedule row still matches; no active same-ID run | cursor advancement and `claimed` row in one `IMMEDIATE` transaction | stale proposal retries; missed range is compacted, never replayed |
-| Register run worker | scheduler Effect | committed claim returned | scoped child fiber | **gap:** interruption can occur after claim commit but before child registration |
-| Start run | automation service | matching `claimed` row, fingerprint, owner | `claimed → running` | dead owners later become `unknown` |
-| Execute | automation service | running row | gate, Pi, print, delivery outside DB transaction | scoped/finalized resources should publish one truthful terminal state |
-| Finish | run store | matching running row and owner | terminal row plus ordered target outcomes in one transaction | terminal DB failure is surfaced and not followed by a fabricated retry |
-| Recover active run | scheduler/manual admission | owner PID considered dead | `claimed/running → unknown` | **gap:** PID reuse can make an orphan appear live forever |
-| Acquire resident | Gateway owner adapter | owner path absent | hard-link candidate to owner pathname | malformed/stale records fail closed; operator removes stale record |
-| Release resident | scope finalizer | record owner ID matches handle | unlink owner pathname | **gap:** read/compare/unlink is not atomic against pathname replacement |
-
-**Safety invariants already enforced**
-
-1. Cursor advancement and occurrence claim commit together.
-2. One active run per automation is enforced by a partial unique SQLite index.
-3. Gateway ownership, scheduler workers, and channel workers are scope-owned.
-4. Gate/model/delivery work does not run inside SQLite transactions.
-5. Unknown interrupted work is not replayed as if it had never started.
-6. Read projections validate persisted rows and do not create an absent database or sidecars.
-7. Scheduler failure interrupts channel siblings before Gateway owner release.
-8. Expected channel failures are isolated from scheduler and healthy channels.
-
-### New P1 findings
-
-#### A. Claim commit and child registration are not interruption-atomic
-
-**Files and methods**
-
-- `src/application/automation-scheduler.ts:151-171` — `scan`
-- `src/application/automation-scheduler.ts:187-225` — `cycle`
-- `src/adapters/bun/automation-sqlite.ts:255-354` — `commitScheduleTick`
-
-`commitScheduleTick` advances the schedule cursor and inserts `claimed` rows before `cycle` forks the corresponding `automations.run` workers. The parent remains interruptible between the commit and each `Effect.forkScoped`.
-
-If interrupted in that window, the claim belongs to the still-live Gateway PID but no child exists to start or finish it. Dead-owner recovery will not touch it, and the active-run index makes future occurrences `skipped-busy` until the Gateway process exits.
-
-**Target shape**
-
-Protect only the publication window with `Effect.uninterruptibleMask`: commit claims, register one scoped child for every returned claim, and restore interruptibility inside each child's actual run. Alternatively, compensate every unregistered claim before allowing interruption. Do not make gate/model/delivery execution uninterruptible.
-
-**Missing proof**
-
-Pause immediately after the SQLite commit, interrupt the scheduler scope, and prove every committed claim has either a registered scoped child or a compensating terminal transition.
-
-#### B. Run terminal publication has an interruption gap
-
-**File and method**
-
-- `src/application/automations.ts:253-393` — `makeAutomations.run`
-
-`Effect.onInterrupt` currently wraps `execute`, while the success-path `finish(intent.terminal, intent.targets)` runs afterward. Interruption after `execute` returns—or while the final terminal write is pending—can leave the row `running`. Later recovery records `unknown/process-start`, not the intended truthful `failed/interrupted` state.
-
-**Target shape**
-
-Model the post-`start` lifecycle as one bracketed transition with exactly one terminal publication attempt on success, typed failure, or interruption. An `onExit`/`acquireUseRelease`-style owner may be appropriate, but it must preserve the existing invariant that a failed terminal DB write is surfaced and is not followed by a fabricated second finish.
-
-**Missing proof**
-
-Interrupt during prompt, after execution intent, and while terminal persistence is suspended. Assert the exact number of terminal attempts and the chosen persisted state.
-
-#### C. Chat acquisition and disposal are not structurally bracketed
-
-**File and method**
-
-- `src/application/automations.ts:311-331` — `openChat`, `prompt`, `dispose`
-
-`openChat` is yielded before `prompt(...).pipe(Effect.ensuring(dispose))` is constructed. The code usually reaches the ensuring region immediately, but the acquisition-to-finalizer-registration window is not protected by the resource combinator intended for this invariant.
-
-**Target shape**
-
-Use `Effect.acquireUseRelease` for `openChat → prompt → dispose`, with an explicit policy for prompt failure plus disposal failure. Keep disposal before print/delivery if that ordering is intentional.
-
-**Missing proof**
-
-Interrupt immediately after successful acquisition and during prompt; assert `dispose` exactly once.
-
-#### D. PID liveness is not a durable owner identity
-
-**Files and methods**
-
-- `src/adapters/bun/automation-sqlite.ts:212-233` — `recoverAutomationRuns`
-- `src/adapters/bun/gateway-owner.ts:49-56` — `pidIsAlive`
-- `src/adapters/bun/gateway-owner.ts:80-105` — `inspectExistingOwner`
-
-Both authorities treat `process.kill(pid, 0)` success as proof that the original owner still exists. A reused PID can make an orphaned run permanently active and a stale Gateway record permanently held by an unrelated process.
-
-**Target state**
-
-Persist a non-reusable process-instance identity alongside the PID. Resident scheduled runs can use the authoritative Gateway instance token; manual runs need the short-lived CLI process's own instance token. Where available, include OS process-start identity for diagnostics. Recovery should compare instance identity rather than infer identity from PID or heartbeat; heartbeat remains evidence, not a lease.
-
-**Missing proof**
-
-Simulate a live numeric PID with a mismatched process/instance identity and prove the old ownership is classified stale or uncertain rather than live.
-
-#### E. Gateway release can unlink a replacement owner record
-
-**File and method**
-
-- `src/adapters/bun/gateway-owner.ts:151-172` — `release`
-
-Release reads the pathname, compares `ownerId`, then later unlinks the pathname. A replacement between comparison and unlink can be removed by the old owner. The current “foreign owner” test replaces the record before release reads it and does not exercise this TOCTOU.
-
-**Target shape**
-
-Use an ownership protocol whose release is conditional on the same filesystem identity that was verified, or serialize replacement/removal through an atomic directory protocol. If that is intentionally out of scope, weaken the claimed guarantee and document manual replacement as unsafe during release.
-
-**Missing proof**
-
-Pause after owner verification, replace the pathname, resume release, and prove the replacement survives.
-
-### New P2 findings
-
-#### F. Normal Gateway handoff can fail spuriously
-
-**Files and methods**
-
-- `src/adapters/bun/gateway-owner.ts:138-145` — failed hard-link path
-- `src/adapters/bun/gateway-owner.ts:77-85` — owner inspection
-
-A contender may receive `EEXIST`, then the winner may release before the contender reads the owner file. `ENOENT` is currently translated to `unreadable`, so an ordinary handoff can fail even though ownership is available.
-
-**Target shape**
-
-Retry the complete atomic acquisition in a bounded loop only for the `EEXIST → ENOENT` race. Continue failing closed for malformed records and non-`ENOENT` inspection failures.
-
-#### G. New application services depend directly on concrete host adapters
-
-**Files and methods**
-
-- `src/application/automation-scheduler.ts:2-14` — direct imports from `automation-sqlite`
-- `src/application/resident-gateway.ts:1-66` — direct Node filesystem adaptation
-- `src/application/automations.ts:81-156` — existing definition/broadcast filesystem adaptation
-
-The new APIs return Effects, so no Effect execution escapes, but application orchestration still selects Bun/SQLite/Node implementations directly. Scheduler policy cannot be tested independently from the real SQLite store, and resident preflight owns host error-code interpretation.
-
-**Target shape**
-
-Add Effect-native capabilities/Layers for the automation ledger, definition source, projection store, and resident Gateway config store. Keep reconciliation, scheduling, supervision, and product policy in application services; keep SQLite/Node details in adapters.
-
-#### H. Definition discovery is one coarse, uncancellable Promise workflow
-
-**File and method**
-
-- `src/adapters/bun/automation-sqlite.ts:456-469` — `discoverAutomationSources`
-
-The entire directory traversal and sequential file-read loop is hidden in one async `Effect.tryPromise`, and its cancellation signal is ignored. The Promise boundary is correctly located in an adapter, but orchestration cannot regain interruption control between files.
-
-**Target shape**
-
-Adapt `readdir` and each `readFile` separately, then orchestrate with `Effect.forEach`. Pass cancellation signals where the host API supports them; otherwise at least restore cancellation between reads.
-
-#### I. Candidate cleanup discards every failure
-
-**File and method**
-
-- `src/adapters/bun/gateway-owner.ts:121-148` — `acquire` final cleanup
-
-`Effect.promise(() => unlink(candidate).catch(() => undefined))` converts all candidate cleanup outcomes into infallible success. Unexpected permission or filesystem failure leaves hidden candidate files.
-
-**Target shape**
-
-Use a typed cleanup Effect, ignore only verified `ENOENT`, and log unexpected cleanup failures before satisfying the infallible finalizer requirement.
-
-#### J. Process-group cleanup still swallows signaling failures
-
-**Files and methods**
-
-- `src/adapters/bun/automation-gate.ts:37-42` — process-group signal and fallback in `liveHost.kill`
-- `src/adapters/bun/process.ts:30-36` — `killProcess`
-
-The process-group behavior is a real improvement and the integration test proves a representative shell and child die. However, both group signaling and fallback child signaling can fail silently for non-`ESRCH` causes.
-
-**Target shape**
-
-Treat already-exited `ESRCH` as benign. Surface or log `EPERM` and unexpected failures, and test the path where both group and fallback signals fail.
-
-#### K. Write-side lifecycle contracts are weaker than persisted schemas
-
-**Files and symbols**
-
-- `src/adapters/bun/automation-sqlite.ts:236-240` — `ScheduleOccurrence`, `ScheduleMutation`, `ScheduleCommitResult`
-- `src/adapters/bun/automation-sqlite.ts:371-373` — `AutomationRunStore`, `RunTerminal`
-- `src/domain/automation.ts:136-198` — trigger/projection types
-
-Read-side persisted data is Schema-decoded and strongly checked, but write-side interfaces allow invalid fingerprints, failure categories, and terminal field combinations. A trusted internal caller can persist data that makes later projections fail closed.
-
-**Target shape**
-
-Move transition inputs to domain-owned schemas or tagged terminal variants that make invalid combinations unrepresentable. Decode at the transaction boundary and map validation failure into a typed transition/database error.
-
-#### L. The frozen scheduler plan is no longer the current specification
-
-**File**
-
-- `docs/plans/automation-scheduler.md`
-
-The document still says there is no production host, scheduled work is dormant, resident ownership is not implemented, and recovery/schema details that later commits changed. Mark it explicitly as a historical Slice 3 freeze or add a Slice 4/current-state section. Agents must not treat its stale statements as live architecture.
-
-### Lower-priority recent observations
-
-- `GatewayOwnerRuntime.makeOwnerId`, `now`, and `pidIsAlive` may throw outside their nominal typed contract. Either make the injected runtime Effect-shaped or adapt each call with `Effect.try`.
-- `db.close(false)` runs in `Effect.sync`; an unexpected close throw becomes a defect. Confirm Bun's contract or translate recoverable close failures according to the adapter policy.
-- `AutomationStatusProjection` and `AutomationTrigger` remain manual types adjacent to schema-owned persisted concepts; re-evaluate with `effect-schema-inferred-types` rather than retaining the old unconditional keep decision.
-- `Cause.hasInterruptsOnly` in Gateway teardown maps any interrupt-only exit to zero, not only OS-signal intent. This is acceptable while no internal path intentionally interrupts the main Gateway fiber, but should be revisited if that changes.
-- CLI/environment parsing remains distributed across `src/main.ts`; the new `gateway`, `automations status`, and `automations runs` branches increase the value of one decoded command union.
-
-### Recent changes that should remain
-
-1. `Effect.acquireRelease` correctly ties Gateway ownership to the resident scope.
-2. `Effect.scoped` and unbounded `Effect.all` correctly supervise scheduler and channel branches; scheduler failure interrupts siblings before owner release.
-3. `Effect.forkScoped` correctly owns workers once they have been registered.
-4. SQLite claim/cursor commits use one short `IMMEDIATE` transaction.
-5. SQLite connections use `Effect.acquireUseRelease`; no resident connection is leaked.
-6. Synchronous Bun SQLite calls are appropriate at the adapter boundary. Wrapping them in fake Promises would not make them cancellable.
-7. Read-only projections open with `create: false`, validate schema/rows, and do not initialize an absent database.
-8. TestClock-based scheduler tests prove capped wake timing and interruption.
-9. Process-group termination materially improves gate descendant cleanup.
-10. Terminal DB failure is attempted once and is not hidden by a fabricated second terminal write.
-11. Preflight happens before owner acquisition, and a dangling config prevents owner/scheduler/channel side effects.
-12. Pure CLI projection rendering remains total synchronous work and does not need Effect.
-
-### Recent test gaps
-
-| File | Existing strength | Missing/weak proof |
-|---|---|---|
-| `src/application/automation-scheduler.test.ts` | TestClock timing, independent IDs, outage compaction, fatal DB propagation | commit-to-fork interruption; several assertions inspect partial projections |
-| `src/application/automations.test.ts` | fresh run, recovery, truth-preserving terminal failure, ordered delivery | interruption after execution and during terminal commit; immediate post-acquire chat interruption |
-| `src/adapters/bun/automation-sqlite.test.ts` | schema freeze, transactional claim, exclusion, recovery, projection fail-closed | PID reuse/instance identity; invalid write-side transitions; full plan-promised tree snapshot |
-| `src/adapters/bun/gateway-owner.test.ts` | one-owner exclusion, interruption release, malformed/stale fail-closed | release TOCTOU; `EEXIST → ENOENT` handoff; PID reuse; cleanup failure |
-| `src/application/resident-gateway.test.ts` | preflight ordering, branch supervision, CLI/signal integration | several config failures assert a broad tag rather than exact path/message/cause; SIGTERM path |
-| `src/adapters/bun/automation-gate.test.ts` | real process-group timeout and direct interruption | both group and fallback signaling failure; deterministic error classification |
-
-## Governing source of truth
-
-The assessment uses:
-
-- `.agents/skills/effect-runtime-boundaries/SKILL.md`
-- `.agents/skills/effect-client-wrapper/SKILL.md`
-- `.agents/skills/effect-raw-fetch-boundary/SKILL.md`
-- `.agents/skills/effect-schema-boundaries/SKILL.md`
-- `.agents/skills/effect-schema-inferred-types/SKILL.md`
-- `.agents/skills/effect-value-inferred-types/SKILL.md`
-- `.agents/skills/effect-typed-errors/SKILL.md`
-- `.agents/skills/effect-tests/SKILL.md`
-- `.agents/skills/typescript-type-safety/SKILL.md`
-- `docs/research/minimal-ziggy-scout.md`
-- `docs/research/pi-sdk-surface.md`
-- pinned `vendor/effect` commit `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`
-
-Primary Effect references:
-
-- `vendor/effect/packages/effect/src/Effect.ts:824-947` — `Effect.promise` and `Effect.tryPromise`.
-- `vendor/effect/packages/effect/src/Effect.ts:1164-1207` — `Effect.callback` with interruption cleanup.
-- `vendor/effect/packages/effect/src/Effect.ts:6400-6734` — `scoped`, `acquireRelease`, `acquireUseRelease`, `addFinalizer`.
-- `vendor/effect/packages/effect/src/Effect.ts:8610-8660` — `forkScoped`.
-- `vendor/effect/packages/effect/src/Stream.ts:743-784,1591-1612` — callback streams and event-listener lifetime.
-- `vendor/effect/packages/effect/src/Queue.ts:441-599,694,982,1077,1114` — bounded queues and shutdown.
-- `vendor/effect/packages/effect/src/Schedule.ts:1270,1645,1763,1823` — retry schedules.
-- `vendor/effect/packages/effect/src/Schema.ts:1351-1376,12958-13015` — decoding and tagged errors.
-- `vendor/effect/packages/effect/src/FileSystem.ts` and `vendor/effect/packages/platform-bun/src/BunFileSystem.ts` — Effect-native filesystem capability.
-- `vendor/effect/packages/effect/src/unstable/process/ChildProcessSpawner.ts:226-247` — scoped process lifetime and `spawn` contract.
-- `vendor/effect/packages/effect/src/unstable/http/HttpClient.ts` and `unstable/http/FetchHttpClient.ts` — Effect HTTP capability.
-- `vendor/effect/packages/platform-bun/src/BunRuntime.ts` and `platform-node-shared/src/NodeRuntime.ts:22-59` — production execution edge.
-
-## Act now: core Effect architecture
-
-### 1. Make Pi auth adapter Effect-shaped
-
-**Files and methods**
-
-- `src/adapters/pi/auth.ts`
-  - `requireSoul`
-  - `listAuthStatus`
-  - per-provider `Promise.all(... async ...)` callback
-  - `loginProvider`
-- `src/application/auth.ts`
-  - `status`
-  - `login`
-
-**Current shape**
-
-`src/adapters/pi/auth.ts` exports `Promise` operations and owns `async`/`await`, `try/catch`, and thrown tagged failures. `src/application/auth.ts` then wraps those exported Promises with `Effect.tryPromise`.
-
-**Why it is wrong**
-
-Pi's Promise is not converted exactly once inside the Pi adapter. Promise rejection, cancellation, and Pi-specific operation details escape into application orchestration.
-
-**Target shape**
-
-- Make `listAuthStatus` and `loginProvider` return typed `Effect.Effect` values directly.
-- Wrap `ModelRuntime.create`, `runtime.checkAuth`, and `runtime.login` exactly once in `src/adapters/pi/auth.ts` with `Effect.tryPromise` and the supplied abort signal where supported.
-- Preserve unknown rejected values in tagged error `cause` fields.
-- Make `AuthLive` delegate to adapter Effects without another Promise bridge.
-
-**Proof**
-
-Focused adapter tests should assert exact typed `Exit` values for missing Profile, unknown provider, unsupported auth type, create-runtime failure, login failure, and interruption.
-
----
-
-### 2. Move filesystem ownership out of application services
-
-**Files and methods**
-
-- `src/application/profiles.ts`
-  - `readText`, `lstatPath`, `canonicalPath`
-  - Profile registry reads/writes
-  - skill discovery/copy/staging/promotion/cleanup operations
-  - all direct `node:fs/promises` imports and `Effect.tryPromise` sites
-- `src/application/automations.ts`
-  - `readAutomation`
-  - `resolveTargets` broadcasts file read
-- `src/application/gateway.ts`
-  - `loadGatewayConfig`
-- `src/application/discord-gateway.ts`
-  - `loadDiscordGatewayConfig`
-- `src/application/slack-gateway.ts`
-  - `loadSlackGatewayConfig`
-- `src/application/resident-gateway.ts`
-  - `validateProfile`
-  - `configPresent`
-  - `loadResidentGatewayConfig`
-
-**Current shape**
-
-Application modules import `node:fs/promises` or otherwise own filesystem Promise adaptation, host error-code interpretation, and persistence mechanics.
-
-**Why it is wrong**
-
-Application services should orchestrate Effect-native capabilities. They currently act as filesystem adapters, coupling product flows to Node/Bun APIs and forcing host failures to be classified at the wrong layer.
-
-**Target shape**
-
-Build small named Effect capabilities under `src/adapters/fs/`, not one generic dumping-ground API:
-
-1. gateway configuration store;
-2. automation definition/broadcast store;
-3. Profile registry store;
-4. skill tree store;
-5. extension selection/package store.
-
-Use the pinned `FileSystem` service and Bun layer where practical. Keep policy and workflow ordering in application modules; move Node `Dirent`, `Stats`, Promise, atomic file, and platform error details outward.
-
-**Proof**
-
-Application tests should use test Layers against the same Effect-shaped contracts. Adapter tests should cover atomic replacement, containment, missing files, malformed input, and cleanup.
-
----
-
-### 3. Replace Promise-shaped Discord and Slack socket clients
-
-**Files and methods**
-
-- `src/adapters/discord/socket.ts`
-  - `DiscordSocket.next(): Promise<DiscordInboundMessage>`
-  - `DiscordSocket.close(): Promise<void>`
-  - `openDiscordSocket`
-  - `connect`, `enqueue`, `fail`, heartbeat/reconnect timer helpers
-- `src/adapters/slack/socket.ts`
-  - `SlackSocket.next(): Promise<SlackInboundMessage>`
-  - `SlackSocket.close(): Promise<void>`
-  - `openSlackSocket`
-  - `connect`, `enqueue`, `fail`, reconnect helpers
-- `src/application/discord-gateway.ts`
-  - `DiscordTransport.openSocket`
-  - `makeDiscordGateway` socket acquisition/finalizer
-  - `socket.next()` bridge
-- `src/application/slack-gateway.ts`
-  - `SlackTransport.openSocket`
-  - `makeSlackGateway` socket acquisition/finalizer
-  - `socket.next()` bridge
-
-**Current shape**
-
-Both socket adapters expose Promise methods. Internally they maintain waiter arrays, raw Promise constructors/resolution/rejection, mutable buffers, timers, event listeners, reconnect state, and WebSocket ownership. Application code adapts `next` later and uses `Effect.promise` for `close`.
-
-**Why it is wrong**
-
-- Promise/resource ownership escapes the adapter.
-- Interrupted `next()` waits are not independently removed.
-- `Effect.promise(() => socket.close())` is only correct for a Promise guaranteed not to reject; otherwise rejection becomes a defect.
-- `close()` can wait forever for a close event.
-- inbound arrays are unbounded.
-
-**Target shape**
-
-- Expose a scoped Effect-native socket operation, e.g. `openSocket(...): Effect<Socket, SocketError, Scope>` with `next: Effect<Inbound, SocketError>`.
-- Use `Effect.acquireRelease` for listener/WebSocket lifetime.
-- Use `Effect.callback`, `Stream.callback`, or `Stream.fromEventListener` for callback adaptation.
-- Use a bounded `Queue` with an explicit backpressure/drop policy instead of arrays plus pending Promises.
-- Run heartbeat/reconnect workers with `Effect.forkScoped`.
-- Use `Clock`, `Schedule.exponential`, and `Schedule.jittered` instead of raw timers and `Math.random` in Effect orchestration.
-- Bound close finalization; consume/log cleanup failure before supplying an infallible finalizer.
-
-**Proof**
-
-Test exact typed exits for authentication failure, malformed frames, retryable close, interruption of a pending receive, close timeout, buffer policy, and scoped worker cleanup without patching globals.
-
----
-
-### 4. Decode socket/network input once with Effect Schema
-
-**Files and methods**
-
-- `src/adapters/discord/socket.ts`
-  - `parseJson`
-  - manual `isRecord`/field probes
-  - gateway frame, READY, Hello, and inbound event decoding
-- `src/adapters/slack/socket.ts`
-  - `parseJson`
-  - manual envelope/event/connection response probes
-
-**Current shape**
-
-External JSON is parsed with `JSON.parse` and repeatedly inspected using manual shape guards. Slack silently drops malformed frames; Discord often reduces parse failures to generic strings.
-
-**Target shape**
-
-Define boundary-owned schemas, compile `Schema.decodeUnknownEffect(Schema.fromJsonString(...))` once at module scope, and map failures to structured tagged socket errors. Decide explicitly which successfully decoded variants are ignored and which are fatal.
-
----
-
-### 5. Replace ordinary socket Errors with tagged failures
-
-**Files and methods**
-
-- `src/adapters/discord/socket.ts` — `DiscordSocketError`
-- `src/adapters/discord/socket-error.ts` — `normalizeDiscordSocketError`
-- `src/adapters/slack/socket.ts` — `SlackSocketError`, `normalizeSlackSocketError`
-
-**Current shape**
-
-Socket errors extend `Error`, encode important distinctions as free text, and discard unexpected causes.
-
-**Target shape**
-
-Use `Schema.TaggedErrorClass` with stable fields: operation/stage, reason literal, retriable, optional close code, and `cause: Schema.Defect()`. Translate to channel-level errors only when the translation adds product meaning.
-
----
-
-### 6. Settle and enforce raw HTTP ownership
-
-**Files and methods**
-
-- approved today by skill:
-  - `src/adapters/telegram/api.ts` — `request`
-- conflicting raw fetches:
-  - `src/adapters/discord/api.ts` — `request`
-  - `src/adapters/discord/socket.ts` — `connect`
-  - `src/adapters/slack/api.ts` — `request`
-  - `src/adapters/slack/socket.ts` — `connect`
-- policy implementation:
-  - `tooling/oxlint/effect/rules/no-raw-fetch.mjs`
-  - `.agents/skills/effect-raw-fetch-boundary/SKILL.md`
-
-**Current shape**
-
-The skill says Telegram API is Ziggy's sole raw-fetch boundary. The lint rule globally approves Telegram plus two Discord files, while Slack uses local suppressions. Socket connection fetches do not pass an interruption signal.
-
-**Target shape**
-
-Choose one policy before changing code:
-
-1. preserve the written invariant and route Discord/Slack through Effect `HttpClient`; or
-2. explicitly document one raw boundary per vendor and narrow the allowlist accordingly.
-
-Do not retain the current contradiction. In either shape, sockets should consume typed HTTP operations rather than own fetch and response decoding.
-
----
-
-### 7. Shrink the Pi memory Promise island
-
-**Files and methods**
-
-- `src/adapters/pi/pi-agent.ts`
-  - `atomicReplace`
-  - `delay`
-  - `releaseMemoryLock`
-  - `acquireMemoryLock`
-  - `createMemoryWriteTool.execute`
-  - `readMemoryDocument`
-  - `buildMemoryPrompt`
-
-**Current shape**
-
-A required Pi tool callback returns a Promise, but many internal helpers also own Promises, `async`/`await`, nested `try/catch`, `.catch`, manual timeout/lock/release, and silent cleanup suppression.
-
-**Boundary distinction**
-
-Pi's `ToolDefinition.execute` is genuinely Promise-shaped. The callback edge is valid; the whole internal workflow does not need to remain a Promise island.
-
-**Target shape**
-
-Implement lock acquisition/use/release and atomic filesystem operations as typed Effects with `acquireUseRelease`/`acquireRelease`. Convert the final Effect only at the Pi callback boundary. Do not erase cleanup failures without an explicit logging/best-effort policy.
-
----
-
-### 8. Stop classifying Pi failures by unknown message text
-
-**File and methods**
-
-- `src/adapters/pi/pi-agent.ts`
-  - `causeMessage`
-  - `isProviderConfigFailure`
-  - `providerError`
-
-**Current shape**
-
-Unknown rejected values are stringified and matched against fragments such as `no api key`, `credential`, and `authentication failed` to select product error tags.
-
-**Why it is wrong**
-
-Recovery and user-visible behavior depend on unstable third-party wording.
-
-**Target shape**
-
-Use structured Pi outcomes/error classes where available. Otherwise classify conservatively by known operation context and preserve the unknown value only as `cause`; do not parse it for product behavior or copy.
-
----
-
-### 9. Preserve external causes in gateway/Profile failures
-
-**Files and symbols**
-
-- `src/domain/gateway.ts` — `GatewayConfigError`
-- `src/application/gateway.ts` — config read/decode error mapping
-- `src/application/discord-gateway.ts` — config read/decode error mapping
-- `src/application/slack-gateway.ts` — config read/decode error mapping
-- `src/application/resident-gateway.ts` — `validateProfile` and `configPresent`
-- `src/domain/profile.ts` — `ProfileFileSystemError`
-- `src/application/profiles.ts` — `fileSystemError`
-
-**Current shape**
-
-Filesystem and Schema causes are frequently discarded in favor of stable messages and sometimes a code.
-
-**Target shape**
-
-Keep stable user-facing fields, but add/preserve `cause: Schema.Defect()` at the boundary. Split missing/invalid errors only if callers have meaningfully different recovery paths.
-
----
-
-### 10. Repair custom lint so `check` means what it claims
-
-**Primary files/symbols**
-
-- `tooling/oxlint/effect/utils.mjs` — `isAdapterFile`, `isTestLike`, Promise helpers
-- `tooling/oxlint/effect/rules/no-native-promise-ownership.mjs`
-- `tooling/oxlint/effect/rules/no-try-catch-or-throw.mjs`
-- `tooling/oxlint/effect/rules/no-promise-catch.mjs`
-- `tooling/oxlint/effect/rules/no-promise-client-surface.mjs`
-- `tooling/oxlint/effect/rules/no-raw-fetch.mjs`
-- `tooling/oxlint/effect/rules/no-effect-execution-boundary.mjs`
-- `tooling/oxlint/effect/rules/no-unsupported-effect-api.mjs`
-- `tooling/oxlint/effect/rules/no-unknown-shape-probing.mjs`
-- `tooling/oxlint/effect/rules/no-unknown-error-message.mjs`
-- `package.json`, `tsconfig.json`, `.oxlintrc.json`, `.oxfmtrc.json`
-
-**Observed gaps**
-
-1. Most Promise/throw/error/shape rules return early for every `src/adapters/**` file.
-2. Promise surface detection mostly recognizes narrowly named `*Client`/exported `*Sdk` interfaces, missing exported functions, type aliases, `*Socket`, factories, inferred async exports, and `PromiseLike`.
-3. Raw-fetch policy contradicts the skill and ignores extensions.
-4. `isTestLike` exists but most rules do not apply a deliberate test policy, creating false positives and suppression pressure.
-5. Rules rely heavily on identifier spelling/suffixes rather than import provenance or types.
-6. File-wide disables exempt unrelated future code.
-7. No rule fixture/test harness exists.
-8. `tooling/**/*.mjs` is outside the normal lint/typecheck/format scope.
-9. The architecture spec says custom rule suites were not planned, yet the repository now depends on 23 custom Effect rules without their validation burden.
-
-**Target shape**
-
-Either retire low-confidence heuristic rules or explicitly own the suite:
-
-- remove blanket adapter exemptions;
-- permit only exact external callback/bridge contexts;
-- structurally inspect exported Promise surfaces independent of names;
-- encode approved execution/test locations;
-- narrow suppressions to the exact line/callback;
-- add valid/invalid fixtures for every retained rule;
-- include tooling in format/lint/type verification;
-- add a repository assertion for the selected raw-fetch policy.
-
-## Defer: smaller core corrections
-
-| File | Symbol/method | Correction |
-|---|---|---|
-| `src/application/agent.ts` | `ZiggyAgentShape`, `ChatHandle`, `ChatSessionMode` imports | Move the stable Effect-native chat contract inward; let the Pi adapter implement it instead of owning application vocabulary. |
-| `src/adapters/fs/cause.ts` | `FileSystemCauseDetails` | Derive the static type from the owning Schema, resolving optional `code` normalization deliberately. |
-| `src/adapters/bun/recent-ids.ts` | `RecentIds` | If the factory remains the only implementation, derive with `ReturnType<typeof makeRecentIds>`. Keep operations synchronous; they are total local work. |
-| `src/adapters/bun/process.ts` | `killProcess` | Return an Effect or explicitly model/log non-benign kill failure instead of swallowing every throw; `automation-gate.ts` process-group fallback must not report cleanup as complete when both group and child signals fail. |
-| `src/adapters/fs/profile-extensions.ts` | `replaceExtensionSelection` finalizer | Separate close/remove cleanup, eliminate nested Promise `.catch`, and choose typed propagation or logged best effort. |
-| `src/adapters/telegram/api.ts` | numeric schemas and `TelegramApiError` fields | Use/reuse finite numeric schemas consistently; current safe-integer checks already reject non-finite IDs, so prioritize unconstrained error fields. |
-| `src/main.ts` | argv/env parsing | Decode CLI/environment input once into a tagged command union rather than distributing positional string checks. |
-| `src/application/gateway.ts` | Telegram message batch concurrency | Decide whether batch backpressure is intentional; Discord/Slack use `forkScoped`, while Telegram waits for the batch. |
-| `src/adapters/*/api.ts` | `safeCause` | Preserve structured sanitized causes where possible without retaining tokens; document the security trade-off if lossy redaction remains. |
-
-## Tests that should be strengthened
-
-These are not reasons to migrate test harness Promises into production Effects. Tests are approved execution edges.
-
-| File | Current test/helper | Correction |
-|---|---|---|
-| `src/adapters/discord/socket.test.ts` | global `fetch` patch | Inject typed HTTP/socket capability and assert exact typed `Exit`; do not patch process-global networking. |
-| `src/adapters/pi/resources.test.ts` | invalid selection/containment cases | Assert complete expected `Exit.fail(...)` values instead of reducing failures to booleans. |
-| `src/application/profiles.test.ts` | refusal/invalid-selection cases | Assert exact recoverable domain failure plus unchanged filesystem bytes. |
-| `src/adapters/pi/ziggy-tui-extension.test.ts` | `Bun.sleep(1)` | Inject deterministic scheduling rather than relying on a one-millisecond timing guess. |
-| `extensions/skill-creator/.../test_package_skill.py` | global `sys.modules` replacement | Exercise the real validator; add one invalid-frontmatter integration case that creates no archive. |
-
-## Intentional Promise/non-Effect boundaries — keep
-
-Not every `Promise`, `async`, `throw`, Python exception, shell exit, or raw HTTP use in this repository should become an Effect.
-
-### Required Pi Promise callbacks
-
-Keep a narrow bridge for:
-
-- `src/adapters/terminal/auth-interaction.ts` — Pi `AuthInteraction.prompt` contract.
-- `src/adapters/pi/pi-agent.ts`:
-  - Pi `ToolDefinition.execute` callbacks;
-  - agent runtime factory callback;
-  - registered extension command handlers.
-- Pi SDK methods such as session/runtime operations and `InteractiveMode.run` are Promise-returning APIs that require one adapter bridge.
-- `before_agent_start` permits either synchronous or Promise results; it is a valid Pi integration boundary, but not a mandatory Promise callback.
-- executable Pi extension entrypoints under `extensions/*/index.ts` where Pi requires Promise-returning tool execution.
-
-The correction is to keep the callback edge small, not to pretend Pi returns Effects.
-
-### Standalone executables and scripts
-
-The Python/shell/MJS executables under `extensions/**` and `skills/**` own process-specific boundaries and are not imported into Ziggy application/domain code. They need ordinary boundary hygiene, not wholesale Effect migration.
-
-### Tests
-
-Bun tests may use `async`, `await`, `Promise.all`, and `Effect.runPromise`/`runPromiseExit` at the test execution edge. Test doubles should still implement the same Effect-shaped consumer contracts production uses.
-
-### Total synchronous domain work
-
-Keep total calculations such as memory operations, ID sanitization, target parsing internals, and bounded recent-ID Set operations as plain synchronous TypeScript when wrapping them adds no failure, requirement, resource, scheduling, or observability value.
-
-## Non-Effect issues found in standalone extensions
-
-These are real fixes, but they are **not evidence that core Ziggy should wrap every extension in Effect**.
-
-| Priority | File and method | Issue | Smallest correction |
+| `11554fc` | Makes claim commit → scoped-worker registration and run → terminal publication interruption-safe; brackets automation chat; bounds Gateway handoff retry. | Scheduler committed-claim interruption; run execution/terminal interruption; Gateway `EEXIST → ENOENT` handoff tests. |
+| `f7b580a` | Converts Pi auth runtime creation/check/login once inside the Pi adapter; application auth delegates Effects. | Typed missing Profile, create-runtime, unknown provider, unsupported type, login, and cancellation tests. |
+| `558a11d` | Adds the missing per-provider auth-status failure witness. | `could not check provider auth` preserves the rejected cause. |
+| `03cb552` | Rejects Lossless Claw and Skill Curator symlink escapes. | External-session-tree and Profile-skill symlink tests. |
+| `70587f2` | Publishes telephony state/secrets and skill archives privately and atomically. | Mode, unchanged-bytes, invalid-frontmatter, and no-partial-archive helper tests. |
+| `79bbb36` | Bounds extension subprocess trees and curl operations; closes temporary response/call-file paths. | Uncooperative descendant, missing executable, failed calls-file, and hanging-curl tests. |
+| `1125841` | Replaces Discord/Slack Promise socket surfaces with scoped Effects, bounded queues, Schema decoding, tagged errors, and typed HTTP operations. | Authentication, malformed frame, reconnect, interruption, overflow, timeout, and application transport tests. |
+| `96135cd` | Preserves terminal publication failure and stops classifying provider errors from message text. | Interrupted terminal-write failure and misleading vendor-wording tests. |
+| `d819615` | Makes Pi memory lock/read/write/prompt work Effect-shaped behind required Pi callbacks; adds cancellation cleanup. | Memory concurrency, overflow, waiting-lock interruption, prompt abort/listener cleanup, and refresh tests. |
+| `60be120` | Rolls back partially registered Discord/Slack listeners and reports reconnect-close cleanup failures. | Deterministic partial-acquisition and reconnect-cleanup tests for both sockets. |
+| `c165de6` | Preserves boundary causes and reports non-benign candidate, signal, Pi, Profile-extension, and socket cleanup failures. | Candidate cleanup and process-group/fallback signal failure tests. |
+| `d2660c8` | Adds domain-owned automation mutation/completion schemas and regains interruption between definition reads. | Malformed transition, fail-closed persisted row, and sequential-read cancellation tests. |
+| `77d2cdd` | Removes low-confidence lint heuristics, covers `src`, `extensions`, and `tooling`, and narrows raw fetch to Telegram. | `bun run lint`; full `bun run check`; candidate-file assertion retained. |
+| `d8718c1` | Moves automation definitions/broadcasts and Gateway config filesystem mechanics into focused FS adapters. | Application filesystem scan leaves only the Profile workflow; full check/test. |
+| `ec13a93` | Corrects finite numeric Schemas and records the first current adjudication without changing the retained runtime mechanisms. | Typecheck exit 0 with the five documented informational suggestions. |
+
+## Current action matrix
+
+`Fixed` means the old finding is closed at reviewed HEAD. `Keep` means the current mechanism is
+intentional. `Narrow-document` and `Defer` are explicit boundaries, not untracked gaps.
+
+| Historical item | Files / methods at reviewed HEAD | Evidence, commit, and pinned source | Disposition |
 |---|---|---|---|
-| P1 | `extensions/lossless-claw/src/store.ts` — `discoverSessionFiles` | Follows directory symlinks outside the Profile. | Reject symlinks or canonicalize every target and prove containment. |
-| P1 | `extensions/lossless-claw/index.ts` tool `execute` methods; `store.ts` refresh/search | Synchronous recursive IO/SQLite blocks Pi and ignores cancellation. | Move work behind a worker/child process with signal propagation. |
-| P1 | `extensions/telephony/.../telephony.py` — `_upsert_env_file`, `_save_state` | Credentials/state written non-atomically and without enforced `0600`. | Same-directory `0600` temp, fsync, `os.replace`, chmod existing files. |
-| P1 | `extensions/skill-curator/index.ts` — `skillFilePath`, `atomicWrite`, `writeProfileSkill` | Symlinked skill directories can escape the Profile. | Reject symlink roots/parents and verify canonical containment before operations. |
-| P2 | `extensions/agent-browser/index.ts`, `extensions/diffs/index.ts`, `extensions/open-computer-use/index.ts` — `execute` | Timeout/abort sends only SIGTERM and can remain pending forever. | Escalate to process-tree SIGKILL after a grace period and guarantee one settlement/finalizer. |
-| P2 | `extensions/open-computer-use/bin/open-computer-use-wrapper.mjs` | Startup-error path leaks temporary call files. | Shared idempotent cleanup on both `error` and `exit`. |
-| P2 | `extensions/here-now/.../drive.sh`, `publish.sh` | Curl has no connect/overall timeout; temporary response cleanup is incomplete. | Centralize bounded curl options and use an EXIT trap. |
-| P3 | `extensions/web-search/bin/web-search.ts` — `parseArgs` | `--n` has no upper bound. | Clamp to the intended provider/tool maximum. |
-| P3 | `extensions/skill-creator/.../package_skill.py` — `package_skill` | Failure can leave a partial final archive. | Write a sibling temporary archive and atomically replace on success. |
+| 1. Pi auth adapter shape | `src/adapters/pi/auth.ts` — `makePiAuth`, `listAuthStatus`, `loginProvider`; `src/application/auth.ts` | `f7b580a`, `558a11d`; seven focused auth tests. Promise-producing Pi calls are adapted once. | **Fixed.** |
+| 2. Application filesystem ownership | `src/adapters/fs/automation-files.ts`; `src/adapters/fs/gateway-config.ts`; `src/application/profiles.ts` | `d8718c1`; live scan finds native filesystem imports only in `profiles.ts` among production application files. Pinned `FileSystem.ts` and `platform-bun/src/BunFileSystem.ts` remain reference implementations. | **Fixed for automation/Gateway; defer Profile extraction and broader Layers.** No second implementation or isolation failure justifies moving the whole Profile workflow now. |
+| 3. Promise-shaped Discord/Slack sockets | `src/adapters/{discord,slack}/socket.ts` — `open*Socket`, `next`, `close` | `1125841`, `60be120`; pending-receive, overflow, close-timeout, partial-listener, reconnect-cleanup tests. Pinned `Effect.ts:1166-1206`; `Queue.ts:562,1114`. | **Fixed; keep current socket boundary.** |
+| 4. Socket/network Schema decoding | Discord Gateway/READY/Hello/message decoders; Slack envelope/events/message decoders | `1125841`; malformed Discord fails through the receive channel and malformed unacknowledged Slack input is deliberately ignored. Pinned `Schema.ts:1368-1375`. | **Fixed.** |
+| 5. Socket typed errors | `DiscordSocketError`, `SlackSocketError` in their socket adapters | `1125841`; typed authentication, malformed-frame, queue-overflow, fatal-close, and close-timeout exits. Pinned `Schema.ts:12981-12997`. | **Fixed.** |
+| 6. Raw HTTP ownership | `src/adapters/telegram/api.ts` — `request`; Discord/Slack API and socket adapters | `1125841`, `77d2cdd`; source scan finds core raw `fetch` only in Telegram; `no-raw-fetch.mjs` allows exactly that path. | **Fixed; keep Telegram as the sole core raw-fetch boundary.** Standalone extension executables retain their own HTTP/process boundaries. |
+| 7. Pi memory Promise island | `src/adapters/pi/pi-agent.ts` — memory DB acquisition, read/write, `buildMemoryPrompt`, tool callback | `d819615`; memory lock interruption/concurrency/overflow tests. Pinned `Effect.ts:6677-6681` for `acquireUseRelease`. | **Fixed; keep the required ToolDefinition Promise callback bridge.** |
+| 8. Provider failure classification by message text | `src/adapters/pi/pi-agent.ts` — provider failure mapping | `96135cd`; `misleading vendor wording remains a provider call failure with stable copy`. | **Fixed.** |
+| 9. Boundary causes | `src/domain/{gateway,profile}.ts`; Gateway/Profile config and filesystem mappings | `c165de6`; tagged errors retain `Schema.Defect` causes without unstable user copy. Pinned `Schema.ts:12981-12997`. | **Fixed.** |
+| 10. Lint architecture claims | `package.json`; `.oxlintrc.json`; `tooling/oxlint/effect-plugin.mjs`; retained rules | `77d2cdd`; lint covers `src extensions tooling`; check formats the same code-like trees; low-confidence Promise-client and shape/message heuristics were removed. | **Keep reduced policy.** It is guardrail coverage, not complete architectural proof; defer a fixture/type-provenance project. |
+| A. Claim commit → worker registration | `src/application/automation-scheduler.ts` — `scan`, `registerClaims` | `11554fc`; committed-claim interruption waits until `forkScoped` registration. Pinned `Effect.ts:7362-7366` (`uninterruptibleMask`) and `8642-8657` (`forkScoped`). | **Fixed; keep.** Restore interruptibility inside the worker; never extend the mask over gate/model/delivery. |
+| B. One truthful terminal publication | `src/application/automations.ts` — `makeAutomations().run` | `11554fc`, `96135cd`; execution interruption, terminal-publication interruption, and terminal-write-failure tests prove one attempt and truthful failure. Pinned `Effect.ts:7362-7366`. | **Fixed; keep.** |
+| C. Automation chat lifetime | `src/application/automations.ts` — `openChat → prompt → dispose` | `11554fc`, `96135cd`; disposal is observed on interruption. Pinned `Effect.ts:6677-6681`. | **Fixed; keep.** |
+| D. Durable process-instance identity | `src/adapters/bun/process.ts` — `makeLocalProcessAlive`; `automation-sqlite.ts` — `recoverAutomationRuns`; `gateway-owner.ts` — `pidIsAlive` | `local PID liveness proves only ESRCH dead and otherwise stays conservative`. No portable process-start token or migration contract exists. | **Defer.** PID is evidence, not identity. Do not add an OS-specific token or second durable owner authority without a reproducible collision witness. |
+| E. Gateway release TOCTOU | `src/adapters/bun/gateway-owner.ts` — `release` | Existing foreign-owner test replaces before release reads. Read/compare/unlink cannot condition unlink on the same inode against an external mid-release replacement. | **Narrow-document.** The guarantee applies to current internal contenders, not an adversarial external replacer. Do not replace the lock protocol solely for an actor the system does not have. |
+| F. Gateway handoff | `gateway-owner.ts` — bounded acquisition loop; `gateway-owner.test.ts` | `11554fc`; `retries when the previous owner releases after a link conflict`. | **Fixed; keep two-attempt internal handoff.** |
+| G. Concrete adapter selection | `automation-scheduler.ts`, `automations.ts`, `resident-gateway.ts`, application composition | Tests can inject focused runtime/file capabilities, but application services still choose concrete Bun/FS/channel/Pi adapters. | **Defer.** Introduce more capabilities/Layers only when a second implementation or concrete isolation failure appears. |
+| H. Coarse uncancellable definition scan | `src/adapters/bun/automation-sqlite.ts` — `discoverAutomationSources` | `d2660c8`; `Effect.forEach` adapts each signal-aware `readFile`; deterministic interruption resumes between reads. | **Fixed.** |
+| I. Candidate cleanup suppression | `src/adapters/bun/gateway-owner.ts` — candidate finalizer | `c165de6`; only `ENOENT` is benign; unexpected failure is reported and the candidate remains inspectable. Pinned `Effect.ts:6684-6693`. | **Fixed; keep best-effort reporting.** |
+| J. Process signaling suppression | `src/adapters/bun/{automation-gate,process}.ts` | `c165de6`; both group and fallback failure witness; `ESRCH` remains benign. | **Fixed; keep reporting policy.** |
+| K. Write-side automation contracts | `src/domain/automation.ts` — `AutomationScheduleMutation`, `AutomationRunTerminal`, `AutomationRunCompletion`; SQLite decoders | `d2660c8`; malformed mutations/completions are rejected before transaction writes. Pinned `Schema.ts:1368-1375,12981-12997`. | **Fixed; keep.** Do not schema-wrap transient commit results or capability objects. |
+| L. Stale scheduler plan | `docs/plans/automation-scheduler.md` | `ec13a93` marks Slice 3 historical; the current-state addendum records Gateway hosting and residual boundaries. | **Fixed.** Keep settled Slice 3 history rather than rewriting it as a second live spec. |
 
-## File coverage
+## Lower-priority and standalone findings
 
-All 37 production `src` files are classified below: 28 with action items and 9 as keep.
-
-### Core production files with action items
-
-- `src/adapters/bun/automation-gate.ts`
-- `src/adapters/bun/automation-sqlite.ts`
-- `src/adapters/bun/gateway-owner.ts`
-- `src/adapters/bun/process.ts`
-- `src/adapters/bun/recent-ids.ts`
-- `src/adapters/discord/api.ts`
-- `src/adapters/discord/socket-error.ts`
-- `src/adapters/discord/socket.ts`
-- `src/adapters/fs/cause.ts`
-- `src/adapters/fs/profile-extensions.ts`
-- `src/adapters/pi/auth.ts`
-- `src/adapters/pi/pi-agent.ts`
-- `src/adapters/slack/api.ts`
-- `src/adapters/slack/socket.ts`
-- `src/adapters/telegram/api.ts`
-- `src/application/agent.ts`
-- `src/application/auth.ts`
-- `src/application/automation-scheduler.ts`
-- `src/application/automations.ts`
-- `src/application/discord-gateway.ts`
-- `src/application/gateway.ts`
-- `src/application/profiles.ts`
-- `src/application/resident-gateway.ts`
-- `src/application/slack-gateway.ts`
-- `src/domain/automation.ts`
-- `src/domain/gateway.ts`
-- `src/domain/profile.ts`
-- `src/main.ts`
-
-### Core production files reviewed as keep
-
-- `src/adapters/pi/resources.ts` — Promise wrapped at adapter and only Effect exposed.
-- `src/adapters/pi/ziggy-tui-extension.ts` — required Pi/TUI callback boundary.
-- `src/adapters/terminal/auth-interaction.ts` — required Pi Promise callback boundary.
-- `src/domain/agent.ts`
-- `src/domain/discord.ts`
-- `src/domain/memory.ts`
-- `src/domain/slack.ts`
-- `src/domain/telegram.ts`
-- `src/faces/automation-cli.ts`
-
-### Test files with action items
-
-- `src/adapters/bun/automation-gate.test.ts`
-- `src/adapters/bun/automation-sqlite.test.ts`
-- `src/adapters/bun/gateway-owner.test.ts`
-- `src/adapters/discord/socket.test.ts`
-- `src/adapters/pi/resources.test.ts`
-- `src/adapters/pi/ziggy-tui-extension.test.ts`
-- `src/application/automation-scheduler.test.ts`
-- `src/application/automations.test.ts`
-- `src/application/profiles.test.ts`
-- `src/application/resident-gateway.test.ts`
-- `extensions/skill-creator/skills/skill-creator/scripts/test_package_skill.py`
-
-All other test files, including `src/domain/automation.test.ts` and `src/faces/automation-cli.test.ts`, were reviewed and are acceptable execution boundaries for their current contracts.
-
-### Tooling/config files with action items
-
-- `.oxlintrc.json`
-- `.oxfmtrc.json`
-- `package.json`
-- `tsconfig.json`
-- `tooling/oxlint/effect-plugin.mjs`
-- `tooling/oxlint/effect/utils.mjs`
-- all rules under `tooling/oxlint/effect/rules/`, with highest priority on the rules named in finding 10.
-
-`tooling/oxlint/no-unsafe-typescript-syntax.mjs` was also reviewed; keep its narrow TypeScript-safety role, while adding tooling-wide verification as described above.
-
-### Extension files with non-Effect action items
-
-- `extensions/agent-browser/index.ts`
-- `extensions/diffs/index.ts`
-- `extensions/here-now/skills/here-now/scripts/drive.sh`
-- `extensions/here-now/skills/here-now/scripts/publish.sh`
-- `extensions/lossless-claw/index.ts`
-- `extensions/lossless-claw/src/store.ts`
-- `extensions/open-computer-use/bin/open-computer-use-wrapper.mjs`
-- `extensions/open-computer-use/index.ts`
-- `extensions/skill-creator/skills/skill-creator/scripts/package_skill.py`
-- `extensions/skill-curator/index.ts`
-- `extensions/telephony/skills/telephony/scripts/telephony.py`
-- `extensions/web-search/bin/web-search.ts`
-
-The remaining extension executables were inspected and classified as intentional Pi/process boundaries with no Effect migration required:
-
-- `extensions/agent-browser/bin/agent-browser-wrapper.mjs`
-- `extensions/diffs/bin/diffs.py`
-- `extensions/executor/index.ts`
-- `extensions/github-pr-triage/bin/gh-prs.py`
-- `extensions/github-pr-triage/index.ts`
-- `extensions/github/index.ts`
-- `extensions/hyperframes/skills/hyperframes/scripts/setup.sh`
-- `extensions/linear/index.ts`
-- `extensions/linear/scripts/linear_api.py`
-- `extensions/skill-creator/skills/skill-creator/scripts/init_skill.py`
-- `extensions/skill-creator/skills/skill-creator/scripts/quick_validate.py`
-- `extensions/tmux/skills/tmux/scripts/find-sessions.sh`
-- `extensions/tmux/skills/tmux/scripts/wait-for-text.sh`
-- `extensions/web-search/index.ts`
-
-`skills/google-workspace/scripts/google_api.py` is likewise an intentional standalone script boundary.
-
-## Recommended correction order
-
-1. **Close scheduler publication gaps**: make claim commit → child registration interruption-safe, then bracket running → one truthful terminal publication.
-2. **Bracket automation chat lifetime** with `acquireUseRelease` and prove immediate post-acquire interruption.
-3. **Strengthen resident identity** beyond PID-only liveness for both Gateway ownership and active automation rows.
-4. **Fix the Gateway owner protocol races**: bounded `EEXIST → ENOENT` handoff retry and a release protocol that cannot unlink a replacement owner.
-5. **Make cleanup failure observable** for candidate files, process-group signaling, chat disposal, and database close according to explicit best-effort/typed policies.
-6. **Introduce Effect capabilities/Layers** for automation ledger/definition/projection stores and resident Gateway config; remove direct concrete adapter selection from application services.
-7. **Split definition discovery into cancellable Effect orchestration** rather than one coarse async Promise workflow.
-8. **Make write-side scheduler/run transitions schema-owned** so invalid terminal and mutation combinations cannot enter SQLite.
-9. **Update or supersede `docs/plans/automation-scheduler.md`** so agents do not use the historical Slice 3 freeze as the current architecture.
-10. **Repair lint policy/gaps** enough that adapter directories are not blanket exemptions and tests have an explicit policy.
-11. **Convert Pi auth adapter and application auth** to one Effect bridge.
-12. **Replace Discord/Slack Promise socket contracts** and settle raw HTTP ownership.
-13. **Move remaining Profile filesystem mechanics** from application to focused adapters, including Gateway and automation config/definition reads.
-14. **Shrink the Pi memory Promise island**, preserve structured causes, and repair smaller schema/type ownership issues.
-15. Address standalone extension reliability/security findings separately; do not mix them into the core Effect migration.
-
-## Current HEAD adjudication — d8718c1
-
-This section supersedes the historical action order above. It is deliberately a disposition, not a
-second repository-wide audit.
-
-| Item | Current evidence | Disposition |
+| Prior observation | Current evidence | Disposition |
 |---|---|---|
-| Scheduler publication and chat lifetime | `automation-scheduler.ts` wraps commit plus registration in `Effect.uninterruptibleMask`, restoring interruption only in registered workers. `automations.ts` uses `Effect.acquireUseRelease` for chat and one uninterruptible terminal publication path. Tests cover commit interruption, immediate cleanup, terminal interruption, and terminal-write failure. | **Keep.** The mechanism matches pinned `Effect.ts:7362-7366`, `6677-6681`, and `8642-8657`. |
-| Durable process-instance identity | Scheduler and Gateway recovery still use PID liveness. `isLocalProcessAlive` treats only `ESRCH` as dead and remains conservative for unknown signal errors; the focused test proves that policy. There is no portable current process-start identity capability or migration contract. | **Defer.** PID reuse is a real theoretical ambiguity, but adding an OS-specific start token or a second registry without a live collision witness would be a larger authority change. Keep fail-closed recovery and document that PID is evidence, not identity. |
-| Gateway handoff and release | Acquisition retries the complete `EEXIST → inspect → ENOENT → link` sequence twice (`gateway-owner.ts`), with a deterministic handoff test. Release still performs read/compare/unlink; the foreign-record test proves the normal replacement-before-read case, not an adversarial mid-release replacement. | **Narrow-document.** The internal contender protocol is bounded and fail-closed. A truly conditional unlink needs a different lock authority (for example a directory/OS lock), not a safe local patch to pathname unlink; no current actor replaces a held record mid-release. |
-| Application filesystem and concrete adapter selection | Automation definitions/broadcasts and Gateway config now live under `src/adapters/fs/`. `src/application/profiles.ts` remains a direct Node filesystem workflow, and application services still select concrete Bun/FS/channel/Pi adapters. | **Defer.** The remaining Profile workflow has one implementation and no current failure or test-isolation pressure that justifies a generic Layer family. Do not call this fully Effect-capability-independent. |
-| Cleanup observability | Candidate-file cleanup, process-group signaling, Pi memory/runtime cleanup, and socket close cleanup report unexpected failures; only `ENOENT` is benign in the new candidate path. Database close and Profile staging cleanup remain best-effort host finalizers. | **Keep current policy; defer expansion.** Existing logs preserve operational evidence. Add typed propagation only when a deterministic close failure or an operator recovery path exists. |
-| Write-side schema/type ownership | `AutomationScheduleMutation`, `AutomationRunTerminal`, and `AutomationRunCompletion` are domain-owned schemas; the SQLite boundary decodes mutation and completion inputs before transactions. `ScheduleCommitResult` and capability interfaces are transient contracts, not persisted shapes. | **Keep.** The original weak-write finding is closed without adding a schema for an internal return value. |
-| Pi memory, prompt, and resources | Memory lock/write/read/prompt composition is Effect-shaped through the Pi callback bridge. Runtime disposal is scoped/best-effort logged, prompt interruption uses `Effect.callback`, and resource stats remain a single Pi/filesystem adapter bridge. Required Pi Promise callbacks remain at the edge. | **Keep.** Pinned `Effect.ts:1166-1206` explicitly supports callback registration cleanup; no second loop or resource authority is warranted. |
-| Discord/Slack sockets | Both expose `next`/`close` as Effects, use bounded dropping queues, scope heartbeat/reconnect supervisors, clean partial listener acquisition, and bound close callbacks. Focused tests cover partial acquisition, pending receive, close timeout, and cleanup reporting. | **Keep.** This is the intended callback boundary under pinned `Effect.ts:1166-1206`; `Queue.dropping`/`shutdown` are available at `Queue.ts:562`, `1114`. |
-| Lint and tooling | `bun run lint` checks `src`, `extensions`, and `tooling`; `bun run check` formats those same code-like trees. The old low-confidence Promise-client and heuristic rules were removed. Raw fetch now approves only `src/adapters/telegram/api.ts`, matching the raw-fetch skill. Adapter exemptions remain intentional for host callback/Promise mechanics. | **Keep reduced policy.** A fixture harness and deeper type-provenance rules would be a new tooling project, contrary to the minimal architecture; current coverage is explicit, not proof of every architectural invariant. |
-| TypeScript Effect suggestions | Current `bun run typecheck` is exit-0 with five non-fatal suggestions: two `Effect.succeed(undefined)` cases whose exact `string | undefined` contract rejects `Effect.void`, two `Effect.catch(() => Effect.void)` cases retained because the repository lint policy rejects `Effect.ignore`, and one rollback-preserving `Effect.catch` in `profiles.ts` where `Effect.mapError` would not preserve rollback. Finite Schema suggestions were corrected. | **Narrow-document.** The remaining suggestions are semantically intentional; do not distort value types or remove rollback to make the diagnostic list empty. |
-| Scheduler plan and audit accuracy | `docs/plans/automation-scheduler.md` is explicitly marked a historical Slice 3 freeze. This report now labels its old snapshot and records current HEAD `d8718c1`, seven-commit dispositions, and the current 122-file count. | **Keep documentation correction.** Current source and this adjudication supersede the historical action list. |
+| Gateway runtime callbacks (`makeOwnerId`, `now`, `pidIsAlive`) can throw | They are injected synchronous host operations; no expected recoverable failure witness exists. | **Defer** until one is observed; do not add typed error classes speculatively. |
+| SQLite close and Profile staging cleanup | SQLite close remains a scope finalizer; Profile staging and extension-selection cleanup are logged best effort. | **Intentional keep.** Add typed propagation only with deterministic close failure and a caller recovery path. |
+| Automation projection/trigger manual types | Persisted and write-side shapes are Schema-owned; transient command/capability values are not persisted. | **Keep.** Do not duplicate transient contracts as runtime schemas. |
+| `Cause.hasInterruptsOnly` maps interrupt-only Gateway teardown to exit 0 | No internal path intentionally interrupts the main Gateway fiber for a non-shutdown reason. | **Keep**, revisit only if that execution path changes. |
+| Distributed CLI/environment parsing | Existing commands remain boundary-decoded enough for current behavior; no failure in this adjudication depends on a new command union. | **Defer** outside this outcome. |
+| Telegram batch concurrency differs from Discord/Slack | Telegram intentionally waits for its current batch while Discord/Slack fork scoped message workers; no backpressure failure was part of this adjudication. | **Defer** until channel load makes the policy decision observable. |
+| `ZiggyAgentShape` imports Pi-owned chat vocabulary; `FileSystemCauseDetails`; `RecentIds` manual interfaces | Each has one implementation and no runtime-unsafe external shape. | **Defer** stylistic type derivation; no new abstraction. |
+| Telegram finite numeric schemas | `ec13a93` uses `Schema.Finite` plus exact safe-integer/range checks. | **Fixed.** |
+| API `safeCause` deliberately redacts to an `Error` message | Structured causes may contain credentials; current stable tagged fields carry recovery meaning. | **Intentional keep** pending a proven safe structured-redaction contract. |
+| Lossless Claw session symlink traversal | Session-root and descendant symlinks are rejected/skipped. | **Fixed** in `03cb552`; external-tree test passes. |
+| Lossless Claw synchronous refresh/search | The repository-owned Pi package still performs synchronous filesystem/SQLite work inside its required tool callback. | **Defer** worker/process migration until measured blocking is load-bearing; do not treat it as a core Promise leak. |
+| Skill Curator symlink escape | Canonical containment, `O_NOFOLLOW`, and parent revalidation protect list/read/write. | **Fixed** in `03cb552`; symlink-root/directory tests pass. |
+| Telephony non-atomic/private state | Same-directory `0600` temporary files, fsync, replace, and final chmod. | **Fixed** in `70587f2`; helper tests pass. |
+| Skill archive partial publication | Sibling temporary archive is atomically replaced only after successful validation/build. | **Fixed** in `70587f2`; invalid frontmatter leaves no archive. |
+| Agent Browser, Diffs, Open Computer Use subprocess lifetime | Abort/timeout terminate the process group and escalate to `SIGKILL`; settlement and cleanup are bounded. | **Fixed** in `79bbb36`; descendant tests pass. |
+| Open Computer Use failed-start calls file | Shared cleanup runs on startup error and exit. | **Fixed** in `79bbb36`; missing-executable test passes. |
+| Here Now unbounded curl/temp responses | Shared connect/overall timeouts and `EXIT` cleanup trap. | **Fixed** in `79bbb36`; hanging-curl helper test passes. |
+| Web Search `--n` has no upper bound | It remains a standalone executable concern and was not changed by the core adjudication. | **Defer** until the provider/tool limit is a witnessed failure; do not expand this closeout. |
 
-### Focused current proof
+## Test-gap adjudication
 
-- `bun run typecheck` passes (exit 0; five informational Effect suggestions described above).
-- The existing focused witnesses cover scheduler claim registration, terminal publication, gateway
-  handoff, socket partial acquisition/close cleanup, Pi memory interruption, and persisted write
-  validation; no duplicate test harness or new external credential proof was added.
-- The pinned source used for the adjudication is `vendor/effect` commit
-  `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`: `Effect.ts:1166-1206, 6677-6681, 7362-7366,
-  8642-8657`; `Schema.ts:1368-1375, 12981-12997`; and `Queue.ts:562, 1114`.
+- Global networking patches from the old socket tests were replaced by injected Effect-shaped
+  dependencies in `1125841` — **fixed**.
+- Pi auth now asserts exact typed exits, including status-check failure — **fixed** in `f7b580a` and
+  `558a11d`.
+- Automation publication, chat cleanup, PID conservatism, Gateway handoff/candidate cleanup,
+  write-boundary rejection, socket partial acquisition/close, Pi prompt cancellation, extension
+  containment, atomic publication, process descendants, and bounded curl all have focused witnesses
+  — **fixed/keep**.
+- Broader exact-Exit rewrites for unrelated Profile/resource tests and replacing the existing TUI
+  timing smoke were not needed to prove an adjudicated invariant — **deferred**, not missing proof for
+  this outcome.
+- Tests, required Pi callbacks, and standalone executable entrypoints remain valid Promise/Effect
+  execution edges — **intentional keep**.
+
+## Current file and method inventory
+
+| Area | Current owner / methods | Classification |
+|---|---|---|
+| Scheduler publication | `src/application/automation-scheduler.ts` — `scan`, `registerClaims`, `makeAutomationScheduler` | **Keep** interruption-safe publication. |
+| Recorded automation run | `src/application/automations.ts` — `makeAutomations().run`, chat bracket, terminal publication | **Keep** one truthful terminal attempt. |
+| Durable automation store | `src/adapters/bun/automation-sqlite.ts` — `commitScheduleTick`, `recoverAutomationRuns`, `makeAutomationRunStore`, `discoverAutomationSources` | **Keep** transactions/schema validation/cancellation; **defer** process identity. |
+| Automation domain | `src/domain/automation.ts` — mutation, terminal, completion, projection Schemas | **Keep** domain-owned persisted/write shapes. |
+| Gateway ownership | `src/adapters/bun/gateway-owner.ts` — `acquire`, `inspectExistingOwner`, `release` | **Keep** bounded handoff; **narrow-document** external release TOCTOU. |
+| Process cleanup | `src/adapters/bun/process.ts`; `automation-gate.ts` | **Keep** ESRCH-only benign classification and reporting. |
+| Focused FS adapters | `src/adapters/fs/automation-files.ts`; `gateway-config.ts`; `profile-extensions.ts` | **Keep** current boundaries and logged best-effort cleanup. |
+| Remaining application FS | `src/application/profiles.ts` — Profile registry, skill staging/promotion/rollback | **Defer** extraction until justified; retain rollback semantics. |
+| Pi auth | `src/adapters/pi/auth.ts`; `src/application/auth.ts` | **Fixed/keep** one adapter Promise bridge. |
+| Pi agent/memory/resources | `src/adapters/pi/pi-agent.ts`; `resources.ts`; `ziggy-tui-extension.ts`; terminal auth interaction | **Keep** scoped Effects behind Pi-required callbacks. |
+| Discord/Slack transport | `src/adapters/{discord,slack}/{api,socket}.ts`; application gateway services | **Fixed/keep** typed HTTP, Effect sockets, bounded queues, scoped cleanup. |
+| Telegram transport | `src/adapters/telegram/api.ts`; `src/application/gateway.ts` | **Keep** sole approved core raw-fetch adapter. |
+| Composition/execution | `src/application/{agent,resident-gateway}.ts`; `src/main.ts` | **Keep** current composition; **defer** generic Layers; `BunRuntime.runMain` remains the production orchestration edge. |
+| Domain/faces/total helpers | Remaining `src/domain/*`, `src/faces/automation-cli.ts`, `recent-ids.ts`, FS cause helper | **Keep** total calculations and Schema-owned boundary data; no speculative Effects. |
+| Repository Pi packages | Changed extension files listed in the commit table | **Fixed/keep** package-local process/FS boundaries; Lossless Claw blocking and Web Search bound remain explicit deferrals. |
+| Tooling | `package.json`, `.oxlintrc.json`, `tooling/oxlint/**` | **Keep reduced policy**, no new fixture/type-analysis project. |
+
+All 38 production `src` files fall into the owners above. No production Effect executor was added:
+`BunRuntime.runMain` is in `src/main.ts`; the two `Effect.runPromise` calls in
+`src/adapters/pi/pi-agent.ts` terminate required Pi Promise callbacks, matching
+`docs/research/pi-sdk-surface.md`.
+
+## TypeScript Effect suggestions
+
+`bun run typecheck` exits 0 and currently reports exactly five informational diagnostics:
+
+1. `src/adapters/fs/automation-files.ts:59` — `Effect.succeed(undefined)` preserves
+   `Effect<string | undefined, ...>`; `Effect.void` changes the success type to `void` under exact
+   optional/value contracts.
+2. `src/adapters/pi/pi-agent.ts:374` — same exact `string | undefined` reason.
+3. `src/application/profiles.ts:577` — the `Effect.catch` performs rollback and then re-fails;
+   `Effect.mapError` is not behaviorally equivalent.
+4. `src/application/profiles.ts:585` — `Effect.catch(() => Effect.void)` is retained because the
+   repository's `no-effect-escape-hatch` policy rejects `Effect.ignore`.
+5. `src/main.ts:80` — same intentional catch-to-void policy.
+
+Disposition: **narrow-document**. Do not optimize for an empty suggestion list by changing values,
+rollback, or typed-error policy.
+
+## Pinned Effect references
+
+- `vendor/effect/packages/effect/src/Effect.ts:1166-1206` — callback adaptation and interruption
+  cleanup.
+- `vendor/effect/packages/effect/src/Effect.ts:6398-6403` — scoped resource ownership.
+- `vendor/effect/packages/effect/src/Effect.ts:6677-6681` — `acquireUseRelease`.
+- `vendor/effect/packages/effect/src/Effect.ts:6684-6693` — finalizer registration.
+- `vendor/effect/packages/effect/src/Effect.ts:7362-7366` — `uninterruptibleMask` and local restore.
+- `vendor/effect/packages/effect/src/Effect.ts:8642-8657` — `forkScoped`.
+- `vendor/effect/packages/effect/src/Schema.ts:1368-1375` — unknown-input decoding to Effect.
+- `vendor/effect/packages/effect/src/Schema.ts:12981-12997` — tagged typed errors.
+- `vendor/effect/packages/effect/src/Queue.ts:562,1114` — dropping queues and shutdown.
+- `vendor/effect/packages/effect/src/FileSystem.ts` and
+  `vendor/effect/packages/platform-bun/src/BunFileSystem.ts` — reference filesystem capabilities.
+
+## Current recommendations, in exact remaining order
+
+1. **Durable process-instance identity versus PID-only recovery — defer.** Keep PID as conservative
+   evidence; add no platform token or registry without a reproducible collision and migration
+   contract.
+2. **Gateway release TOCTOU and bounded handoff — narrow-document/keep.** Keep the two-attempt
+   internal contender protocol. The release guarantee excludes an external mid-release pathname
+   replacer.
+3. **Remaining application filesystem imports and concrete adapter selection — defer.** Keep the
+   Profile workflow and current composition until a second implementation or isolation failure
+   earns focused capabilities.
+4. **Cleanup observability — keep.** Preserve current reporting and intentional best-effort
+   finalizers; add typed propagation only with an operator recovery path.
+5. **Write-side schema/type ownership — keep.** Persisted/write transitions remain domain-Schema
+   owned; transient return values remain static types.
+6. **Pi memory/prompt/resource boundaries — keep.** Preserve the narrow required Promise callbacks
+   and current scoped cleanup; do not build another agent loop.
+7. **Socket partial acquisition/callback cleanup — keep.** Preserve one Effect-shaped transport
+   boundary and bounded cleanup; do not add a second socket abstraction.
+8. **Reduced lint policy/tooling coverage — keep.** Do not start a fixture or type-provenance project
+   in this adjudication.
+9. **TypeScript Effect suggestions — narrow-document.** Keep the five semantically intentional
+   advisories.
+10. **Historical scheduler plan — fixed.** Retain the Slice 3 freeze plus its concise current-state
+    addendum; use live source for present behavior.
+11. **Audit accuracy — fixed.** This matrix, inventory, commit evidence, verification counts, and
+    recommendations supersede the old gap list.
+
+## Overengineering boundary
+
+Do not add a process-start registry, second durable owner authority, directory/OS lock protocol,
+generic filesystem Layer family, duplicate socket abstraction, lint fixture/type-provenance project,
+or fake Effect wrapper around Pi-required callbacks without the concrete witness named above. The
+remaining deferred items are decision records, not permission to start later roadmap work.

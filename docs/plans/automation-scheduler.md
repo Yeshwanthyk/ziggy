@@ -26,6 +26,23 @@ scheduler-specific OS service.
 **Slice 3 readiness: ready (historical).** The missing Gateway host no longer describes the
 current runtime; `ziggy gateway` is the resident host and scheduled work is active there.
 
+## Current-state addendum
+
+As of implementation HEAD `ec13a93`, `ziggy gateway` acquires one Profile owner and supervises the
+scheduler with configured channel branches. Claim commit through scoped-worker registration and
+run completion publication use narrow uninterruptible windows; actual gate, model, delivery, and
+worker execution remain interruptible. Automation definition/broadcast and Gateway configuration
+filesystem work lives in focused `src/adapters/fs/` modules, while the larger Profile workflow and
+concrete adapter selection remain intentionally unchanged.
+
+Recovery still treats PID liveness as conservative evidence rather than durable process-instance
+identity. Gateway acquisition has a bounded internal handoff retry; release is read/compare/unlink
+and does not promise conditional unlink against an external mid-release pathname replacer. These
+are explicit defer/narrow-document decisions, not claims made by the historical Slice 3 design.
+Current evidence and exact dispositions live in `docs/research/effect-native-full-audit.md`.
+
+Everything below remains the settled Slice 3 freeze and should be read in that historical context.
+
 ## Settled scope
 
 This slice includes:
