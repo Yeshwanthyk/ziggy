@@ -147,14 +147,28 @@ export type AutomationRunOutcome =
     };
 
 const Millis = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const Integer = Schema.Finite.check(Schema.isInt());
+const Ordinal = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const ScheduleFingerprint = Schema.String.check(
+  Schema.makeFilter((value) => /^[0-9a-f]{64}$/.test(value), {
+    expected: "a 64-character lowercase hexadecimal schedule fingerprint",
+  }),
+);
 // oxfmt-ignore
-export const AutomationScheduleRecord = Schema.Struct({ automationId: Schema.String, definitionState: Schema.Literals(["valid", "invalid", "deleted"]), scheduleFingerprint: Schema.NullOr(Schema.String), nextScheduledAtMs: Schema.NullOr(Millis), definitionObservedAtMs: Millis, definitionError: Schema.NullOr(Schema.String) });
+export const AutomationScheduleRecord = Schema.Struct({ automationId: Schema.String, definitionState: Schema.Literals(["valid", "invalid", "deleted"]), scheduleFingerprint: Schema.NullOr(ScheduleFingerprint), nextScheduledAtMs: Schema.NullOr(Millis), definitionObservedAtMs: Millis, definitionError: Schema.NullOr(Schema.String) }).check(Schema.makeFilter((value) => (value.definitionState === "valid" && value.scheduleFingerprint !== null && value.nextScheduledAtMs !== null && value.definitionError === null) || (value.definitionState === "invalid" && value.definitionError !== null) || (value.definitionState === "deleted" && value.nextScheduledAtMs === null && value.definitionError === null), { expected: "a structurally consistent automation schedule record" }));
 export type AutomationScheduleRecord = typeof AutomationScheduleRecord.Type;
 // oxfmt-ignore
-export const AutomationTargetProjection = Schema.Struct({ ordinal: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), target: Schema.String, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(Schema.String), retriable: Schema.NullOr(Schema.Boolean) });
+export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, target: Schema.String, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(Schema.String), retriable: Schema.NullOr(Schema.Boolean) }).check(Schema.makeFilter((value) => (value.status === "delivered" && value.failureCategory === null && value.retriable === null) || (value.status === "failed" && value.failureCategory !== null && value.retriable !== null), { expected: "a structurally consistent automation target outcome" }));
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 // oxfmt-ignore
-export const AutomationRunProjection = Schema.Struct({ runId: Schema.String, automationId: Schema.String, trigger: Schema.Literals(["manual-force", "scheduled"]), state: Schema.Literals(["claimed", "running", "completed", "failed", "skipped-gate", "skipped-busy", "missed", "unknown"]), scheduleFingerprint: Schema.NullOr(Schema.String), scheduledForMs: Schema.NullOr(Millis), missedThroughMs: Schema.NullOr(Millis), recordedAtMs: Millis, startedAtMs: Schema.NullOr(Millis), finishedAtMs: Schema.NullOr(Millis), localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(Schema.String), gateExitCode: Schema.NullOr(Schema.Finite.check(Schema.isInt())), targets: Schema.Array(AutomationTargetProjection) });
+export const AutomationRunProjection = Schema.Struct({ runId: Schema.String, automationId: Schema.String, trigger: Schema.Literals(["manual-force", "scheduled"]), state: Schema.Literals(["claimed", "running", "completed", "failed", "skipped-gate", "skipped-busy", "missed", "unknown"]), scheduleFingerprint: Schema.NullOr(ScheduleFingerprint), scheduledForMs: Schema.NullOr(Millis), missedThroughMs: Schema.NullOr(Millis), recordedAtMs: Millis, startedAtMs: Schema.NullOr(Millis), finishedAtMs: Schema.NullOr(Millis), localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(Schema.String), gateExitCode: Schema.NullOr(Integer), targets: Schema.Array(AutomationTargetProjection) }).check(Schema.makeFilter((value) => {
+  const triggerValid = value.trigger === "manual-force" ? value.scheduleFingerprint === null && value.scheduledForMs === null : value.scheduleFingerprint !== null && value.scheduledForMs !== null;
+  const lifecycleValid = value.state === "claimed" ? value.startedAtMs === null && value.finishedAtMs === null : value.state === "running" ? value.startedAtMs !== null && value.finishedAtMs === null : value.finishedAtMs !== null;
+  const missedValid = value.state === "missed" ? value.trigger === "scheduled" && value.missedThroughMs !== null && value.scheduledForMs !== null && value.missedThroughMs >= value.scheduledForMs : value.missedThroughMs === null;
+  const failureValid = value.state === "completed" ? value.localCompleted && value.failureCategory === null : value.state === "failed" ? value.failureCategory !== null : value.state === "skipped-gate" ? !value.localCompleted && (value.failureCategory === "gate-missing" || value.failureCategory === "gate-nonzero") : value.state === "unknown" ? !value.localCompleted && value.failureCategory === "process-start" : !value.localCompleted && value.failureCategory === null;
+  const gateValid = value.failureCategory === "gate-nonzero" ? value.gateExitCode !== null && value.gateExitCode !== 0 : value.gateExitCode === null;
+  return triggerValid && lifecycleValid && missedValid && failureValid && gateValid;
+}, { expected: "a structurally consistent automation run" }));
 export type AutomationRunProjection = typeof AutomationRunProjection.Type;
 // oxfmt-ignore
 export interface AutomationStatusProjection { readonly profilePath: string; readonly observedAtMs: number; readonly heartbeatAtMs: number | null; readonly lastTickAtMs: number | null; readonly lastTickStatus: "ok" | "error" | null; readonly lastTickError: string | null; readonly schedules: ReadonlyArray<AutomationScheduleRecord>; readonly activeRunCount: number; readonly latestRun: AutomationRunProjection | null; readonly latestErrorRun: AutomationRunProjection | null }

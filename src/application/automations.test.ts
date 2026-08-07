@@ -9,8 +9,12 @@ import {
   automationRunStore,
   commitScheduleTick,
   readAutomationRuns,
+  recoverAutomationRuns,
+  type AutomationRunStore,
+  type RunTerminal,
 } from "../adapters/bun/automation-sqlite";
 import { TelegramApiError } from "../adapters/telegram/api";
+import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
 import { type AutomationCapabilities, makeAutomations } from "./automations";
@@ -43,6 +47,7 @@ const harness = (
   options: {
     readonly gateExit?: number;
     readonly telegramFailure?: TelegramApiError;
+    readonly store?: AutomationRunStore;
   } = {},
 ) => {
   const agent: ZiggyAgentShape = {
@@ -107,7 +112,7 @@ const harness = (
       }),
   };
   return makeAutomations(agent, capabilities, {
-    store: automationRunStore,
+    store: options.store ?? automationRunStore,
     now: Effect.succeed(1_000),
     makeManualRunId: () => "manual:00000000-0000-4000-8000-000000000001",
   });
@@ -274,6 +279,71 @@ describe("automation run", () => {
       delivery: { kind: "resolution-failed", category: "all-empty" },
     });
     expect(allEvents.at(-1)).toBe("reply:local reply");
+  });
+
+  test("a truthful terminal database failure is attempted once and is not fabricated", async () => {
+    const events: Array<string> = [];
+    const target = await profile("discord:channel:1,telegram:chat:2");
+    const failure = new AutomationDatabaseError({
+      operation: "finish run",
+      path: target.path,
+      message: "injected terminal write failure",
+      cause: "fixture",
+    });
+    let finishCalls = 0;
+    let terminal: RunTerminal | undefined;
+    let targets: ReadonlyArray<AutomationTargetOutcome> = [];
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      finish: (profilePath, runId, nextTerminal, nextTargets) => {
+        finishCalls += 1;
+        terminal = nextTerminal;
+        targets = nextTargets;
+        return finishCalls === 1
+          ? Effect.fail(failure)
+          : automationRunStore.finish(profilePath, runId, nextTerminal, nextTargets);
+      },
+    };
+
+    const result = await Effect.runPromise(
+      harness(events, { store })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: (outcome) => outcome,
+          }),
+        ),
+    );
+    expect(result).toBe(failure);
+    expect(finishCalls).toBe(1);
+    expect(terminal).toEqual({
+      state: "completed",
+      atMs: 1_000,
+      localCompleted: true,
+      failureCategory: null,
+      gateExitCode: null,
+    });
+    expect(targets).toEqual([
+      { target: "discord:channel:1", status: "delivered" },
+      { target: "telegram:chat:2", status: "delivered" },
+    ]);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "running",
+      localCompleted: false,
+      failureCategory: null,
+      finishedAtMs: null,
+      targets: [],
+    });
+
+    await Effect.runPromise(recoverAutomationRuns(target.path, 2_000, () => false));
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "unknown",
+      localCompleted: false,
+      failureCategory: "process-start",
+      finishedAtMs: 2_000,
+      targets: [],
+    });
   });
 
   test("continues success, failure, success with complete ordered outcomes", async () => {

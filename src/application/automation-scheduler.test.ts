@@ -4,16 +4,18 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import {
-  automationRunStore,
+  commitScheduleTick,
+  makeAutomationRunStore,
   readAutomationRuns,
   readAutomationStatus,
   readScheduleRecords,
 } from "../adapters/bun/automation-sqlite";
 import type { ProfileTarget } from "../domain/profile";
-import type { AutomationsShape } from "./automations";
+import type { ZiggyAgentShape } from "./agent";
+import { type AutomationCapabilities, type AutomationsShape, makeAutomations } from "./automations";
 import { makeAutomationScheduler } from "./automation-scheduler";
 
 const paths: Array<string> = [];
@@ -101,8 +103,68 @@ describe("automation scheduler engine", () => {
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
-  test("startup recovers active work and compacts an outage into one missed range", async () => {
+  test("startup preserves a live manual run until its truthful terminal commit", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({
+              prompt: () =>
+                Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as("local reply"),
+                ),
+              dispose: Effect.void,
+            }),
+        };
+        const capabilities: AutomationCapabilities = {
+          gate: { run: () => Effect.succeed({ kind: "passed" }) },
+          printReply: () => Effect.void,
+          loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
+          loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
+          loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
+          sendTelegram: () => Effect.void,
+          sendDiscord: () => Effect.void,
+          sendSlack: () => Effect.void,
+        };
+        const automations = makeAutomations(agent, capabilities);
+        const manual = yield* Effect.forkScoped(
+          automations.run(target, "daily", { kind: "manual-force" }),
+        );
+        yield* Deferred.await(entered);
+        expect((yield* readAutomationRuns(target.path))[0]?.state).toBe("running");
+
+        const scheduler = makeAutomationScheduler(automations);
+        const schedulerFiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        expect((yield* readAutomationRuns(target.path))[0]?.state).toBe("running");
+
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(manual)).toEqual({
+          kind: "executed",
+          delivery: { kind: "resolved", targets: [] },
+        });
+        expect((yield* readAutomationRuns(target.path))[0]?.state).toBe("completed");
+        yield* Fiber.interrupt(schedulerFiber);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
+  test("startup recovers an exited child owner and compacts an outage into one missed range", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const child = Bun.spawn([process.execPath, "-e", ""], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const deadStore = makeAutomationRunStore(child.pid);
+    await child.exited;
     const scheduler = makeAutomationScheduler({ run: () => Effect.never });
     const program = Effect.scoped(
       Effect.gen(function* () {
@@ -111,8 +173,8 @@ describe("automation scheduler engine", () => {
         yield* awaitHeartbeat(target, start);
         yield* Fiber.interrupt(first);
         const manualId = "manual:00000000-0000-4000-8000-000000000001";
-        yield* automationRunStore.admitManual(target.path, "other", manualId, start + 10);
-        yield* automationRunStore.start(target.path, manualId, start + 10, null);
+        yield* deadStore.admitManual(target.path, "other", manualId, start + 10);
+        yield* deadStore.start(target.path, manualId, start + 10, null);
         yield* TestClock.setTime(start + 300_000);
         const second = yield* Effect.forkScoped(scheduler.run(target));
         yield* awaitHeartbeat(target, start + 300_000);
@@ -127,6 +189,69 @@ describe("automation scheduler engine", () => {
           start + 360_000,
         );
         yield* Fiber.interrupt(second);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
+  test("definition scan failures re-arm from each failure event despite an overdue cursor", async () => {
+    const target = await profile([]);
+    await Effect.runPromise(
+      commitScheduleTick(target.path, start - 120_000, [
+        {
+          expected: null,
+          next: {
+            automationId: "retained",
+            definitionState: "valid",
+            scheduleFingerprint: "a".repeat(64),
+            nextScheduledAtMs: start - 60_000,
+            definitionObservedAtMs: start - 120_000,
+            definitionError: null,
+          },
+        },
+      ]),
+    );
+    await rm(join(target.path, "automations"), { recursive: true });
+    await writeFile(join(target.path, "automations"), "not a directory");
+    const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const fiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        expect(yield* readAutomationStatus(target.path, start)).toMatchObject({
+          heartbeatAtMs: start,
+          lastTickAtMs: start,
+          lastTickStatus: "error",
+          lastTickError: "definitions-unreadable",
+        });
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(59_999);
+        expect(yield* readAutomationStatus(target.path, start + 59_999)).toMatchObject({
+          heartbeatAtMs: start,
+          lastTickAtMs: start,
+        });
+        yield* TestClock.adjust(1);
+        yield* awaitHeartbeat(target, start + 60_000);
+        expect(yield* readAutomationStatus(target.path, start + 60_000)).toMatchObject({
+          heartbeatAtMs: start + 60_000,
+          lastTickAtMs: start + 60_000,
+          lastTickStatus: "error",
+        });
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(59_999);
+        expect(yield* readAutomationStatus(target.path, start + 119_999)).toMatchObject({
+          heartbeatAtMs: start + 60_000,
+          lastTickAtMs: start + 60_000,
+        });
+        yield* TestClock.adjust(1);
+        yield* awaitHeartbeat(target, start + 120_000);
+        expect(yield* readAutomationStatus(target.path, start + 120_000)).toMatchObject({
+          heartbeatAtMs: start + 120_000,
+          lastTickAtMs: start + 120_000,
+          lastTickStatus: "error",
+        });
+        yield* Fiber.interrupt(fiber);
       }),
     );
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));

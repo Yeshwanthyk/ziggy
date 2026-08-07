@@ -143,19 +143,29 @@ const schedulerFailure = (operation: string, cause: unknown) =>
     cause,
   });
 
+type ScanResult =
+  | { readonly kind: "committed"; readonly result: ScheduleCommitResult }
+  | { readonly kind: "definitions-unreadable"; readonly retryAtMs: number };
+
 const scan = (target: ProfileTarget, atMs: number, startup: boolean) =>
   Effect.gen(function* () {
     const observations = yield* discover(target).pipe(Effect.result);
     if (Result.isFailure(observations)) {
       yield* recordDefinitionTickFailure(target.path, atMs);
-      return { stale: false, claimed: [] } satisfies ScheduleCommitResult;
+      return {
+        kind: "definitions-unreadable",
+        retryAtMs: atMs + 60_000,
+      } satisfies ScanResult;
     }
     const current = yield* readScheduleRecords(target.path);
-    return yield* commitScheduleTick(
-      target.path,
-      atMs,
-      proposals(current, observations.success, atMs, startup),
-    );
+    return {
+      kind: "committed",
+      result: yield* commitScheduleTick(
+        target.path,
+        atMs,
+        proposals(current, observations.success, atMs, startup),
+      ),
+    } satisfies ScanResult;
   });
 
 export const makeAutomationScheduler = (
@@ -168,7 +178,9 @@ export const makeAutomationScheduler = (
         yield* initializeAutomationDatabase(target.path);
         yield* recoverAutomationRuns(target.path, startupAt);
         let initial = yield* scan(target, startupAt, true);
-        while (initial.stale) initial = yield* scan(target, yield* Clock.currentTimeMillis, true);
+        while (initial.kind === "committed" && initial.result.stale)
+          initial = yield* scan(target, yield* Clock.currentTimeMillis, true);
+        let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
 
         const cycle = Effect.gen(function* () {
           const schedules = yield* readScheduleRecords(target.path);
@@ -182,19 +194,26 @@ export const makeAutomationScheduler = (
             .sort((left, right) => left - right)[0];
           yield* Effect.sleep(
             Duration.millis(
-              earliest === undefined ? 60_000 : Math.min(60_000, Math.max(0, earliest - now)),
+              retryAtMs === null
+                ? earliest === undefined
+                  ? 60_000
+                  : Math.min(60_000, Math.max(0, earliest - now))
+                : Math.max(0, retryAtMs - now),
             ),
           );
-          let result = yield* scan(target, yield* Clock.currentTimeMillis, false);
-          while (result.stale) result = yield* scan(target, yield* Clock.currentTimeMillis, false);
-          for (const claim of result.claimed)
-            yield* Effect.forkScoped(
-              automations.run(target, claim.automationId, {
-                kind: "scheduled",
-                scheduledFor: new Date(claim.scheduledForMs).toISOString(),
-                scheduleFingerprint: claim.scheduleFingerprint,
-              }),
-            );
+          let scanResult = yield* scan(target, yield* Clock.currentTimeMillis, false);
+          while (scanResult.kind === "committed" && scanResult.result.stale)
+            scanResult = yield* scan(target, yield* Clock.currentTimeMillis, false);
+          retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
+          if (scanResult.kind === "committed")
+            for (const claim of scanResult.result.claimed)
+              yield* Effect.forkScoped(
+                automations.run(target, claim.automationId, {
+                  kind: "scheduled",
+                  scheduledFor: new Date(claim.scheduledForMs).toISOString(),
+                  scheduleFingerprint: claim.scheduleFingerprint,
+                }),
+              );
         });
         return yield* Effect.forever(cycle);
       }).pipe(Effect.mapError((cause) => schedulerFailure("run", cause))),

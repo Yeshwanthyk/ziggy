@@ -236,6 +236,12 @@ const liveRunRuntime: AutomationRunRuntime = {
   makeManualRunId: makeLiveManualRunId,
 };
 
+interface TerminalIntent {
+  readonly outcome: AutomationRunOutcome;
+  readonly terminal: Omit<RunTerminal, "atMs">;
+  readonly targets: ReadonlyArray<AutomationTargetOutcome>;
+}
+
 // oxfmt-ignore
 const failedCategory = (error: AutomationError): string => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid", AutomationNotFound: () => "AutomationNotFound", AutomationFileSystemError: () => "AutomationFileSystemError", AutomationGateFailed: (failure) => `AutomationGateFailed:${failure.reason}`, AutomationDatabaseError: () => "AutomationDatabaseError", ProfileNotInitialized: () => "ProfileNotInitialized", ProviderConfigError: () => "ProviderConfigError", ProviderCallError: () => "ProviderCallError", MemoryIdInvalid: () => "MemoryIdInvalid", ProfileExtensionInvalid: () => "ProfileExtensionInvalid", ProfileFileSystemError: () => "ProfileFileSystemError" }));
 
@@ -272,27 +278,33 @@ export const makeAutomations = (
           runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets),
         );
 
-      const execute = Effect.gen(function* () {
+      const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {
         const automation = yield* readAutomation(target, automationId);
         if (trigger.kind === "scheduled" && automation.gate === undefined) {
-          yield* finish({
-            state: "skipped-gate",
-            localCompleted: false,
-            failureCategory: "gate-missing",
-            gateExitCode: null,
-          });
-          return { kind: "declined", reason: "gate-nonzero", exitCode: 1 } as const;
+          return {
+            outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },
+            terminal: {
+              state: "skipped-gate",
+              localCompleted: false,
+              failureCategory: "gate-missing",
+              gateExitCode: null,
+            },
+            targets: [],
+          };
         }
         if (automation.gate !== undefined) {
           const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
           if (gate.kind === "declined") {
-            yield* finish({
-              state: "skipped-gate",
-              localCompleted: false,
-              failureCategory: "gate-nonzero",
-              gateExitCode: gate.exitCode,
-            });
-            return { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode } as const;
+            return {
+              outcome: { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode },
+              terminal: {
+                state: "skipped-gate",
+                localCompleted: false,
+                failureCategory: "gate-nonzero",
+                gateExitCode: gate.exitCode,
+              },
+              targets: [],
+            };
           }
         }
         const handle = yield* agent.openChat(
@@ -319,41 +331,45 @@ export const makeAutomations = (
         yield* capabilities.printReply(reply);
         const resolution = yield* resolveTargets(target, automation);
         if (!resolution.ok) {
-          yield* finish({
-            state: "failed",
-            localCompleted: true,
-            failureCategory: resolution.category,
-            gateExitCode: null,
-          });
           return {
-            kind: "executed",
-            delivery: { kind: "resolution-failed", category: resolution.category },
-          } as const;
+            outcome: {
+              kind: "executed",
+              delivery: { kind: "resolution-failed", category: resolution.category },
+            },
+            terminal: {
+              state: "failed",
+              localCompleted: true,
+              failureCategory: resolution.category,
+              gateExitCode: null,
+            },
+            targets: [],
+          };
         }
         const outcomes: Array<AutomationTargetOutcome> = [];
         for (const destination of resolution.targets)
           outcomes.push(yield* deliver(capabilities, target, destination, reply));
         const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
-        yield* finish(
-          firstFailure === undefined
-            ? {
-                state: "completed",
-                localCompleted: true,
-                failureCategory: null,
-                gateExitCode: null,
-              }
-            : {
-                state: "failed",
-                localCompleted: true,
-                failureCategory: firstFailure.category,
-                gateExitCode: null,
-              },
-          outcomes,
-        );
-        return { kind: "executed", delivery: { kind: "resolved", targets: outcomes } } as const;
+        return {
+          outcome: { kind: "executed", delivery: { kind: "resolved", targets: outcomes } },
+          terminal:
+            firstFailure === undefined
+              ? {
+                  state: "completed",
+                  localCompleted: true,
+                  failureCategory: null,
+                  gateExitCode: null,
+                }
+              : {
+                  state: "failed",
+                  localCompleted: true,
+                  failureCategory: firstFailure.category,
+                  gateExitCode: null,
+                },
+          targets: outcomes,
+        };
       });
 
-      return yield* execute.pipe(
+      const intent = yield* execute.pipe(
         Effect.catch((error) =>
           finish({
             state: "failed",
@@ -374,6 +390,8 @@ export const makeAutomations = (
           }).pipe(Effect.catch(() => Effect.void)),
         ),
       );
+      yield* finish(intent.terminal, intent.targets);
+      return intent.outcome;
     }),
 });
 
