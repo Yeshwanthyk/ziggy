@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Result } from "effect";
@@ -67,6 +67,26 @@ describe("gateway owner", () => {
     await Effect.runPromise(Deferred.await(entered));
     await Effect.runPromise(Fiber.interrupt(owner));
     await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
+  });
+
+  test("retries when the previous owner releases after a link conflict", async () => {
+    const profile = await target();
+    const lockPath = gatewayOwnerPath(profile);
+    await mkdir(join(profile.path, ".runtime"));
+    await writeFile(lockPath, record("00000000-0000-4000-8000-999999999999"));
+    let conflicts = 0;
+    const host: GatewayOwnerRuntime = {
+      ...runtime(),
+      afterLinkConflict: () =>
+        Effect.promise(async () => {
+          conflicts += 1;
+          await rm(lockPath);
+        }),
+    };
+
+    await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
+
+    expect(conflicts).toBe(1);
   });
 
   test("release never removes a valid foreign owner", async () => {

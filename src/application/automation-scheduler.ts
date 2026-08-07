@@ -1,4 +1,4 @@
-import { Clock, Context, Cron, Deferred, Duration, Effect, Layer, Result } from "effect";
+import { Clock, Context, Cron, Deferred, Duration, Effect, Layer, Result, Scope } from "effect";
 import {
   commitScheduleTick,
   discoverAutomationSources,
@@ -148,7 +148,32 @@ type ScanResult =
   | { readonly kind: "committed"; readonly result: ScheduleCommitResult }
   | { readonly kind: "definitions-unreadable"; readonly retryAtMs: number };
 
-const scan = (target: ProfileTarget, atMs: number, startup: boolean) =>
+type ScheduleClaim = ScheduleCommitResult["claimed"][number];
+export interface AutomationSchedulerRuntime {
+  readonly afterScheduleCommit: (result: ScheduleCommitResult) => Effect.Effect<void>;
+  readonly afterWorkerRegistered: (claim: ScheduleClaim) => Effect.Effect<void>;
+}
+
+const liveSchedulerRuntime: AutomationSchedulerRuntime = {
+  afterScheduleCommit: () => Effect.void,
+  afterWorkerRegistered: () => Effect.void,
+};
+
+type RestoreInterruptibility = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) => Effect.Effect<A, E, R>;
+type RegisterClaims = (
+  result: ScheduleCommitResult,
+  restore: RestoreInterruptibility,
+) => Effect.Effect<void, never, Scope.Scope>;
+
+const scan = (
+  target: ProfileTarget,
+  atMs: number,
+  startup: boolean,
+  runtime: AutomationSchedulerRuntime,
+  registerClaims: RegisterClaims,
+) =>
   Effect.gen(function* () {
     yield* recoverAutomationRuns(target.path, atMs);
     const observations = yield* discover(target).pipe(Effect.result);
@@ -160,29 +185,60 @@ const scan = (target: ProfileTarget, atMs: number, startup: boolean) =>
       } satisfies ScanResult;
     }
     const current = yield* readScheduleRecords(target.path);
-    return {
-      kind: "committed",
-      result: yield* commitScheduleTick(
-        target.path,
-        atMs,
-        proposals(current, observations.success, atMs, startup),
-      ),
-    } satisfies ScanResult;
+    const result = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const committed = yield* commitScheduleTick(
+          target.path,
+          atMs,
+          proposals(current, observations.success, atMs, startup),
+        );
+        yield* runtime.afterScheduleCommit(committed);
+        yield* registerClaims(committed, restore);
+        return committed;
+      }),
+    );
+    return { kind: "committed", result } satisfies ScanResult;
   });
 
 export const makeAutomationScheduler = (
   automations: AutomationsShape,
+  runtime: AutomationSchedulerRuntime = liveSchedulerRuntime,
 ): AutomationSchedulerShape => {
   const run = (target: ProfileTarget): Effect.Effect<never, AutomationSchedulerError> =>
     Effect.scoped(
       Effect.gen(function* () {
         const startupAt = yield* Clock.currentTimeMillis;
         yield* initializeAutomationDatabase(target.path);
-        let initial = yield* scan(target, startupAt, true);
-        while (initial.kind === "committed" && initial.result.stale)
-          initial = yield* scan(target, yield* Clock.currentTimeMillis, true);
-        let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
         const fatal = yield* Deferred.make<never, AutomationDatabaseError>();
+        const registerClaims: RegisterClaims = (result, restore) =>
+          Effect.gen(function* () {
+            for (const claim of result.claimed) {
+              const worker = automations
+                .run(target, claim.automationId, {
+                  kind: "scheduled",
+                  scheduledFor: new Date(claim.scheduledForMs).toISOString(),
+                  scheduleFingerprint: claim.scheduleFingerprint,
+                })
+                .pipe(
+                  Effect.catchTag("AutomationDatabaseError", (failure) =>
+                    Deferred.fail(fatal, failure).pipe(Effect.asVoid),
+                  ),
+                  Effect.catch(() => Effect.void),
+                );
+              yield* restore(worker).pipe(Effect.forkScoped);
+              yield* runtime.afterWorkerRegistered(claim);
+            }
+          });
+        let initial = yield* scan(target, startupAt, true, runtime, registerClaims);
+        while (initial.kind === "committed" && initial.result.stale)
+          initial = yield* scan(
+            target,
+            yield* Clock.currentTimeMillis,
+            true,
+            runtime,
+            registerClaims,
+          );
+        let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
 
         const cycle = Effect.gen(function* () {
           const schedules = yield* readScheduleRecords(target.path);
@@ -203,25 +259,22 @@ export const makeAutomationScheduler = (
                 : Math.max(0, retryAtMs - now),
             ),
           );
-          let scanResult = yield* scan(target, yield* Clock.currentTimeMillis, false);
+          let scanResult = yield* scan(
+            target,
+            yield* Clock.currentTimeMillis,
+            false,
+            runtime,
+            registerClaims,
+          );
           while (scanResult.kind === "committed" && scanResult.result.stale)
-            scanResult = yield* scan(target, yield* Clock.currentTimeMillis, false);
+            scanResult = yield* scan(
+              target,
+              yield* Clock.currentTimeMillis,
+              false,
+              runtime,
+              registerClaims,
+            );
           retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
-          if (scanResult.kind === "committed")
-            for (const claim of scanResult.result.claimed)
-              yield* automations
-                .run(target, claim.automationId, {
-                  kind: "scheduled",
-                  scheduledFor: new Date(claim.scheduledForMs).toISOString(),
-                  scheduleFingerprint: claim.scheduleFingerprint,
-                })
-                .pipe(
-                  Effect.catchTag("AutomationDatabaseError", (failure) =>
-                    Deferred.fail(fatal, failure).pipe(Effect.asVoid),
-                  ),
-                  Effect.catch(() => Effect.void),
-                  Effect.forkScoped,
-                );
         });
         return yield* Effect.raceFirst(Effect.forever(cycle), Deferred.await(fatal));
       }).pipe(Effect.mapError((cause) => schedulerFailure("run", cause))),

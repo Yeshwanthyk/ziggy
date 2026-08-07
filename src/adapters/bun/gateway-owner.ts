@@ -40,6 +40,7 @@ export interface GatewayOwnerRuntime {
   readonly makeOwnerId: () => string;
   readonly now: () => Date;
   readonly pidIsAlive: (pid: number) => boolean;
+  readonly afterLinkConflict?: (path: string) => Effect.Effect<void>;
 }
 
 const liveRuntime: GatewayOwnerRuntime = {
@@ -79,11 +80,16 @@ const unreadableError = (path: string, cause: unknown) =>
 
 const inspectExistingOwner = (path: string, runtime: GatewayOwnerRuntime) =>
   Effect.gen(function* () {
-    const source = yield* Effect.tryPromise({
+    const sourceResult = yield* Effect.tryPromise({
       try: () => readFile(path, "utf8"),
-      catch: (cause) => unreadableError(path, cause),
-    });
-    const record = yield* decodeGatewayOwnerRecordJson(source).pipe(
+      catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
+    }).pipe(Effect.result);
+    if (Result.isFailure(sourceResult)) {
+      if (sourceResult.failure.details.code === "ENOENT")
+        return { kind: "released" as const, cause: sourceResult.failure.cause };
+      return yield* unreadableError(path, sourceResult.failure.cause);
+    }
+    const record = yield* decodeGatewayOwnerRecordJson(sourceResult.success).pipe(
       Effect.mapError((cause) => unreadableError(path, cause)),
     );
     if (runtime.pidIsAlive(record.pid)) {
@@ -135,16 +141,19 @@ const acquire = (
       },
       catch: (cause) => filesystemError(path, cause),
     });
-    const linked = yield* Effect.tryPromise({
-      try: () => link(candidate, path),
-      catch: (cause) => fileSystemCauseDetails(cause),
-    }).pipe(Effect.result);
-    if (Result.isFailure(linked)) {
-      return yield* linked.failure.code === "EEXIST"
-        ? inspectExistingOwner(path, runtime)
-        : filesystemError(path, linked.failure);
+    let finalMissingCause: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const linked = yield* Effect.tryPromise({
+        try: () => link(candidate, path),
+        catch: (cause) => fileSystemCauseDetails(cause),
+      }).pipe(Effect.result);
+      if (Result.isSuccess(linked)) return { path, ownerId };
+      if (linked.failure.code !== "EEXIST") return yield* filesystemError(path, linked.failure);
+      yield* runtime.afterLinkConflict?.(path) ?? Effect.void;
+      const inspection = yield* inspectExistingOwner(path, runtime);
+      finalMissingCause = inspection.cause;
     }
-    return { path, ownerId };
+    return yield* unreadableError(path, finalMissingCause);
   }).pipe(Effect.ensuring(Effect.promise(() => unlink(candidate).catch(() => undefined))));
 };
 

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber, Option } from "effect";
 import {
   automationRunStore,
   commitScheduleTick,
@@ -50,6 +50,7 @@ const harness = (
     readonly gateExit?: number;
     readonly telegramFailure?: TelegramApiError;
     readonly promptFailure?: ProviderCallError;
+    readonly promptEffect?: Effect.Effect<string, ProviderCallError>;
     readonly store?: AutomationRunStore;
   } = {},
 ) => {
@@ -63,9 +64,10 @@ const harness = (
           prompt: (prompt) =>
             Effect.sync(() => events.push(`prompt:${prompt}`)).pipe(
               Effect.andThen(
-                options.promptFailure === undefined
-                  ? Effect.succeed("local reply")
-                  : Effect.fail(options.promptFailure),
+                options.promptEffect ??
+                  (options.promptFailure === undefined
+                    ? Effect.succeed("local reply")
+                    : Effect.fail(options.promptFailure)),
               ),
             ),
           dispose: Effect.sync(() => {
@@ -435,6 +437,102 @@ describe("automation run", () => {
       localCompleted: false,
       failureCategory: null,
       finishedAtMs: null,
+    });
+  });
+
+  test("interruption during execution publishes one interrupted terminal", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    let finishCalls = 0;
+    let terminal: RunTerminal | undefined;
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      finish: (profilePath, runId, nextTerminal, targets) => {
+        finishCalls += 1;
+        terminal = nextTerminal;
+        return automationRunStore.finish(profilePath, runId, nextTerminal, targets);
+      },
+    };
+    const service = harness(events, {
+      store,
+      promptEffect: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    const fiber = Effect.runFork(
+      service.run(target, "daily-note", { kind: "manual-force" }),
+    );
+    await Effect.runPromise(Deferred.await(entered));
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(finishCalls).toBe(1);
+    expect(terminal).toEqual({
+      state: "failed",
+      atMs: 1_000,
+      localCompleted: false,
+      failureCategory: "interrupted",
+      gateExitCode: null,
+    });
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      localCompleted: false,
+      failureCategory: "interrupted",
+      finishedAtMs: 1_000,
+    });
+  });
+
+  test("interruption during terminal publication waits for the one truthful terminal attempt", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const finishEntered = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinish = await Effect.runPromise(Deferred.make<void>());
+    const interruptionStarted = await Effect.runPromise(Deferred.make<void>());
+    const interruptionDone = await Effect.runPromise(Deferred.make<void>());
+    let finishCalls = 0;
+    let terminal: RunTerminal | undefined;
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      finish: (profilePath, runId, nextTerminal, targets) => {
+        finishCalls += 1;
+        terminal = nextTerminal;
+        return Deferred.succeed(finishEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseFinish)),
+          Effect.andThen(automationRunStore.finish(profilePath, runId, nextTerminal, targets)),
+        );
+      },
+    };
+    const runFiber = Effect.runFork(
+      harness(events, { store }).run(target, "daily-note", { kind: "manual-force" }),
+    );
+    await Effect.runPromise(Deferred.await(finishEntered));
+    const interruptFiber = Effect.runFork(
+      Deferred.succeed(interruptionStarted, undefined).pipe(
+        Effect.andThen(Fiber.interrupt(runFiber)),
+        Effect.ensuring(Deferred.succeed(interruptionDone, undefined)),
+      ),
+    );
+    await Effect.runPromise(Deferred.await(interruptionStarted));
+    await Effect.runPromise(Effect.yieldNow);
+    const completedBeforeRelease = Option.isSome(
+      await Effect.runPromise(Deferred.poll(interruptionDone)),
+    );
+    await Effect.runPromise(Deferred.succeed(releaseFinish, undefined));
+    await Effect.runPromise(Fiber.join(interruptFiber));
+
+    expect(completedBeforeRelease).toBe(false);
+    expect(finishCalls).toBe(1);
+    expect(terminal).toEqual({
+      state: "completed",
+      atMs: 1_000,
+      localCompleted: true,
+      failureCategory: null,
+      gateExitCode: null,
+    });
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "completed",
+      localCompleted: true,
+      failureCategory: null,
+      finishedAtMs: 1_000,
     });
   });
 

@@ -105,6 +105,48 @@ describe("automation scheduler engine", () => {
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
+  test("interruption after a committed claim waits for scoped worker registration", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const registered: Array<string> = [];
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const committed = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const scheduler = makeAutomationScheduler(
+          { run: () => Effect.never },
+          {
+            afterScheduleCommit: (result) =>
+              result.claimed.length === 0
+                ? Effect.void
+                : Deferred.succeed(committed, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  ),
+            afterWorkerRegistered: (claim) =>
+              Effect.sync(() => {
+                registered.push(claim.automationId);
+              }),
+          },
+        );
+        const schedulerFiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        yield* TestClock.adjust(60_000);
+        yield* Deferred.await(committed);
+        expect((yield* readAutomationRuns(target.path)).map((item) => item.state)).toEqual([
+          "claimed",
+        ]);
+
+        const interruption = yield* Effect.forkScoped(Fiber.interrupt(schedulerFiber));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(interruption);
+
+        expect(registered).toEqual(["daily"]);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
   test("startup preserves a live manual run until its truthful terminal commit", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
     const program = Effect.scoped(

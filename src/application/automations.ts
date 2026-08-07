@@ -370,26 +370,29 @@ export const makeAutomations = (
         };
       });
 
-      const intent = yield* execute.pipe(
-        Effect.catch((error) =>
-          finish({
-            state: "failed",
-            localCompleted: false,
-            failureCategory: failedCategory(error),
-            gateExitCode: null,
-          }).pipe(Effect.andThen(Effect.fail(error))),
-        ),
-        Effect.onInterrupt(() =>
-          finish({
-            state: "failed",
-            localCompleted: false,
-            failureCategory: "interrupted",
-            gateExitCode: null,
-          }).pipe(Effect.catch(() => Effect.void)),
+      return yield* Effect.uninterruptibleMask((restore) =>
+        restore(execute).pipe(
+          Effect.onInterrupt(() =>
+            finish({
+              state: "failed",
+              localCompleted: false,
+              failureCategory: "interrupted",
+              gateExitCode: null,
+            }).pipe(Effect.catch(() => Effect.void)),
+          ),
+          Effect.catch((error) =>
+            finish({
+              state: "failed",
+              localCompleted: false,
+              failureCategory: failedCategory(error),
+              gateExitCode: null,
+            }).pipe(Effect.andThen(Effect.fail(error))),
+          ),
+          Effect.flatMap((intent) =>
+            finish(intent.terminal, intent.targets).pipe(Effect.as(intent.outcome)),
+          ),
         ),
       );
-      yield* finish(intent.terminal, intent.targets);
-      return intent.outcome;
     }),
 });
 
