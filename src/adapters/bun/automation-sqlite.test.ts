@@ -390,7 +390,7 @@ describe("automation SQLite", () => {
             state: "failed",
             atMs: row.finishedAtMs,
             localCompleted: true,
-            failureCategory: "remote",
+            failureCategory: "all-empty",
             gateExitCode: null,
           },
           [],
@@ -419,6 +419,13 @@ describe("automation SQLite", () => {
       "UPDATE automation_run SET state='completed',failure_category='remote'",
       "UPDATE automation_run SET failure_category='gate-nonzero',gate_exit_code=1.5",
       "UPDATE automation_run SET state='running',owner_pid=1.5,finished_at_ms=NULL,local_completed=0,failure_category=NULL,gate_exit_code=NULL",
+      "UPDATE automation_run SET state='completed',failure_category=NULL; UPDATE automation_target_outcome SET status='failed',failure_category='remote',retriable=1",
+      "UPDATE automation_target_outcome SET target='not-a-canonical-target'",
+      "UPDATE automation_target_outcome SET failure_category='not-a-category'",
+      "UPDATE automation_run SET failure_category='not-a-category'",
+      "UPDATE automation_run SET failure_category='rate-limited'; UPDATE automation_target_outcome SET failure_category='remote'",
+      "UPDATE automation_run SET local_completed=0,failure_category='AutomationInvalid'",
+      "UPDATE automation_run SET failure_category='all-empty'",
     ];
     for (const statement of fixtures) {
       const path = await profile();
