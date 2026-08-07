@@ -14,6 +14,7 @@ import {
   readAutomationStatus,
   readScheduleRecords,
 } from "../adapters/bun/automation-sqlite";
+import { automationFileStore } from "../adapters/fs/automation-files";
 import { AutomationDatabaseError } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
@@ -169,6 +170,7 @@ describe("automation scheduler engine", () => {
         };
         const capabilities: AutomationCapabilities = {
           gate: { run: () => Effect.succeed({ kind: "passed" }) },
+          files: automationFileStore,
           printReply: () => Effect.void,
           loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
           loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
@@ -363,6 +365,7 @@ describe("automation scheduler engine", () => {
     };
     const capabilities: AutomationCapabilities = {
       gate: { run: () => Effect.succeed({ kind: "passed" }) },
+      files: automationFileStore,
       printReply: () => Effect.void,
       loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
       loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),

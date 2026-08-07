@@ -14,6 +14,7 @@ import {
   type AutomationRunStore,
   type RunTerminal,
 } from "../adapters/bun/automation-sqlite";
+import { automationFileStore } from "../adapters/fs/automation-files";
 import { TelegramApiError } from "../adapters/telegram/api";
 import { ProviderCallError } from "../domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
@@ -86,6 +87,7 @@ const harness = (
             : { kind: "declined" as const, exitCode: options.gateExit };
         }),
     },
+    files: automationFileStore,
     printReply: (reply) =>
       Effect.sync(() => {
         events.push(`reply:${reply}`);

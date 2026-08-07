@@ -1,4 +1,3 @@
-import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
 import type * as Scope from "effect/Scope";
@@ -9,10 +8,9 @@ import {
   type DiscordSocketError,
   openDiscordSocket,
 } from "../adapters/discord/socket";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { loadDiscordConfigFile } from "../adapters/fs/gateway-config";
 import { type ZiggyAgentError } from "../domain/agent";
-import { decodeDiscordGatewayConfigJson, type DiscordGatewayConfig } from "../domain/discord";
-import { GatewayConfigError } from "../domain/gateway";
+import type { DiscordGatewayConfig } from "../domain/discord";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
@@ -58,55 +56,7 @@ interface ChatState {
   handle?: ChatHandle;
 }
 
-const configGuidance = (configPath: string): string =>
-  `create ${configPath} with {"botToken":"...","ownerUserId":"123"}`;
-
-export const loadDiscordGatewayConfig = (
-  target: ProfileTarget,
-): Effect.Effect<DiscordGatewayConfig, GatewayConfigError> =>
-  Effect.gen(function* () {
-    const soulPath = join(target.path, "SOUL.md");
-    const soulStatus = yield* Effect.tryPromise({
-      try: () => stat(soulPath),
-      catch: (cause) =>
-        new GatewayConfigError({
-          path: soulPath,
-          message:
-            fileSystemCauseDetails(cause).code === "ENOENT"
-              ? `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`
-              : `could not inspect ${soulPath}`,
-          cause,
-        }),
-    });
-    if (!soulStatus.isFile()) {
-      return yield* new GatewayConfigError({
-        path: soulPath,
-        message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-        cause: "SOUL.md is not a file",
-      });
-    }
-
-    const configPath = join(target.path, "discord.json");
-    const source = yield* Effect.tryPromise({
-      try: () => readFile(configPath, "utf8"),
-      catch: (cause) =>
-        new GatewayConfigError({
-          path: configPath,
-          message: configGuidance(configPath),
-          cause,
-        }),
-    });
-    return yield* decodeDiscordGatewayConfigJson(source).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GatewayConfigError({
-            path: configPath,
-            message: configGuidance(configPath),
-            cause,
-          }),
-      ),
-    );
-  });
+export const loadDiscordGatewayConfig = loadDiscordConfigFile;
 
 export const normalizeDiscordMessage = (
   message: DiscordInboundMessage,

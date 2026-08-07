@@ -1,4 +1,3 @@
-import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Duration, Effect, Layer, Semaphore } from "effect";
 import type * as Scope from "effect/Scope";
@@ -9,11 +8,10 @@ import {
   type SlackSocketError,
   openSlackSocket,
 } from "../adapters/slack/socket";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { loadSlackConfigFile } from "../adapters/fs/gateway-config";
 import { type ZiggyAgentError } from "../domain/agent";
-import { GatewayConfigError } from "../domain/gateway";
 import { codePointLength, type ChatContext } from "../domain/memory";
-import { decodeSlackGatewayConfigJson, type SlackGatewayConfig } from "../domain/slack";
+import type { SlackGatewayConfig } from "../domain/slack";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
 
@@ -59,55 +57,7 @@ interface ChatState {
   handle?: ChatHandle;
 }
 
-const configGuidance = (configPath: string): string =>
-  `create ${configPath} with {"botToken":"xoxb-...","appToken":"xapp-...","ownerUserId":"U0123ABC"}`;
-
-export const loadSlackGatewayConfig = (
-  target: ProfileTarget,
-): Effect.Effect<SlackGatewayConfig, GatewayConfigError> =>
-  Effect.gen(function* () {
-    const soulPath = join(target.path, "SOUL.md");
-    const soulStatus = yield* Effect.tryPromise({
-      try: () => stat(soulPath),
-      catch: (cause) =>
-        new GatewayConfigError({
-          path: soulPath,
-          message:
-            fileSystemCauseDetails(cause).code === "ENOENT"
-              ? `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`
-              : `could not inspect ${soulPath}`,
-          cause,
-        }),
-    });
-    if (!soulStatus.isFile()) {
-      return yield* new GatewayConfigError({
-        path: soulPath,
-        message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-        cause: "SOUL.md is not a file",
-      });
-    }
-
-    const configPath = join(target.path, "slack.json");
-    const source = yield* Effect.tryPromise({
-      try: () => readFile(configPath, "utf8"),
-      catch: (cause) =>
-        new GatewayConfigError({
-          path: configPath,
-          message: configGuidance(configPath),
-          cause,
-        }),
-    });
-    return yield* decodeSlackGatewayConfigJson(source).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GatewayConfigError({
-            path: configPath,
-            message: configGuidance(configPath),
-            cause,
-          }),
-      ),
-    );
-  });
+export const loadSlackGatewayConfig = loadSlackConfigFile;
 
 export const normalizeSlackMessage = (
   message: SlackInboundMessage,

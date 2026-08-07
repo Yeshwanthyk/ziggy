@@ -1,9 +1,8 @@
-import { lstat, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Effect, Layer, Scope } from "effect";
 import { acquireGatewayOwner, type GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { type DiscordApiError } from "../adapters/discord/api";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { type SlackApiError } from "../adapters/slack/api";
 import { type TelegramApiError } from "../adapters/telegram/api";
 import { ProfileNotInitialized } from "../domain/agent";
@@ -28,56 +27,16 @@ export interface ResidentGatewayConfig {
   readonly slack: SlackGatewayConfig | undefined;
 }
 
-const validateProfile = (target: ProfileTarget) =>
-  Effect.gen(function* () {
-    const soulPath = join(target.path, "SOUL.md");
-    const status = yield* Effect.tryPromise({
-      try: () => stat(soulPath),
-      catch: (cause) =>
-        fileSystemCauseDetails(cause).code === "ENOENT"
-          ? new ProfileNotInitialized({
-              profilePath: target.path,
-              message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-            })
-          : new GatewayConfigError({
-              path: soulPath,
-              message: `could not inspect ${soulPath}`,
-              cause,
-            }),
-    });
-    if (!status.isFile()) {
-      return yield* new ProfileNotInitialized({
-        profilePath: target.path,
-        message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-      });
-    }
-  });
-
-const configPresent = (path: string): Effect.Effect<boolean, GatewayConfigError> =>
-  Effect.tryPromise({
-    try: () => lstat(path),
-    catch: (cause) => fileSystemCauseDetails(cause),
-  }).pipe(
-    Effect.as(true),
-    Effect.catch((cause) =>
-      cause.code === "ENOENT"
-        ? Effect.succeed(false)
-        : Effect.fail(
-            new GatewayConfigError({ path, message: `could not inspect ${path}`, cause }),
-          ),
-    ),
-  );
-
 export const loadResidentGatewayConfig = (
   target: ProfileTarget,
 ): Effect.Effect<ResidentGatewayConfig, ProfileNotInitialized | GatewayConfigError> =>
   Effect.gen(function* () {
-    yield* validateProfile(target);
-    const telegram = yield* configPresent(join(target.path, "telegram.json"));
+    yield* validateGatewayProfile(target);
+    const telegram = yield* gatewayConfigPresent(join(target.path, "telegram.json"));
     const telegramConfig = telegram ? yield* loadGatewayConfig(target) : undefined;
-    const discord = yield* configPresent(join(target.path, "discord.json"));
+    const discord = yield* gatewayConfigPresent(join(target.path, "discord.json"));
     const discordConfig = discord ? yield* loadDiscordGatewayConfig(target) : undefined;
-    const slack = yield* configPresent(join(target.path, "slack.json"));
+    const slack = yield* gatewayConfigPresent(join(target.path, "slack.json"));
     const slackConfig = slack ? yield* loadSlackGatewayConfig(target) : undefined;
     return { telegram: telegramConfig, discord: discordConfig, slack: slackConfig };
   });

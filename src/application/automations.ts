@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Clock, Context, Effect, Layer, Match, Option, Predicate, Result } from "effect";
 import { liveAutomationGate, type AutomationGate } from "../adapters/bun/automation-gate";
@@ -9,7 +8,7 @@ import {
   type RunTerminal,
 } from "../adapters/bun/automation-sqlite";
 import { createMessage, DiscordApiError } from "../adapters/discord/api";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { automationFileStore, type AutomationFileStore } from "../adapters/fs/automation-files";
 import { postMessage, SlackApiError } from "../adapters/slack/api";
 import { sendMessage, TelegramApiError } from "../adapters/telegram/api";
 import {
@@ -58,6 +57,7 @@ export class Automations extends Context.Service<Automations, AutomationsShape>(
 
 export interface AutomationCapabilities {
   readonly gate: AutomationGate;
+  readonly files: AutomationFileStore;
   readonly printReply: (reply: string) => Effect.Effect<void>;
   readonly loadTelegramConfig: typeof loadGatewayConfig;
   readonly loadDiscordConfig: typeof loadDiscordGatewayConfig;
@@ -69,6 +69,7 @@ export interface AutomationCapabilities {
 
 const liveCapabilities: AutomationCapabilities = {
   gate: liveAutomationGate,
+  files: automationFileStore,
   printReply: (reply) => Effect.sync(() => console.log(reply)),
   loadTelegramConfig: loadGatewayConfig,
   loadDiscordConfig: loadDiscordGatewayConfig,
@@ -78,26 +79,11 @@ const liveCapabilities: AutomationCapabilities = {
   sendSlack: postMessage,
 };
 
-const readAutomation = (target: ProfileTarget, idSource: string) =>
+const readAutomation = (files: AutomationFileStore, target: ProfileTarget, idSource: string) =>
   Effect.gen(function* () {
     const id = yield* validateAutomationId(idSource);
-    const filePath = join(target.path, "automations", `${id}.md`);
-    const source = yield* Effect.tryPromise({
-      try: () => readFile(filePath, "utf8"),
-      catch: (cause) =>
-        fileSystemCauseDetails(cause).code === "ENOENT"
-          ? new AutomationNotFound({
-              id,
-              path: filePath,
-              message: `no automation ${id} at ${filePath}`,
-            })
-          : new AutomationFileSystemError({
-              path: filePath,
-              message: `could not read automation ${id} at ${filePath}`,
-              cause,
-            }),
-    });
-    return yield* parseAutomationFile(id, filePath, source);
+    const loaded = yield* files.readDefinition(target, id);
+    return yield* parseAutomationFile(id, loaded.path, loaded.source);
   });
 
 type TargetResolution =
@@ -108,6 +94,7 @@ type TargetResolution =
     };
 
 const resolveTargets = (
+  files: AutomationFileStore,
   target: ProfileTarget,
   automation: Automation,
 ): Effect.Effect<TargetResolution> =>
@@ -115,14 +102,11 @@ const resolveTargets = (
     let homes: ReadonlyArray<AutomationTarget> | undefined;
     if (automation.broadcast.includes("all")) {
       const path = join(target.path, "broadcasts.json");
-      const sourceResult = yield* Effect.tryPromise({
-        try: () => readFile(path, "utf8"),
-        catch: fileSystemCauseDetails,
-      }).pipe(Effect.result);
-      if (Result.isFailure(sourceResult) && sourceResult.failure.code !== "ENOENT") {
+      const sourceResult = yield* files.readBroadcasts(target).pipe(Effect.result);
+      if (Result.isFailure(sourceResult)) {
         return { ok: false, category: "broadcasts-unreadable" };
       }
-      const source = Result.isSuccess(sourceResult) ? sourceResult.success : '{"targets":[]}';
+      const source = sourceResult.success ?? '{"targets":[]}';
       const decoded = yield* decodeBroadcastsFileJson(source).pipe(Effect.option);
       if (Option.isNone(decoded)) return { ok: false, category: "broadcasts-invalid" };
       const parsed: Array<AutomationTarget> = [];
@@ -293,7 +277,7 @@ export const makeAutomations = (
         );
 
       const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {
-        const automation = yield* readAutomation(target, automationId);
+        const automation = yield* readAutomation(capabilities.files, target, automationId);
         if (trigger.kind === "scheduled" && automation.gate === undefined) {
           return {
             outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },
@@ -341,7 +325,7 @@ export const makeAutomations = (
             ),
         );
         yield* capabilities.printReply(reply);
-        const resolution = yield* resolveTargets(target, automation);
+        const resolution = yield* resolveTargets(capabilities.files, target, automation);
         if (!resolution.ok) {
           return {
             outcome: {
