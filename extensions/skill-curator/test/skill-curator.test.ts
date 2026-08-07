@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun tests exercise the Pi filesystem boundary. */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listProfileSkills, readProfileSkill, writeProfileSkill } from "../index.ts";
@@ -54,6 +54,45 @@ describe("Profile skill curation", () => {
       skill: { name: "alpha-skill", description: "First skill." },
       body: skillBody("alpha-skill", "First skill."),
     });
+  });
+
+  test("does not read, list, or replace a skill through a symlinked directory", async () => {
+    const profilePath = await makeProfile();
+    const outsidePath = await makeProfile();
+    const original = skillBody("escape-skill", "Outside original.");
+    await seedSkill(outsidePath, "escape-skill", original);
+    await mkdir(join(profilePath, "skills"));
+    await symlink(
+      join(outsidePath, "skills", "escape-skill"),
+      join(profilePath, "skills", "escape-skill"),
+      "dir",
+    );
+
+    expect(await listProfileSkills(profilePath)).toEqual([]);
+    expect(readProfileSkill(profilePath, "escape-skill")).rejects.toThrow("regular directory");
+    expect(
+      writeProfileSkill(
+        profilePath,
+        "escape-skill",
+        skillBody("escape-skill", "Replacement."),
+        true,
+      ),
+    ).rejects.toThrow("regular directory");
+    expect(await readFile(join(outsidePath, "skills", "escape-skill", "SKILL.md"), "utf8")).toBe(
+      original,
+    );
+  });
+
+  test("rejects a symlinked Profile skills root", async () => {
+    const profilePath = await makeProfile();
+    const outsidePath = await makeProfile();
+    await seedSkill(outsidePath, "outside-skill", skillBody("outside-skill"));
+    await symlink(join(outsidePath, "skills"), join(profilePath, "skills"), "dir");
+
+    expect(listProfileSkills(profilePath)).rejects.toThrow("regular directory");
+    expect(writeProfileSkill(profilePath, "new-skill", skillBody("new-skill"))).rejects.toThrow(
+      "regular directory",
+    );
   });
 
   test("creates one complete Profile SKILL.md", async () => {
