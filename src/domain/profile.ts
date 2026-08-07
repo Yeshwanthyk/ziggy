@@ -39,6 +39,45 @@ export class ProfileExtensionInvalid extends Schema.TaggedErrorClass<ProfileExte
   },
 ) {}
 
+export class ProfileAgentInvalid extends Schema.TaggedErrorClass<ProfileAgentInvalid>()(
+  "ProfileAgentInvalid",
+  {
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.UndefinedOr(Schema.Defect()),
+  },
+) {}
+
+const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
+const ProfileAgentThinking = Schema.Literals([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+export const ProfileAgent = Schema.Struct({
+  id: ProfileAgentId,
+  version: Schema.Literal(1),
+  description: Schema.NonEmptyString,
+  provider: Schema.optionalKey(Schema.NonEmptyString),
+  model: Schema.optionalKey(Schema.NonEmptyString),
+  thinking: Schema.optionalKey(ProfileAgentThinking),
+  tools: Schema.optionalKey(Schema.Array(Schema.NonEmptyString)),
+  body: Schema.NonEmptyString,
+}).pipe(
+  Schema.check(
+    Schema.makeFilter((agent) => (agent.provider === undefined) === (agent.model === undefined), {
+      expected: "provider and model must be provided together",
+    }),
+  ),
+);
+
+export type ProfileAgent = typeof ProfileAgent.Type;
+
 export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(
   "ProfileSkillInvalid",
   {

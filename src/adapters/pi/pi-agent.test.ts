@@ -7,13 +7,14 @@ import type {
   AgentSessionEventListener,
   BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Predicate, Result } from "effect";
 import { ProviderCallError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
 import {
   createLocalSessionManager,
   createProfileMemoryExtension,
   localMainSessionDirectory,
+  openTui,
   promptForAssistantText,
   providerError,
   refreshProfileMemory,
@@ -168,6 +169,34 @@ describe("Profile memory refresh", () => {
     expect(result?.systemPrompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN.");
     expect(result?.systemPrompt).toContain("Do not claim to remember Profile facts");
     expect(result?.systemPrompt).not.toContain("Durable facts should be saved");
+  });
+});
+
+describe("openTui Profile agent admission", () => {
+  test("discovers and rejects an invalid Profile agent before Pi opens", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    await mkdir(join(profilePath, "agents"), { recursive: true });
+    await writeFile(
+      join(profilePath, "agents", "broken.md"),
+      "---\nversion: 1\ndescription: Broken\n---\n",
+      "utf8",
+    );
+
+    const result = await Effect.runPromise(
+      openTui({ path: profilePath, name: "Profile" }, { kind: "local" }, profilePath).pipe(
+        Effect.result,
+      ),
+    );
+
+    expect(
+      Result.match(result, {
+        onFailure: (error) =>
+          Predicate.isTagged(error, "ProfileAgentInvalid") &&
+          error.path === join(profilePath, "agents", "broken.md"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
   });
 });
 

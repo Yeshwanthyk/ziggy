@@ -4,6 +4,7 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { ProfileAgent } from "../../domain/profile";
 
 interface TextComponent {
   invalidate(): void;
@@ -21,11 +22,25 @@ interface ZiggyTuiContext {
   };
 }
 
+interface ZiggyTuiCommandContext {
+  mode: "tui" | "rpc" | "json" | "print";
+  ui: {
+    notify(message: string, type?: "info" | "warning" | "error"): void;
+  };
+}
+
 type ZiggyTuiEvent = SessionStartEvent | SessionInfoChangedEvent;
 type ZiggyTuiHandler = (event: ZiggyTuiEvent, context: ZiggyTuiContext) => void;
 
 interface ZiggyTuiApi {
   on(event: "session_start" | "session_info_changed", handler: ZiggyTuiHandler): void;
+  registerCommand(
+    name: string,
+    options: {
+      description: string;
+      handler(args: string, context: ZiggyTuiCommandContext): Promise<void>;
+    },
+  ): void;
 }
 
 const textComponent = (text: string) => ({
@@ -33,7 +48,17 @@ const textComponent = (text: string) => ({
   render: (_width: number): Array<string> => [text],
 });
 
-export const createZiggyTuiExtension = (profilePath: string) =>
+const renderAgents = (agents: ReadonlyArray<ProfileAgent>): string =>
+  agents.length === 0
+    ? "No Profile agents found."
+    : ["Profile agents:", ...agents.map((agent) => `- ${agent.id} — ${agent.description}`)].join(
+        "\n",
+      );
+
+export const createZiggyTuiExtension = (
+  profilePath: string,
+  agents: ReadonlyArray<ProfileAgent> = [],
+) =>
   ({
     name: "ziggy-tui",
     hidden: true,
@@ -59,5 +84,16 @@ export const createZiggyTuiExtension = (profilePath: string) =>
           setTitle(context);
         }
       });
+
+      pi.registerCommand("agents", {
+        description: "List the specialists owned by this Profile",
+        handler: async (_args, context) => {
+          if (context.mode === "tui") {
+            context.ui.notify(renderAgents(agents));
+          }
+        },
+      });
     },
   }) satisfies InlineExtension;
+
+export { renderAgents as renderProfileAgents };

@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { PiAgent, type ChatHandle, type ChatSessionMode } from "../adapters/pi/pi-agent";
-import type { ZiggyAgentError } from "../domain/agent";
+import type { OpenTuiError, ZiggyAgentError } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 
@@ -16,7 +16,7 @@ export interface ZiggyAgentShape {
   readonly openTui: (
     target: ProfileTarget,
     context: ChatContext,
-  ) => Effect.Effect<number, ZiggyAgentError>;
+  ) => Effect.Effect<number, OpenTuiError>;
   readonly openChat: (
     target: ProfileTarget,
     context: ChatContext,

@@ -354,6 +354,7 @@ const program = Effect.gen(function* () {
     ProfileFileSystemError: (failure) =>
       fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
     ProfileExtensionInvalid: (failure) => fail(failure.message),
+    ProfileAgentInvalid: (failure) => fail(failure.message),
     ProfileSkillInvalid: (failure) => fail(failure.message),
     ProfileSkillNotFound: (failure) => fail(failure.message),
     ProfileSkillExists: (failure) => fail(failure.message),

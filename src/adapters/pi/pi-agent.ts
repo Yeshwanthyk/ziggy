@@ -22,6 +22,7 @@ import {
   ProfileNotInitialized,
   ProviderCallError,
   ProviderConfigError,
+  type OpenTuiError,
   type ZiggyAgentError,
 } from "../../domain/agent";
 import {
@@ -33,7 +34,8 @@ import {
   type MemoryDocument,
   type MemoryScope,
 } from "../../domain/memory";
-import type { ProfileTarget } from "../../domain/profile";
+import type { ProfileAgent, ProfileTarget } from "../../domain/profile";
+import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources } from "./resources";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
@@ -47,7 +49,7 @@ export interface PiAgentShape {
   readonly openTui: (
     target: ProfileTarget,
     context: ChatContext,
-  ) => Effect.Effect<number, ZiggyAgentError>;
+  ) => Effect.Effect<number, OpenTuiError>;
   readonly openChat: (
     target: ProfileTarget,
     context: ChatContext,
@@ -514,6 +516,7 @@ const createProfileRuntime = (
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
+  tuiAgents: ReadonlyArray<ProfileAgent> = [],
 ) =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
@@ -542,7 +545,7 @@ const createProfileRuntime = (
               noThemes: true,
               noContextFiles: true,
               extensionFactories: [
-                createZiggyTuiExtension(profilePath),
+                createZiggyTuiExtension(profilePath, tuiAgents),
                 createProfileMemoryExtension(profilePath, paths.documents),
               ],
             },
@@ -719,9 +722,10 @@ export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
   repositoryRoot: string,
-): Effect.Effect<number, ZiggyAgentError> =>
+): Effect.Effect<number, OpenTuiError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
+    const tuiAgents = yield* discoverProfileAgents(target.path);
     const sessionManager = createLocalSessionManager(target.path, "main");
     const runtime = yield* createProfileRuntime(
       target.path,
@@ -729,6 +733,7 @@ export const openTui = (
       soulPath,
       sessionManager,
       context,
+      tuiAgents,
     );
 
     yield* piPromise(target.path, "open interactive mode", async () => {

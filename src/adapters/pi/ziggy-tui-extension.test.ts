@@ -23,6 +23,10 @@ const createHarness = () => {
   const titles: Array<string> = [];
   const headers: Array<HeaderFactory> = [];
   const footers: Array<FooterFactory> = [];
+  type RegisterCommand = ExtensionApi["registerCommand"];
+  type CommandOptions = Parameters<RegisterCommand>[1];
+  const notifications: Array<string> = [];
+  const commands: Array<{ readonly name: string; readonly options: CommandOptions }> = [];
 
   const ui: Ui = {
     setTitle: (title) => titles.push(title),
@@ -30,7 +34,7 @@ const createHarness = () => {
     setFooter: (factory) => footers.push(factory),
   };
 
-  return { footers, headers, titles, ui };
+  return { commands, footers, headers, notifications, titles, ui };
 };
 
 describe("Ziggy TUI extension", () => {
@@ -51,6 +55,7 @@ describe("Ziggy TUI extension", () => {
           sessionInfoChanged = registeredHandler;
         }
       },
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
 
     if (sessionStart === undefined || sessionInfoChanged === undefined) {
@@ -65,6 +70,13 @@ describe("Ziggy TUI extension", () => {
     expect(harness.footers).toHaveLength(1);
     expect(harness.headers[0]?.().render(80)).toEqual(["Ziggy · ziggy-dev"]);
     expect(harness.footers[0]?.().render(80)).toEqual([`Profile · ${profilePath}`]);
+    expect(harness.commands.map((command) => command.name)).toEqual(["agents"]);
+
+    await harness.commands[0]?.options.handler("", {
+      mode: "tui",
+      ui: { notify: (message) => harness.notifications.push(message) },
+    });
+    expect(harness.notifications).toEqual(["No Profile agents found."]);
 
     sessionInfoChanged(sessionInfoChangedEvent, { mode: "tui", ui: harness.ui });
     await Bun.sleep(1);
@@ -80,6 +92,7 @@ describe("Ziggy TUI extension", () => {
       on: (_event, registeredHandler) => {
         handlers.push(registeredHandler);
       },
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
 
     if (handlers.length !== 2) {
@@ -90,10 +103,42 @@ describe("Ziggy TUI extension", () => {
     handlers[1]?.(sessionInfoChangedEvent, { mode: "print", ui: harness.ui });
     await Bun.sleep(1);
 
+    await harness.commands[0]?.options.handler("", {
+      mode: "print",
+      ui: { notify: (message) => harness.notifications.push(message) },
+    });
+
     expect(harness).toMatchObject({
       footers: [],
       headers: [],
       titles: [],
+      notifications: [],
     });
+  });
+
+  test("lists discovered Profile agents only in TUI mode", async () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
+      {
+        id: "research-helper",
+        version: 1,
+        description: "Researches carefully",
+        body: "Research instructions",
+      },
+    ]);
+    const harness = createHarness();
+
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+
+    await harness.commands[0]?.options.handler("", {
+      mode: "tui",
+      ui: { notify: (message) => harness.notifications.push(message) },
+    });
+
+    expect(harness.notifications).toEqual([
+      "Profile agents:\n- research-helper — Researches carefully",
+    ]);
   });
 });

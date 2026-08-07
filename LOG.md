@@ -122,3 +122,12 @@ Chronological; newest at the bottom. One entry per logical block of work.
 **Effect audit adjudicated at d8718c1.** Closed the stale scheduler-plan and audit-accuracy records, kept the scheduler/chat/schema/Pi/socket corrections, and deferred PID identity, adversarial Gateway unlink semantics, Profile filesystem extraction, and deeper lint/type-provenance work where no current collision witness justifies a new authority or abstraction. Corrected finite Schema suggestions; current typecheck remains exit-0 with five intentional informational suggestions documented in the audit.
 
 **Effect audit closeout.** Replaced the superseded gap inventory with a current disposition matrix, commit/test/vendor evidence, live file/method inventory, exact residual order, and a concise scheduler-plan addendum. Full check, 182 Bun tests, all helper suites, and diff validation pass.
+
+**Profile agent discovery (TUI-only).** Added a schema-derived `agents/*.md` contract with strict
+version/description/provider-model/thinking/tools metadata, kebab-case filename IDs, and required
+Markdown bodies. The filesystem adapter discovers physical files safely with signal-aware,
+sequential Effect reads, preserves typed causes, treats a missing directory as empty, and rejects
+symlink roots/files. `openTui` alone admits the discovered specialists; the hidden TUI extension
+registers `/agents` and keeps the command inert outside TUI mode. Added domain, filesystem, TUI
+extension, and openTui admission proofs; gateways, automations, and selected extension loading are
+unchanged.
