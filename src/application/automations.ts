@@ -242,8 +242,21 @@ interface TerminalIntent {
   readonly targets: ReadonlyArray<AutomationTargetOutcome>;
 }
 
+const gateFailureCategory = (
+  reason: AutomationGateFailed["reason"],
+): "AutomationGateFailed:spawn" | "AutomationGateFailed:wait" | "AutomationGateFailed:timeout" => {
+  switch (reason) {
+    case "spawn":
+      return "AutomationGateFailed:spawn";
+    case "wait":
+      return "AutomationGateFailed:wait";
+    case "timeout":
+      return "AutomationGateFailed:timeout";
+  }
+};
+
 // oxfmt-ignore
-const failedCategory = (error: AutomationError): string => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid", AutomationNotFound: () => "AutomationNotFound", AutomationFileSystemError: () => "AutomationFileSystemError", AutomationGateFailed: (failure) => `AutomationGateFailed:${failure.reason}`, AutomationDatabaseError: () => "AutomationDatabaseError", ProfileNotInitialized: () => "ProfileNotInitialized", ProviderConfigError: () => "ProviderConfigError", ProviderCallError: () => "ProviderCallError", MemoryIdInvalid: () => "MemoryIdInvalid", ProfileExtensionInvalid: () => "ProfileExtensionInvalid", ProfileFileSystemError: () => "ProfileFileSystemError" }));
+const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const }));
 
 export const makeAutomations = (
   agent: ZiggyAgentShape,

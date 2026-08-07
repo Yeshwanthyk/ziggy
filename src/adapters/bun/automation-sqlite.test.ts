@@ -1,15 +1,16 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { Effect, Predicate } from "effect";
+import { Deferred, Effect, Fiber, Predicate, Result } from "effect";
 import type { AutomationScheduleRecord } from "../../domain/automation";
 import {
   automationDatabasePath,
   automationRunStore,
   commitScheduleTick,
+  discoverAutomationSources,
   initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
@@ -92,6 +93,33 @@ describe("automation SQLite", () => {
         throw "unknown";
       })(123),
     ).toBe(true);
+  });
+
+  test("definition discovery regains interruption between sequential file reads", async () => {
+    const path = await profile();
+    await mkdir(join(path, "automations"));
+    await writeFile(join(path, "automations", "a.md"), "a");
+    await writeFile(join(path, "automations", "b.md"), "b");
+    const firstRead = await Effect.runPromise(Deferred.make<void>());
+    let reads = 0;
+    const fiber = Effect.runFork(
+      discoverAutomationSources(
+        { path, name: "Test" },
+        {
+          afterRead: () => {
+            reads += 1;
+            return reads === 1
+              ? Deferred.succeed(firstRead, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void;
+          },
+        },
+      ),
+    );
+    await Effect.runPromise(Deferred.await(firstRead));
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(reads).toBe(1);
   });
 
   test("initializes exactly schema version one with four tables and six named indexes", async () => {
@@ -288,6 +316,63 @@ describe("automation SQLite", () => {
     expect((await run(readAutomationRuns(path))).filter((item) => deadIds.has(item.runId))).toEqual(
       firstRecovery,
     );
+  });
+
+  test("rejects malformed write transitions before SQLite changes", async () => {
+    const path = await profile();
+    const runId = "manual:00000000-0000-4000-8000-000000000001";
+    await run(automationRunStore.admitManual(path, "daily", runId, 100));
+    await run(automationRunStore.start(path, runId, 110, null));
+
+    const malformedTerminal = await run(
+      Reflect.apply(automationRunStore.finish, automationRunStore, [
+        path,
+        runId,
+        {
+          state: "failed",
+          atMs: 120,
+          localCompleted: true,
+          failureCategory: "AutomationInvalid",
+          gateExitCode: null,
+        },
+        [],
+      ]).pipe(Effect.result),
+    );
+    const malformedOccurrence = await run(
+      Reflect.apply(commitScheduleTick, undefined, [
+        path,
+        100,
+        [
+          {
+            expected: null,
+            next: schedule("invalid", 1_000),
+            occurrence: {
+              kind: "due",
+              runId: "scheduled:invalid:1970-01-01T00:00:01.000Z",
+              scheduledForMs: 1_000,
+              missedThroughMs: null,
+              scheduleFingerprint: "not-a-fingerprint",
+            },
+          },
+        ],
+      ]).pipe(Effect.result),
+    );
+
+    expect(
+      Result.isFailure(malformedTerminal) &&
+        Predicate.isTagged(malformedTerminal.failure, "AutomationDatabaseError"),
+    ).toBe(true);
+    expect(
+      Result.isFailure(malformedOccurrence) &&
+        Predicate.isTagged(malformedOccurrence.failure, "AutomationDatabaseError"),
+    ).toBe(true);
+    expect(await run(readScheduleRecords(path))).toEqual([]);
+    expect((await run(readAutomationRuns(path)))[0]).toMatchObject({
+      state: "running",
+      finishedAtMs: null,
+      failureCategory: null,
+      targets: [],
+    });
   });
 
   test("persists ordered partial delivery truth in one terminal transaction", async () => {

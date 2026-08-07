@@ -125,14 +125,16 @@ const AutomationDeliveryFailureCategorySchema = Schema.Literals([
 ]);
 export type AutomationDeliveryFailureCategory =
   typeof AutomationDeliveryFailureCategorySchema.Type;
-export type AutomationTargetOutcome =
-  | { readonly target: string; readonly status: "delivered" }
-  | {
-      readonly target: string;
-      readonly status: "failed";
-      readonly category: AutomationDeliveryFailureCategory;
-      readonly retriable: boolean;
-    };
+export const AutomationTargetOutcome = Schema.Union([
+  Schema.Struct({ target: CanonicalTargetString, status: Schema.Literal("delivered") }),
+  Schema.Struct({
+    target: CanonicalTargetString,
+    status: Schema.Literal("failed"),
+    category: AutomationDeliveryFailureCategorySchema,
+    retriable: Schema.Boolean,
+  }),
+]);
+export type AutomationTargetOutcome = typeof AutomationTargetOutcome.Type;
 export type AutomationTrigger =
   | { readonly kind: "manual-force" }
   | {
@@ -162,6 +164,13 @@ const ScheduleFingerprint = Schema.String.check(
 // oxfmt-ignore
 export const AutomationScheduleRecord = Schema.Struct({ automationId: Schema.String, definitionState: Schema.Literals(["valid", "invalid", "deleted"]), scheduleFingerprint: Schema.NullOr(ScheduleFingerprint), nextScheduledAtMs: Schema.NullOr(Millis), definitionObservedAtMs: Millis, definitionError: Schema.NullOr(Schema.String) }).check(Schema.makeFilter((value) => (value.definitionState === "valid" && value.scheduleFingerprint !== null && value.nextScheduledAtMs !== null && value.definitionError === null) || (value.definitionState === "invalid" && value.definitionError !== null) || (value.definitionState === "deleted" && value.nextScheduledAtMs === null && value.definitionError === null), { expected: "a structurally consistent automation schedule record" }));
 export type AutomationScheduleRecord = typeof AutomationScheduleRecord.Type;
+const AutomationScheduleOccurrence = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("due"), runId: NonEmpty, scheduledForMs: Millis, missedThroughMs: Schema.Null, scheduleFingerprint: ScheduleFingerprint }),
+  Schema.Struct({ kind: Schema.Literal("missed"), runId: NonEmpty, scheduledForMs: Millis, missedThroughMs: Millis, scheduleFingerprint: ScheduleFingerprint }),
+]);
+// oxfmt-ignore
+export const AutomationScheduleMutation = Schema.Struct({ expected: Schema.NullOr(AutomationScheduleRecord), next: AutomationScheduleRecord, occurrence: Schema.optional(AutomationScheduleOccurrence) }).check(Schema.makeFilter((value) => value.occurrence === undefined || (value.next.definitionState === "valid" && value.next.automationId.length > 0 && value.next.scheduleFingerprint === value.occurrence.scheduleFingerprint && (value.occurrence.kind === "due" || value.occurrence.missedThroughMs >= value.occurrence.scheduledForMs)), { expected: "a schedule mutation whose occurrence matches its valid schedule" }));
+export type AutomationScheduleMutation = typeof AutomationScheduleMutation.Type;
 // oxfmt-ignore
 export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, target: CanonicalTargetString, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(AutomationDeliveryFailureCategorySchema), retriable: Schema.NullOr(Schema.Boolean) }).check(Schema.makeFilter((value) => (value.status === "delivered" && value.failureCategory === null && value.retriable === null) || (value.status === "failed" && value.failureCategory !== null && value.retriable !== null), { expected: "a structurally consistent automation target outcome" }));
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
@@ -182,6 +191,19 @@ const executionFailureCategories: ReadonlySet<string> = new Set([
   "AutomationDatabaseError", "ProfileNotInitialized", "ProviderConfigError", "ProviderCallError",
   "MemoryIdInvalid", "ProfileExtensionInvalid", "ProfileFileSystemError", "interrupted",
 ]);
+// oxfmt-ignore
+export const AutomationRunTerminal = Schema.Struct({ state: Schema.Literals(["completed", "failed", "skipped-gate"]), atMs: Millis, localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(AutomationRunFailureCategory), gateExitCode: Schema.NullOr(Integer) }).check(Schema.makeFilter((value) => {
+  const stateValid = value.state === "completed" ? value.localCompleted && value.failureCategory === null : value.state === "failed" ? value.failureCategory !== null && (value.localCompleted ? resolutionFailureCategories.has(value.failureCategory) || deliveryFailureCategories.has(value.failureCategory) : executionFailureCategories.has(value.failureCategory)) : !value.localCompleted && (value.failureCategory === "gate-missing" || value.failureCategory === "gate-nonzero");
+  const gateValid = value.failureCategory === "gate-nonzero" ? value.gateExitCode !== null && value.gateExitCode !== 0 : value.gateExitCode === null;
+  return stateValid && gateValid;
+}, { expected: "a structurally consistent automation run terminal" }));
+export type AutomationRunTerminal = typeof AutomationRunTerminal.Type;
+// oxfmt-ignore
+export const AutomationRunCompletion = Schema.Struct({ terminal: AutomationRunTerminal, targets: Schema.Array(AutomationTargetOutcome) }).check(Schema.makeFilter((value) => {
+  const firstFailedTarget = value.targets.find((target) => target.status === "failed");
+  return value.terminal.state === "completed" ? value.targets.every((target) => target.status === "delivered") : value.terminal.state !== "failed" ? value.targets.length === 0 : value.terminal.localCompleted ? value.terminal.failureCategory !== null && (resolutionFailureCategories.has(value.terminal.failureCategory) ? value.targets.length === 0 : deliveryFailureCategories.has(value.terminal.failureCategory) && firstFailedTarget?.category === value.terminal.failureCategory) : value.targets.length === 0;
+}, { expected: "terminal state and target outcomes from the same valid run transition" }));
+export type AutomationRunCompletion = typeof AutomationRunCompletion.Type;
 // oxfmt-ignore
 export const AutomationRunProjection = Schema.Struct({ runId: Schema.String, automationId: Schema.String, trigger: Schema.Literals(["manual-force", "scheduled"]), state: Schema.Literals(["claimed", "running", "completed", "failed", "skipped-gate", "skipped-busy", "missed", "unknown"]), scheduleFingerprint: Schema.NullOr(ScheduleFingerprint), scheduledForMs: Schema.NullOr(Millis), missedThroughMs: Schema.NullOr(Millis), recordedAtMs: Millis, startedAtMs: Schema.NullOr(Millis), finishedAtMs: Schema.NullOr(Millis), localCompleted: Schema.Boolean, failureCategory: Schema.NullOr(AutomationRunFailureCategory), gateExitCode: Schema.NullOr(Integer), targets: Schema.Array(AutomationTargetProjection) }).check(Schema.makeFilter((value) => {
   const triggerValid = value.trigger === "manual-force" ? value.scheduleFingerprint === null && value.scheduledForMs === null : value.scheduleFingerprint !== null && value.scheduledForMs !== null;

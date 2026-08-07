@@ -2,11 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { Effect, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import {
   AutomationDatabaseError,
   AutomationProjectionError,
+  AutomationRunCompletion,
+  type AutomationRunTerminal,
   AutomationRunProjection,
+  AutomationScheduleMutation,
   AutomationScheduleRecord,
   type AutomationStatusProjection,
   type AutomationTargetOutcome,
@@ -112,6 +115,13 @@ const decodeVersion = Schema.decodeUnknownSync(Schema.NullOr(VersionRow), {
   onExcessProperty: "error",
 });
 const decodeMaster = Schema.decodeUnknownSync(Schema.Array(MasterRow), {
+  onExcessProperty: "error",
+});
+const decodeScheduleMutations = Schema.decodeUnknownSync(
+  Schema.Array(AutomationScheduleMutation),
+  { onExcessProperty: "error" },
+);
+const decodeRunCompletion = Schema.decodeUnknownSync(AutomationRunCompletion, {
   onExcessProperty: "error",
 });
 
@@ -232,10 +242,7 @@ export const recoverAutomationRuns = (
       .immediate();
   });
 
-// oxfmt-ignore
-export interface ScheduleOccurrence { readonly kind: "due" | "missed"; readonly runId: string; readonly scheduledForMs: number; readonly missedThroughMs: number | null; readonly scheduleFingerprint: string }
-// oxfmt-ignore
-export interface ScheduleMutation { readonly expected: AutomationScheduleRecord | null; readonly next: AutomationScheduleRecord; readonly occurrence?: ScheduleOccurrence }
+export type ScheduleMutation = typeof AutomationScheduleMutation.Type;
 // oxfmt-ignore
 export interface ScheduleCommitResult { readonly stale: boolean; readonly claimed: ReadonlyArray<{ readonly automationId: string; readonly runId: string; readonly scheduledForMs: number; readonly scheduleFingerprint: string }> }
 
@@ -261,14 +268,15 @@ export const commitScheduleTick = (
   withWritable(
     profilePath,
     "commit tick",
-    (db): ScheduleCommitResult =>
-      db
+    (db): ScheduleCommitResult => {
+      const validatedMutations = decodeScheduleMutations(mutations);
+      return db
         .transaction(() => {
           const current = new Map(
             decodeSchedules(db.query(scheduleQuery).all()).map((row) => [row.automationId, row]),
           );
           if (
-            mutations.some((mutation) =>
+            validatedMutations.some((mutation) =>
               mutation.expected === null
                 ? current.has(mutation.next.automationId)
                 : !sameSchedule(current.get(mutation.next.automationId), mutation.expected),
@@ -282,7 +290,7 @@ export const commitScheduleTick = (
             scheduledForMs: number;
             scheduleFingerprint: string;
           }> = [];
-          for (const mutation of mutations) {
+          for (const mutation of validatedMutations) {
             const row = mutation.next;
             db.query(`INSERT INTO automation_schedule VALUES (?,?,?,?,?,?) ON CONFLICT(automation_id) DO UPDATE SET
         definition_state=excluded.definition_state, schedule_fingerprint=excluded.schedule_fingerprint,
@@ -350,7 +358,8 @@ export const commitScheduleTick = (
           );
           return { stale: false, claimed };
         })
-        .immediate(),
+        .immediate();
+    },
   );
 
 export const recordDefinitionTickFailure = (profilePath: string, atMs: number) =>
@@ -369,8 +378,7 @@ export const recordDefinitionTickFailure = (profilePath: string, atMs: number) =
 
 // oxfmt-ignore
 export interface AutomationRunStore { readonly recover: (profilePath: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>) => Effect.Effect<void, AutomationDatabaseError> }
-// oxfmt-ignore
-export interface RunTerminal { readonly state: "completed" | "failed" | "skipped-gate"; readonly atMs: number; readonly localCompleted: boolean; readonly failureCategory: string | null; readonly gateExitCode: number | null }
+export type RunTerminal = AutomationRunTerminal;
 
 export const makeAutomationRunStore = (ownerPid: number): AutomationRunStore => ({
   recover: (profilePath, atMs) => recoverAutomationRuns(profilePath, atMs),
@@ -413,10 +421,11 @@ export const makeAutomationRunStore = (ownerPid: number): AutomationRunStore => 
         .immediate(),
     ),
   finish: (profilePath, runId, terminal, targets) =>
-    withWritable(profilePath, "finish run", (db) =>
-      db
+    withWritable(profilePath, "finish run", (db) => {
+      const completion = decodeRunCompletion({ terminal, targets });
+      return db
         .transaction(() => {
-          for (const [ordinal, target] of targets.entries())
+          for (const [ordinal, target] of completion.targets.entries())
             db.query("INSERT INTO automation_target_outcome VALUES (?,?,?,?,?,?)").run(
               runId,
               ordinal,
@@ -429,19 +438,19 @@ export const makeAutomationRunStore = (ownerPid: number): AutomationRunStore => 
             .query(`UPDATE automation_run SET state=?,finished_at_ms=?,local_completed=?,failure_category=?,gate_exit_code=?,owner_pid=NULL
       WHERE run_id=? AND state='running' AND owner_pid=?`)
             .run(
-              terminal.state,
-              terminal.atMs,
-              Number(terminal.localCompleted),
-              terminal.failureCategory,
-              terminal.gateExitCode,
+              completion.terminal.state,
+              completion.terminal.atMs,
+              Number(completion.terminal.localCompleted),
+              completion.terminal.failureCategory,
+              completion.terminal.gateExitCode,
               runId,
               ownerPid,
             );
           if (result.changes !== 1)
             throw dbError("finish running run", automationDatabasePath(profilePath), runId);
         })
-        .immediate(),
-    ),
+        .immediate();
+    }),
 });
 
 export const automationRunStore = makeAutomationRunStore(process.pid);
@@ -452,20 +461,59 @@ export const makeLiveManualRunId = (): string => manualRunId(randomUUID());
 export interface AutomationSourceObservation { readonly idSource: string; readonly path: string; readonly source: string | null; readonly error: string | null }
 const missing = (cause: unknown): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
-// oxfmt-ignore
-export const discoverAutomationSources = (target: ProfileTarget): Effect.Effect<ReadonlyArray<AutomationSourceObservation>, AutomationProjectionError> => {
+export interface AutomationSourceRuntime {
+  readonly afterRead: (path: string) => Effect.Effect<void>;
+}
+const liveAutomationSourceRuntime: AutomationSourceRuntime = { afterRead: () => Effect.void };
+export const discoverAutomationSources = (
+  target: ProfileTarget,
+  runtime: AutomationSourceRuntime = liveAutomationSourceRuntime,
+): Effect.Effect<ReadonlyArray<AutomationSourceObservation>, AutomationProjectionError> => {
   const directory = join(target.path, "automations");
-  return Effect.tryPromise({ try: async () => {
-    let entries;
-    try { entries = await readdir(directory, { withFileTypes: true }); } catch (cause) { if (missing(cause)) return []; throw cause; }
-    const observations: Array<AutomationSourceObservation> = [];
-    for (const entry of entries.filter((item) => item.name.endsWith(".md") && item.isFile()).sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = join(directory, entry.name); const idSource = entry.name.slice(0, -3);
-      try { observations.push({ idSource, path, source: await readFile(path, "utf8"), error: null }); }
-      catch { observations.push({ idSource, path, source: null, error: `could not read automation ${idSource} at ${path}` }); }
-    }
-    return observations;
-  }, catch: (cause) => new AutomationProjectionError({ operation: "list definitions", path: directory, message: `could not list automation definitions at ${directory}`, cause }) });
+  const entries = Effect.tryPromise({
+    try: () => readdir(directory, { withFileTypes: true }),
+    catch: (cause) =>
+      new AutomationProjectionError({
+        operation: "list definitions",
+        path: directory,
+        message: `could not list automation definitions at ${directory}`,
+        cause,
+      }),
+  }).pipe(
+    Effect.catch((failure) =>
+      missing(failure.cause) ? Effect.succeed([]) : Effect.fail(failure),
+    ),
+    Effect.map((items) =>
+      items
+        .filter((item) => item.name.endsWith(".md") && item.isFile())
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    ),
+  );
+  return entries.pipe(
+    Effect.flatMap((items) =>
+      Effect.forEach(items, (entry) => {
+        const path = join(directory, entry.name);
+        const idSource = entry.name.slice(0, -3);
+        return Effect.tryPromise({
+          try: (signal) => readFile(path, { encoding: "utf8", signal }),
+          catch: (cause) => ({ cause }),
+        }).pipe(
+          Effect.result,
+          Effect.tap(() => runtime.afterRead(path)),
+          Effect.map((result): AutomationSourceObservation =>
+            Result.isSuccess(result)
+              ? { idSource, path, source: result.success, error: null }
+              : {
+                  idSource,
+                  path,
+                  source: null,
+                  error: `could not read automation ${idSource} at ${path}`,
+                },
+          ),
+        );
+      }),
+    ),
+  );
 };
 
 // oxfmt-ignore
