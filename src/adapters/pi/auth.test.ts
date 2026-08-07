@@ -139,6 +139,32 @@ describe("Pi auth Effect boundary", () => {
     );
   });
 
+  test("preserves provider-check rejection as the provider configuration cause", async () => {
+    const path = await profile();
+    const cause = { reason: "credential store unavailable" };
+    const auth = makePiAuth(() =>
+      Promise.resolve(
+        runtime({
+          providers: [provider("provider", { oauth: true })],
+          checkAuth: () => Promise.reject(cause),
+        }),
+      ),
+    );
+
+    const exit = await Effect.runPromiseExit(auth.listAuthStatus(path));
+
+    expect(exit).toEqual(
+      Exit.fail(
+        new ProviderConfigError({
+          profilePath: path,
+          operation: "check provider auth",
+          message: "could not check provider auth for provider",
+          cause,
+        }),
+      ),
+    );
+  });
+
   test("preserves login rejection as the authentication failure cause", async () => {
     const path = await profile();
     const cause = { reason: "credential refused" };
