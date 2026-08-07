@@ -58,6 +58,7 @@ const renderAgents = (agents: ReadonlyArray<ProfileAgent>): string =>
 export const createZiggyTuiExtension = (
   profilePath: string,
   agents: ReadonlyArray<ProfileAgent> = [],
+  enableSpecialists = true,
 ) =>
   ({
     name: "ziggy-tui",
@@ -85,14 +86,16 @@ export const createZiggyTuiExtension = (
         }
       });
 
-      pi.registerCommand("agents", {
-        description: "List the specialists owned by this Profile",
-        handler: async (_args, context) => {
-          if (context.mode === "tui") {
-            context.ui.notify(renderAgents(agents));
-          }
-        },
-      });
+      if (enableSpecialists) {
+        pi.registerCommand("agents", {
+          description: "List the specialists owned by this Profile",
+          handler: async (_args, context) => {
+            if (context.mode === "tui") {
+              context.ui.notify(renderAgents(agents));
+            }
+          },
+        });
+      }
     },
   }) satisfies InlineExtension;
 

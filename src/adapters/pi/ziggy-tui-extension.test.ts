@@ -141,4 +141,16 @@ describe("Ziggy TUI extension", () => {
       "Profile agents:\n- research-helper — Researches carefully",
     ]);
   });
+
+  test("does not register Profile specialist commands when specialist admission is disabled", () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], false);
+    const harness = createHarness();
+
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+
+    expect(harness.commands).toEqual([]);
+  });
 });

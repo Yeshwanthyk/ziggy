@@ -37,6 +37,7 @@ import {
 import type { ProfileAgent, ProfileTarget } from "../../domain/profile";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources } from "./resources";
+import { createAgentRunTool, makeSpecialistRunner, type SpecialistParent } from "./specialist";
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
@@ -517,6 +518,7 @@ const createProfileRuntime = (
   sessionManager: SessionManager,
   context: ChatContext,
   tuiAgents: ReadonlyArray<ProfileAgent> = [],
+  includeTuiSpecialists = false,
 ) =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
@@ -525,8 +527,10 @@ const createProfileRuntime = (
     }
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
-    return yield* piPromise(profilePath, "create agent runtime", () =>
-      createAgentSessionRuntime(
+    const runtimeRef: { current?: AgentSessionRuntime } = {};
+
+    return yield* piPromise(profilePath, "create agent runtime", async () => {
+      const runtime = await createAgentSessionRuntime(
         async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
           const services = await createAgentSessionServices({
             cwd,
@@ -545,16 +549,36 @@ const createProfileRuntime = (
               noThemes: true,
               noContextFiles: true,
               extensionFactories: [
-                createZiggyTuiExtension(profilePath, tuiAgents),
+                createZiggyTuiExtension(profilePath, tuiAgents, includeTuiSpecialists),
                 createProfileMemoryExtension(profilePath, paths.documents),
               ],
             },
           });
+          const specialistRunner = includeTuiSpecialists
+            ? makeSpecialistRunner({
+                profilePath,
+                agents: tuiAgents,
+                parent: () => {
+                  const current = runtimeRef.current;
+                  if (current === undefined) return undefined;
+                  const parent: SpecialistParent = {
+                    session: current.session,
+                    services,
+                    resources,
+                  };
+                  return parent;
+                },
+              })
+            : undefined;
+          const customTools: Array<ToolDefinition> = [
+            createMemoryWriteTool(profilePath, context),
+            ...(specialistRunner === undefined ? [] : [createAgentRunTool(specialistRunner)]),
+          ];
           const created = await createAgentSessionFromServices({
             services,
             sessionManager: runtimeSessionManager,
             ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-            customTools: [createMemoryWriteTool(profilePath, context)],
+            customTools,
           });
           return {
             ...created,
@@ -567,8 +591,10 @@ const createProfileRuntime = (
           agentDir: profilePath,
           sessionManager,
         },
-      ),
-    );
+      );
+      runtimeRef.current = runtime;
+      return runtime;
+    });
   });
 
 const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
@@ -734,6 +760,7 @@ export const openTui = (
       sessionManager,
       context,
       tuiAgents,
+      true,
     );
 
     yield* piPromise(target.path, "open interactive mode", async () => {

@@ -131,3 +131,13 @@ symlink roots/files. `openTui` alone admits the discovered specialists; the hidd
 registers `/agents` and keeps the command inert outside TUI mode. Added domain, filesystem, TUI
 extension, and openTui admission proofs; gateways, automations, and selected extension loading are
 unchanged.
+
+**Runnable Profile specialist (TUI-only).** Added an Effect-native `agent_run` bridge that resolves
+exact Profile registry models/auth and thinking levels, inherits active parent settings when
+metadata is omitted, intersects declared tools with admitted parent tools, and excludes
+`memory_write` plus `agent_run`. Each call uses captured Profile resources, a Pi in-memory child
+session, `promptForAssistantText`, signal-aware interruption, and acquire/use/release disposal;
+child answers return model, thinking, tools, and nested session usage metadata. The hidden TUI
+extension keeps Ziggy chrome everywhere it is intended but admits `/agents` and `agent_run` only
+for `openTui`; fake-runner tests cover strict input, failure rendering, and compact/expanded
+results.
