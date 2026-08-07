@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Predicate } from "effect";
+import { Context, Effect, Layer } from "effect";
 import {
   listAuthStatus,
   loginProvider,
@@ -40,39 +40,9 @@ export class Auth extends Context.Service<Auth, AuthShape>()("ziggy/Auth") {}
 export const defaultAuthType = (provider: ProviderAuthStatus): ProviderAuthType =>
   provider.supportsOauth && !provider.supportsApiKeyLogin ? "oauth" : "api_key";
 
-const isAuthError = (cause: unknown): cause is AuthError =>
-  Predicate.isTagged(cause, "ProfileNotInitialized") ||
-  Predicate.isTagged(cause, "ProviderConfigError") ||
-  Predicate.isTagged(cause, "AuthProviderUnknown") ||
-  Predicate.isTagged(cause, "AuthTypeUnsupported") ||
-  Predicate.isTagged(cause, "AuthFlowFailed");
-
-const statusFailure = (profilePath: string, cause: unknown): AuthError =>
-  isAuthError(cause)
-    ? cause
-    : new ProviderConfigError({
-        profilePath,
-        operation: "load provider auth",
-        message: `could not load provider auth for ${profilePath}`,
-        cause,
-      });
-
-const loginFailure = (providerId: string, cause: unknown): AuthError =>
-  isAuthError(cause)
-    ? cause
-    : new AuthFlowFailed({
-        providerId,
-        message: `authentication failed for ${providerId}`,
-        cause,
-      });
-
 const status = (
   target: ProfileTarget,
-): Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError> =>
-  Effect.tryPromise({
-    try: () => listAuthStatus(target.path),
-    catch: (cause) => statusFailure(target.path, cause),
-  });
+): Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError> => listAuthStatus(target.path);
 
 const login = (
   target: ProfileTarget,
@@ -95,10 +65,7 @@ const login = (
       selectedType = defaultAuthType(provider);
     }
 
-    return yield* Effect.tryPromise({
-      try: () => loginProvider(target.path, providerId, selectedType, interaction),
-      catch: (cause) => loginFailure(providerId, cause),
-    });
+    return yield* loginProvider(target.path, providerId, selectedType, interaction);
   });
 
 export const AuthLive = Layer.succeed(Auth, { status, login });
