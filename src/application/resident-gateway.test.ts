@@ -1,10 +1,10 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem and process state */
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Fiber, Predicate, Result } from "effect";
+import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
 import { DiscordApiError } from "../adapters/discord/api";
 import { AutomationSchedulerError } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
@@ -40,6 +40,10 @@ const waitFor = (predicate: () => boolean) =>
   Effect.gen(function* () {
     while (!predicate()) yield* Effect.promise<void>(() => new Promise(setImmediate));
   });
+const exists = (path: string) => Bun.file(path).exists();
+const isGatewayConfigError = Predicate.isTagged("GatewayConfigError");
+const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
+  Effect.runPromise(Effect.scoped(effect));
 const scheduler = (run: AutomationSchedulerShape["run"]): AutomationSchedulerShape => ({
   run,
   status: () => Effect.never,
@@ -103,23 +107,19 @@ describe("resident gateway preflight", () => {
       const target = await profile([channel]);
       await writeFile(join(target.path, `${channel}.json`), "{}");
       const result = await Effect.runPromise(loadResidentGatewayConfig(target).pipe(Effect.result));
-      expect(
-        Result.isFailure(result) && Predicate.isTagged("GatewayConfigError")(result.failure),
-      ).toBe(true);
+      expect(Result.isFailure(result) && isGatewayConfigError(result.failure)).toBe(true);
     }
     const target = await profile();
     await mkdir(join(target.path, "telegram.json"));
     const unreadable = await Effect.runPromise(
       loadResidentGatewayConfig(target).pipe(Effect.result),
     );
-    expect(
-      Result.isFailure(unreadable) && Predicate.isTagged("GatewayConfigError")(unreadable.failure),
-    ).toBe(true);
+    expect(Result.isFailure(unreadable) && isGatewayConfigError(unreadable.failure)).toBe(true);
   });
 
-  test("a preflight failure performs no owner, scheduler, or channel work", async () => {
-    const target = await profile(["discord"]);
-    await writeFile(join(target.path, "discord.json"), "{}");
+  test("a dangling config symlink fails before owner, scheduler, or channel work", async () => {
+    const target = await profile();
+    await symlink("missing-config.json", join(target.path, "telegram.json"));
     const events: Array<string> = [];
     const channels = loops((name) =>
       Effect.sync(() => events.push(name)).pipe(Effect.andThen(Effect.never)),
@@ -134,14 +134,34 @@ describe("resident gateway preflight", () => {
       { ...runtime(allConfig, events), loadConfig: loadResidentGatewayConfig },
     );
     const result = await Effect.runPromise(host.run(target).pipe(Effect.result));
-    expect(
-      Result.isFailure(result) && Predicate.isTagged("GatewayConfigError")(result.failure),
-    ).toBe(true);
+    expect(Result.isFailure(result) && isGatewayConfigError(result.failure)).toBe(true);
     expect(events).toEqual([]);
   });
 });
 
 describe("resident gateway supervision", () => {
+  test("automation-only enters one scheduler and no channel loops", async () => {
+    const target = await profile();
+    const events: Array<string> = [];
+    const channelLoops = loops((name) =>
+      Effect.sync(() => events.push(name)).pipe(Effect.andThen(Effect.never)),
+    );
+    const host = makeResidentGateway(
+      scheduler(() => scopedLoop(events, "scheduler")),
+      channelLoops.telegram,
+      channelLoops.discord,
+      channelLoops.slack,
+      runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
+    );
+    await runScoped(
+      Effect.gen(function* () {
+        yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("scheduler:enter"));
+        expect(events).toEqual(["owner:enter", "scheduler:enter"]);
+      }),
+    );
+  });
+
   test("isolates one typed channel failure while scheduler and healthy channels stay live", async () => {
     const target = await profile();
     const events: Array<string> = [];
@@ -182,20 +202,18 @@ describe("resident gateway supervision", () => {
       channelLoops.slack,
       runtime(allConfig, events),
     );
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fiber = yield* Effect.forkScoped(host.run(target));
-          yield* waitFor(() => events.includes("discord:exit") && events.includes("slack:enter"));
-          expect(events.filter((event) => event.includes("Discord stopped"))).toEqual([
-            "[gateway] Discord stopped: socket ended",
-          ]);
-          yield* Deferred.succeed(progress, undefined);
-          yield* waitFor(() => events.includes("scheduler:progress"));
-          expect(events).toContain("telegram:enter");
-          yield* Fiber.interrupt(fiber);
-        }),
-      ),
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("discord:exit") && events.includes("slack:enter"));
+        expect(events.filter((event) => event.includes("Discord stopped"))).toEqual([
+          "[gateway] Discord stopped: socket ended",
+        ]);
+        yield* Deferred.succeed(progress, undefined);
+        yield* waitFor(() => events.includes("scheduler:progress"));
+        expect(events).toContain("telegram:enter");
+        yield* Fiber.interrupt(fiber);
+      }),
     );
     expect(events.at(-1)).toBe("owner:exit");
     for (const name of ["scheduler", "telegram", "discord", "slack"])
@@ -230,18 +248,16 @@ describe("resident gateway supervision", () => {
       channelLoops.slack,
       runtime(allConfig, events),
     );
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fiber = yield* Effect.forkScoped(host.run(target));
-          yield* waitFor(() =>
-            ["telegram", "discord", "slack"].every((name) => events.includes(`${name}:enter`)),
-          );
-          yield* Deferred.succeed(failScheduler, undefined);
-          const result = yield* Fiber.join(fiber).pipe(Effect.result);
-          expect(Result.isFailure(result) && result.failure.message).toBe("scheduler stopped");
-        }),
-      ),
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() =>
+          ["telegram", "discord", "slack"].every((name) => events.includes(`${name}:enter`)),
+        );
+        yield* Deferred.succeed(failScheduler, undefined);
+        const result = yield* Fiber.join(fiber).pipe(Effect.result);
+        expect(Result.isFailure(result) && result.failure.message).toBe("scheduler stopped");
+      }),
     );
     expect(events.at(-1)).toBe("owner:exit");
     expect(events.filter((event) => event.endsWith(":exit"))).toHaveLength(5);
@@ -275,28 +291,12 @@ describe("gateway CLI", () => {
     });
     const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
     for (let attempt = 0; attempt < 200; attempt += 1) {
-      if (
-        await access(lockPath).then(
-          () => true,
-          () => false,
-        )
-      )
-        break;
+      if (await exists(lockPath)) break;
       await Bun.sleep(10);
     }
-    expect(
-      await access(lockPath).then(
-        () => true,
-        () => false,
-      ),
-    ).toBe(true);
+    expect(await exists(lockPath)).toBe(true);
     child.kill("SIGINT");
     expect(await child.exited).toBe(0);
-    expect(
-      await access(lockPath).then(
-        () => true,
-        () => false,
-      ),
-    ).toBe(false);
+    expect(await exists(lockPath)).toBe(false);
   });
 });

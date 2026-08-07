@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Effect, Layer, Scope } from "effect";
 import { acquireGatewayOwner, type GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
@@ -54,7 +54,7 @@ const validateProfile = (target: ProfileTarget) =>
 
 const configPresent = (path: string): Effect.Effect<boolean, GatewayConfigError> =>
   Effect.tryPromise({
-    try: () => stat(path),
+    try: () => lstat(path),
     catch: (cause) => fileSystemCauseDetails(cause),
   }).pipe(
     Effect.as(true),
