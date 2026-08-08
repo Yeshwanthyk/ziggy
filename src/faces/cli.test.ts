@@ -1,3 +1,5 @@
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun async tests own their disposable Effect execution */
 import { describe, expect, test } from "bun:test";
 import { Effect, Exit } from "effect";
 import { decodeCliCommand, renderHelp } from "./cli";

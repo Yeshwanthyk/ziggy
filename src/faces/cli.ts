@@ -3,7 +3,7 @@ import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli"
 
 const decodeArguments = Schema.decodeUnknownEffect(Schema.Array(Schema.String));
 
-const helpTopics = new Set<HelpTopic>([
+const helpTopics = new Set<string>([
   "help",
   "version",
   "init",
@@ -19,7 +19,7 @@ const helpTopics = new Set<HelpTopic>([
   "tui",
 ]);
 
-const isHelpTopic = (value: string): value is HelpTopic => helpTopics.has(value as HelpTopic);
+const isHelpTopic = (value: string): value is HelpTopic => helpTopics.has(value);
 
 const reservedWords = new Set([
   ...helpTopics,
@@ -31,8 +31,7 @@ const reservedWords = new Set([
   "slack",
 ]);
 
-const invalid = (message: string): CliInputInvalid =>
-  new CliInputInvalid({ message: `${message}\nRun 'ziggy help' for usage.` });
+const invalid = (message: string): CliInputInvalid => new CliInputInvalid({ message });
 
 const required = (value: string | undefined): value is string =>
   value !== undefined && value.length > 0;
@@ -45,7 +44,7 @@ const parseModelReference = (
   return { providerId: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 };
 
-const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
+const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
   const [word, ...rest] = args;
   if (word === undefined) return { _tag: "Tui", target: "." };
 
@@ -54,26 +53,28 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
     if (rest.length === 1 && rest[0] !== undefined && isHelpTopic(rest[0])) {
       return { _tag: "Help", topic: rest[0] };
     }
-    throw invalid("usage: ziggy help [command]");
+    return invalid("usage: ziggy help [command]");
   }
 
   if (word === "version" || word === "--version" || word === "-V") {
-    if (rest.length !== 0) throw invalid("usage: ziggy version");
+    if (rest.length !== 0) return invalid("usage: ziggy version");
     return { _tag: "Version" };
   }
 
   if (word === "tui") {
-    if (rest.length > 1) throw invalid("usage: ziggy tui [<name|path>]");
+    if (rest.length > 1) return invalid("usage: ziggy tui [<name|path>]");
     return { _tag: "Tui", target: rest[0] ?? "." };
   }
 
   if (word === "init") {
-    if (rest.length !== 1 || !required(rest[0])) throw invalid("usage: ziggy init <name|path>");
+    if (rest.length !== 1 || !required(rest[0])) {
+      return invalid("usage: ziggy init <name|path>");
+    }
     return { _tag: "Init", target: rest[0] };
   }
 
   if (word === "profiles") {
-    if (rest.length !== 0) throw invalid("usage: ziggy profiles");
+    if (rest.length !== 0) return invalid("usage: ziggy profiles");
     return { _tag: "Profiles" };
   }
 
@@ -89,7 +90,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
     ) {
       return { _tag: "SkillsAdd", target: rest[1], source: rest[2], force: rest.length === 4 };
     }
-    throw invalid(
+    return invalid(
       "usage:\n  ziggy skills list <name|path>\n  ziggy skills add <name|path> <id|path> [--force]",
     );
   }
@@ -111,7 +112,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
         id: rest[2],
       };
     }
-    throw invalid(
+    return invalid(
       "usage:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
     );
   }
@@ -135,7 +136,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
         };
       }
     }
-    throw invalid("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
+    return invalid("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
   }
 
   if (word === "models") {
@@ -162,7 +163,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
         }
       }
     }
-    throw invalid(
+    return invalid(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );
   }
@@ -177,7 +178,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
       promptParts.length === 0 ||
       promptParts.join(" ").trim().length === 0
     ) {
-      throw invalid("usage: ziggy run [-c] <name|path> <prompt...>");
+      return invalid("usage: ziggy run [-c] <name|path> <prompt...>");
     }
     return { _tag: "Run", target, prompt: promptParts.join(" "), continueSession };
   }
@@ -192,47 +193,43 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand => {
         ? { _tag: "AutomationsRuns", target: rest[1] }
         : { _tag: "AutomationsRuns", target: rest[1], automationId };
     }
-    throw invalid(
+    return invalid(
       "usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
     );
   }
 
   if (word === "wake") {
     if (rest.length !== 2 || !required(rest[0]) || !required(rest[1])) {
-      throw invalid("usage: ziggy wake <name|path> <automation-id>");
+      return invalid("usage: ziggy wake <name|path> <automation-id>");
     }
     return { _tag: "Wake", target: rest[0], automationId: rest[1] };
   }
 
   if (word === "gateway") {
     if (rest.length !== 1 || !required(rest[0])) {
-      throw invalid("usage: ziggy gateway <name|path>");
+      return invalid("usage: ziggy gateway <name|path>");
     }
     return { _tag: "Gateway", target: rest[0] };
   }
 
   if (word === "discord" || word === "slack") {
-    if (rest.length !== 0) throw invalid(`usage: ziggy ${word}`);
     return { _tag: "UnsupportedResidentAlias", name: word };
   }
 
   if (reservedWords.has(word) || word.startsWith("-")) {
-    throw invalid(`invalid ${word} command`);
+    return invalid(`invalid ${word} command`);
   }
-  if (rest.length !== 0) throw invalid("usage: ziggy <name|path>");
+  if (rest.length !== 0) return invalid("usage: ziggy <name|path>");
   return { _tag: "Tui", target: word };
 };
 
 export const decodeCliCommand = (input: unknown): Effect.Effect<CliCommand, CliInputInvalid> =>
   decodeArguments(input).pipe(
     Effect.mapError(() => invalid("command arguments must be strings")),
-    Effect.flatMap((args) =>
-      Effect.try({
-        try: () => parseTypedArguments(args),
-        catch: (cause) =>
-          cause instanceof CliInputInvalid ? cause : invalid("could not decode command"),
-      }),
-    ),
+    Effect.flatMap((args) => {
+      const parsed = parseTypedArguments(args);
+      return parsed._tag === "CliInputInvalid" ? Effect.fail(parsed) : Effect.succeed(parsed);
+    }),
   );
 
 const generalHelp = `Usage:
