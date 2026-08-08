@@ -9,9 +9,11 @@ Profile files and the rules that connect those Pi parts.
 
 This plan fixes two product gaps.
 
-First, every Profile agent run must use a saved Pi session. A Profile agent that is called by an
-existing chat must be a saved child of that chat. The parent keeps the call, final result, usage,
-and child link. The child keeps its full isolated transcript.
+First, every Profile agent run must use a persistent Pi session manager. A Profile agent called by
+an existing chat uses a child manager linked to that chat. Pi v0.82.0 materializes JSONL lazily on
+the first assistant message, so a run cancelled or failed before then can leave only an allocated
+session path, not a saved file. Completed calls keep the call, final result, usage, and child link in
+the parent; the child JSONL keeps its full isolated transcript.
 
 Second, the CLI must expose the parts that already exist. A new operator must be able to create a
 ready Profile, select a model, inspect agents and automations, inspect sessions, check health, and
@@ -27,8 +29,10 @@ The plan does not copy Hermes' runtime. It keeps Pi as the only agent and sessio
   manager.
 - Production code does not use `SessionManager.inMemory` for a Profile agent run.
 - Tests may use in-memory sessions.
-- A direct agent run is a saved root session.
-- An agent called by a TUI, gateway, print, or other Pi session is a saved child session.
+- A direct agent run uses one persistent root session manager.
+- An agent called by a TUI, gateway, print, or other Pi session uses one persistent child manager.
+- Pi writes a new manager's JSONL only after its first assistant message. Pre-response failure or
+  cancellation can therefore leave no session file through the public API.
 - Pi JSONL stores the full transcript.
 - Ziggy does not copy a transcript into SQLite, Markdown, or another database.
 - The parent session stores the `agent_run` call, final result, nested usage, and child session
@@ -171,15 +175,16 @@ No fact in this table gets a second writable authority.
 
 ## Required invariants
 
-1. A model call cannot start before its persistent Pi session file exists.
-2. A nested Profile agent run has one saved parent and one saved child.
-3. The child header points to the parent session file.
-4. The parent tool result points to the child session ID and file.
+1. A model call cannot start before its persistent Pi session manager and target path are allocated.
+2. A nested Profile agent run has one persistent parent manager and one persistent child manager.
+3. When the child JSONL materializes, its header points to the parent session file.
+4. A successful parent tool result points to the materialized child session ID and file.
 5. The parent receives only the bounded result and usage in model context.
-6. The child stores its complete Pi message and tool history.
+6. A materialized child stores its complete Pi message and tool history.
 7. Parent cancellation aborts the child.
 8. Child cleanup runs after success, failure, or interruption.
-9. A saved failed or aborted child remains inspectable.
+9. A failed or aborted child is inspectable only if Pi emitted an assistant message and therefore
+   materialized its JSONL; Ziggy does not fabricate transcript entries to force persistence.
 10. Ziggy never replays a child after process failure.
 11. Agent model and tool policy resolves the same way in every face.
 12. An invalid or unknown leading `@agent-id` fails before a provider call.
@@ -462,20 +467,23 @@ The tool reads the parent session ID and file. It creates the child with:
 SessionManager.create(profilePath, childDirectory, { parentSession: parentFile })
 ```
 
-The model call starts only after the child manager is persistent. The child result returns its ID
-and file. Pi stores those details in the parent tool result.
+The model call starts only after Pi has allocated a persistent child manager and target file path.
+The JSONL itself appears lazily with the first assistant message. A successful child result returns
+its ID and materialized file path, which Pi stores in the parent tool result.
 
 **State transition**
 
 ```text
 no child
-→ child session file created
+→ persistent child manager and target path allocated
 → child running
+→ first assistant message materializes JSONL, if one occurs
 → child completed | failed | aborted
-→ parent tool result saved
+→ successful parent tool result saves the child reference
 ```
 
-A process crash can leave an incomplete child. The file remains evidence. Ziggy does not replay it.
+A process crash can leave an incomplete child. Its file remains evidence only if Pi had emitted the
+first assistant message. Ziggy does not replay it.
 
 **Dependencies**
 
@@ -483,13 +491,15 @@ Chunk 1.
 
 **Verification**
 
-- Child session has `isPersisted() === true`.
-- Child header `parentSession` equals the parent file.
+- Child manager has `isPersisted() === true`; this means persistence is enabled, not that the lazy
+  JSONL already exists.
+- A materialized child header `parentSession` equals the parent file.
 - Parent tool result contains child ID and path.
 - Child transcript contains its user prompt, assistant output, and tool results.
 - Parent context contains only the bounded tool result.
-- Abort disposes the child and leaves an inspectable session.
-- Discussion saves one child for every participant call.
+- Abort disposes the child; it leaves an inspectable session only after Pi has emitted the first
+  assistant message.
+- Every completed discussion participant materializes one child.
 
 **Risk**
 
@@ -524,8 +534,8 @@ Chunk 2.
 
 **Verification**
 
-- A tagged automation creates exactly one saved specialist root session.
-- A direct CLI-ready operation creates exactly one saved root session.
+- A successful tagged automation materializes exactly one specialist root session.
+- A successful direct CLI-ready operation materializes exactly one root session.
 - Agent overrides and Profile fallback produce the same model, reasoning, and tools as nested use.
 - No production Profile agent path calls `SessionManager.inMemory`.
 - Automation SQLite contains no transcript copy.
@@ -775,8 +785,9 @@ Chunks 3, 5, and 6.
 - List order is stable.
 - Show returns metadata and relative path.
 - Validate reports invalid frontmatter, ID, provider/model pairing, reasoning, and tools.
-- Run creates one saved root session and prints one final answer.
-- Run failure keeps the saved session.
+- A successful run materializes one root session and prints one final answer.
+- Run failure keeps a session only when Pi emitted an assistant message before failing; an earlier
+  failure can leave no JSONL.
 
 **Risk**
 
@@ -896,13 +907,13 @@ a real code problem. Public command clarity does not require an internal migrati
 
 | Invariant | Focused proof |
 | --- | --- |
-| Every nested agent has a saved child | Real Pi SDK test checks child file and `isPersisted()` |
+| Every completed nested agent has a saved child | Real Pi SDK test checks the materialized child file, header, and `isPersisted()` manager mode |
 | Parent and child are linked | Child header and parent tool-result details match |
 | Child context stays isolated | Parent JSONL lacks child internal messages |
-| Cancellation reaches child | Abort test records an aborted child and closes resources |
+| Cancellation reaches child | Abort test proves interruption and cleanup; JSONL evidence is conditional on Pi's first assistant message |
 | No recursive agents | Child active-tool test excludes memory and agent tools |
 | All faces share agent policy | TUI, print, chat-handle, and automation tests use one fixture agent |
-| Direct agent run is a root | Exactly one saved session and no empty host file |
+| Successful direct agent run is a root | Exactly one materialized session and no empty host file |
 | Init never overwrites | Before/after hashes for all existing human-owned files |
 | Init produces a usable Profile | Guided fixture ends with doctor success and one model probe seam |
 | Model writes use Pi | SettingsManager fake/real adapter test and flush proof |
@@ -956,8 +967,10 @@ Doctor should report broken session links as warnings. An unreadable session fil
 
 ## Residual risks
 
-- A process crash can leave an incomplete parent tool call or child session. The record remains
-  evidence. This plan does not replay or repair it.
+- A process crash can leave an incomplete parent tool call or child session. If Pi had already
+  emitted an assistant message, the JSONL remains evidence. Failure or cancellation before that
+  point can leave no JSONL because public Pi v0.82.0 has no explicit new-session flush. This plan
+  does not fabricate transcript entries, replay, or repair runs.
 - Pi stores parent session paths. Moving a Profile can make old links stale.
 - Adding agent tools to gateways increases prompt size when agents exist.
 - Remote model catalogs can be stale during setup.

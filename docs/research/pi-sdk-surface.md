@@ -118,6 +118,14 @@ For a custom directory, pass it directly:
 ```ts
 const sessions = SessionManager.create(cwd, "/var/lib/my-wrapper/sessions");
 ```
+Persistence is lazy. `create(...)` allocates an ID, target file path, and directory, while
+`isPersisted()` reports that persistence mode is enabled; neither guarantees that the JSONL file
+already exists. `_persist` defers the header and pre-assistant entries until the first assistant
+message (`src/core/session-manager.ts:991-1048`). A run that fails or is cancelled before that
+message can therefore have a session ID/path but no inspectable JSONL. The public v0.82.0 API has
+no explicit flush-new-session operation, so wrappers should not claim stronger failure evidence or
+fabricate an assistant transcript entry merely to force a file.
+
 For non-persistent operation use `SessionManager.inMemory(cwd)`; it passes an empty
 session directory and `persist = false` (`:1567-1569`).
 
