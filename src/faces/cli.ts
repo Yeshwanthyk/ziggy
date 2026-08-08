@@ -16,6 +16,7 @@ const helpTopics = new Set<string>([
   "run",
   "automations",
   "wake",
+  "sessions",
   "gateway",
   "tui",
 ]);
@@ -245,6 +246,18 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return { _tag: "Wake", target: rest[0], automationId: rest[1] };
   }
 
+  if (word === "sessions") {
+    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
+      return { _tag: "SessionsList", target: rest[1] };
+    }
+    if (rest[0] === "show" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
+      return { _tag: "SessionsShow", target: rest[1], reference: rest[2] };
+    }
+    return invalid(
+      "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
+    );
+  }
+
   if (word === "gateway") {
     if (rest.length !== 1 || !required(rest[0])) {
       return invalid("usage: ziggy gateway <name|path>");
@@ -288,6 +301,7 @@ const generalHelp = `Usage:
   ziggy extensions list|show|add|remove ...
   ziggy automations create|list|validate|status|runs ...
   ziggy wake <name|path> <automation-id>
+  ziggy sessions list|show ...
   ziggy gateway <name|path>
   ziggy help [command]
   ziggy version`;
@@ -310,6 +324,8 @@ const topicHelp: Record<HelpTopic, string> = {
   automations:
     "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
   wake: "usage: ziggy wake <name|path> <automation-id>",
+  sessions:
+    "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
   gateway: "usage: ziggy gateway <name|path>",
   tui: "usage: ziggy tui [<name|path>]",
 };

@@ -816,6 +816,11 @@ Do not infer definition truth from scheduler SQLite. Markdown remains authoritat
 
 ### Chunk 11 — Add session lineage projections
 
+**Status:** Implemented on `impl/sessions-serve`. The adapter intentionally does not call
+`SessionManager.open` because Pi v0.82.0 can migrate and rewrite older files, nor `list` because it
+is non-recursive and transcript-oriented. Schema decoding and all Pi JSONL inspection remain inside
+`src/adapters/pi/sessions.ts`; application and face layers receive typed metadata only.
+
 **Behavior delivered**
 
 Operators can see root and child Pi sessions without reading transcripts.

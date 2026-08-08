@@ -80,6 +80,18 @@ describe("CLI decoding", () => {
     });
   });
 
+  test("decodes session commands", async () => {
+    await expect(decode(["sessions", "list", "buddy"])).resolves.toEqual({
+      _tag: "SessionsList",
+      target: "buddy",
+    });
+    await expect(decode(["sessions", "show", "buddy", "agents/child.jsonl"])).resolves.toEqual({
+      _tag: "SessionsShow",
+      target: "buddy",
+      reference: "agents/child.jsonl",
+    });
+  });
+
   test("decodes model commands and model ids containing slashes", async () => {
     await expect(decode(["models", "status", "buddy"])).resolves.toEqual({
       _tag: "ModelsStatus",
@@ -119,6 +131,8 @@ describe("CLI decoding", () => {
       ["agents", "show", "buddy"],
       ["automations", "create", "buddy"],
       ["automations", "validate"],
+      ["sessions", "list"],
+      ["sessions", "show", "buddy"],
       ["--unknown"],
     ]) {
       const exit = await Effect.runPromiseExit(decodeCliCommand(args));
@@ -131,6 +145,8 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy models set");
     expect(renderHelp()).toContain("ziggy agents create|list|show|validate|run");
     expect(renderHelp()).toContain("ziggy automations create|list|validate|status|runs");
+    expect(renderHelp()).toContain("ziggy sessions list|show");
+    expect(renderHelp("sessions")).toContain("sessions show");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

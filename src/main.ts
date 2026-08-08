@@ -19,6 +19,7 @@ import { Models, ModelsLive } from "./application/models";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { Sessions, SessionsLive } from "./application/sessions";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { validateAutomationId } from "./domain/automation";
 import {
@@ -41,6 +42,7 @@ import {
 } from "./faces/automation-cli";
 import { decodeCliCommand, renderHelp } from "./faces/cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
+import { renderSession, renderSessionList } from "./faces/sessions-cli";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -98,6 +100,7 @@ const program = Effect.gen(function* () {
   const automations = yield* Automations;
   const automationScheduler = yield* AutomationScheduler;
   const residentGateway = yield* ResidentGateway;
+  const sessions = yield* Sessions;
 
   switch (command._tag) {
     case "Init": {
@@ -335,6 +338,19 @@ const program = Effect.gen(function* () {
       process.exitCode = rendered.exitCode;
       return;
     }
+    case "SessionsList": {
+      const listed = yield* sessions.list(resolveProfileTarget(command.target, resolutionOptions));
+      console.log(renderSessionList(listed));
+      return;
+    }
+    case "SessionsShow": {
+      const shown = yield* sessions.show(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.reference,
+      );
+      console.log(renderSession(shown));
+      return;
+    }
     case "Gateway":
       return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
     case "UnsupportedResidentAlias":
@@ -411,6 +427,8 @@ const program = Effect.gen(function* () {
     AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
     GatewayOwnerError: (failure) => fail(failure.message),
+    SessionReadFailed: (failure) => fail(failure.message),
+    SessionNotFound: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.merge(
@@ -439,7 +457,10 @@ const program = Effect.gen(function* () {
                       ),
                       Layer.merge(
                         ProfileAgentsProvided,
-                        Layer.merge(SchedulerProvided, ResidentProvided),
+                        Layer.merge(
+                          SessionsLive,
+                          Layer.merge(SchedulerProvided, ResidentProvided),
+                        ),
                       ),
                     ),
                   ),

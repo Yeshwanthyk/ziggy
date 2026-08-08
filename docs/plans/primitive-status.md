@@ -12,7 +12,7 @@ not active targets.
 | --- | --- | --- |
 | Profile | The current working directory is the Profile. `SOUL.md` marks initialization; names and explicit paths remain supported entry conveniences. Symlink spelling is accepted. | Complete. Do not add canonical-realpath identity, symlink rejection, or richer Profile metadata. |
 | Provider | Profile-local Pi `ModelRuntime`, auth, models, and login. | Complete. Keep Pi as the only provider authority. |
-| Session | Pi JSONL. TUI and `run -c` share `sessions/local/main/`; plain `run` is fresh; each gateway chat persists; every automation and direct Profile agent run is fresh. Nested Profile agents are saved Pi children linked by the child header and parent tool result. Pi owns transcripts, compaction, and branching. | Complete for conversation and Profile agent lineage semantics. Add only read-only operator visibility. |
+| Session | Pi JSONL. TUI and `run -c` share `sessions/local/main/`; plain `run` is fresh; each gateway chat persists; every automation and direct Profile agent run is fresh. Nested Profile agents are saved Pi children linked by the child header and parent tool result. `sessions list/show` recursively expose transcript-free lineage, usage, model/thinking changes, and safe terminal state without mutating Pi files. | Complete for conversation, Profile agent lineage, and read-only operator visibility. Pi remains the only transcript, compaction, and branching authority. |
 | Memory | Scoped Markdown, entry operations, per-document SQLite writer locks, and fresh `before_agent_start` injection every turn. Owner DMs across Telegram, Discord, and Slack share `memory/users/owner.md`; other memory remains scoped. | Complete. Do not add a memory registry, index, or second compactor. |
 | Extension | All 47 repository-owned `extensions/<id>/` folders are Pi packages containing skills, executable extension code, or both. Profile skills load first, package skills next, and top-level skills last. All 19 package tools run in every face. One hidden internal Pi extension shapes the TUI. | Complete. Pi remains the only extension host; do not add a parallel registry or load Profile-authored executable code. |
 | Gateway | Telegram, Discord, and Slack owner-only vertical slices with scoped shutdown, persistent per-chat sessions, and bounded transport redelivery suppression. | Functionally shipped. Disposable live proofs remain credential-dependent; durable delivery state remains deferred. |
@@ -38,10 +38,10 @@ derive one deterministic firing ID, atomically claim that firing before model or
 prevent overlap for the same automation. Keep definitions as Markdown and every run as a fresh Pi
 session. Do not add a general run ledger, retries, dashboards, or lifecycle state machine.
 
-### 3. Operator visibility
+### 3. Profile doctor
 
-Land `ziggy sessions <profile>`, then `ziggy doctor <profile>`, as separate read-only slices from
-`cli-polish.md`. They project Pi and Profile state; they do not create new authorities.
+Land `ziggy doctor <profile>` as the next read-only operator slice from `cli-polish.md`. It projects
+Pi and Profile state; it does not create a new authority.
 
 Live Telegram, Discord, and Slack proofs can run beside this queue whenever disposable credentials
 are available.

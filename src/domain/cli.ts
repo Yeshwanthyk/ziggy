@@ -13,6 +13,7 @@ export type HelpTopic =
   | "run"
   | "automations"
   | "wake"
+  | "sessions"
   | "gateway"
   | "tui";
 
@@ -78,6 +79,8 @@ export type CliCommand =
   | { readonly _tag: "AutomationsStatus"; readonly target: string }
   | { readonly _tag: "AutomationsRuns"; readonly target: string; readonly automationId?: string }
   | { readonly _tag: "Wake"; readonly target: string; readonly automationId: string }
+  | { readonly _tag: "SessionsList"; readonly target: string }
+  | { readonly _tag: "SessionsShow"; readonly target: string; readonly reference: string }
   | { readonly _tag: "Gateway"; readonly target: string }
   | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
   | { readonly _tag: "Tui"; readonly target: string };
