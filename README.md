@@ -19,6 +19,12 @@ Session list/show output is transcript-free: it includes only paths, IDs, lineag
 
 Run `ziggy help` for the complete command surface.
 
+## Operations guides
+
+- [Supervise `ziggy serve`](docs/operations/serve.md)
+- [Connect a Profile to Slack](docs/operations/slack.md)
+- [Operate automations](docs/operations/automations.md)
+
 ## Development
 
 ```sh

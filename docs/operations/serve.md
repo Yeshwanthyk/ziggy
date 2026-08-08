@@ -8,6 +8,10 @@ Ziggy installs one user service per Profile and delegates restart policy to laun
 systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
 scheduler process.
 
+Channel setup guides:
+
+- [Connect a Profile to Slack](slack.md)
+
 ## Lifecycle commands
 
 ```sh
