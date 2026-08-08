@@ -75,6 +75,52 @@ export class AuthFlowFailed extends Schema.TaggedErrorClass<AuthFlowFailed>()("A
   cause: Schema.Defect(),
 }) {}
 
+export class ModelProviderUnknown extends Schema.TaggedErrorClass<ModelProviderUnknown>()(
+  "ModelProviderUnknown",
+  {
+    profilePath: Schema.String,
+    providerId: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class ModelUnknown extends Schema.TaggedErrorClass<ModelUnknown>()("ModelUnknown", {
+  profilePath: Schema.String,
+  providerId: Schema.String,
+  modelId: Schema.String,
+  message: Schema.String,
+}) {}
+
+export class ModelThinkingUnsupported extends Schema.TaggedErrorClass<ModelThinkingUnsupported>()(
+  "ModelThinkingUnsupported",
+  {
+    providerId: Schema.String,
+    modelId: Schema.String,
+    thinking: Schema.String,
+    supported: Schema.Array(Schema.String),
+    message: Schema.String,
+  },
+) {}
+
+export class ModelOperationFailed extends Schema.TaggedErrorClass<ModelOperationFailed>()(
+  "ModelOperationFailed",
+  {
+    profilePath: Schema.String,
+    operation: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+export class ModelSettingsWriteFailed extends Schema.TaggedErrorClass<ModelSettingsWriteFailed>()(
+  "ModelSettingsWriteFailed",
+  {
+    profilePath: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 export class SpecialistAgentNotFound extends Schema.TaggedErrorClass<SpecialistAgentNotFound>()(
   "SpecialistAgentNotFound",
   {

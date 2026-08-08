@@ -11,6 +11,7 @@ import { AutomationScheduler, AutomationSchedulerLive } from "./application/auto
 import { Automations, AutomationsLive } from "./application/automations";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { GatewayLive } from "./application/gateway";
+import { Models, ModelsLive } from "./application/models";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
 import { SlackGatewayLive } from "./application/slack-gateway";
@@ -26,6 +27,7 @@ import {
   renderAutomationStatus,
 } from "./faces/automation-cli";
 import { decodeCliCommand, renderHelp } from "./faces/cli";
+import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -74,6 +76,7 @@ const program = Effect.gen(function* () {
   const profiles = yield* Profiles;
   const agent = yield* ZiggyAgent;
   const auth = yield* Auth;
+  const models = yield* Models;
   const automations = yield* Automations;
   const automationScheduler = yield* AutomationScheduler;
   const residentGateway = yield* ResidentGateway;
@@ -261,10 +264,29 @@ const program = Effect.gen(function* () {
         { kind: "local" },
       );
       return;
-    case "ModelsStatus":
-    case "ModelsList":
-    case "ModelsSet":
-      return yield* fail("model commands are unavailable");
+    case "ModelsStatus": {
+      const status = yield* models.status(resolveProfileTarget(command.target, resolutionOptions));
+      console.log(renderModelStatus(status));
+      return;
+    }
+    case "ModelsList": {
+      const listed = yield* models.list(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.providerId,
+      );
+      console.log(renderModels(listed));
+      return;
+    }
+    case "ModelsSet": {
+      const selection = yield* models.set(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.providerId,
+        command.modelId,
+        command.thinking,
+      );
+      console.log(renderModelSelection(selection));
+      return;
+    }
   }
 }).pipe(
   Effect.catchTags({
@@ -291,6 +313,11 @@ const program = Effect.gen(function* () {
     AuthProviderUnknown: (failure) => fail(failure.message),
     AuthTypeUnsupported: (failure) => fail(failure.message),
     AuthFlowFailed: (failure) => fail(failure.message),
+    ModelProviderUnknown: (failure) => fail(failure.message),
+    ModelUnknown: (failure) => fail(failure.message),
+    ModelThinkingUnsupported: (failure) => fail(failure.message),
+    ModelOperationFailed: (failure) => fail(failure.message),
+    ModelSettingsWriteFailed: (failure) => fail(failure.message),
     MemoryIdInvalid: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
@@ -308,22 +335,25 @@ const program = Effect.gen(function* () {
       Layer.merge(
         AuthLive,
         Layer.merge(
-          ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
+          ModelsLive,
           Layer.merge(
-            GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+            ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
             Layer.merge(
-              DiscordGatewayLive.pipe(
-                Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
-              ),
+              GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
               Layer.merge(
-                SlackGatewayLive.pipe(
+                DiscordGatewayLive.pipe(
                   Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
                 ),
                 Layer.merge(
-                  AutomationsLive.pipe(
+                  SlackGatewayLive.pipe(
                     Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
                   ),
-                  Layer.merge(SchedulerProvided, ResidentProvided),
+                  Layer.merge(
+                    AutomationsLive.pipe(
+                      Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
+                    ),
+                    Layer.merge(SchedulerProvided, ResidentProvided),
+                  ),
                 ),
               ),
             ),
