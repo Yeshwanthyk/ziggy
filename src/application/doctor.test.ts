@@ -146,7 +146,43 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
   }
 });
 
-test("doctor continues independent checks after malformed session headers", async () => {
+test("doctor uses the session projection for broken parent links", async () => {
+  const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-lineage-"));
+  try {
+    await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
+    await mkdir(path.join(profilePath, "sessions"));
+    await writeFile(
+      path.join(profilePath, "sessions", "child.jsonl"),
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "child-id",
+        timestamp: "2026-08-08T10:00:00.000Z",
+        cwd: profilePath,
+        parentSession: path.join(profilePath, "sessions", "missing-parent.jsonl"),
+      })}\n`,
+    );
+    const before = await tree(profilePath);
+
+    const report = await Effect.runPromise(
+      makeDoctor(auth, models).check(
+        { path: profilePath, name: "Test" },
+        path.resolve(import.meta.dir, "../.."),
+      ),
+    );
+
+    expect(report.checks.find((check) => check.id === "sessions")).toEqual({
+      id: "sessions",
+      severity: "warn",
+      message: "1 readable Pi session file; 1 broken parent link",
+    });
+    expect(await tree(profilePath)).toEqual(before);
+  } finally {
+    await rm(profilePath, { recursive: true, force: true });
+  }
+});
+
+test("doctor continues independent checks after malformed session metadata", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-error-"));
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");

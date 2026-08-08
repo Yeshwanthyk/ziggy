@@ -1,9 +1,8 @@
 import { Context, Effect, Layer } from "effect";
 import {
-  getModelStatus,
   getModelStatusReadOnly,
   type KnownModel,
-  listModels,
+  listModelsReadOnly,
   type ModelSelection,
   type ModelStatus,
   setModel,
@@ -44,9 +43,9 @@ export interface ModelsShape {
 export class Models extends Context.Service<Models, ModelsShape>()("ziggy/Models") {}
 
 export const ModelsLive = Layer.succeed(Models, {
-  status: (target) => getModelStatus(target.path),
+  status: (target) => getModelStatusReadOnly(target.path),
   readOnlyStatus: (target) => getModelStatusReadOnly(target.path),
-  list: (target, providerId) => listModels(target.path, providerId),
+  list: (target, providerId) => listModelsReadOnly(target.path, providerId),
   set: (target, providerId, modelId, thinking) =>
     setModel(target.path, providerId, modelId, thinking),
 });

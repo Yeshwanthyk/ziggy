@@ -40,6 +40,13 @@ const models: ModelsShape = {
       thinking: "medium",
       authConfigured: true,
     }),
+  readOnlyStatus: () =>
+    Effect.succeed({
+      providerId: "openai",
+      modelId: "gpt-test",
+      thinking: "medium",
+      authConfigured: true,
+    }),
   list: () =>
     Effect.succeed([
       {

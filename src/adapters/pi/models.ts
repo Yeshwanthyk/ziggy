@@ -332,4 +332,5 @@ const piReadOnlyModels = makePiModels(createPiReadOnlyModelsSession);
 export const getModelStatus = piModels.status;
 export const getModelStatusReadOnly = piReadOnlyModels.status;
 export const listModels = piModels.list;
+export const listModelsReadOnly = piReadOnlyModels.list;
 export const setModel = piModels.set;

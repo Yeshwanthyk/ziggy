@@ -1,6 +1,6 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { discoverProfileAgents } from "../adapters/fs/profile-agents";
 import {
@@ -10,6 +10,7 @@ import {
   loadTelegramConfigFile,
 } from "../adapters/fs/gateway-config";
 import { discoverPiResources } from "../adapters/pi/resources";
+import { listProfileSessions } from "../adapters/pi/sessions";
 import { type AuthShape, Auth } from "./auth";
 import { type ModelsShape, Models } from "./models";
 import { parseAutomationFile } from "../domain/automation";
@@ -254,52 +255,22 @@ const gatewayCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
     ),
   );
 
-const SessionHeader = Schema.Struct({
-  type: Schema.Literal("session"),
-  id: Schema.String,
-  parentSession: Schema.optionalKey(Schema.String),
-});
-const decodeSessionHeader = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionHeader));
-
-const sessionFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<string>, unknown> =>
-  Effect.gen(function* () {
-    const status = yield* Effect.result(inspect(directoryPath));
-    if (status._tag === "Failure")
-      return isMissing(status.failure) ? [] : yield* Effect.fail(status.failure);
-    if (status.success.isSymbolicLink() || !status.success.isDirectory())
-      return yield* Effect.fail("invalid sessions root");
-    const files: string[] = [];
-    for (const entry of (yield* readDirectory(directoryPath)).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    )) {
-      const entryPath = path.join(directoryPath, entry.name);
-      if (entry.isSymbolicLink()) return yield* Effect.fail("symlinked session entry");
-      if (entry.isDirectory()) files.push(...(yield* sessionFiles(entryPath)));
-      else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(entryPath);
-    }
-    return files;
-  });
-
 const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
-  Effect.gen(function* () {
-    const files = yield* sessionFiles(path.join(target.path, "sessions"));
-    const known = new Set(files.map((file) => path.resolve(file)));
-    let broken = 0;
-    for (const file of files) {
-      const firstLine = (yield* readText(file)).split(/\r?\n/u, 1)[0] ?? "";
-      const header = yield* decodeSessionHeader(firstLine);
-      if (header.parentSession !== undefined && !known.has(path.resolve(header.parentSession)))
-        broken += 1;
-    }
-    return broken > 0
-      ? warn(
-          "sessions",
-          `${files.length} readable Pi session files; ${broken} broken parent link${broken === 1 ? "" : "s"}`,
-        )
-      : ok("sessions", `${files.length} readable Pi session file${files.length === 1 ? "" : "s"}`);
-  }).pipe(
+  listProfileSessions(target.path).pipe(
+    Effect.map((sessions) => {
+      const broken = sessions.filter((session) => session.parentUnknown).length;
+      return broken > 0
+        ? warn(
+            "sessions",
+            `${sessions.length} readable Pi session file${sessions.length === 1 ? "" : "s"}; ${broken} broken parent link${broken === 1 ? "" : "s"}`,
+          )
+        : ok(
+            "sessions",
+            `${sessions.length} readable Pi session file${sessions.length === 1 ? "" : "s"}`,
+          );
+    }),
     Effect.catch(() =>
-      Effect.succeed(error("sessions", "A Pi session header is invalid or unreadable")),
+      Effect.succeed(error("sessions", "Pi session metadata is invalid or unreadable")),
     ),
   );
 

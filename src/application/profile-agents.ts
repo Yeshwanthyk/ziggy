@@ -170,7 +170,8 @@ export const makeProfileAgents = (
         (observation): observation is typeof observation & { readonly agent: ProfileAgent } =>
           observation.agent !== undefined,
       );
-      const defaults = parsed.length === 0 ? undefined : yield* modelsRuntime.status(target);
+      const defaults =
+        parsed.length === 0 ? undefined : yield* modelsRuntime.readOnlyStatus(target);
       const models = parsed.length === 0 ? [] : yield* modelsRuntime.list(target);
       return selected.map((observation): ProfileAgentValidation => {
         const path = relative(target.path, observation.path);

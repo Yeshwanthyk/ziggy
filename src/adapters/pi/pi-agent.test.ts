@@ -178,6 +178,24 @@ describe("Profile memory refresh", () => {
 });
 
 describe("Profile specialist runtime integration", () => {
+  test("Pi persistent mode allocates a lazy path before any JSONL exists", async () => {
+    const profilePath = await temporaryProfile();
+    const manager = SessionManager.create(profilePath, join(profilePath, "sessions", "lazy"));
+    const file = manager.getSessionFile();
+    expect(manager.isPersisted()).toBe(true);
+    expect(file).toBeDefined();
+    if (file === undefined) throw new Error("expected a persistent target path");
+    expect(await Bun.file(file).exists()).toBe(false);
+
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "not enough to materialize JSONL" }],
+      timestamp: Date.now(),
+    });
+
+    expect(await Bun.file(file).exists()).toBe(false);
+  });
+
   test("rejects an unknown direct agent before creating a root session", async () => {
     const profilePath = await temporaryProfile();
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");

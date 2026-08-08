@@ -1,6 +1,5 @@
 import { Context, Effect, Layer } from "effect";
 import {
-  listAuthStatus,
   listAuthStatusReadOnly,
   loginProvider,
   type AuthInteraction,
@@ -46,7 +45,8 @@ export const defaultAuthType = (provider: ProviderAuthStatus): ProviderAuthType 
 
 const status = (
   target: ProfileTarget,
-): Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError> => listAuthStatus(target.path);
+): Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError> =>
+  listAuthStatusReadOnly(target.path);
 
 const login = (
   target: ProfileTarget,

@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Exit } from "effect";
-import { getModelStatusReadOnly, makePiModels, type KnownModel } from "./models";
+import {
+  getModelStatusReadOnly,
+  listModelsReadOnly,
+  makePiModels,
+  type KnownModel,
+} from "./models";
 
 const temporaryPaths: string[] = [];
 
@@ -136,11 +141,12 @@ describe("Pi-backed model operations", () => {
     expect(reloaded.drainErrors()).toEqual([]);
   });
 
-  test("read-only status does not create auth or model-store state", async () => {
+  test("read-only status and list do not create auth or model-store state", async () => {
     const profilePath = await profile();
     const before = await readdir(profilePath);
 
     await Effect.runPromise(getModelStatusReadOnly(profilePath));
+    await Effect.runPromise(listModelsReadOnly(profilePath));
 
     expect(await readdir(profilePath)).toEqual(before);
   });
