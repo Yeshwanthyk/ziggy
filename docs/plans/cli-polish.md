@@ -1,5 +1,9 @@
 # CLI slices
 
+> This older queue is superseded by
+> `docs/plans/profile-agent-session-lineage-and-cli.md`. The newer plan keeps these read-only
+> session and doctor requirements and places them in the complete Profile agent and setup flow.
+
 ## What shipped
 
 `ziggy auth <profile>` reports Profile-local provider status. Interactive
