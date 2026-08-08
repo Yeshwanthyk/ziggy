@@ -2,7 +2,101 @@
 
 Date: 2026-08-08
 
-## Verdict
+## Round 2 — completed 25-step live capability journey
+
+Round 2 used fresh retained Profiles and the same authorized `openai-codex/gpt-5.6-luna`
+configuration at high reasoning. These are the exact summary reports reviewed for this closeout:
+
+- Ziggy: `/Users/yesh/Documents/personal/dump/ziggy-core-parity/live-capability/evidence/round-2/report.md`
+- Hermes: `/Users/yesh/Documents/personal/dump/hermes-core-parity/profiles/capability/evidence/round-2/REPORT.md`
+
+The corresponding raw-evidence roots are:
+
+- Ziggy: `/Users/yesh/Documents/personal/dump/ziggy-core-parity/live-capability/evidence/round-2/`
+- Hermes: `/Users/yesh/Documents/personal/dump/hermes-core-parity/profiles/capability/evidence/round-2/`
+
+The command ledgers are `attempts.tsv` under the Ziggy root and `commands.log` under the Hermes
+root. Raw outputs were inspected where the summaries could hide a meaningful distinction:
+model-authored file tool calls, Profile-agent root/child lineage, session metadata redaction,
+read-only snapshots, resident automatic runs, clean stop, doctor output, and the bounded TUI retry.
+
+### Numbered results
+
+| # | Tested operator step | Ziggy | Hermes | Evidence and interpretation |
+| ---: | --- | --- | --- | --- |
+| 1 | Identify product with version/help | PASS | PASS | Ziggy `version.*`, `help.*`; Hermes `70-version.stdout`, `71-help.stdout`. |
+| 2 | Initialize a fresh Profile | PASS | PASS | Ziggy `init-minimal.*`; Hermes `78-profile-show.stdout`. Ziggy created the visible Profile boundary without making a mixed machine-state authority. |
+| 3 | Connect the authorized account | PASS | PASS | Ziggy `auth-status.*`, `final-metadata.txt`; Hermes `07-auth-status.stdout`, `85-home-and-scout-audit.txt`. Both used credential links without printing secrets. |
+| 4 | Select Luna with high reasoning | PASS | PASS with warning | Ziggy `models-set.*`, `models-status.*`; Hermes `config.yaml` and live usage evidence. Hermes warned that its saved reasoning key was outdated; explicit live flags proved high reasoning. |
+| 5 | Set distinct Profile identity and first voice | PASS | PASS | Ziggy `SOUL-first.md`, `soul-first.sha256`; Hermes `10-soul-v1.sha256`, `10-soul-v1.bytes`. |
+| 6 | Verify the first voice | PASS | PASS | Ziggy `voice-first.*`; Hermes `11-voice-v1.stdout`. Both real model runs followed the first rule. |
+| 7 | Update only the voice rule | PASS | PASS | Ziggy `soul-voice-only.diff`, first/second hashes; Hermes `12-soul-rule.diff`, `12-soul-v2.sha256`. |
+| 8 | Verify the updated voice in a fresh run | PASS | PASS | Ziggy `voice-second.*`; Hermes `13-voice-v2.stdout`. Neither reused the old voice. |
+| 9 | Add a local skill through the public surface | PASS | PASS after partial first attempt | Ziggy `skills-add.*`, `skills-list.*`; Hermes `14-skill-install.stdout`, `17-skill-install-retry.stdout`, `87-restore-private-url-policy.stdout`. Hermes' default SSRF guard rejected localhost until a temporary Profile-only opt-in. |
+| 10 | Prove the skill loads | PASS | PASS | Ziggy `skill-load.*`; Hermes `21-skill-load.stdout`. Both returned `CAPABILITY_SKILL_V1`. |
+| 11 | Create the closest named specialist | PASS | PASS, different mechanism | Ziggy `agent-create.*`, `agent-show.*`, `agent-validate.*` and visible `agents/proof-agent.md`; Hermes `24-delegation.stdout`. Hermes used anonymous bounded delegation, not a durable Ziggy-style named policy file. |
+| 12 | Invoke the specialist and retain lineage | PASS | PASS | Ziggy `agent-leading-mention.*`, `agent-direct-run.*`, `sessions-show-leading-root.*`, `sessions-show-leading-child.*`, `sessions-show-direct-root.*`; Hermes `83-delegation-lineage.json`. Ziggy proved both model-guided `@` child dispatch and a direct saved agent root. |
+| 13 | Have the model author an automation | PASS | PASS | Ziggy `automation-authoring.*`, `automation-schedule-adjust.*`, visible `automations/skill-proof.md`, and Pi roots `sessions/2026-08-08T15-05-30-419Z_019fe1e8-6033-7290-af04-346fcd99e39f.jsonl` plus `sessions/2026-08-08T15-06-20-186Z_019fe1e9-229a-76dd-b302-731cd75cdda5.jsonl`, whose tool sequences contain `write`/`edit`; Hermes `25-cron-create.stdout` and usage. The harness did not author Ziggy's final definition. |
+| 14 | Validate and inspect automation policy | PASS | PASS | Ziggy `automation-list.*`, `automation-validate.*`, `automation-validate-one.*`; Hermes `26-cron-list.stdout`, `28-cron-jobs-projection.json`. Ziggy's Markdown remains authoritative; Hermes uses its JSON job registry. |
+| 15 | Run the automation manually | PASS | PASS | Ziggy `automation-wake.*`, `automation-runs-after-wake.*`; Hermes `29-cron-run.stdout`, `31-cron-runs-after-manual.stdout`. Both produced durable completed run projections. |
+| 16 | Prove the skill marker affects the run | PASS | PASS | Ziggy visible definition, `automation-wake.*`, `automation-runs-after-serve.*`; Hermes `34-cron-output.txt`. Ziggy kept output local with `broadcast: none`. |
+| 17 | Start the resident scheduler without messaging | PASS | PASS | Ziggy `serve-bounded.*`, `serve-process.*`; Hermes `36-gateway-status.stdout`, `37-cron-status-resident.stdout`. Both scheduling owners ran with no messaging platform configured. |
+| 18 | Observe an automatic scheduled trigger | PASS | PASS | Ziggy `serve-process.stdout.txt`, `automation-runs-after-serve.*` show three unforced runs; Hermes `40-cron-runs-after-resident.stdout`, `43-cron-output-after-resident.txt` show an unforced resident run. |
+| 19 | Stop the resident owner cleanly | PASS | PASS after partial first stop | Ziggy `serve-clean-stop.txt`, `serve-processes-after-stop.txt`, `runtime-after-serve.tree.txt`; Hermes `51-clean-stop-result.txt`, `86-final-state.txt`. Hermes' first stop left stale status; its supported retry cleaned it. |
+| 20 | Inspect sessions and lineage safely | PASS | PASS | Ziggy `sessions-list-after-wake.*` and all `sessions-show-*` files expose IDs, root/child links, model, thinking, usage, and state without transcript text; Hermes `82-session-metadata.json`, `83-delegation-lineage.json`, `84-sessions-list-final.stdout`. |
+| 21 | Run health checks | PASS | PASS with warnings | Ziggy `doctor-readonly.*` reported ten OK checks. Hermes `73-doctor.stdout` recorded outdated config and optional dependency/auth warnings without running `--fix`. |
+| 22 | Verify read-only commands do not mutate authority | PASS | PASS on checked surface | Ziggy `profile-before-readonly.snapshot`, `profile-after-readonly.snapshot`, `readonly-comparison.txt` (`readonly-content-equal`); Hermes `55-readonly-before.manifest`, `80-readonly-after.manifest`, `81-readonly-manifest-diff.txt` (empty). |
+| 23 | Start the TUI and expose the Profile agent | PASS after partial first probe | PASS | Ziggy's first bounded attempt loaded the Profile but did not invoke `/agents`; `tui-bounded-retry.*` and `tui-proof.txt` then proved `proof-agent` advertisement and clean Ctrl-C. Hermes `54-tui-driver.stdout` proved Profile/model startup. No second model call was needed. |
+| 24 | Preflight scheduling with no gateway delivery | PASS | PASS, different public path | Ziggy `automation-status-after-serve.*`, `doctor-readonly.*`, `serve-process.*`; Hermes `37-cron-status-resident.stdout`. Ziggy's delivery-neutral public name is `serve`; Hermes hosts cron in `gateway run`. |
+| 25 | Classify outcome gaps without copying architecture | COMPLETE — no missing tested capability | COMPLETE | The two exact reports above agree on the outcome and classify the remaining differences as authority/mechanism choices rather than missing Ziggy core behavior. |
+
+### Defect decision
+
+No concrete Ziggy code defect blocked any tested Profile, voice, skill, Profile agent, `@`,
+model/auth, model-authored automation, manual wake, automatic cron, `serve`, sessions, doctor, or
+TUI journey. The only partial Ziggy item was the first bounded TUI evidence attempt: it stopped
+before issuing `/agents`; the retry exercised that command and passed. This is a harness-evidence
+issue, not a runtime divergence. No production or test code is changed for Round 2.
+
+The raw Ziggy evidence also closes the earlier Round 1 concerns: agent admission works from normal
+print and TUI paths; direct and nested Profile-agent runs persist Pi root/child JSONL with usage and
+lineage; model, agent, automation, session, doctor, help/version, and `serve` commands are present;
+and the checked read projections preserve Profile contents byte-for-byte.
+
+### Preserved design differences
+
+- **Authority:** Ziggy keeps identity, agents, installed skills, and automation policy in visible
+  Profile files. Hermes mixes Profile and machine state and uses a JSON cron registry.
+- **Runtime:** Pi remains Ziggy's model/auth/tool/session and agent-loop authority. Hermes owns its
+  own loop and SQLite-backed session/runtime machinery.
+- **Specialists:** Ziggy's `agents/<id>.md` is a named Profile-local policy with Pi session lineage.
+  Hermes' tested equivalent is anonymous bounded delegation.
+- **Dispatch:** Ziggy's leading `@agent-id` guides the parent model to the shared `agent_run`
+  capability; it is not a face-specific direct bypass.
+- **Automation:** Ziggy's model edited visible Markdown and `serve` hosted the scheduler without a
+  delivery channel. Hermes' model wrote its cron registry and the gateway hosted cron.
+- **Reads:** Ziggy's operator projections remain transcript-free and read-only. No mutable memory,
+  broad plugin authority, anonymous durable fleet, or second session store is introduced.
+
+### Remaining operator gaps and limits
+
+These are not failures in the tested core and do not justify copying Hermes:
+
+1. The TUI advertises the agent roster through `/agents`, not an always-visible roster; the first
+   bounded probe therefore needed a retry that actually invoked the command.
+2. The live automation intentionally used `broadcast: none`; configured Telegram, Discord, or
+   Slack delivery was outside this proof, so no external-delivery claim follows from it.
+3. Minimal init intentionally required explicit auth/model setup afterward. Guided init exists,
+   but Round 2 chose `--minimal` to keep credential setup controlled and inspectable.
+4. Pi v0.82.0 persists a new JSONL only after the first assistant message. A failure or cancellation
+   before that point can have no session file; Ziggy must not fabricate one.
+5. `@` remains model-guided and Profile-agent children remain bounded and non-recursive. Background
+   reconnect handles, mutable agent fleets, and direct child resume remain intentionally absent.
+
+## Round 1 verdict (historical baseline)
+
+The sections below record the first live comparison and the gaps it found before the intervening
+Profile-agent lineage and CLI work. Round 2 above is the current conclusion.
 
 Ziggy already has the smaller and better-aligned core:
 
