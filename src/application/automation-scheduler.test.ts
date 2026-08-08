@@ -157,6 +157,7 @@ describe("automation scheduler engine", () => {
         const release = yield* Deferred.make<void>();
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
+          runSpecialist: () => Effect.succeed("local reply"),
           openTui: () => Effect.succeed(0),
           openChat: () =>
             Effect.succeed({
@@ -356,6 +357,7 @@ describe("automation scheduler engine", () => {
     });
     const agent: ZiggyAgentShape = {
       runOnce: () => Effect.succeed(0),
+      runSpecialist: () => Effect.succeed("local reply"),
       openTui: () => Effect.succeed(0),
       openChat: () =>
         Effect.succeed({

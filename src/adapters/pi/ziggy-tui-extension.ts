@@ -7,7 +7,7 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import type { ProfileAgent } from "../../domain/profile";
+import { parseLeadingProfileAgentMention, type ProfileAgent } from "../../domain/profile";
 
 interface TextComponent {
   invalidate(): void;
@@ -96,8 +96,6 @@ const renderAgents = (agents: ReadonlyArray<ProfileAgent>): string =>
         "\n",
       );
 
-const leadingAgent = (text: string): string | undefined => /^@(\S+)(?:\s|$)/.exec(text)?.[1];
-
 const agentPromptGuidance = (agents: ReadonlyArray<ProfileAgent>): string =>
   agents.length === 0
     ? "No Profile specialists are available. Do not attempt to call agent_run."
@@ -180,12 +178,16 @@ export const createZiggyTuiExtension = (
         if (!enableSpecialists || context.mode !== "tui" || event.source !== "interactive") {
           return { action: "continue" };
         }
-        const agentId = leadingAgent(event.text);
-        if (agentId === undefined) return { action: "continue" };
-        const agent = agents.find((candidate) => candidate.id === agentId);
+        const mention = parseLeadingProfileAgentMention(event.text);
+        if (mention.kind === "untagged") return { action: "continue" };
+        if (mention.kind === "invalid") {
+          context.ui.notify(`Invalid Profile agent mention: ${mention.message}`, "error");
+          return { action: "handled" };
+        }
+        const agent = agents.find((candidate) => candidate.id === mention.agentId);
         if (agent === undefined) {
           context.ui.notify(
-            `Unknown Profile agent "${agentId}". Use /agents to see available agents.`,
+            `Unknown Profile agent "${mention.agentId}". Use /agents to see available agents.`,
             "error",
           );
           return { action: "handled" };

@@ -16,14 +16,18 @@ import {
 } from "../adapters/bun/automation-sqlite";
 import { automationFileStore } from "../adapters/fs/automation-files";
 import { TelegramApiError } from "../adapters/telegram/api";
-import { ProviderCallError } from "../domain/agent";
+import { ProviderCallError, ProviderConfigError, SpecialistAgentNotFound } from "../domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
 import { type AutomationCapabilities, makeAutomations } from "./automations";
 
 const paths: Array<string> = [];
-const definition = (broadcast: string, extras: ReadonlyArray<string> = []) =>
+const definition = (
+  broadcast: string,
+  extras: ReadonlyArray<string> = [],
+  body = "Write the daily note.",
+) =>
   [
     "---",
     "version: 1",
@@ -32,16 +36,16 @@ const definition = (broadcast: string, extras: ReadonlyArray<string> = []) =>
     ...extras,
     `broadcast: ${broadcast}`,
     "---",
-    "Write the daily note.",
+    body,
     "",
   ].join("\n");
 
-const profile = async (broadcast: string, extras: ReadonlyArray<string> = []) => {
+const profile = async (broadcast: string, extras: ReadonlyArray<string> = [], body?: string) => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-automations-"));
   paths.push(path);
   await mkdir(join(path, "automations"));
   await writeFile(join(path, "SOUL.md"), "# Test\n");
-  await writeFile(join(path, "automations", "daily-note.md"), definition(broadcast, extras));
+  await writeFile(join(path, "automations", "daily-note.md"), definition(broadcast, extras, body));
   return { path, name: "Test" } satisfies ProfileTarget;
 };
 
@@ -52,11 +56,19 @@ const harness = (
     readonly telegramFailure?: TelegramApiError;
     readonly promptFailure?: ProviderCallError;
     readonly promptEffect?: Effect.Effect<string, ProviderCallError>;
+    readonly specialistEffect?: Effect.Effect<
+      string,
+      ProviderConfigError | SpecialistAgentNotFound
+    >;
     readonly store?: AutomationRunStore;
   } = {},
 ) => {
   const agent: ZiggyAgentShape = {
     runOnce: () => Effect.succeed(0),
+    runSpecialist: (_target, agentId, task) =>
+      Effect.sync(() => {
+        events.push(`specialist:${agentId}:${task}`);
+      }).pipe(Effect.andThen(options.specialistEffect ?? Effect.succeed("local reply"))),
     openTui: () => Effect.succeed(0),
     openChat: (target, context, sessionPath, mode) =>
       Effect.sync(() => {
@@ -207,15 +219,76 @@ describe("automation run", () => {
     });
   });
 
-  test("a nonzero gate declines before Pi", async () => {
+  test("a nonzero gate declines before Pi or specialist discovery", async () => {
     const events: Array<string> = [];
-    const target = await profile("none", ["gate: exit 7"]);
+    const target = await profile(
+      "none",
+      ["gate: exit 7"],
+      "@research-helper\nWrite the daily note.",
+    );
     expect(await run(harness(events, { gateExit: 7 }), target)).toEqual({
       kind: "declined",
       reason: "gate-nonzero",
       exitCode: 7,
     });
     expect(events).toEqual(["gate:exit 7"]);
+  });
+
+  test("a tagged automation calls the explicit specialist operation once with the tag stripped", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+    expect(events).toEqual([
+      "specialist:research-helper:Write the daily note.",
+      "reply:local reply",
+    ]);
+  });
+
+  test("specialist configuration failure records a stable failed local projection", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+    const failure = new ProviderConfigError({
+      profilePath: target.path,
+      operation: "select model",
+      message: "specialist model configuration failed",
+      cause: "fixture",
+    });
+    const result = await Effect.runPromise(
+      harness(events, { specialistEffect: Effect.fail(failure) })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
+    );
+    expect(result).toBe(failure);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      localCompleted: false,
+      failureCategory: "ProviderConfigError",
+    });
+  });
+
+  test("unknown specialist failure records a failed local run without a provider call", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@missing\nWrite the daily note.");
+    const failure = new SpecialistAgentNotFound({
+      profilePath: target.path,
+      agentId: "missing",
+      message: "unknown Profile agent: missing",
+    });
+    const result = await Effect.runPromise(
+      harness(events, { specialistEffect: Effect.fail(failure) })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
+    );
+    expect(result).toBe(failure);
+    expect(events).toEqual(["specialist:missing:Write the daily note."]);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      localCompleted: false,
+      failureCategory: "SpecialistAgentNotFound",
+    });
   });
 
   test("a scheduled definition without a gate records skipped-gate before Pi", async () => {

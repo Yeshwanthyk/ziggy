@@ -175,6 +175,38 @@ describe("automation definition", () => {
     ).toEqual(["telegram:chat:1", "telegram:chat:1"]);
   });
 
+  test("routes a leading Profile agent mention and strips only its tag", async () => {
+    const newline = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "@research-helper\nWrite the daily note.",
+    );
+    const inline = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "@research-helper Write the daily note.",
+    );
+    expect(newline.specialist).toEqual({
+      agentId: "research-helper",
+      task: "Write the daily note.",
+    });
+    expect(inline).toMatchObject({
+      prompt: "Write the daily note.",
+      specialist: { agentId: "research-helper" },
+    });
+  });
+
+  test("rejects malformed leading Profile agent mentions with the automation source path", async () => {
+    const messages = await Promise.all(
+      ["@Research-helper do this", "@research-helper", "@research_helper do this"].map((body) =>
+        invalidMessage(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"], body),
+      ),
+    );
+    expect(messages).toEqual([
+      "invalid automation daily-note: a leading Profile agent mention must use lowercase kebab-case @agent-id",
+      "invalid automation daily-note: a leading Profile agent mention must be followed by a non-empty task",
+      "invalid automation daily-note: a leading Profile agent mention must use lowercase kebab-case @agent-id",
+    ]);
+  });
+
   test("rejects strict frontmatter violations and prompt shadowing", async () => {
     const cases = [
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none", "unknown: x"],

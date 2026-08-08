@@ -10,6 +10,7 @@ import {
   initTheme,
   runPrintMode,
   type AgentSessionRuntime,
+  type AgentSessionServices,
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
   type InlineExtension,
@@ -23,6 +24,7 @@ import {
   ProviderCallError,
   ProviderConfigError,
   type OpenTuiError,
+  type ProfileSpecialistError,
   type ZiggyAgentError,
 } from "../../domain/agent";
 import {
@@ -36,7 +38,7 @@ import {
 } from "../../domain/memory";
 import type { ProfileAgent, ProfileTarget } from "../../domain/profile";
 import { discoverProfileAgents } from "../fs/profile-agents";
-import { discoverPiResources } from "./resources";
+import { discoverPiResources, type PiResources } from "./resources";
 import {
   createAgentDiscussTool,
   createAgentRunTool,
@@ -46,6 +48,11 @@ import {
 import { createZiggyTuiExtension } from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
+  readonly runSpecialist: (
+    target: ProfileTarget,
+    agentId: string,
+    task: string,
+  ) => Effect.Effect<string, ProfileSpecialistError>;
   readonly askOnce: (
     target: ProfileTarget,
     prompt: string,
@@ -516,6 +523,11 @@ export const askOnce = (
     return exitCode;
   });
 
+interface ProfileRuntime extends AgentSessionRuntime {
+  readonly services: AgentSessionServices;
+  readonly resources: PiResources;
+}
+
 const createProfileRuntime = (
   profilePath: string,
   repositoryRoot: string,
@@ -524,7 +536,7 @@ const createProfileRuntime = (
   context: ChatContext,
   tuiAgents: ReadonlyArray<ProfileAgent> = [],
   includeTuiSpecialists = false,
-) =>
+): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
     if (!paths.ok) {
@@ -533,8 +545,9 @@ const createProfileRuntime = (
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
     const runtimeRef: { current?: AgentSessionRuntime } = {};
+    const servicesRef: { current?: AgentSessionServices } = {};
 
-    return yield* piPromise(profilePath, "create agent runtime", async () => {
+    const runtime = yield* piPromise(profilePath, "create agent runtime", async () => {
       const runtime = await createAgentSessionRuntime(
         async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
           const services = await createAgentSessionServices({
@@ -559,6 +572,7 @@ const createProfileRuntime = (
               ],
             },
           });
+          servicesRef.current = services;
           const specialistRunner = includeTuiSpecialists
             ? makeSpecialistRunner({
                 profilePath,
@@ -590,6 +604,7 @@ const createProfileRuntime = (
           return {
             ...created,
             services,
+            resources,
             diagnostics: services.diagnostics,
           };
         },
@@ -599,9 +614,20 @@ const createProfileRuntime = (
           sessionManager,
         },
       );
-      runtimeRef.current = runtime;
       return runtime;
     });
+    const services = servicesRef.current;
+    if (services === undefined) {
+      return yield* new ProviderConfigError({
+        profilePath,
+        operation: "create agent runtime",
+        message: "Pi did not provide agent services for the Profile runtime",
+        cause: undefined,
+      });
+    }
+    const profileRuntime: ProfileRuntime = Object.assign(runtime, { services, resources });
+    runtimeRef.current = profileRuntime;
+    return profileRuntime;
   });
 
 const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
@@ -751,6 +777,58 @@ export const openChat = (
     };
   });
 
+export const runSpecialist = (
+  target: ProfileTarget,
+  agentId: string,
+  task: string,
+  repositoryRoot: string,
+): Effect.Effect<string, ProfileSpecialistError> =>
+  Effect.gen(function* () {
+    const soulPath = yield* requireSoul(target.path);
+    const agents = yield* discoverProfileAgents(target.path);
+    const host = createProfileRuntime(
+      target.path,
+      repositoryRoot,
+      soulPath,
+      SessionManager.inMemory(target.path),
+      { kind: "local" },
+    );
+
+    return yield* Effect.acquireUseRelease(
+      host,
+      (runtime) => {
+        if (runtime.modelFallbackMessage !== undefined) {
+          return Effect.fail(
+            new ProviderConfigError({
+              profilePath: target.path,
+              operation: "select model",
+              message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
+              cause: new Error(runtime.modelFallbackMessage),
+            }),
+          );
+        }
+        const specialistRunner = makeSpecialistRunner({
+          profilePath: target.path,
+          agents,
+          parent: () => ({
+            session: runtime.session,
+            services: runtime.services,
+            resources: runtime.resources,
+          }),
+        });
+        return specialistRunner
+          .run({ agent: agentId, prompt: task })
+          .pipe(Effect.map((result) => result.answer));
+      },
+      (runtime) =>
+        piPromise(target.path, "dispose specialist host runtime", () => runtime.dispose()).pipe(
+          Effect.catch((failure) =>
+            Effect.logWarning("Pi specialist host cleanup failed", { failure }),
+          ),
+        ),
+    );
+  });
+
 export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
@@ -781,6 +859,7 @@ export const openTui = (
 
 export const makePiAgentLive = (repositoryRoot: string) =>
   Layer.succeed(PiAgent, {
+    runSpecialist: (target, agentId, task) => runSpecialist(target, agentId, task, repositoryRoot),
     askOnce: (target, prompt, continueSession, context) =>
       askOnce(target, prompt, continueSession, context, repositoryRoot),
     openTui: (target, context) => openTui(target, context, repositoryRoot),

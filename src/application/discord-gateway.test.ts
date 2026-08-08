@@ -80,6 +80,7 @@ describe("Discord gateway boundary", () => {
         };
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
+          runSpecialist: () => Effect.succeed("reply"),
           openTui: () => Effect.succeed(0),
           openChat: (target, context, sessionDirectory) =>
             Effect.sync(() => {

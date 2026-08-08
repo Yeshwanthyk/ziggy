@@ -98,6 +98,7 @@ describe("Telegram gateway startup", () => {
         };
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
+          runSpecialist: () => Effect.succeed("reply"),
           openTui: () => Effect.succeed(0),
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {

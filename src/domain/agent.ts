@@ -134,4 +134,15 @@ export type ZiggyAgentError =
   | ProfileExtensionInvalid
   | ProfileFileSystemError;
 
+export type ProfileSpecialistError =
+  | ZiggyAgentError
+  | ProfileAgentInvalid
+  | SpecialistAgentNotFound
+  | SpecialistProviderUnsupported
+  | SpecialistModelUnsupported
+  | SpecialistAuthUnavailable
+  | SpecialistThinkingUnsupported
+  | SpecialistToolUnsupported
+  | SpecialistRunFailed;
+
 export type OpenTuiError = ZiggyAgentError | ProfileAgentInvalid;

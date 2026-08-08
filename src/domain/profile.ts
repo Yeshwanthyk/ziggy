@@ -78,6 +78,34 @@ export const ProfileAgent = Schema.Struct({
 
 export type ProfileAgent = typeof ProfileAgent.Type;
 
+export type LeadingProfileAgentMention =
+  | { readonly kind: "untagged" }
+  | { readonly kind: "tagged"; readonly agentId: string; readonly task: string }
+  | { readonly kind: "invalid"; readonly message: string };
+
+const profileAgentIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Apply the one leading @agent-id policy shared by TUI and automation bodies. */
+export const parseLeadingProfileAgentMention = (text: string): LeadingProfileAgentMention => {
+  if (!text.startsWith("@")) return { kind: "untagged" };
+  const tokenEnd = text.search(/\s/u);
+  const token = (tokenEnd === -1 ? text : text.slice(0, tokenEnd)).slice(1);
+  if (!profileAgentIdPattern.test(token)) {
+    return {
+      kind: "invalid",
+      message: "a leading Profile agent mention must use lowercase kebab-case @agent-id",
+    };
+  }
+  const task = text.slice(tokenEnd === -1 ? text.length : tokenEnd).trim();
+  if (task.length === 0) {
+    return {
+      kind: "invalid",
+      message: "a leading Profile agent mention must be followed by a non-empty task",
+    };
+  }
+  return { kind: "tagged", agentId: token, task };
+};
+
 export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(
   "ProfileSkillInvalid",
   {

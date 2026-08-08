@@ -29,7 +29,7 @@ import {
   scheduledRunId,
   validateAutomationId,
 } from "../domain/automation";
-import type { ZiggyAgentError } from "../domain/agent";
+import type { ProfileSpecialistError } from "../domain/agent";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ZiggyAgentShape } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
@@ -42,7 +42,7 @@ export type AutomationError =
   | AutomationFileSystemError
   | AutomationGateFailed
   | AutomationDatabaseError
-  | ZiggyAgentError;
+  | ProfileSpecialistError;
 
 export interface AutomationsShape {
   readonly run: (
@@ -240,7 +240,7 @@ const gateFailureCategory = (
 };
 
 // oxfmt-ignore
-const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const }));
+const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
 export const makeAutomations = (
   agent: ZiggyAgentShape,
@@ -305,25 +305,32 @@ export const makeAutomations = (
             };
           }
         }
-        const reply = yield* Effect.acquireUseRelease(
-          agent.openChat(
-            target,
-            { kind: "local" },
-            join(target.path, "sessions", "automations", automation.id),
-            "fresh",
-          ),
-          (handle) => handle.prompt(automation.prompt),
-          (handle) =>
-            handle.dispose.pipe(
-              Effect.catch((failure) =>
-                Effect.sync(() =>
-                  console.error(
-                    `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
-                  ),
+        const reply =
+          automation.specialist === undefined
+            ? yield* Effect.acquireUseRelease(
+                agent.openChat(
+                  target,
+                  { kind: "local" },
+                  join(target.path, "sessions", "automations", automation.id),
+                  "fresh",
                 ),
-              ),
-            ),
-        );
+                (handle) => handle.prompt(automation.prompt),
+                (handle) =>
+                  handle.dispose.pipe(
+                    Effect.catch((failure) =>
+                      Effect.sync(() =>
+                        console.error(
+                          `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
+                        ),
+                      ),
+                    ),
+                  ),
+              )
+            : yield* agent.runSpecialist(
+                target,
+                automation.specialist.agentId,
+                automation.specialist.task,
+              );
         yield* capabilities.printReply(reply);
         const resolution = yield* resolveTargets(capabilities.files, target, automation);
         if (!resolution.ok) {
