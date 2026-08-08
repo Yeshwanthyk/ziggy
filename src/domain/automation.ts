@@ -423,11 +423,9 @@ export const parseAutomationFile = (
       keys.add(key);
       entries.push([key, key === "version" && value.trim() === "1" ? 1 : value]);
     }
-    const body = lines
-      .slice(end + 1)
-      .join("\n")
-      .trim();
-    const mention = parseLeadingProfileAgentMention(body);
+    const rawBody = lines.slice(end + 1).join("\n");
+    const body = rawBody.trim();
+    const mention = parseLeadingProfileAgentMention(rawBody);
     if (mention.kind === "invalid") {
       return yield* invalid(filePath, `invalid automation ${id}: ${mention.message}`);
     }

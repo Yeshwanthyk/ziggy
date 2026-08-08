@@ -16,6 +16,7 @@ import {
   localMainSessionDirectory,
   openTui,
   promptForAssistantText,
+  runSpecialist,
   providerError,
   refreshProfileMemory,
 } from "./pi-agent";
@@ -169,6 +170,23 @@ describe("Profile memory refresh", () => {
     expect(result?.systemPrompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN.");
     expect(result?.systemPrompt).toContain("Do not claim to remember Profile facts");
     expect(result?.systemPrompt).not.toContain("Durable facts should be saved");
+  });
+});
+
+describe("Profile specialist runtime integration", () => {
+  test("preserves Pi's services getter while attaching Ziggy resources", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const result = await Effect.runPromise(
+      runSpecialist({ path: profilePath, name: "Profile" }, "missing", "task", process.cwd()).pipe(
+        Effect.result,
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SpecialistAgentNotFound", agentId: "missing" },
+    });
   });
 });
 

@@ -1,9 +1,23 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { expect, test } from "bun:test";
 import { Effect, Predicate, Result, Schema } from "effect";
-import { ProfileAgent } from "./profile";
+import { parseLeadingProfileAgentMention, ProfileAgent } from "./profile";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent);
+
+test("leading Profile agent mentions require the same literal leading position", () => {
+  expect(parseLeadingProfileAgentMention("@research-helper\n  do the work  ")).toEqual({
+    kind: "tagged",
+    agentId: "research-helper",
+    task: "do the work",
+  });
+  expect(parseLeadingProfileAgentMention("  @research-helper do the work")).toEqual({
+    kind: "untagged",
+  });
+  expect(parseLeadingProfileAgentMention("help @research-helper do the work")).toEqual({
+    kind: "untagged",
+  });
+});
 
 test("Profile agent contract derives the specialist shape and requires provider/model together", () => {
   const valid = Effect.runSync(

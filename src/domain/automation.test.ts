@@ -79,13 +79,18 @@ describe("automation definition", () => {
   });
 
   test("fingerprints parsed schedule semantics and UTC occurrence identities", async () => {
-    const [five, six, changed, zoned] = await Promise.all([
+    const [five, six, steppedFive, steppedSix, changed, zoned] = await Promise.all([
       parse(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 0 9 * * *", "timezone: UTC", "broadcast: none"]),
+      parse(["cron: 0 9 */2 * 1", "timezone: UTC", "broadcast: none"]),
+      parse(["cron: 0 0 9 */2 * 1", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 10 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 9 * * *", "timezone: Europe/London", "broadcast: none"]),
     ]);
     expect(automationScheduleFingerprint(five)).toBe(automationScheduleFingerprint(six));
+    expect(automationScheduleFingerprint(steppedFive)).toBe(
+      automationScheduleFingerprint(steppedSix),
+    );
     expect(automationScheduleFingerprint(changed)).not.toBe(automationScheduleFingerprint(five));
     expect(automationScheduleFingerprint(zoned)).not.toBe(automationScheduleFingerprint(five));
     expect(scheduledRunId("daily-note", Date.parse("2026-11-01T05:30:00.000Z"))).not.toBe(
@@ -192,6 +197,12 @@ describe("automation definition", () => {
       prompt: "Write the daily note.",
       specialist: { agentId: "research-helper" },
     });
+    const indented = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "  @research-helper\nWrite the daily note.",
+    );
+    expect(indented.specialist).toBeUndefined();
+    expect(indented.prompt).toBe("@research-helper\nWrite the daily note.");
   });
 
   test("rejects malformed leading Profile agent mentions with the automation source path", async () => {

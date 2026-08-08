@@ -10,7 +10,6 @@ import {
   initTheme,
   runPrintMode,
   type AgentSessionRuntime,
-  type AgentSessionServices,
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
   type InlineExtension,
@@ -524,7 +523,6 @@ export const askOnce = (
   });
 
 interface ProfileRuntime extends AgentSessionRuntime {
-  readonly services: AgentSessionServices;
   readonly resources: PiResources;
 }
 
@@ -545,7 +543,6 @@ const createProfileRuntime = (
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
     const runtimeRef: { current?: AgentSessionRuntime } = {};
-    const servicesRef: { current?: AgentSessionServices } = {};
 
     const runtime = yield* piPromise(profilePath, "create agent runtime", async () => {
       const runtime = await createAgentSessionRuntime(
@@ -572,7 +569,6 @@ const createProfileRuntime = (
               ],
             },
           });
-          servicesRef.current = services;
           const specialistRunner = includeTuiSpecialists
             ? makeSpecialistRunner({
                 profilePath,
@@ -604,7 +600,6 @@ const createProfileRuntime = (
           return {
             ...created,
             services,
-            resources,
             diagnostics: services.diagnostics,
           };
         },
@@ -616,16 +611,9 @@ const createProfileRuntime = (
       );
       return runtime;
     });
-    const services = servicesRef.current;
-    if (services === undefined) {
-      return yield* new ProviderConfigError({
-        profilePath,
-        operation: "create agent runtime",
-        message: "Pi did not provide agent services for the Profile runtime",
-        cause: undefined,
-      });
-    }
-    const profileRuntime: ProfileRuntime = Object.assign(runtime, { services, resources });
+    // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
+    // additional resource bundle; assigning `services` would throw at runtime.
+    const profileRuntime: ProfileRuntime = Object.assign(runtime, { resources });
     runtimeRef.current = profileRuntime;
     return profileRuntime;
   });
@@ -797,16 +785,6 @@ export const runSpecialist = (
     return yield* Effect.acquireUseRelease(
       host,
       (runtime) => {
-        if (runtime.modelFallbackMessage !== undefined) {
-          return Effect.fail(
-            new ProviderConfigError({
-              profilePath: target.path,
-              operation: "select model",
-              message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
-              cause: new Error(runtime.modelFallbackMessage),
-            }),
-          );
-        }
         const specialistRunner = makeSpecialistRunner({
           profilePath: target.path,
           agents,
