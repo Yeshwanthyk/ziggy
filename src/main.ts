@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
+import packageJson from "../package.json" with { type: "json" };
 import { makePiAgentLive } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
@@ -13,19 +14,18 @@ import { GatewayLive } from "./application/gateway";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
 import { SlackGatewayLive } from "./application/slack-gateway";
+import { validateAutomationId } from "./domain/automation";
 import {
   resolveProfileTarget,
   resolveProfilesDirectory,
   resolveProfilesRegistry,
 } from "./domain/profile";
-import { validateAutomationId } from "./domain/automation";
 import {
   renderAutomationOutcome,
   renderAutomationRuns,
   renderAutomationStatus,
 } from "./faces/automation-cli";
-
-const command = process.argv[2];
+import { decodeCliCommand, renderHelp } from "./faces/cli";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -60,6 +60,17 @@ const fail = (message: string) =>
   });
 
 const program = Effect.gen(function* () {
+  const command = yield* decodeCliCommand(process.argv.slice(2));
+
+  if (command._tag === "Help") {
+    console.log(renderHelp(command.topic));
+    return;
+  }
+  if (command._tag === "Version") {
+    console.log(packageJson.version);
+    return;
+  }
+
   const profiles = yield* Profiles;
   const agent = yield* ZiggyAgent;
   const auth = yield* Auth;
@@ -67,14 +78,11 @@ const program = Effect.gen(function* () {
   const automationScheduler = yield* AutomationScheduler;
   const residentGateway = yield* ResidentGateway;
 
-  switch (command) {
-    case "init": {
-      const argument = process.argv[3];
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy init <name|path>");
-      }
-
-      const result = yield* profiles.initProfile(resolveProfileTarget(argument, resolutionOptions));
+  switch (command._tag) {
+    case "Init": {
+      const result = yield* profiles.initProfile(
+        resolveProfileTarget(command.target, resolutionOptions),
+      );
       yield* profiles
         .registerProfile(resolveProfilesRegistry(resolutionOptions), result.path)
         .pipe(Effect.catch(() => Effect.void));
@@ -85,7 +93,7 @@ const program = Effect.gen(function* () {
       );
       return;
     }
-    case "profiles": {
+    case "Profiles": {
       const listings = yield* profiles.listProfiles(
         resolveProfilesDirectory(resolutionOptions),
         resolveProfilesRegistry(resolutionOptions),
@@ -94,225 +102,146 @@ const program = Effect.gen(function* () {
         console.log("no profiles yet — try: ziggy init <name>");
         return;
       }
-
-      for (const profile of listings) {
-        console.log(`${profile.name}\t${profile.path}`);
+      for (const profile of listings) console.log(`${profile.name}\t${profile.path}`);
+      return;
+    }
+    case "SkillsList": {
+      const listing = yield* profiles.listSkills(
+        resolveProfileTarget(command.target, resolutionOptions),
+        repositoryRoot,
+      );
+      console.log("installed:");
+      if (listing.installed.length === 0) console.log("(none)");
+      else for (const skill of listing.installed) console.log(skill.id);
+      console.log("available:");
+      if (listing.available.length === 0) console.log("(none)");
+      else for (const skill of listing.available) console.log(skill.id);
+      return;
+    }
+    case "SkillsAdd": {
+      const installed = yield* profiles.addSkill(
+        resolveProfileTarget(command.target, resolutionOptions),
+        repositoryRoot,
+        command.source,
+        resolutionOptions.cwd,
+        command.force,
+      );
+      console.log(
+        `${installed.replaced ? "replaced" : "installed"} ${installed.id} at ${installed.destinationPath}`,
+      );
+      return;
+    }
+    case "ExtensionsList": {
+      const extensions = yield* profiles.listExtensions(repositoryRoot);
+      for (const extension of extensions) {
+        console.log(
+          `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.description}`,
+        );
       }
       return;
     }
-    case "skills": {
-      const action = process.argv[3];
-      const argument = process.argv[4];
-      if (action === "list") {
-        if (argument === undefined || process.argv.length !== 5) {
-          return yield* fail("usage: ziggy skills list <name|path>");
-        }
-        const listing = yield* profiles.listSkills(
-          resolveProfileTarget(argument, resolutionOptions),
-          repositoryRoot,
-        );
-        console.log("installed:");
-        if (listing.installed.length === 0) {
-          console.log("(none)");
-        } else {
-          for (const skill of listing.installed) {
-            console.log(skill.id);
-          }
-        }
-        console.log("available:");
-        if (listing.available.length === 0) {
-          console.log("(none)");
-        } else {
-          for (const skill of listing.available) {
-            console.log(skill.id);
-          }
-        }
-        return;
+    case "ExtensionsShow": {
+      const extension = yield* profiles.showExtension(repositoryRoot, command.id);
+      console.log(`id\t${extension.id}`);
+      console.log(`kind\t${extension.kind}`);
+      console.log(`status\t${extension.required ? "required" : "optional"}`);
+      console.log(`description\t${extension.description}`);
+      console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
+      for (const skill of extension.skills) {
+        console.log(`skill\t${skill.name} — ${skill.description}`);
       }
-      if (action === "add") {
-        const source = process.argv[5];
-        const addArguments = process.argv.slice(6);
-        const force = addArguments.length === 1 && addArguments[0] === "--force";
-        if (argument === undefined || source === undefined || (addArguments.length > 0 && !force)) {
-          return yield* fail("usage: ziggy skills add <name|path> <id|path> [--force]");
-        }
-        const installed = yield* profiles.addSkill(
-          resolveProfileTarget(argument, resolutionOptions),
-          repositoryRoot,
-          source,
-          resolutionOptions.cwd,
-          force,
-        );
-        console.log(
-          `${installed.replaced ? "replaced" : "installed"} ${installed.id} at ${installed.destinationPath}`,
-        );
-        return;
+      for (const extensionPath of extension.extensionPaths) {
+        console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
       }
-      return yield* fail(`usage:
-  ziggy skills list <name|path>
-  ziggy skills add <name|path> <id|path> [--force]`);
+      return;
     }
-    case "extensions": {
-      const action = process.argv[3];
-      if (action === "list" && process.argv.length === 4) {
-        const extensions = yield* profiles.listExtensions(repositoryRoot);
-        for (const extension of extensions) {
-          console.log(
-            `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.description}`,
-          );
-        }
-        return;
-      }
-      if (action === "show" && process.argv[4] !== undefined && process.argv.length === 5) {
-        const extension = yield* profiles.showExtension(repositoryRoot, process.argv[4]);
-        console.log(`id\t${extension.id}`);
-        console.log(`kind\t${extension.kind}`);
-        console.log(`status\t${extension.required ? "required" : "optional"}`);
-        console.log(`description\t${extension.description}`);
-        console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
-        for (const skill of extension.skills) {
-          console.log(`skill\t${skill.name} — ${skill.description}`);
-        }
-        for (const extensionPath of extension.extensionPaths) {
-          console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
-        }
-        return;
-      }
-      if (
-        (action === "add" || action === "remove") &&
-        process.argv[4] !== undefined &&
-        process.argv[5] !== undefined &&
-        process.argv.length === 6
-      ) {
-        const target = resolveProfileTarget(process.argv[4], resolutionOptions);
-        const result = yield* action === "add"
-          ? profiles.addExtension(target, repositoryRoot, process.argv[5])
-          : profiles.removeExtension(target, repositoryRoot, process.argv[5]);
-        if (!result.changed) {
-          console.log(
-            `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
-          );
-          return;
-        }
+    case "ExtensionsAdd":
+    case "ExtensionsRemove": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const result = yield* command._tag === "ExtensionsAdd"
+        ? profiles.addExtension(target, repositoryRoot, command.id)
+        : profiles.removeExtension(target, repositoryRoot, command.id);
+      if (!result.changed) {
         console.log(
-          `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`,
+          `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
         );
-        console.log("reopen the Profile or restart its Ziggy process to apply the change");
         return;
       }
-      return yield* fail(`usage:
-  ziggy extensions list
-  ziggy extensions show <id>
-  ziggy extensions add <name|path> <id>
-  ziggy extensions remove <name|path> <id>`);
+      console.log(
+        `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`,
+      );
+      console.log("reopen the Profile or restart its Ziggy process to apply the change");
+      return;
     }
-    case "auth": {
-      const argument = process.argv[3];
-      const providerId = process.argv[4];
-      const authArguments = process.argv.slice(5);
-      if (argument === undefined) {
-        return yield* fail("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
+    case "AuthStatus": {
+      const statuses = yield* auth.status(resolveProfileTarget(command.target, resolutionOptions));
+      const sorted = [...statuses].sort(
+        (left, right) =>
+          Number(right.configured !== undefined) - Number(left.configured !== undefined) ||
+          left.id.localeCompare(right.id),
+      );
+      for (const provider of sorted) {
+        const configured =
+          provider.configured === undefined
+            ? "not configured"
+            : `configured: ${provider.configured.type}${provider.configured.source === undefined ? "" : ` via ${provider.configured.source}`}`;
+        const loginTypes = [
+          ...(provider.supportsApiKeyLogin ? ["api_key"] : []),
+          ...(provider.supportsOauth ? ["oauth"] : []),
+        ];
+        const login =
+          loginTypes.length === 0 && provider.ambientOnly
+            ? "ambient env only"
+            : loginTypes.join(", ");
+        console.log(`${provider.id}\t${configured}\tlogin: ${login}`);
       }
-      if (providerId === undefined && authArguments.length > 0) {
-        return yield* fail("usage: ziggy auth <name|path> [provider] [--type api_key|oauth]");
-      }
-
-      const target = resolveProfileTarget(argument, resolutionOptions);
-      if (providerId === undefined) {
-        const statuses = yield* auth.status(target);
-        const sorted = [...statuses].sort(
-          (left, right) =>
-            Number(right.configured !== undefined) - Number(left.configured !== undefined) ||
-            left.id.localeCompare(right.id),
-        );
-        for (const provider of sorted) {
-          const configured =
-            provider.configured === undefined
-              ? "not configured"
-              : `configured: ${provider.configured.type}${provider.configured.source === undefined ? "" : ` via ${provider.configured.source}`}`;
-          const loginTypes = [
-            ...(provider.supportsApiKeyLogin ? ["api_key"] : []),
-            ...(provider.supportsOauth ? ["oauth"] : []),
-          ];
-          const login =
-            loginTypes.length === 0 && provider.ambientOnly
-              ? "ambient env only"
-              : loginTypes.join(", ");
-          console.log(`${provider.id}\t${configured}\tlogin: ${login}`);
-        }
-        return;
-      }
-
-      let type: "api_key" | "oauth" | undefined;
-      if (authArguments.length > 0) {
-        if (
-          authArguments.length !== 2 ||
-          authArguments[0] !== "--type" ||
-          (authArguments[1] !== "api_key" && authArguments[1] !== "oauth")
-        ) {
-          return yield* fail("usage: ziggy auth <name|path> <provider> [--type api_key|oauth]");
-        }
-        type = authArguments[1];
-      }
-
-      const result = yield* auth.login(target, providerId, type, terminalAuthInteraction());
+      return;
+    }
+    case "AuthLogin": {
+      const result = yield* auth.login(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.providerId,
+        command.type,
+        terminalAuthInteraction(),
+      );
       console.log(
         `logged in to ${result.providerId} (${result.type})${result.source === undefined ? "" : ` via ${result.source}`}`,
       );
       return;
     }
-    case "run": {
-      const runArguments = process.argv.slice(3);
-      const continueSession = runArguments[0] === "-c" || runArguments[0] === "--continue";
-      const argument = runArguments[continueSession ? 1 : 0];
-      const prompt = runArguments.slice(continueSession ? 2 : 1).join(" ");
-      if (argument === undefined || prompt.trim().length === 0) {
-        return yield* fail("usage: ziggy run [-c] <name|path> <prompt...>");
-      }
-
+    case "Run": {
       const exitCode = yield* agent.runOnce(
-        resolveProfileTarget(argument, resolutionOptions),
-        prompt,
-        continueSession,
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.prompt,
+        command.continueSession,
         { kind: "local" },
       );
       process.exitCode = exitCode;
       return;
     }
-    case "automations": {
-      const action = process.argv[3];
-      const argument = process.argv[4];
-      if (action === "status" && argument !== undefined && process.argv.length === 5) {
-        const status = yield* automationScheduler.status(
-          resolveProfileTarget(argument, resolutionOptions),
-        );
-        console.log(renderAutomationStatus(status));
-        return;
-      }
-      if (action === "runs" && argument !== undefined && process.argv.length <= 6) {
-        const automationId =
-          process.argv[5] === undefined ? undefined : yield* validateAutomationId(process.argv[5]);
-        const runs = yield* automationScheduler.runs(
-          resolveProfileTarget(argument, resolutionOptions),
-          automationId,
-        );
-        console.log(renderAutomationRuns(runs, yield* Clock.currentTimeMillis));
-        return;
-      }
-      return yield* fail(
-        `usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]`,
+    case "AutomationsStatus": {
+      const status = yield* automationScheduler.status(
+        resolveProfileTarget(command.target, resolutionOptions),
       );
+      console.log(renderAutomationStatus(status));
+      return;
     }
-    case "wake": {
-      const argument = process.argv[3];
-      const automationId = process.argv[4];
-      if (argument === undefined || automationId === undefined || process.argv.length !== 5) {
-        return yield* fail("usage: ziggy wake <name|path> <automation-id>");
-      }
-
-      const outcome = yield* automations.run(
-        resolveProfileTarget(argument, resolutionOptions),
+    case "AutomationsRuns": {
+      const automationId =
+        command.automationId === undefined
+          ? undefined
+          : yield* validateAutomationId(command.automationId);
+      const runs = yield* automationScheduler.runs(
+        resolveProfileTarget(command.target, resolutionOptions),
         automationId,
+      );
+      console.log(renderAutomationRuns(runs, yield* Clock.currentTimeMillis));
+      return;
+    }
+    case "Wake": {
+      const outcome = yield* automations.run(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.automationId,
         { kind: "manual-force" },
       );
       const rendered = renderAutomationOutcome(outcome);
@@ -320,35 +249,26 @@ const program = Effect.gen(function* () {
       process.exitCode = rendered.exitCode;
       return;
     }
-    case "gateway": {
-      const argument = process.argv[3];
-      if (argument === undefined || process.argv.length !== 4) {
-        return yield* fail("usage: ziggy gateway <name|path>");
-      }
-
-      return yield* residentGateway.run(resolveProfileTarget(argument, resolutionOptions));
-    }
-    case "discord":
+    case "Gateway":
+      return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
+    case "UnsupportedResidentAlias":
       return yield* fail(
-        "ziggy discord is no longer a resident command; use: ziggy gateway <name|path>",
+        `ziggy ${command.name} is no longer a resident command; use: ziggy gateway <name|path>`,
       );
-    case "slack":
-      return yield* fail(
-        "ziggy slack is no longer a resident command; use: ziggy gateway <name|path>",
+    case "Tui":
+      process.exitCode = yield* agent.openTui(
+        resolveProfileTarget(command.target, resolutionOptions),
+        { kind: "local" },
       );
-    case undefined:
-      process.exitCode = yield* agent.openTui(resolveProfileTarget(".", resolutionOptions), {
-        kind: "local",
-      });
       return;
-    default:
-      process.exitCode = yield* agent.openTui(resolveProfileTarget(command, resolutionOptions), {
-        kind: "local",
-      });
-      return;
+    case "ModelsStatus":
+    case "ModelsList":
+    case "ModelsSet":
+      return yield* fail("model commands are unavailable");
   }
 }).pipe(
   Effect.catchTags({
+    CliInputInvalid: (failure) => fail(failure.message),
     ProfileTargetNotDirectory: (failure) =>
       fail(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>
@@ -416,14 +336,11 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(command === "gateway"
+  ...(process.argv[2] === "gateway"
     ? {
         teardown: (exit, onExit) => {
-          if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
-            onExit(0);
-          } else {
-            Runtime.defaultTeardown(exit, onExit);
-          }
+          if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);
+          else Runtime.defaultTeardown(exit, onExit);
         },
       }
     : {}),

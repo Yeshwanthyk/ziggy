@@ -1,0 +1,65 @@
+import { Schema } from "effect";
+
+export type HelpTopic =
+  | "help"
+  | "version"
+  | "init"
+  | "profiles"
+  | "skills"
+  | "extensions"
+  | "auth"
+  | "models"
+  | "run"
+  | "automations"
+  | "wake"
+  | "gateway"
+  | "tui";
+
+export type CliCommand =
+  | { readonly _tag: "Help"; readonly topic?: HelpTopic }
+  | { readonly _tag: "Version" }
+  | { readonly _tag: "Init"; readonly target: string }
+  | { readonly _tag: "Profiles" }
+  | { readonly _tag: "SkillsList"; readonly target: string }
+  | {
+      readonly _tag: "SkillsAdd";
+      readonly target: string;
+      readonly source: string;
+      readonly force: boolean;
+    }
+  | { readonly _tag: "ExtensionsList" }
+  | { readonly _tag: "ExtensionsShow"; readonly id: string }
+  | { readonly _tag: "ExtensionsAdd"; readonly target: string; readonly id: string }
+  | { readonly _tag: "ExtensionsRemove"; readonly target: string; readonly id: string }
+  | { readonly _tag: "AuthStatus"; readonly target: string }
+  | {
+      readonly _tag: "AuthLogin";
+      readonly target: string;
+      readonly providerId: string;
+      readonly type?: "api_key" | "oauth";
+    }
+  | { readonly _tag: "ModelsStatus"; readonly target: string }
+  | { readonly _tag: "ModelsList"; readonly target: string; readonly providerId?: string }
+  | {
+      readonly _tag: "ModelsSet";
+      readonly target: string;
+      readonly providerId: string;
+      readonly modelId: string;
+      readonly thinking?: string;
+    }
+  | {
+      readonly _tag: "Run";
+      readonly target: string;
+      readonly prompt: string;
+      readonly continueSession: boolean;
+    }
+  | { readonly _tag: "AutomationsStatus"; readonly target: string }
+  | { readonly _tag: "AutomationsRuns"; readonly target: string; readonly automationId?: string }
+  | { readonly _tag: "Wake"; readonly target: string; readonly automationId: string }
+  | { readonly _tag: "Gateway"; readonly target: string }
+  | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
+  | { readonly _tag: "Tui"; readonly target: string };
+
+export class CliInputInvalid extends Schema.TaggedErrorClass<CliInputInvalid>()("CliInputInvalid", {
+  message: Schema.String,
+}) {}
