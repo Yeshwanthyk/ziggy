@@ -65,10 +65,16 @@ const harness = (
 ) => {
   const agent: ZiggyAgentShape = {
     runOnce: () => Effect.succeed(0),
-    runSpecialist: (_target, agentId, task) =>
+    runSpecialist: (_target, agentId, task, context) =>
       Effect.sync(() => {
-        events.push(`specialist:${agentId}:${task}`);
-      }).pipe(Effect.andThen(options.specialistEffect ?? Effect.succeed("local reply"))),
+        events.push(`specialist:${agentId}:${task}:${context.sessionDirectory}`);
+      }).pipe(
+        Effect.andThen(options.specialistEffect ?? Effect.succeed("local reply")),
+        Effect.map((answer) => ({
+          answer,
+          session: { id: "specialist", file: join(context.sessionDirectory, "specialist.jsonl") },
+        })),
+      ),
     openTui: () => Effect.succeed(0),
     openChat: (target, context, sessionPath, mode) =>
       Effect.sync(() => {
@@ -242,7 +248,13 @@ describe("automation run", () => {
       delivery: { kind: "resolved", targets: [] },
     });
     expect(events).toEqual([
-      "specialist:research-helper:Write the daily note.",
+      `specialist:research-helper:Write the daily note.:${join(
+        target.path,
+        "sessions",
+        "automations",
+        "daily-note",
+        "manual:00000000-0000-4000-8000-000000000001",
+      )}`,
       "reply:local reply",
     ]);
   });
@@ -283,7 +295,15 @@ describe("automation run", () => {
         .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
     );
     expect(result).toBe(failure);
-    expect(events).toEqual(["specialist:missing:Write the daily note."]);
+    expect(events).toEqual([
+      `specialist:missing:Write the daily note.:${join(
+        target.path,
+        "sessions",
+        "automations",
+        "daily-note",
+        "manual:00000000-0000-4000-8000-000000000001",
+      )}`,
+    ]);
     expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
       state: "failed",
       localCompleted: false,

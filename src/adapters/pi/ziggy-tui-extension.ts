@@ -7,7 +7,7 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { parseLeadingProfileAgentMention, type ProfileAgent } from "../../domain/profile";
+import { prepareProfileAgentPrompt, type ProfileAgent } from "../../domain/profile";
 
 interface TextComponent {
   invalidate(): void;
@@ -140,10 +140,20 @@ const createAgentAutocomplete = (
   },
 });
 
+export const createProfileAgentGuidanceExtension = (agents: ReadonlyArray<ProfileAgent>) =>
+  ({
+    name: "ziggy-profile-agents",
+    hidden: true,
+    factory: (pi: ZiggyTuiApi) => {
+      pi.on("before_agent_start", (event) => ({
+        systemPrompt: `${event.systemPrompt}\n\n${agentPromptGuidance(agents)}`,
+      }));
+    },
+  }) satisfies InlineExtension;
+
 export const createZiggyTuiExtension = (
   profilePath: string,
   agents: ReadonlyArray<ProfileAgent> = [],
-  enableSpecialists = true,
 ) =>
   ({
     name: "ziggy-tui",
@@ -162,7 +172,7 @@ export const createZiggyTuiExtension = (
 
         context.ui.setHeader(() => textComponent(`Ziggy · ${profileName}`));
         context.ui.setFooter(() => textComponent(`Profile · ${profilePath}`));
-        if (enableSpecialists) {
+        if (agents.length > 0) {
           context.ui.addAutocompleteProvider((current) => createAgentAutocomplete(agents, current));
         }
         setTitle(context);
@@ -175,36 +185,23 @@ export const createZiggyTuiExtension = (
       });
 
       pi.on("input", (event, context) => {
-        if (!enableSpecialists || context.mode !== "tui" || event.source !== "interactive") {
+        if (context.mode !== "tui" || event.source !== "interactive") {
           return { action: "continue" };
         }
-        const mention = parseLeadingProfileAgentMention(event.text);
-        if (mention.kind === "untagged") return { action: "continue" };
-        if (mention.kind === "invalid") {
-          context.ui.notify(`Invalid Profile agent mention: ${mention.message}`, "error");
-          return { action: "handled" };
-        }
-        const agent = agents.find((candidate) => candidate.id === mention.agentId);
-        if (agent === undefined) {
+        const prepared = prepareProfileAgentPrompt(event.text, agents);
+        if (!prepared.ok) {
           context.ui.notify(
-            `Unknown Profile agent "${mention.agentId}". Use /agents to see available agents.`,
+            `Invalid Profile agent mention: ${prepared.message}. Use /agents to see available agents.`,
             "error",
           );
           return { action: "handled" };
         }
-        return {
-          action: "transform",
-          text: `${event.text}\n\n[Ziggy dispatch guidance: call agent_run for the named agent "${agent.id}" with the user's task, then use the result to answer. This is model-guided; @ syntax does not bypass the core model.]`,
-        };
+        return prepared.text === event.text
+          ? { action: "continue" }
+          : { action: "transform", text: prepared.text };
       });
 
-      pi.on("before_agent_start", (event, context) =>
-        context.mode === "tui" && enableSpecialists
-          ? { systemPrompt: `${event.systemPrompt}\n\n${agentPromptGuidance(agents)}` }
-          : { systemPrompt: event.systemPrompt },
-      );
-
-      if (enableSpecialists) {
+      {
         pi.registerCommand("agents", {
           description: "List the specialists owned by this Profile",
           handler: async (_args, context) => {

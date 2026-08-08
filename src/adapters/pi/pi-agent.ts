@@ -22,7 +22,10 @@ import {
   ProfileNotInitialized,
   ProviderCallError,
   ProviderConfigError,
+  SpecialistAgentNotFound,
   type OpenTuiError,
+  type ProfileAgentRunContext,
+  type ProfileAgentRunResult,
   type ProfileSpecialistError,
   type ZiggyAgentError,
 } from "../../domain/agent";
@@ -35,23 +38,36 @@ import {
   type MemoryDocument,
   type MemoryScope,
 } from "../../domain/memory";
-import type { ProfileAgent, ProfileTarget } from "../../domain/profile";
+import {
+  prepareProfileAgentPrompt,
+  ProfileAgentMentionInvalid,
+  type ProfileAgent,
+  type ProfileTarget,
+} from "../../domain/profile";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources, type PiResources } from "./resources";
 import {
   createAgentDiscussTool,
   createAgentRunTool,
   makeSpecialistRunner,
+  selectSpecialist,
+  specialistRuntime,
+  useSpecialistChild,
   type SpecialistParent,
 } from "./specialist";
-import { createZiggyTuiExtension } from "./ziggy-tui-extension";
+import { sessionReference } from "./session-lineage";
+import {
+  createProfileAgentGuidanceExtension,
+  createZiggyTuiExtension,
+} from "./ziggy-tui-extension";
 
 export interface PiAgentShape {
   readonly runSpecialist: (
     target: ProfileTarget,
     agentId: string,
     task: string,
-  ) => Effect.Effect<string, ProfileSpecialistError>;
+    context: ProfileAgentRunContext,
+  ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
   readonly askOnce: (
     target: ProfileTarget,
     prompt: string,
@@ -486,6 +502,16 @@ export const askOnce = (
       sessionManager,
       context,
     );
+    const prepared = prepareProfileAgentPrompt(prompt, runtime.agents);
+    if (!prepared.ok) {
+      yield* piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+        Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+      );
+      return yield* new ProfileAgentMentionInvalid({
+        profilePath: target.path,
+        message: prepared.message,
+      });
+    }
 
     if (runtime.modelFallbackMessage !== undefined) {
       return yield* new ProviderConfigError({
@@ -505,7 +531,7 @@ export const askOnce = (
     const exitCode = yield* piPromise(target.path, "call provider", () =>
       runPrintMode(runtime, {
         mode: "text",
-        initialMessage: prompt,
+        initialMessage: prepared.text,
       }).finally(() => {
         console.error = originalConsoleError;
       }),
@@ -524,6 +550,7 @@ export const askOnce = (
 
 interface ProfileRuntime extends AgentSessionRuntime {
   readonly resources: PiResources;
+  readonly agents: ReadonlyArray<ProfileAgent>;
 }
 
 const createProfileRuntime = (
@@ -532,14 +559,14 @@ const createProfileRuntime = (
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-  tuiAgents: ReadonlyArray<ProfileAgent> = [],
-  includeTuiSpecialists = false,
+  admittedAgents?: ReadonlyArray<ProfileAgent>,
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
     if (!paths.ok) {
       return yield* paths.error;
     }
+    const agents = admittedAgents ?? (yield* discoverProfileAgents(profilePath));
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
     const runtimeRef: { current?: AgentSessionRuntime } = {};
@@ -564,27 +591,29 @@ const createProfileRuntime = (
               noThemes: true,
               noContextFiles: true,
               extensionFactories: [
-                createZiggyTuiExtension(profilePath, tuiAgents, includeTuiSpecialists),
+                createZiggyTuiExtension(profilePath, agents),
+                ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                 createProfileMemoryExtension(profilePath, paths.documents),
               ],
             },
           });
-          const specialistRunner = includeTuiSpecialists
-            ? makeSpecialistRunner({
-                profilePath,
-                agents: tuiAgents,
-                parent: () => {
-                  const current = runtimeRef.current;
-                  if (current === undefined) return undefined;
-                  const parent: SpecialistParent = {
-                    session: current.session,
-                    services,
-                    resources,
-                  };
-                  return parent;
-                },
-              })
-            : undefined;
+          const specialistRunner =
+            agents.length === 0
+              ? undefined
+              : makeSpecialistRunner({
+                  profilePath,
+                  agents,
+                  parent: () => {
+                    const current = runtimeRef.current;
+                    if (current === undefined) return undefined;
+                    const parent: SpecialistParent = {
+                      session: current.session,
+                      services,
+                      resources,
+                    };
+                    return parent;
+                  },
+                });
           const customTools: Array<ToolDefinition> = [
             createMemoryWriteTool(profilePath, context),
             ...(specialistRunner === undefined
@@ -613,7 +642,7 @@ const createProfileRuntime = (
     });
     // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
     // additional resource bundle; assigning `services` would throw at runtime.
-    const profileRuntime: ProfileRuntime = Object.assign(runtime, { resources });
+    const profileRuntime: ProfileRuntime = Object.assign(runtime, { resources, agents });
     runtimeRef.current = profileRuntime;
     return profileRuntime;
   });
@@ -760,7 +789,17 @@ export const openChat = (
     );
 
     return {
-      prompt: (text) => promptForAssistantText(target.path, runtime.session, text),
+      prompt: (text) => {
+        const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+        return prepared.ok
+          ? promptForAssistantText(target.path, runtime.session, prepared.text)
+          : Effect.fail(
+              new ProfileAgentMentionInvalid({
+                profilePath: target.path,
+                message: prepared.message,
+              }),
+            );
+      },
       dispose,
     };
   });
@@ -769,42 +808,82 @@ export const runSpecialist = (
   target: ProfileTarget,
   agentId: string,
   task: string,
+  context: ProfileAgentRunContext,
   repositoryRoot: string,
-): Effect.Effect<string, ProfileSpecialistError> =>
+): Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const agents = yield* discoverProfileAgents(target.path);
-    const host = createProfileRuntime(
-      target.path,
-      repositoryRoot,
-      soulPath,
-      SessionManager.inMemory(target.path),
-      { kind: "local" },
-    );
+    if (!agents.some((agent) => agent.id === agentId)) {
+      return yield* new SpecialistAgentNotFound({
+        profilePath: target.path,
+        agentId,
+        message: `unknown Profile agent: ${agentId}`,
+      });
+    }
+    const rootManager = SessionManager.create(target.path, context.sessionDirectory);
+    const rootReference = sessionReference(rootManager);
+    if (rootReference === undefined) {
+      return yield* new ProviderConfigError({
+        profilePath: target.path,
+        operation: "create Profile agent session",
+        message: "Pi did not create a persistent Profile agent session",
+        cause: undefined,
+      });
+    }
 
-    return yield* Effect.acquireUseRelease(
-      host,
-      (runtime) => {
-        const specialistRunner = makeSpecialistRunner({
-          profilePath: target.path,
-          agents,
-          parent: () => ({
-            session: runtime.session,
-            services: runtime.services,
-            resources: runtime.resources,
-          }),
-        });
-        return specialistRunner
-          .run({ agent: agentId, prompt: task })
-          .pipe(Effect.map((result) => result.answer));
-      },
+    const selectedEnvironment = yield* Effect.acquireUseRelease(
+      createProfileRuntime(
+        target.path,
+        repositoryRoot,
+        soulPath,
+        rootManager,
+        { kind: "local" },
+        agents,
+      ),
       (runtime) =>
-        piPromise(target.path, "dispose specialist host runtime", () => runtime.dispose()).pipe(
+        selectSpecialist(
+          { profilePath: target.path, agents },
+          { agent: agentId, prompt: task },
+          runtime,
+        ).pipe(
+          Effect.map((selected) => ({
+            selected,
+            environment: { services: runtime.services, resources: runtime.resources },
+          })),
+        ),
+      (runtime) =>
+        piPromise(target.path, "dispose specialist selection runtime", () =>
+          runtime.dispose(),
+        ).pipe(
           Effect.catch((failure) =>
-            Effect.logWarning("Pi specialist host cleanup failed", { failure }),
+            Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
           ),
         ),
     );
+
+    const { selected, environment } = selectedEnvironment;
+    const result = yield* useSpecialistChild(
+      target.path,
+      specialistRuntime(
+        target.path,
+        environment,
+        selected.agent,
+        selected.model,
+        selected.thinking,
+        selected.tools,
+        rootManager,
+      ).pipe(
+        Effect.map((runtime) => ({
+          session: runtime.session,
+          reference: rootReference,
+          dispose: () => runtime.dispose(),
+        })),
+      ),
+      selected,
+      (runtime) => promptForAssistantText(target.path, runtime.session, task),
+    );
+    return { answer: result.answer, session: result.session };
   });
 
 export const openTui = (
@@ -814,7 +893,6 @@ export const openTui = (
 ): Effect.Effect<number, OpenTuiError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
-    const tuiAgents = yield* discoverProfileAgents(target.path);
     const sessionManager = createLocalSessionManager(target.path, "main");
     const runtime = yield* createProfileRuntime(
       target.path,
@@ -822,8 +900,6 @@ export const openTui = (
       soulPath,
       sessionManager,
       context,
-      tuiAgents,
-      true,
     );
 
     yield* piPromise(target.path, "open interactive mode", async () => {
@@ -837,7 +913,8 @@ export const openTui = (
 
 export const makePiAgentLive = (repositoryRoot: string) =>
   Layer.succeed(PiAgent, {
-    runSpecialist: (target, agentId, task) => runSpecialist(target, agentId, task, repositoryRoot),
+    runSpecialist: (target, agentId, task, context) =>
+      runSpecialist(target, agentId, task, context, repositoryRoot),
     askOnce: (target, prompt, continueSession, context) =>
       askOnce(target, prompt, continueSession, context, repositoryRoot),
     openTui: (target, context) => openTui(target, context, repositoryRoot),

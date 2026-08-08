@@ -1,7 +1,11 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { expect, test } from "bun:test";
 import { Effect, Predicate, Result, Schema } from "effect";
-import { parseLeadingProfileAgentMention, ProfileAgent } from "./profile";
+import {
+  parseLeadingProfileAgentMention,
+  prepareProfileAgentPrompt,
+  ProfileAgent,
+} from "./profile";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent);
 
@@ -16,6 +20,33 @@ test("leading Profile agent mentions require the same literal leading position",
   });
   expect(parseLeadingProfileAgentMention("help @research-helper do the work")).toEqual({
     kind: "untagged",
+  });
+});
+
+test("leading Profile agent preparation is shared and rejects malformed or unknown ids", () => {
+  const agents = [
+    {
+      id: "research-helper",
+      version: 1 as const,
+      description: "Researches carefully",
+      body: "Use primary sources.",
+    },
+  ];
+  expect(prepareProfileAgentPrompt("plain prompt", agents)).toEqual({
+    ok: true,
+    text: "plain prompt",
+  });
+  expect(prepareProfileAgentPrompt("@research-helper do the work", agents)).toMatchObject({
+    ok: true,
+    text: expect.stringContaining('call agent_run for the named agent "research-helper"'),
+  });
+  expect(prepareProfileAgentPrompt("@missing do the work", agents)).toEqual({
+    ok: false,
+    message: "unknown Profile agent: missing",
+  });
+  expect(prepareProfileAgentPrompt("@Missing do the work", agents)).toEqual({
+    ok: false,
+    message: "a leading Profile agent mention must use lowercase kebab-case @agent-id",
   });
 });
 

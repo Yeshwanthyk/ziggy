@@ -2,9 +2,26 @@ import { Schema } from "effect";
 import type { MemoryIdInvalid } from "./memory";
 import type {
   ProfileAgentInvalid,
+  ProfileAgentMentionInvalid,
   ProfileExtensionInvalid,
   ProfileFileSystemError,
 } from "./profile";
+
+/** Read-only projection of one Pi-owned session. */
+export interface SessionReference {
+  readonly id: string;
+  readonly file: string;
+}
+
+/** Bounded Profile agent output; Pi JSONL remains the transcript authority. */
+export interface ProfileAgentRunResult {
+  readonly answer: string;
+  readonly session: SessionReference;
+}
+
+export interface ProfileAgentRunContext {
+  readonly sessionDirectory: string;
+}
 
 export class ProfileNotInitialized extends Schema.TaggedErrorClass<ProfileNotInitialized>()(
   "ProfileNotInitialized",
@@ -131,6 +148,8 @@ export type ZiggyAgentError =
   | ProviderConfigError
   | ProviderCallError
   | MemoryIdInvalid
+  | ProfileAgentInvalid
+  | ProfileAgentMentionInvalid
   | ProfileExtensionInvalid
   | ProfileFileSystemError;
 

@@ -48,6 +48,14 @@ export class ProfileAgentInvalid extends Schema.TaggedErrorClass<ProfileAgentInv
   },
 ) {}
 
+export class ProfileAgentMentionInvalid extends Schema.TaggedErrorClass<ProfileAgentMentionInvalid>()(
+  "ProfileAgentMentionInvalid",
+  {
+    profilePath: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const ProfileAgentThinking = Schema.Literals([
   "off",
@@ -104,6 +112,28 @@ export const parseLeadingProfileAgentMention = (text: string): LeadingProfileAge
     };
   }
   return { kind: "tagged", agentId: token, task };
+};
+
+export type PreparedProfileAgentPrompt =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly message: string };
+
+/** Validate and prepare the one leading mention policy used by every conversational face. */
+export const prepareProfileAgentPrompt = (
+  text: string,
+  agents: ReadonlyArray<ProfileAgent>,
+): PreparedProfileAgentPrompt => {
+  const mention = parseLeadingProfileAgentMention(text);
+  if (mention.kind === "untagged") return { ok: true, text };
+  if (mention.kind === "invalid") return { ok: false, message: mention.message };
+  const agent = agents.find((candidate) => candidate.id === mention.agentId);
+  if (agent === undefined) {
+    return { ok: false, message: `unknown Profile agent: ${mention.agentId}` };
+  }
+  return {
+    ok: true,
+    text: `${text}\n\n[Ziggy dispatch guidance: call agent_run for the named agent "${agent.id}" with the user's task, then use the result to answer. This is model-guided; @ syntax does not bypass the core model.]`,
+  };
 };
 
 export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(

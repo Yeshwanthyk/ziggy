@@ -32,10 +32,12 @@ import {
   SpecialistRunFailed,
   SpecialistThinkingUnsupported,
   SpecialistToolUnsupported,
+  type SessionReference,
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { promptForAssistantText } from "./pi-agent";
 import type { PiResources } from "./resources";
+import { createProfileAgentChildSession } from "./session-lineage";
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -90,8 +92,14 @@ const specialistUsageSchema = Type.Object({
   }),
 });
 
+const sessionReferenceSchema = Type.Object({
+  id: Type.String(),
+  file: Type.String(),
+});
+
 const specialistResultSchema = Type.Object({
   answer: Type.String(),
+  session: sessionReferenceSchema,
   agent: Type.String(),
   provider: Type.String(),
   model: Type.String(),
@@ -132,6 +140,7 @@ const discussionParticipantSchema = Type.Object({
   thinking: thinkingSchema,
   tools: Type.Array(Type.String()),
   answer: Type.String(),
+  session: sessionReferenceSchema,
   usage: specialistUsageSchema,
 });
 
@@ -180,7 +189,10 @@ export interface SpecialistRunner {
 }
 
 export interface SpecialistSelectionParent {
-  readonly session: Pick<AgentSession, "model" | "thinkingLevel" | "getAllTools">;
+  readonly session: Pick<
+    AgentSession,
+    "model" | "thinkingLevel" | "getAllTools" | "sessionManager"
+  >;
   readonly services: {
     readonly modelRuntime: {
       readonly getProvider: (providerId: string) => unknown;
@@ -213,13 +225,19 @@ const specialistFailure = (
     cause,
   });
 
-const childRuntime = (
-  options: MakeSpecialistRunnerOptions,
-  parent: SpecialistParent,
+export interface SpecialistExecutionEnvironment {
+  readonly services: AgentSessionServices;
+  readonly resources: PiResources;
+}
+
+export const specialistRuntime = (
+  profilePath: string,
+  environment: SpecialistExecutionEnvironment,
   agent: ProfileAgent,
   model: Model<Api>,
   thinking: ThinkingLevel,
   tools: ReadonlyArray<string>,
+  sessionManager: SessionManager,
 ): Effect.Effect<AgentSessionRuntime, SpecialistRunFailed> =>
   Effect.tryPromise({
     try: () =>
@@ -228,17 +246,17 @@ const childRuntime = (
           const services = await createAgentSessionServices({
             cwd,
             agentDir,
-            modelRuntime: parent.services.modelRuntime,
+            modelRuntime: environment.services.modelRuntime,
             resourceLoaderOptions: {
               systemPrompt: agent.body,
               noExtensions: true,
               noSkills: true,
-              ...(parent.resources.extensionPaths.length === 0
+              ...(environment.resources.extensionPaths.length === 0
                 ? {}
-                : { additionalExtensionPaths: [...parent.resources.extensionPaths] }),
-              ...(parent.resources.skillPaths.length === 0
+                : { additionalExtensionPaths: [...environment.resources.extensionPaths] }),
+              ...(environment.resources.skillPaths.length === 0
                 ? {}
-                : { additionalSkillPaths: [...parent.resources.skillPaths] }),
+                : { additionalSkillPaths: [...environment.resources.skillPaths] }),
               noPromptTemplates: true,
               noThemes: true,
               noContextFiles: true,
@@ -253,27 +271,60 @@ const childRuntime = (
             tools: [...tools],
             noTools: "all",
           });
-          return {
-            ...created,
-            services,
-            diagnostics: services.diagnostics,
-          };
+          return { ...created, services, diagnostics: services.diagnostics };
         },
-        {
-          cwd: options.profilePath,
-          agentDir: options.profilePath,
-          sessionManager: SessionManager.inMemory(options.profilePath),
-        },
+        { cwd: profilePath, agentDir: profilePath, sessionManager },
       ),
-    catch: (cause) => specialistFailure(options.profilePath, "create child runtime", cause),
+    catch: (cause) => specialistFailure(profilePath, "create specialist runtime", cause),
+  });
+
+const childRuntime = (
+  options: MakeSpecialistRunnerOptions,
+  parent: SpecialistParent,
+  agent: ProfileAgent,
+  model: Model<Api>,
+  thinking: ThinkingLevel,
+  tools: ReadonlyArray<string>,
+): Effect.Effect<SpecialistChildRuntime, SpecialistRunFailed> =>
+  Effect.gen(function* () {
+    const child = createProfileAgentChildSession(
+      options.profilePath,
+      parent.session.sessionManager,
+    );
+    if (child === undefined) {
+      return yield* specialistFailure(
+        options.profilePath,
+        "create child session",
+        new Error("specialist parent session is not persistent"),
+      );
+    }
+    const runtime = yield* specialistRuntime(
+      options.profilePath,
+      parent,
+      agent,
+      model,
+      thinking,
+      tools,
+      child.manager,
+    );
+    return {
+      session: runtime.session,
+      reference: child.reference,
+      dispose: () => runtime.dispose(),
+    };
   });
 
 export interface SpecialistChildRuntime {
+  readonly reference: SessionReference;
   readonly session: {
     readonly model: Model<Api> | undefined;
     readonly thinkingLevel: ThinkingLevel;
     readonly getActiveToolNames: () => ReadonlyArray<string>;
     readonly messages: ReadonlyArray<AgentMessage>;
+    readonly abort: () => Promise<void>;
+    readonly isIdle: boolean;
+    readonly prompt: AgentSession["prompt"];
+    readonly subscribe: AgentSession["subscribe"];
   };
   readonly dispose: () => Promise<void>;
 }
@@ -309,6 +360,7 @@ export const useSpecialistChild = <Runtime extends SpecialistChildRuntime, E>(
       answer(child).pipe(
         Effect.map((text) => ({
           answer: text,
+          session: child.reference,
           agent: selected.agent.id,
           provider: child.session.model?.provider ?? selected.model.provider,
           model: child.session.model?.id ?? selected.model.id,
@@ -429,6 +481,7 @@ const boundedPriorOutputs = (participants: ReadonlyArray<AgentDiscussionParticip
 
 const discussionParticipant = (result: SpecialistRunResult): AgentDiscussionParticipant => ({
   agent: result.agent,
+  session: result.session,
   provider: result.provider,
   model: result.model,
   thinking: result.thinking,
@@ -675,6 +728,7 @@ export const renderAgentRunResult = (details: SpecialistToolDetails, expanded: b
     `model: ${specialist.provider}/${specialist.model}`,
     `thinking: ${specialist.thinking}`,
     `tools: ${specialist.tools.length === 0 ? "(none)" : specialist.tools.join(", ")}`,
+    `child session: ${specialist.session.id}`,
     `usage: ${specialist.usage.input} in · ${specialist.usage.output} out · ${compactUsage(specialist.usage)}`,
     "",
     specialist.answer,
@@ -695,7 +749,7 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
   name: "agent_run",
   label: "agent_run",
   description:
-    "Run one named Profile specialist in an isolated in-memory child session. The specialist cannot use memory_write, agent_run, or agent_discuss. Use only for focused delegation; the child answer is returned here.",
+    "Run one named Profile specialist in an isolated saved child session. The specialist cannot use memory_write, agent_run, or agent_discuss. Use only for focused delegation; the child answer and session reference are returned here.",
   promptSnippet: "agent_run(agent, prompt) — delegate one focused task",
   parameters: agentRunParameters,
   executionMode: "sequential",
@@ -776,6 +830,7 @@ export const renderAgentDiscussResult = (
       `agent_discuss ← ${participants.join(", ")}`,
       `rounds: ${discussion.rounds.length}`,
       `model calls: ${calls}`,
+      `child sessions: ${discussion.rounds.flatMap((round) => round.participants.map((participant) => participant.session.id)).join(", ")}`,
       `usage: ${discussion.usage.input} in · ${discussion.usage.output} out · ${compactUsage(discussion.usage)}`,
       "",
       discussionTranscript(discussion),

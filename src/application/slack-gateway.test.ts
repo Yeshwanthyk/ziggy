@@ -98,7 +98,11 @@ describe("Slack gateway boundary", () => {
         };
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
-          runSpecialist: () => Effect.succeed("reply"),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
           openTui: () => Effect.succeed(0),
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {

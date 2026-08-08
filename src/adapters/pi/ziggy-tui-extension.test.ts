@@ -6,7 +6,10 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { createZiggyTuiExtension } from "./ziggy-tui-extension";
+import {
+  createProfileAgentGuidanceExtension,
+  createZiggyTuiExtension,
+} from "./ziggy-tui-extension";
 
 type Extension = ReturnType<typeof createZiggyTuiExtension>;
 type ExtensionApi = Parameters<Extension["factory"]>[0];
@@ -237,6 +240,13 @@ describe("Ziggy TUI extension", () => {
     extension.factory({
       on: (event, handler) => {
         if (event === "input") inputHandler = handler as typeof inputHandler;
+      },
+      registerCommand: () => undefined,
+    });
+    createProfileAgentGuidanceExtension([
+      { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
+    ]).factory({
+      on: (event, handler) => {
         if (event === "before_agent_start") beforeStart = handler as typeof beforeStart;
       },
       registerCommand: () => undefined,
@@ -275,8 +285,8 @@ describe("Ziggy TUI extension", () => {
     expect(JSON.stringify(guidance)).toMatch(/agent_discuss/);
   });
 
-  test("does not add specialist guidance outside TUI", () => {
-    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
+  test("adds the same specialist guidance outside TUI", () => {
+    const extension = createProfileAgentGuidanceExtension([
       { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
     ]);
     let beforeStart:
@@ -298,8 +308,8 @@ describe("Ziggy TUI extension", () => {
           systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
         },
         { mode: "print" },
-      ),
-    ).toEqual({ systemPrompt: "base" });
+      ).systemPrompt,
+    ).toContain("Researches carefully");
     expect(
       beforeStart(
         {
@@ -310,11 +320,11 @@ describe("Ziggy TUI extension", () => {
         },
         { mode: "print" },
       ).systemPrompt,
-    ).not.toContain("agent_discuss");
+    ).toContain("agent_discuss");
   });
 
-  test("does not register Profile specialist commands when specialist admission is disabled", () => {
-    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], false);
+  test("keeps the TUI-only agents command when a Profile has no agents", () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", []);
     const harness = createHarness();
 
     extension.factory({
@@ -322,6 +332,6 @@ describe("Ziggy TUI extension", () => {
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
 
-    expect(harness.commands).toEqual([]);
+    expect(harness.commands.map((command) => command.name)).toEqual(["agents"]);
   });
 });

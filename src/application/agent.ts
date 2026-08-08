@@ -1,6 +1,12 @@
 import { Context, Effect, Layer } from "effect";
 import { PiAgent, type ChatHandle, type ChatSessionMode } from "../adapters/pi/pi-agent";
-import type { OpenTuiError, ProfileSpecialistError, ZiggyAgentError } from "../domain/agent";
+import type {
+  OpenTuiError,
+  ProfileAgentRunContext,
+  ProfileAgentRunResult,
+  ProfileSpecialistError,
+  ZiggyAgentError,
+} from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 
@@ -27,7 +33,8 @@ export interface ZiggyAgentShape {
     target: ProfileTarget,
     agentId: string,
     task: string,
-  ) => Effect.Effect<string, ProfileSpecialistError>;
+    context: ProfileAgentRunContext,
+  ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
 }
 
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentShape>()(
@@ -52,7 +59,8 @@ export const ZiggyAgentLive = Layer.effect(
         sessionDirectory: string,
         sessionMode?: ChatSessionMode,
       ) => piAgent.openChat(target, context, sessionDirectory, sessionMode),
-      runSpecialist: (target, agentId, task) => piAgent.runSpecialist(target, agentId, task),
+      runSpecialist: (target, agentId, task, context) =>
+        piAgent.runSpecialist(target, agentId, task, context),
     };
   }),
 );

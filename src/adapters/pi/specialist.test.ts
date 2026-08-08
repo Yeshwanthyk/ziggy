@@ -5,7 +5,7 @@ import { Value } from "typebox/value";
 import { SpecialistModelUnsupported } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { Type } from "typebox";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model, ToolResultMessage } from "@earendil-works/pi-ai";
 import {
   DISCUSSION_ANSWER_MAX_CODE_POINTS,
@@ -30,8 +30,11 @@ import {
   type SpecialistRunner,
 } from "./specialist";
 
+const childSession = { id: "child-session", file: "/profile/sessions/child.jsonl" };
+
 const result: SpecialistRunResult = {
   answer: "delegated answer",
+  session: childSession,
   agent: "research-helper",
   provider: "anthropic",
   model: "claude-sonnet",
@@ -80,6 +83,7 @@ const discussionChildResult = (
   value: number,
 ): SpecialistRunResult => ({
   answer,
+  session: { id: `${agent}-session`, file: `/profile/sessions/${agent}.jsonl` },
   agent,
   provider: "test-provider",
   model: "test-model",
@@ -119,19 +123,20 @@ const failureOf = <E>(exit: Exit.Exit<unknown, E>): E => {
 type ToolInfo = ReturnType<AgentSession["getAllTools"]>[number];
 
 const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, model: Model<Api>) => {
-  const tools: ReadonlyArray<ToolInfo> = [
-    {
-      name: "read",
+  const tools: ReadonlyArray<ToolInfo> = ["read", "memory_write", "agent_run", "agent_discuss"].map(
+    (name) => ({
+      name,
       description: "",
       parameters: Type.Object({}),
       sourceInfo: { path: "", source: "", scope: "user", origin: "top-level" },
-    },
-  ];
+    }),
+  );
   const parent: SpecialistSelectionParent = {
     session: {
       model: parentModel,
       thinkingLevel: "off",
       getAllTools: () => [...tools],
+      sessionManager: SessionManager.inMemory("/profile"),
     },
     services: {
       modelRuntime: {
@@ -237,6 +242,7 @@ describe("agent_run TUI tool", () => {
         "model: anthropic/claude-sonnet",
         "thinking: high",
         "tools: read",
+        "child session: child-session",
         "usage: 12 in · 8 out · 20 tok · $0.0010",
         "",
         "delegated answer",
@@ -389,11 +395,16 @@ describe("agent_run TUI tool", () => {
     let disposals = 0;
     const model = makeModel("parent", "parent-model", false);
     const runtime: SpecialistChildRuntime = {
+      reference: childSession,
       session: {
         model,
         thinkingLevel: "off",
         getActiveToolNames: () => [],
         messages: [],
+        abort: async () => undefined,
+        isIdle: false,
+        prompt: async () => undefined,
+        subscribe: () => () => undefined,
       },
       dispose: async () => {
         disposals += 1;
