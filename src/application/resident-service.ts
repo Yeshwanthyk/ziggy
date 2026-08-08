@@ -237,7 +237,9 @@ const inspectSupervisor = (
         launchdStatusCommand(runtime.uid, definition.identity),
       );
       if (result.exitCode !== 0) {
-        return { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
+        return /Could not find service\b/u.test(result.stderr)
+          ? { state: "stopped" }
+          : { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
       }
       return /\bstate\s*=\s*running\b/u.test(result.stdout)
         ? { state: "running" }

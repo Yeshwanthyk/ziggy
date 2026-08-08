@@ -313,7 +313,7 @@ describe("gateway CLI", () => {
     const output = result.stdout.toString().trim();
     expect(output).toContain(`profile: ${target.path}`);
     expect(output).toContain("managed service: not-installed");
-    expect(output).toContain("supervisor: unknown");
+    expect(output).toContain("supervisor: stopped");
     expect(output).toContain("process: stopped\npid: -\nacquired at: -");
     expect(output).toContain("scheduler: unknown");
     expect(await exists(join(target.path, ".runtime"))).toBe(false);

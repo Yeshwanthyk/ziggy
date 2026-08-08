@@ -192,6 +192,38 @@ describe("resident service orchestration", () => {
     expect(result.ready).toBeTrue();
   });
 
+  test("treats launchd's missing-service response as a stopped supervisor", async () => {
+    const target = await profile();
+    const seen: Array<ReadonlyArray<string>> = [];
+    const service = makeResidentService(
+      gateway("stopped"),
+      scheduler(),
+      runtime(
+        target.path,
+        seen,
+        (command) =>
+          command.includes("bootout")
+            ? { exitCode: 0, stdout: "", stderr: "" }
+            : {
+                exitCode: 113,
+                stdout: "",
+                stderr:
+                  'Bad request. Could not find service "fixture" in domain for user gui: 501\n',
+              },
+        { platform: "darwin" },
+      ),
+    );
+
+    const result = await Effect.runPromise(service.stop(target));
+
+    expect(seen.map((command) => command.slice(0, 2))).toEqual([
+      ["launchctl", "bootout"],
+      ["launchctl", "print"],
+    ]);
+    expect(result.ready).toBeTrue();
+    expect(result.owner?._tag).toBe("stopped");
+  });
+
   test("status preserves process and supervisor results when other projections fail", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
