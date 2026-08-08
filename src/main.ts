@@ -5,6 +5,7 @@ import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { makePiAgentLive } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
+import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
 import {
@@ -22,6 +23,7 @@ import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SlackGatewayLive } from "./application/slack-gateway";
+import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
 import {
   resolveProfileTarget,
@@ -100,6 +102,7 @@ const program = Effect.gen(function* () {
   const doctor = yield* Doctor;
   const profileAgents = yield* ProfileAgents;
   const automationDefinitions = yield* AutomationDefinitions;
+  const setup = yield* Setup;
   const automations = yield* Automations;
   const automationScheduler = yield* AutomationScheduler;
   const residentGateway = yield* ResidentGateway;
@@ -107,17 +110,55 @@ const program = Effect.gen(function* () {
 
   switch (command._tag) {
     case "Init": {
-      const result = yield* profiles.initProfile(
-        resolveProfileTarget(command.target, resolutionOptions),
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const result = yield* setup.initialize(
+        target,
+        resolveProfilesRegistry(resolutionOptions),
+        repositoryRoot,
+        {
+          minimal: command.minimal,
+          interactive:
+            !command.nonInteractive &&
+            process.stdin.isTTY === true &&
+            process.stdout.isTTY === true,
+          ...(command.providerId === undefined ? {} : { providerId: command.providerId }),
+          ...(command.modelId === undefined ? {} : { modelId: command.modelId }),
+          ...(command.thinking === undefined ? {} : { thinking: command.thinking }),
+        },
+        terminalSetupInteraction(target.path),
       );
-      yield* profiles
-        .registerProfile(resolveProfilesRegistry(resolutionOptions), result.path)
-        .pipe(Effect.catch(() => Effect.void));
       console.log(
-        result.created
-          ? `created profile at ${result.path}`
-          : `profile already initialized at ${result.path}`,
+        result.soulCreated
+          ? `created profile at ${result.profilePath}`
+          : `profile already initialized at ${result.profilePath}`,
       );
+      if (result.createdDirectories.length > 0) {
+        console.log(`created folders: ${result.createdDirectories.join(", ")}`);
+      }
+      if (result.minimal) {
+        console.log(`next: ziggy tui ${JSON.stringify(result.profilePath)}`);
+        return;
+      }
+      if (
+        result.modelStatus?.providerId !== undefined &&
+        result.modelStatus.modelId !== undefined
+      ) {
+        console.log(
+          `model: ${result.modelStatus.providerId}/${result.modelStatus.modelId} (${result.modelStatus.thinking})`,
+        );
+      }
+      if (result.doctor !== undefined) {
+        const rendered = renderDoctor(result.doctor);
+        console.log(rendered.text);
+        if (rendered.exitCode !== 0) {
+          process.exitCode = rendered.exitCode;
+          console.error(
+            `setup incomplete; resume with: ziggy init ${JSON.stringify(result.profilePath)}`,
+          );
+          return;
+        }
+      }
+      console.log(`ready: ziggy tui ${JSON.stringify(result.profilePath)}`);
       return;
     }
     case "Profiles": {
@@ -431,6 +472,7 @@ const program = Effect.gen(function* () {
     ModelThinkingUnsupported: (failure) => fail(failure.message),
     ModelOperationFailed: (failure) => fail(failure.message),
     ModelSettingsWriteFailed: (failure) => fail(failure.message),
+    SetupIncomplete: (failure) => fail(failure.message),
     MemoryIdInvalid: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
@@ -451,6 +493,16 @@ const program = Effect.gen(function* () {
       AuthLive,
       ModelsLive,
       DoctorLive.pipe(Layer.provide(Layer.merge(AuthLive, ModelsLive))),
+      SetupLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ProfilesLive,
+            AuthLive,
+            ModelsLive,
+            DoctorLive.pipe(Layer.provide(Layer.merge(AuthLive, ModelsLive))),
+          ),
+        ),
+      ),
       ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
       GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
       DiscordGatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),

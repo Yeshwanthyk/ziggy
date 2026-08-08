@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
-import { Context, Effect, Layer, Predicate, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
+import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { discoverProfileAgents } from "../adapters/fs/profile-agents";
 import {
   gatewayConfigPresent,
@@ -47,8 +48,7 @@ const readText = (filePath: string) =>
     catch: (cause) => cause,
   });
 
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+const isMissing = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
 
 const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
@@ -181,13 +181,13 @@ const collectMemoryFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<
     if (status._tag === "Failure")
       return isMissing(status.failure) ? [] : yield* Effect.fail(status.failure);
     if (status.success.isSymbolicLink() || !status.success.isDirectory())
-      return yield* Effect.fail(new Error("invalid memory directory"));
+      return yield* Effect.fail("invalid memory directory");
     const files: string[] = [];
     for (const entry of (yield* readDirectory(directoryPath)).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       const entryPath = path.join(directoryPath, entry.name);
-      if (entry.isSymbolicLink()) return yield* Effect.fail(new Error("symlinked memory entry"));
+      if (entry.isSymbolicLink()) return yield* Effect.fail("symlinked memory entry");
       if (entry.isDirectory()) files.push(...(yield* collectMemoryFiles(entryPath)));
       else if (entry.isFile() && entry.name.endsWith(".md")) files.push(entryPath);
     }
@@ -267,13 +267,13 @@ const sessionFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<string
     if (status._tag === "Failure")
       return isMissing(status.failure) ? [] : yield* Effect.fail(status.failure);
     if (status.success.isSymbolicLink() || !status.success.isDirectory())
-      return yield* Effect.fail(new Error("invalid sessions root"));
+      return yield* Effect.fail("invalid sessions root");
     const files: string[] = [];
     for (const entry of (yield* readDirectory(directoryPath)).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       const entryPath = path.join(directoryPath, entry.name);
-      if (entry.isSymbolicLink()) return yield* Effect.fail(new Error("symlinked session entry"));
+      if (entry.isSymbolicLink()) return yield* Effect.fail("symlinked session entry");
       if (entry.isDirectory()) files.push(...(yield* sessionFiles(entryPath)));
       else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(entryPath);
     }

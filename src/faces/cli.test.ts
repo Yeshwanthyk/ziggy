@@ -26,6 +26,12 @@ describe("CLI decoding", () => {
   });
 
   test("preserves current command shapes", async () => {
+    await expect(decode(["init", "buddy"])).resolves.toEqual({
+      _tag: "Init",
+      target: "buddy",
+      minimal: false,
+      nonInteractive: false,
+    });
     await expect(decode(["run", "-c", "buddy", "hello", "there"])).resolves.toEqual({
       _tag: "Run",
       target: "buddy",
@@ -98,6 +104,43 @@ describe("CLI decoding", () => {
       _tag: "Gateway",
       target: "buddy",
     });
+  });
+
+  test("decodes guided, minimal, and explicit non-interactive init", async () => {
+    await expect(decode(["init", "buddy", "--minimal", "--non-interactive"])).resolves.toEqual({
+      _tag: "Init",
+      target: "buddy",
+      minimal: true,
+      nonInteractive: true,
+    });
+    await expect(
+      decode([
+        "init",
+        "buddy",
+        "--provider",
+        "anthropic",
+        "--model",
+        "claude",
+        "--thinking",
+        "high",
+        "--non-interactive",
+      ]),
+    ).resolves.toEqual({
+      _tag: "Init",
+      target: "buddy",
+      minimal: false,
+      nonInteractive: true,
+      providerId: "anthropic",
+      modelId: "claude",
+      thinking: "high",
+    });
+    for (const args of [
+      ["init", "buddy", "--minimal", "--model", "claude"],
+      ["init", "buddy", "--provider"],
+      ["init", "buddy", "--provider", "a", "--provider", "b"],
+    ]) {
+      expect(Exit.isFailure(await Effect.runPromiseExit(decodeCliCommand(args)))).toBeTrue();
+    }
   });
 
   test("decodes model commands and model ids containing slashes", async () => {

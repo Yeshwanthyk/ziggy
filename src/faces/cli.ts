@@ -48,6 +48,51 @@ const parseModelReference = (
   return { providerId: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 };
 
+const parseInit = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
+  const target = args[0];
+  if (!required(target)) return invalid("usage: ziggy init <name|path> [options]");
+  let minimal = false;
+  let nonInteractive = false;
+  let providerId: string | undefined;
+  let modelId: string | undefined;
+  let thinking: string | undefined;
+  const seen = new Set<string>();
+  for (let index = 1; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag === "--minimal" || flag === "--non-interactive") {
+      if (seen.has(flag)) return invalid(`duplicate init option ${flag}`);
+      seen.add(flag);
+      if (flag === "--minimal") minimal = true;
+      else nonInteractive = true;
+      continue;
+    }
+    if (flag === "--provider" || flag === "--model" || flag === "--thinking") {
+      if (seen.has(flag)) return invalid(`duplicate init option ${flag}`);
+      const value = args[index + 1];
+      if (!required(value) || value.startsWith("--")) return invalid(`missing value for ${flag}`);
+      seen.add(flag);
+      index += 1;
+      if (flag === "--provider") providerId = value;
+      else if (flag === "--model") modelId = value;
+      else thinking = value;
+      continue;
+    }
+    return invalid(`unknown init option ${flag ?? ""}`);
+  }
+  if (minimal && (providerId !== undefined || modelId !== undefined || thinking !== undefined)) {
+    return invalid("--minimal cannot be combined with provider, model, or thinking setup");
+  }
+  return {
+    _tag: "Init",
+    target,
+    minimal,
+    nonInteractive,
+    ...(providerId === undefined ? {} : { providerId }),
+    ...(modelId === undefined ? {} : { modelId }),
+    ...(thinking === undefined ? {} : { thinking }),
+  };
+};
+
 const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
   const [word, ...rest] = args;
   if (word === undefined) return { _tag: "Tui", target: "." };
@@ -70,12 +115,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return { _tag: "Tui", target: rest[0] ?? "." };
   }
 
-  if (word === "init") {
-    if (rest.length !== 1 || !required(rest[0])) {
-      return invalid("usage: ziggy init <name|path>");
-    }
-    return { _tag: "Init", target: rest[0] };
-  }
+  if (word === "init") return parseInit(rest);
 
   if (word === "profiles") {
     if (rest.length !== 0) return invalid("usage: ziggy profiles");
@@ -296,7 +336,7 @@ const generalHelp = `Usage:
   ziggy [<name|path>]
   ziggy tui [<name|path>]
   ziggy run [-c] <name|path> <prompt...>
-  ziggy init <name|path>
+  ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]
   ziggy profiles
   ziggy auth <name|path> [provider] [--type api_key|oauth]
   ziggy models status <name|path>
@@ -318,7 +358,7 @@ const generalHelp = `Usage:
 const topicHelp: Record<HelpTopic, string> = {
   help: "usage: ziggy help [command]",
   version: "usage: ziggy version",
-  init: "usage: ziggy init <name|path>",
+  init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
   profiles: "usage: ziggy profiles",
   skills:
     "usage:\n  ziggy skills list <name|path>\n  ziggy skills add <name|path> <id|path> [--force]",

@@ -22,7 +22,15 @@ export type HelpTopic =
 export type CliCommand =
   | { readonly _tag: "Help"; readonly topic?: HelpTopic }
   | { readonly _tag: "Version" }
-  | { readonly _tag: "Init"; readonly target: string }
+  | {
+      readonly _tag: "Init";
+      readonly target: string;
+      readonly minimal: boolean;
+      readonly nonInteractive: boolean;
+      readonly providerId?: string;
+      readonly modelId?: string;
+      readonly thinking?: string;
+    }
   | { readonly _tag: "Profiles" }
   | { readonly _tag: "SkillsList"; readonly target: string }
   | {

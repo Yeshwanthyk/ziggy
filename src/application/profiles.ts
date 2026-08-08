@@ -35,6 +35,11 @@ import {
 export interface InitializedProfile {
   readonly path: string;
   readonly created: boolean;
+  readonly createdDirectories: ReadonlyArray<"agents" | "automations">;
+}
+
+export interface InitProfileOptions {
+  readonly createStarterDirectories?: boolean;
 }
 
 export interface ProfileListing {
@@ -81,7 +86,10 @@ export type ProfileError =
   | ProfileExtensionInvalid;
 
 export interface ProfilesShape {
-  readonly initProfile: (target: ProfileTarget) => Effect.Effect<InitializedProfile, ProfileError>;
+  readonly initProfile: (
+    target: ProfileTarget,
+    options?: InitProfileOptions,
+  ) => Effect.Effect<InitializedProfile, ProfileError>;
   readonly registerProfile: (
     registryPath: string,
     profilePath: string,
@@ -287,11 +295,42 @@ const readRegistry = (registryPath: string) =>
     ),
   );
 
-const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, ProfileError> =>
+const ensureStarterDirectory = (
+  targetPath: string,
+  name: "agents" | "automations",
+): Effect.Effect<boolean, ProfileFileSystemError> => {
+  const directoryPath = path.join(targetPath, name);
+  return lstatPath(directoryPath).pipe(
+    Effect.flatMap((status) =>
+      status.isDirectory() && !status.isSymbolicLink()
+        ? Effect.succeed(false)
+        : Effect.fail(
+            fileSystemError(
+              "validate directory",
+              directoryPath,
+              `${directoryPath} must be a regular non-symlink directory`,
+            ),
+          ),
+    ),
+    Effect.catchIf(
+      (failure) => failure.code === "ENOENT",
+      () =>
+        Effect.tryPromise({
+          try: () => mkdir(directoryPath),
+          catch: (cause) => fileSystemError("create directory", directoryPath, cause),
+        }).pipe(Effect.as(true)),
+    ),
+  );
+};
+
+const initProfile = (
+  target: ProfileTarget,
+  options: InitProfileOptions = {},
+): Effect.Effect<InitializedProfile, ProfileError> =>
   Effect.gen(function* () {
     const targetStatus = yield* statPath(target.path).pipe(
       Effect.catchIf(
-        (error) => error.code === "ENOENT",
+        (failure) => failure.code === "ENOENT",
         () => Effect.void,
       ),
     );
@@ -308,16 +347,33 @@ const initProfile = (target: ProfileTarget): Effect.Effect<InitializedProfile, P
     }
 
     const soulPath = path.join(target.path, "SOUL.md");
-    if (yield* pathExists(soulPath)) {
-      return { path: target.path, created: false };
+    const soulStatus = yield* lstatPath(soulPath).pipe(
+      Effect.catchIf(
+        (failure) => failure.code === "ENOENT",
+        () => Effect.void,
+      ),
+    );
+    if (soulStatus !== undefined && (!soulStatus.isFile() || soulStatus.isSymbolicLink())) {
+      return yield* new ProfileTargetNotDirectory({ path: soulPath });
     }
 
-    yield* Effect.tryPromise({
-      try: () => writeFile(soulPath, soulTemplate(target.name), { flag: "wx" }),
-      catch: (cause) => fileSystemError("write", soulPath, cause),
-    });
+    let created = false;
+    if (soulStatus === undefined) {
+      yield* Effect.tryPromise({
+        try: () => writeFile(soulPath, soulTemplate(target.name), { flag: "wx" }),
+        catch: (cause) => fileSystemError("write", soulPath, cause),
+      });
+      created = true;
+    }
 
-    return { path: target.path, created: true };
+    const createdDirectories: Array<"agents" | "automations"> = [];
+    if (options.createStarterDirectories === true) {
+      for (const name of ["agents", "automations"] as const) {
+        if (yield* ensureStarterDirectory(target.path, name)) createdDirectories.push(name);
+      }
+    }
+
+    return { path: target.path, created, createdDirectories };
   });
 
 const registerProfile = (
