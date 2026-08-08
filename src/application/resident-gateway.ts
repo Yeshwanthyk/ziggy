@@ -95,9 +95,9 @@ export const makeResidentGateway = (
       const config = yield* runtime.loadConfig(target);
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* runtime.acquireOwner(target);
+          const owner = yield* runtime.acquireOwner(target);
           const branches: Array<Effect.Effect<never, AutomationSchedulerError>> = [
-            scheduler.run(target),
+            scheduler.run(target, owner),
           ];
           if (config.telegram !== undefined)
             branches.push(

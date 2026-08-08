@@ -273,14 +273,18 @@ export const makeAutomations = (
         if (admission === "skipped-busy") return { kind: "skipped-busy" };
       }
       const fingerprint = trigger.kind === "scheduled" ? trigger.scheduleFingerprint : null;
-      yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint);
+      const owner =
+        trigger.kind === "scheduled"
+          ? { kind: "resident" as const, id: trigger.residentOwnerId }
+          : undefined;
+      yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint, owner);
 
       const finish = (
         terminal: Omit<RunTerminal, "atMs">,
         targets: ReadonlyArray<AutomationTargetOutcome> = [],
       ) =>
         Effect.flatMap(runtime.now, (atMs) =>
-          runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets),
+          runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets, owner),
         );
 
       const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {

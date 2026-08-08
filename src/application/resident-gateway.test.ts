@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem and process state */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
@@ -61,7 +61,12 @@ const runtime = (config: ResidentGatewayConfig, events: Array<string>): Resident
     Effect.acquireRelease(
       Effect.sync(() => {
         events.push("owner:enter");
-        return { path: "/owner", ownerId: "owner" };
+        return {
+          path: "/owner",
+          ownerId: "owner",
+          pid: 4242,
+          acquiredAt: "2026-01-01T00:00:00.000Z",
+        };
       }),
       () => Effect.sync(() => events.push("owner:exit")),
     ),
@@ -304,6 +309,35 @@ describe("gateway CLI", () => {
       ].join("\n"),
     );
     expect(await exists(join(target.path, ".runtime"))).toBe(false);
+  });
+
+  test("a hard crash leaves only a stale projection and the next serve replaces it", async () => {
+    const target = await profile();
+    const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+    const spawn = () =>
+      Bun.spawn([process.execPath, "src/main.ts", "serve", target.path], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    const first = spawn();
+    for (let attempt = 0; attempt < 200 && !(await exists(lockPath)); attempt += 1)
+      await Bun.sleep(10);
+    const firstProjection = await readFile(lockPath, "utf8");
+    first.kill("SIGKILL");
+    await first.exited;
+    expect(await exists(lockPath)).toBe(true);
+
+    const second = spawn();
+    let secondProjection = firstProjection;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      secondProjection = await readFile(lockPath, "utf8");
+      if (secondProjection !== firstProjection) break;
+      await Bun.sleep(10);
+    }
+    expect(secondProjection).not.toBe(firstProjection);
+    second.kill("SIGINT");
+    expect(await second.exited).toBe(0);
+    expect(await exists(lockPath)).toBe(false);
   });
 
   test("interrupt-only serve and gateway shutdowns exit zero and release ownership", async () => {

@@ -8,6 +8,7 @@ import { Deferred, Effect, Exit, Fiber, Option } from "effect";
 import {
   automationRunStore,
   commitScheduleTick,
+  initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
   recoverAutomationRuns,
@@ -238,6 +239,7 @@ describe("automation run", () => {
     });
     const deadStore = makeAutomationRunStore(child.pid);
     await child.exited;
+    await Effect.runPromise(deadStore.recover(target.path, 99));
     const orphanId = "manual:00000000-0000-4000-8000-000000000002";
     await Effect.runPromise(deadStore.admitManual(target.path, "daily-note", orphanId, 100));
     await Effect.runPromise(deadStore.start(target.path, orphanId, 110, null));
@@ -364,23 +366,34 @@ describe("automation run", () => {
       definitionObservedAtMs: 0,
       definitionError: null,
     };
+    await Effect.runPromise(initializeAutomationDatabase(target.path));
     await Effect.runPromise(
-      commitScheduleTick(target.path, 0, [{ expected: null, next: initial }]),
+      commitScheduleTick(
+        target.path,
+        0,
+        [{ expected: null, next: initial }],
+        "00000000-0000-4000-8000-000000000001",
+      ),
     );
     await Effect.runPromise(
-      commitScheduleTick(target.path, 1_000, [
-        {
-          expected: initial,
-          next: { ...initial, nextScheduledAtMs: 2_000, definitionObservedAtMs: 1_000 },
-          occurrence: {
-            kind: "due",
-            runId: "scheduled:daily-note:1970-01-01T00:00:01.000Z",
-            scheduledForMs: 1_000,
-            missedThroughMs: null,
-            scheduleFingerprint: fingerprint,
+      commitScheduleTick(
+        target.path,
+        1_000,
+        [
+          {
+            expected: initial,
+            next: { ...initial, nextScheduledAtMs: 2_000, definitionObservedAtMs: 1_000 },
+            occurrence: {
+              kind: "due",
+              runId: "scheduled:daily-note:1970-01-01T00:00:01.000Z",
+              scheduledForMs: 1_000,
+              missedThroughMs: null,
+              scheduleFingerprint: fingerprint,
+            },
           },
-        },
-      ]),
+        ],
+        "00000000-0000-4000-8000-000000000001",
+      ),
     );
     expect(
       await Effect.runPromise(
@@ -388,6 +401,7 @@ describe("automation run", () => {
           kind: "scheduled",
           scheduledFor: "1970-01-01T00:00:01.000Z",
           scheduleFingerprint: fingerprint,
+          residentOwnerId: "00000000-0000-4000-8000-000000000001",
         }),
       ),
     ).toEqual({ kind: "declined", reason: "gate-nonzero", exitCode: 1 });

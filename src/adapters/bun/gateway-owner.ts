@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { Database } from "bun:sqlite";
 import { Effect, Result, Schema, Scope } from "effect";
 import { fileSystemCauseDetails } from "../fs/cause";
 import { GatewayOwnerError, type GatewayOwnerStatus } from "../../domain/gateway";
@@ -31,10 +32,18 @@ export const decodeGatewayOwnerRecordJson = Schema.decodeUnknownEffect(
   { onExcessProperty: "error" },
 );
 
+const leaseAuthority = Symbol("ziggy/GatewayLeaseAuthority");
 export interface GatewayOwnerHandle {
   readonly path: string;
   readonly ownerId: string;
+  readonly pid: number;
+  readonly acquiredAt: string;
+  readonly [leaseAuthority]?: true;
 }
+
+export const isGatewayOwnerAuthority = (profilePath: string, handle: GatewayOwnerHandle): boolean =>
+  handle[leaseAuthority] === true &&
+  handle.path === join(profilePath, ".runtime", "gateway-owner.lock");
 
 export interface GatewayOwnerInspectionRuntime {
   readonly pidIsAlive: (pid: number) => boolean;
@@ -44,6 +53,7 @@ export interface GatewayOwnerRuntime extends GatewayOwnerInspectionRuntime {
   readonly pid: number;
   readonly makeOwnerId: () => string;
   readonly now: () => Date;
+  /** Legacy fixture hooks; the SQLite lease no longer uses hard links. */
   readonly afterLinkConflict?: (path: string) => Effect.Effect<void>;
   readonly removeCandidate?: (path: string) => Promise<void>;
   readonly reportCleanupFailure?: (path: string, cause: unknown) => Effect.Effect<void>;
@@ -61,31 +71,32 @@ const liveRuntime: GatewayOwnerRuntime = {
       return fileSystemCauseDetails(cause).code !== "ESRCH";
     }
   },
-  removeCandidate: unlink,
   reportCleanupFailure: (path, cause) =>
-    Effect.logWarning("Gateway owner candidate cleanup failed", { path, cause }),
+    Effect.logWarning("Gateway owner cleanup failed", { path, cause }),
 };
 
 export const gatewayOwnerPath = (target: ProfileTarget): string =>
   join(target.path, ".runtime", "gateway-owner.lock");
+export const gatewayLeasePath = (target: ProfileTarget): string =>
+  join(target.path, ".runtime", "serve-owner.sqlite");
+
+const ownerError = (
+  reason: GatewayOwnerError["reason"],
+  path: string,
+  message: string,
+  cause: unknown,
+  pid?: number,
+) => new GatewayOwnerError({ reason, path, pid, message, cause });
 
 const filesystemError = (path: string, cause: unknown) =>
-  new GatewayOwnerError({
-    reason: "filesystem",
+  ownerError(
+    "filesystem",
     path,
-    pid: undefined,
-    message: `could not acquire gateway ownership at ${path}: ${fileSystemCauseDetails(cause).message}`,
+    `could not acquire gateway ownership at ${path}: ${fileSystemCauseDetails(cause).message}`,
     cause,
-  });
-
+  );
 const unreadableError = (path: string, cause: unknown) =>
-  new GatewayOwnerError({
-    reason: "unreadable",
-    path,
-    pid: undefined,
-    message: `gateway ownership at ${path} is unreadable`,
-    cause,
-  });
+  ownerError("unreadable", path, `gateway ownership at ${path} is unreadable`, cause);
 
 const inspectPath = (path: string) =>
   Effect.tryPromise({
@@ -104,11 +115,7 @@ const readOwnerFile = (path: string) =>
         try: () => handle.readFile("utf8"),
         catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
       }),
-    (handle) =>
-      Effect.tryPromise({
-        try: () => handle.close(),
-        catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
-      }),
+    (handle) => Effect.promise(() => handle.close()),
   );
 
 export const inspectGatewayOwner = (
@@ -125,7 +132,6 @@ export const inspectGatewayOwner = (
     }
     if (!runtimeStatus.success.isDirectory() || runtimeStatus.success.isSymbolicLink())
       return yield* unreadableError(path, `${runtimePath} must be a regular non-symlink directory`);
-
     const ownerStatus = yield* inspectPath(path);
     if (Result.isFailure(ownerStatus)) {
       if (ownerStatus.failure.details.code === "ENOENT") return { _tag: "stopped", path };
@@ -133,7 +139,6 @@ export const inspectGatewayOwner = (
     }
     if (!ownerStatus.success.isFile() || ownerStatus.success.isSymbolicLink())
       return yield* unreadableError(path, `${path} must be a regular non-symlink file`);
-
     const sourceResult = yield* readOwnerFile(path).pipe(Effect.result);
     if (Result.isFailure(sourceResult)) {
       if (sourceResult.failure.details.code === "ENOENT") return { _tag: "stopped", path };
@@ -142,124 +147,116 @@ export const inspectGatewayOwner = (
     const record = yield* decodeGatewayOwnerRecordJson(sourceResult.success).pipe(
       Effect.mapError((cause) => unreadableError(path, cause)),
     );
+    const fields = { path, pid: record.pid, acquiredAt: record.acquiredAt };
     return runtime.pidIsAlive(record.pid)
-      ? { _tag: "running", path, pid: record.pid, acquiredAt: record.acquiredAt }
-      : { _tag: "stale", path, pid: record.pid, acquiredAt: record.acquiredAt };
+      ? { _tag: "running", ...fields }
+      : { _tag: "stale", ...fields };
   });
 };
 
-const inspectExistingOwner = (target: ProfileTarget, runtime: GatewayOwnerRuntime) =>
-  inspectGatewayOwner(target, runtime).pipe(
-    Effect.flatMap((status) => {
-      if (status._tag === "stopped") return Effect.succeed({ kind: "released" as const });
-      if (status._tag === "running")
-        return Effect.fail(
-          new GatewayOwnerError({
-            reason: "held",
-            path: status.path,
-            pid: status.pid,
-            message: `gateway already running for ${target.path} (pid ${status.pid})`,
-            cause: undefined,
-          }),
-        );
-      return Effect.fail(
-        new GatewayOwnerError({
-          reason: "stale",
-          path: status.path,
-          pid: status.pid,
-          message: `stale gateway owner at ${status.path} (pid ${status.pid}); remove the lock file after confirming that process is stopped`,
-          cause: undefined,
-        }),
-      );
-    }),
+const reportCleanup = (runtime: GatewayOwnerRuntime, path: string, cause: unknown) =>
+  (runtime.reportCleanupFailure ?? liveRuntime.reportCleanupFailure)?.(path, cause) ?? Effect.void;
+
+const removeMatchingProjection = (handle: GatewayOwnerHandle, runtime: GatewayOwnerRuntime) =>
+  Effect.gen(function* () {
+    const source = yield* Effect.tryPromise({
+      try: () => readFile(handle.path, "utf8"),
+      catch: fileSystemCauseDetails,
+    });
+    const record = yield* decodeGatewayOwnerRecordJson(source);
+    if (record.ownerId === handle.ownerId)
+      yield* Effect.tryPromise({ try: () => unlink(handle.path), catch: fileSystemCauseDetails });
+  }).pipe(
+    Effect.catch((cause) =>
+      fileSystemCauseDetails(cause).code === "ENOENT"
+        ? Effect.void
+        : reportCleanup(runtime, handle.path, cause),
+    ),
   );
 
-const acquire = (
+const publishProjection = (
   target: ProfileTarget,
   runtime: GatewayOwnerRuntime,
 ): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError> => {
   const path = gatewayOwnerPath(target);
   const ownerId = runtime.makeOwnerId();
+  const acquiredAt = runtime.now().toISOString();
   const candidate = join(dirname(path), `.gateway-owner.${ownerId}.candidate`);
-  const record: GatewayOwnerRecord = {
-    version: 1,
-    ownerId,
-    pid: runtime.pid,
-    acquiredAt: runtime.now().toISOString(),
-  };
-
+  const record: GatewayOwnerRecord = { version: 1, ownerId, pid: runtime.pid, acquiredAt };
   return Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => mkdir(dirname(path), { recursive: true }),
-      catch: (cause) => filesystemError(path, cause),
-    });
+    const status = yield* inspectGatewayOwner(target, runtime);
+    if (status._tag === "running")
+      return yield* ownerError(
+        "held",
+        status.path,
+        `gateway already running for ${target.path} (pid ${status.pid})`,
+        undefined,
+        status.pid,
+      );
     yield* Effect.tryPromise({
       try: async () => {
-        const handle = await open(candidate, "wx", 0o600);
+        const file = await open(candidate, "wx", 0o600);
         try {
-          await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-          await handle.sync();
+          await file.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+          await file.sync();
         } finally {
-          await handle.close();
+          await file.close();
         }
+        await rename(candidate, path);
       },
       catch: (cause) => filesystemError(path, cause),
     });
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const linked = yield* Effect.tryPromise({
-        try: () => link(candidate, path),
-        catch: (cause) => fileSystemCauseDetails(cause),
-      }).pipe(Effect.result);
-      if (Result.isSuccess(linked)) return { path, ownerId };
-      if (linked.failure.code !== "EEXIST") return yield* filesystemError(path, linked.failure);
-      yield* runtime.afterLinkConflict?.(path) ?? Effect.void;
-      yield* inspectExistingOwner(target, runtime);
-    }
-    return yield* unreadableError(path, undefined);
+    return { path, ownerId, pid: runtime.pid, acquiredAt, [leaseAuthority]: true as const };
   }).pipe(
     Effect.ensuring(
-      Effect.tryPromise({
-        try: () => (runtime.removeCandidate ?? unlink)(candidate),
-        catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
-      }).pipe(
-        Effect.catch((failure) =>
-          failure.details.code === "ENOENT"
-            ? Effect.void
-            : ((runtime.reportCleanupFailure ?? liveRuntime.reportCleanupFailure)?.(
-                candidate,
-                failure.cause,
-              ) ?? Effect.void),
+      Effect.tryPromise({ try: () => unlink(candidate), catch: fileSystemCauseDetails }).pipe(
+        Effect.catch((cause) =>
+          cause.code === "ENOENT" ? Effect.void : reportCleanup(runtime, candidate, cause),
         ),
       ),
     ),
   );
 };
 
-const release = (handle: GatewayOwnerHandle): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const source = yield* Effect.tryPromise({
-      try: () => readFile(handle.path, "utf8"),
-      catch: fileSystemCauseDetails,
-    }).pipe(Effect.catch((cause) => (cause.code === "ENOENT" ? Effect.void : Effect.fail(cause))));
-    if (source === undefined) return;
-    const record = yield* decodeGatewayOwnerRecordJson(source);
-    if (record.ownerId === handle.ownerId)
-      yield* Effect.tryPromise({
-        try: () => unlink(handle.path),
-        catch: fileSystemCauseDetails,
-      }).pipe(
-        Effect.catch((cause) => (cause.code === "ENOENT" ? Effect.void : Effect.fail(cause))),
-      );
-  }).pipe(
-    Effect.catch((cause) =>
-      Effect.sync(() =>
-        console.error(`[gateway] owner release failed: ${fileSystemCauseDetails(cause).message}`),
-      ),
-    ),
-  );
-
 export const acquireGatewayOwner = (
   target: ProfileTarget,
   runtime: GatewayOwnerRuntime = liveRuntime,
-): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope> =>
-  Effect.acquireRelease(acquire(target, runtime), release);
+): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope> => {
+  const leasePath = gatewayLeasePath(target);
+  return Effect.gen(function* () {
+    yield* Effect.tryPromise({
+      try: () => mkdir(dirname(leasePath), { recursive: true }),
+      catch: (cause) => filesystemError(leasePath, cause),
+    });
+    const db = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => {
+          const opened = new Database(leasePath, { create: true, readwrite: true, strict: true });
+          opened.exec(
+            "PRAGMA busy_timeout = 0; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
+          );
+          return opened;
+        },
+        catch: (cause) => filesystemError(leasePath, cause),
+      }),
+      (opened) =>
+        Effect.try({ try: () => opened.close(false), catch: fileSystemCauseDetails }).pipe(
+          Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
+        ),
+    );
+    yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => db.exec("BEGIN IMMEDIATE"),
+        catch: (cause) =>
+          ownerError("held", leasePath, `gateway already running for ${target.path}`, cause),
+      }),
+      () =>
+        Effect.try({ try: () => db.exec("ROLLBACK"), catch: fileSystemCauseDetails }).pipe(
+          Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
+        ),
+    );
+    return yield* Effect.acquireRelease(publishProjection(target, runtime), (handle) =>
+      removeMatchingProjection(handle, runtime),
+    );
+  });
+};

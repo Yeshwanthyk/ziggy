@@ -6,7 +6,8 @@ import {
   readAutomationStatus,
   readScheduleRecords,
   recordDefinitionTickFailure,
-  recoverAutomationRuns,
+  recoverManualAutomationRuns,
+  recoverResidentAutomationRuns,
   type ScheduleCommitResult,
   type ScheduleMutation,
   validateAutomationProjectionProfile,
@@ -29,10 +30,11 @@ import {
   validateAutomationId,
 } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
+import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { Automations, type AutomationsShape } from "./automations";
 
 // oxfmt-ignore
-export interface AutomationSchedulerShape { readonly run: (target: ProfileTarget) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+export interface AutomationSchedulerShape { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
 // oxfmt-ignore
 export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerShape>()("ziggy/AutomationScheduler") {}
 // oxfmt-ignore
@@ -189,9 +191,10 @@ const scan = (
   startup: boolean,
   runtime: AutomationSchedulerRuntime,
   registerClaims: RegisterClaims,
+  owner: GatewayOwnerHandle,
 ) =>
   Effect.gen(function* () {
-    yield* recoverAutomationRuns(target.path, atMs);
+    yield* recoverManualAutomationRuns(target.path, atMs);
     const observations = yield* discover(target).pipe(Effect.result);
     if (Result.isFailure(observations)) {
       yield* recordDefinitionTickFailure(target.path, atMs);
@@ -207,6 +210,8 @@ const scan = (
           target.path,
           atMs,
           proposals(current, observations.success, atMs, startup),
+          owner.ownerId,
+          owner.pid,
         );
         yield* runtime.afterScheduleCommit(committed);
         yield* registerClaims(committed, restore);
@@ -220,11 +225,15 @@ export const makeAutomationScheduler = (
   automations: AutomationsShape,
   runtime: AutomationSchedulerRuntime = liveSchedulerRuntime,
 ): AutomationSchedulerShape => {
-  const run = (target: ProfileTarget): Effect.Effect<never, AutomationSchedulerError> =>
+  const run = (
+    target: ProfileTarget,
+    owner: GatewayOwnerHandle,
+  ): Effect.Effect<never, AutomationSchedulerError> =>
     Effect.scoped(
       Effect.gen(function* () {
         const startupAt = yield* Clock.currentTimeMillis;
-        yield* initializeAutomationDatabase(target.path);
+        yield* initializeAutomationDatabase(target.path, owner);
+        yield* recoverResidentAutomationRuns(target.path, owner.ownerId, startupAt);
         const fatal = yield* Deferred.make<never, AutomationDatabaseError>();
         const registerClaims: RegisterClaims = (result, restore) =>
           Effect.gen(function* () {
@@ -234,6 +243,7 @@ export const makeAutomationScheduler = (
                   kind: "scheduled",
                   scheduledFor: new Date(claim.scheduledForMs).toISOString(),
                   scheduleFingerprint: claim.scheduleFingerprint,
+                  residentOwnerId: owner.ownerId,
                 })
                 .pipe(
                   Effect.catchTag("AutomationDatabaseError", (failure) =>
@@ -245,7 +255,7 @@ export const makeAutomationScheduler = (
               yield* runtime.afterWorkerRegistered(claim);
             }
           });
-        let initial = yield* scan(target, startupAt, true, runtime, registerClaims);
+        let initial = yield* scan(target, startupAt, true, runtime, registerClaims, owner);
         while (initial.kind === "committed" && initial.result.stale)
           initial = yield* scan(
             target,
@@ -253,6 +263,7 @@ export const makeAutomationScheduler = (
             true,
             runtime,
             registerClaims,
+            owner,
           );
         let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
 
@@ -281,6 +292,7 @@ export const makeAutomationScheduler = (
             false,
             runtime,
             registerClaims,
+            owner,
           );
           while (scanResult.kind === "committed" && scanResult.result.stale)
             scanResult = yield* scan(
@@ -289,6 +301,7 @@ export const makeAutomationScheduler = (
               false,
               runtime,
               registerClaims,
+              owner,
             );
           retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
         });

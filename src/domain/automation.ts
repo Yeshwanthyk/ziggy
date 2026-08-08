@@ -151,6 +151,7 @@ export type AutomationTrigger =
       readonly kind: "scheduled";
       readonly scheduledFor: string;
       readonly scheduleFingerprint: string;
+      readonly residentOwnerId: string;
     };
 
 export type AutomationRunOutcome =
