@@ -1,98 +1,120 @@
 # Supervise `ziggy serve`
 
-Run exactly one resident process per Profile:
+`ziggy serve <profile>` is the only production scheduler host. It owns the Profile's automation
+scheduler and any configured Telegram, Discord, or Slack loops. Run at most one resident per
+resolved Profile path.
+
+Ziggy installs one user service per Profile and delegates restart policy to launchd on macOS or
+systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
+scheduler process.
+
+## Lifecycle commands
 
 ```sh
-ziggy serve /ABSOLUTE/PATH/TO/PROFILE
+ziggy serve install <profile> [--force] [--no-start]
+ziggy serve start <profile>
+ziggy serve stop <profile>
+ziggy serve restart <profile>
+ziggy serve status <profile>
+ziggy serve logs <profile> [--follow]
+ziggy serve uninstall <profile>
 ```
 
-That existing command owns the Profile's scheduler and configured channel loops. Use the operating
-system's service manager to keep it resident. Ziggy does not install a service, expose a daemon
-protocol, or provide a second scheduler.
+`install` writes and starts the service by default. Use `--no-start` to write it without loading it
+on macOS, or to write and enable it without starting it on Linux. `start` and `restart` validate the
+Profile before asking the service manager to run it. `stop`, `status`, `logs`, and `uninstall` can
+still identify the service from the original absolute path if the Profile has moved or disappeared.
 
-Use absolute paths in service definitions. Replace every placeholder below and create log
-directories yourself before loading the service.
+`gateway <profile>` remains a foreground compatibility alias. Lifecycle subcommands exist only
+under `serve`.
 
-## launchd (macOS)
+## Managed files and safety
 
-Save this as `~/Library/LaunchAgents/com.example.ziggy.PROFILE.plist` for a user service. Use a
-unique label and one plist per Profile.
+The resolved absolute Profile path determines a bounded readable service name plus a SHA-256 path
+digest. Equal folder names at different paths therefore receive different service identities.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.example.ziggy.PROFILE</string>
+- macOS definition: `~/Library/LaunchAgents/works.earendil.ziggy.serve.*.plist`
+- macOS logs: `$ZIGGY_HOME/logs/serve/*.stdout.log` and `*.stderr.log`
+- Linux definition: `~/.config/systemd/user/ziggy-serve-*.service`
+- Linux logs: the user journal
 
-  <key>ProgramArguments</key>
-  <array>
-    <string>/ABSOLUTE/PATH/TO/ziggy</string>
-    <string>serve</string>
-    <string>/ABSOLUTE/PATH/TO/PROFILE</string>
-  </array>
+Definitions contain absolute argument arrays, the Profile path, a managed marker, and a deterministic
+fingerprint. They do not contain provider credentials or channel tokens. Ziggy writes definitions
+atomically and refuses unmanaged, symlinked, or non-regular destinations. It also refuses a changed
+managed definition unless `install --force` is explicit.
 
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
+`uninstall` stops the job and removes only its recognized managed definition. It retains the
+Profile, `.runtime/`, automation history, Pi sessions, and logs.
 
-  <key>StandardOutPath</key>
-  <string>/ABSOLUTE/PATH/TO/LOGS/ziggy-PROFILE.stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>/ABSOLUTE/PATH/TO/LOGS/ziggy-PROFILE.stderr.log</string>
-</dict>
-</plist>
+## macOS privacy
+
+A LaunchAgent does not inherit Terminal's Files & Folders permission. If a Profile is inside a
+macOS-protected folder such as `Documents`, the launched Ziggy executable must already have access
+to that folder; otherwise macOS can block directory enumeration while the owner process still looks
+alive. Prefer an unprotected Profile location such as `$ZIGGY_HOME/profiles`, or grant the exact
+installed/compiled Ziggy executable the required access before installation. Verify scheduler
+freshness after every first install rather than treating process ownership as health.
+
+## Read combined status
+
+```sh
+ziggy serve status <profile>
 ```
 
-Load and unload it with the `launchctl bootstrap` and `launchctl bootout` commands appropriate to
-your user domain. Unload the job when you intend the process to remain stopped; `KeepAlive` will
-otherwise restart it.
+The output intentionally keeps these facts separate:
 
-## systemd (Linux)
-
-Save this as `~/.config/systemd/user/ziggy-PROFILE.service` for a user service. Use one unit per
-Profile.
-
-```ini
-[Unit]
-Description=Ziggy resident owner for PROFILE
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/ABSOLUTE/PATH/TO/ziggy serve /ABSOLUTE/PATH/TO/PROFILE
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=default.target
+```text
+managed service: installed|not-installed|drifted|unknown
+service manager: launchd|systemd|unsupported
+supervisor: running|stopped|failed|unknown
+process: running|stopped|stale
+scheduler: active|stale|unknown
+tick: ok|error|unknown
+next due: ...
+active runs: ...
+latest run: ...
 ```
 
-After replacing placeholders, use `systemctl --user daemon-reload`, then manage the unit with
-`systemctl --user enable --now ziggy-PROFILE.service`, `status`, `restart`, and `stop`. Ziggy itself
-does not run these commands or write this unit.
+A loaded supervisor without a live owner is not healthy. A live owner with a stale or unknown
+scheduler is also not healthy. A recently stopped process can temporarily have a fresh persisted
+heartbeat; the process field remains authoritative for process liveness. Any unreadable or degraded
+section makes status exit 1 while preserving the other section results. Status is read-only: it does
+not create `.runtime`, initialize SQLite, repair ownership, or contact a model.
 
-## Three separate operational facts
+Use the detailed projections when needed:
 
-Do not use one projection as a substitute for another:
+```sh
+ziggy automations status <profile>
+ziggy automations runs <profile> [automation-id]
+ziggy sessions list <profile>
+```
 
-1. **Resident process state** — `ziggy serve status /ABSOLUTE/PATH/TO/PROFILE` reads the owner file
-   and checks its PID. It reports `running`, `stopped`, or `stale`, plus the owner path and the PID
-   and acquisition time when a record exists. The command is read-only: it does not create
-   `.runtime`, acquire ownership, remove a stale record, or contact a daemon. `stale` means the
-   record is valid but its PID is dead; confirm the process is stopped before removing that lock.
-2. **Scheduler health** — `ziggy automations status /ABSOLUTE/PATH/TO/PROFILE` projects the persisted
-   heartbeat freshness, last tick, definitions, and next due occurrence. A recently stopped serve
-   process can temporarily coexist with `scheduler: active` because the last heartbeat remains
-   fresh. This is expected and is not process-liveness proof.
-3. **Run history** — `ziggy automations runs /ABSOLUTE/PATH/TO/PROFILE [automation-id]` projects the
-   persisted run ledger and delivery outcomes. It is the truth for what ran, failed, or was
-   skipped; neither process status nor heartbeat freshness answers that question.
+## Crash and restart behavior
 
-The service manager supervises the single `ziggy serve` process. Do not add a cron-triggered tick,
-a second scheduler unit, or multiple resident jobs for the same Profile.
+Resident exclusion is an OS-released SQLite lease in `.runtime/serve-owner.sqlite`. The JSON
+`gateway-owner.lock` file is only a status and legacy-compatibility projection. A normal stop removes
+the matching projection and releases the lease. SIGKILL may leave stale JSON, but closing the dead
+process releases the authoritative SQLite lock, so the service manager can start a new owner without
+manual lock deletion.
+
+Scheduled claims store the resident owner UUID and PID. On startup, a new resident marks active
+claims from an older resident UUID `unknown` with `process-start`. Their schedule cursor was already
+advanced in the claim transaction, so Ziggy never replays the crashed occurrence.
+
+## Platform notes
+
+On macOS, Ziggy uses `launchctl bootstrap`, `bootout`, `kickstart`, and `print` in the current GUI
+user domain. The generated LaunchAgent has `RunAtLoad`, `KeepAlive`, bounded restart throttling, and
+a bounded exit timeout.
+
+On Linux, Ziggy uses `systemctl --user`, writes a `Type=simple` unit with `Restart=always`, and keeps
+output in the user journal. Installation warns when user lingering is not enabled and prints the
+operator command, but never invokes `sudo` or enables lingering itself.
+
+When troubleshooting, capture all three views before changing files:
+
+```sh
+ziggy serve status <profile>
+ziggy serve logs <profile>
+ziggy automations runs <profile>
+```

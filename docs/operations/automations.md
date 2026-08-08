@@ -68,6 +68,40 @@ Recover manually:
 Never resolve a conflict by copying one form over the other without first inspecting both. Ziggy
 will not choose or overwrite one on the operator's behalf.
 
+## Scheduled admission and sessions
+
+`ziggy serve <profile>` discovers active definitions and persists a future schedule cursor. When an
+occurrence is due, one SQLite transaction advances that cursor and writes the claimed run before
+executing a gate, creating a Pi session, printing output, or delivering it. Scheduled definitions
+without a gate are recorded as `skipped-gate`; add an explicit gate such as `gate: true` only when
+the scheduled model call is intended.
+
+Every admitted model-backed run receives a fresh Pi session under
+`sessions/automations/<automation-id>/`. The run ledger answers whether an occurrence was claimed,
+completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
+history authority.
+
+Inspect both authorities:
+
+```sh
+ziggy automations runs <profile> [id]
+ziggy sessions list <profile>
+```
+
+## Process failure and no replay
+
+Active scheduled rows are fenced by the resident owner UUID and PID. After a hard crash, the service
+manager starts a new `serve` process. Startup changes active rows belonging to the previous resident
+to terminal `unknown` with failure category `process-start`. It never returns them to `claimed` or
+`running`, and the already-advanced occurrence cursor means they are not replayed.
+
+A normal stop interrupts scoped workers and attempts one truthful terminal `failed/interrupted`
+write. If the process is force-killed before that write, startup records `unknown` instead of
+inferring success. There are no automatic run retries.
+
+Manual wakes have a separate process-local owner identity. Manual recovery can mark only dead manual
+owners unknown; it cannot recover, start, or finish a resident-owned scheduled claim.
+
 ## Why there is no public tick
 
 `ziggy serve <profile>` is the supervised resident owner and the only production owner of the
