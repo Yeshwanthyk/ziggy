@@ -10,7 +10,6 @@ import {
   automationDatabasePath,
   automationRunStore,
   commitScheduleTick,
-  discoverAutomationSources,
   initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
@@ -18,6 +17,7 @@ import {
   readScheduleRecords,
   recoverAutomationRuns,
 } from "./automation-sqlite";
+import { discoverAutomationSources } from "../fs/automation-files";
 import { isLocalProcessAlive, makeLocalProcessAlive } from "./process";
 
 const paths: Array<string> = [];

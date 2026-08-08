@@ -64,6 +64,17 @@ export type CliCommand =
       readonly prompt: string;
       readonly continueSession: boolean;
     }
+  | {
+      readonly _tag: "AutomationsCreate";
+      readonly target: string;
+      readonly automationId: string;
+    }
+  | { readonly _tag: "AutomationsList"; readonly target: string }
+  | {
+      readonly _tag: "AutomationsValidate";
+      readonly target: string;
+      readonly automationId?: string;
+    }
   | { readonly _tag: "AutomationsStatus"; readonly target: string }
   | { readonly _tag: "AutomationsRuns"; readonly target: string; readonly automationId?: string }
   | { readonly _tag: "Wake"; readonly target: string; readonly automationId: string }

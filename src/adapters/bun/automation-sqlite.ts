@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { Effect, Result, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import {
   AutomationDatabaseError,
   AutomationProjectionError,
@@ -452,63 +452,8 @@ export const automationRunStore = makeAutomationRunStore(process.pid);
 
 export const makeLiveManualRunId = (): string => manualRunId(randomUUID());
 
-// oxfmt-ignore
-export interface AutomationSourceObservation { readonly idSource: string; readonly path: string; readonly source: string | null; readonly error: string | null }
 const missing = (cause: unknown): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
-export interface AutomationSourceRuntime {
-  readonly afterRead: (path: string) => Effect.Effect<void>;
-}
-const liveAutomationSourceRuntime: AutomationSourceRuntime = { afterRead: () => Effect.void };
-export const discoverAutomationSources = (
-  target: ProfileTarget,
-  runtime: AutomationSourceRuntime = liveAutomationSourceRuntime,
-): Effect.Effect<ReadonlyArray<AutomationSourceObservation>, AutomationProjectionError> => {
-  const directory = join(target.path, "automations");
-  const entries = Effect.tryPromise({
-    try: () => readdir(directory, { withFileTypes: true }),
-    catch: (cause) =>
-      new AutomationProjectionError({
-        operation: "list definitions",
-        path: directory,
-        message: `could not list automation definitions at ${directory}`,
-        cause,
-      }),
-  }).pipe(
-    Effect.catch((failure) => (missing(failure.cause) ? Effect.succeed([]) : Effect.fail(failure))),
-    Effect.map((items) =>
-      items
-        .filter((item) => item.name.endsWith(".md") && item.isFile())
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    ),
-  );
-  return entries.pipe(
-    Effect.flatMap((items) =>
-      Effect.forEach(items, (entry) => {
-        const path = join(directory, entry.name);
-        const idSource = entry.name.slice(0, -3);
-        return Effect.tryPromise({
-          try: (signal) => readFile(path, { encoding: "utf8", signal }),
-          catch: (cause) => ({ cause }),
-        }).pipe(
-          Effect.result,
-          Effect.tap(() => runtime.afterRead(path)),
-          Effect.map(
-            (result): AutomationSourceObservation =>
-              Result.isSuccess(result)
-                ? { idSource, path, source: result.success, error: null }
-                : {
-                    idSource,
-                    path,
-                    source: null,
-                    error: `could not read automation ${idSource} at ${path}`,
-                  },
-          ),
-        );
-      }),
-    ),
-  );
-};
 
 // oxfmt-ignore
 const openReadonlyIfPresent = <A>(profilePath: string, operation: string, absent: A, use: (db: Database) => A): Effect.Effect<A, AutomationProjectionError> => {

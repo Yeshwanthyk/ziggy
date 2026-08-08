@@ -45,6 +45,23 @@ describe("CLI decoding", () => {
     });
   });
 
+  test("decodes automation definition commands", async () => {
+    await expect(decode(["automations", "create", "buddy", "morning"])).resolves.toEqual({
+      _tag: "AutomationsCreate",
+      target: "buddy",
+      automationId: "morning",
+    });
+    await expect(decode(["automations", "list", "buddy"])).resolves.toEqual({
+      _tag: "AutomationsList",
+      target: "buddy",
+    });
+    await expect(decode(["automations", "validate", "buddy", "morning"])).resolves.toEqual({
+      _tag: "AutomationsValidate",
+      target: "buddy",
+      automationId: "morning",
+    });
+  });
+
   test("decodes Profile agent commands and joins direct-run prompts", async () => {
     await expect(decode(["agents", "create", "buddy", "reviewer"])).resolves.toEqual({
       _tag: "AgentsCreate",
@@ -100,6 +117,8 @@ describe("CLI decoding", () => {
       ["models", "set", "buddy", "broken"],
       ["agents", "run", "buddy", "reviewer"],
       ["agents", "show", "buddy"],
+      ["automations", "create", "buddy"],
+      ["automations", "validate"],
       ["--unknown"],
     ]) {
       const exit = await Effect.runPromiseExit(decodeCliCommand(args));
@@ -111,6 +130,7 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy tui [<name|path>]");
     expect(renderHelp()).toContain("ziggy models set");
     expect(renderHelp()).toContain("ziggy agents create|list|show|validate|run");
+    expect(renderHelp()).toContain("ziggy automations create|list|validate|status|runs");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

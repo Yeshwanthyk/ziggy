@@ -212,6 +212,18 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "automations") {
+    if (rest[0] === "create" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
+      return { _tag: "AutomationsCreate", target: rest[1], automationId: rest[2] };
+    }
+    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
+      return { _tag: "AutomationsList", target: rest[1] };
+    }
+    if (rest[0] === "validate" && (rest.length === 2 || rest.length === 3) && required(rest[1])) {
+      const automationId = rest[2];
+      return automationId === undefined
+        ? { _tag: "AutomationsValidate", target: rest[1] }
+        : { _tag: "AutomationsValidate", target: rest[1], automationId };
+    }
     if (rest[0] === "status" && rest.length === 2 && required(rest[1])) {
       return { _tag: "AutomationsStatus", target: rest[1] };
     }
@@ -222,7 +234,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
         : { _tag: "AutomationsRuns", target: rest[1], automationId };
     }
     return invalid(
-      "usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
+      "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
     );
   }
 
@@ -274,7 +286,7 @@ const generalHelp = `Usage:
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]
   ziggy extensions list|show|add|remove ...
-  ziggy automations status|runs ...
+  ziggy automations create|list|validate|status|runs ...
   ziggy wake <name|path> <automation-id>
   ziggy gateway <name|path>
   ziggy help [command]
@@ -296,7 +308,7 @@ const topicHelp: Record<HelpTopic, string> = {
     "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path>\n  ziggy agents show <name|path> <agent-id>\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
   run: "usage: ziggy run [-c] <name|path> <prompt...>",
   automations:
-    "usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
+    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
   wake: "usage: ziggy wake <name|path> <automation-id>",
   gateway: "usage: ziggy gateway <name|path>",
   tui: "usage: ziggy tui [<name|path>]",

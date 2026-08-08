@@ -1,7 +1,6 @@
 import { Clock, Context, Cron, Deferred, Duration, Effect, Layer, Result, Scope } from "effect";
 import {
   commitScheduleTick,
-  discoverAutomationSources,
   initializeAutomationDatabase,
   readAutomationRuns,
   readAutomationStatus,
@@ -12,6 +11,7 @@ import {
   type ScheduleMutation,
   validateAutomationProjectionProfile,
 } from "../adapters/bun/automation-sqlite";
+import { discoverAutomationSources } from "../adapters/fs/automation-files";
 import {
   type Automation,
   AutomationDatabaseError,

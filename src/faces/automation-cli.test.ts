@@ -1,10 +1,49 @@
 import { describe, expect, test } from "bun:test";
 import type { AutomationRunProjection, AutomationStatusProjection } from "../domain/automation";
 import {
+  renderAutomationCreated,
+  renderAutomationDefinitions,
   renderAutomationOutcome,
   renderAutomationRuns,
   renderAutomationStatus,
+  renderAutomationValidation,
 } from "./automation-cli";
+
+describe("automation definition CLI", () => {
+  const validDefinition = {
+    id: "alpha",
+    path: "automations/alpha.md",
+    valid: true,
+    schedule: "0 9 * * *",
+    timezone: "UTC",
+    gateState: "manual-only" as const,
+  };
+  const definitions = [
+    validDefinition,
+    {
+      id: "broken",
+      path: "automations/broken.md",
+      valid: false,
+      message: "bad frontmatter",
+    },
+  ];
+
+  test("renders valid and invalid siblings without hiding either", () => {
+    expect(renderAutomationDefinitions(definitions)).toBe(
+      "alpha\tvalid\t0 9 * * *\tUTC\tmanual-only\tautomations/alpha.md\nbroken\tinvalid\t-\t-\t-\tautomations/broken.md",
+    );
+    expect(renderAutomationValidation(definitions)).toBe(
+      "automations/alpha.md\tvalid\tmanual-only\nautomations/broken.md\tinvalid\tbad frontmatter",
+    );
+  });
+
+  test("explains why the safe starter cannot make scheduled model calls", () => {
+    expect(renderAutomationCreated(validDefinition)).toContain(
+      "scheduled model calls remain blocked until you add a gate",
+    );
+    expect(renderAutomationCreated(validDefinition)).toContain("broadcast is none");
+  });
+});
 
 describe("automation CLI outcome", () => {
   test("renders busy, decline, and no-target success", () => {

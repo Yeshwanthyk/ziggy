@@ -1,8 +1,41 @@
+import type { AutomationDefinitionProjection } from "../application/automation-definitions";
 import type {
   AutomationRunOutcome,
   AutomationRunProjection,
   AutomationStatusProjection,
 } from "../domain/automation";
+
+export const renderAutomationDefinitions = (
+  definitions: ReadonlyArray<AutomationDefinitionProjection>,
+): string =>
+  definitions.length === 0
+    ? "no automation definitions"
+    : definitions
+        .map((definition) =>
+          definition.valid
+            ? `${definition.id}\tvalid\t${definition.schedule}\t${definition.timezone}\t${definition.gateState}\t${definition.path}`
+            : `${definition.id}\tinvalid\t-\t-\t-\t${definition.path}`,
+        )
+        .join("\n");
+
+export const renderAutomationValidation = (
+  definitions: ReadonlyArray<AutomationDefinitionProjection>,
+): string =>
+  definitions.length === 0
+    ? "no automation definitions"
+    : definitions
+        .map((definition) =>
+          definition.valid
+            ? `${definition.path}\tvalid\t${definition.gateState}`
+            : `${definition.path}\tinvalid\t${definition.message}`,
+        )
+        .join("\n");
+
+export const renderAutomationCreated = (definition: AutomationDefinitionProjection): string =>
+  [
+    `created automation ${definition.id} at ${definition.path}`,
+    "manual-only: scheduled model calls remain blocked until you add a gate; broadcast is none",
+  ].join("\n");
 
 export interface AutomationCliResult {
   readonly exitCode: 0 | 1;
