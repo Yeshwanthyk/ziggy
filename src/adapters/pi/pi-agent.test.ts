@@ -1,20 +1,26 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type {
-  AgentSessionEventListener,
-  BeforeAgentStartEventResult,
+import {
+  SessionManager,
+  type AgentSessionEventListener,
+  type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Predicate } from "effect";
 import { ProviderCallError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
+import { createProfileAgentChildSession } from "./session-lineage";
 import {
+  askOnce,
   createLocalSessionManager,
   createProfileMemoryExtension,
   localMainSessionDirectory,
+  openChat,
+  openTui,
   promptForAssistantText,
+  runSpecialist,
   providerError,
   refreshProfileMemory,
 } from "./pi-agent";
@@ -168,6 +174,211 @@ describe("Profile memory refresh", () => {
     expect(result?.systemPrompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN.");
     expect(result?.systemPrompt).toContain("Do not claim to remember Profile facts");
     expect(result?.systemPrompt).not.toContain("Durable facts should be saved");
+  });
+});
+
+describe("Profile specialist runtime integration", () => {
+  test("Pi persistent mode allocates a lazy path before any JSONL exists", async () => {
+    const profilePath = await temporaryProfile();
+    const manager = SessionManager.create(profilePath, join(profilePath, "sessions", "lazy"));
+    const file = manager.getSessionFile();
+    expect(manager.isPersisted()).toBe(true);
+    expect(file).toBeDefined();
+    if (file === undefined) throw new Error("expected a persistent target path");
+    expect(await Bun.file(file).exists()).toBe(false);
+
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "not enough to materialize JSONL" }],
+      timestamp: Date.now(),
+    });
+
+    expect(await Bun.file(file).exists()).toBe(false);
+  });
+
+  test("rejects an unknown direct agent before creating a root session", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const result = await Effect.runPromise(
+      runSpecialist(
+        { path: profilePath, name: "Profile" },
+        "missing",
+        "task",
+        { sessionDirectory: join(profilePath, "sessions", "direct") },
+        process.cwd(),
+      ).pipe(Effect.result),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SpecialistAgentNotFound", agentId: "missing" },
+    });
+    expect(await readdir(profilePath)).not.toContain("sessions");
+  });
+
+  test("a direct Profile agent uses one useful saved Pi root without an in-memory host", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          [
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"saved root answer"},"finish_reason":null}]}',
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    try {
+      const profilePath = await temporaryProfile();
+      const sessionDirectory = join(profilePath, "sessions", "direct");
+      await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+      await mkdir(join(profilePath, "agents"), { recursive: true });
+      await writeFile(
+        join(profilePath, "agents", "fixture.md"),
+        "---\nversion: 1\ndescription: Fixture\nprovider: fixture\nmodel: fixture-model\nthinking: off\n---\n\nAnswer briefly.\n",
+        "utf8",
+      );
+      await writeFile(
+        join(profilePath, "models.json"),
+        JSON.stringify({
+          providers: {
+            fixture: {
+              baseUrl: `http://127.0.0.1:${server.port}/v1`,
+              api: "openai-completions",
+              apiKey: "fixture-key",
+              models: [{ id: "fixture-model" }],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const result = await Effect.runPromise(
+        runSpecialist(
+          { path: profilePath, name: "Profile" },
+          "fixture",
+          "root task",
+          { sessionDirectory },
+          process.cwd(),
+        ),
+      );
+      const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
+        path.endsWith(".jsonl"),
+      );
+      expect(result.answer).toBe("saved root answer");
+      expect(files).toHaveLength(1);
+      expect(result.session.file).toBe(join(sessionDirectory, files[0] ?? ""));
+      const manager = SessionManager.open(result.session.file, sessionDirectory);
+      expect(manager.isPersisted()).toBe(true);
+      expect(manager.getHeader()?.parentSession).toBeUndefined();
+      const jsonl = await readFile(result.session.file, "utf8");
+      expect(jsonl).toContain("root task");
+      expect(jsonl).toContain("saved root answer");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("the real Pi SDK persists a child header and isolated transcript under its parent", async () => {
+    const profilePath = await temporaryProfile();
+    const parent = SessionManager.create(profilePath, join(profilePath, "sessions", "parent"));
+    parent.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "parent prompt" }],
+      timestamp: Date.now(),
+    });
+    parent.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "parent answer" }],
+      api: "test",
+      provider: "test",
+      model: "test",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+    const child = createProfileAgentChildSession(profilePath, parent);
+    if (child === undefined) throw new Error("expected persistent child session");
+    child.manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "isolated child prompt" }],
+      timestamp: Date.now(),
+    });
+    child.manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "isolated child answer" }],
+      api: "test",
+      provider: "test",
+      model: "test",
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+
+    expect(child.manager.isPersisted()).toBe(true);
+    expect(child.manager.getHeader()?.parentSession).toBe(parent.getSessionFile());
+    expect(child.reference.id).toBe(child.manager.getSessionId());
+    expect(child.manager.getSessionFile()).toBe(child.reference.file);
+    const childJsonl = await readFile(child.reference.file, "utf8");
+    const parentJsonl = await readFile(parent.getSessionFile() ?? "", "utf8");
+    expect(childJsonl).toContain("isolated child prompt");
+    expect(childJsonl).toContain("isolated child answer");
+    expect(parentJsonl).not.toContain("isolated child prompt");
+    expect(parentJsonl).not.toContain("isolated child answer");
+  });
+});
+
+describe("Profile agent admission across faces", () => {
+  test("TUI, print, and gateway chat reject the same invalid agent before Pi opens", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    await mkdir(join(profilePath, "agents"), { recursive: true });
+    await writeFile(
+      join(profilePath, "agents", "broken.md"),
+      "---\nversion: 1\ndescription: Broken\n---\n",
+      "utf8",
+    );
+
+    const target = { path: profilePath, name: "Profile" };
+    const results = await Promise.all([
+      Effect.runPromise(openTui(target, { kind: "local" }, process.cwd()).pipe(Effect.result)),
+      Effect.runPromise(
+        askOnce(target, "prompt", false, { kind: "local" }, process.cwd()).pipe(Effect.result),
+      ),
+      Effect.runPromise(
+        openChat(
+          target,
+          { kind: "local" },
+          join(profilePath, "sessions", "gateway"),
+          process.cwd(),
+        ).pipe(Effect.result),
+      ),
+    ]);
+
+    expect(
+      results.every(
+        (result) =>
+          result._tag === "Failure" &&
+          Predicate.isTagged(result.failure, "ProfileAgentInvalid") &&
+          result.failure.path === join(profilePath, "agents", "broken.md"),
+      ),
+    ).toBe(true);
   });
 });
 

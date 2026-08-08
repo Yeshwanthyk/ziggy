@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem and process state */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
@@ -56,11 +56,17 @@ const loops = (run: (name: string) => Effect.Effect<never, never>) => ({
 });
 const runtime = (config: ResidentGatewayConfig, events: Array<string>): ResidentGatewayRuntime => ({
   loadConfig: () => Effect.succeed(config),
+  inspectOwner: () => Effect.succeed({ _tag: "stopped", path: "/owner" }),
   acquireOwner: () =>
     Effect.acquireRelease(
       Effect.sync(() => {
         events.push("owner:enter");
-        return { path: "/owner", ownerId: "owner" };
+        return {
+          path: "/owner",
+          ownerId: "owner",
+          pid: 4242,
+          acquiredAt: "2026-01-01T00:00:00.000Z",
+        };
       }),
       () => Effect.sync(() => events.push("owner:exit")),
     ),
@@ -269,6 +275,23 @@ describe("gateway CLI", () => {
     Bun.spawnSync([process.execPath, "src/main.ts", ...args], { stdout: "pipe", stderr: "pipe" });
 
   test("enforces exact arity and keeps legacy resident words as tombstones", () => {
+    for (const args of [["serve"], ["serve", "test", "extra"]]) {
+      const result = invoke(...args);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString().trim()).toBe(
+        [
+          "usage:",
+          "  ziggy serve <name|path>",
+          "  ziggy serve install <name|path> [--force] [--no-start]",
+          "  ziggy serve start <name|path>",
+          "  ziggy serve stop <name|path>",
+          "  ziggy serve restart <name|path>",
+          "  ziggy serve status <name|path>",
+          "  ziggy serve logs <name|path> [--follow]",
+          "  ziggy serve uninstall <name|path>",
+        ].join("\n"),
+      );
+    }
     for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
@@ -278,25 +301,69 @@ describe("gateway CLI", () => {
       const result = invoke(command, "ignored");
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe(
-        `ziggy ${command} is no longer a resident command; use: ziggy gateway <name|path>`,
+        `ziggy ${command} is no longer a resident command; use: ziggy serve <name|path>`,
       );
     }
   });
 
-  test("an interrupt-only gateway shutdown exits zero and releases ownership", async () => {
+  test("serve status reports a stopped process without creating runtime state", async () => {
     const target = await profile();
-    const child = Bun.spawn([process.execPath, "src/main.ts", "gateway", target.path], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    const result = invoke("serve", "status", target.path);
+    expect(result.exitCode).toBe(1);
+    const output = result.stdout.toString().trim();
+    expect(output).toContain(`profile: ${target.path}`);
+    expect(output).toContain("managed service: not-installed");
+    expect(output).toContain("supervisor: stopped");
+    expect(output).toContain("process: stopped\npid: -\nacquired at: -");
+    expect(output).toContain("scheduler: unknown");
+    expect(await exists(join(target.path, ".runtime"))).toBe(false);
+  });
+
+  test("a hard crash leaves only a stale projection and the next serve replaces it", async () => {
+    const target = await profile();
     const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+    const spawn = () =>
+      Bun.spawn([process.execPath, "src/main.ts", "serve", target.path], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    const first = spawn();
+    for (let attempt = 0; attempt < 200 && !(await exists(lockPath)); attempt += 1)
+      await Bun.sleep(10);
+    const firstProjection = await readFile(lockPath, "utf8");
+    first.kill("SIGKILL");
+    await first.exited;
+    expect(await exists(lockPath)).toBe(true);
+
+    const second = spawn();
+    let secondProjection = firstProjection;
     for (let attempt = 0; attempt < 200; attempt += 1) {
-      if (await exists(lockPath)) break;
+      secondProjection = await readFile(lockPath, "utf8");
+      if (secondProjection !== firstProjection) break;
       await Bun.sleep(10);
     }
-    expect(await exists(lockPath)).toBe(true);
-    child.kill("SIGINT");
-    expect(await child.exited).toBe(0);
+    expect(secondProjection).not.toBe(firstProjection);
+    second.kill("SIGINT");
+    expect(await second.exited).toBe(0);
     expect(await exists(lockPath)).toBe(false);
+  });
+
+  test("interrupt-only serve and gateway shutdowns exit zero and release ownership", async () => {
+    for (const command of ["serve", "gateway"] as const) {
+      const target = await profile();
+      const child = Bun.spawn([process.execPath, "src/main.ts", command, target.path], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await exists(lockPath)) break;
+        await Bun.sleep(10);
+      }
+      expect(await exists(lockPath)).toBe(true);
+      child.kill("SIGINT");
+      expect(await child.exited).toBe(0);
+      expect(await exists(lockPath)).toBe(false);
+    }
   });
 });

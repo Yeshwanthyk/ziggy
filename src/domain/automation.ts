@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Cron, DateTime, Effect, Option, Result, Schema } from "effect";
+import { parseLeadingProfileAgentMention } from "./profile";
 
 const AutomationIdSchema = Schema.String.check(
   Schema.makeFilter((value) => /^[a-z0-9-]+$/.test(value) && value.length <= 80, {
@@ -26,6 +27,11 @@ export const AutomationTarget = Schema.Union([TelegramTarget, DiscordTarget, Sla
 export type AutomationTarget = typeof AutomationTarget.Type;
 export type AutomationBroadcastToken = "origin" | "all" | AutomationTarget;
 
+const AutomationSpecialist = Schema.Struct({
+  agentId: NonEmpty,
+  task: NonEmpty,
+});
+
 export const Automation = Schema.Struct({
   id: AutomationIdSchema,
   version: Schema.Literal(1),
@@ -34,6 +40,7 @@ export const Automation = Schema.Struct({
   broadcast: Schema.Array(Schema.Union([Schema.Literals(["origin", "all"]), AutomationTarget])),
   origin: Schema.optional(AutomationTarget),
   prompt: NonEmpty,
+  specialist: Schema.optional(AutomationSpecialist),
 });
 export type Automation = typeof Automation.Type;
 
@@ -94,6 +101,10 @@ export class AutomationNotFound extends Schema.TaggedErrorClass<AutomationNotFou
   "AutomationNotFound",
   { id: Schema.String, path: Schema.String, message: Schema.String },
 ) {}
+export class AutomationPaused extends Schema.TaggedErrorClass<AutomationPaused>()(
+  "AutomationPaused",
+  { id: Schema.String, path: Schema.String, message: Schema.String },
+) {}
 export class AutomationFileSystemError extends Schema.TaggedErrorClass<AutomationFileSystemError>()(
   "AutomationFileSystemError",
   { path: Schema.String, message: Schema.String, cause: Schema.Defect() },
@@ -140,6 +151,7 @@ export type AutomationTrigger =
       readonly kind: "scheduled";
       readonly scheduledFor: string;
       readonly scheduleFingerprint: string;
+      readonly residentOwnerId: string;
     };
 
 export type AutomationRunOutcome =
@@ -197,6 +209,7 @@ const AutomationRunFailureCategory = Schema.Literals([
   "invalid-response",
   "AutomationInvalid",
   "AutomationNotFound",
+  "AutomationPaused",
   "AutomationFileSystemError",
   "AutomationGateFailed:spawn",
   "AutomationGateFailed:wait",
@@ -208,6 +221,15 @@ const AutomationRunFailureCategory = Schema.Literals([
   "MemoryIdInvalid",
   "ProfileExtensionInvalid",
   "ProfileFileSystemError",
+  "ProfileAgentInvalid",
+  "ProfileAgentMentionInvalid",
+  "SpecialistAgentNotFound",
+  "SpecialistProviderUnsupported",
+  "SpecialistModelUnsupported",
+  "SpecialistAuthUnavailable",
+  "SpecialistThinkingUnsupported",
+  "SpecialistToolUnsupported",
+  "SpecialistRunFailed",
   "interrupted",
   "gate-missing",
   "gate-nonzero",
@@ -229,6 +251,7 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
 const executionFailureCategories: ReadonlySet<string> = new Set([
   "AutomationInvalid",
   "AutomationNotFound",
+  "AutomationPaused",
   "AutomationFileSystemError",
   "AutomationGateFailed:spawn",
   "AutomationGateFailed:wait",
@@ -240,6 +263,15 @@ const executionFailureCategories: ReadonlySet<string> = new Set([
   "MemoryIdInvalid",
   "ProfileExtensionInvalid",
   "ProfileFileSystemError",
+  "ProfileAgentInvalid",
+  "ProfileAgentMentionInvalid",
+  "SpecialistAgentNotFound",
+  "SpecialistProviderUnsupported",
+  "SpecialistModelUnsupported",
+  "SpecialistAuthUnavailable",
+  "SpecialistThinkingUnsupported",
+  "SpecialistToolUnsupported",
+  "SpecialistRunFailed",
   "interrupted",
 ]);
 // oxfmt-ignore
@@ -400,10 +432,13 @@ export const parseAutomationFile = (
       keys.add(key);
       entries.push([key, key === "version" && value.trim() === "1" ? 1 : value]);
     }
-    const prompt = lines
-      .slice(end + 1)
-      .join("\n")
-      .trim();
+    const rawBody = lines.slice(end + 1).join("\n");
+    const body = rawBody.trim();
+    const mention = parseLeadingProfileAgentMention(rawBody);
+    if (mention.kind === "invalid") {
+      return yield* invalid(filePath, `invalid automation ${id}: ${mention.message}`);
+    }
+    const prompt = mention.kind === "tagged" ? mention.task : body;
     const decoded = yield* decodeAutomationFile(
       Object.fromEntries([...entries, ["prompt", prompt]]),
     ).pipe(
@@ -449,6 +484,9 @@ export const parseAutomationFile = (
       schedule: { cronSource: decoded.cron, timezone: decoded.timezone, cron: cron.success },
       broadcast,
       prompt: decoded.prompt,
+      ...(mention.kind === "tagged"
+        ? { specialist: { agentId: mention.agentId, task: mention.task } }
+        : {}),
       ...(decoded.gate === undefined ? {} : { gate: decoded.gate }),
       ...(origin === undefined ? {} : { origin }),
     };

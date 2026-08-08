@@ -1,10 +1,62 @@
 import { describe, expect, test } from "bun:test";
 import type { AutomationRunProjection, AutomationStatusProjection } from "../domain/automation";
 import {
+  renderAutomationCreated,
+  renderAutomationDefinitions,
   renderAutomationOutcome,
   renderAutomationRuns,
   renderAutomationStatus,
+  renderAutomationTransition,
+  renderAutomationValidation,
 } from "./automation-cli";
+
+describe("automation definition CLI", () => {
+  const validDefinition = {
+    id: "alpha",
+    path: "automations/alpha.md",
+    valid: true,
+    lifecycle: "active" as const,
+    schedule: "0 9 * * *",
+    timezone: "UTC",
+    gateState: "manual-only" as const,
+  };
+  const definitions = [
+    validDefinition,
+    {
+      id: "broken",
+      path: "automations/broken.md",
+      valid: false,
+      lifecycle: "active" as const,
+      message: "bad frontmatter",
+    },
+  ];
+
+  test("renders valid and invalid siblings without hiding either", () => {
+    expect(renderAutomationDefinitions(definitions)).toBe(
+      "alpha\tactive\tvalid\t0 9 * * *\tUTC\tmanual-only\tautomations/alpha.md\nbroken\tactive\tinvalid\t-\t-\t-\tautomations/broken.md",
+    );
+    expect(renderAutomationValidation(definitions)).toBe(
+      "automations/alpha.md\tactive\tvalid\tmanual-only\nautomations/broken.md\tactive\tinvalid\tbad frontmatter",
+    );
+  });
+
+  test("renders lifecycle transitions explicitly", () => {
+    expect(
+      renderAutomationTransition("paused", {
+        ...validDefinition,
+        lifecycle: "paused",
+        path: "automations/alpha.paused.md",
+      }),
+    ).toBe("paused automation alpha at automations/alpha.paused.md");
+  });
+
+  test("explains why the safe starter cannot make scheduled model calls", () => {
+    expect(renderAutomationCreated(validDefinition)).toContain(
+      "scheduled model calls remain blocked until you add a gate",
+    );
+    expect(renderAutomationCreated(validDefinition)).toContain("broadcast is none");
+  });
+});
 
 describe("automation CLI outcome", () => {
   test("renders busy, decline, and no-target success", () => {

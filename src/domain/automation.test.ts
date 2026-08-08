@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import {
+  AutomationPaused,
   automationScheduleFingerprint,
   manualRunId,
   parseAutomationFile,
@@ -30,6 +31,18 @@ const invalidMessage = async (fields: ReadonlyArray<string>, body?: string) => {
     ),
   );
 };
+
+describe("automation lifecycle", () => {
+  test("keeps paused failure distinct from missing", () => {
+    const failure = new AutomationPaused({
+      id: "daily",
+      path: "/profile/automations/daily.paused.md",
+      message: "automation daily is paused",
+    });
+    expect(failure._tag).toBe("AutomationPaused");
+    expect(failure.message).toContain("paused");
+  });
+});
 
 describe("automation definition", () => {
   test("parses the exact contract independent of field order", async () => {
@@ -79,13 +92,18 @@ describe("automation definition", () => {
   });
 
   test("fingerprints parsed schedule semantics and UTC occurrence identities", async () => {
-    const [five, six, changed, zoned] = await Promise.all([
+    const [five, six, steppedFive, steppedSix, changed, zoned] = await Promise.all([
       parse(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 0 9 * * *", "timezone: UTC", "broadcast: none"]),
+      parse(["cron: 0 9 */2 * 1", "timezone: UTC", "broadcast: none"]),
+      parse(["cron: 0 0 9 */2 * 1", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 10 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 9 * * *", "timezone: Europe/London", "broadcast: none"]),
     ]);
     expect(automationScheduleFingerprint(five)).toBe(automationScheduleFingerprint(six));
+    expect(automationScheduleFingerprint(steppedFive)).toBe(
+      automationScheduleFingerprint(steppedSix),
+    );
     expect(automationScheduleFingerprint(changed)).not.toBe(automationScheduleFingerprint(five));
     expect(automationScheduleFingerprint(zoned)).not.toBe(automationScheduleFingerprint(five));
     expect(scheduledRunId("daily-note", Date.parse("2026-11-01T05:30:00.000Z"))).not.toBe(
@@ -173,6 +191,44 @@ describe("automation definition", () => {
     expect(
       duplicate.broadcast.map((token) => (typeof token === "string" ? token : token.target)),
     ).toEqual(["telegram:chat:1", "telegram:chat:1"]);
+  });
+
+  test("routes a leading Profile agent mention and strips only its tag", async () => {
+    const newline = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "@research-helper\nWrite the daily note.",
+    );
+    const inline = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "@research-helper Write the daily note.",
+    );
+    expect(newline.specialist).toEqual({
+      agentId: "research-helper",
+      task: "Write the daily note.",
+    });
+    expect(inline).toMatchObject({
+      prompt: "Write the daily note.",
+      specialist: { agentId: "research-helper" },
+    });
+    const indented = await parse(
+      ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
+      "  @research-helper\nWrite the daily note.",
+    );
+    expect(indented.specialist).toBeUndefined();
+    expect(indented.prompt).toBe("@research-helper\nWrite the daily note.");
+  });
+
+  test("rejects malformed leading Profile agent mentions with the automation source path", async () => {
+    const messages = await Promise.all(
+      ["@Research-helper do this", "@research-helper", "@research_helper do this"].map((body) =>
+        invalidMessage(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"], body),
+      ),
+    );
+    expect(messages).toEqual([
+      "invalid automation daily-note: a leading Profile agent mention must use lowercase kebab-case @agent-id",
+      "invalid automation daily-note: a leading Profile agent mention must be followed by a non-empty task",
+      "invalid automation daily-note: a leading Profile agent mention must use lowercase kebab-case @agent-id",
+    ]);
   });
 
   test("rejects strict frontmatter violations and prompt shadowing", async () => {

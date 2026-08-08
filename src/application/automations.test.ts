@@ -1,13 +1,14 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixtures exercise the Node filesystem adapter */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Option } from "effect";
 import {
   automationRunStore,
   commitScheduleTick,
+  initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
   recoverAutomationRuns,
@@ -16,14 +17,19 @@ import {
 } from "../adapters/bun/automation-sqlite";
 import { automationFileStore } from "../adapters/fs/automation-files";
 import { TelegramApiError } from "../adapters/telegram/api";
-import { ProviderCallError } from "../domain/agent";
+import { ProviderCallError, ProviderConfigError, SpecialistAgentNotFound } from "../domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
+import { makeAutomationDefinitions } from "./automation-definitions";
 import { type AutomationCapabilities, makeAutomations } from "./automations";
 
 const paths: Array<string> = [];
-const definition = (broadcast: string, extras: ReadonlyArray<string> = []) =>
+const definition = (
+  broadcast: string,
+  extras: ReadonlyArray<string> = [],
+  body = "Write the daily note.",
+) =>
   [
     "---",
     "version: 1",
@@ -32,16 +38,16 @@ const definition = (broadcast: string, extras: ReadonlyArray<string> = []) =>
     ...extras,
     `broadcast: ${broadcast}`,
     "---",
-    "Write the daily note.",
+    body,
     "",
   ].join("\n");
 
-const profile = async (broadcast: string, extras: ReadonlyArray<string> = []) => {
+const profile = async (broadcast: string, extras: ReadonlyArray<string> = [], body?: string) => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-automations-"));
   paths.push(path);
   await mkdir(join(path, "automations"));
   await writeFile(join(path, "SOUL.md"), "# Test\n");
-  await writeFile(join(path, "automations", "daily-note.md"), definition(broadcast, extras));
+  await writeFile(join(path, "automations", "daily-note.md"), definition(broadcast, extras, body));
   return { path, name: "Test" } satisfies ProfileTarget;
 };
 
@@ -52,11 +58,25 @@ const harness = (
     readonly telegramFailure?: TelegramApiError;
     readonly promptFailure?: ProviderCallError;
     readonly promptEffect?: Effect.Effect<string, ProviderCallError>;
+    readonly specialistEffect?: Effect.Effect<
+      string,
+      ProviderConfigError | SpecialistAgentNotFound
+    >;
     readonly store?: AutomationRunStore;
   } = {},
 ) => {
   const agent: ZiggyAgentShape = {
     runOnce: () => Effect.succeed(0),
+    runSpecialist: (_target, agentId, task, context) =>
+      Effect.sync(() => {
+        events.push(`specialist:${agentId}:${task}:${context.sessionDirectory}`);
+      }).pipe(
+        Effect.andThen(options.specialistEffect ?? Effect.succeed("local reply")),
+        Effect.map((answer) => ({
+          answer,
+          session: { id: "specialist", file: join(context.sessionDirectory, "specialist.jsonl") },
+        })),
+      ),
     openTui: () => Effect.succeed(0),
     openChat: (target, context, sessionPath, mode) =>
       Effect.sync(() => {
@@ -136,6 +156,46 @@ afterEach(async () =>
 );
 
 describe("automation run", () => {
+  test("manual wake fails explicitly when the definition is paused", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    await rename(
+      join(target.path, "automations", "daily-note.md"),
+      join(target.path, "automations", "daily-note.paused.md"),
+    );
+    const message = await Effect.runPromise(
+      harness(events)
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.catchTag("AutomationPaused", (failure) => Effect.succeed(failure.message))),
+    );
+    expect(message).toContain("is paused");
+    expect(events).toEqual([]);
+  });
+
+  test("pausing does not cancel a run that is already running", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const running = run(
+      harness(events, {
+        promptEffect: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as("local reply"),
+        ),
+      }),
+      target,
+    );
+    await Effect.runPromise(Deferred.await(entered));
+    const paused = await Effect.runPromise(makeAutomationDefinitions().pause(target, "daily-note"));
+    expect(paused.lifecycle).toBe("paused");
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await expect(running).resolves.toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+  });
+
   test("an absent gate opens one exact fresh session, prompts once, prints once, and records the manual run", async () => {
     const events: Array<string> = [];
     const target = await profile("none");
@@ -179,6 +239,7 @@ describe("automation run", () => {
     });
     const deadStore = makeAutomationRunStore(child.pid);
     await child.exited;
+    await Effect.runPromise(deadStore.recover(target.path, 99));
     const orphanId = "manual:00000000-0000-4000-8000-000000000002";
     await Effect.runPromise(deadStore.admitManual(target.path, "daily-note", orphanId, 100));
     await Effect.runPromise(deadStore.start(target.path, orphanId, 110, null));
@@ -207,15 +268,90 @@ describe("automation run", () => {
     });
   });
 
-  test("a nonzero gate declines before Pi", async () => {
+  test("a nonzero gate declines before Pi or specialist discovery", async () => {
     const events: Array<string> = [];
-    const target = await profile("none", ["gate: exit 7"]);
+    const target = await profile(
+      "none",
+      ["gate: exit 7"],
+      "@research-helper\nWrite the daily note.",
+    );
     expect(await run(harness(events, { gateExit: 7 }), target)).toEqual({
       kind: "declined",
       reason: "gate-nonzero",
       exitCode: 7,
     });
     expect(events).toEqual(["gate:exit 7"]);
+  });
+
+  test("a tagged automation calls the explicit specialist operation once with the tag stripped", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+    expect(events).toEqual([
+      `specialist:research-helper:Write the daily note.:${join(
+        target.path,
+        "sessions",
+        "automations",
+        "daily-note",
+        "manual:00000000-0000-4000-8000-000000000001",
+      )}`,
+      "reply:local reply",
+    ]);
+  });
+
+  test("specialist configuration failure records a stable failed local projection", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+    const failure = new ProviderConfigError({
+      profilePath: target.path,
+      operation: "select model",
+      message: "specialist model configuration failed",
+      cause: "fixture",
+    });
+    const result = await Effect.runPromise(
+      harness(events, { specialistEffect: Effect.fail(failure) })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
+    );
+    expect(result).toBe(failure);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      localCompleted: false,
+      failureCategory: "ProviderConfigError",
+    });
+  });
+
+  test("unknown specialist failure records a failed local run without a provider call", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [], "@missing\nWrite the daily note.");
+    const failure = new SpecialistAgentNotFound({
+      profilePath: target.path,
+      agentId: "missing",
+      message: "unknown Profile agent: missing",
+    });
+    const result = await Effect.runPromise(
+      harness(events, { specialistEffect: Effect.fail(failure) })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
+    );
+    expect(result).toBe(failure);
+    expect(events).toEqual([
+      `specialist:missing:Write the daily note.:${join(
+        target.path,
+        "sessions",
+        "automations",
+        "daily-note",
+        "manual:00000000-0000-4000-8000-000000000001",
+      )}`,
+    ]);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      localCompleted: false,
+      failureCategory: "SpecialistAgentNotFound",
+    });
   });
 
   test("a scheduled definition without a gate records skipped-gate before Pi", async () => {
@@ -230,23 +366,34 @@ describe("automation run", () => {
       definitionObservedAtMs: 0,
       definitionError: null,
     };
+    await Effect.runPromise(initializeAutomationDatabase(target.path));
     await Effect.runPromise(
-      commitScheduleTick(target.path, 0, [{ expected: null, next: initial }]),
+      commitScheduleTick(
+        target.path,
+        0,
+        [{ expected: null, next: initial }],
+        "00000000-0000-4000-8000-000000000001",
+      ),
     );
     await Effect.runPromise(
-      commitScheduleTick(target.path, 1_000, [
-        {
-          expected: initial,
-          next: { ...initial, nextScheduledAtMs: 2_000, definitionObservedAtMs: 1_000 },
-          occurrence: {
-            kind: "due",
-            runId: "scheduled:daily-note:1970-01-01T00:00:01.000Z",
-            scheduledForMs: 1_000,
-            missedThroughMs: null,
-            scheduleFingerprint: fingerprint,
+      commitScheduleTick(
+        target.path,
+        1_000,
+        [
+          {
+            expected: initial,
+            next: { ...initial, nextScheduledAtMs: 2_000, definitionObservedAtMs: 1_000 },
+            occurrence: {
+              kind: "due",
+              runId: "scheduled:daily-note:1970-01-01T00:00:01.000Z",
+              scheduledForMs: 1_000,
+              missedThroughMs: null,
+              scheduleFingerprint: fingerprint,
+            },
           },
-        },
-      ]),
+        ],
+        "00000000-0000-4000-8000-000000000001",
+      ),
     );
     expect(
       await Effect.runPromise(
@@ -254,6 +401,7 @@ describe("automation run", () => {
           kind: "scheduled",
           scheduledFor: "1970-01-01T00:00:01.000Z",
           scheduleFingerprint: fingerprint,
+          residentOwnerId: "00000000-0000-4000-8000-000000000001",
         }),
       ),
     ).toEqual({ kind: "declined", reason: "gate-nonzero", exitCode: 1 });

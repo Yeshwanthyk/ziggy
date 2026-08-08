@@ -1,10 +1,11 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Fiber } from "effect";
 import {
+  listAuthStatusReadOnly,
   makePiAuth,
   type AuthInteraction,
   type PiAuthRuntime,
@@ -55,6 +56,14 @@ const interaction: AuthInteraction = {
 };
 
 describe("Pi auth Effect boundary", () => {
+  test("read-only status does not create credential or model-store files", async () => {
+    const profilePath = await profile();
+    const before = await readdir(profilePath);
+
+    await Effect.runPromise(listAuthStatusReadOnly(profilePath));
+
+    expect(await readdir(profilePath)).toEqual(before);
+  });
   test("fails before runtime creation when the Profile is not initialized", async () => {
     const path = await mkdtemp(join(tmpdir(), "ziggy-auth-missing-"));
     temporaryPaths.push(path);

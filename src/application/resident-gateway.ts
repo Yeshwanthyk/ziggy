@@ -1,13 +1,21 @@
 import { join } from "node:path";
 import { Context, Effect, Layer, Scope } from "effect";
-import { acquireGatewayOwner, type GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
+import {
+  acquireGatewayOwner,
+  inspectGatewayOwner,
+  type GatewayOwnerHandle,
+} from "../adapters/bun/gateway-owner";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { type SlackApiError } from "../adapters/slack/api";
 import { type TelegramApiError } from "../adapters/telegram/api";
 import { ProfileNotInitialized } from "../domain/agent";
 import { type AutomationSchedulerError } from "../domain/automation";
-import { GatewayConfigError, type GatewayOwnerError } from "../domain/gateway";
+import {
+  GatewayConfigError,
+  type GatewayOwnerError,
+  type GatewayOwnerStatus,
+} from "../domain/gateway";
 import type { ProfileTarget } from "../domain/profile";
 import type { DiscordGatewayConfig } from "../domain/discord";
 import type { SlackGatewayConfig } from "../domain/slack";
@@ -49,6 +57,7 @@ export type ResidentGatewayError =
 
 export interface ResidentGatewayShape {
   readonly run: (target: ProfileTarget) => Effect.Effect<never, ResidentGatewayError>;
+  readonly status: (target: ProfileTarget) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
 }
 
 export class ResidentGateway extends Context.Service<ResidentGateway, ResidentGatewayShape>()(
@@ -60,12 +69,16 @@ export interface ResidentGatewayRuntime {
   readonly acquireOwner: (
     target: ProfileTarget,
   ) => Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope>;
+  readonly inspectOwner: (
+    target: ProfileTarget,
+  ) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
   readonly logError: (message: string) => Effect.Effect<void>;
 }
 
 const liveRuntime: ResidentGatewayRuntime = {
   loadConfig: loadResidentGatewayConfig,
   acquireOwner: acquireGatewayOwner,
+  inspectOwner: inspectGatewayOwner,
   logError: (message) => Effect.sync(() => console.error(message)),
 };
 
@@ -76,14 +89,15 @@ export const makeResidentGateway = (
   slack: SlackGatewayShape,
   runtime: ResidentGatewayRuntime = liveRuntime,
 ): ResidentGatewayShape => ({
+  status: (target) => runtime.inspectOwner(target),
   run: (target) =>
     Effect.gen(function* () {
       const config = yield* runtime.loadConfig(target);
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* runtime.acquireOwner(target);
+          const owner = yield* runtime.acquireOwner(target);
           const branches: Array<Effect.Effect<never, AutomationSchedulerError>> = [
-            scheduler.run(target),
+            scheduler.run(target, owner),
           ];
           if (config.telegram !== undefined)
             branches.push(

@@ -1,11 +1,16 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Result } from "effect";
 import type { ProfileTarget } from "../../domain/profile";
-import { acquireGatewayOwner, gatewayOwnerPath, type GatewayOwnerRuntime } from "./gateway-owner";
+import {
+  acquireGatewayOwner,
+  gatewayOwnerPath,
+  inspectGatewayOwner,
+  type GatewayOwnerRuntime,
+} from "./gateway-owner";
 
 const paths: Array<string> = [];
 const target = async (prefix = "ziggy-owner-"): Promise<ProfileTarget> => {
@@ -29,6 +34,82 @@ afterEach(async () =>
   Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
 
+describe("gateway owner inspection", () => {
+  test("reports stopped without creating the runtime directory", async () => {
+    const profile = await target();
+    const before = await readdir(profile.path);
+
+    await expect(Effect.runPromise(inspectGatewayOwner(profile, runtime()))).resolves.toEqual({
+      _tag: "stopped",
+      path: gatewayOwnerPath(profile),
+    });
+
+    expect(await readdir(profile.path)).toEqual(before);
+    expect(await Bun.file(join(profile.path, ".runtime")).exists()).toBe(false);
+  });
+
+  test("reports running and stale records without changing owner bytes", async () => {
+    const profile = await target();
+    const lockPath = gatewayOwnerPath(profile);
+    const source = record("00000000-0000-4000-8000-999999999999", 31337);
+    await mkdir(join(profile.path, ".runtime"));
+    await writeFile(lockPath, source);
+
+    await expect(
+      Effect.runPromise(
+        inspectGatewayOwner(
+          profile,
+          runtime((pid) => pid === 31337),
+        ),
+      ),
+    ).resolves.toEqual({
+      _tag: "running",
+      path: lockPath,
+      pid: 31337,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    });
+    await expect(
+      Effect.runPromise(
+        inspectGatewayOwner(
+          profile,
+          runtime(() => false),
+        ),
+      ),
+    ).resolves.toEqual({
+      _tag: "stale",
+      path: lockPath,
+      pid: 31337,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(await readFile(lockPath, "utf8")).toBe(source);
+    expect(await readdir(join(profile.path, ".runtime"))).toEqual(["gateway-owner.lock"]);
+  });
+
+  test("fails typed on malformed and symlinked ownership without mutation", async () => {
+    const profile = await target();
+    const runtimePath = join(profile.path, ".runtime");
+    const lockPath = gatewayOwnerPath(profile);
+    await mkdir(runtimePath);
+    await writeFile(lockPath, "not-json\n");
+
+    const malformed = await Effect.runPromise(
+      inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
+    );
+    expect(Result.isFailure(malformed) && malformed.failure.reason).toBe("unreadable");
+    expect(await readFile(lockPath, "utf8")).toBe("not-json\n");
+
+    await rm(lockPath);
+    const external = join(profile.path, "external-owner");
+    await writeFile(external, record("00000000-0000-4000-8000-999999999999"));
+    await symlink(external, lockPath);
+    const linked = await Effect.runPromise(
+      inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
+    );
+    expect(Result.isFailure(linked) && linked.failure.reason).toBe("unreadable");
+    expect(await readFile(external, "utf8")).toBe(record("00000000-0000-4000-8000-999999999999"));
+  });
+});
+
 describe("gateway owner", () => {
   test("admits exactly one concurrent owner per Profile and independent Profiles", async () => {
     const first = await target();
@@ -44,7 +125,7 @@ describe("gateway owner", () => {
           expect(attempts.filter(Result.isSuccess)).toHaveLength(1);
           const failures = attempts.filter(Result.isFailure).map(({ failure }) => failure);
           expect(failures.every((failure) => failure.reason === "held")).toBe(true);
-          expect(failures[0]?.message).toBe(`gateway already running for ${first.path} (pid 4242)`);
+          expect(failures[0]?.message).toBe(`gateway already running for ${first.path}`);
           yield* acquireGatewayOwner(second, host);
         }),
       ),
@@ -69,43 +150,46 @@ describe("gateway owner", () => {
     await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
   });
 
-  test("retries when the previous owner releases after a link conflict", async () => {
+  test("a live legacy v1 projection remains a compatibility barrier", async () => {
     const profile = await target();
     const lockPath = gatewayOwnerPath(profile);
     await mkdir(join(profile.path, ".runtime"));
-    await writeFile(lockPath, record("00000000-0000-4000-8000-999999999999"));
-    let conflicts = 0;
-    const host: GatewayOwnerRuntime = {
-      ...runtime(),
-      afterLinkConflict: () =>
-        Effect.promise(async () => {
-          conflicts += 1;
-          await rm(lockPath);
-        }),
-    };
+    await writeFile(lockPath, record("00000000-0000-4000-8000-999999999999", 31337));
 
-    await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        acquireGatewayOwner(
+          profile,
+          runtime((pid) => pid === 31337),
+        ).pipe(Effect.result),
+      ),
+    );
 
-    expect(conflicts).toBe(1);
+    expect(Result.isFailure(result) && result.failure.reason).toBe("held");
+    expect(await readFile(lockPath, "utf8")).toBe(
+      record("00000000-0000-4000-8000-999999999999", 31337),
+    );
   });
 
-  test("reports an unexpected candidate cleanup failure without failing owner release", async () => {
+  test("the SQLite holder replaces a dead legacy projection", async () => {
     const profile = await target();
-    const cleanupFailure = Object.assign(new Error("cleanup denied"), { code: "EPERM" });
-    const reported: Array<{ readonly path: string; readonly cause: unknown }> = [];
-    const host: GatewayOwnerRuntime = {
-      ...runtime(),
-      removeCandidate: () => Promise.reject(cleanupFailure),
-      reportCleanupFailure: (path, cause) => Effect.sync(() => reported.push({ path, cause })),
-    };
+    const lockPath = gatewayOwnerPath(profile);
+    await mkdir(join(profile.path, ".runtime"));
+    await writeFile(lockPath, record("00000000-0000-4000-8000-999999999999", 31337));
 
-    await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
+    await Effect.runPromise(
+      Effect.scoped(
+        acquireGatewayOwner(
+          profile,
+          runtime(() => false),
+        ),
+      ),
+    );
 
-    expect(reported).toHaveLength(1);
-    expect(reported[0]?.cause).toBe(cleanupFailure);
+    expect(await Bun.file(lockPath).exists()).toBe(false);
     expect(
       (await readdir(join(profile.path, ".runtime"))).filter((name) => name.endsWith(".candidate")),
-    ).toHaveLength(1);
+    ).toEqual([]);
   });
 
   test("release never removes a valid foreign owner", async () => {
@@ -123,30 +207,16 @@ describe("gateway owner", () => {
     expect(await readFile(lockPath, "utf8")).toBe(record(foreign));
   });
 
-  test("dead and malformed records fail closed with exact copy and remain present", async () => {
+  test("malformed records fail closed and remain present", async () => {
     const profile = await target();
     const lockPath = gatewayOwnerPath(profile);
-    await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, runtime())));
-    await writeFile(lockPath, record("00000000-0000-4000-8000-999999999999", 31337));
-    const stale = await Effect.runPromise(
-      Effect.scoped(
-        acquireGatewayOwner(
-          profile,
-          runtime(() => false),
-        ).pipe(Effect.result),
-      ),
-    );
-    expect(Result.isFailure(stale) && stale.failure.message).toBe(
-      `stale gateway owner at ${lockPath} (pid 31337); remove the lock file after confirming that process is stopped`,
-    );
-    expect(await access(lockPath).then(() => true)).toBe(true);
-
+    await mkdir(join(profile.path, ".runtime"));
     await writeFile(lockPath, "not-json\n");
     const malformed = await Effect.runPromise(
       Effect.scoped(acquireGatewayOwner(profile, runtime()).pipe(Effect.result)),
     );
     expect(Result.isFailure(malformed) && malformed.failure.message).toBe(
-      `gateway ownership at ${lockPath} is unreadable; refusing to start`,
+      `gateway ownership at ${lockPath} is unreadable`,
     );
     expect(await readFile(lockPath, "utf8")).toBe("not-json\n");
   });

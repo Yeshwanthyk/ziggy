@@ -1,17 +1,18 @@
 import { Clock, Context, Cron, Deferred, Duration, Effect, Layer, Result, Scope } from "effect";
 import {
   commitScheduleTick,
-  discoverAutomationSources,
   initializeAutomationDatabase,
   readAutomationRuns,
   readAutomationStatus,
   readScheduleRecords,
   recordDefinitionTickFailure,
-  recoverAutomationRuns,
+  recoverManualAutomationRuns,
+  recoverResidentAutomationRuns,
   type ScheduleCommitResult,
   type ScheduleMutation,
   validateAutomationProjectionProfile,
 } from "../adapters/bun/automation-sqlite";
+import { discoverAutomationSources } from "../adapters/fs/automation-files";
 import {
   type Automation,
   AutomationDatabaseError,
@@ -29,16 +30,18 @@ import {
   validateAutomationId,
 } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
+import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { Automations, type AutomationsShape } from "./automations";
 
 // oxfmt-ignore
-export interface AutomationSchedulerShape { readonly run: (target: ProfileTarget) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+export interface AutomationSchedulerShape { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
 // oxfmt-ignore
 export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerShape>()("ziggy/AutomationScheduler") {}
 // oxfmt-ignore
 interface ValidObservation { readonly id: AutomationId; readonly automation: Automation; readonly fingerprint: string }
 type Observation =
   | { readonly kind: "valid"; readonly idSource: string; readonly valid: ValidObservation }
+  | { readonly kind: "paused"; readonly idSource: string }
   | { readonly kind: "invalid"; readonly idSource: string; readonly error: string };
 
 const discover = (target: ProfileTarget) =>
@@ -46,6 +49,10 @@ const discover = (target: ProfileTarget) =>
     const sources = yield* discoverAutomationSources(target);
     const observations: Array<Observation> = [];
     for (const source of sources) {
+      if (source.lifecycle === "paused") {
+        observations.push({ kind: "paused", idSource: source.idSource });
+        continue;
+      }
       if (source.source === null) {
         observations.push({
           kind: "invalid",
@@ -99,6 +106,21 @@ const validMutation = (previous: AutomationScheduleRecord | undefined, observati
   return { expected: previous, next: { ...base, nextScheduledAtMs: second }, occurrence: { kind: "due", runId: scheduledRunId(id, cursor), scheduledForMs: cursor, missedThroughMs: null, scheduleFingerprint: fingerprint } };
 };
 
+// Paused definitions intentionally project as deleted schedule rows: Profile filenames remain the
+// lifecycle authority while SQLite retains only its existing projection vocabulary.
+const deletedSchedule = (
+  previous: AutomationScheduleRecord | undefined,
+  id: string,
+  observedAtMs: number,
+): AutomationScheduleRecord => ({
+  automationId: id,
+  definitionState: "deleted",
+  scheduleFingerprint: previous?.scheduleFingerprint ?? null,
+  nextScheduledAtMs: null,
+  definitionObservedAtMs: observedAtMs,
+  definitionError: null,
+});
+
 const proposals = (
   current: ReadonlyArray<AutomationScheduleRecord>,
   observations: ReadonlyArray<Observation>,
@@ -114,24 +136,22 @@ const proposals = (
     mutations.push(
       observation.kind === "valid"
         ? validMutation(before, observation.valid, observedAtMs, startup)
-        : {
-            expected: before ?? null,
-            next: invalidSchedule(before, observation.idSource, observation.error, observedAtMs),
-          },
+        : observation.kind === "paused"
+          ? {
+              expected: before ?? null,
+              next: deletedSchedule(before, observation.idSource, observedAtMs),
+            }
+          : {
+              expected: before ?? null,
+              next: invalidSchedule(before, observation.idSource, observation.error, observedAtMs),
+            },
     );
   }
   for (const before of current)
     if (!seen.has(before.automationId) && before.definitionState !== "deleted")
       mutations.push({
         expected: before,
-        next: {
-          automationId: before.automationId,
-          definitionState: "deleted",
-          scheduleFingerprint: before.scheduleFingerprint,
-          nextScheduledAtMs: null,
-          definitionObservedAtMs: observedAtMs,
-          definitionError: null,
-        },
+        next: deletedSchedule(before, before.automationId, observedAtMs),
       });
   // oxfmt-ignore
   return mutations.sort((left, right) => (left.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) - (right.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) || left.next.automationId.localeCompare(right.next.automationId));
@@ -171,9 +191,10 @@ const scan = (
   startup: boolean,
   runtime: AutomationSchedulerRuntime,
   registerClaims: RegisterClaims,
+  owner: GatewayOwnerHandle,
 ) =>
   Effect.gen(function* () {
-    yield* recoverAutomationRuns(target.path, atMs);
+    yield* recoverManualAutomationRuns(target.path, atMs);
     const observations = yield* discover(target).pipe(Effect.result);
     if (Result.isFailure(observations)) {
       yield* recordDefinitionTickFailure(target.path, atMs);
@@ -189,6 +210,8 @@ const scan = (
           target.path,
           atMs,
           proposals(current, observations.success, atMs, startup),
+          owner.ownerId,
+          owner.pid,
         );
         yield* runtime.afterScheduleCommit(committed);
         yield* registerClaims(committed, restore);
@@ -202,11 +225,15 @@ export const makeAutomationScheduler = (
   automations: AutomationsShape,
   runtime: AutomationSchedulerRuntime = liveSchedulerRuntime,
 ): AutomationSchedulerShape => {
-  const run = (target: ProfileTarget): Effect.Effect<never, AutomationSchedulerError> =>
+  const run = (
+    target: ProfileTarget,
+    owner: GatewayOwnerHandle,
+  ): Effect.Effect<never, AutomationSchedulerError> =>
     Effect.scoped(
       Effect.gen(function* () {
         const startupAt = yield* Clock.currentTimeMillis;
-        yield* initializeAutomationDatabase(target.path);
+        yield* initializeAutomationDatabase(target.path, owner);
+        yield* recoverResidentAutomationRuns(target.path, owner.ownerId, startupAt);
         const fatal = yield* Deferred.make<never, AutomationDatabaseError>();
         const registerClaims: RegisterClaims = (result, restore) =>
           Effect.gen(function* () {
@@ -216,6 +243,7 @@ export const makeAutomationScheduler = (
                   kind: "scheduled",
                   scheduledFor: new Date(claim.scheduledForMs).toISOString(),
                   scheduleFingerprint: claim.scheduleFingerprint,
+                  residentOwnerId: owner.ownerId,
                 })
                 .pipe(
                   Effect.catchTag("AutomationDatabaseError", (failure) =>
@@ -227,7 +255,7 @@ export const makeAutomationScheduler = (
               yield* runtime.afterWorkerRegistered(claim);
             }
           });
-        let initial = yield* scan(target, startupAt, true, runtime, registerClaims);
+        let initial = yield* scan(target, startupAt, true, runtime, registerClaims, owner);
         while (initial.kind === "committed" && initial.result.stale)
           initial = yield* scan(
             target,
@@ -235,6 +263,7 @@ export const makeAutomationScheduler = (
             true,
             runtime,
             registerClaims,
+            owner,
           );
         let retryAtMs = initial.kind === "definitions-unreadable" ? initial.retryAtMs : null;
 
@@ -263,6 +292,7 @@ export const makeAutomationScheduler = (
             false,
             runtime,
             registerClaims,
+            owner,
           );
           while (scanResult.kind === "committed" && scanResult.result.stale)
             scanResult = yield* scan(
@@ -271,6 +301,7 @@ export const makeAutomationScheduler = (
               false,
               runtime,
               registerClaims,
+              owner,
             );
           retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
         });

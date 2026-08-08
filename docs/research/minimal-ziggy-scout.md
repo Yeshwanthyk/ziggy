@@ -12,7 +12,9 @@ Start local and in-process: `init`, TUI, CLI. No daemon, attach client, socket p
 
 **Pi owns:** loop execution, model/provider implementations, auth mechanics, session JSONL (append-only tree, compaction, branching), tool execution, skill parsing and progressive disclosure, event stream, interactive TUI, print mode, RPC mode.
 
-**Ziggy owns:** Profile discovery/init policy; which Pi resources are admitted; `SOUL.md`, `MEMORY.md`, `USER.md`, automation files, later channel routing; Effect services and typed product errors; process ownership once a gateway exists; command naming and user-facing composition; and the repository-owned Pi packages under `extensions/`. A package may contain progressively loaded Agent Skills, executable Pi extensions, or both. One hidden internal Pi extension shapes the TUI.
+**Ziggy owns:** Profile discovery/init policy; which Pi resources are admitted; `SOUL.md`, `MEMORY.md`, `USER.md`, Profile agent and automation files, later channel routing; Effect services and typed product errors; parent/child session relation policy; process ownership once a gateway exists; command naming and user-facing composition; and the repository-owned Pi packages under `extensions/`. A package may contain progressively loaded Agent Skills, executable Pi extensions, or both. One hidden internal Pi extension shapes the TUI.
+
+Every production Profile agent execution uses a persistent Pi session manager. A successful direct agent or tagged automation run materializes one root JSONL; a successful `agent_run` or `agent_discuss` participant materializes one child whose Pi header points to the parent session file. The successful parent Pi tool result keeps only bounded output, nested usage, and a child session reference. The isolated child JSONL keeps the complete transcript. Pi v0.82.0 creates JSONL lazily on the first assistant message, so an earlier failure or cancellation can leave no file through the public API. Ziggy does not fabricate transcript entries, copy transcripts, or maintain a second session registry.
 
 ## Adapter recipe
 
@@ -53,7 +55,11 @@ ziggy init <name|path>       create a Profile (SOUL.md); names resolve under ~/.
 ziggy <name|path>            open the Profile in the TUI
 ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest session
 ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
-ziggy gateway <name|path>    run the resident Telegram gateway
+ziggy sessions list <name|path>              list safe Pi session metadata
+ziggy sessions show <name|path> <id|path>    inspect lineage, usage, changes, and state
+ziggy serve <name|path>      run the resident Profile owner (scheduler + configured channels)
+ziggy serve status <name|path>  inspect resident owner/PID state without mutation
+ziggy gateway <name|path>    compatibility alias for serve
 ziggy profiles               list known Profiles (registry: ~/.ziggy/profiles.list)
 ziggy extensions list        inspect the offline package shelf
 ziggy extensions show <id>   inspect one package without importing its code
@@ -67,11 +73,12 @@ Each primitive ships with one walking-skeleton proof before the next begins.
 
 1. **Profile** — path is identity; `init` is idempotent and never overwrites changed human content. Creates `SOUL.md` only; Pi-owned files appear when Pi needs them. *Proof:* `ziggy init` twice — first creates, second refuses to clobber.
 2. **Provider** — Pi's provider/model/auth vocabulary unchanged; a Provider never owns a loop. *Proof:* one non-persistent, no-tools prompt via `SessionManager.inMemory()` returns streamed text or a typed config/provider error.
-3. **Session** — Pi's Profile-local `SessionManager`; client-neutral prompt/steer/abort/events. *Proof:* one TUI turn, exit, resume the same JSONL session via CLI print. TUI and CLI are in-process owners for now (Pi has no cross-process session lock).
+3. **Session** — Pi's Profile-local `SessionManager`; client-neutral prompt/steer/abort/events. Read-only list/show recursively project only path, IDs, lineage, timestamps, entry counts, model/thinking changes, usage, and terminal state; they reject symlinked roots/files and never expose transcript content. *Proof:* one TUI turn, exit, resume the same JSONL session via CLI print; filesystem snapshots prove list/show create and rewrite nothing.
 4. **Memory** — retained facts separate from transcripts, all plain markdown in the Profile. `MEMORY.md` is assistant-wide; `memory/users/<id>.md` is per-person and loaded only in 1:1 contexts; `memory/groups/<id>.md` is shared per group and is the only extra memory loaded in group contexts — individual user memories never leak into groups. Capped, reject-on-overflow, never silent truncation. *Proof:* a Ziggy-owned Pi tool atomically replaces a bounded memory doc mid-chat; the next session sees the fact via prompt context; transcript untouched. A session-recall package may build a disposable projection of Pi JSONL, but it is never a second memory or compaction authority.
 5. **Extension** — each `extensions/<id>/` folder is a shelf package containing skills, executable extension code, or both. `<profile>/extensions.json` is the sole optional-package selection authority; `pi-packages` and `extension-authoring` remain mandatory. Selection admits the package as one manifest-declared unit, with Profile-local skill precedence and no ambient resources. All faces share this resolver through one Profile runtime construction path. *Proof:* missing and invalid selections fail closed as specified, collisions favor Profile skills, selected package tools load from direct paths, list/show stay offline, and atomic add/remove changes only the selection file.
 6. **Gateway** — first resident process; first channel is Telegram, with embedded `ZiggyAgent` in-process. Channel adapters are thin: receive message, resolve context (1:1 vs group) for memory admission, invoke the core, deliver the reply. *Proof:* one owner-authorized Telegram message in, one reply out; gateway exclusively owns live sessions.
 7. **Automation** — file-authored triggers with a cheap wake-gate; a run gets a fresh session. *Proof:* gate false → zero model calls; gate true → fresh session + one result through the existing delivery face.
+8. **Profile Agent** — `agents/<id>.md` is the sole role/model/reasoning/tool policy authority. Every face discovers and selects agents identically; a leading `@agent-id` is validated before a provider call and guides the parent model. Children cannot use `memory_write`, `agent_run`, or `agent_discuss`, and discussion children have no tools. *Proof:* a completed parent tool call has one linked child JSONL, and one completed direct run has one root JSONL with matching resolved policy.
 
 Invariants carried throughout: no durable fact has two writable authorities; Session owns history, Memory owns facts; no LLM call without user input or a passed wake-gate; client disconnect is not cancellation.
 
