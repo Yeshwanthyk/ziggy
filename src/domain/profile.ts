@@ -56,7 +56,7 @@ export class ProfileAgentMentionInvalid extends Schema.TaggedErrorClass<ProfileA
   },
 ) {}
 
-const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
+export const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const ProfileAgentThinking = Schema.Literals([
   "off",
   "minimal",

@@ -12,6 +12,7 @@ const helpTopics = new Set<string>([
   "extensions",
   "auth",
   "models",
+  "agents",
   "run",
   "automations",
   "wake",
@@ -168,6 +169,33 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     );
   }
 
+  if (word === "agents") {
+    if (rest[0] === "create" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
+      return { _tag: "AgentsCreate", target: rest[1], agentId: rest[2] };
+    }
+    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
+      return { _tag: "AgentsList", target: rest[1] };
+    }
+    if (rest[0] === "show" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
+      return { _tag: "AgentsShow", target: rest[1], agentId: rest[2] };
+    }
+    if (rest[0] === "validate" && (rest.length === 2 || rest.length === 3) && required(rest[1])) {
+      const agentId = rest[2];
+      return agentId === undefined
+        ? { _tag: "AgentsValidate", target: rest[1] }
+        : { _tag: "AgentsValidate", target: rest[1], agentId };
+    }
+    if (rest[0] === "run" && required(rest[1]) && required(rest[2])) {
+      const prompt = rest.slice(3).join(" ").trim();
+      if (prompt.length > 0) {
+        return { _tag: "AgentsRun", target: rest[1], agentId: rest[2], prompt };
+      }
+    }
+    return invalid(
+      "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path>\n  ziggy agents show <name|path> <agent-id>\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
+    );
+  }
+
   if (word === "run") {
     const continueSession = rest[0] === "-c" || rest[0] === "--continue";
     const targetIndex = continueSession ? 1 : 0;
@@ -242,6 +270,7 @@ const generalHelp = `Usage:
   ziggy models status <name|path>
   ziggy models list <name|path> [--provider <id>]
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
+  ziggy agents create|list|show|validate|run ...
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]
   ziggy extensions list|show|add|remove ...
@@ -263,6 +292,8 @@ const topicHelp: Record<HelpTopic, string> = {
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
   models:
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
+  agents:
+    "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path>\n  ziggy agents show <name|path> <agent-id>\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
   run: "usage: ziggy run [-c] <name|path> <prompt...>",
   automations:
     "usage:\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",

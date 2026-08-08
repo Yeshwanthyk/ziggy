@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
 import { ProfileAgent, ProfileAgentInvalid, ProfileFileSystemError } from "../../domain/profile";
@@ -110,7 +110,7 @@ const rawAgent = (
   return raw;
 };
 
-const decodeAgent = (targetPath: string, text: string) =>
+export const decodeProfileAgentSource = (targetPath: string, text: string) =>
   Effect.gen(function* () {
     const parsed = yield* parseFrontmatter(targetPath, text);
     const id = path.basename(targetPath, ".md");
@@ -180,12 +180,133 @@ export const discoverProfileAgents = (
                 return Effect.fail(invalid(agentPath, `Profile agent is not a file: ${agentPath}`));
               }
               return readText(agentPath).pipe(
-                Effect.flatMap((text) => decodeAgent(agentPath, text)),
+                Effect.flatMap((text) => decodeProfileAgentSource(agentPath, text)),
               );
             },
             { concurrency: 1 },
           ),
         ),
+      );
+    }),
+  );
+};
+
+export interface ProfileAgentFileObservation {
+  readonly id: string;
+  readonly path: string;
+  readonly agent?: ProfileAgent;
+  readonly error?: ProfileAgentInvalid | ProfileFileSystemError;
+}
+
+export const inspectProfileAgentFiles = (
+  profilePath: string,
+): Effect.Effect<
+  ReadonlyArray<ProfileAgentFileObservation>,
+  ProfileAgentInvalid | ProfileFileSystemError
+> => {
+  const agentsPath = path.join(profilePath, "agents");
+  return inspect(agentsPath).pipe(
+    Effect.catchIf(
+      (error) => Predicate.isTagged(error, "ProfileFileSystemError") && error.code === "ENOENT",
+      () => Effect.void,
+    ),
+    Effect.flatMap(
+      (
+        status,
+      ): Effect.Effect<
+        ReadonlyArray<ProfileAgentFileObservation>,
+        ProfileAgentInvalid | ProfileFileSystemError
+      > => {
+        if (status === undefined)
+          return Effect.succeed<ReadonlyArray<ProfileAgentFileObservation>>([]);
+        if (status.isSymbolicLink() || !status.isDirectory()) {
+          return Effect.fail(
+            invalid(agentsPath, `Profile agents root must be a physical directory: ${agentsPath}`),
+          );
+        }
+        return agentFiles(agentsPath).pipe(
+          Effect.flatMap((entries) =>
+            Effect.forEach(entries, (entry) => {
+              const targetPath = path.join(agentsPath, entry.name);
+              const id = entry.name.slice(0, -3);
+              if (entry.isSymbolicLink() || !entry.isFile()) {
+                return Effect.succeed({
+                  id,
+                  path: targetPath,
+                  error: invalid(targetPath, `Profile agent is not a physical file: ${targetPath}`),
+                });
+              }
+              return readText(targetPath).pipe(
+                Effect.flatMap((source) => decodeProfileAgentSource(targetPath, source)),
+                Effect.match({
+                  onFailure: (error): ProfileAgentFileObservation => ({
+                    id,
+                    path: targetPath,
+                    error,
+                  }),
+                  onSuccess: (agent): ProfileAgentFileObservation => ({
+                    id,
+                    path: targetPath,
+                    agent,
+                  }),
+                }),
+              );
+            }),
+          ),
+        );
+      },
+    ),
+  );
+};
+
+export const profileAgentTemplate = (id: string): string =>
+  `---\nversion: 1\ndescription: Describe the ${id} specialist.\n---\n\nFollow the assigned task within this specialist role.\n`;
+
+export const createProfileAgentFile = (
+  profilePath: string,
+  id: string,
+): Effect.Effect<
+  { readonly agent: ProfileAgent; readonly path: string },
+  ProfileAgentInvalid | ProfileFileSystemError
+> => {
+  const agentsPath = path.join(profilePath, "agents");
+  const targetPath = path.join(agentsPath, `${id}.md`);
+  const source = profileAgentTemplate(id);
+  return decodeProfileAgentSource(targetPath, source).pipe(
+    Effect.flatMap((agent) =>
+      Effect.tryPromise({
+        try: async () => {
+          await mkdir(agentsPath, { recursive: true });
+          const status = await lstat(agentsPath);
+          if (status.isSymbolicLink() || !status.isDirectory()) {
+            throw new Error("Profile agents root must be a physical directory");
+          }
+          await writeFile(targetPath, source, { encoding: "utf8", flag: "wx" });
+        },
+        catch: (cause) => fsError("create", targetPath, cause),
+      }).pipe(Effect.as({ agent, path: targetPath })),
+    ),
+  );
+};
+
+export const readProfileAgent = (
+  profilePath: string,
+  id: string,
+): Effect.Effect<
+  { readonly agent: ProfileAgent; readonly path: string },
+  ProfileAgentInvalid | ProfileFileSystemError
+> => {
+  const targetPath = path.join(profilePath, "agents", `${id}.md`);
+  return inspect(targetPath).pipe(
+    Effect.flatMap((status) => {
+      if (status.isSymbolicLink() || !status.isFile()) {
+        return Effect.fail(
+          invalid(targetPath, `Profile agent is not a physical file: ${targetPath}`),
+        );
+      }
+      return readText(targetPath).pipe(
+        Effect.flatMap((source) => decodeProfileAgentSource(targetPath, source)),
+        Effect.map((agent) => ({ agent, path: targetPath })),
       );
     }),
   );

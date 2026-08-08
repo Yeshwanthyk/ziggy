@@ -9,6 +9,7 @@ export type HelpTopic =
   | "extensions"
   | "auth"
   | "models"
+  | "agents"
   | "run"
   | "automations"
   | "wake"
@@ -46,6 +47,16 @@ export type CliCommand =
       readonly providerId: string;
       readonly modelId: string;
       readonly thinking?: string;
+    }
+  | { readonly _tag: "AgentsCreate"; readonly target: string; readonly agentId: string }
+  | { readonly _tag: "AgentsList"; readonly target: string }
+  | { readonly _tag: "AgentsShow"; readonly target: string; readonly agentId: string }
+  | { readonly _tag: "AgentsValidate"; readonly target: string; readonly agentId?: string }
+  | {
+      readonly _tag: "AgentsRun";
+      readonly target: string;
+      readonly agentId: string;
+      readonly prompt: string;
     }
   | {
       readonly _tag: "Run";
