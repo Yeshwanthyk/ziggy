@@ -21,6 +21,7 @@ import { Models, ModelsLive } from "./application/models";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
@@ -44,11 +45,11 @@ import {
   renderAutomationTransition,
   renderAutomationValidation,
 } from "./faces/automation-cli";
-import { decodeCliCommand, renderHelp } from "./faces/cli";
+import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import { renderSession, renderSessionList } from "./faces/sessions-cli";
-import { renderServeStatus } from "./faces/serve-cli";
+import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -77,6 +78,9 @@ const ResidentProvided = ResidentGatewayLive.pipe(
       ),
     ),
   ),
+);
+const ResidentServiceProvided = ResidentServiceLive.pipe(
+  Layer.provide(Layer.merge(ResidentProvided, SchedulerProvided)),
 );
 
 const fail = (message: string) =>
@@ -108,6 +112,7 @@ const program = Effect.gen(function* () {
   const automations = yield* Automations;
   const automationScheduler = yield* AutomationScheduler;
   const residentGateway = yield* ResidentGateway;
+  const residentService = yield* ResidentService;
   const sessions = yield* Sessions;
 
   switch (command._tag) {
@@ -416,11 +421,49 @@ const program = Effect.gen(function* () {
       console.log(renderSession(shown));
       return;
     }
+    case "ServeInstall": {
+      const result = yield* residentService.install(
+        resolveProfileTarget(command.target, resolutionOptions),
+        { force: command.force, start: !command.noStart },
+      );
+      console.log(renderResidentLifecycle(result));
+      if (result.ready === false) process.exitCode = 1;
+      return;
+    }
+    case "ServeStart":
+    case "ServeStop":
+    case "ServeRestart":
+    case "ServeUninstall": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const result =
+        command._tag === "ServeStart"
+          ? yield* residentService.start(target)
+          : command._tag === "ServeStop"
+            ? yield* residentService.stop(target)
+            : command._tag === "ServeRestart"
+              ? yield* residentService.restart(target)
+              : yield* residentService.uninstall(target);
+      console.log(renderResidentLifecycle(result));
+      if (result.ready === false) process.exitCode = 1;
+      return;
+    }
     case "ServeStatus": {
-      const status = yield* residentGateway.status(
+      const status = yield* residentService.status(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderServeStatus(status));
+      const rendered = renderServeStatus(status);
+      console.log(rendered.text);
+      process.exitCode = rendered.exitCode;
+      return;
+    }
+    case "ServeLogs": {
+      const logs = yield* residentService.logs(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.follow,
+      );
+      const rendered = renderResidentLogs(logs);
+      if (rendered.length > 0) console.log(rendered);
+      process.exitCode = logs.exitCode;
       return;
     }
     case "Serve":
@@ -512,6 +555,7 @@ const program = Effect.gen(function* () {
     AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
     GatewayOwnerError: (failure) => fail(failure.message),
+    ResidentServiceError: (failure) => fail(failure.message),
     SessionReadFailed: (failure) => fail(failure.message),
     SessionNotFound: (failure) => fail(failure.message),
   }),
@@ -541,13 +585,14 @@ const program = Effect.gen(function* () {
       SessionsLive,
       SchedulerProvided,
       ResidentProvided,
+      ResidentServiceProvided,
     ),
   ),
 );
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...((process.argv[2] === "serve" && process.argv[3] !== "status") || process.argv[2] === "gateway"
+  ...(isForegroundResidentArguments(process.argv.slice(2))
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);

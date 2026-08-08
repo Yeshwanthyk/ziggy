@@ -2,7 +2,7 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun async tests own their disposable Effect execution */
 import { describe, expect, test } from "bun:test";
 import { Effect, Exit } from "effect";
-import { decodeCliCommand, renderHelp } from "./cli";
+import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./cli";
 
 const decode = (args: ReadonlyArray<string>) => Effect.runPromise(decodeCliCommand(args));
 
@@ -114,6 +114,28 @@ describe("CLI decoding", () => {
       _tag: "ServeStatus",
       target: "buddy",
     });
+    await expect(decode(["serve", "install", "buddy", "--no-start", "--force"])).resolves.toEqual({
+      _tag: "ServeInstall",
+      target: "buddy",
+      force: true,
+      noStart: true,
+    });
+    await expect(decode(["serve", "logs", "buddy", "--follow"])).resolves.toEqual({
+      _tag: "ServeLogs",
+      target: "buddy",
+      follow: true,
+    });
+    for (const [verb, tag] of [
+      ["start", "ServeStart"],
+      ["stop", "ServeStop"],
+      ["restart", "ServeRestart"],
+      ["uninstall", "ServeUninstall"],
+    ] as const) {
+      await expect(decode(["serve", verb, "buddy"])).resolves.toEqual({
+        _tag: tag,
+        target: "buddy",
+      });
+    }
     await expect(decode(["gateway", "buddy"])).resolves.toEqual({
       _tag: "Gateway",
       target: "buddy",
@@ -201,11 +223,22 @@ describe("CLI decoding", () => {
       ["sessions", "list"],
       ["sessions", "show", "buddy"],
       ["serve"],
+      ["serve", "install", "buddy", "--force", "--force"],
+      ["serve", "logs", "buddy", "--unknown"],
+      ["serve", "start", "buddy", "extra"],
       ["--unknown"],
     ]) {
       const exit = await Effect.runPromiseExit(decodeCliCommand(args));
       expect(Exit.isFailure(exit)).toBeTrue();
     }
+  });
+
+  test("identifies only exact foreground resident commands for teardown", () => {
+    expect(isForegroundResidentArguments(["serve", "buddy"])).toBeTrue();
+    expect(isForegroundResidentArguments(["gateway", "buddy"])).toBeTrue();
+    expect(isForegroundResidentArguments(["serve", "status", "buddy"])).toBeFalse();
+    expect(isForegroundResidentArguments(["serve", "install", "buddy"])).toBeFalse();
+    expect(isForegroundResidentArguments(["gateway", "buddy", "extra"])).toBeFalse();
   });
 
   test("renders stable general and command help", () => {
@@ -219,9 +252,8 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
-    expect(renderHelp("serve")).toBe(
-      "usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>",
-    );
+    expect(renderHelp("serve")).toContain("ziggy serve install <name|path> [--force] [--no-start]");
+    expect(renderHelp("serve")).toContain("ziggy serve logs <name|path> [--follow]");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

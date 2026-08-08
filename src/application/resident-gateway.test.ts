@@ -279,7 +279,17 @@ describe("gateway CLI", () => {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe(
-        "usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>",
+        [
+          "usage:",
+          "  ziggy serve <name|path>",
+          "  ziggy serve install <name|path> [--force] [--no-start]",
+          "  ziggy serve start <name|path>",
+          "  ziggy serve stop <name|path>",
+          "  ziggy serve restart <name|path>",
+          "  ziggy serve status <name|path>",
+          "  ziggy serve logs <name|path> [--follow]",
+          "  ziggy serve uninstall <name|path>",
+        ].join("\n"),
       );
     }
     for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
@@ -299,15 +309,13 @@ describe("gateway CLI", () => {
   test("serve status reports a stopped process without creating runtime state", async () => {
     const target = await profile();
     const result = invoke("serve", "status", target.path);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString().trim()).toBe(
-      [
-        "process: stopped",
-        "pid: -",
-        "acquired at: -",
-        `owner path: ${join(target.path, ".runtime", "gateway-owner.lock")}`,
-      ].join("\n"),
-    );
+    expect(result.exitCode).toBe(1);
+    const output = result.stdout.toString().trim();
+    expect(output).toContain(`profile: ${target.path}`);
+    expect(output).toContain("managed service: not-installed");
+    expect(output).toContain("supervisor: unknown");
+    expect(output).toContain("process: stopped\npid: -\nacquired at: -");
+    expect(output).toContain("scheduler: unknown");
     expect(await exists(join(target.path, ".runtime"))).toBe(false);
   });
 

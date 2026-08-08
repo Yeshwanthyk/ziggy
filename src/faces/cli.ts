@@ -37,6 +37,16 @@ const reservedWords = new Set([
 
 const invalid = (message: string): CliInputInvalid => new CliInputInvalid({ message });
 
+const serveHelp = `usage:
+  ziggy serve <name|path>
+  ziggy serve install <name|path> [--force] [--no-start]
+  ziggy serve start <name|path>
+  ziggy serve stop <name|path>
+  ziggy serve restart <name|path>
+  ziggy serve status <name|path>
+  ziggy serve logs <name|path> [--follow]
+  ziggy serve uninstall <name|path>`;
+
 const required = (value: string | undefined): value is string =>
   value !== undefined && value.length > 0;
 
@@ -318,11 +328,43 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "serve") {
-    if (rest[0] === "status" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "ServeStatus", target: rest[1] };
+    if (rest[0] === "install" && required(rest[1])) {
+      let force = false;
+      let noStart = false;
+      for (const option of rest.slice(2)) {
+        if (option === "--force" && !force) force = true;
+        else if (option === "--no-start" && !noStart) noStart = true;
+        else return invalid(`unknown or duplicate serve install option ${option}`);
+      }
+      return { _tag: "ServeInstall", target: rest[1], force, noStart };
+    }
+    if (
+      (rest[0] === "start" ||
+        rest[0] === "stop" ||
+        rest[0] === "restart" ||
+        rest[0] === "status" ||
+        rest[0] === "uninstall") &&
+      rest.length === 2 &&
+      required(rest[1])
+    ) {
+      const tags = {
+        start: "ServeStart",
+        stop: "ServeStop",
+        restart: "ServeRestart",
+        status: "ServeStatus",
+        uninstall: "ServeUninstall",
+      } as const;
+      return { _tag: tags[rest[0]], target: rest[1] };
+    }
+    if (
+      rest[0] === "logs" &&
+      required(rest[1]) &&
+      (rest.length === 2 || (rest.length === 3 && rest[2] === "--follow"))
+    ) {
+      return { _tag: "ServeLogs", target: rest[1], follow: rest.length === 3 };
     }
     if (rest.length === 1 && required(rest[0])) return { _tag: "Serve", target: rest[0] };
-    return invalid("usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>");
+    return invalid(serveHelp);
   }
 
   if (word === "gateway") {
@@ -371,7 +413,11 @@ const generalHelp = `Usage:
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ...
   ziggy serve <name|path>
+  ziggy serve install <name|path> [--force] [--no-start]
+  ziggy serve start|stop|restart <name|path>
   ziggy serve status <name|path>
+  ziggy serve logs <name|path> [--follow]
+  ziggy serve uninstall <name|path>
   ziggy gateway <name|path>  # compatibility alias
   ziggy help [command]
   ziggy version`;
@@ -397,10 +443,13 @@ const topicHelp: Record<HelpTopic, string> = {
   wake: "usage: ziggy wake <name|path> <automation-id>",
   sessions:
     "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
-  serve: "usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>",
+  serve: serveHelp,
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",
 };
 
 export const renderHelp = (topic?: HelpTopic): string =>
   topic === undefined ? generalHelp : topicHelp[topic];
+
+export const isForegroundResidentArguments = (args: ReadonlyArray<string>): boolean =>
+  args.length === 2 && (args[0] === "serve" || args[0] === "gateway");

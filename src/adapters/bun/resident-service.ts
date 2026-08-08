@@ -105,6 +105,21 @@ export const resolveResidentLaunch = (
     };
   });
 
+export const ensureResidentServiceDirectory = (
+  path: string,
+): Effect.Effect<void, ResidentServiceError> =>
+  Effect.tryPromise({
+    try: () => mkdir(path, { recursive: true }),
+    catch: (cause) =>
+      serviceError(
+        "create service directory",
+        "filesystem",
+        path,
+        `could not create resident service directory ${path}`,
+        cause,
+      ),
+  }).pipe(Effect.asVoid);
+
 export const detectResidentServiceManager = (
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<ResidentServiceManager, ResidentServiceError> => {
@@ -223,6 +238,36 @@ export const inspectManagedDefinition = (
   definition: ResidentServiceDefinition,
 ): Effect.Effect<ResidentServiceDefinitionState, ResidentServiceError> =>
   observeDefinition(definition).pipe(Effect.map((observation) => observation.state));
+
+export const removeManagedDefinition = (
+  definition: ResidentServiceDefinition,
+): Effect.Effect<boolean, ResidentServiceError> =>
+  Effect.gen(function* () {
+    const initial = yield* observeDefinition(definition);
+    if (initial.state._tag === "not-installed") return false;
+    if (initial.state._tag === "refused") return yield* policyFailure(initial.state);
+    const current = yield* observeDefinition(definition);
+    if (!sameObservation(initial, current)) {
+      return yield* serviceError(
+        "remove definition",
+        "unsafe-definition",
+        definition.path,
+        `resident service definition changed before removal at ${definition.path}`,
+      );
+    }
+    yield* Effect.tryPromise({
+      try: () => rm(definition.path),
+      catch: (cause) =>
+        serviceError(
+          "remove definition",
+          "filesystem",
+          definition.path,
+          `could not remove ${definition.path}`,
+          cause,
+        ),
+    });
+    return true;
+  });
 
 const sameObservation = (left: DefinitionObservation, right: DefinitionObservation): boolean =>
   left.state._tag === right.state._tag &&

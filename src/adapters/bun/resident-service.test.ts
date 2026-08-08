@@ -9,6 +9,7 @@ import {
   detectResidentServiceManager,
   inspectManagedDefinition,
   makeResidentPlatformCommands,
+  removeManagedDefinition,
   resolveResidentLaunch,
   writeManagedDefinition,
   type ResidentLaunchRuntime,
@@ -87,6 +88,18 @@ describe("resident service platform adapter", () => {
         "replaced",
       );
       expect(await readFile(definition.path, "utf8")).toBe(definition.content);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("removes only a recognized managed definition and is idempotent", async () => {
+    const root = await temporaryRoot();
+    try {
+      const definition = makeDefinition(root);
+      await Effect.runPromise(writeManagedDefinition(definition, { force: false }));
+      expect(await Effect.runPromise(removeManagedDefinition(definition))).toBeTrue();
+      expect(await Effect.runPromise(removeManagedDefinition(definition))).toBeFalse();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

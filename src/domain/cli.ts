@@ -95,7 +95,18 @@ export type CliCommand =
   | { readonly _tag: "SessionsList"; readonly target: string }
   | { readonly _tag: "SessionsShow"; readonly target: string; readonly reference: string }
   | { readonly _tag: "Serve"; readonly target: string }
+  | {
+      readonly _tag: "ServeInstall";
+      readonly target: string;
+      readonly force: boolean;
+      readonly noStart: boolean;
+    }
+  | { readonly _tag: "ServeStart"; readonly target: string }
+  | { readonly _tag: "ServeStop"; readonly target: string }
+  | { readonly _tag: "ServeRestart"; readonly target: string }
   | { readonly _tag: "ServeStatus"; readonly target: string }
+  | { readonly _tag: "ServeLogs"; readonly target: string; readonly follow: boolean }
+  | { readonly _tag: "ServeUninstall"; readonly target: string }
   | { readonly _tag: "Gateway"; readonly target: string }
   | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
   | { readonly _tag: "Tui"; readonly target: string };
