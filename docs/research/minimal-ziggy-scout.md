@@ -57,7 +57,8 @@ ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest sess
 ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
 ziggy sessions list <name|path>              list safe Pi session metadata
 ziggy sessions show <name|path> <id|path>    inspect lineage, usage, changes, and state
-ziggy gateway <name|path>    run the resident Profile owner
+ziggy serve <name|path>      run the resident Profile owner (scheduler + configured channels)
+ziggy gateway <name|path>    compatibility alias for serve
 ziggy profiles               list known Profiles (registry: ~/.ziggy/profiles.list)
 ziggy extensions list        inspect the offline package shelf
 ziggy extensions show <id>   inspect one package without importing its code

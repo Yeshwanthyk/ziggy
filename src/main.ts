@@ -351,11 +351,12 @@ const program = Effect.gen(function* () {
       console.log(renderSession(shown));
       return;
     }
+    case "Serve":
     case "Gateway":
       return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
     case "UnsupportedResidentAlias":
       return yield* fail(
-        `ziggy ${command.name} is no longer a resident command; use: ziggy gateway <name|path>`,
+        `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
       );
     case "Tui":
       process.exitCode = yield* agent.openTui(
@@ -476,7 +477,7 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(process.argv[2] === "gateway"
+  ...(process.argv[2] === "serve" || process.argv[2] === "gateway"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);

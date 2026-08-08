@@ -269,34 +269,41 @@ describe("gateway CLI", () => {
     Bun.spawnSync([process.execPath, "src/main.ts", ...args], { stdout: "pipe", stderr: "pipe" });
 
   test("enforces exact arity and keeps legacy resident words as tombstones", () => {
-    for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
+    for (const args of [
+      ["serve"],
+      ["serve", "test", "extra"],
+      ["gateway"],
+      ["gateway", "test", "extra"],
+    ]) {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString().trim()).toBe("usage: ziggy gateway <name|path>");
+      expect(result.stderr.toString().trim()).toBe(`usage: ziggy ${args[0]} <name|path>`);
     }
     for (const command of ["discord", "slack"] as const) {
       const result = invoke(command, "ignored");
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe(
-        `ziggy ${command} is no longer a resident command; use: ziggy gateway <name|path>`,
+        `ziggy ${command} is no longer a resident command; use: ziggy serve <name|path>`,
       );
     }
   });
 
-  test("an interrupt-only gateway shutdown exits zero and releases ownership", async () => {
-    const target = await profile();
-    const child = Bun.spawn([process.execPath, "src/main.ts", "gateway", target.path], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      if (await exists(lockPath)) break;
-      await Bun.sleep(10);
+  test("interrupt-only serve and gateway shutdowns exit zero and release ownership", async () => {
+    for (const command of ["serve", "gateway"] as const) {
+      const target = await profile();
+      const child = Bun.spawn([process.execPath, "src/main.ts", command, target.path], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (await exists(lockPath)) break;
+        await Bun.sleep(10);
+      }
+      expect(await exists(lockPath)).toBe(true);
+      child.kill("SIGINT");
+      expect(await child.exited).toBe(0);
+      expect(await exists(lockPath)).toBe(false);
     }
-    expect(await exists(lockPath)).toBe(true);
-    child.kill("SIGINT");
-    expect(await child.exited).toBe(0);
-    expect(await exists(lockPath)).toBe(false);
   });
 });

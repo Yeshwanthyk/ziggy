@@ -860,6 +860,10 @@ session roots and files.
 
 ### Chunk 12 — Add the `serve` name and finish docs
 
+**Status:** Implemented on `impl/sessions-serve`. `serve` and the compatibility `gateway` command
+route to the same `ResidentGateway.run` operation and receive the same interrupt-only clean
+teardown at the sole production execution edge.
+
 **Behavior delivered**
 
 The resident command describes scheduling and channels instead of only gateways.

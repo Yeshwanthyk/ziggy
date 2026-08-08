@@ -17,6 +17,7 @@ const helpTopics = new Set<string>([
   "automations",
   "wake",
   "sessions",
+  "serve",
   "gateway",
   "tui",
 ]);
@@ -258,11 +259,11 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     );
   }
 
-  if (word === "gateway") {
+  if (word === "serve" || word === "gateway") {
     if (rest.length !== 1 || !required(rest[0])) {
-      return invalid("usage: ziggy gateway <name|path>");
+      return invalid(`usage: ziggy ${word} <name|path>`);
     }
-    return { _tag: "Gateway", target: rest[0] };
+    return { _tag: word === "serve" ? "Serve" : "Gateway", target: rest[0] };
   }
 
   if (word === "discord" || word === "slack") {
@@ -302,7 +303,8 @@ const generalHelp = `Usage:
   ziggy automations create|list|validate|status|runs ...
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ...
-  ziggy gateway <name|path>
+  ziggy serve <name|path>
+  ziggy gateway <name|path>  # compatibility alias
   ziggy help [command]
   ziggy version`;
 
@@ -326,7 +328,8 @@ const topicHelp: Record<HelpTopic, string> = {
   wake: "usage: ziggy wake <name|path> <automation-id>",
   sessions:
     "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
-  gateway: "usage: ziggy gateway <name|path>",
+  serve: "usage: ziggy serve <name|path>",
+  gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",
 };
 
