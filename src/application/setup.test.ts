@@ -64,6 +64,19 @@ const auth = (events: string[], configured = true): AuthShape => ({
       },
     ]);
   },
+  readOnlyStatus: () => {
+    events.push("auth-read-only-status");
+    return Effect.succeed([
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        supportsApiKeyLogin: true,
+        ambientOnly: false,
+        supportsOauth: true,
+        configured: configured ? { type: "api_key" } : undefined,
+      },
+    ]);
+  },
   login: () => {
     events.push("login");
     return Effect.succeed({ providerId: "anthropic", type: "api_key", source: undefined });
@@ -76,6 +89,10 @@ const models = (
 ): ModelsShape => ({
   status: () => {
     events.push("model-status");
+    return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
+  },
+  readOnlyStatus: () => {
+    events.push("model-read-only-status");
     return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
   },
   list: (_target, providerId) => {

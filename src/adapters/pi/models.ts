@@ -1,7 +1,17 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
-import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  type Api,
+  type CredentialStore,
+  getSupportedThinkingLevels,
+  type Model,
+  type ModelsStore,
+} from "@earendil-works/pi-ai";
+import {
+  ModelRuntime,
+  readStoredCredential,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import {
   ModelOperationFailed,
@@ -54,11 +64,33 @@ const toKnownModel = (model: Model<Api>): KnownModel => ({
   thinkingLevels: getSupportedThinkingLevels(model),
 });
 
-const createPiModelsSession: PiModelsSessionFactory = async (profilePath) => {
+const readOnlyCredentials = (profilePath: string): CredentialStore => ({
+  read: (providerId) =>
+    Promise.resolve(readStoredCredential(providerId, join(profilePath, "auth.json"))),
+  list: () => Promise.resolve([]),
+  modify: (providerId, update) =>
+    update(readStoredCredential(providerId, join(profilePath, "auth.json"))),
+  delete: () => Promise.resolve(),
+});
+
+const readOnlyModelsStore: ModelsStore = {
+  read: () => Promise.resolve(undefined),
+  write: () => Promise.resolve(),
+  delete: () => Promise.resolve(),
+};
+
+const createPiModelsSessionWith = async (
+  profilePath: string,
+  readOnly: boolean,
+): Promise<PiModelsSession> => {
   const runtime = await ModelRuntime.create({
-    authPath: join(profilePath, "auth.json"),
+    ...(readOnly
+      ? { credentials: readOnlyCredentials(profilePath), modelsStore: readOnlyModelsStore }
+      : {
+          authPath: join(profilePath, "auth.json"),
+          modelsStorePath: join(profilePath, "models-store.json"),
+        }),
     modelsPath: join(profilePath, "models.json"),
-    modelsStorePath: join(profilePath, "models-store.json"),
   });
   const settings = SettingsManager.create(profilePath, profilePath);
 
@@ -100,6 +132,11 @@ const createPiModelsSession: PiModelsSessionFactory = async (profilePath) => {
     drainSettingsError: () => settings.drainErrors()[0]?.error,
   };
 };
+
+const createPiModelsSession: PiModelsSessionFactory = (profilePath) =>
+  createPiModelsSessionWith(profilePath, false);
+const createPiReadOnlyModelsSession: PiModelsSessionFactory = (profilePath) =>
+  createPiModelsSessionWith(profilePath, true);
 
 const causeCode = (cause: unknown): string | undefined =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
@@ -291,6 +328,8 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
 };
 
 const piModels = makePiModels();
+const piReadOnlyModels = makePiModels(createPiReadOnlyModelsSession);
 export const getModelStatus = piModels.status;
+export const getModelStatusReadOnly = piReadOnlyModels.status;
 export const listModels = piModels.list;
 export const setModel = piModels.set;

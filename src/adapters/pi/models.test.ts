@@ -1,11 +1,11 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Exit } from "effect";
-import { makePiModels, type KnownModel } from "./models";
+import { getModelStatusReadOnly, makePiModels, type KnownModel } from "./models";
 
 const temporaryPaths: string[] = [];
 
@@ -134,6 +134,15 @@ describe("Pi-backed model operations", () => {
     expect(reloaded.getDefaultModel()).toBe(selected.modelId);
     expect(String(reloaded.getDefaultThinkingLevel())).toBe(thinking);
     expect(reloaded.drainErrors()).toEqual([]);
+  });
+
+  test("read-only status does not create auth or model-store state", async () => {
+    const profilePath = await profile();
+    const before = await readdir(profilePath);
+
+    await Effect.runPromise(getModelStatusReadOnly(profilePath));
+
+    expect(await readdir(profilePath)).toEqual(before);
   });
 
   test("fails when SettingsManager reports a queued write error after flush", async () => {

@@ -1,8 +1,14 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import type {
+  AuthEvent,
+  AuthInteraction,
+  AuthPrompt,
+  CredentialStore,
+  ModelsStore,
+} from "@earendil-works/pi-ai";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import {
   AuthFlowFailed,
@@ -100,6 +106,28 @@ const createModelRuntime: PiAuthRuntimeFactory = (profilePath) =>
     authPath: join(profilePath, "auth.json"),
     modelsPath: join(profilePath, "models.json"),
     modelsStorePath: join(profilePath, "models-store.json"),
+  });
+
+const readOnlyCredentials = (profilePath: string): CredentialStore => ({
+  read: (providerId) =>
+    Promise.resolve(readStoredCredential(providerId, join(profilePath, "auth.json"))),
+  list: () => Promise.resolve([]),
+  modify: (providerId, update) =>
+    update(readStoredCredential(providerId, join(profilePath, "auth.json"))),
+  delete: () => Promise.resolve(),
+});
+
+const readOnlyModelsStore: ModelsStore = {
+  read: () => Promise.resolve(undefined),
+  write: () => Promise.resolve(),
+  delete: () => Promise.resolve(),
+};
+
+const createReadOnlyModelRuntime: PiAuthRuntimeFactory = (profilePath) =>
+  ModelRuntime.create({
+    credentials: readOnlyCredentials(profilePath),
+    modelsPath: join(profilePath, "models.json"),
+    modelsStore: readOnlyModelsStore,
   });
 
 const unsupportedMessage = (
@@ -264,5 +292,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
 };
 
 const piAuth = makePiAuth();
+const piReadOnlyAuth = makePiAuth(createReadOnlyModelRuntime);
 export const listAuthStatus = piAuth.listAuthStatus;
+export const listAuthStatusReadOnly = piReadOnlyAuth.listAuthStatus;
 export const loginProvider = piAuth.loginProvider;

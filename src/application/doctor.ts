@@ -69,7 +69,7 @@ const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   });
 
 const modelCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<DoctorCheck> =>
-  models.status(target).pipe(
+  models.readOnlyStatus(target).pipe(
     Effect.map((status) =>
       status.providerId === undefined || status.modelId === undefined
         ? error("model", "No effective Pi model is selected")
@@ -89,10 +89,10 @@ const authCheck = (
   models: ModelsShape,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const status = yield* models.status(target);
+    const status = yield* models.readOnlyStatus(target);
     if (status.providerId === undefined)
       return warn("auth", "Provider auth cannot be checked until a model is selected");
-    const providers = yield* auth.status(target);
+    const providers = yield* auth.readOnlyStatus(target);
     const provider = providers.find((candidate) => candidate.id === status.providerId);
     return provider?.configured === undefined
       ? error("auth", `Provider ${status.providerId} is not authenticated`)

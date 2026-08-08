@@ -44,11 +44,29 @@ const auth: AuthShape = {
         configured: { type: "oauth" },
       },
     ]),
+  readOnlyStatus: () =>
+    Effect.succeed([
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        supportsApiKeyLogin: true,
+        ambientOnly: false,
+        supportsOauth: true,
+        configured: { type: "oauth" },
+      },
+    ]),
   login: () => Effect.die("not used"),
 };
 
 const models: ModelsShape = {
   status: () =>
+    Effect.succeed({
+      providerId: "anthropic",
+      modelId: "claude",
+      thinking: "high",
+      authConfigured: true,
+    }),
+  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "anthropic",
       modelId: "claude",

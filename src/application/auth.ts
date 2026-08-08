@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import {
   listAuthStatus,
+  listAuthStatusReadOnly,
   loginProvider,
   type AuthInteraction,
   type ProviderAuthStatus,
@@ -25,6 +26,9 @@ export type AuthError =
 
 export interface AuthShape {
   readonly status: (
+    target: ProfileTarget,
+  ) => Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError>;
+  readonly readOnlyStatus: (
     target: ProfileTarget,
   ) => Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError>;
   readonly login: (
@@ -68,4 +72,8 @@ const login = (
     return yield* loginProvider(target.path, providerId, selectedType, interaction);
   });
 
-export const AuthLive = Layer.succeed(Auth, { status, login });
+export const AuthLive = Layer.succeed(Auth, {
+  status,
+  readOnlyStatus: (target) => listAuthStatusReadOnly(target.path),
+  login,
+});
