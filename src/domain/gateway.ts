@@ -9,6 +9,21 @@ export class GatewayConfigError extends Schema.TaggedErrorClass<GatewayConfigErr
   },
 ) {}
 
+export const GatewayOwnerStatus = Schema.Union([
+  Schema.TaggedStruct("stopped", { path: Schema.String }),
+  Schema.TaggedStruct("running", {
+    path: Schema.String,
+    pid: Schema.Int.check(Schema.isGreaterThan(0)),
+    acquiredAt: Schema.String,
+  }),
+  Schema.TaggedStruct("stale", {
+    path: Schema.String,
+    pid: Schema.Int.check(Schema.isGreaterThan(0)),
+    acquiredAt: Schema.String,
+  }),
+]);
+export type GatewayOwnerStatus = typeof GatewayOwnerStatus.Type;
+
 export class GatewayOwnerError extends Schema.TaggedErrorClass<GatewayOwnerError>()(
   "GatewayOwnerError",
   {

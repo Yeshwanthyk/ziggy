@@ -47,6 +47,7 @@ import { decodeCliCommand, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import { renderSession, renderSessionList } from "./faces/sessions-cli";
+import { renderServeStatus } from "./faces/serve-cli";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -395,6 +396,13 @@ const program = Effect.gen(function* () {
       console.log(renderSession(shown));
       return;
     }
+    case "ServeStatus": {
+      const status = yield* residentGateway.status(
+        resolveProfileTarget(command.target, resolutionOptions),
+      );
+      console.log(renderServeStatus(status));
+      return;
+    }
     case "Serve":
     case "Gateway":
       return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
@@ -518,7 +526,7 @@ const program = Effect.gen(function* () {
 
 BunRuntime.runMain(program, {
   disableErrorReporting: true,
-  ...(process.argv[2] === "serve" || process.argv[2] === "gateway"
+  ...((process.argv[2] === "serve" && process.argv[3] !== "status") || process.argv[2] === "gateway"
     ? {
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);

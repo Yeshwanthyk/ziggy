@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { link, lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Effect, Result, Schema, Scope } from "effect";
 import { fileSystemCauseDetails } from "../fs/cause";
-import { GatewayOwnerError } from "../../domain/gateway";
+import { GatewayOwnerError, type GatewayOwnerStatus } from "../../domain/gateway";
 import type { ProfileTarget } from "../../domain/profile";
 
 const PositivePid = Schema.Int.check(Schema.isGreaterThan(0));
@@ -35,11 +36,14 @@ export interface GatewayOwnerHandle {
   readonly ownerId: string;
 }
 
-export interface GatewayOwnerRuntime {
+export interface GatewayOwnerInspectionRuntime {
+  readonly pidIsAlive: (pid: number) => boolean;
+}
+
+export interface GatewayOwnerRuntime extends GatewayOwnerInspectionRuntime {
   readonly pid: number;
   readonly makeOwnerId: () => string;
   readonly now: () => Date;
-  readonly pidIsAlive: (pid: number) => boolean;
   readonly afterLinkConflict?: (path: string) => Effect.Effect<void>;
   readonly removeCandidate?: (path: string) => Promise<void>;
   readonly reportCleanupFailure?: (path: string, cause: unknown) => Effect.Effect<void>;
@@ -79,41 +83,96 @@ const unreadableError = (path: string, cause: unknown) =>
     reason: "unreadable",
     path,
     pid: undefined,
-    message: `gateway ownership at ${path} is unreadable; refusing to start`,
+    message: `gateway ownership at ${path} is unreadable`,
     cause,
   });
 
-const inspectExistingOwner = (path: string, runtime: GatewayOwnerRuntime) =>
-  Effect.gen(function* () {
-    const sourceResult = yield* Effect.tryPromise({
-      try: () => readFile(path, "utf8"),
+const inspectPath = (path: string) =>
+  Effect.tryPromise({
+    try: () => lstat(path),
+    catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
+  }).pipe(Effect.result);
+
+const readOwnerFile = (path: string) =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => open(path, constants.O_RDONLY | constants.O_NOFOLLOW),
       catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
-    }).pipe(Effect.result);
+    }),
+    (handle) =>
+      Effect.tryPromise({
+        try: () => handle.readFile("utf8"),
+        catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
+      }),
+    (handle) =>
+      Effect.tryPromise({
+        try: () => handle.close(),
+        catch: (cause) => ({ cause, details: fileSystemCauseDetails(cause) }),
+      }),
+  );
+
+export const inspectGatewayOwner = (
+  target: ProfileTarget,
+  runtime: GatewayOwnerInspectionRuntime = liveRuntime,
+): Effect.Effect<GatewayOwnerStatus, GatewayOwnerError> => {
+  const path = gatewayOwnerPath(target);
+  const runtimePath = dirname(path);
+  return Effect.gen(function* () {
+    const runtimeStatus = yield* inspectPath(runtimePath);
+    if (Result.isFailure(runtimeStatus)) {
+      if (runtimeStatus.failure.details.code === "ENOENT") return { _tag: "stopped", path };
+      return yield* unreadableError(path, runtimeStatus.failure.cause);
+    }
+    if (!runtimeStatus.success.isDirectory() || runtimeStatus.success.isSymbolicLink())
+      return yield* unreadableError(path, `${runtimePath} must be a regular non-symlink directory`);
+
+    const ownerStatus = yield* inspectPath(path);
+    if (Result.isFailure(ownerStatus)) {
+      if (ownerStatus.failure.details.code === "ENOENT") return { _tag: "stopped", path };
+      return yield* unreadableError(path, ownerStatus.failure.cause);
+    }
+    if (!ownerStatus.success.isFile() || ownerStatus.success.isSymbolicLink())
+      return yield* unreadableError(path, `${path} must be a regular non-symlink file`);
+
+    const sourceResult = yield* readOwnerFile(path).pipe(Effect.result);
     if (Result.isFailure(sourceResult)) {
-      if (sourceResult.failure.details.code === "ENOENT")
-        return { kind: "released" as const, cause: sourceResult.failure.cause };
+      if (sourceResult.failure.details.code === "ENOENT") return { _tag: "stopped", path };
       return yield* unreadableError(path, sourceResult.failure.cause);
     }
     const record = yield* decodeGatewayOwnerRecordJson(sourceResult.success).pipe(
       Effect.mapError((cause) => unreadableError(path, cause)),
     );
-    if (runtime.pidIsAlive(record.pid)) {
-      return yield* new GatewayOwnerError({
-        reason: "held",
-        path,
-        pid: record.pid,
-        message: `gateway already running for ${dirname(dirname(path))} (pid ${record.pid})`,
-        cause: undefined,
-      });
-    }
-    return yield* new GatewayOwnerError({
-      reason: "stale",
-      path,
-      pid: record.pid,
-      message: `stale gateway owner at ${path} (pid ${record.pid}); remove the lock file after confirming that process is stopped`,
-      cause: undefined,
-    });
+    return runtime.pidIsAlive(record.pid)
+      ? { _tag: "running", path, pid: record.pid, acquiredAt: record.acquiredAt }
+      : { _tag: "stale", path, pid: record.pid, acquiredAt: record.acquiredAt };
   });
+};
+
+const inspectExistingOwner = (target: ProfileTarget, runtime: GatewayOwnerRuntime) =>
+  inspectGatewayOwner(target, runtime).pipe(
+    Effect.flatMap((status) => {
+      if (status._tag === "stopped") return Effect.succeed({ kind: "released" as const });
+      if (status._tag === "running")
+        return Effect.fail(
+          new GatewayOwnerError({
+            reason: "held",
+            path: status.path,
+            pid: status.pid,
+            message: `gateway already running for ${target.path} (pid ${status.pid})`,
+            cause: undefined,
+          }),
+        );
+      return Effect.fail(
+        new GatewayOwnerError({
+          reason: "stale",
+          path: status.path,
+          pid: status.pid,
+          message: `stale gateway owner at ${status.path} (pid ${status.pid}); remove the lock file after confirming that process is stopped`,
+          cause: undefined,
+        }),
+      );
+    }),
+  );
 
 const acquire = (
   target: ProfileTarget,
@@ -146,7 +205,6 @@ const acquire = (
       },
       catch: (cause) => filesystemError(path, cause),
     });
-    let finalMissingCause: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const linked = yield* Effect.tryPromise({
         try: () => link(candidate, path),
@@ -155,10 +213,9 @@ const acquire = (
       if (Result.isSuccess(linked)) return { path, ownerId };
       if (linked.failure.code !== "EEXIST") return yield* filesystemError(path, linked.failure);
       yield* runtime.afterLinkConflict?.(path) ?? Effect.void;
-      const inspection = yield* inspectExistingOwner(path, runtime);
-      finalMissingCause = inspection.cause;
+      yield* inspectExistingOwner(target, runtime);
     }
-    return yield* unreadableError(path, finalMissingCause);
+    return yield* unreadableError(path, undefined);
   }).pipe(
     Effect.ensuring(
       Effect.tryPromise({

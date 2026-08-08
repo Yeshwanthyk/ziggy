@@ -100,6 +100,10 @@ describe("CLI decoding", () => {
       _tag: "Serve",
       target: "buddy",
     });
+    await expect(decode(["serve", "status", "buddy"])).resolves.toEqual({
+      _tag: "ServeStatus",
+      target: "buddy",
+    });
     await expect(decode(["gateway", "buddy"])).resolves.toEqual({
       _tag: "Gateway",
       target: "buddy",
@@ -199,8 +203,11 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy automations create|list|validate|status|runs");
     expect(renderHelp()).toContain("ziggy sessions list|show");
     expect(renderHelp()).toContain("ziggy serve <name|path>");
+    expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
-    expect(renderHelp("serve")).toBe("usage: ziggy serve <name|path>");
+    expect(renderHelp("serve")).toBe(
+      "usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>",
+    );
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

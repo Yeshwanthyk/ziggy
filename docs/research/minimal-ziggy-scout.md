@@ -58,6 +58,7 @@ ziggy wake <name|path> <id>  manually wake an automation (gate can stop it befor
 ziggy sessions list <name|path>              list safe Pi session metadata
 ziggy sessions show <name|path> <id|path>    inspect lineage, usage, changes, and state
 ziggy serve <name|path>      run the resident Profile owner (scheduler + configured channels)
+ziggy serve status <name|path>  inspect resident owner/PID state without mutation
 ziggy gateway <name|path>    compatibility alias for serve
 ziggy profiles               list known Profiles (registry: ~/.ziggy/profiles.list)
 ziggy extensions list        inspect the offline package shelf

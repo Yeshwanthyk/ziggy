@@ -56,6 +56,7 @@ const loops = (run: (name: string) => Effect.Effect<never, never>) => ({
 });
 const runtime = (config: ResidentGatewayConfig, events: Array<string>): ResidentGatewayRuntime => ({
   loadConfig: () => Effect.succeed(config),
+  inspectOwner: () => Effect.succeed({ _tag: "stopped", path: "/owner" }),
   acquireOwner: () =>
     Effect.acquireRelease(
       Effect.sync(() => {
@@ -269,15 +270,17 @@ describe("gateway CLI", () => {
     Bun.spawnSync([process.execPath, "src/main.ts", ...args], { stdout: "pipe", stderr: "pipe" });
 
   test("enforces exact arity and keeps legacy resident words as tombstones", () => {
-    for (const args of [
-      ["serve"],
-      ["serve", "test", "extra"],
-      ["gateway"],
-      ["gateway", "test", "extra"],
-    ]) {
+    for (const args of [["serve"], ["serve", "test", "extra"]]) {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString().trim()).toBe(`usage: ziggy ${args[0]} <name|path>`);
+      expect(result.stderr.toString().trim()).toBe(
+        "usage:\n  ziggy serve <name|path>\n  ziggy serve status <name|path>",
+      );
+    }
+    for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
+      const result = invoke(...args);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString().trim()).toBe("usage: ziggy gateway <name|path>");
     }
     for (const command of ["discord", "slack"] as const) {
       const result = invoke(command, "ignored");
@@ -286,6 +289,21 @@ describe("gateway CLI", () => {
         `ziggy ${command} is no longer a resident command; use: ziggy serve <name|path>`,
       );
     }
+  });
+
+  test("serve status reports a stopped process without creating runtime state", async () => {
+    const target = await profile();
+    const result = invoke("serve", "status", target.path);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe(
+      [
+        "process: stopped",
+        "pid: -",
+        "acquired at: -",
+        `owner path: ${join(target.path, ".runtime", "gateway-owner.lock")}`,
+      ].join("\n"),
+    );
+    expect(await exists(join(target.path, ".runtime"))).toBe(false);
   });
 
   test("interrupt-only serve and gateway shutdowns exit zero and release ownership", async () => {

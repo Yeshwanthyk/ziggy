@@ -1,11 +1,25 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Result } from "effect";
 import type { ProfileTarget } from "../../domain/profile";
-import { acquireGatewayOwner, gatewayOwnerPath, type GatewayOwnerRuntime } from "./gateway-owner";
+import {
+  acquireGatewayOwner,
+  gatewayOwnerPath,
+  inspectGatewayOwner,
+  type GatewayOwnerRuntime,
+} from "./gateway-owner";
 
 const paths: Array<string> = [];
 const target = async (prefix = "ziggy-owner-"): Promise<ProfileTarget> => {
@@ -28,6 +42,82 @@ const record = (ownerId: string, pid = 4242) =>
 afterEach(async () =>
   Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
+
+describe("gateway owner inspection", () => {
+  test("reports stopped without creating the runtime directory", async () => {
+    const profile = await target();
+    const before = await readdir(profile.path);
+
+    await expect(Effect.runPromise(inspectGatewayOwner(profile, runtime()))).resolves.toEqual({
+      _tag: "stopped",
+      path: gatewayOwnerPath(profile),
+    });
+
+    expect(await readdir(profile.path)).toEqual(before);
+    expect(await Bun.file(join(profile.path, ".runtime")).exists()).toBe(false);
+  });
+
+  test("reports running and stale records without changing owner bytes", async () => {
+    const profile = await target();
+    const lockPath = gatewayOwnerPath(profile);
+    const source = record("00000000-0000-4000-8000-999999999999", 31337);
+    await mkdir(join(profile.path, ".runtime"));
+    await writeFile(lockPath, source);
+
+    await expect(
+      Effect.runPromise(
+        inspectGatewayOwner(
+          profile,
+          runtime((pid) => pid === 31337),
+        ),
+      ),
+    ).resolves.toEqual({
+      _tag: "running",
+      path: lockPath,
+      pid: 31337,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    });
+    await expect(
+      Effect.runPromise(
+        inspectGatewayOwner(
+          profile,
+          runtime(() => false),
+        ),
+      ),
+    ).resolves.toEqual({
+      _tag: "stale",
+      path: lockPath,
+      pid: 31337,
+      acquiredAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(await readFile(lockPath, "utf8")).toBe(source);
+    expect(await readdir(join(profile.path, ".runtime"))).toEqual(["gateway-owner.lock"]);
+  });
+
+  test("fails typed on malformed and symlinked ownership without mutation", async () => {
+    const profile = await target();
+    const runtimePath = join(profile.path, ".runtime");
+    const lockPath = gatewayOwnerPath(profile);
+    await mkdir(runtimePath);
+    await writeFile(lockPath, "not-json\n");
+
+    const malformed = await Effect.runPromise(
+      inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
+    );
+    expect(Result.isFailure(malformed) && malformed.failure.reason).toBe("unreadable");
+    expect(await readFile(lockPath, "utf8")).toBe("not-json\n");
+
+    await rm(lockPath);
+    const external = join(profile.path, "external-owner");
+    await writeFile(external, record("00000000-0000-4000-8000-999999999999"));
+    await symlink(external, lockPath);
+    const linked = await Effect.runPromise(
+      inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
+    );
+    expect(Result.isFailure(linked) && linked.failure.reason).toBe("unreadable");
+    expect(await readFile(external, "utf8")).toBe(record("00000000-0000-4000-8000-999999999999"));
+  });
+});
 
 describe("gateway owner", () => {
   test("admits exactly one concurrent owner per Profile and independent Profiles", async () => {
@@ -146,7 +236,7 @@ describe("gateway owner", () => {
       Effect.scoped(acquireGatewayOwner(profile, runtime()).pipe(Effect.result)),
     );
     expect(Result.isFailure(malformed) && malformed.failure.message).toBe(
-      `gateway ownership at ${lockPath} is unreadable; refusing to start`,
+      `gateway ownership at ${lockPath} is unreadable`,
     );
     expect(await readFile(lockPath, "utf8")).toBe("not-json\n");
   });
