@@ -6,6 +6,11 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import type {
+  AutomationTuiDispatch,
+  AutomationTuiRequest,
+  AutomationTuiResponse,
+} from "./automation-tui";
 import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
@@ -57,6 +62,13 @@ const createHarness = () => {
   return { autocompleteFactories, commands, footers, headers, notifications, titles, ui };
 };
 
+const commandUi = (harness: ReturnType<typeof createHarness>) => ({
+  notify: (message: string) => harness.notifications.push(message),
+  select: async (_title: string, _options: string[]) => undefined,
+  confirm: async (_title: string, _message: string) => false,
+  editor: async (_title: string, _prefilled: string) => undefined,
+});
+
 describe("Ziggy TUI extension", () => {
   test("applies the profile title, header, and footer in TUI mode", async () => {
     const profilePath = "/profiles/ziggy-dev";
@@ -95,7 +107,7 @@ describe("Ziggy TUI extension", () => {
 
     await harness.commands[0]?.options.handler("", {
       mode: "tui",
-      ui: { notify: (message) => harness.notifications.push(message) },
+      ui: commandUi(harness),
     });
     expect(harness.notifications).toEqual(["No Profile agents found."]);
 
@@ -138,7 +150,7 @@ describe("Ziggy TUI extension", () => {
 
     await harness.commands[0]?.options.handler("", {
       mode: "print",
-      ui: { notify: (message) => harness.notifications.push(message) },
+      ui: commandUi(harness),
     });
 
     expect(harness).toMatchObject({
@@ -167,7 +179,7 @@ describe("Ziggy TUI extension", () => {
 
     await harness.commands[0]?.options.handler("", {
       mode: "tui",
-      ui: { notify: (message) => harness.notifications.push(message) },
+      ui: commandUi(harness),
     });
 
     expect(harness.notifications).toEqual([
@@ -352,7 +364,7 @@ describe("Ziggy TUI extension", () => {
     await command.options.handler("", {
       mode: "tui",
       ui: {
-        notify: (message) => harness.notifications.push(message),
+        ...commandUi(harness),
         custom: async <Result>() => ["alpha", "beta"] as Result,
       },
     });
@@ -360,6 +372,108 @@ describe("Ziggy TUI extension", () => {
     expect(setCalls).toEqual([["alpha", "beta"]]);
     expect(harness.notifications).toEqual([
       "Saved 2 optional extensions. Reopen this Profile to apply the change.",
+    ]);
+  });
+
+  test("manages definitions, validated edits, scheduler status, and run history", async () => {
+    const requests: Array<AutomationTuiRequest> = [];
+    const source =
+      "---\nversion: 1\ncron: 0 9 * * *\ntimezone: UTC\nbroadcast: none\n---\n\nOld task.\n";
+    const edited = source.replace("Old task.", "New task.");
+    let overviewCount = 0;
+    const dispatch: AutomationTuiDispatch = (request) => {
+      requests.push(request);
+      let response: AutomationTuiResponse;
+      switch (request.kind) {
+        case "overview":
+          overviewCount += 1;
+          response = {
+            kind: "overview",
+            definitions: [
+              {
+                id: "daily",
+                path: "automations/daily.md",
+                valid: true,
+                lifecycle: "active",
+                schedule: "0 9 * * *",
+                timezone: "UTC",
+                gateState: "manual-only",
+              },
+            ],
+            statusText: "scheduler: active\nnext due: tomorrow (daily)",
+          };
+          break;
+        case "document":
+          response = {
+            kind: "document",
+            id: "daily",
+            path: "automations/daily.md",
+            lifecycle: "active",
+            source,
+          };
+          break;
+        case "save":
+          response = {
+            kind: "saved",
+            id: "daily",
+            path: "automations/daily.md",
+            lifecycle: "active",
+            source: request.source,
+          };
+          break;
+        case "runs":
+          response = {
+            kind: "runs",
+            ...(request.id === undefined ? {} : { automationId: request.id }),
+            text: "daily completed scheduled",
+          };
+          break;
+        case "pause":
+        case "resume":
+          response = {
+            kind: "transitioned",
+            id: request.id,
+            path: `automations/daily${request.kind === "pause" ? ".paused" : ""}.md`,
+            lifecycle: request.kind === "pause" ? "paused" : "active",
+          };
+          break;
+      }
+      return Promise.resolve(response);
+    };
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], undefined, dispatch);
+    const harness = createHarness();
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+    const command = harness.commands.find(({ name }) => name === "automations");
+    if (command === undefined) throw new Error("automations command missing");
+    const selections = ["View details", "Run history", "Edit Markdown", "Scheduler overview"];
+
+    await command.options.handler("daily", {
+      mode: "tui",
+      ui: {
+        notify: (message) => harness.notifications.push(message),
+        select: async () => selections.shift(),
+        confirm: async () => true,
+        editor: async () => edited,
+      },
+    });
+
+    expect(overviewCount).toBe(3);
+    expect(requests).toEqual([
+      { kind: "overview" },
+      { kind: "runs", id: "daily" },
+      { kind: "document", id: "daily" },
+      { kind: "save", id: "daily", expectedSource: source, source: edited },
+      { kind: "overview" },
+      { kind: "overview" },
+    ]);
+    expect(harness.notifications).toEqual([
+      "Automation: daily\nLifecycle: active\nDefinition: valid\nSchedule: 0 9 * * *\nTimezone: UTC\nGate: manual-only\nFile: automations/daily.md",
+      "daily completed scheduled",
+      "Saved daily at automations/daily.md.",
+      "scheduler: active\nnext due: tomorrow (daily)",
     ]);
   });
 

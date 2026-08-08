@@ -105,6 +105,10 @@ export class AutomationPaused extends Schema.TaggedErrorClass<AutomationPaused>(
   "AutomationPaused",
   { id: Schema.String, path: Schema.String, message: Schema.String },
 ) {}
+export class AutomationEditConflict extends Schema.TaggedErrorClass<AutomationEditConflict>()(
+  "AutomationEditConflict",
+  { id: Schema.String, path: Schema.String, message: Schema.String },
+) {}
 export class AutomationFileSystemError extends Schema.TaggedErrorClass<AutomationFileSystemError>()(
   "AutomationFileSystemError",
   { path: Schema.String, message: Schema.String, cause: Schema.Defect() },

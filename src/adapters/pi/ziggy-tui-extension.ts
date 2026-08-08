@@ -8,6 +8,11 @@ import type {
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { prepareProfileAgentPrompt, type ProfileAgent } from "../../domain/profile";
+import type {
+  AutomationTuiDefinition,
+  AutomationTuiDispatch,
+  AutomationTuiResponse,
+} from "./automation-tui";
 import { ExtensionMultiSelect } from "./extension-multi-select";
 import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 
@@ -64,6 +69,9 @@ interface ZiggyTuiCommandContext {
   mode: "tui" | "rpc" | "json" | "print";
   ui: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
+    select(title: string, options: string[]): Promise<string | undefined>;
+    confirm(title: string, message: string): Promise<boolean>;
+    editor(title: string, prefilled: string): Promise<string | undefined>;
     custom?<Result>(
       factory: (
         tui: ExtensionSelectionTui,
@@ -114,6 +122,186 @@ const renderAgents = (agents: ReadonlyArray<ProfileAgent>): string =>
     : ["Profile agents:", ...agents.map((agent) => `- ${agent.id} — ${agent.description}`)].join(
         "\n",
       );
+
+const automationLabel = (definition: AutomationTuiDefinition): string =>
+  `${definition.id} — ${definition.lifecycle} · ${
+    definition.valid
+      ? `${definition.schedule ?? "schedule unknown"} · ${definition.timezone ?? "timezone unknown"}`
+      : "invalid"
+  }`;
+
+const renderAutomationDetails = (definition: AutomationTuiDefinition): string =>
+  [
+    `Automation: ${definition.id}`,
+    `Lifecycle: ${definition.lifecycle}`,
+    `Definition: ${definition.valid ? "valid" : "invalid"}`,
+    `Schedule: ${definition.schedule ?? "-"}`,
+    `Timezone: ${definition.timezone ?? "-"}`,
+    `Gate: ${definition.gateState ?? "-"}`,
+    `File: ${definition.path}`,
+    ...(definition.message === undefined ? [] : [`Error: ${definition.message}`]),
+  ].join("\n");
+
+const notifyAutomationFailure = (
+  context: ZiggyTuiCommandContext,
+  response: Extract<AutomationTuiResponse, { readonly kind: "failure" }>,
+) => context.ui.notify(response.message, "error");
+
+const editAutomation = async (
+  definition: AutomationTuiDefinition,
+  dispatch: AutomationTuiDispatch,
+  context: ZiggyTuiCommandContext,
+): Promise<void> => {
+  const loaded = await dispatch({ kind: "document", id: definition.id });
+  if (loaded.kind === "failure") {
+    notifyAutomationFailure(context, loaded);
+    return;
+  }
+  if (loaded.kind !== "document") {
+    context.ui.notify("automation editor received an unexpected response", "error");
+    return;
+  }
+
+  let draft = loaded.source;
+  while (true) {
+    const edited = await context.ui.editor(`Edit ${loaded.id} · ${loaded.path}`, draft);
+    if (edited === undefined) return;
+    if (edited === loaded.source) {
+      context.ui.notify(`No changes to ${loaded.id}.`);
+      return;
+    }
+    const confirmed = await context.ui.confirm(
+      `Save ${loaded.id}?`,
+      `Validate and replace ${loaded.path}?`,
+    );
+    if (!confirmed) return;
+
+    const saved = await dispatch({
+      kind: "save",
+      id: loaded.id,
+      expectedSource: loaded.source,
+      source: edited,
+    });
+    if (saved.kind === "saved") {
+      context.ui.notify(`Saved ${saved.id} at ${saved.path}.`);
+      return;
+    }
+    if (saved.kind !== "failure") {
+      context.ui.notify("automation editor received an unexpected response", "error");
+      return;
+    }
+    notifyAutomationFailure(context, saved);
+    if (saved.category !== "invalid") return;
+    draft = edited;
+  }
+};
+
+const manageAutomation = async (
+  definition: AutomationTuiDefinition,
+  dispatch: AutomationTuiDispatch,
+  context: ZiggyTuiCommandContext,
+): Promise<void> => {
+  while (true) {
+    const lifecycleAction =
+      definition.lifecycle === "active"
+        ? "Pause automation"
+        : definition.lifecycle === "paused"
+          ? "Resume automation"
+          : undefined;
+    const action = await context.ui.select(`Automation · ${definition.id}`, [
+      "View details",
+      "Edit Markdown",
+      "Run history",
+      ...(lifecycleAction === undefined ? [] : [lifecycleAction]),
+      "Back",
+    ]);
+    if (action === undefined || action === "Back") return;
+
+    if (action === "View details") {
+      context.ui.notify(renderAutomationDetails(definition));
+      continue;
+    }
+    if (action === "Edit Markdown") {
+      await editAutomation(definition, dispatch, context);
+      return;
+    }
+    if (action === "Run history") {
+      const runs = await dispatch({ kind: "runs", id: definition.id });
+      if (runs.kind === "failure") notifyAutomationFailure(context, runs);
+      else if (runs.kind === "runs") context.ui.notify(runs.text);
+      else context.ui.notify("automation history received an unexpected response", "error");
+      continue;
+    }
+    if (action === lifecycleAction) {
+      const verb = definition.lifecycle === "active" ? "pause" : "resume";
+      const confirmed = await context.ui.confirm(
+        `${verb === "pause" ? "Pause" : "Resume"} ${definition.id}?`,
+        verb === "pause"
+          ? "Future scheduler admission will stop; an already running occurrence may finish."
+          : "Scheduling restarts from the next future occurrence.",
+      );
+      if (!confirmed) continue;
+      const transitioned = await dispatch({ kind: verb, id: definition.id });
+      if (transitioned.kind === "failure") notifyAutomationFailure(context, transitioned);
+      else if (transitioned.kind === "transitioned")
+        context.ui.notify(
+          `${transitioned.lifecycle === "paused" ? "Paused" : "Resumed"} ${transitioned.id} at ${transitioned.path}.`,
+        );
+      else context.ui.notify("automation lifecycle received an unexpected response", "error");
+      return;
+    }
+  }
+};
+
+const openAutomations = async (
+  requestedId: string,
+  dispatch: AutomationTuiDispatch,
+  context: ZiggyTuiCommandContext,
+): Promise<void> => {
+  let selectId = requestedId.trim();
+  while (true) {
+    const overview = await dispatch({ kind: "overview" });
+    if (overview.kind === "failure") {
+      notifyAutomationFailure(context, overview);
+      return;
+    }
+    if (overview.kind !== "overview") {
+      context.ui.notify("automation manager received an unexpected response", "error");
+      return;
+    }
+
+    let selected: AutomationTuiDefinition | undefined;
+    if (selectId.length > 0) {
+      selected = overview.definitions.find((definition) => definition.id === selectId);
+      if (selected === undefined) {
+        context.ui.notify(`No automation named ${selectId}.`, "error");
+        return;
+      }
+      selectId = "";
+    } else {
+      const statusOption = "Scheduler overview";
+      const labels = new Map(
+        overview.definitions.map((definition) => [automationLabel(definition), definition]),
+      );
+      const choice = await context.ui.select("Profile automations", [
+        statusOption,
+        ...labels.keys(),
+      ]);
+      if (choice === undefined) return;
+      if (choice === statusOption) {
+        context.ui.notify(overview.statusText);
+        continue;
+      }
+      selected = labels.get(choice);
+      if (selected === undefined) {
+        context.ui.notify("automation selection is no longer available", "error");
+        continue;
+      }
+    }
+
+    await manageAutomation(selected, dispatch, context);
+  }
+};
 
 const agentPromptGuidance = (agents: ReadonlyArray<ProfileAgent>): string =>
   agents.length === 0
@@ -177,6 +365,7 @@ export const createZiggyTuiExtension = (
   profilePath: string,
   agents: ReadonlyArray<ProfileAgent> = [],
   extensionSelection?: ProfileExtensionSelectionRunner,
+  automationDispatch?: AutomationTuiDispatch,
 ) =>
   ({
     name: "ziggy-tui",
@@ -232,6 +421,17 @@ export const createZiggyTuiExtension = (
           }
         },
       });
+
+      if (automationDispatch !== undefined) {
+        pi.registerCommand("automations", {
+          description: "Inspect and manage this Profile's automations",
+          handler: async (args, context) => {
+            if (context.mode === "tui") {
+              await openAutomations(args, automationDispatch, context);
+            }
+          },
+        });
+      }
 
       if (extensionSelection !== undefined) {
         pi.registerCommand("extensions", {

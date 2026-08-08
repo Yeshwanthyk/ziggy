@@ -3,6 +3,11 @@ import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
 import packageJson from "../package.json" with { type: "json" };
+import type {
+  AutomationTuiFailureCategory,
+  AutomationTuiHandler,
+  AutomationTuiResponse,
+} from "./adapters/pi/automation-tui";
 import { makePiAgentLive } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
@@ -88,6 +93,23 @@ const fail = (message: string) =>
     console.error(message);
     process.exitCode = 1;
   });
+
+interface AutomationTuiOperationFailure {
+  readonly _tag: string;
+  readonly message: string;
+}
+
+const automationTuiFailure = (failure: AutomationTuiOperationFailure): AutomationTuiResponse => {
+  const category: AutomationTuiFailureCategory =
+    failure._tag === "AutomationInvalid"
+      ? "invalid"
+      : failure._tag === "AutomationEditConflict"
+        ? "changed"
+        : failure._tag === "AutomationNotFound" || failure._tag === "AutomationPaused"
+          ? "not-found"
+          : "unavailable";
+  return { kind: "failure", category, message: failure.message };
+};
 
 const program = Effect.gen(function* () {
   const command = yield* decodeCliCommand(process.argv.slice(2));
@@ -473,12 +495,60 @@ const program = Effect.gen(function* () {
       return yield* fail(
         `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
       );
-    case "Tui":
-      process.exitCode = yield* agent.openTui(
-        resolveProfileTarget(command.target, resolutionOptions),
-        { kind: "local" },
-      );
+    case "Tui": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const automationHandler: AutomationTuiHandler = (request) =>
+        Effect.gen(function* () {
+          switch (request.kind) {
+            case "overview": {
+              const [definitions, status] = yield* Effect.all(
+                [automationDefinitions.list(target), automationScheduler.status(target)],
+                { concurrency: 2 },
+              );
+              return {
+                kind: "overview",
+                definitions,
+                statusText: renderAutomationStatus(status),
+              } satisfies AutomationTuiResponse;
+            }
+            case "document": {
+              const document = yield* automationDefinitions.show(target, request.id);
+              return { kind: "document", ...document } satisfies AutomationTuiResponse;
+            }
+            case "save": {
+              const document = yield* automationDefinitions.save(
+                target,
+                request.id,
+                request.expectedSource,
+                request.source,
+              );
+              return { kind: "saved", ...document } satisfies AutomationTuiResponse;
+            }
+            case "runs": {
+              const automationId =
+                request.id === undefined ? undefined : yield* validateAutomationId(request.id);
+              const runs = yield* automationScheduler.runs(target, automationId);
+              return {
+                kind: "runs",
+                ...(request.id === undefined ? {} : { automationId: request.id }),
+                text: renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
+              } satisfies AutomationTuiResponse;
+            }
+            case "pause":
+            case "resume": {
+              const transitioned = yield* request.kind === "pause"
+                ? automationDefinitions.pause(target, request.id)
+                : automationDefinitions.resume(target, request.id);
+              return {
+                kind: "transitioned",
+                ...transitioned,
+              } satisfies AutomationTuiResponse;
+            }
+          }
+        }).pipe(Effect.catch((failure) => Effect.succeed(automationTuiFailure(failure))));
+      process.exitCode = yield* agent.openTui(target, { kind: "local" }, automationHandler);
       return;
+    }
     case "Doctor": {
       const report = yield* doctor.check(
         resolveProfileTarget(command.target, resolutionOptions),

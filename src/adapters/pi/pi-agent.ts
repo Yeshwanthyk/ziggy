@@ -56,6 +56,11 @@ import {
   type SpecialistParent,
 } from "./specialist";
 import { sessionReference } from "./session-lineage";
+import {
+  makeAutomationTuiDispatch,
+  type AutomationTuiDispatch,
+  type AutomationTuiHandler,
+} from "./automation-tui";
 import { createProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
@@ -78,6 +83,7 @@ export interface PiAgentShape {
   readonly openTui: (
     target: ProfileTarget,
     context: ChatContext,
+    automationHandler?: AutomationTuiHandler,
   ) => Effect.Effect<number, OpenTuiError>;
   readonly openChat: (
     target: ProfileTarget,
@@ -561,6 +567,7 @@ const createProfileRuntime = (
   sessionManager: SessionManager,
   context: ChatContext,
   admittedAgents?: ReadonlyArray<ProfileAgent>,
+  automationDispatch?: AutomationTuiDispatch,
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
@@ -596,6 +603,7 @@ const createProfileRuntime = (
                   profilePath,
                   agents,
                   createProfileExtensionSelectionRunner(profilePath, repositoryRoot),
+                  automationDispatch,
                 ),
                 ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                 createProfileMemoryExtension(profilePath, paths.documents),
@@ -895,26 +903,35 @@ export const openTui = (
   target: ProfileTarget,
   context: ChatContext,
   repositoryRoot: string,
+  automationHandler?: AutomationTuiHandler,
 ): Effect.Effect<number, OpenTuiError> =>
-  Effect.gen(function* () {
-    const soulPath = yield* requireSoul(target.path);
-    const sessionManager = createLocalSessionManager(target.path, "main");
-    const runtime = yield* createProfileRuntime(
-      target.path,
-      repositoryRoot,
-      soulPath,
-      sessionManager,
-      context,
-    );
+  Effect.scoped(
+    Effect.gen(function* () {
+      const soulPath = yield* requireSoul(target.path);
+      const sessionManager = createLocalSessionManager(target.path, "main");
+      const automationDispatch =
+        automationHandler === undefined
+          ? undefined
+          : yield* makeAutomationTuiDispatch(automationHandler);
+      const runtime = yield* createProfileRuntime(
+        target.path,
+        repositoryRoot,
+        soulPath,
+        sessionManager,
+        context,
+        undefined,
+        automationDispatch,
+      );
 
-    yield* piPromise(target.path, "open interactive mode", async () => {
-      initTheme();
-      const interactiveMode = new InteractiveMode(runtime, {});
-      await interactiveMode.run();
-    });
+      yield* piPromise(target.path, "open interactive mode", async () => {
+        initTheme();
+        const interactiveMode = new InteractiveMode(runtime, {});
+        await interactiveMode.run();
+      });
 
-    return 0;
-  });
+      return 0;
+    }),
+  );
 
 export const makePiAgentLive = (repositoryRoot: string) =>
   Layer.succeed(PiAgent, {
@@ -922,7 +939,8 @@ export const makePiAgentLive = (repositoryRoot: string) =>
       runSpecialist(target, agentId, task, context, repositoryRoot),
     askOnce: (target, prompt, continueSession, context) =>
       askOnce(target, prompt, continueSession, context, repositoryRoot),
-    openTui: (target, context) => openTui(target, context, repositoryRoot),
+    openTui: (target, context, automationHandler) =>
+      openTui(target, context, repositoryRoot, automationHandler),
     openChat: (target, context, sessionDirectory, sessionMode) =>
       openChat(target, context, sessionDirectory, repositoryRoot, sessionMode),
   });

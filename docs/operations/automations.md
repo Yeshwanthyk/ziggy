@@ -25,8 +25,16 @@ ziggy automations create <profile> <id>
 ```
 
 Creation refuses to proceed if either the active or paused form already exists. Edit definitions
-with a normal editor and remove them with normal filesystem operations; Ziggy intentionally adds
-no edit or remove command.
+with the TUI's built-in `/automations` manager or a normal editor, and remove them with normal
+filesystem operations. Ziggy intentionally adds no CLI edit or remove command.
+
+The TUI manager reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
+CLI. Choose an automation to view its metadata, edit its complete Markdown, inspect run history, or
+pause/resume it; choose the scheduler overview to see heartbeat, tick, next-due, and latest-run
+state. `/automations <id>` opens one definition directly. A TUI edit must parse as a complete valid
+definition before Ziggy writes it, refuses to replace bytes changed since the editor opened, and
+uses a same-directory atomic replacement. It does not create a second definition store or runtime
+owner.
 
 ## Pause and resume
 
@@ -81,7 +89,7 @@ Every admitted model-backed run receives a fresh Pi session under
 completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
 history authority.
 
-Inspect both authorities:
+Inspect both authorities from the CLI or open `/automations` in the TUI:
 
 ```sh
 ziggy automations runs <profile> [id]

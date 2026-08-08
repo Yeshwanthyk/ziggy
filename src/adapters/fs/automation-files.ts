@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 import {
+  AutomationEditConflict,
   AutomationFileSystemError,
   AutomationInvalid,
   AutomationNotFound,
@@ -410,3 +412,57 @@ export const automationFileStore: AutomationFileStore = {
     );
   },
 };
+
+export const replaceAutomationDefinition = (
+  target: ProfileTarget,
+  id: AutomationId,
+  expectedSource: string,
+  source: string,
+): Effect.Effect<
+  AutomationDefinitionSource,
+  | AutomationEditConflict
+  | AutomationFileSystemError
+  | AutomationInvalid
+  | AutomationNotFound
+  | AutomationPaused
+> =>
+  Effect.gen(function* () {
+    const current = yield* automationFileStore.readDefinition(target, id, true);
+    if (current.source !== expectedSource) {
+      return yield* new AutomationEditConflict({
+        id,
+        path: current.path,
+        message: `automation ${id} changed after the editor opened; reopen it before saving`,
+      });
+    }
+    if (source === current.source) return current;
+
+    const temporaryPath = `${current.path}.ziggy-edit-${randomUUID()}.tmp`;
+    yield* Effect.tryPromise({
+      try: async () => {
+        let replaced = false;
+        try {
+          const status = await lstat(current.path);
+          if (status.isSymbolicLink() || !status.isFile()) {
+            throw new Error(`${current.path} must remain a physical file`);
+          }
+          await writeFile(temporaryPath, source, {
+            encoding: "utf8",
+            flag: "wx",
+            mode: status.mode,
+          });
+          await rename(temporaryPath, current.path);
+          replaced = true;
+        } finally {
+          if (!replaced) await rm(temporaryPath, { force: true });
+        }
+      },
+      catch: (cause) =>
+        new AutomationFileSystemError({
+          path: current.path,
+          message: `could not atomically save automation ${id} at ${current.path}`,
+          cause,
+        }),
+    });
+    return { ...current, source };
+  });

@@ -2,14 +2,17 @@ import { join, relative } from "node:path";
 import { Context, Effect, Layer, Result } from "effect";
 import {
   automationDefinitionTemplate,
+  automationFileStore,
   createAutomationDefinition,
   discoverAutomationSources,
   pauseAutomationDefinition,
+  replaceAutomationDefinition,
   resumeAutomationDefinition,
   type AutomationLifecycle,
 } from "../adapters/fs/automation-files";
 import {
   type Automation,
+  type AutomationEditConflict,
   type AutomationFileSystemError,
   type AutomationInvalid,
   AutomationNotFound,
@@ -37,7 +40,15 @@ export interface AutomationDefinitionTransitionProjection {
   readonly lifecycle: AutomationLifecycle;
 }
 
+export interface AutomationDefinitionDocument {
+  readonly id: string;
+  readonly path: string;
+  readonly lifecycle: AutomationLifecycle;
+  readonly source: string;
+}
+
 export type AutomationDefinitionsError =
+  | AutomationEditConflict
   | AutomationFileSystemError
   | AutomationInvalid
   | AutomationProjectionError
@@ -49,6 +60,16 @@ export interface AutomationDefinitionsShape {
     target: ProfileTarget,
     id: string,
   ) => Effect.Effect<AutomationDefinitionProjection, AutomationDefinitionsError>;
+  readonly show: (
+    target: ProfileTarget,
+    id: string,
+  ) => Effect.Effect<AutomationDefinitionDocument, AutomationDefinitionsError>;
+  readonly save: (
+    target: ProfileTarget,
+    id: string,
+    expectedSource: string,
+    source: string,
+  ) => Effect.Effect<AutomationDefinitionDocument, AutomationDefinitionsError>;
   readonly pause: (
     target: ProfileTarget,
     id: string,
@@ -140,6 +161,30 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsShape => ({
       const automation = yield* parseAutomationFile(id, path, source);
       const created = yield* createAutomationDefinition(target, id);
       return validProjection(target.path, created.path, automation, created.lifecycle);
+    }),
+  show: (target, idSource) =>
+    Effect.gen(function* () {
+      const id = yield* validateAutomationId(idSource);
+      const document = yield* automationFileStore.readDefinition(target, id, true);
+      return {
+        id,
+        path: relative(target.path, document.path),
+        lifecycle: document.lifecycle,
+        source: document.source,
+      };
+    }),
+  save: (target, idSource, expectedSource, source) =>
+    Effect.gen(function* () {
+      const id = yield* validateAutomationId(idSource);
+      const current = yield* automationFileStore.readDefinition(target, id, true);
+      yield* parseAutomationFile(id, current.path, source);
+      const saved = yield* replaceAutomationDefinition(target, id, expectedSource, source);
+      return {
+        id,
+        path: relative(target.path, saved.path),
+        lifecycle: saved.lifecycle,
+        source: saved.source,
+      };
     }),
   pause: (target, idSource) =>
     Effect.gen(function* () {

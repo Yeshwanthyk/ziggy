@@ -79,6 +79,42 @@ describe("automation definition commands", () => {
     expect(await tree(target.path)).not.toContain(".runtime");
   });
 
+  test("shows and atomically saves only validated Markdown without losing concurrent edits", async () => {
+    const target = await profile();
+    const created = await Effect.runPromise(service.create(target, "daily"));
+    const definitionPath = join(target.path, created.path);
+    const original = await readFile(definitionPath, "utf8");
+    const next = original.replace("Describe the manual daily task here.", "Send the daily digest.");
+
+    expect(await Effect.runPromise(service.show(target, "daily"))).toEqual({
+      id: "daily",
+      path: "automations/daily.md",
+      lifecycle: "active",
+      source: original,
+    });
+    expect(await Effect.runPromise(service.save(target, "daily", original, next))).toEqual({
+      id: "daily",
+      path: "automations/daily.md",
+      lifecycle: "active",
+      source: next,
+    });
+    expect(await readFile(definitionPath, "utf8")).toBe(next);
+    expect((await readdir(join(target.path, "automations"))).sort()).toEqual(["daily.md"]);
+
+    const invalid = next.replace("version: 1", "version: 2");
+    expect(
+      await Effect.runPromise(service.save(target, "daily", next, invalid).pipe(Effect.result)),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "AutomationInvalid" } });
+    expect(await readFile(definitionPath, "utf8")).toBe(next);
+
+    const external = next.replace("Send the daily digest.", "Externally changed.");
+    await writeFile(definitionPath, external);
+    expect(
+      await Effect.runPromise(service.save(target, "daily", next, original).pipe(Effect.result)),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "AutomationEditConflict" } });
+    expect(await readFile(definitionPath, "utf8")).toBe(external);
+  });
+
   test("pauses and resumes through explicit lifecycle projections without changing bytes", async () => {
     const target = await profile();
     const created = await Effect.runPromise(service.create(target, "daily"));
