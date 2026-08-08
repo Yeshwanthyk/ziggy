@@ -56,6 +56,7 @@ import {
   type SpecialistParent,
 } from "./specialist";
 import { sessionReference } from "./session-lineage";
+import { createProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
@@ -591,7 +592,11 @@ const createProfileRuntime = (
               noThemes: true,
               noContextFiles: true,
               extensionFactories: [
-                createZiggyTuiExtension(profilePath, agents),
+                createZiggyTuiExtension(
+                  profilePath,
+                  agents,
+                  createProfileExtensionSelectionRunner(profilePath, repositoryRoot),
+                ),
                 ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                 createProfileMemoryExtension(profilePath, paths.documents),
               ],

@@ -6,6 +6,7 @@ import type {
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
@@ -323,7 +324,46 @@ describe("Ziggy TUI extension", () => {
     ).toContain("agent_discuss");
   });
 
-  test("keeps the TUI-only agents command when a Profile has no agents", () => {
+  test("saves one complete extension checklist from the TUI", async () => {
+    const setCalls: Array<ReadonlyArray<string>> = [];
+    const runner: ProfileExtensionSelectionRunner = {
+      list: () =>
+        Promise.resolve({
+          available: [
+            { id: "alpha", description: "Alpha extension", kind: "skill" },
+            { id: "beta", description: "Beta extension", kind: "skill+code" },
+          ],
+          selected: ["alpha"],
+        }),
+      setSelected: (ids) => {
+        setCalls.push(ids);
+        return Promise.resolve({ changed: true, selected: [...ids] });
+      },
+    };
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], runner);
+    const harness = createHarness();
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+    const command = harness.commands.find(({ name }) => name === "extensions");
+    if (command === undefined) throw new Error("extensions command missing");
+
+    await command.options.handler("", {
+      mode: "tui",
+      ui: {
+        notify: (message) => harness.notifications.push(message),
+        custom: async <Result>() => ["alpha", "beta"] as Result,
+      },
+    });
+
+    expect(setCalls).toEqual([["alpha", "beta"]]);
+    expect(harness.notifications).toEqual([
+      "Saved 2 optional extensions. Reopen this Profile to apply the change.",
+    ]);
+  });
+
+  test("keeps the TUI-only agents command when a Profile has no selection runner", () => {
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev", []);
     const harness = createHarness();
 

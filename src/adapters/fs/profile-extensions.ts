@@ -16,6 +16,7 @@ const Manifest = Schema.Struct({
   }),
 });
 const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(Selection));
+const decodeExtensionIds = Schema.decodeUnknownEffect(Schema.Array(ExtensionId));
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest));
 
 export type ExtensionKind = "skill" | "code" | "skill+code";
@@ -283,6 +284,43 @@ export const readExtensionSelection = (
     ),
   );
 };
+
+export interface ExtensionSelectionSetResult {
+  readonly changed: boolean;
+  readonly selected: ReadonlyArray<string>;
+}
+
+export const setExtensionSelection = (
+  profilePath: string,
+  repositoryRoot: string,
+  ids: ReadonlyArray<string>,
+): Effect.Effect<ExtensionSelectionSetResult, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    const selectionPath = path.join(profilePath, "extensions.json");
+    const decoded = yield* decodeExtensionIds(ids).pipe(
+      Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
+    );
+    const problem =
+      new Set(decoded).size !== decoded.length
+        ? "extension selection contains duplicate IDs"
+        : decoded.includes("pi-packages")
+          ? "extension selection cannot include reserved ID 'pi-packages'"
+          : undefined;
+    if (problem !== undefined) {
+      return yield* invalid(selectionPath, problem);
+    }
+
+    yield* Effect.forEach(decoded, (id) => readExtensionPackage(repositoryRoot, id));
+    const current = yield* readExtensionSelection(profilePath);
+    yield* Effect.forEach(current, (id) => readExtensionPackage(repositoryRoot, id));
+    const selected = [...decoded].sort();
+    const changed =
+      current.length !== selected.length || current.some((id, index) => id !== selected[index]);
+    if (changed) {
+      yield* replaceExtensionSelection(profilePath, selected);
+    }
+    return { changed, selected };
+  });
 
 export const replaceExtensionSelection = (profilePath: string, ids: ReadonlyArray<string>) => {
   const selectionPath = path.join(profilePath, "extensions.json");

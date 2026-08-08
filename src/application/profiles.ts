@@ -17,8 +17,8 @@ import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
   readExtensionPackage,
   readExtensionSelection,
-  replaceExtensionSelection,
   scanExtensionShelf,
+  setExtensionSelection,
   type ExtensionPackage,
 } from "../adapters/fs/profile-extensions";
 import {
@@ -733,8 +733,8 @@ const mutateExtension = (
       return { id, profilePath: target.path, changed: false, selected };
     }
     const next = selected ? [...current, id].sort() : current.filter((item) => item !== id);
-    yield* replaceExtensionSelection(target.path, next);
-    return { id, profilePath: target.path, changed: true, selected };
+    const result = yield* setExtensionSelection(target.path, repositoryRoot, next);
+    return { id, profilePath: target.path, changed: result.changed, selected };
   });
 
 export const ProfilesLive = Layer.succeed(Profiles, {

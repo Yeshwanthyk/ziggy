@@ -8,6 +8,8 @@ import type {
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { prepareProfileAgentPrompt, type ProfileAgent } from "../../domain/profile";
+import { ExtensionMultiSelect } from "./extension-multi-select";
+import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 
 interface TextComponent {
   invalidate(): void;
@@ -49,10 +51,27 @@ interface AutocompleteProvider {
   ): { lines: string[]; cursorLine: number; cursorCol: number };
 }
 
+interface ExtensionSelectionTui {
+  requestRender(): void;
+}
+
+interface ExtensionSelectionTheme {
+  fg(color: "accent" | "muted" | "text" | "dim", text: string): string;
+  bold(text: string): string;
+}
+
 interface ZiggyTuiCommandContext {
   mode: "tui" | "rpc" | "json" | "print";
   ui: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
+    custom?<Result>(
+      factory: (
+        tui: ExtensionSelectionTui,
+        theme: ExtensionSelectionTheme,
+        keybindings: unknown,
+        done: (result: Result) => void,
+      ) => TextComponent,
+    ): Promise<Result>;
   };
 }
 
@@ -151,9 +170,13 @@ export const createProfileAgentGuidanceExtension = (agents: ReadonlyArray<Profil
     },
   }) satisfies InlineExtension;
 
+const extensionSelectionError = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : "The extension selection could not be saved";
+
 export const createZiggyTuiExtension = (
   profilePath: string,
   agents: ReadonlyArray<ProfileAgent> = [],
+  extensionSelection?: ProfileExtensionSelectionRunner,
 ) =>
   ({
     name: "ziggy-tui",
@@ -201,12 +224,51 @@ export const createZiggyTuiExtension = (
           : { action: "transform", text: prepared.text };
       });
 
-      {
-        pi.registerCommand("agents", {
-          description: "List the specialists owned by this Profile",
+      pi.registerCommand("agents", {
+        description: "List the specialists owned by this Profile",
+        handler: async (_args, context) => {
+          if (context.mode === "tui") {
+            context.ui.notify(renderAgents(agents));
+          }
+        },
+      });
+
+      if (extensionSelection !== undefined) {
+        pi.registerCommand("extensions", {
+          description: "Choose the complete optional extension set for this Profile",
           handler: async (_args, context) => {
-            if (context.mode === "tui") {
-              context.ui.notify(renderAgents(agents));
+            if (context.mode !== "tui" || context.ui.custom === undefined) {
+              return;
+            }
+            try {
+              const listing = await extensionSelection.list();
+              const selected = await context.ui.custom<ReadonlyArray<string> | undefined>(
+                (tui, theme, _keybindings, done) =>
+                  new ExtensionMultiSelect(
+                    listing.available,
+                    listing.selected,
+                    theme,
+                    () => tui.requestRender(),
+                    done,
+                  ),
+              );
+              if (selected === undefined) {
+                return;
+              }
+
+              const result = await extensionSelection.setSelected(selected);
+              if (!result.changed) {
+                context.ui.notify("Extension selection is already up to date", "info");
+                return;
+              }
+              context.ui.notify(
+                result.selected.length === 0
+                  ? "Removed all optional extensions. Reopen this Profile to apply the change."
+                  : `Saved ${result.selected.length} optional extension${result.selected.length === 1 ? "" : "s"}. Reopen this Profile to apply the change.`,
+                "info",
+              );
+            } catch (cause: unknown) {
+              context.ui.notify(extensionSelectionError(cause), "error");
             }
           },
         });
