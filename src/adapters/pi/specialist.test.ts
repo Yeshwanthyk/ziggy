@@ -569,6 +569,10 @@ describe("agent_discuss TUI tool", () => {
         ),
     ).toBe(true);
     expect(response.usage?.totalTokens).toBe(12);
+    const content = response.content[0];
+    expect(content?.type === "text" ? Array.from(content.text).length : 0).toBeLessThanOrEqual(
+      8_000,
+    );
   });
 
   test("stops on the first typed runner failure", async () => {
@@ -597,6 +601,60 @@ describe("agent_discuss TUI tool", () => {
     expect(response).toEqual({
       content: [{ type: "text", text: "ERROR: model failed" }],
       details: { error: "model failed" },
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+  });
+
+  test("keeps exact usage from completed children when a later child fails", async () => {
+    const runner: SpecialistRunner = {
+      run: (request) =>
+        request.agent === "beta"
+          ? Effect.fail(
+              new SpecialistModelUnsupported({
+                profilePath: "/profile",
+                providerId: "test",
+                modelId: "missing",
+                message: "later model failed",
+              }),
+            )
+          : Effect.succeed(discussionChildResult(request.agent, "answer", 3)),
+    };
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: "topic",
+      agents: ["alpha", "beta"],
+    });
+    expect(response).toEqual({
+      content: [{ type: "text", text: "ERROR: later model failed" }],
+      details: { error: "later model failed" },
+      usage: discussionUsage(3),
+    });
+  });
+
+  test("rejects a whitespace-only topic before invoking a child", async () => {
+    let calls = 0;
+    const runner: SpecialistRunner = {
+      run: () => {
+        calls += 1;
+        return Effect.succeed(discussionChildResult("alpha", "answer", 1));
+      },
+    };
+    const response = await createAgentDiscussTool(runner).execute("call", {
+      topic: " \t\n ",
+      agents: ["alpha", "beta"],
+    });
+    expect(calls).toBe(0);
+    expect(response).toEqual({
+      content: [
+        { type: "text", text: "ERROR: agent_discuss topic must contain non-whitespace characters" },
+      ],
+      details: { error: "topic must contain non-whitespace characters" },
     });
   });
 

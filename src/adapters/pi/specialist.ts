@@ -380,9 +380,10 @@ const blockedSpecialistTool = (name: string): boolean =>
 /** Truncate by Unicode code point so bounded prompts never split a surrogate pair. */
 export const truncateDiscussionText = (text: string, maxCodePoints: number): string => {
   const codePoints = Array.from(text);
-  return codePoints.length <= maxCodePoints
-    ? text
-    : `${codePoints.slice(0, Math.max(0, maxCodePoints - 3)).join("")}...`;
+  if (maxCodePoints <= 0) return "";
+  if (codePoints.length <= maxCodePoints) return text;
+  if (maxCodePoints <= 3) return ".".repeat(maxCodePoints);
+  return `${codePoints.slice(0, maxCodePoints - 3).join("")}...`;
 };
 
 const compareDiscussionAgents = (left: string, right: string): number =>
@@ -440,13 +441,18 @@ const runDiscussion = (
   runner: SpecialistRunner,
   input: AgentDiscussionInput,
   signal?: AbortSignal,
-): Effect.Effect<AgentDiscussionResult, SpecialistRunnerError> =>
-  Effect.gen(function* () {
+): {
+  readonly usage: () => Usage;
+  readonly effect: Effect.Effect<AgentDiscussionResult, SpecialistRunnerError>;
+} => {
+  // Keep this per-invocation accumulator outside the Effect so a typed failure can
+  // still publish usage for children that completed before the failing child.
+  let combinedUsage = zeroUsage();
+  const effect = Effect.gen(function* () {
     const agents = [...input.agents].sort(compareDiscussionAgents);
     const topic = truncateDiscussionText(input.topic, DISCUSSION_TOPIC_MAX_CODE_POINTS);
     const roundCount = input.rounds ?? 1;
     const rounds: Array<Static<typeof discussionRoundSchema>> = [];
-    let combinedUsage = zeroUsage();
     let priorOutputs: string | undefined;
 
     const roundOrder: ReadonlyArray<1 | 2> = roundCount === 1 ? [1] : [1, 2];
@@ -471,6 +477,8 @@ const runDiscussion = (
 
     return { topic, rounds, usage: combinedUsage };
   });
+  return { usage: () => combinedUsage, effect };
+};
 
 const discussionTranscript = (result: AgentDiscussionResult): string =>
   result.rounds
@@ -729,6 +737,21 @@ const discussionTextResult = (
   ...(usage === undefined ? {} : { usage }),
 });
 
+const discussionSynthesisInstruction =
+  "Synthesize the final answer to the user's topic from this transcript. Do not call another discussion or specialist provider.";
+
+const boundedDiscussionOutput = (transcript: string): string => {
+  const prefix = "Bounded specialist discussion transcript:";
+  const fixed = Array.from(`${prefix}\n\n\n${discussionSynthesisInstruction}`).length;
+  const transcriptBudget = Math.max(0, DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS - fixed);
+  return [
+    prefix,
+    truncateDiscussionText(transcript, transcriptBudget),
+    "",
+    discussionSynthesisInstruction,
+  ].join("\n");
+};
+
 const discussionCallRounds = (input: AgentDiscussionInput): 1 | 2 => input.rounds ?? 1;
 
 export const renderAgentDiscussCall = (input: AgentDiscussionInput): string =>
@@ -792,26 +815,28 @@ export const createAgentDiscussTool = (runner: SpecialistRunner): AgentDiscussTo
         }),
       );
     }
-    const program = runDiscussion(runner, rawInput, signal).pipe(
+    if (rawInput.topic.trim().length === 0) {
+      return Promise.resolve(
+        discussionTextResult("ERROR: agent_discuss topic must contain non-whitespace characters", {
+          error: "topic must contain non-whitespace characters",
+        }),
+      );
+    }
+    const discussion = runDiscussion(runner, rawInput, signal);
+    const program = discussion.effect.pipe(
       Effect.match({
         onFailure: (failure) =>
-          discussionTextResult(`ERROR: ${failure.message}`, { error: failure.message }),
-        onSuccess: (result) => {
-          const transcript = truncateDiscussionText(
-            discussionTranscript(result),
-            DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS,
-          );
-          return discussionTextResult(
-            [
-              "Bounded specialist discussion transcript:",
-              transcript,
-              "",
-              "Synthesize the final answer to the user's topic from this transcript. Do not call another discussion or specialist provider.",
-            ].join("\n"),
+          discussionTextResult(
+            `ERROR: ${failure.message}`,
+            { error: failure.message },
+            discussion.usage(),
+          ),
+        onSuccess: (result) =>
+          discussionTextResult(
+            boundedDiscussionOutput(discussionTranscript(result)),
             { result },
             result.usage,
-          );
-        },
+          ),
       }),
     );
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
