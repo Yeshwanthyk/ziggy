@@ -1,4 +1,7 @@
-import type { AutomationDefinitionProjection } from "../application/automation-definitions";
+import type {
+  AutomationDefinitionProjection,
+  AutomationDefinitionTransitionProjection,
+} from "../application/automation-definitions";
 import type {
   AutomationRunOutcome,
   AutomationRunProjection,
@@ -13,8 +16,8 @@ export const renderAutomationDefinitions = (
     : definitions
         .map((definition) =>
           definition.valid
-            ? `${definition.id}\tvalid\t${definition.schedule}\t${definition.timezone}\t${definition.gateState}\t${definition.path}`
-            : `${definition.id}\tinvalid\t-\t-\t-\t${definition.path}`,
+            ? `${definition.id}\t${definition.lifecycle}\tvalid\t${definition.schedule}\t${definition.timezone}\t${definition.gateState}\t${definition.path}`
+            : `${definition.id}\t${definition.lifecycle}\tinvalid\t-\t-\t-\t${definition.path}`,
         )
         .join("\n");
 
@@ -26,10 +29,15 @@ export const renderAutomationValidation = (
     : definitions
         .map((definition) =>
           definition.valid
-            ? `${definition.path}\tvalid\t${definition.gateState}`
-            : `${definition.path}\tinvalid\t${definition.message}`,
+            ? `${definition.path}\t${definition.lifecycle}\tvalid\t${definition.gateState}`
+            : `${definition.path}\t${definition.lifecycle}\tinvalid\t${definition.message}`,
         )
         .join("\n");
+
+export const renderAutomationTransition = (
+  action: "paused" | "resumed",
+  definition: AutomationDefinitionTransitionProjection,
+): string => `${action} automation ${definition.id} at ${definition.path}`;
 
 export const renderAutomationCreated = (definition: AutomationDefinitionProjection): string =>
   [

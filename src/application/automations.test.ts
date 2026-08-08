@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixtures exercise the Node filesystem adapter */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Option } from "effect";
@@ -20,6 +20,7 @@ import { ProviderCallError, ProviderConfigError, SpecialistAgentNotFound } from 
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentShape } from "./agent";
+import { makeAutomationDefinitions } from "./automation-definitions";
 import { type AutomationCapabilities, makeAutomations } from "./automations";
 
 const paths: Array<string> = [];
@@ -154,6 +155,46 @@ afterEach(async () =>
 );
 
 describe("automation run", () => {
+  test("manual wake fails explicitly when the definition is paused", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    await rename(
+      join(target.path, "automations", "daily-note.md"),
+      join(target.path, "automations", "daily-note.paused.md"),
+    );
+    const message = await Effect.runPromise(
+      harness(events)
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.catchTag("AutomationPaused", (failure) => Effect.succeed(failure.message))),
+    );
+    expect(message).toContain("is paused");
+    expect(events).toEqual([]);
+  });
+
+  test("pausing does not cancel a run that is already running", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none");
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const running = run(
+      harness(events, {
+        promptEffect: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as("local reply"),
+        ),
+      }),
+      target,
+    );
+    await Effect.runPromise(Deferred.await(entered));
+    const paused = await Effect.runPromise(makeAutomationDefinitions().pause(target, "daily-note"));
+    expect(paused.lifecycle).toBe("paused");
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await expect(running).resolves.toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+  });
+
   test("an absent gate opens one exact fresh session, prompts once, prints once, and records the manual run", async () => {
     const events: Array<string> = [];
     const target = await profile("none");

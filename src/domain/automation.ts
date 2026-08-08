@@ -101,6 +101,10 @@ export class AutomationNotFound extends Schema.TaggedErrorClass<AutomationNotFou
   "AutomationNotFound",
   { id: Schema.String, path: Schema.String, message: Schema.String },
 ) {}
+export class AutomationPaused extends Schema.TaggedErrorClass<AutomationPaused>()(
+  "AutomationPaused",
+  { id: Schema.String, path: Schema.String, message: Schema.String },
+) {}
 export class AutomationFileSystemError extends Schema.TaggedErrorClass<AutomationFileSystemError>()(
   "AutomationFileSystemError",
   { path: Schema.String, message: Schema.String, cause: Schema.Defect() },
@@ -204,6 +208,7 @@ const AutomationRunFailureCategory = Schema.Literals([
   "invalid-response",
   "AutomationInvalid",
   "AutomationNotFound",
+  "AutomationPaused",
   "AutomationFileSystemError",
   "AutomationGateFailed:spawn",
   "AutomationGateFailed:wait",
@@ -245,6 +250,7 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
 const executionFailureCategories: ReadonlySet<string> = new Set([
   "AutomationInvalid",
   "AutomationNotFound",
+  "AutomationPaused",
   "AutomationFileSystemError",
   "AutomationGateFailed:spawn",
   "AutomationGateFailed:wait",

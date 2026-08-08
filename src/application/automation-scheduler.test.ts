@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem state */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Clock, Deferred, Effect, Fiber } from "effect";
@@ -65,6 +65,72 @@ afterEach(async () =>
 );
 
 describe("automation scheduler engine", () => {
+  test("paused filenames clear the next occurrence on the next scan and resume from a fresh future cursor", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const dispatched: Array<string> = [];
+    const scheduler = makeAutomationScheduler({
+      run: (_target, id) =>
+        Effect.sync(() => dispatched.push(id)).pipe(
+          Effect.as({ kind: "executed", delivery: { kind: "resolved", targets: [] } } as const),
+        ),
+    });
+    const active = join(target.path, "automations", "daily.md");
+    const paused = join(target.path, "automations", "daily.paused.md");
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const fiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        yield* Effect.promise(() => rename(active, paused));
+        yield* TestClock.adjust(60_000);
+        yield* awaitHeartbeat(target, start + 60_000);
+        expect(dispatched).toEqual([]);
+        expect((yield* readScheduleRecords(target.path))[0]).toMatchObject({
+          definitionState: "deleted",
+          nextScheduledAtMs: null,
+        });
+
+        yield* Effect.promise(() => rename(paused, active));
+        yield* TestClock.adjust(60_000);
+        yield* awaitHeartbeat(target, start + 120_000);
+        expect(dispatched).toEqual([]);
+        expect((yield* readScheduleRecords(target.path))[0]).toMatchObject({
+          definitionState: "valid",
+          nextScheduledAtMs: start + 180_000,
+        });
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
+  test("an active-paused conflict is one invalid schedule and is never dispatched", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    await writeFile(join(target.path, "automations", "daily.paused.md"), definition("* * * * *"));
+    const dispatched: Array<string> = [];
+    const scheduler = makeAutomationScheduler({
+      run: (_target, id) =>
+        Effect.sync(() => dispatched.push(id)).pipe(
+          Effect.as({ kind: "executed", delivery: { kind: "resolved", targets: [] } } as const),
+        ),
+    });
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start);
+        const fiber = yield* Effect.forkScoped(scheduler.run(target));
+        yield* awaitHeartbeat(target, start);
+        const rows = yield* readScheduleRecords(target.path);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.definitionState).toBe("invalid");
+        expect(rows[0]?.definitionError).toContain("conflicting active and paused");
+        yield* TestClock.adjust(120_000);
+        expect(dispatched).toEqual([]);
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+    await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
   test("arms the earliest occurrence, dispatches without waiting, and keeps unrelated IDs independent", async () => {
     const target = await profile([
       ["first", definition("1 * * * *")],

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import {
+  AutomationPaused,
   automationScheduleFingerprint,
   manualRunId,
   parseAutomationFile,
@@ -30,6 +31,18 @@ const invalidMessage = async (fields: ReadonlyArray<string>, body?: string) => {
     ),
   );
 };
+
+describe("automation lifecycle", () => {
+  test("keeps paused failure distinct from missing", () => {
+    const failure = new AutomationPaused({
+      id: "daily",
+      path: "/profile/automations/daily.paused.md",
+      message: "automation daily is paused",
+    });
+    expect(failure._tag).toBe("AutomationPaused");
+    expect(failure.message).toContain("paused");
+  });
+});
 
 describe("automation definition", () => {
   test("parses the exact contract independent of field order", async () => {

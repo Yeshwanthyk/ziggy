@@ -266,6 +266,18 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
       return { _tag: "AutomationsList", target: rest[1] };
     }
+    if (
+      (rest[0] === "pause" || rest[0] === "resume") &&
+      rest.length === 3 &&
+      required(rest[1]) &&
+      required(rest[2])
+    ) {
+      return {
+        _tag: rest[0] === "pause" ? "AutomationsPause" : "AutomationsResume",
+        target: rest[1],
+        automationId: rest[2],
+      };
+    }
     if (rest[0] === "validate" && (rest.length === 2 || rest.length === 3) && required(rest[1])) {
       const automationId = rest[2];
       return automationId === undefined
@@ -282,7 +294,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
         : { _tag: "AutomationsRuns", target: rest[1], automationId };
     }
     return invalid(
-      "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
+      "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
     );
   }
 
@@ -355,7 +367,7 @@ const generalHelp = `Usage:
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]
   ziggy extensions list|show|add|remove ...
-  ziggy automations create|list|validate|status|runs ...
+  ziggy automations create|list|pause|resume|validate|status|runs ...
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ...
   ziggy serve <name|path>
@@ -381,7 +393,7 @@ const topicHelp: Record<HelpTopic, string> = {
   doctor: "usage: ziggy doctor <name|path>",
   run: "usage: ziggy run [-c] <name|path> <prompt...>",
   automations:
-    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
+    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
   wake: "usage: ziggy wake <name|path> <automation-id>",
   sessions:
     "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",

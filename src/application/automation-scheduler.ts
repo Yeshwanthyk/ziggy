@@ -39,6 +39,7 @@ export class AutomationScheduler extends Context.Service<AutomationScheduler, Au
 interface ValidObservation { readonly id: AutomationId; readonly automation: Automation; readonly fingerprint: string }
 type Observation =
   | { readonly kind: "valid"; readonly idSource: string; readonly valid: ValidObservation }
+  | { readonly kind: "paused"; readonly idSource: string }
   | { readonly kind: "invalid"; readonly idSource: string; readonly error: string };
 
 const discover = (target: ProfileTarget) =>
@@ -46,6 +47,10 @@ const discover = (target: ProfileTarget) =>
     const sources = yield* discoverAutomationSources(target);
     const observations: Array<Observation> = [];
     for (const source of sources) {
+      if (source.lifecycle === "paused") {
+        observations.push({ kind: "paused", idSource: source.idSource });
+        continue;
+      }
       if (source.source === null) {
         observations.push({
           kind: "invalid",
@@ -99,6 +104,21 @@ const validMutation = (previous: AutomationScheduleRecord | undefined, observati
   return { expected: previous, next: { ...base, nextScheduledAtMs: second }, occurrence: { kind: "due", runId: scheduledRunId(id, cursor), scheduledForMs: cursor, missedThroughMs: null, scheduleFingerprint: fingerprint } };
 };
 
+// Paused definitions intentionally project as deleted schedule rows: Profile filenames remain the
+// lifecycle authority while SQLite retains only its existing projection vocabulary.
+const deletedSchedule = (
+  previous: AutomationScheduleRecord | undefined,
+  id: string,
+  observedAtMs: number,
+): AutomationScheduleRecord => ({
+  automationId: id,
+  definitionState: "deleted",
+  scheduleFingerprint: previous?.scheduleFingerprint ?? null,
+  nextScheduledAtMs: null,
+  definitionObservedAtMs: observedAtMs,
+  definitionError: null,
+});
+
 const proposals = (
   current: ReadonlyArray<AutomationScheduleRecord>,
   observations: ReadonlyArray<Observation>,
@@ -114,24 +134,22 @@ const proposals = (
     mutations.push(
       observation.kind === "valid"
         ? validMutation(before, observation.valid, observedAtMs, startup)
-        : {
-            expected: before ?? null,
-            next: invalidSchedule(before, observation.idSource, observation.error, observedAtMs),
-          },
+        : observation.kind === "paused"
+          ? {
+              expected: before ?? null,
+              next: deletedSchedule(before, observation.idSource, observedAtMs),
+            }
+          : {
+              expected: before ?? null,
+              next: invalidSchedule(before, observation.idSource, observation.error, observedAtMs),
+            },
     );
   }
   for (const before of current)
     if (!seen.has(before.automationId) && before.definitionState !== "deleted")
       mutations.push({
         expected: before,
-        next: {
-          automationId: before.automationId,
-          definitionState: "deleted",
-          scheduleFingerprint: before.scheduleFingerprint,
-          nextScheduledAtMs: null,
-          definitionObservedAtMs: observedAtMs,
-          definitionError: null,
-        },
+        next: deletedSchedule(before, before.automationId, observedAtMs),
       });
   // oxfmt-ignore
   return mutations.sort((left, right) => (left.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) - (right.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) || left.next.automationId.localeCompare(right.next.automationId));

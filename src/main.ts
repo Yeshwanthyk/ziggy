@@ -41,6 +41,7 @@ import {
   renderAutomationOutcome,
   renderAutomationRuns,
   renderAutomationStatus,
+  renderAutomationTransition,
   renderAutomationValidation,
 } from "./faces/automation-cli";
 import { decodeCliCommand, renderHelp } from "./faces/cli";
@@ -344,6 +345,25 @@ const program = Effect.gen(function* () {
       console.log(renderAutomationDefinitions(listed));
       return;
     }
+    case "AutomationsPause":
+    case "AutomationsResume": {
+      const definition = yield* command._tag === "AutomationsPause"
+        ? automationDefinitions.pause(
+            resolveProfileTarget(command.target, resolutionOptions),
+            command.automationId,
+          )
+        : automationDefinitions.resume(
+            resolveProfileTarget(command.target, resolutionOptions),
+            command.automationId,
+          );
+      console.log(
+        renderAutomationTransition(
+          command._tag === "AutomationsPause" ? "paused" : "resumed",
+          definition,
+        ),
+      );
+      return;
+    }
     case "AutomationsValidate": {
       const validation = yield* automationDefinitions.validate(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -484,6 +504,7 @@ const program = Effect.gen(function* () {
     MemoryIdInvalid: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
+    AutomationPaused: (failure) => fail(failure.message),
     AutomationFileSystemError: (failure) => fail(failure.message),
     AutomationGateFailed: (failure) => fail(failure.message),
     AutomationDatabaseError: (failure) => fail(failure.message),

@@ -18,6 +18,7 @@ import {
   AutomationGateFailed,
   AutomationInvalid,
   AutomationNotFound,
+  AutomationPaused,
   type AutomationDeliveryFailureCategory,
   type AutomationRunOutcome,
   type AutomationTrigger,
@@ -39,6 +40,7 @@ import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
 export type AutomationError =
   | AutomationInvalid
   | AutomationNotFound
+  | AutomationPaused
   | AutomationFileSystemError
   | AutomationGateFailed
   | AutomationDatabaseError
@@ -79,10 +81,15 @@ const liveCapabilities: AutomationCapabilities = {
   sendSlack: postMessage,
 };
 
-const readAutomation = (files: AutomationFileStore, target: ProfileTarget, idSource: string) =>
+const readAutomation = (
+  files: AutomationFileStore,
+  target: ProfileTarget,
+  idSource: string,
+  allowPaused: boolean,
+) =>
   Effect.gen(function* () {
     const id = yield* validateAutomationId(idSource);
-    const loaded = yield* files.readDefinition(target, id);
+    const loaded = yield* files.readDefinition(target, id, allowPaused);
     return yield* parseAutomationFile(id, loaded.path, loaded.source);
   });
 
@@ -240,7 +247,7 @@ const gateFailureCategory = (
 };
 
 // oxfmt-ignore
-const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
+const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
 export const makeAutomations = (
   agent: ZiggyAgentShape,
@@ -277,7 +284,12 @@ export const makeAutomations = (
         );
 
       const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {
-        const automation = yield* readAutomation(capabilities.files, target, automationId);
+        const automation = yield* readAutomation(
+          capabilities.files,
+          target,
+          automationId,
+          trigger.kind === "scheduled",
+        );
         if (trigger.kind === "scheduled" && automation.gate === undefined) {
           return {
             outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },

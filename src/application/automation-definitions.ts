@@ -4,12 +4,16 @@ import {
   automationDefinitionTemplate,
   createAutomationDefinition,
   discoverAutomationSources,
+  pauseAutomationDefinition,
+  resumeAutomationDefinition,
+  type AutomationLifecycle,
 } from "../adapters/fs/automation-files";
 import {
   type Automation,
   type AutomationFileSystemError,
   type AutomationInvalid,
   AutomationNotFound,
+  type AutomationPaused,
   type AutomationProjectionError,
   parseAutomationFile,
   validateAutomationId,
@@ -20,23 +24,39 @@ export interface AutomationDefinitionProjection {
   readonly id: string;
   readonly path: string;
   readonly valid: boolean;
+  readonly lifecycle: AutomationLifecycle | "conflict";
   readonly schedule?: string;
   readonly timezone?: string;
   readonly gateState?: "scheduled" | "manual-only";
   readonly message?: string;
 }
 
+export interface AutomationDefinitionTransitionProjection {
+  readonly id: string;
+  readonly path: string;
+  readonly lifecycle: AutomationLifecycle;
+}
+
 export type AutomationDefinitionsError =
   | AutomationFileSystemError
   | AutomationInvalid
   | AutomationProjectionError
-  | AutomationNotFound;
+  | AutomationNotFound
+  | AutomationPaused;
 
 export interface AutomationDefinitionsShape {
   readonly create: (
     target: ProfileTarget,
     id: string,
   ) => Effect.Effect<AutomationDefinitionProjection, AutomationDefinitionsError>;
+  readonly pause: (
+    target: ProfileTarget,
+    id: string,
+  ) => Effect.Effect<AutomationDefinitionTransitionProjection, AutomationDefinitionsError>;
+  readonly resume: (
+    target: ProfileTarget,
+    id: string,
+  ) => Effect.Effect<AutomationDefinitionTransitionProjection, AutomationDefinitionsError>;
   readonly list: (
     target: ProfileTarget,
   ) => Effect.Effect<ReadonlyArray<AutomationDefinitionProjection>, AutomationProjectionError>;
@@ -55,10 +75,12 @@ const validProjection = (
   profilePath: string,
   path: string,
   automation: Automation,
+  lifecycle: AutomationLifecycle,
 ): AutomationDefinitionProjection => ({
   id: automation.id,
   path: relative(profilePath, path),
   valid: true,
+  lifecycle,
   schedule: automation.schedule.cronSource,
   timezone: automation.schedule.timezone,
   gateState: automation.gate === undefined ? "manual-only" : "scheduled",
@@ -69,12 +91,23 @@ const catalog = (target: ProfileTarget) =>
     const sources = yield* discoverAutomationSources(target);
     const rows: Array<AutomationDefinitionProjection> = [];
     for (const source of sources) {
+      if (source.lifecycle === "conflict") {
+        rows.push({
+          id: source.idSource,
+          path: relative(target.path, source.path),
+          valid: false,
+          lifecycle: "conflict",
+          message: source.error ?? "automation has conflicting active and paused definitions",
+        });
+        continue;
+      }
       const sourceText = source.source;
       if (sourceText === null) {
         rows.push({
           id: source.idSource,
           path: relative(target.path, source.path),
           valid: false,
+          lifecycle: source.lifecycle,
           message: source.error ?? "automation definition is unreadable",
         });
         continue;
@@ -85,11 +118,12 @@ const catalog = (target: ProfileTarget) =>
       }).pipe(Effect.result);
       rows.push(
         Result.isSuccess(parsed)
-          ? validProjection(target.path, source.path, parsed.success)
+          ? validProjection(target.path, source.path, parsed.success, source.lifecycle)
           : {
               id: source.idSource,
               path: relative(target.path, source.path),
               valid: false,
+              lifecycle: source.lifecycle,
               message: parsed.failure.message,
             },
       );
@@ -105,7 +139,27 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsShape => ({
       const path = join(target.path, "automations", `${id}.md`);
       const automation = yield* parseAutomationFile(id, path, source);
       const created = yield* createAutomationDefinition(target, id);
-      return validProjection(target.path, created.path, automation);
+      return validProjection(target.path, created.path, automation, created.lifecycle);
+    }),
+  pause: (target, idSource) =>
+    Effect.gen(function* () {
+      const id = yield* validateAutomationId(idSource);
+      const transitioned = yield* pauseAutomationDefinition(target, id);
+      return {
+        id,
+        path: relative(target.path, transitioned.path),
+        lifecycle: transitioned.lifecycle,
+      };
+    }),
+  resume: (target, idSource) =>
+    Effect.gen(function* () {
+      const id = yield* validateAutomationId(idSource);
+      const transitioned = yield* resumeAutomationDefinition(target, id);
+      return {
+        id,
+        path: relative(target.path, transitioned.path),
+        lifecycle: transitioned.lifecycle,
+      };
     }),
   list: catalog,
   validate: (target, idSource) =>

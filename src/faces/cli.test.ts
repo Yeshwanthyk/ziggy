@@ -61,6 +61,16 @@ describe("CLI decoding", () => {
       _tag: "AutomationsList",
       target: "buddy",
     });
+    await expect(decode(["automations", "pause", "buddy", "morning"])).resolves.toEqual({
+      _tag: "AutomationsPause",
+      target: "buddy",
+      automationId: "morning",
+    });
+    await expect(decode(["automations", "resume", "buddy", "morning"])).resolves.toEqual({
+      _tag: "AutomationsResume",
+      target: "buddy",
+      automationId: "morning",
+    });
     await expect(decode(["automations", "validate", "buddy", "morning"])).resolves.toEqual({
       _tag: "AutomationsValidate",
       target: "buddy",
@@ -185,6 +195,8 @@ describe("CLI decoding", () => {
       ["agents", "run", "buddy", "reviewer"],
       ["agents", "show", "buddy"],
       ["automations", "create", "buddy"],
+      ["automations", "pause", "buddy"],
+      ["automations", "resume", "buddy", "daily", "extra"],
       ["automations", "validate"],
       ["sessions", "list"],
       ["sessions", "show", "buddy"],
@@ -200,7 +212,9 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy tui [<name|path>]");
     expect(renderHelp()).toContain("ziggy models set");
     expect(renderHelp()).toContain("ziggy agents create|list|show|validate|run");
-    expect(renderHelp()).toContain("ziggy automations create|list|validate|status|runs");
+    expect(renderHelp()).toContain(
+      "ziggy automations create|list|pause|resume|validate|status|runs",
+    );
     expect(renderHelp()).toContain("ziggy sessions list|show");
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");

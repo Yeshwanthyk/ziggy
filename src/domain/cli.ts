@@ -82,6 +82,8 @@ export type CliCommand =
       readonly automationId: string;
     }
   | { readonly _tag: "AutomationsList"; readonly target: string }
+  | { readonly _tag: "AutomationsPause"; readonly target: string; readonly automationId: string }
+  | { readonly _tag: "AutomationsResume"; readonly target: string; readonly automationId: string }
   | {
       readonly _tag: "AutomationsValidate";
       readonly target: string;

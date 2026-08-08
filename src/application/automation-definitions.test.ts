@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute application Effects */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixtures own temporary filesystem setup */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
@@ -30,6 +30,25 @@ const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   return found.sort();
 };
 
+const snapshot = async (root: string): Promise<ReadonlyArray<string>> => {
+  const found: Array<string> = [];
+  const walk = async (directory: string, prefix = "") => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = join(prefix, entry.name);
+      const path = join(directory, entry.name);
+      const status = await lstat(path);
+      found.push(
+        entry.isDirectory()
+          ? `${relative}\tdirectory\t${status.mtimeMs}`
+          : `${relative}\tfile\t${status.size}\t${status.mtimeMs}\t${(await readFile(path)).toString("base64")}`,
+      );
+      if (entry.isDirectory()) await walk(path, relative);
+    }
+  };
+  await walk(root);
+  return found.sort();
+};
+
 afterEach(async () =>
   Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
@@ -43,6 +62,7 @@ describe("automation definition commands", () => {
       id: "morning-note",
       path: "automations/morning-note.md",
       valid: true,
+      lifecycle: "active",
       schedule: "0 9 * * *",
       timezone: "UTC",
       gateState: "manual-only",
@@ -59,12 +79,77 @@ describe("automation definition commands", () => {
     expect(await tree(target.path)).not.toContain(".runtime");
   });
 
+  test("pauses and resumes through explicit lifecycle projections without changing bytes", async () => {
+    const target = await profile();
+    const created = await Effect.runPromise(service.create(target, "daily"));
+    const activePath = join(target.path, created.path);
+    const bytes = await readFile(activePath);
+
+    const paused = await Effect.runPromise(service.pause(target, "daily"));
+    expect(paused.lifecycle).toBe("paused");
+    expect(paused.path).toBe("automations/daily.paused.md");
+    expect(await readFile(join(target.path, paused.path))).toEqual(bytes);
+    expect((await Effect.runPromise(service.list(target)))[0]?.lifecycle).toBe("paused");
+
+    const resumed = await Effect.runPromise(service.resume(target, "daily"));
+    expect(resumed.lifecycle).toBe("active");
+    expect(await readFile(join(target.path, resumed.path))).toEqual(bytes);
+  });
+
+  test("can pause an invalid definition without rewriting or requiring it to parse", async () => {
+    const target = await profile();
+    await mkdir(join(target.path, "automations"));
+    const activePath = join(target.path, "automations", "broken.md");
+    await writeFile(activePath, "not valid markdown\n");
+    const bytes = await readFile(activePath);
+
+    const paused = await Effect.runPromise(service.pause(target, "broken"));
+    expect(paused).toEqual({
+      id: "broken",
+      path: "automations/broken.paused.md",
+      lifecycle: "paused",
+    });
+    expect(await readFile(join(target.path, paused.path))).toEqual(bytes);
+    expect((await Effect.runPromise(service.validate(target, "broken")))[0]).toMatchObject({
+      lifecycle: "paused",
+      valid: false,
+    });
+  });
+
+  test("create refuses collision with an existing paused form", async () => {
+    const target = await profile();
+    await mkdir(join(target.path, "automations"));
+    const pausedPath = join(target.path, "automations", "daily.paused.md");
+    await writeFile(pausedPath, "human bytes\n");
+    expect(Exit.isFailure(await Effect.runPromiseExit(service.create(target, "daily")))).toBeTrue();
+    expect(await readFile(pausedPath, "utf8")).toBe("human bytes\n");
+  });
+
+  test("list and validate report one explicit conflict and do not mutate files", async () => {
+    const target = await profile();
+    await Effect.runPromise(service.create(target, "daily"));
+    const activePath = join(target.path, "automations", "daily.md");
+    const pausedPath = join(target.path, "automations", "daily.paused.md");
+    await writeFile(pausedPath, await readFile(activePath));
+    const before = await Promise.all([stat(activePath), stat(pausedPath)]);
+
+    const listed = await Effect.runPromise(service.list(target));
+    const validated = await Effect.runPromise(service.validate(target));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.lifecycle).toBe("conflict");
+    expect(listed[0]?.message).toContain("conflicting active and paused");
+    expect(validated).toEqual(listed);
+    expect(
+      (await Promise.all([stat(activePath), stat(pausedPath)])).map((item) => item.mtimeMs),
+    ).toEqual(before.map((item) => item.mtimeMs));
+  });
+
   test("lists and validates every sibling in stable order without runtime state", async () => {
     const target = await profile();
     await Effect.runPromise(service.create(target, "zeta"));
     await writeFile(join(target.path, "automations", "broken.md"), "invalid\n");
     await Effect.runPromise(service.create(target, "alpha"));
-    const before = await tree(target.path);
+    const before = await snapshot(target.path);
 
     const listed = await Effect.runPromise(service.list(target));
     const validated = await Effect.runPromise(service.validate(target));
@@ -76,7 +161,7 @@ describe("automation definition commands", () => {
     ]);
     expect(validated).toEqual(listed);
     expect(validated[1]?.message).toContain("frontmatter must start");
-    expect(await tree(target.path)).toEqual(before);
-    expect(before).not.toContain(".runtime");
+    expect(await snapshot(target.path)).toEqual(before);
+    expect(before.some((item) => item.startsWith(".runtime"))).toBeFalse();
   });
 });
