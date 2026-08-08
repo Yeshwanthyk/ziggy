@@ -10,6 +10,7 @@ export type HelpTopic =
   | "auth"
   | "models"
   | "agents"
+  | "doctor"
   | "run"
   | "automations"
   | "wake"
@@ -42,6 +43,7 @@ export type CliCommand =
       readonly type?: "api_key" | "oauth";
     }
   | { readonly _tag: "ModelsStatus"; readonly target: string }
+  | { readonly _tag: "Doctor"; readonly target: string }
   | { readonly _tag: "ModelsList"; readonly target: string; readonly providerId?: string }
   | {
       readonly _tag: "ModelsSet";

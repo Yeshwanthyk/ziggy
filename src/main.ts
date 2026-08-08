@@ -14,6 +14,7 @@ import {
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
 import { DiscordGatewayLive } from "./application/discord-gateway";
+import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
 import { Models, ModelsLive } from "./application/models";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
@@ -41,6 +42,7 @@ import {
   renderAutomationValidation,
 } from "./faces/automation-cli";
 import { decodeCliCommand, renderHelp } from "./faces/cli";
+import { renderDoctor } from "./faces/doctor-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import { renderSession, renderSessionList } from "./faces/sessions-cli";
 
@@ -95,6 +97,7 @@ const program = Effect.gen(function* () {
   const agent = yield* ZiggyAgent;
   const auth = yield* Auth;
   const models = yield* Models;
+  const doctor = yield* Doctor;
   const profileAgents = yield* ProfileAgents;
   const automationDefinitions = yield* AutomationDefinitions;
   const automations = yield* Automations;
@@ -364,6 +367,16 @@ const program = Effect.gen(function* () {
         { kind: "local" },
       );
       return;
+    case "Doctor": {
+      const report = yield* doctor.check(
+        resolveProfileTarget(command.target, resolutionOptions),
+        repositoryRoot,
+      );
+      const rendered = renderDoctor(report);
+      console.log(rendered.text);
+      process.exitCode = rendered.exitCode;
+      return;
+    }
     case "ModelsStatus": {
       const status = yield* models.status(resolveProfileTarget(command.target, resolutionOptions));
       console.log(renderModelStatus(status));
@@ -432,45 +445,21 @@ const program = Effect.gen(function* () {
     SessionNotFound: (failure) => fail(failure.message),
   }),
   Effect.provide(
-    Layer.merge(
+    Layer.mergeAll(
       ProfilesLive,
-      Layer.merge(
-        AutomationDefinitionsLive,
-        Layer.merge(
-          AuthLive,
-          Layer.merge(
-            ModelsLive,
-            Layer.merge(
-              ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
-              Layer.merge(
-                GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
-                Layer.merge(
-                  DiscordGatewayLive.pipe(
-                    Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
-                  ),
-                  Layer.merge(
-                    SlackGatewayLive.pipe(
-                      Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
-                    ),
-                    Layer.merge(
-                      AutomationsLive.pipe(
-                        Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))),
-                      ),
-                      Layer.merge(
-                        ProfileAgentsProvided,
-                        Layer.merge(
-                          SessionsLive,
-                          Layer.merge(SchedulerProvided, ResidentProvided),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+      AutomationDefinitionsLive,
+      AuthLive,
+      ModelsLive,
+      DoctorLive.pipe(Layer.provide(Layer.merge(AuthLive, ModelsLive))),
+      ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)),
+      GatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+      DiscordGatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+      SlackGatewayLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+      AutomationsLive.pipe(Layer.provide(ZiggyAgentLive.pipe(Layer.provide(PiAgentLive)))),
+      ProfileAgentsProvided,
+      SessionsLive,
+      SchedulerProvided,
+      ResidentProvided,
     ),
   ),
 );

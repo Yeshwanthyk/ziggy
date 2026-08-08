@@ -1,0 +1,343 @@
+import { lstat, readFile, readdir } from "node:fs/promises";
+import * as path from "node:path";
+import { Context, Effect, Layer, Predicate, Schema } from "effect";
+import { discoverProfileAgents } from "../adapters/fs/profile-agents";
+import {
+  gatewayConfigPresent,
+  loadDiscordConfigFile,
+  loadSlackConfigFile,
+  loadTelegramConfigFile,
+} from "../adapters/fs/gateway-config";
+import { discoverPiResources } from "../adapters/pi/resources";
+import { type AuthShape, Auth } from "./auth";
+import { type ModelsShape, Models } from "./models";
+import { parseAutomationFile } from "../domain/automation";
+import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../domain/memory";
+import { type DoctorCheck, type DoctorReport, doctorReport } from "../domain/doctor";
+import type { ProfileTarget } from "../domain/profile";
+
+export interface DoctorShape {
+  readonly check: (
+    target: ProfileTarget,
+    repositoryRoot: string,
+  ) => Effect.Effect<DoctorReport, never>;
+}
+
+export class Doctor extends Context.Service<Doctor, DoctorShape>()("ziggy/Doctor") {}
+
+const ok = (id: string, message: string): DoctorCheck => ({ id, severity: "ok", message });
+const warn = (id: string, message: string): DoctorCheck => ({ id, severity: "warn", message });
+const error = (id: string, message: string): DoctorCheck => ({ id, severity: "error", message });
+
+const inspect = (targetPath: string) =>
+  Effect.tryPromise({
+    try: () => lstat(targetPath),
+    catch: (cause) => cause,
+  });
+
+const readDirectory = (directoryPath: string) =>
+  Effect.tryPromise({
+    try: () => readdir(directoryPath, { withFileTypes: true }),
+    catch: (cause) => cause,
+  });
+
+const readText = (filePath: string) =>
+  Effect.tryPromise({
+    try: (signal) => readFile(filePath, { encoding: "utf8", signal }),
+    catch: (cause) => cause,
+  });
+
+const isMissing = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+
+const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const directory = yield* Effect.result(inspect(target.path));
+    if (directory._tag === "Failure") {
+      return error("profile", `Profile directory is not readable: ${target.path}`);
+    }
+    if (directory.success.isSymbolicLink() || !directory.success.isDirectory()) {
+      return error("profile", `Profile path is not a regular directory: ${target.path}`);
+    }
+    const soulPath = path.join(target.path, "SOUL.md");
+    const soul = yield* Effect.result(inspect(soulPath));
+    if (soul._tag === "Failure")
+      return error("profile", `SOUL.md is missing or unreadable: ${soulPath}`);
+    return soul.success.isFile() && !soul.success.isSymbolicLink()
+      ? ok("profile", "Profile directory and SOUL.md are readable")
+      : error("profile", `SOUL.md must be a regular non-symlink file: ${soulPath}`);
+  });
+
+const modelCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<DoctorCheck> =>
+  models.status(target).pipe(
+    Effect.map((status) =>
+      status.providerId === undefined || status.modelId === undefined
+        ? error("model", "No effective Pi model is selected")
+        : ok(
+            "model",
+            `Pi model settings resolve to ${status.providerId}/${status.modelId} (${status.thinking})`,
+          ),
+    ),
+    Effect.catch(() =>
+      Effect.succeed(error("model", "Pi model settings are invalid or unreadable")),
+    ),
+  );
+
+const authCheck = (
+  target: ProfileTarget,
+  auth: AuthShape,
+  models: ModelsShape,
+): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const status = yield* models.status(target);
+    if (status.providerId === undefined)
+      return warn("auth", "Provider auth cannot be checked until a model is selected");
+    const providers = yield* auth.status(target);
+    const provider = providers.find((candidate) => candidate.id === status.providerId);
+    return provider?.configured === undefined
+      ? error("auth", `Provider ${status.providerId} is not authenticated`)
+      : ok("auth", `Provider ${status.providerId} authentication is configured`);
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(error("auth", "Provider authentication could not be checked")),
+    ),
+  );
+
+const agentsCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const agents = yield* discoverProfileAgents(target.path);
+    const known = agents.some((agent) => agent.provider !== undefined)
+      ? yield* models.list(target)
+      : [];
+    for (const agent of agents) {
+      if (agent.provider === undefined || agent.model === undefined) continue;
+      const model = known.find(
+        (candidate) => candidate.providerId === agent.provider && candidate.modelId === agent.model,
+      );
+      if (model === undefined)
+        return error("agents", `Profile agent ${agent.id} selects an unknown Pi model`);
+      if (agent.thinking !== undefined && !model.thinkingLevels.includes(agent.thinking)) {
+        return error(
+          "agents",
+          `Profile agent ${agent.id} selects unsupported thinking ${agent.thinking}`,
+        );
+      }
+    }
+    return ok(
+      "agents",
+      `${agents.length} Profile agent file${agents.length === 1 ? "" : "s"} valid`,
+    );
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(error("agents", "Profile agent files are invalid or unreadable")),
+    ),
+  );
+
+const automationsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const directoryPath = path.join(target.path, "automations");
+    const status = yield* Effect.result(inspect(directoryPath));
+    if (status._tag === "Failure") {
+      return isMissing(status.failure)
+        ? ok("automations", "0 automation files valid")
+        : error("automations", "Automation directory is unreadable");
+    }
+    if (status.success.isSymbolicLink() || !status.success.isDirectory()) {
+      return error("automations", "Automation root must be a regular directory");
+    }
+    const entries = (yield* readDirectory(directoryPath))
+      .filter((entry) => entry.name.endsWith(".md"))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    let manualOnly = 0;
+    for (const entry of entries) {
+      const filePath = path.join(directoryPath, entry.name);
+      if (!entry.isFile() || entry.isSymbolicLink())
+        return error("automations", `Automation file is not regular: ${entry.name}`);
+      const automation = yield* parseAutomationFile(
+        path.basename(entry.name, ".md"),
+        filePath,
+        yield* readText(filePath),
+      );
+      if (automation.gate === undefined) manualOnly += 1;
+    }
+    return manualOnly > 0
+      ? warn(
+          "automations",
+          `${entries.length} automation files valid; ${manualOnly} manual-only without a gate`,
+        )
+      : ok(
+          "automations",
+          `${entries.length} automation file${entries.length === 1 ? "" : "s"} valid`,
+        );
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(error("automations", "Automation files are invalid or unreadable")),
+    ),
+  );
+
+const collectMemoryFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<string>, unknown> =>
+  Effect.gen(function* () {
+    const status = yield* Effect.result(inspect(directoryPath));
+    if (status._tag === "Failure")
+      return isMissing(status.failure) ? [] : yield* Effect.fail(status.failure);
+    if (status.success.isSymbolicLink() || !status.success.isDirectory())
+      return yield* Effect.fail(new Error("invalid memory directory"));
+    const files: string[] = [];
+    for (const entry of (yield* readDirectory(directoryPath)).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isSymbolicLink()) return yield* Effect.fail(new Error("symlinked memory entry"));
+      if (entry.isDirectory()) files.push(...(yield* collectMemoryFiles(entryPath)));
+      else if (entry.isFile() && entry.name.endsWith(".md")) files.push(entryPath);
+    }
+    return files;
+  });
+
+const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const sharedPath = path.join(target.path, "MEMORY.md");
+    const files = [...(yield* collectMemoryFiles(path.join(target.path, "memory")))];
+    const shared = yield* Effect.result(inspect(sharedPath));
+    if (shared._tag === "Success") {
+      if (!shared.success.isFile() || shared.success.isSymbolicLink())
+        return error("memory", "MEMORY.md must be a regular non-symlink file");
+      files.unshift(sharedPath);
+    } else if (!isMissing(shared.failure)) return error("memory", "MEMORY.md is unreadable");
+    for (const filePath of files) {
+      const cap = filePath === sharedPath ? SHARED_MEMORY_CAP : CONTEXT_MEMORY_CAP;
+      if (codePointLength(yield* readText(filePath)) > cap)
+        return error("memory", `Memory size cap exceeded: ${path.relative(target.path, filePath)}`);
+    }
+    return ok(
+      "memory",
+      `${files.length} memory file${files.length === 1 ? "" : "s"} within size caps`,
+    );
+  }).pipe(
+    Effect.catch(() => Effect.succeed(error("memory", "Memory files are invalid or unreadable"))),
+  );
+
+const resourcesCheck = (
+  target: ProfileTarget,
+  repositoryRoot: string,
+): Effect.Effect<DoctorCheck> =>
+  discoverPiResources(target.path, repositoryRoot).pipe(
+    Effect.map((resources) =>
+      ok(
+        "resources",
+        `${resources.extensionPaths.length} extension entrypoints and ${resources.skillPaths.length} skill roots selected`,
+      ),
+    ),
+    Effect.catch(() =>
+      Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
+    ),
+  );
+
+const gatewayCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const configs = [
+      ["telegram.json", loadTelegramConfigFile] as const,
+      ["discord.json", loadDiscordConfigFile] as const,
+      ["slack.json", loadSlackConfigFile] as const,
+    ];
+    let count = 0;
+    for (const [name, load] of configs) {
+      const configPath = path.join(target.path, name);
+      if (!(yield* gatewayConfigPresent(configPath))) continue;
+      count += 1;
+      yield* load(target);
+    }
+    return ok("gateways", `${count} present gateway config file${count === 1 ? "" : "s"} valid`);
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(error("gateways", "A present gateway config file is invalid or unreadable")),
+    ),
+  );
+
+const SessionHeader = Schema.Struct({
+  type: Schema.Literal("session"),
+  id: Schema.String,
+  parentSession: Schema.optionalKey(Schema.String),
+});
+const decodeSessionHeader = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionHeader));
+
+const sessionFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<string>, unknown> =>
+  Effect.gen(function* () {
+    const status = yield* Effect.result(inspect(directoryPath));
+    if (status._tag === "Failure")
+      return isMissing(status.failure) ? [] : yield* Effect.fail(status.failure);
+    if (status.success.isSymbolicLink() || !status.success.isDirectory())
+      return yield* Effect.fail(new Error("invalid sessions root"));
+    const files: string[] = [];
+    for (const entry of (yield* readDirectory(directoryPath)).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isSymbolicLink()) return yield* Effect.fail(new Error("symlinked session entry"));
+      if (entry.isDirectory()) files.push(...(yield* sessionFiles(entryPath)));
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(entryPath);
+    }
+    return files;
+  });
+
+const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const files = yield* sessionFiles(path.join(target.path, "sessions"));
+    const known = new Set(files.map((file) => path.resolve(file)));
+    let broken = 0;
+    for (const file of files) {
+      const firstLine = (yield* readText(file)).split(/\r?\n/u, 1)[0] ?? "";
+      const header = yield* decodeSessionHeader(firstLine);
+      if (header.parentSession !== undefined && !known.has(path.resolve(header.parentSession)))
+        broken += 1;
+    }
+    return broken > 0
+      ? warn(
+          "sessions",
+          `${files.length} readable Pi session files; ${broken} broken parent link${broken === 1 ? "" : "s"}`,
+        )
+      : ok("sessions", `${files.length} readable Pi session file${files.length === 1 ? "" : "s"}`);
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(error("sessions", "A Pi session header is invalid or unreadable")),
+    ),
+  );
+
+const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  Effect.gen(function* () {
+    const runtimePath = path.join(target.path, ".runtime");
+    const status = yield* Effect.result(inspect(runtimePath));
+    if (status._tag === "Failure")
+      return isMissing(status.failure)
+        ? ok("runtime", "Resident runtime directory has not been created")
+        : error("runtime", "Resident runtime directory is unreadable");
+    return status.success.isDirectory() && !status.success.isSymbolicLink()
+      ? ok("runtime", "Resident runtime directory is readable")
+      : error("runtime", "Resident runtime path must be a regular directory");
+  });
+
+export const makeDoctor = (auth: AuthShape, models: ModelsShape): DoctorShape => ({
+  check: (target, repositoryRoot) =>
+    Effect.gen(function* () {
+      const checks = [
+        yield* profileCheck(target),
+        yield* modelCheck(target, models),
+        yield* authCheck(target, auth, models),
+        yield* agentsCheck(target, models),
+        yield* automationsCheck(target),
+        yield* memoryCheck(target),
+        yield* resourcesCheck(target, repositoryRoot),
+        yield* gatewayCheck(target),
+        yield* sessionsCheck(target),
+        yield* runtimeCheck(target),
+      ];
+      return doctorReport(target.path, checks);
+    }),
+});
+
+export const DoctorLive = Layer.effect(
+  Doctor,
+  Effect.gen(function* () {
+    return makeDoctor(yield* Auth, yield* Models);
+  }),
+);

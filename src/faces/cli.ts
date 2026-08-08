@@ -13,6 +13,7 @@ const helpTopics = new Set<string>([
   "auth",
   "models",
   "agents",
+  "doctor",
   "run",
   "automations",
   "wake",
@@ -198,6 +199,11 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     );
   }
 
+  if (word === "doctor") {
+    if (rest.length !== 1 || !required(rest[0])) return invalid("usage: ziggy doctor <name|path>");
+    return { _tag: "Doctor", target: rest[0] };
+  }
+
   if (word === "run") {
     const continueSession = rest[0] === "-c" || rest[0] === "--continue";
     const targetIndex = continueSession ? 1 : 0;
@@ -297,6 +303,7 @@ const generalHelp = `Usage:
   ziggy models list <name|path> [--provider <id>]
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
   ziggy agents create|list|show|validate|run ...
+  ziggy doctor <name|path>
   ziggy skills list <name|path>
   ziggy skills add <name|path> <id|path> [--force]
   ziggy extensions list|show|add|remove ...
@@ -322,6 +329,7 @@ const topicHelp: Record<HelpTopic, string> = {
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
   agents:
     "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path>\n  ziggy agents show <name|path> <agent-id>\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
+  doctor: "usage: ziggy doctor <name|path>",
   run: "usage: ziggy run [-c] <name|path> <prompt...>",
   automations:
     "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
