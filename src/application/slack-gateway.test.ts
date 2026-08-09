@@ -13,6 +13,7 @@ import {
   normalizeSlackMessage,
   normalizeSlackUserText,
   prepareSlackAttachmentPrompt,
+  resolveSlackChannelMode,
   retrySlackDelivery,
   slackHeartbeat,
   slackIngressTerminalState,
@@ -52,7 +53,9 @@ describe("Slack gateway boundary", () => {
   });
 
   test("keeps channel memory channel-scoped", () => {
-    expect(normalizeSlackMessage(message({ channelType: "channel" }), "UBOT", "U123")).toEqual({
+    expect(
+      normalizeSlackMessage(message({ channelType: "channel" }), "UBOT", "U123", "always"),
+    ).toEqual({
       chatKey: "group-slC123",
       channel: "C123",
       context: { kind: "group", groupId: "slC123" },
@@ -69,6 +72,7 @@ describe("Slack gateway boundary", () => {
         message({ channelType: "channel", threadTs: "123.456" }),
         "UBOT",
         "U123",
+        "always",
       ),
     ).toEqual({
       chatKey: "group-slC123-thread-123.456",
@@ -109,6 +113,46 @@ describe("Slack gateway boundary", () => {
         "mention",
       ),
     ).toBeUndefined();
+  });
+
+  test("defaults every channel and thread to mention-only unless that channel is always", () => {
+    const config = {
+      channels: {
+        C0A06UL1CKW: "always" as const,
+        C0BP3QUQ3CL: "mention" as const,
+      },
+    };
+
+    expect(resolveSlackChannelMode(config, "C0A06UL1CKW")).toBe("always");
+    expect(resolveSlackChannelMode(config, "C0BP3QUQ3CL")).toBe("mention");
+    expect(resolveSlackChannelMode(config, "C9999999999")).toBe("mention");
+    expect(resolveSlackChannelMode({}, "C9999999999")).toBe("mention");
+
+    const thread = message({
+      channel: "C0BP3QUQ3CL",
+      channelType: "channel",
+      threadTs: "123.456",
+    });
+    expect(
+      normalizeSlackMessage(
+        thread,
+        "UBOT",
+        "U123",
+        resolveSlackChannelMode(config, thread.channel),
+      ),
+    ).toBeUndefined();
+    expect(
+      normalizeSlackMessage(
+        { ...thread, text: "<@UBOT> help the thread" },
+        "UBOT",
+        "U123",
+        resolveSlackChannelMode(config, thread.channel),
+      ),
+    ).toMatchObject({
+      chatKey: "group-slC0BP3QUQ3CL-thread-123.456",
+      text: "help the thread",
+      threadTs: "123.456",
+    });
   });
 
   test("keeps direct messages active regardless of channel activation", () => {
@@ -811,7 +855,12 @@ describe("Slack gateway boundary", () => {
         };
         const gateway = makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
           { path: "/tmp/ziggy-slack-stop-isolation-test", name: "Test" },
-          { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+          {
+            botToken: "bot-token",
+            appToken: "app-token",
+            ownerUserId: "U123",
+            channels: { C123: "always" },
+          },
         );
 
         yield* Effect.raceFirst(

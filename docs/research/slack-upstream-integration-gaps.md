@@ -21,8 +21,9 @@ P1 (high user value), P2 (useful follow-up), and P3 (optional parity).
 ## Current baseline
 
 The current Slack integration is intentionally a resident-owned Socket Mode
-face. Its persisted configuration is only `botToken`, `appToken`,
-`ownerUserId`, and optional `channelMode` ([`src/domain/slack.ts`](../../src/domain/slack.ts#L4-L18)).
+face. Its persisted configuration is `botToken`, `appToken`, `ownerUserId`,
+and optional per-channel activation overrides; channels default to mention-only
+([`src/domain/slack.ts`](../../src/domain/slack.ts)).
 It authenticates the bot, opens Socket Mode with `apps.connections.open`, ACKs
 Socket Mode envelopes, decodes message events, and reconnects with bounded
 backoff ([`src/adapters/slack/socket.ts`](../../src/adapters/slack/socket.ts#L260-L419)).
@@ -312,10 +313,12 @@ is deliberately expanded.
   mention memory, bot policy, and MPIM rules (Hermes `adapter.py:5320-5780`,
   `8252-8370`). OpenClaw supports DM pairing/open policy, room allowlists, and
   ephemeral denial explanations (OpenClaw `dm-auth.ts:20-71`, `context.ts:560-647`).
-- **Ziggy now:** It has one owner and a global channel `mention`/`always` switch;
-  there is no channel allowlist, per-channel policy, pairing, strict thread
-  mention, or multi-user admission ([`slack.ts`](../../src/domain/slack.ts#L4-L18),
-  [`docs/operations/slack.md`](../operations/slack.md#L263-L268)).
+- **Ziggy now:** It has one owner, mention-only channel activation by default,
+  and per-channel `mention`/`always` overrides inherited by threads. Every
+  mention-only thread request must mention the bot; there is no mention-once
+  latch, channel user allowlist, pairing, or multi-user admission
+  ([`slack.ts`](../../src/domain/slack.ts),
+  [`docs/operations/slack.md`](../operations/slack.md)).
 - **Benefit:** Safe shared workspaces and clearer per-room behavior without
   requiring a new Profile per channel.
 - **Size:** M (schema, policy evaluator, reasoned diagnostics, tests, docs).

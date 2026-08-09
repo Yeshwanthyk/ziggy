@@ -174,11 +174,16 @@ export const normalizeSlackUserText = (text: string): string =>
       (_token, entity: keyof typeof SLACK_ENTITY_VALUE) => SLACK_ENTITY_VALUE[entity],
     );
 
+export const resolveSlackChannelMode = (
+  config: Pick<SlackGatewayConfig, "channels">,
+  channel: string,
+): typeof SlackChannelMode.Type => config.channels?.[channel] ?? "mention";
+
 export const classifySlackMessage = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "always",
+  channelMode: typeof SlackChannelMode.Type = "mention",
 ): SlackAdmission => {
   if (message.userId === botUserId) {
     return { kind: "ignored", reason: "bot-message" };
@@ -247,7 +252,7 @@ export const normalizeSlackMessage = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "always",
+  channelMode: typeof SlackChannelMode.Type = "mention",
 ): InboundMessage | undefined => {
   const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
   return admission.kind === "accepted" ? admission.message : undefined;
@@ -257,7 +262,7 @@ export const classifySlackCommand = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "always",
+  channelMode: typeof SlackChannelMode.Type = "mention",
 ): SlackCommandAdmission => {
   const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
   if (admission.kind === "ignored") return admission;
@@ -622,16 +627,17 @@ export const makeSlackGateway = (
         const chats = new Map<string, ChatState>();
         let reactionsAvailable = true;
         const admitInbound: SlackSocketInboundAdmit = (inbound, eventId) => {
+          const channelMode = resolveSlackChannelMode(config, inbound.channel);
           const admission = classifySlackCommand(
             inbound,
             bot.userId,
             config.ownerUserId,
-            config.channelMode ?? "always",
+            channelMode,
           );
           if (admission.kind === "ignored") {
             if (admission.reason === "mention-required") {
               console.log(
-                `[slack] ignored owner channel message reason:mention-required channel:${inbound.channel}`,
+                `[slack] ignored owner channel message reason:${admission.reason} channel:${inbound.channel}`,
               );
             }
             return Effect.succeed("acknowledge");
@@ -660,8 +666,9 @@ export const makeSlackGateway = (
           ),
           Effect.mapError(socketFailure),
         );
+        const channelPolicySummary = `default:mention overrides:${Object.keys(config.channels ?? {}).length}`;
         console.log(
-          `[slack] authenticated; socket supervisor started; channel-mode:${config.channelMode ?? "always"}`,
+          `[slack] authenticated; socket supervisor started; channel-policy:${channelPolicySummary}`,
         );
         yield* Effect.addFinalizer(() =>
           Effect.all(
@@ -1262,20 +1269,20 @@ export const makeSlackGateway = (
             Effect.mapError(socketFailure),
           );
           yield* observe({ _tag: "inbound", atMs: healthRuntime.now() });
+          const channelMode = resolveSlackChannelMode(config, inbound.channel);
           const admission = classifySlackCommand(
             inbound,
             bot.userId,
             config.ownerUserId,
-            config.channelMode ?? "always",
+            channelMode,
           );
           if (admission.kind !== "ignored") {
-            console.log(
-              `[slack] admitted ${admission.message.chatKey} activation:${config.channelMode ?? "always"}`,
-            );
+            const activation = inbound.channelType === "im" ? "direct" : channelMode;
+            console.log(`[slack] admitted ${admission.message.chatKey} activation:${activation}`);
             yield* dispatchMessage(admission.message);
           } else if (admission.reason === "mention-required") {
             console.log(
-              `[slack] ignored owner channel message reason:mention-required channel:${inbound.channel}`,
+              `[slack] ignored owner channel message reason:${admission.reason} channel:${inbound.channel}`,
             );
           }
         }

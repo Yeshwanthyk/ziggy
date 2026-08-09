@@ -23,10 +23,10 @@ session routing.
   separate threads from contaminating one another without exposing owner-DM memory to the channel.
 - Personal direct-message memory is intentionally not admitted into channel conversations.
 - Other Slack users are ignored.
-- Channel activation is explicit: `channelMode: "mention"` requires `@Squarey`, while
-  `channelMode: "always"` accepts every owner-authored message delivered from an invited channel.
-  Direct messages are always active. Existing three-field configurations retain `always` for
-  compatibility; `mention` is recommended for newly configured shared channels.
+- Channel activation is mention-only by default. A `channels` entry can opt one channel into
+  `"always"`; root messages and thread replies both inherit the setting for their Slack channel ID.
+  Direct messages are always active, and every accepted request in a mention-only channel must
+  contain the app's real Slack mention.
 - Accepted messages immediately show Slack's native `is thinking...` loading status on the source
   thread. The status is best-effort, never blocks the model turn, and is explicitly cleared after
   success, failure, or cancellation.
@@ -223,14 +223,19 @@ Create `<profile>/slack.json` with these fields:
   "botToken": "xoxb-...",
   "appToken": "xapp-...",
   "ownerUserId": "U...",
-  "channelMode": "mention"
+  "channels": {
+    "C0A06UL1CKW": "always",
+    "C0BP3QUQ3CL": "mention"
+  }
 }
 ```
 
-`channelMode` accepts only `"mention"` or `"always"`. It is optional only to preserve existing
-three-field Profiles, where omission retains the earlier `"always"` behavior. The decoder rejects
-missing required fields, empty values, unknown modes, and additional fields. Store the file
-privately:
+`channels` is optional. Any omitted channel defaults to `"mention"`; use an explicit `"always"`
+entry only for a channel where every owner-authored message should activate Ziggy. An explicit
+`"mention"` entry is allowed when documenting policy matters. The former Profile-wide
+`channelMode` field is no longer accepted. Channel keys must be Slack channel IDs beginning with
+`C` or `G`; the decoder rejects invalid IDs, unknown modes, missing required fields, empty values,
+and additional fields. Store the file privately:
 
 ```sh
 umask 077
@@ -298,10 +303,11 @@ Invite the app into each channel where it should receive events:
 /invite @Squarey
 ```
 
-With `channelMode: "mention"`, send `@Squarey` followed by the request; Ziggy strips its Slack mention
-before prompting Pi. With `channelMode: "always"`, any ordinary owner-authored channel message is a
-request. Messages from other users are ignored in both modes, and the channel receives isolated group
-memory rather than the owner's direct-message memory.
+By default, send `@Squarey` followed by the request; Ziggy strips its Slack mention before prompting
+Pi. Every request in a thread must mention Squarey too: one earlier mention does not latch activation
+for later replies. A channel configured as `"always"` treats any ordinary owner-authored message as
+a request, both at the root and in its threads. Messages from other users are ignored in both modes,
+and the channel receives isolated group memory rather than the owner's direct-message memory.
 
 To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
 mention-only channel. The command affects only that exact chat key: separate channel threads keep
@@ -332,7 +338,7 @@ Check, in order:
 9. The resident was restarted after creating or changing `slack.json`.
 10. `ziggy serve logs <profile>` contains no authentication, socket, or provider failure.
 
-For an owner-authored channel message omitted by `channelMode: "mention"`, the log says
+For an owner-authored channel message without a mention in the default mention-only mode, the log says
 `reason:mention-required`. An accepted message logs its chat key and activation mode. A healthy live
 transport logs `socket connected`; repeated `socket connection degraded` lines mean the resident is
 running but Socket Mode is reconnecting.
@@ -354,9 +360,9 @@ the bot in the channel. Public and private channels use different Slack event/sc
 ### The bot sees the channel but ignores a message
 
 This is expected when the sender is not `ownerUserId`, the text is blank, or the event was authored
-by the bot itself. With `channelMode: "mention"`, the message must also contain the app's real Slack
-mention; plain text such as `Squarey` is not an activation. Ziggy currently has no multi-user
-allowlist and intentionally ignores those messages.
+by the bot itself. Unless that exact channel is configured as `"always"`, the message must also
+contain the app's real Slack mention; plain text such as `Squarey` is not an activation. Ziggy
+currently has no multi-user allowlist and intentionally ignores those messages.
 
 ### The reply works but no loading status appears
 
