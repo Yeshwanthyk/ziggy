@@ -45,6 +45,10 @@ session routing.
   delimiters. Executable `<!channel>`, `<!here>`, and `<!everyone>` output tokens are escaped before
   delivery.
 - Inbound Socket Mode envelopes are acknowledged only after valid work enters Ziggy's bounded queue.
+  Slack-generated link markup is normalized back to its visible label before prompting, including
+  telephone-looking numeric text; HTML entities are decoded, while user and channel mentions remain
+  explicit Slack tokens. Mention-only admission still requires the real bot mention in the original
+  event text.
   Message edits use at most four idempotent retries. New message posts retry only explicit Slack rate
   limits, never ambiguous network or server failures that could otherwise duplicate a reply.
 - Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
@@ -67,6 +71,15 @@ ziggy serve status <profile>
 ```
 
 A resident with no `telegram.json`, `discord.json`, or `slack.json` is valid but scheduler-only.
+When Slack is configured, `serve status` also reports its connection state, observation freshness,
+active and queued turn counts, completed and failed counts, and a bounded failure category. `doctor`
+reports a missing, stale, reconnecting, or failed Slack runtime independently from configuration
+validity. The resident atomically refreshes this projection at
+`<profile>/.runtime/slack-health.json`; inability to write it is logged but never blocks a turn.
+
+The projection is deliberately content-free. It contains no prompt or response text, channel or
+user IDs, Slack timestamps, tokens, session paths, or external error messages. It is operational
+evidence, not a transcript.
 
 ## 1. Create a blank Slack app
 

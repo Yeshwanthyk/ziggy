@@ -11,6 +11,7 @@ import {
 } from "../adapters/fs/gateway-config";
 import { discoverPiResources } from "../adapters/pi/resources";
 import { listProfileSessions } from "../adapters/pi/sessions";
+import { readSlackHealth } from "../adapters/fs/slack-health";
 import { type AuthShape, Auth } from "./auth";
 import { type ModelsShape, Models } from "./models";
 import { parseAutomationFile } from "../domain/automation";
@@ -274,6 +275,39 @@ const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
     ),
   );
 
+const slackRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  readSlackHealth(target.path, Date.now()).pipe(
+    Effect.map((projection) => {
+      if (projection._tag === "not-configured") {
+        return ok("slack-runtime", "Slack is not configured");
+      }
+      if (projection._tag === "not-observed") {
+        return warn("slack-runtime", "Slack is configured but has no runtime observation");
+      }
+      const { snapshot } = projection;
+      const stale =
+        snapshot.updatedAtMs > projection.observedAtMs ||
+        projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+      if (stale) return warn("slack-runtime", "Slack runtime observation is stale");
+      if (snapshot.state === "connected") {
+        return ok(
+          "slack-runtime",
+          `Slack is connected; ${snapshot.activeTurnCount} active and ${snapshot.queuedTurnCount} queued turn${snapshot.queuedTurnCount === 1 ? "" : "s"}`,
+        );
+      }
+      if (snapshot.state === "failed") {
+        return error(
+          "slack-runtime",
+          `Slack runtime failed (${snapshot.lastFailure ?? "unknown"})`,
+        );
+      }
+      return warn("slack-runtime", `Slack runtime is ${snapshot.state}`);
+    }),
+    Effect.catch(() =>
+      Effect.succeed(error("slack-runtime", "Slack runtime observation is invalid or unreadable")),
+    ),
+  );
+
 const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
     const runtimePath = path.join(target.path, ".runtime");
@@ -299,6 +333,7 @@ export const makeDoctor = (auth: AuthShape, models: ModelsShape): DoctorShape =>
         yield* memoryCheck(target),
         yield* resourcesCheck(target, repositoryRoot),
         yield* gatewayCheck(target),
+        yield* slackRuntimeCheck(target),
         yield* sessionsCheck(target),
         yield* runtimeCheck(target),
       ];

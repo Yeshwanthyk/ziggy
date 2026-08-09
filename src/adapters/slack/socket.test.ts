@@ -119,6 +119,25 @@ const yieldToSupervisor = Effect.gen(function* () {
 });
 
 describe("Slack socket Effect boundary", () => {
+  test("projects reconnecting state without Slack message content", async () => {
+    const fixture = dependencies({
+      schedule: () => () => undefined,
+    });
+
+    const state = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitError();
+          return yield* socket.nextConnectionState;
+        }),
+      ),
+    );
+
+    expect(state).toEqual({ state: "reconnecting", failure: "connection" });
+  });
+
   test("fails authentication once with a typed socket error", async () => {
     const fixture = dependencies({
       connectionsOpen: () => Effect.fail(apiFailure("authentication")),

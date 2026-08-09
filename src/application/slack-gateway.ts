@@ -17,9 +17,17 @@ import {
   openSlackSocket,
 } from "../adapters/slack/socket";
 import { loadSlackConfigFile } from "../adapters/fs/gateway-config";
+import { writeSlackHealth } from "../adapters/fs/slack-health";
 import { type ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import { SlackChannelMode, type SlackGatewayConfig } from "../domain/slack";
+import {
+  evolveSlackHealth,
+  initialSlackHealth,
+  type SlackHealthEvent,
+  type SlackHealthProjectionError,
+  type SlackHealthSnapshot,
+} from "../domain/slack-health";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
 
@@ -31,6 +39,13 @@ const WORKING_MESSAGE = "Working on that…";
 const QUEUED_MESSAGE = "Queued behind an earlier request…";
 const FAILED_MESSAGE = "I couldn't complete that request.";
 const SLACK_BROADCAST_MENTION = /<!(?:everyone|channel|here)(?:\|[^>\n]*)?>/gi;
+const SLACK_LINK = /<((?:https?|mailto|tel):[^|>]+)(?:\|([^>]*))?>/giu;
+const SLACK_ENTITY = /&(amp|lt|gt);/gu;
+const SLACK_ENTITY_VALUE = {
+  amp: "&",
+  gt: ">",
+  lt: "<",
+} as const;
 
 export type SlackGatewayError = SlackApiError;
 
@@ -110,6 +125,16 @@ export type SlackAdmission =
 
 export const loadSlackGatewayConfig = loadSlackConfigFile;
 
+export const normalizeSlackUserText = (text: string): string =>
+  text
+    .replace(SLACK_LINK, (_token, target: string, label: string | undefined) =>
+      label === undefined || label.length === 0 ? target : label,
+    )
+    .replace(
+      SLACK_ENTITY,
+      (_token, entity: keyof typeof SLACK_ENTITY_VALUE) => SLACK_ENTITY_VALUE[entity],
+    );
+
 export const classifySlackMessage = (
   message: SlackInboundMessage,
   botUserId: string,
@@ -135,7 +160,7 @@ export const classifySlackMessage = (
         context: { kind: "user", userId: "owner" },
         statusThreadTs: message.threadTs ?? message.ts,
         sourceTs: message.ts,
-        text: message.text,
+        text: normalizeSlackUserText(message.text),
         threadTs: message.threadTs,
       },
     };
@@ -145,7 +170,7 @@ export const classifySlackMessage = (
   if (channelMode === "mention" && !message.text.includes(botMention)) {
     return { kind: "ignored", reason: "mention-required" };
   }
-  const channelText = message.text.replaceAll(botMention, "").trim();
+  const channelText = normalizeSlackUserText(message.text.replaceAll(botMention, "")).trim();
   if (channelText.length === 0) {
     return { kind: "ignored", reason: "empty-message" };
   }
@@ -301,27 +326,116 @@ const liveSlackTransport: SlackTransport = {
   updateMessage,
 };
 
+export interface SlackHealthRuntime {
+  readonly now: () => number;
+  readonly waitForHeartbeat: Effect.Effect<void>;
+  readonly write: (
+    profilePath: string,
+    snapshot: SlackHealthSnapshot,
+  ) => Effect.Effect<void, SlackHealthProjectionError>;
+}
+
+const liveSlackHealthRuntime: SlackHealthRuntime = {
+  now: Date.now,
+  waitForHeartbeat: Effect.sleep(Duration.seconds(30)),
+  write: writeSlackHealth,
+};
+
+const silentSlackHealthRuntime: SlackHealthRuntime = {
+  now: Date.now,
+  waitForHeartbeat: Effect.never,
+  write: () => Effect.void,
+};
+
 export const makeSlackGateway = (
   agent: ZiggyAgentShape,
   transport: SlackTransport = liveSlackTransport,
+  healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
 ): SlackGatewayShape => ({
   runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const bot = yield* transport.authTest(config.botToken);
+        let health = initialSlackHealth(healthRuntime.now());
+        const healthPermit = Semaphore.makeUnsafe(1);
+        const observe = (event: SlackHealthEvent): Effect.Effect<void> =>
+          healthPermit.withPermit(
+            Effect.sync(() => {
+              health = evolveSlackHealth(health, event);
+              return health;
+            }).pipe(
+              Effect.flatMap((snapshot) => healthRuntime.write(target.path, snapshot)),
+              Effect.catch((failure) =>
+                Effect.sync(() => {
+                  console.error(`[slack] health observation failed: ${failure.message}`);
+                }),
+              ),
+            ),
+          );
+        yield* healthRuntime.write(target.path, health).pipe(
+          Effect.catch((failure) =>
+            Effect.sync(() => {
+              console.error(`[slack] health observation failed: ${failure.message}`);
+            }),
+          ),
+        );
+        const bot = yield* transport.authTest(config.botToken).pipe(
+          Effect.tapError((failure) =>
+            observe({
+              _tag: "failed",
+              atMs: healthRuntime.now(),
+              failure: failure.reason === "authentication" ? "authentication" : "connection",
+            }),
+          ),
+        );
         const chats = new Map<string, ChatState>();
         let reactionsAvailable = true;
-        const socket = yield* transport
-          .openSocket(config.appToken)
-          .pipe(Effect.mapError(socketFailure));
+        const socket = yield* transport.openSocket(config.appToken).pipe(
+          Effect.tapError((failure) =>
+            observe({
+              _tag: "failed",
+              atMs: healthRuntime.now(),
+              failure: failure.reason === "authentication" ? "authentication" : "socket",
+            }),
+          ),
+          Effect.mapError(socketFailure),
+        );
         console.log(
           `[slack] authenticated; socket supervisor started; channel-mode:${config.channelMode ?? "always"}`,
         );
         yield* Effect.addFinalizer(() =>
-          socket.close.pipe(
-            Effect.catch((failure) => Effect.logWarning("Slack socket close failed", { failure })),
-            Effect.andThen(disposeChats(chats)),
+          Effect.all(
+            [
+              socket.close.pipe(
+                Effect.catch((failure) =>
+                  Effect.logWarning("Slack socket close failed", { failure }),
+                ),
+              ),
+              disposeChats(chats),
+            ],
+            { concurrency: "unbounded", discard: true },
+          ).pipe(Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() }))),
+        );
+        yield* socket.nextConnectionState.pipe(
+          Effect.flatMap((state) =>
+            observe(
+              state.state === "connected"
+                ? { _tag: "connected", atMs: healthRuntime.now() }
+                : {
+                    _tag: "reconnecting",
+                    atMs: healthRuntime.now(),
+                    failure: state.failure,
+                  },
+            ),
           ),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+        yield* healthRuntime.waitForHeartbeat.pipe(
+          Effect.andThen(
+            Effect.suspend(() => observe({ _tag: "heartbeat", atMs: healthRuntime.now() })),
+          ),
+          Effect.forever,
+          Effect.forkScoped,
         );
 
         const processMessage = (message: InboundMessage) => {
@@ -333,6 +447,11 @@ export const makeSlackGateway = (
           const chatState = state;
           const queued = chatState.pending > 0;
           chatState.pending += 1;
+          const accepted = observe({
+            _tag: "accepted",
+            atMs: healthRuntime.now(),
+            queued,
+          });
 
           const updateStatus = (status: string) =>
             transport
@@ -390,11 +509,16 @@ export const makeSlackGateway = (
               );
           });
 
-          return Effect.acquireUseRelease(
+          const work = Effect.acquireUseRelease(
             acquireFeedback,
             (workingMessage) =>
               chatState.semaphore.withPermit(
                 Effect.gen(function* () {
+                  yield* observe({
+                    _tag: "started",
+                    atMs: healthRuntime.now(),
+                    wasQueued: queued,
+                  });
                   if (queued) {
                     yield* updateStatus("is thinking...");
                     if (workingMessage !== undefined) {
@@ -495,10 +619,18 @@ export const makeSlackGateway = (
                           ),
                         )
                     : Effect.void,
+                  observe({
+                    _tag: "completed",
+                    atMs: healthRuntime.now(),
+                    succeeded: Exit.isSuccess(exit),
+                  }),
                 ],
                 { concurrency: "unbounded", discard: true },
               ),
-          ).pipe(
+          );
+
+          return accepted.pipe(
+            Effect.andThen(work),
             Effect.catch((failure: ZiggyAgentError | SlackApiError) =>
               Effect.sync(() => {
                 console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
@@ -513,7 +645,22 @@ export const makeSlackGateway = (
         };
 
         while (true) {
-          const inbound = yield* socket.next.pipe(Effect.mapError(socketFailure));
+          const inbound = yield* socket.next.pipe(
+            Effect.tapError((failure) =>
+              observe({
+                _tag: "failed",
+                atMs: healthRuntime.now(),
+                failure:
+                  failure.reason === "authentication"
+                    ? "authentication"
+                    : failure.reason === "queue-overflow"
+                      ? "queue-overflow"
+                      : "socket",
+              }),
+            ),
+            Effect.mapError(socketFailure),
+          );
+          yield* observe({ _tag: "inbound", atMs: healthRuntime.now() });
           const admission = classifySlackMessage(
             inbound,
             bot.userId,
@@ -539,6 +686,6 @@ export const SlackGatewayLive = Layer.effect(
   SlackGateway,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
-    return makeSlackGateway(agent);
+    return makeSlackGateway(agent, liveSlackTransport, liveSlackHealthRuntime);
   }),
 );

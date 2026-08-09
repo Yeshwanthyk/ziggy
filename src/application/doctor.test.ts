@@ -110,10 +110,12 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "memory",
       "resources",
       "gateways",
+      "slack-runtime",
       "sessions",
       "runtime",
     ]);
     expect(report.checks.map((check) => check.severity)).toEqual([
+      "ok",
       "ok",
       "ok",
       "ok",
@@ -137,6 +139,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "OK\tmemory",
       "OK\tresources",
       "OK\tgateways",
+      "OK\tslack-runtime",
       "OK\tsessions",
       "OK\truntime",
     ]);
@@ -175,6 +178,34 @@ test("doctor uses the session projection for broken parent links", async () => {
       id: "sessions",
       severity: "warn",
       message: "1 readable Pi session file; 1 broken parent link",
+    });
+    expect(await tree(profilePath)).toEqual(before);
+  } finally {
+    await rm(profilePath, { recursive: true, force: true });
+  }
+});
+
+test("doctor warns when configured Slack has no runtime observation", async () => {
+  const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-slack-"));
+  try {
+    await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
+    await writeFile(
+      path.join(profilePath, "slack.json"),
+      JSON.stringify({ botToken: "bot", appToken: "app", ownerUserId: "owner" }),
+    );
+    const before = await tree(profilePath);
+
+    const report = await Effect.runPromise(
+      makeDoctor(auth, models).check(
+        { path: profilePath, name: "Test" },
+        path.resolve(import.meta.dir, "../.."),
+      ),
+    );
+
+    expect(report.checks.find((check) => check.id === "slack-runtime")).toEqual({
+      id: "slack-runtime",
+      severity: "warn",
+      message: "Slack is configured but has no runtime observation",
     });
     expect(await tree(profilePath)).toEqual(before);
   } finally {

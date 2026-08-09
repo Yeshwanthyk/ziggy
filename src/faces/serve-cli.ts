@@ -6,6 +6,7 @@ import type {
 } from "../application/resident-service";
 import type { AutomationRunProjection, AutomationStatusProjection } from "../domain/automation";
 import type { GatewayOwnerStatus } from "../domain/gateway";
+import type { SlackHealthProjection } from "../domain/slack-health";
 
 const bounded = (value: string): string =>
   [
@@ -51,6 +52,30 @@ const schedulerLines = (status: AutomationStatusProjection): ReadonlyArray<strin
     `active runs: ${status.activeRunCount}`,
     `latest run: ${status.latestRun === null ? "none" : runSummary(status.latestRun)}`,
   ];
+};
+
+const slackLines = (
+  projection: SlackHealthProjection,
+): { readonly lines: ReadonlyArray<string>; readonly degraded: boolean } => {
+  if (projection._tag === "not-configured") {
+    return { lines: ["slack: not configured"], degraded: false };
+  }
+  if (projection._tag === "not-observed") {
+    return { lines: ["slack: not observed"], degraded: true };
+  }
+  const { snapshot } = projection;
+  const stale =
+    snapshot.updatedAtMs > projection.observedAtMs ||
+    projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+  return {
+    lines: [
+      `slack: ${stale ? "stale" : snapshot.state}`,
+      `slack observed: ${new Date(snapshot.updatedAtMs).toISOString()}`,
+      `slack turns: active ${snapshot.activeTurnCount}, queued ${snapshot.queuedTurnCount}, completed ${snapshot.completedTurnCount}, failed ${snapshot.failedTurnCount}`,
+      `slack last failure: ${snapshot.lastFailure ?? "none"}`,
+    ],
+    degraded: stale || snapshot.state !== "connected",
+  };
 };
 
 export interface RenderedServeStatus {
@@ -114,6 +139,14 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
   if (scheduler[0]?.startsWith("scheduler: unknown") || scheduler[0] === "scheduler: stale") {
     degraded = true;
   }
+  const slack = Result.match(status.slack, {
+    onFailure: (failure) => ({
+      lines: [`slack: unknown (${bounded(failure.message)})`],
+      degraded: true,
+    }),
+    onSuccess: slackLines,
+  });
+  if (slack.degraded) degraded = true;
 
   return {
     text: [
@@ -123,6 +156,7 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
       `supervisor: ${supervisor}`,
       ...process,
       ...scheduler,
+      ...slack.lines,
     ].join("\n"),
     exitCode: degraded ? 1 : 0,
   };

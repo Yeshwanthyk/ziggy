@@ -4,10 +4,12 @@ import { Deferred, Effect, Result } from "effect";
 import { SlackApiError } from "../adapters/slack/api";
 import type { SlackInboundMessage } from "../adapters/slack/socket";
 import { ProviderCallError } from "../domain/agent";
+import { SlackHealthProjectionError } from "../domain/slack-health";
 import type { ZiggyAgentShape } from "./agent";
 import {
   makeSlackGateway,
   normalizeSlackMessage,
+  normalizeSlackUserText,
   retrySlackDelivery,
   slackHeartbeat,
   slackMessageChunks,
@@ -104,6 +106,49 @@ describe("Slack gateway boundary", () => {
 
   test("keeps direct messages active regardless of channel activation", () => {
     expect(normalizeSlackMessage(message(), "UBOT", "U123", "mention")?.text).toBe("hello");
+  });
+
+  test("decodes Slack entities once without turning nested text into markup", () => {
+    expect(
+      normalizeSlackMessage(
+        message({ text: "one &amp; two &lt; three &gt; four &amp;lt;literal&amp;gt;" }),
+        "UBOT",
+        "U123",
+      )?.text,
+    ).toBe("one & two < three > four &lt;literal&gt;");
+  });
+
+  test("normalizes Slack link labels and entities without expanding mentions", () => {
+    expect(
+      normalizeSlackUserText(
+        "reminder <tel:202608082212|20260808 2212> &amp; <https://example.com|details> <@U999> <#C999>",
+      ),
+    ).toBe("reminder 20260808 2212 & details <@U999> <#C999>");
+    expect(normalizeSlackUserText("visit <https://example.com> &lt;soon&gt;")).toBe(
+      "visit https://example.com <soon>",
+    );
+  });
+
+  test("strips only the real channel bot mention before normalizing visible text", () => {
+    expect(
+      normalizeSlackMessage(
+        message({
+          channelType: "channel",
+          text: "<@UBOT> call <tel:202608082212|20260808 2212> &amp; keep <@U999>",
+        }),
+        "UBOT",
+        "U123",
+        "mention",
+      )?.text,
+    ).toBe("call 20260808 2212 & keep <@U999>");
+    expect(
+      normalizeSlackMessage(
+        message({ channelType: "channel", text: "&lt;@UBOT&gt; decoded lookalike" }),
+        "UBOT",
+        "U123",
+        "mention",
+      ),
+    ).toBeUndefined();
   });
 
   test("chunks by Unicode code point at Slack's limit", () => {
@@ -208,6 +253,7 @@ describe("Slack gateway boundary", () => {
                 if (nextCall === 2) return Effect.succeed(message({ ts: "2.0" }));
                 return Effect.never;
               }),
+              nextConnectionState: Effect.never,
               close: Effect.void,
             }),
           setStatus: (_token, _channel, _threadTs, status) =>
@@ -315,6 +361,7 @@ describe("Slack gateway boundary", () => {
                   nextCall += 1;
                   return nextCall === 1 ? inbound : pending;
                 }),
+                nextConnectionState: Effect.never,
                 close: Effect.sync(() => {
                   socketClosed = true;
                 }),
@@ -362,7 +409,19 @@ describe("Slack gateway boundary", () => {
               };
             }),
         };
-        const gateway = makeSlackGateway(agent, transport);
+        const gateway = makeSlackGateway(agent, transport, {
+          now: () => 100,
+          waitForHeartbeat: Effect.never,
+          write: () =>
+            Effect.fail(
+              new SlackHealthProjectionError({
+                operation: "write",
+                path: "/unwritable/slack-health.json",
+                message: "fixture health write failed",
+                cause: "fixture",
+              }),
+            ),
+        });
 
         yield* Effect.raceFirst(
           gateway.runLoop(
@@ -426,6 +485,7 @@ describe("Slack gateway boundary", () => {
                 nextCall += 1;
                 return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
               }),
+              nextConnectionState: Effect.never,
               close: Effect.void,
             }),
           setStatus: (_token, _channel, _threadTs, status) =>
