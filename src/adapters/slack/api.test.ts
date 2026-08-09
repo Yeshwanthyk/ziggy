@@ -70,6 +70,84 @@ describe("Slack HTTP adapter", () => {
     ]);
   });
 
+  test("retrieves all prior thread replies with cursor pagination", async () => {
+    const requests: Array<{ readonly method: string; readonly url: string }> = [];
+    const client = HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      const cursor = new URL(request.url).searchParams.get("cursor");
+      const response =
+        cursor === null
+          ? {
+              ok: true,
+              messages: [
+                { ts: "0.9", user: "U1", text: "parent" },
+                {
+                  ts: "1.0",
+                  bot_id: "B1",
+                  text: "first",
+                  files: [
+                    {
+                      id: "F1",
+                      name: "parking.png",
+                      mimetype: "image/png",
+                      size: 123,
+                      url_private_download: "https://files.slack.com/files-pri/T-F1/download",
+                    },
+                  ],
+                },
+              ],
+              response_metadata: { next_cursor: "page-2" },
+            }
+          : {
+              ok: true,
+              messages: [{ ts: "1.1", user: "U2", text: "second" }],
+              response_metadata: { next_cursor: "" },
+            };
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify(response), { status: 200 }),
+        ),
+      );
+    });
+
+    const history = await Effect.runPromise(
+      makeSlackApi(client).getThreadReplies("bot-secret", "C123", "0.9", "1.2"),
+    );
+
+    expect(history).toEqual({
+      messages: [
+        { ts: "0.9", text: "parent", userId: "U1" },
+        {
+          ts: "1.0",
+          text: "first",
+          botId: "B1",
+          files: [
+            {
+              id: "F1",
+              name: "parking.png",
+              mimeType: "image/png",
+              size: 123,
+              urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+            },
+          ],
+        },
+        { ts: "1.1", text: "second", userId: "U2" },
+      ],
+      truncated: false,
+    });
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        url: "https://slack.com/api/conversations.replies?channel=C123&ts=0.9&latest=1.2&inclusive=false&limit=100",
+      },
+      {
+        method: "GET",
+        url: "https://slack.com/api/conversations.replies?channel=C123&ts=0.9&latest=1.2&inclusive=false&limit=100&cursor=page-2",
+      },
+    ]);
+  });
+
   test("sends agent output as standard Markdown instead of Slack mrkdwn", async () => {
     let requestBody = "";
     const client = HttpClient.make((request) => {

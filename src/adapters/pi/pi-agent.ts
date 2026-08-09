@@ -474,6 +474,31 @@ export const createProfileMemoryExtension = (
   },
 });
 
+interface EphemeralPromptContextState {
+  generation: number;
+  value?: string;
+}
+
+export const appendEphemeralPromptContext = (
+  event: Pick<BeforeAgentStartEvent, "systemPrompt">,
+  context: string,
+): BeforeAgentStartEventResult => ({
+  systemPrompt: `${event.systemPrompt}\n\n${context}`,
+});
+
+export const createEphemeralPromptContextExtension = (
+  current: () => string | undefined,
+): InlineExtension => ({
+  name: "ziggy-ephemeral-prompt-context",
+  hidden: true,
+  factory: (pi) => {
+    pi.on("before_agent_start", (event) => {
+      const context = current();
+      return context === undefined ? undefined : appendEphemeralPromptContext(event, context);
+    });
+  },
+});
+
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");
 
@@ -554,6 +579,7 @@ export const askOnce = (
 interface ProfileRuntime extends AgentSessionRuntime {
   readonly resources: PiResources;
   readonly agents: ReadonlyArray<ProfileAgent>;
+  readonly ephemeralPromptContext: EphemeralPromptContextState;
 }
 
 const createProfileRuntime = (
@@ -574,6 +600,7 @@ const createProfileRuntime = (
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
     const runtimeRef: { current?: AgentSessionRuntime } = {};
+    const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
 
     const runtime = yield* piPromise(profilePath, "create agent runtime", async () => {
       const runtime = await createAgentSessionRuntime(
@@ -603,6 +630,7 @@ const createProfileRuntime = (
                 ),
                 ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                 createProfileMemoryExtension(profilePath, paths.documents),
+                createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
               ],
             },
           });
@@ -651,7 +679,11 @@ const createProfileRuntime = (
     });
     // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
     // additional resource bundle; assigning `services` would throw at runtime.
-    const profileRuntime: ProfileRuntime = Object.assign(runtime, { resources, agents });
+    const profileRuntime: ProfileRuntime = Object.assign(runtime, {
+      resources,
+      agents,
+      ephemeralPromptContext,
+    });
     runtimeRef.current = profileRuntime;
     return profileRuntime;
   });
@@ -859,17 +891,34 @@ export const openChat = (
     );
 
     return {
-      prompt: (text, options) => {
-        const prepared = prepareProfileAgentPrompt(text, runtime.agents);
-        return prepared.ok
-          ? promptForAssistantText(target.path, runtime.session, prepared.text, options)
-          : Effect.fail(
-              new ProfileAgentMentionInvalid({
-                profilePath: target.path,
-                message: prepared.message,
+      prompt: (text, options) =>
+        Effect.suspend(() => {
+          const generation = runtime.ephemeralPromptContext.generation + 1;
+          runtime.ephemeralPromptContext.generation = generation;
+          if (options?.ephemeralContext === undefined) {
+            delete runtime.ephemeralPromptContext.value;
+          } else {
+            runtime.ephemeralPromptContext.value = options.ephemeralContext;
+          }
+          const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+          const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
+            ? promptForAssistantText(target.path, runtime.session, prepared.text, options)
+            : Effect.fail(
+                new ProfileAgentMentionInvalid({
+                  profilePath: target.path,
+                  message: prepared.message,
+                }),
+              );
+          return prompted.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (runtime.ephemeralPromptContext.generation === generation) {
+                  delete runtime.ephemeralPromptContext.value;
+                }
               }),
-            );
-      },
+            ),
+          );
+        }),
       dispose,
     };
   });

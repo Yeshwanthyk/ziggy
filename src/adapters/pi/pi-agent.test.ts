@@ -15,6 +15,7 @@ import { memoryFilePaths, type ChatContext } from "../../domain/memory";
 import type { ChatProgressEvent } from "../../application/agent";
 import { createProfileAgentChildSession } from "./session-lineage";
 import {
+  appendEphemeralPromptContext,
   askOnce,
   createLocalSessionManager,
   createProfileMemoryExtension,
@@ -69,6 +70,96 @@ describe("Pi provider failure classification", () => {
         cause,
       }),
     );
+  });
+});
+
+describe("Pi ephemeral prompt context", () => {
+  test("appends turn-only context to the provider system prompt", () => {
+    expect(
+      appendEphemeralPromptContext(
+        { systemPrompt: "SOUL" },
+        "[Slack thread context]\nquoted history\n[/Slack thread context]",
+      ),
+    ).toEqual({
+      systemPrompt: "SOUL\n\n[Slack thread context]\nquoted history\n[/Slack thread context]",
+    });
+  });
+
+  test("uses context for one real provider turn without persisting or replaying it", async () => {
+    const requestBodies: Array<string> = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        requestBodies.push(JSON.stringify(await request.json()));
+        return new Response(
+          [
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},"finish_reason":null}]}',
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    try {
+      const profilePath = await temporaryProfile();
+      const sessionDirectory = join(profilePath, "sessions", "slack-thread");
+      await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+      await writeFile(
+        join(profilePath, "settings.json"),
+        JSON.stringify({ defaultProvider: "fixture", defaultModel: "fixture-model" }),
+        "utf8",
+      );
+      await writeFile(
+        join(profilePath, "models.json"),
+        JSON.stringify({
+          providers: {
+            fixture: {
+              baseUrl: `http://127.0.0.1:${server.port}/v1`,
+              api: "openai-completions",
+              apiKey: "fixture-key",
+              models: [{ id: "fixture-model" }],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const handle = await Effect.runPromise(
+        openChat(
+          { path: profilePath, name: "Profile" },
+          { kind: "group", groupId: "slC123" },
+          sessionDirectory,
+          process.cwd(),
+          "fresh",
+        ),
+      );
+      try {
+        await Effect.runPromise(
+          handle.prompt("first current message", {
+            ephemeralContext: "SLACK_THREAD_CONTEXT_ONLY_90210",
+          }),
+        );
+        await Effect.runPromise(handle.prompt("second current message"));
+      } finally {
+        await Effect.runPromise(handle.dispose);
+      }
+
+      expect(requestBodies).toHaveLength(2);
+      expect(requestBodies[0]).toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
+      expect(requestBodies[1]).not.toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
+      const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
+        path.endsWith(".jsonl"),
+      );
+      expect(files).toHaveLength(1);
+      const transcript = await readFile(join(sessionDirectory, files[0] ?? ""), "utf8");
+      expect(transcript).toContain("first current message");
+      expect(transcript).toContain("second current message");
+      expect(transcript).not.toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
+    } finally {
+      server.stop(true);
+    }
   });
 });
 

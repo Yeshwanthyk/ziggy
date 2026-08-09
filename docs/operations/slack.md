@@ -22,6 +22,13 @@ session routing.
   `sessions/slack/group-sl<channel-id>-thread-<root-ts>/`. Later accepted replies in that thread use
   the same Pi session. Separate roots do not share a transcript or queue, and owner-DM memory is
   never exposed to the channel.
+- Before every accepted request inside an existing channel thread, Ziggy reads a fresh bounded
+  snapshot of that thread's root and prior replies. The snapshot is supplied to Pi as untrusted
+  context for that turn only; it is not copied into the persistent Pi transcript or Profile memory.
+  Slack threads are flat, so this covers the parent plus all replies before the triggering message.
+  Ziggy reads at most 200 messages and renders at most 30,000 Unicode code points. Supported images
+  attached to earlier thread replies are also available: pasting images and then mentioning Squarey
+  in the next reply supplies those recent images to Pi.
 - Personal direct-message memory is intentionally not admitted into channel conversations.
 - Other Slack users are ignored.
 - Channel activation is mention-only by default. A `channels` entry can opt one channel into
@@ -55,6 +62,8 @@ session routing.
   5 MiB. File-only messages are valid. Ziggy validates Slack's private-file metadata before using
   the bot credential, downloads only `https://files.slack.com` content, verifies the response type
   and a bounded byte stream, and supplies successful images through Pi's native image prompt input.
+  Current-message images take priority, followed by the most recent distinct images from prior
+  thread replies, with the same four-image total bound.
   Unsupported, oversized, inaccessible, or excess attachments become concise metadata notices in
   the prompt instead of failing the whole turn. Private URLs and credentials are never placed in
   prompts or diagnostics. The configured provider and model must also support image input.
@@ -170,7 +179,9 @@ Since Slack's March 2026 scope update, channel-based apps can use that loading s
 `assistant:write` or the AI assistant split view.
 
 `mpim:history` is only needed for multi-person direct messages, but keeping it with the corresponding
-event below makes the complete DM-and-channel setup explicit.
+event below makes the complete DM-and-channel setup explicit. Channel-thread hydration uses the
+history scope corresponding to the conversation type: `channels:history` for public channels,
+`groups:history` for private channels, and `mpim:history` for multi-person direct messages.
 
 ## 4. Subscribe to message events
 
@@ -313,7 +324,8 @@ a request, both at the root and in its threads. Messages from other users are ig
 and the channel receives isolated group memory rather than the owner's direct-message memory. A
 top-level request receives its working and final messages in a thread under that request. Later
 accepted replies in that thread continue the same Pi session. Separate top-level requests use
-separate sessions and can run independently.
+separate sessions and can run independently. A bare `@Squarey` inside an existing thread means
+"review this thread and help"; a bare top-level mention asks the owner what help they want.
 
 To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
 mention-only channel. The command affects only that exact chat key: separate channel threads keep

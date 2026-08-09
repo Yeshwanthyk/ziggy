@@ -33,6 +33,8 @@ export type ChatProgressEvent =
 
 export interface ChatPromptOptions {
   readonly images?: Array<ChatPromptImage>;
+  /** Context for only this provider turn. It is not added to the persisted user message. */
+  readonly ephemeralContext?: string;
   readonly onProgress?: (event: ChatProgressEvent) => void;
 }
 

@@ -66,7 +66,7 @@ Implementation through 2026-08-09 changed the live status as follows:
 | G18 | Complete for content-free connection and turn health in `serve status` and `doctor`. Workspace/team identity inspection remains part of G4/G23. |
 | G19 | Partial. Owner admission, token/URL redaction, private-file guards, media bounds, and broadcast escaping ship. Future actions need their own policy boundary. |
 | G20 | Complete. Per-chat generations, scoped interruption, and ordered status settlement block stale progress and answers after stop. |
-| G21 | Open for pre-existing human discussion history. A conversation started through a root Squarey request now keeps its own Pi context. Ziggy still does not fetch earlier Slack thread messages when first mentioned later. |
+| G21 | Complete. Every accepted channel-thread turn fetches a bounded fresh root-plus-prior-replies snapshot and supplies it as untrusted, ephemeral Pi context. |
 | G22 | Open. Top-level text and bounded file metadata ship; rich blocks, forwards, and unfurls are not hydrated. |
 | G23 | Partial. Strict local config, current setup docs, runtime health, and live proof ship. Generated manifests and live scope/subscription validation remain open. |
 
@@ -623,18 +623,18 @@ is deliberately expanded.
   agent invocation (Hermes `adapter.py:5780-5925`). OpenClaw resolves thread
   starters and optionally hydrates thread history (OpenClaw
   `prepare-routing.ts:214-336`, `thread.ts:98-170`).
-- **Baseline at research time:** It preserves `thread_ts` for reply placement but supplies Pi
-  only the incoming text and Ziggy's existing channel session; it never reads a
-  Slack thread root or prior human replies ([`socket.ts`](../../src/adapters/slack/socket.ts#L6-L13),
-  [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L97-L126)).
+- **Implemented baseline:** For each accepted channel-thread turn, the Slack adapter cursor-paginates
+  `conversations.replies` up to the triggering timestamp, with a 200-message bound. The gateway
+  renders the root and prior replies as a 30,000-code-point untrusted quote, and the Pi adapter adds
+  that quote to the system prompt for only the active turn. The snapshot does not become durable
+  Profile memory or a repeated user transcript entry. A bare bot mention in a thread is admitted as
+  a request to review and help with that discussion. Up to four supported images are selected across
+  the current message and prior replies, preferring current and then recent distinct thread images.
 - **Benefit:** Mentioning Squarey inside an existing human thread gives the
   model the conversation it is being asked about, not only the final message.
-- **Size:** M (bounded history API, schemas, authorization, prompt projection,
-  and tests); larger if combined with G7 session migration.
-- **Risk:** History may contain untrusted users, secrets, large payloads, or
-  edited/deleted messages. Bound count/bytes and clearly mark it as untrusted
-  Slack context rather than durable Profile memory.
-- **Priority:** P1 for channel-thread use; P2 for DM-first use.
+- **Remaining boundary:** History can still contain sensitive or adversarial participant text.
+  It is explicitly marked context-only, and only the current owner message authorizes tools or
+  external actions. Rich blocks, forwards, unfurls, and non-image historical files remain G22.
 
 ### G22. Rich inbound text, blocks, forwards, and unfurls
 

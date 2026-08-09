@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import type { SlackIngressFileReference } from "../../domain/slack-ingress";
 
@@ -49,6 +49,34 @@ const ConnectionsOpenSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   url: Schema.String,
 });
+const BoundedThreadFileText = Schema.String.check(Schema.isMaxLength(4_096));
+const BoundedThreadFileName = Schema.String.check(Schema.isMaxLength(512));
+const ThreadReplyFile = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
+  name: Schema.optional(BoundedThreadFileName),
+  title: Schema.optional(BoundedThreadFileName),
+  mimetype: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  size: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  url_private: Schema.optional(BoundedThreadFileText),
+  url_private_download: Schema.optional(BoundedThreadFileText),
+});
+const ThreadReply = Schema.Struct({
+  ts: Schema.String,
+  text: Schema.optional(Schema.String),
+  user: Schema.optional(Schema.String),
+  bot_id: Schema.optional(Schema.String),
+  files: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+const ThreadRepliesSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  messages: Schema.Array(ThreadReply),
+  has_more: Schema.optional(Schema.Boolean),
+  response_metadata: Schema.optional(
+    Schema.Struct({
+      next_cursor: Schema.optional(Schema.String),
+    }),
+  ),
+});
 const SlackFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
@@ -72,9 +100,33 @@ const decodeReactionResponse = Schema.decodeUnknownEffect(
 const decodeConnectionsOpenResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ConnectionsOpenSuccess, SlackFailure])),
 );
+const decodeThreadRepliesResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([ThreadRepliesSuccess, SlackFailure])),
+);
+const decodeThreadReplyFile = Schema.decodeUnknownEffect(ThreadReplyFile);
+
+const MAX_SLACK_THREAD_MESSAGES = 200;
+const SLACK_THREAD_PAGE_SIZE = 100;
+const MAX_SLACK_THREAD_FILES_PER_MESSAGE = 4;
+const MAX_SLACK_THREAD_FILES_TO_DECODE = 20;
+
+export interface SlackThreadMessage {
+  readonly ts: string;
+  readonly text: string;
+  readonly userId?: string;
+  readonly botId?: string;
+  readonly files?: ReadonlyArray<SlackIngressFileReference>;
+  readonly omittedFileCount?: number;
+}
+
+export interface SlackThreadHistory {
+  readonly messages: ReadonlyArray<SlackThreadMessage>;
+  readonly truncated: boolean;
+}
 
 export type SlackApiOperation =
   | "authTest"
+  | "getThreadReplies"
   | "postMessage"
   | "updateMessage"
   | "setStatus"
@@ -95,6 +147,7 @@ export type SlackApiErrorReason =
 export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("SlackApiError", {
   operation: Schema.Literals([
     "authTest",
+    "getThreadReplies",
     "postMessage",
     "updateMessage",
     "setStatus",
@@ -257,6 +310,31 @@ const jsonRequest = (
     contentType: "application/json; charset=utf-8",
   });
 
+const queryRequest = (
+  client: HttpClient.HttpClient,
+  token: string,
+  operation: SlackApiOperation,
+  method: string,
+  parameters: ReadonlyArray<readonly [string, string]>,
+): Effect.Effect<RawResponse, SlackApiError> => {
+  const url = new URL(`https://slack.com/api/${method}`);
+  for (const [key, value] of parameters) url.searchParams.set(key, value);
+  const outgoing = HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.bearerToken(token));
+
+  return client.execute(outgoing).pipe(
+    Effect.flatMap((response) =>
+      response.text.pipe(
+        Effect.map((body) => ({
+          status: response.status,
+          body,
+          retryAfterHeader: response.headers["retry-after"],
+        })),
+      ),
+    ),
+    Effect.mapError((cause) => apiError(operation, "network", true, cause, token)),
+  );
+};
+
 const ensureHttpSuccess = (
   token: string,
   operation: SlackApiOperation,
@@ -324,6 +402,97 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
+  getThreadReplies: (token: string, channel: string, threadTs: string, latestTs: string) =>
+    Effect.gen(function* () {
+      const messages: Array<SlackThreadMessage> = [];
+      const seenMessageTimestamps = new Set<string>();
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+      let truncated = false;
+
+      while (messages.length < MAX_SLACK_THREAD_MESSAGES) {
+        const response = yield* queryRequest(
+          client,
+          token,
+          "getThreadReplies",
+          "conversations.replies",
+          [
+            ["channel", channel],
+            ["ts", threadTs],
+            ["latest", latestTs],
+            ["inclusive", "false"],
+            ["limit", String(SLACK_THREAD_PAGE_SIZE)],
+            ...(cursor === undefined ? [] : [["cursor", cursor] as const]),
+          ],
+        ).pipe(Effect.flatMap((raw) => ensureHttpSuccess(token, "getThreadReplies", raw)));
+        const envelope = yield* decodeThreadRepliesResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("getThreadReplies", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+        );
+        if (!envelope.ok) {
+          return yield* slackFailure(token, "getThreadReplies", envelope.error, response.status);
+        }
+
+        for (const message of envelope.messages) {
+          if (seenMessageTimestamps.has(message.ts)) continue;
+          if (messages.length >= MAX_SLACK_THREAD_MESSAGES) {
+            truncated = true;
+            break;
+          }
+          seenMessageTimestamps.add(message.ts);
+          const rawFiles = message.files ?? [];
+          const decodedFiles: Array<typeof ThreadReplyFile.Type> = [];
+          for (const rawFile of rawFiles.slice(0, MAX_SLACK_THREAD_FILES_TO_DECODE)) {
+            const decodedFile = yield* decodeThreadReplyFile(rawFile).pipe(Effect.option);
+            if (Option.isSome(decodedFile)) decodedFiles.push(decodedFile.value);
+          }
+          const files = decodedFiles
+            .slice(0, MAX_SLACK_THREAD_FILES_PER_MESSAGE)
+            .map((file): SlackIngressFileReference => {
+              const name = file.name ?? file.title;
+              const urlPrivate = file.url_private_download ?? file.url_private;
+              return {
+                id: file.id,
+                ...(name === undefined ? {} : { name }),
+                ...(file.mimetype === undefined ? {} : { mimeType: file.mimetype }),
+                ...(file.size === undefined ? {} : { size: file.size }),
+                ...(urlPrivate === undefined ? {} : { urlPrivate }),
+              };
+            });
+          messages.push({
+            ts: message.ts,
+            text: message.text ?? "",
+            ...(message.user === undefined ? {} : { userId: message.user }),
+            ...(message.bot_id === undefined ? {} : { botId: message.bot_id }),
+            ...(files.length === 0 ? {} : { files }),
+            ...(rawFiles.length <= files.length
+              ? {}
+              : { omittedFileCount: rawFiles.length - files.length }),
+          });
+        }
+
+        const nextCursor = envelope.response_metadata?.next_cursor?.trim();
+        if (nextCursor === undefined || nextCursor.length === 0) {
+          truncated ||= envelope.has_more === true;
+          break;
+        }
+        if (seenCursors.has(nextCursor)) {
+          truncated = true;
+          break;
+        }
+        if (messages.length >= MAX_SLACK_THREAD_MESSAGES) {
+          truncated = true;
+          break;
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
+
+      return { messages, truncated } satisfies SlackThreadHistory;
+    }),
   postMessage: (token: string, channel: string, text: string, threadTs?: string) =>
     jsonRequest(client, token, "postMessage", "chat.postMessage", {
       channel,
@@ -589,6 +758,14 @@ export const postMessage = (
   threadTs?: string,
 ): Effect.Effect<{ readonly ts: string }, SlackApiError> =>
   withLiveClient((api) => api.postMessage(token, channel, text, threadTs));
+
+export const getThreadReplies = (
+  token: string,
+  channel: string,
+  threadTs: string,
+  latestTs: string,
+): Effect.Effect<SlackThreadHistory, SlackApiError> =>
+  withLiveClient((api) => api.getThreadReplies(token, channel, threadTs, latestTs));
 
 export const updateMessage = (
   token: string,
