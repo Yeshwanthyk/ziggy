@@ -31,6 +31,7 @@ const status = (overrides: Partial<ResidentServiceStatus> = {}): ResidentService
     acquiredAt: "2026-01-01T00:00:00.000Z",
   }),
   scheduler: Result.succeed(scheduler),
+  discord: Result.succeed({ _tag: "not-configured" }),
   slack: Result.succeed({ _tag: "not-configured" }),
   ...overrides,
 });
@@ -51,6 +52,7 @@ describe("serve status CLI projection", () => {
         "next due: none",
         "active runs: 0",
         "latest run: none",
+        "discord: not configured",
         "slack: not configured",
       ].join("\n"),
       exitCode: 0,

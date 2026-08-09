@@ -27,10 +27,15 @@ import {
   systemdMainPidCommand,
 } from "../adapters/bun/systemd-service";
 import { validateGatewayProfile } from "../adapters/fs/gateway-config";
+import { readDiscordHealth } from "../adapters/fs/discord-health";
 import { readSlackHealth } from "../adapters/fs/slack-health";
 import type { ProfileNotInitialized } from "../domain/agent";
 import type { AutomationProjectionError, AutomationStatusProjection } from "../domain/automation";
 import type { GatewayConfigError, GatewayOwnerError, GatewayOwnerStatus } from "../domain/gateway";
+import type {
+  DiscordHealthProjection,
+  DiscordHealthProjectionError,
+} from "../domain/discord-health";
 import type { ProfileTarget } from "../domain/profile";
 import type { SlackHealthProjection, SlackHealthProjectionError } from "../domain/slack-health";
 import {
@@ -55,6 +60,7 @@ export interface ResidentServiceStatus {
   readonly supervisor: Result.Result<ResidentSupervisorStatus, ResidentServiceError>;
   readonly process: Result.Result<GatewayOwnerStatus, GatewayOwnerError>;
   readonly scheduler: Result.Result<AutomationStatusProjection, AutomationProjectionError>;
+  readonly discord: Result.Result<DiscordHealthProjection, DiscordHealthProjectionError>;
   readonly slack: Result.Result<SlackHealthProjection, SlackHealthProjectionError>;
 }
 
@@ -530,16 +536,18 @@ export const makeResidentService = (
             supervisor: Result.fail(failure),
             process: yield* gateway.status(target).pipe(Effect.result),
             scheduler: yield* scheduler.status(target).pipe(Effect.result),
+            discord: yield* readDiscordHealth(target.path, Date.now()).pipe(Effect.result),
             slack: yield* readSlackHealth(target.path, Date.now()).pipe(Effect.result),
           };
         }
         const definition = definitionResult.success;
-        const [managed, supervisor, process, schedulerStatus, slack] = yield* Effect.all(
+        const [managed, supervisor, process, schedulerStatus, discord, slack] = yield* Effect.all(
           [
             runtime.inspectDefinition(definition).pipe(Effect.result),
             inspectSupervisor(definition, runtime).pipe(Effect.result),
             gateway.status(target).pipe(Effect.result),
             scheduler.status(target).pipe(Effect.result),
+            readDiscordHealth(target.path, Date.now()).pipe(Effect.result),
             readSlackHealth(target.path, Date.now()).pipe(Effect.result),
           ],
           { concurrency: "unbounded" },
@@ -551,6 +559,7 @@ export const makeResidentService = (
           supervisor,
           process,
           scheduler: schedulerStatus,
+          discord,
           slack,
         };
       }),

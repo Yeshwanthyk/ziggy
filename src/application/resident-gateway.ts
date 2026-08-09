@@ -18,6 +18,7 @@ import {
 } from "../domain/gateway";
 import type { ProfileTarget } from "../domain/profile";
 import type { DiscordGatewayConfig } from "../domain/discord";
+import type { DiscordIngressDatabaseError } from "../domain/discord-ingress";
 import type { SlackGatewayConfig } from "../domain/slack";
 import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
@@ -114,15 +115,20 @@ export const makeResidentGateway = (
             );
           if (config.discord !== undefined)
             branches.push(
-              discord
-                .runLoop(target, config.discord)
-                .pipe(
-                  Effect.catchTag("DiscordApiError", (failure: DiscordApiError) =>
+              discord.runLoop(target, config.discord).pipe(
+                Effect.catchTag("DiscordApiError", (failure: DiscordApiError) =>
+                  runtime
+                    .logError(`[gateway] Discord stopped: ${failure.message}`)
+                    .pipe(Effect.andThen(Effect.never)),
+                ),
+                Effect.catchTag(
+                  "DiscordIngressDatabaseError",
+                  (failure: DiscordIngressDatabaseError) =>
                     runtime
                       .logError(`[gateway] Discord stopped: ${failure.message}`)
                       .pipe(Effect.andThen(Effect.never)),
-                  ),
                 ),
+              ),
             );
           if (config.slack !== undefined)
             branches.push(

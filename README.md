@@ -22,6 +22,7 @@ Run `ziggy help` for the complete command surface.
 ## Operations guides
 
 - [Supervise `ziggy serve`](docs/operations/serve.md)
+- [Connect a Profile to Discord](docs/operations/discord.md)
 - [Connect a Profile to Slack](docs/operations/slack.md)
 - [Operate automations](docs/operations/automations.md)
 

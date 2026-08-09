@@ -4,6 +4,7 @@ import { Duration, Effect, Fiber, Result } from "effect";
 import { TestClock } from "effect/testing";
 import { DiscordApiError } from "./api";
 import {
+  DiscordSocketError,
   type DiscordSocketConnection,
   type DiscordSocketDependencies,
   openDiscordSocket,
@@ -136,6 +137,31 @@ const yieldToSupervisor = Effect.gen(function* () {
 });
 
 describe("Discord socket Effect boundary", () => {
+  test("projects connected and reconnecting lifecycle without Discord content", async () => {
+    const fixture = dependencies({
+      schedule: () => () => undefined,
+    });
+
+    const states = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(ready);
+          const connected = yield* socket.nextConnectionState;
+          fixture.connections[0]?.emitClose(1001);
+          const reconnecting = yield* socket.nextConnectionState;
+          return [connected, reconnecting];
+        }),
+      ),
+    );
+
+    expect(states).toEqual([
+      { state: "connected" },
+      { state: "reconnecting", reason: "connection" },
+    ]);
+  });
+
   test("fails authentication once with a typed socket error", async () => {
     const fixture = dependencies({
       getGatewayBot: () => Effect.fail(apiFailure("authentication")),
@@ -176,6 +202,123 @@ describe("Discord socket Effect boundary", () => {
     );
 
     expect(Result.isFailure(result) && result.failure.reason).toBe("malformed-frame");
+  });
+
+  test("decodes bounded Discord attachment metadata for file-only messages", async () => {
+    const fixture = dependencies();
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(ready);
+          fixture.connections[0]?.emitMessage(
+            JSON.stringify({
+              op: 0,
+              s: 43,
+              t: "MESSAGE_CREATE",
+              d: {
+                id: "attachment-message",
+                channel_id: "channel",
+                author: { id: "owner" },
+                content: "",
+                attachments: [
+                  {
+                    id: "a1",
+                    filename: "one.png",
+                    content_type: "image/png",
+                    size: 3,
+                    url: "https://cdn.discordapp.com/attachments/1/2/one.png",
+                  },
+                  { malformed: true },
+                  { id: "a2", filename: "two.jpg", content_type: "image/jpeg", size: 4 },
+                  { id: "a3", filename: "three.txt", content_type: "text/plain", size: 5 },
+                  { id: "a4" },
+                  { id: "a5" },
+                ],
+              },
+            }),
+          );
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received).toMatchObject({
+      id: "attachment-message",
+      content: "",
+      attachments: [
+        {
+          id: "a1",
+          filename: "one.png",
+          mimeType: "image/png",
+          size: 3,
+          url: "https://cdn.discordapp.com/attachments/1/2/one.png",
+        },
+        { id: "a2", filename: "two.jpg", mimeType: "image/jpeg", size: 4 },
+        { id: "a3", filename: "three.txt", mimeType: "text/plain", size: 5 },
+      ],
+      omittedAttachmentCount: 3,
+    });
+  });
+
+  test("decodes and deduplicates owner slash-command interactions", async () => {
+    const fixture = dependencies();
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(ready);
+          const interaction = JSON.stringify({
+            op: 0,
+            s: 44,
+            t: "INTERACTION_CREATE",
+            d: {
+              id: "interaction-1",
+              token: "interaction-token",
+              type: 2,
+              guild_id: "guild",
+              channel_id: "thread",
+              channel: { id: "thread", type: 11, parent_id: "parent" },
+              member: { user: { id: "owner" } },
+              data: { type: 1, name: "status" },
+            },
+          });
+          fixture.connections[0]?.emitMessage(interaction);
+          fixture.connections[0]?.emitMessage(interaction);
+          fixture.connections[0]?.emitMessage(
+            interaction.replace('"interaction-1"', '"interaction-2"').replace('"status"', '"stop"'),
+          );
+          const nextInteraction =
+            socket.nextInteraction ??
+            Effect.fail(
+              new DiscordSocketError({
+                operation: "receive",
+                reason: "closed",
+                retriable: false,
+                message: "missing interaction queue",
+                cause: new Error("missing interaction queue"),
+              }),
+            );
+          const first = yield* nextInteraction;
+          const second = yield* nextInteraction;
+          return { first, second };
+        }),
+      ),
+    );
+
+    expect(received.first).toEqual({
+      id: "interaction-1",
+      token: "interaction-token",
+      guildId: "guild",
+      channelId: "thread",
+      channelType: 11,
+      parentChannelId: "parent",
+      authorId: "owner",
+      commandName: "status",
+    });
+    expect(received.second).toMatchObject({ id: "interaction-2", commandName: "stop" });
   });
 
   test("resumes after a retryable close without bootstrapping again", async () => {

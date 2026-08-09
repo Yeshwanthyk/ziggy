@@ -10,6 +10,7 @@ scheduler process.
 
 Channel setup guides:
 
+- [Connect a Profile to Discord](discord.md)
 - [Connect a Profile to Slack](slack.md)
 
 ## Lifecycle commands

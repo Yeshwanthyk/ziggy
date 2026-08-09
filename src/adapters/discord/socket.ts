@@ -2,6 +2,7 @@ import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
 import type * as Scope from "effect/Scope";
 import { type DiscordApiError, getGatewayBot } from "./api";
 import { makeRecentIds } from "../bun/recent-ids";
+import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
 
 export interface DiscordInboundMessage {
   readonly id: string;
@@ -10,6 +11,19 @@ export interface DiscordInboundMessage {
   readonly authorId: string;
   readonly authorIsBot: boolean;
   readonly content: string;
+  readonly attachments: ReadonlyArray<DiscordIngressAttachmentReference>;
+  readonly omittedAttachmentCount: number;
+}
+
+export interface DiscordInboundInteraction {
+  readonly id: string;
+  readonly token: string;
+  readonly guildId: string | undefined;
+  readonly channelId: string | undefined;
+  readonly channelType: number | undefined;
+  readonly parentChannelId: string | undefined;
+  readonly authorId: string;
+  readonly commandName: string;
 }
 
 const SocketCloseCode = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
@@ -36,8 +50,22 @@ export class DiscordSocketError extends Schema.TaggedErrorClass<DiscordSocketErr
 
 export interface DiscordSocket {
   readonly next: Effect.Effect<DiscordInboundMessage, DiscordSocketError>;
+  readonly nextInteraction?: Effect.Effect<DiscordInboundInteraction, DiscordSocketError>;
+  readonly nextConnectionState: Effect.Effect<DiscordSocketConnectionState>;
   readonly close: Effect.Effect<void, DiscordSocketError>;
 }
+
+export type DiscordSocketConnectionState =
+  | { readonly state: "connected" }
+  | {
+      readonly state: "reconnecting";
+      readonly reason: "connection" | "queue-overflow" | "socket";
+    }
+  | {
+      readonly state: "failed";
+      readonly reason: "authentication" | "connection" | "queue-overflow" | "socket";
+    }
+  | { readonly state: "stopped" };
 
 export interface DiscordSocketConnection {
   readonly readyState: () => number;
@@ -103,6 +131,36 @@ const MessageSchema = Schema.Struct({
     bot: Schema.optional(Schema.Boolean),
   }),
   content: Schema.optional(Schema.String),
+  attachments: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+const MessageAttachmentSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
+  filename: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
+  content_type: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  size: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
+});
+const InteractionSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
+  token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+  type: Integer,
+  guild_id: Schema.optional(Schema.String),
+  channel_id: Schema.optional(Schema.String),
+  channel: Schema.optional(
+    Schema.Struct({
+      id: Schema.String,
+      type: Integer,
+      parent_id: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  member: Schema.optional(Schema.Struct({ user: Schema.Struct({ id: Schema.String }) })),
+  user: Schema.optional(Schema.Struct({ id: Schema.String })),
+  data: Schema.optional(
+    Schema.Struct({
+      type: Integer,
+      name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+    }),
+  ),
 });
 
 const decodeGatewayFrameJson = Schema.decodeUnknownEffect(
@@ -111,6 +169,8 @@ const decodeGatewayFrameJson = Schema.decodeUnknownEffect(
 const decodeReadyPayload = Schema.decodeUnknownEffect(ReadySchema);
 const decodeHelloPayload = Schema.decodeUnknownEffect(HelloSchema);
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
+const decodeMessageAttachment = Schema.decodeUnknownEffect(MessageAttachmentSchema);
+const decodeInteractionPayload = Schema.decodeUnknownEffect(InteractionSchema);
 
 const normalizeGatewayFrame = (decoded: typeof GatewayFrameSchema.Type) => ({
   op: decoded.op,
@@ -208,8 +268,13 @@ export const openDiscordSocket = (
     const inbound = yield* Queue.dropping<DiscordInboundMessage, DiscordSocketError>(
       dependencies.inboundCapacity,
     );
+    const interactions = yield* Queue.dropping<DiscordInboundInteraction, DiscordSocketError>(
+      dependencies.inboundCapacity,
+    );
+    const connectionStates = yield* Queue.sliding<DiscordSocketConnectionState>(16);
     const commands = yield* Queue.dropping<Command>(dependencies.commandCapacity);
     const messageIds = makeRecentIds(MAX_MESSAGE_IDS);
+    const interactionIds = makeRecentIds(MAX_MESSAGE_IDS);
     let current: AttachedSocket | undefined;
     let cancelHeartbeat: (() => void) | undefined;
     let cancelReconnect: (() => void) | undefined;
@@ -222,6 +287,10 @@ export const openDiscordSocket = (
     let heartbeatAcknowledged = true;
     let stopped = false;
     let failed = false;
+
+    const reportState = (state: DiscordSocketConnectionState) => {
+      Queue.offerUnsafe(connectionStates, state);
+    };
 
     const clearHeartbeat = () => {
       cancelHeartbeat?.();
@@ -259,6 +328,17 @@ export const openDiscordSocket = (
           return;
         }
         failed = true;
+        reportState({
+          state: "failed",
+          reason:
+            failure.reason === "authentication"
+              ? "authentication"
+              : failure.reason === "queue-overflow"
+                ? "queue-overflow"
+                : failure.reason === "connection"
+                  ? "connection"
+                  : "socket",
+        });
         clearHeartbeat();
         clearReconnect();
         const attached = current;
@@ -267,6 +347,8 @@ export const openDiscordSocket = (
         }
         yield* Queue.clear(inbound);
         yield* Queue.fail(inbound, failure);
+        yield* Queue.clear(interactions);
+        yield* Queue.fail(interactions, failure);
       });
 
     const offerCommand = (command: Command) => {
@@ -279,6 +361,7 @@ export const openDiscordSocket = (
             new Error("Discord command queue capacity exceeded"),
           );
           failed = true;
+          reportState({ state: "failed", reason: "queue-overflow" });
           Queue.failCauseUnsafe(inbound, Cause.fail(failure));
           const attached = current;
           if (attached !== undefined) {
@@ -293,6 +376,7 @@ export const openDiscordSocket = (
         return;
       }
       clearReconnect();
+      reportState({ state: "reconnecting", reason: "connection" });
       cancelReconnect = dependencies.schedule(delayMs, () => {
         cancelReconnect = undefined;
         offerCommand({ _tag: "Connect", mode });
@@ -438,10 +522,12 @@ export const openDiscordSocket = (
           resumeGatewayUrl = ready.resumeGatewayUrl;
           ownUserId = ready.userId;
           reconnectDelayMs = 1_000;
+          reportState({ state: "connected" });
           return;
         }
         if (frame.t === "RESUMED") {
           reconnectDelayMs = 1_000;
+          reportState({ state: "connected" });
           return;
         }
         if (frame.t === "MESSAGE_CREATE") {
@@ -450,6 +536,32 @@ export const openDiscordSocket = (
             return;
           }
           const payload = decoded.value;
+          const rawAttachments = payload.attachments ?? [];
+          const decodedAttachments = yield* Effect.forEach(
+            rawAttachments.slice(0, 4),
+            (attachment) => decodeMessageAttachment(attachment).pipe(Effect.option),
+          );
+          const attachments = decodedAttachments.flatMap((decodedAttachment) =>
+            Option.isSome(decodedAttachment)
+              ? [
+                  {
+                    id: decodedAttachment.value.id,
+                    ...(decodedAttachment.value.filename === undefined
+                      ? {}
+                      : { filename: decodedAttachment.value.filename }),
+                    ...(decodedAttachment.value.content_type === undefined
+                      ? {}
+                      : { mimeType: decodedAttachment.value.content_type }),
+                    ...(decodedAttachment.value.size === undefined
+                      ? {}
+                      : { size: decodedAttachment.value.size }),
+                    ...(decodedAttachment.value.url === undefined
+                      ? {}
+                      : { url: decodedAttachment.value.url }),
+                  },
+                ]
+              : [],
+          );
           const message: DiscordInboundMessage = {
             id: payload.id,
             channelId: payload.channel_id,
@@ -457,6 +569,8 @@ export const openDiscordSocket = (
             authorId: payload.author.id,
             authorIsBot: payload.author.bot ?? false,
             content: payload.content ?? "",
+            attachments,
+            omittedAttachmentCount: Math.max(0, rawAttachments.length - attachments.length),
           };
           if (
             message.authorId !== ownUserId &&
@@ -469,6 +583,41 @@ export const openDiscordSocket = (
                 "queue-overflow",
                 false,
                 new Error("Discord inbound queue capacity exceeded"),
+              ),
+            );
+          }
+          return;
+        }
+        if (frame.t === "INTERACTION_CREATE") {
+          const decoded = yield* decodeInteractionPayload(frame.d).pipe(Effect.option);
+          if (Option.isNone(decoded)) return;
+          const payload = decoded.value;
+          const authorId = payload.member?.user.id ?? payload.user?.id;
+          if (
+            payload.type !== 2 ||
+            payload.data?.type !== 1 ||
+            authorId === undefined ||
+            !interactionIds.remember(payload.id)
+          ) {
+            return;
+          }
+          const interaction: DiscordInboundInteraction = {
+            id: payload.id,
+            token: payload.token,
+            guildId: payload.guild_id,
+            channelId: payload.channel_id ?? payload.channel?.id,
+            channelType: payload.channel?.type,
+            parentChannelId: payload.channel?.parent_id ?? undefined,
+            authorId,
+            commandName: payload.data.name,
+          };
+          if (!(yield* Queue.offer(interactions, interaction))) {
+            yield* terminalFailure(
+              error(
+                "receive",
+                "queue-overflow",
+                false,
+                new Error("Discord interaction queue capacity exceeded"),
               ),
             );
           }
@@ -629,6 +778,7 @@ export const openDiscordSocket = (
         return Effect.void;
       }
       stopped = true;
+      reportState({ state: "stopped" });
       clearHeartbeat();
       clearReconnect();
       const attached = current;
@@ -639,6 +789,10 @@ export const openDiscordSocket = (
         return Queue.clear(inbound).pipe(
           Effect.orElseSucceed(() => []),
           Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
+          Effect.andThen(Queue.clear(interactions)),
+          Effect.andThen(
+            Queue.fail(interactions, error("close", "closed", false, new Error("closed"))),
+          ),
           Effect.andThen(Queue.shutdown(commands)),
           Effect.asVoid,
         );
@@ -688,6 +842,10 @@ export const openDiscordSocket = (
       return Queue.clear(inbound).pipe(
         Effect.orElseSucceed(() => []),
         Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
+        Effect.andThen(Queue.clear(interactions)),
+        Effect.andThen(
+          Queue.fail(interactions, error("close", "closed", false, new Error("closed"))),
+        ),
         Effect.andThen(Queue.shutdown(commands)),
         Effect.andThen(waitForClose),
       );
@@ -701,6 +859,8 @@ export const openDiscordSocket = (
 
     return {
       next: Queue.take(inbound),
+      nextInteraction: Queue.take(interactions),
+      nextConnectionState: Queue.take(connectionStates),
       close,
     };
   });

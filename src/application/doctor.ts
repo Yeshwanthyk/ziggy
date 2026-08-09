@@ -12,6 +12,7 @@ import {
 import { discoverPiResources } from "../adapters/pi/resources";
 import { listProfileSessions } from "../adapters/pi/sessions";
 import { readSlackHealth } from "../adapters/fs/slack-health";
+import { readDiscordHealth } from "../adapters/fs/discord-health";
 import { type AuthShape, Auth } from "./auth";
 import { type ModelsShape, Models } from "./models";
 import { parseAutomationFile } from "../domain/automation";
@@ -308,6 +309,41 @@ const slackRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
     ),
   );
 
+const discordRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
+  readDiscordHealth(target.path, Date.now()).pipe(
+    Effect.map((projection) => {
+      if (projection._tag === "not-configured") {
+        return ok("discord-runtime", "Discord is not configured");
+      }
+      if (projection._tag === "not-observed") {
+        return warn("discord-runtime", "Discord is configured but has no runtime observation");
+      }
+      const { snapshot } = projection;
+      const stale =
+        snapshot.updatedAtMs > projection.observedAtMs ||
+        projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+      if (stale) return warn("discord-runtime", "Discord runtime observation is stale");
+      if (snapshot.state === "connected") {
+        return ok(
+          "discord-runtime",
+          `Discord is connected; ${snapshot.activeTurnCount} active and ${snapshot.queuedTurnCount} queued turn${snapshot.queuedTurnCount === 1 ? "" : "s"}`,
+        );
+      }
+      if (snapshot.state === "failed") {
+        return error(
+          "discord-runtime",
+          `Discord runtime failed (${snapshot.lastFailure ?? "unknown"})`,
+        );
+      }
+      return warn("discord-runtime", `Discord runtime is ${snapshot.state}`);
+    }),
+    Effect.catch(() =>
+      Effect.succeed(
+        error("discord-runtime", "Discord runtime observation is invalid or unreadable"),
+      ),
+    ),
+  );
+
 const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
     const runtimePath = path.join(target.path, ".runtime");
@@ -333,6 +369,7 @@ export const makeDoctor = (auth: AuthShape, models: ModelsShape): DoctorShape =>
         yield* memoryCheck(target),
         yield* resourcesCheck(target, repositoryRoot),
         yield* gatewayCheck(target),
+        yield* discordRuntimeCheck(target),
         yield* slackRuntimeCheck(target),
         yield* sessionsCheck(target),
         yield* runtimeCheck(target),

@@ -6,6 +6,7 @@ import type {
 } from "../application/resident-service";
 import type { AutomationRunProjection, AutomationStatusProjection } from "../domain/automation";
 import type { GatewayOwnerStatus } from "../domain/gateway";
+import type { DiscordHealthProjection } from "../domain/discord-health";
 import type { SlackHealthProjection } from "../domain/slack-health";
 
 const bounded = (value: string): string =>
@@ -78,6 +79,30 @@ const slackLines = (
   };
 };
 
+const discordLines = (
+  projection: DiscordHealthProjection,
+): { readonly lines: ReadonlyArray<string>; readonly degraded: boolean } => {
+  if (projection._tag === "not-configured") {
+    return { lines: ["discord: not configured"], degraded: false };
+  }
+  if (projection._tag === "not-observed") {
+    return { lines: ["discord: not observed"], degraded: true };
+  }
+  const { snapshot } = projection;
+  const stale =
+    snapshot.updatedAtMs > projection.observedAtMs ||
+    projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+  return {
+    lines: [
+      `discord: ${stale ? "stale" : snapshot.state}`,
+      `discord observed: ${new Date(snapshot.updatedAtMs).toISOString()}`,
+      `discord turns: active ${snapshot.activeTurnCount}, queued ${snapshot.queuedTurnCount}, completed ${snapshot.completedTurnCount}, cancelled ${snapshot.cancelledTurnCount}, failed ${snapshot.failedTurnCount}`,
+      `discord last failure: ${snapshot.lastFailure ?? "none"}`,
+    ],
+    degraded: stale || snapshot.state !== "connected",
+  };
+};
+
 export interface RenderedServeStatus {
   readonly text: string;
   readonly exitCode: 0 | 1;
@@ -139,6 +164,14 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
   if (scheduler[0]?.startsWith("scheduler: unknown") || scheduler[0] === "scheduler: stale") {
     degraded = true;
   }
+  const discord = Result.match(status.discord, {
+    onFailure: (failure) => ({
+      lines: [`discord: unknown (${bounded(failure.message)})`],
+      degraded: true,
+    }),
+    onSuccess: discordLines,
+  });
+  if (discord.degraded) degraded = true;
   const slack = Result.match(status.slack, {
     onFailure: (failure) => ({
       lines: [`slack: unknown (${bounded(failure.message)})`],
@@ -156,6 +189,7 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
       `supervisor: ${supervisor}`,
       ...process,
       ...scheduler,
+      ...discord.lines,
       ...slack.lines,
     ].join("\n"),
     exitCode: degraded ? 1 : 0,
