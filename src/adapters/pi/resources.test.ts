@@ -340,6 +340,7 @@ test("the complete repository catalog loads through production paths and Pi mani
     "agent-browser",
     "apple-notes",
     "apple-reminders",
+    "apple-reminders-native",
     "architecture-diagram",
     "blogwatcher",
     "codex",
@@ -463,12 +464,12 @@ test("the complete repository catalog loads through production paths and Pi mani
     "skill-curator",
     "web-search",
   ]);
-  expect(productionResources.skillPaths).toHaveLength(48);
+  expect(productionResources.skillPaths).toHaveLength(49);
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices, 49);
+  assertCatalog(productionServices, 50);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -483,6 +484,6 @@ test("the complete repository catalog loads through production paths and Pi mani
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
-    57,
+    58,
   );
 });
