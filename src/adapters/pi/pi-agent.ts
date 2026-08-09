@@ -13,7 +13,6 @@ import {
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
   type InlineExtension,
-  type PromptOptions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Database } from "bun:sqlite";
@@ -45,6 +44,7 @@ import {
   type ProfileAgent,
   type ProfileTarget,
 } from "../../domain/profile";
+import type { ChatHandle, ChatPromptOptions } from "../../application/agent";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources, type PiResources } from "./resources";
 import {
@@ -95,16 +95,6 @@ export interface PiAgentShape {
 }
 
 export class PiAgent extends Context.Service<PiAgent, PiAgentShape>()("ziggy/PiAgent") {}
-
-export interface ChatHandle {
-  readonly prompt: (
-    text: string,
-    options?: ChatPromptOptions,
-  ) => Effect.Effect<string, ZiggyAgentError>;
-  readonly dispose: Effect.Effect<void, ZiggyAgentError>;
-}
-
-export type ChatPromptOptions = Pick<PromptOptions, "images">;
 
 export type ChatSessionMode = "continue" | "fresh";
 
@@ -709,6 +699,37 @@ type PromptSession = Pick<
   "abort" | "isIdle" | "prompt" | "subscribe"
 >;
 
+const MAX_PROGRESS_TEXT_CODE_POINTS = 3_800;
+const MAX_PROGRESS_DELTA_CODE_POINTS = 512;
+const MAX_PROGRESS_TOOL_NAME_CODE_POINTS = 48;
+const MAX_PROGRESS_TOOL_ID_CODE_POINTS = 128;
+
+const boundedCodePoints = (value: string, maximum: number): string =>
+  [...value].slice(0, maximum).join("");
+
+export const safeProgressToolName = (value: string): string => {
+  const normalized = value
+    .replace(/[^\p{L}\p{N}_.:/-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return boundedCodePoints(
+    normalized.length === 0 ? "tool" : normalized,
+    MAX_PROGRESS_TOOL_NAME_CODE_POINTS,
+  );
+};
+
+const assistantTextSnapshot = (content: ReadonlyArray<{ readonly type: string }>): string =>
+  boundedCodePoints(
+    content
+      .filter(
+        (item): item is { readonly type: "text"; readonly text: string } =>
+          item.type === "text" && "text" in item && typeof item.text === "string",
+      )
+      .map((item) => item.text)
+      .join(""),
+    MAX_PROGRESS_TEXT_CODE_POINTS,
+  );
+
 export const promptForAssistantText = (
   profilePath: string,
   session: PromptSession,
@@ -733,6 +754,34 @@ export const promptForAssistantText = (
         : Effect.fail(providerError(profilePath, "call provider", new Error(assistantError)));
 
     unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_update" && event.message.role === "assistant") {
+        const delta =
+          event.assistantMessageEvent.type === "text_delta"
+            ? boundedCodePoints(event.assistantMessageEvent.delta, MAX_PROGRESS_DELTA_CODE_POINTS)
+            : "";
+        const snapshot = assistantTextSnapshot(event.message.content);
+        if ((snapshot.length > 0 || delta.length > 0) && options?.onProgress !== undefined) {
+          options.onProgress({ kind: "assistant-text", delta, snapshot });
+        }
+      }
+      if (
+        event.type === "tool_execution_start" ||
+        event.type === "tool_execution_update" ||
+        event.type === "tool_execution_end"
+      ) {
+        options?.onProgress?.({
+          kind: "tool",
+          phase:
+            event.type === "tool_execution_start"
+              ? "start"
+              : event.type === "tool_execution_update"
+                ? "update"
+                : "end",
+          toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
+          toolName: safeProgressToolName(event.toolName),
+          failed: event.type === "tool_execution_end" && event.isError,
+        });
+      }
       if (event.type === "message_end" && event.message.role === "assistant") {
         assistantText = event.message.content
           .filter((content) => content.type === "text")
@@ -746,7 +795,8 @@ export const promptForAssistantText = (
       if (event.type === "agent_settled") finish(completeAssistant());
     });
 
-    void session.prompt(text, options).then(
+    const promptOptions = options?.images === undefined ? undefined : { images: options.images };
+    void session.prompt(text, promptOptions).then(
       () => {
         if (session.isIdle) finish(completeAssistant());
       },

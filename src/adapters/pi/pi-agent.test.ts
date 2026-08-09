@@ -8,9 +8,11 @@ import {
   type AgentSessionEventListener,
   type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Effect, Fiber, Predicate } from "effect";
 import { ProviderCallError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
+import type { ChatProgressEvent } from "../../application/agent";
 import { createProfileAgentChildSession } from "./session-lineage";
 import {
   askOnce,
@@ -114,6 +116,132 @@ describe("Pi prompt cancellation", () => {
       listenerPresent: false,
       unsubscribes: 1,
       aborts: 1,
+    });
+  });
+
+  test("maps bounded assistant and tool progress without leaking the callback to Pi", async () => {
+    let listener: AgentSessionEventListener | undefined;
+    let promptOptions: Parameters<Parameters<typeof promptForAssistantText>[1]["prompt"]>[1];
+    const progress: Array<ChatProgressEvent> = [];
+    const session: Parameters<typeof promptForAssistantText>[1] = {
+      isIdle: false,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      prompt: (_text, options) => {
+        promptOptions = options;
+        return new Promise(() => undefined);
+      },
+      abort: () => Promise.resolve(),
+    };
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "a".repeat(4_200) }],
+      api: "test",
+      provider: "test",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: 0,
+    };
+    const fiber = Effect.runFork(
+      promptForAssistantText("/profile", session, "hello", {
+        images: [{ type: "image", data: "AQID", mimeType: "image/png" }],
+        onProgress: (event) => progress.push(event),
+      }),
+    );
+    await Effect.runPromise(Effect.yieldNow);
+    const emit = (event: Parameters<AgentSessionEventListener>[0]) => listener?.(event);
+
+    emit({
+      type: "message_update",
+      message: assistant,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "b".repeat(700),
+        partial: assistant,
+      },
+    });
+    emit({
+      type: "tool_execution_start",
+      toolCallId: "id".repeat(100),
+      toolName: "<unsafe>\nread 🔥".repeat(20),
+      args: {},
+    });
+    emit({
+      type: "tool_execution_update",
+      toolCallId: "id".repeat(100),
+      toolName: "<unsafe>\nread 🔥".repeat(20),
+      args: {},
+      partialResult: { content: [], details: undefined },
+    });
+    emit({
+      type: "tool_execution_end",
+      toolCallId: "id".repeat(100),
+      toolName: "<unsafe>\nread 🔥".repeat(20),
+      result: { content: [], details: undefined },
+      isError: false,
+    });
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(
+      progress.map((event) =>
+        event.kind === "assistant-text"
+          ? {
+              kind: event.kind,
+              deltaLength: [...event.delta].length,
+              snapshotLength: [...event.snapshot].length,
+            }
+          : {
+              kind: event.kind,
+              phase: event.phase,
+              failed: event.failed,
+              toolCallIdLength: [...event.toolCallId].length,
+              toolNameLength: [...event.toolName].length,
+              toolNameSafe: !event.toolName.includes("<") && !event.toolName.includes("🔥"),
+            },
+      ),
+    ).toEqual([
+      { kind: "assistant-text", deltaLength: 512, snapshotLength: 3_800 },
+      {
+        kind: "tool",
+        phase: "start",
+        failed: false,
+        toolCallIdLength: 128,
+        toolNameLength: 48,
+        toolNameSafe: true,
+      },
+      {
+        kind: "tool",
+        phase: "update",
+        failed: false,
+        toolCallIdLength: 128,
+        toolNameLength: 48,
+        toolNameSafe: true,
+      },
+      {
+        kind: "tool",
+        phase: "end",
+        failed: false,
+        toolCallIdLength: 128,
+        toolNameLength: 48,
+        toolNameSafe: true,
+      },
+    ]);
+    expect(promptOptions).toEqual({
+      images: [{ type: "image", data: "AQID", mimeType: "image/png" }],
     });
   });
 });

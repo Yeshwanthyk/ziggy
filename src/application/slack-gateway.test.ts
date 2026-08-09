@@ -17,6 +17,8 @@ import {
   slackHeartbeat,
   slackIngressTerminalState,
   slackMessageChunks,
+  shouldUpdateSlackProgress,
+  uniqueSlackStatusTargets,
   type SlackIngressRuntime,
   type SlackTransport,
 } from "./slack-gateway";
@@ -327,6 +329,30 @@ describe("Slack gateway boundary", () => {
     expect(slackIngressTerminalState(true, false)).toBe("unknown");
   });
 
+  test("deduplicates shared channel-thread status targets without merging DM targets", () => {
+    expect(
+      uniqueSlackStatusTargets([
+        { channel: "C123", statusThreadTs: "100.0" },
+        { channel: "C123", statusThreadTs: "100.0" },
+        { channel: "D123", statusThreadTs: "1.0" },
+        { channel: "D123", statusThreadTs: "2.0" },
+      ]),
+    ).toEqual([
+      { channel: "C123", threadTs: "100.0" },
+      { channel: "D123", threadTs: "1.0" },
+      { channel: "D123", threadTs: "2.0" },
+    ]);
+  });
+
+  test("requires both elapsed time and meaningful text growth for progressive edits", () => {
+    const previous = { atMs: 1_000, text: "a".repeat(60) };
+
+    expect(shouldUpdateSlackProgress(previous, "a".repeat(120), 2_000)).toBe(false);
+    expect(shouldUpdateSlackProgress(previous, "a".repeat(90), 3_000)).toBe(false);
+    expect(shouldUpdateSlackProgress(previous, "a".repeat(120), 3_000)).toBe(true);
+    expect(shouldUpdateSlackProgress(previous, "replacement ".repeat(8), 3_000)).toBe(true);
+  });
+
   test("emits a bounded long-running heartbeat", async () => {
     const statuses: Array<string> = [];
     let waits = 0;
@@ -439,23 +465,28 @@ describe("Slack gateway boundary", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const promptStarted = yield* Deferred.make<void>();
+        const progressPublished = yield* Deferred.make<void>();
+        const progressStatusStarted = yield* Deferred.make<void>();
+        const releaseProgressStatus = yield* Deferred.make<void>();
+        const stopStarted = yield* Deferred.make<void>();
         const bothPlaceholders = yield* Deferred.make<void>();
         const allSettled = yield* Deferred.make<void>();
         const inbound = [
-          message({ ts: "1.0", text: "first", threadTs: "0.9" }),
-          message({ ts: "2.0", text: "second", threadTs: "0.9" }),
-          message({ ts: "3.0", text: "stop", threadTs: "0.9" }),
-          message({ ts: "4.0", text: "fresh", threadTs: "0.9" }),
+          message({ ts: "1.0", text: "first" }),
+          message({ ts: "2.0", text: "second" }),
+          message({ ts: "3.0", text: "stop" }),
+          message({ ts: "4.0", text: "fresh" }),
         ];
         const prompts: Array<string> = [];
         const posts: Array<string> = [];
         const reactions: Array<string> = [];
-        const statuses: Array<string> = [];
+        const statuses: Array<{ readonly status: string; readonly threadTs: string }> = [];
         const updates: Array<string> = [];
         const terminal = new Map<string, string>();
         const journal = new Map<string, "received" | "running" | string>();
         let promptAborts = 0;
         let nextCall = 0;
+        let now = 0;
 
         const ingressRuntime: SlackIngressRuntime = {
           initialize: () => Effect.void,
@@ -467,9 +498,12 @@ describe("Slack gateway boundary", () => {
               return "accepted" as const;
             }),
           start: (_path, payload) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               if (journal.get(payload.sourceTs) !== "received") return false;
               journal.set(payload.sourceTs, "running");
+              if (payload.sourceTs === "3.0") {
+                yield* Deferred.succeed(stopStarted, undefined);
+              }
               return true;
             }),
           finish: (_path, payload, _ownerId, state) =>
@@ -503,7 +537,12 @@ describe("Slack gateway boundary", () => {
                 const wait =
                   item.ts === "3.0"
                     ? Effect.all(
-                        [Deferred.await(promptStarted), Deferred.await(bothPlaceholders)],
+                        [
+                          Deferred.await(promptStarted),
+                          Deferred.await(progressPublished),
+                          Deferred.await(progressStatusStarted),
+                          Deferred.await(bothPlaceholders),
+                        ],
                         { discard: true },
                       )
                     : Effect.void;
@@ -517,8 +556,15 @@ describe("Slack gateway boundary", () => {
               nextConnectionState: Effect.never,
               close: Effect.void,
             }),
-          setStatus: (_token, _channel, _threadTs, status) =>
-            Effect.sync(() => statuses.push(status)),
+          setStatus: (_token, _channel, threadTs, status) =>
+            status === "Using read…"
+              ? Effect.uninterruptible(
+                  Deferred.succeed(progressStatusStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseProgressStatus)),
+                    Effect.andThen(Effect.sync(() => statuses.push({ status, threadTs }))),
+                  ),
+                )
+              : Effect.sync(() => statuses.push({ status, threadTs })),
           postMessage: (_token, _channel, text) =>
             Effect.gen(function* () {
               posts.push(text);
@@ -534,8 +580,11 @@ describe("Slack gateway boundary", () => {
           removeReaction: (_token, _channel, ts, name) =>
             Effect.sync(() => reactions.push(`remove:${ts}:${name}`)),
           updateMessage: (_token, _channel, _ts, text) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               updates.push(text);
+              if (text.includes("first progress")) {
+                yield* Deferred.succeed(progressPublished, undefined);
+              }
             }),
         };
         const agent: ZiggyAgentShape = {
@@ -548,14 +597,38 @@ describe("Slack gateway boundary", () => {
           openTui: () => Effect.succeed(0),
           openChat: () =>
             Effect.succeed({
-              prompt: (text) => {
+              prompt: (text, options) => {
                 prompts.push(text);
                 if (text === "first") {
-                  return Deferred.succeed(promptStarted, undefined).pipe(
+                  now = 2_000;
+                  options?.onProgress?.({
+                    kind: "assistant-text",
+                    delta: "first progress ",
+                    snapshot: `first progress <!channel> ${"a".repeat(80)}`,
+                  });
+                  return Effect.yieldNow.pipe(
+                    Effect.andThen(
+                      Effect.sync(() =>
+                        options?.onProgress?.({
+                          kind: "tool",
+                          phase: "start",
+                          toolCallId: "tool-1",
+                          toolName: "read",
+                          failed: false,
+                        }),
+                      ),
+                    ),
+                    Effect.andThen(Deferred.succeed(promptStarted, undefined)),
                     Effect.andThen(Effect.never),
                     Effect.onInterrupt(() =>
                       Effect.sync(() => {
                         promptAborts += 1;
+                        now = 4_000;
+                        options?.onProgress?.({
+                          kind: "assistant-text",
+                          delta: "late",
+                          snapshot: `late cancelled progress ${"z".repeat(80)}`,
+                        });
                       }),
                     ),
                   );
@@ -567,11 +640,20 @@ describe("Slack gateway boundary", () => {
         };
 
         yield* Effect.raceFirst(
-          makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
+          makeSlackGateway(
+            agent,
+            transport,
+            { now: () => now, waitForHeartbeat: Effect.never, write: () => Effect.void },
+            ingressRuntime,
+          ).runLoop(
             { path: "/tmp/ziggy-slack-stop-test", name: "Test" },
             { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
           ),
-          Deferred.await(allSettled),
+          Effect.gen(function* () {
+            yield* Deferred.await(stopStarted);
+            yield* Deferred.succeed(releaseProgressStatus, undefined);
+            yield* Deferred.await(allSettled);
+          }),
         );
 
         expect(prompts).toEqual(["first", "fresh"]);
@@ -585,13 +667,30 @@ describe("Slack gateway boundary", () => {
         expect(posts).toContain("Stopped 2 requests.");
         expect(updates.filter((text) => text === "Stopped.")).toHaveLength(2);
         expect(updates).toContain("fresh reply");
+        expect(updates).toContain(`first progress &lt;!channel> ${"a".repeat(80)}`);
+        expect(updates).not.toContain(`late cancelled progress ${"z".repeat(80)}`);
         expect(updates).not.toContain("first reply");
         expect(updates).not.toContain("second reply");
         expect(reactions).toContain("add:1.0:octagonal_sign");
         expect(reactions).toContain("add:2.0:octagonal_sign");
-        const freshThinkingIndex = statuses.lastIndexOf("is thinking...");
+        expect(
+          statuses
+            .filter(({ status }) => status === "")
+            .map(({ threadTs }) => threadTs)
+            .toSorted(),
+        ).toEqual(["1.0", "2.0", "4.0"]);
+        expect(statuses).not.toContainEqual({ status: "", threadTs: "3.0" });
+        const staleStatusIndex = statuses.findIndex(({ status }) => status === "Using read…");
+        expect(staleStatusIndex).toBeGreaterThan(-1);
+        expect(statuses[staleStatusIndex + 1]).toEqual({ status: "", threadTs: "1.0" });
+        const freshThinkingIndex = statuses
+          .map(({ status }) => status)
+          .lastIndexOf("is thinking...");
         expect(freshThinkingIndex).toBeGreaterThan(-1);
-        expect(statuses.slice(freshThinkingIndex)).toEqual(["is thinking...", ""]);
+        expect(statuses.slice(freshThinkingIndex)).toEqual([
+          { status: "is thinking...", threadTs: "4.0" },
+          { status: "", threadTs: "4.0" },
+        ]);
       }),
     ));
 
@@ -893,11 +992,18 @@ describe("Slack gateway boundary", () => {
     let chatDisposed = false;
     const ingressOperations: Array<string> = [];
     let ingressOwnerId = "";
+    let now = 100;
+    let sawToolStatus = false;
+    let blockedProgressInterrupted = false;
+    let finalObservedAfterProgressInterrupt = false;
 
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Bun test is the Effect execution boundary.
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+        const progressApplied = yield* Deferred.make<void>();
+        const toolSettled = yield* Deferred.make<void>();
+        const blockedProgressStarted = yield* Deferred.make<void>();
         const inbound = Effect.succeed(
           message({
             threadTs: "0.9",
@@ -946,8 +1052,12 @@ describe("Slack gateway boundary", () => {
               };
             }),
           setStatus: (_token, channel, threadTs, status) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               statuses.push({ channel, threadTs, status });
+              if (status === "Using read…") sawToolStatus = true;
+              if (sawToolStatus && status === "is thinking...") {
+                yield* Deferred.succeed(toolSettled, undefined);
+              }
             }),
           postMessage: (token, channel, text, threadTs) =>
             Effect.sync(() => {
@@ -956,10 +1066,27 @@ describe("Slack gateway boundary", () => {
             }),
           removeReaction: (_token, channel, ts, name) =>
             Effect.sync(() => reactions.push(`remove:${channel}:${ts}:${name}`)),
-          updateMessage: (_token, channel, ts, text) =>
-            Effect.sync(() => {
+          updateMessage: (_token, channel, ts, text) => {
+            if (text.startsWith("blocked progress")) {
+              return Deferred.succeed(blockedProgressStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    blockedProgressInterrupted = true;
+                  }),
+                ),
+              );
+            }
+            return Effect.gen(function* () {
+              if (text === "hello back") {
+                finalObservedAfterProgressInterrupt = blockedProgressInterrupted;
+              }
               updates.push({ channel, ts, text });
-            }),
+              if (updates.filter((update) => update.text.startsWith("progress ")).length === 2) {
+                yield* Deferred.succeed(progressApplied, undefined);
+              }
+            });
+          },
         };
         const agent: ZiggyAgentShape = {
           runOnce: () => Effect.succeed(0),
@@ -974,9 +1101,82 @@ describe("Slack gateway boundary", () => {
               openedChats.push({ context, sessionDirectory });
               return {
                 prompt: (text: string, options) =>
-                  Effect.sync(() => {
+                  Effect.gen(function* () {
                     prompts.push(text);
                     promptImages = options?.images;
+                    now = 2_000;
+                    options?.onProgress?.({
+                      kind: "assistant-text",
+                      delta: "progress one",
+                      snapshot: `progress one ${"a".repeat(80)}`,
+                    });
+                    yield* Effect.yieldNow;
+                    now = 2_200;
+                    options?.onProgress?.({
+                      kind: "assistant-text",
+                      delta: "tiny interval",
+                      snapshot: `progress two ${"b".repeat(160)}`,
+                    });
+                    yield* Effect.yieldNow;
+                    now = 4_000;
+                    options?.onProgress?.({
+                      kind: "assistant-text",
+                      delta: "progress three",
+                      snapshot: `progress three ${"c".repeat(240)}`,
+                    });
+                    yield* Deferred.await(progressApplied);
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "read",
+                      failed: false,
+                    });
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "update",
+                      toolCallId: "tool-1",
+                      toolName: "read",
+                      failed: false,
+                    });
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-2",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-2",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    for (let index = 0; index < 100; index += 1) {
+                      options?.onProgress?.({
+                        kind: "assistant-text",
+                        delta: `${index}`,
+                        snapshot: `progress flood ${index} ${"d".repeat(240)}`,
+                      });
+                    }
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "read",
+                      failed: false,
+                    });
+                    yield* Deferred.await(toolSettled);
+                    now = 6_000;
+                    options?.onProgress?.({
+                      kind: "assistant-text",
+                      delta: "blocked progress",
+                      snapshot: `blocked progress ${"e".repeat(240)}`,
+                    });
+                    yield* Deferred.await(blockedProgressStarted);
                     return "hello back";
                   }),
                 dispose: Effect.sync(() => {
@@ -1020,7 +1220,7 @@ describe("Slack gateway boundary", () => {
           agent,
           transport,
           {
-            now: () => 100,
+            now: () => now,
             waitForHeartbeat: Effect.never,
             write: () =>
               Effect.fail(
@@ -1065,8 +1265,16 @@ describe("Slack gateway boundary", () => {
             threadTs: "0.9",
           },
         ]);
-        expect(updates).toEqual([{ channel: "C123", ts: "2.0", text: "hello back" }]);
+        expect(updates).toEqual([
+          { channel: "C123", ts: "2.0", text: `progress one ${"a".repeat(80)}` },
+          { channel: "C123", ts: "2.0", text: `progress three ${"c".repeat(240)}` },
+          { channel: "C123", ts: "2.0", text: "hello back" },
+        ]);
+        expect(finalObservedAfterProgressInterrupt).toBe(true);
         expect(statuses).toEqual([
+          { channel: "C123", threadTs: "0.9", status: "is thinking..." },
+          { channel: "C123", threadTs: "0.9", status: "Using bash…" },
+          { channel: "C123", threadTs: "0.9", status: "Using read…" },
           { channel: "C123", threadTs: "0.9", status: "is thinking..." },
           { channel: "C123", threadTs: "0.9", status: "" },
         ]);

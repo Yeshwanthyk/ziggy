@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import type { AutomationTuiHandler } from "../adapters/pi/automation-tui";
-import { PiAgent, type ChatHandle, type ChatSessionMode } from "../adapters/pi/pi-agent";
+import { PiAgent, type ChatSessionMode } from "../adapters/pi/pi-agent";
 import type {
   OpenTuiError,
   ProfileAgentRunContext,
@@ -11,7 +11,38 @@ import type {
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 
-export type { ChatHandle } from "../adapters/pi/pi-agent";
+export interface ChatPromptImage {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export type ChatProgressEvent =
+  | {
+      readonly kind: "assistant-text";
+      readonly delta: string;
+      readonly snapshot: string;
+    }
+  | {
+      readonly kind: "tool";
+      readonly phase: "start" | "update" | "end";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly failed: boolean;
+    };
+
+export interface ChatPromptOptions {
+  readonly images?: Array<ChatPromptImage>;
+  readonly onProgress?: (event: ChatProgressEvent) => void;
+}
+
+export interface ChatHandle {
+  readonly prompt: (
+    text: string,
+    options?: ChatPromptOptions,
+  ) => Effect.Effect<string, ZiggyAgentError>;
+  readonly dispose: Effect.Effect<void, ZiggyAgentError>;
+}
 
 export interface ZiggyAgentShape {
   readonly runOnce: (

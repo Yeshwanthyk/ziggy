@@ -36,6 +36,15 @@ session routing.
 - Accepted messages also post `Working on that…` immediately, then replace that same message with
   the final answer. This is the client-visible fallback when Slack does not render the native status;
   a failed turn replaces it with an explicit failure notice instead of leaving stale working text.
+- During a slow Pi turn, Ziggy progressively edits that same placeholder with bounded assistant text
+  snapshots. It requires both 1.5 seconds and at least 48 Unicode code points of meaningful growth
+  between edits, coalesces faster deltas, and serializes them with native status updates. While Pi is
+  using a tool, the native thread status changes to a bounded `Using <tool>…` label and returns to
+  thinking or heartbeat text after the tool ends. These intermediate writes are best-effort; the
+  ordinary final placeholder edit and overflow chunks remain authoritative. `stop` prevents queued
+  progress, waits behind any already in-flight native status write, and then clears every unique
+  cancelled request or shared channel-thread status target last. Scoped progress workers finish
+  interrupting before final delivery begins.
 - A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
   `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
   during a long Pi turn.
@@ -361,8 +370,10 @@ replaced by the final answer.
 ### A `Working on that…` message never changes
 
 Search `ziggy serve logs <profile>` for `final working-message update failed`, `postMessage`, or
-`updateMessage`. The placeholder and final edit both use `chat:write`; no reaction or Agent-view
-scope is required. A model failure should replace the placeholder with a failure notice.
+`updateMessage`. A slow response may also log `progress message update failed`; progressive edits
+are deliberately rate-bounded and their failure does not change final delivery settlement. The
+placeholder, progressive edits, and final edit all use `chat:write`; no reaction, streaming, or
+Agent-view scope is required. A model failure should replace the placeholder with a failure notice.
 
 ### Text replies work but attached images are unavailable
 

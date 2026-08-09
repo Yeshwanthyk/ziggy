@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Context, Deferred, Duration, Effect, Exit, Layer, Result, Semaphore } from "effect";
+import { Context, Deferred, Duration, Effect, Exit, Layer, Queue, Result, Semaphore } from "effect";
 import type * as Scope from "effect/Scope";
 import {
   addReaction,
@@ -57,6 +57,8 @@ const SLACK_MESSAGE_LIMIT = 4_000;
 const MAX_RETRY_SECONDS = 30;
 const MAX_DELIVERY_ATTEMPTS = 4;
 const HEARTBEAT_SECONDS = 30;
+const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
+const PROGRESS_UPDATE_GROWTH = 48;
 const WORKING_MESSAGE = "Working on that…";
 const QUEUED_MESSAGE = "Queued behind an earlier request…";
 const FAILED_MESSAGE = "I couldn't complete that request.";
@@ -129,6 +131,7 @@ type InboundMessage = SlackIngressPayload;
 
 interface ChatState {
   readonly semaphore: Semaphore.Semaphore;
+  readonly statusSemaphore: Semaphore.Semaphore;
   readonly turns: Set<ScheduledSlackTurn>;
   generation: number;
   handle?: ChatHandle;
@@ -322,6 +325,40 @@ export const slackHeartbeat = (
       elapsedSeconds += HEARTBEAT_SECONDS;
     }
   });
+
+export interface SlackProgressUpdateState {
+  readonly atMs: number;
+  readonly text: string;
+}
+
+export const shouldUpdateSlackProgress = (
+  previous: SlackProgressUpdateState,
+  snapshot: string,
+  atMs: number,
+): boolean => {
+  if (snapshot === previous.text || codePointLength(snapshot) < PROGRESS_UPDATE_GROWTH)
+    return false;
+  if (atMs - previous.atMs < PROGRESS_UPDATE_INTERVAL_MS) return false;
+  return (
+    !snapshot.startsWith(previous.text) ||
+    codePointLength(snapshot) - codePointLength(previous.text) >= PROGRESS_UPDATE_GROWTH
+  );
+};
+
+type SlackProgressSignal =
+  | { readonly kind: "text"; readonly snapshot: string }
+  | { readonly kind: "status"; readonly status: string };
+
+export const uniqueSlackStatusTargets = (
+  messages: ReadonlyArray<Pick<SlackIngressPayload, "channel" | "statusThreadTs">>,
+): ReadonlyArray<{ readonly channel: string; readonly threadTs: string }> => [
+  ...new Map(
+    messages.map((message) => [
+      `${message.channel}\u0000${message.statusThreadTs}`,
+      { channel: message.channel, threadTs: message.statusThreadTs },
+    ]),
+  ).values(),
+];
 
 const safeAttachmentName = (value: string | undefined, index: number): string => {
   const normalized = (value ?? `attachment-${index + 1}`)
@@ -667,6 +704,7 @@ export const makeSlackGateway = (
           if (existing !== undefined) return existing;
           const created: ChatState = {
             semaphore: Semaphore.makeUnsafe(1),
+            statusSemaphore: Semaphore.makeUnsafe(1),
             turns: new Set(),
             generation: 0,
             pending: 0,
@@ -687,17 +725,23 @@ export const makeSlackGateway = (
             });
 
             const updateStatus = (status: string) =>
-              transport
-                .setStatus(config.botToken, message.channel, message.statusThreadTs, status)
-                .pipe(
-                  Effect.catch((failure) =>
-                    Effect.sync(() => {
-                      console.error(
-                        `[slack] ${message.chatKey} status update failed: ${failure.message}`,
-                      );
-                    }),
-                  ),
-                );
+              chatState.statusSemaphore.withPermit(
+                Effect.suspend(() =>
+                  isFresh()
+                    ? transport
+                        .setStatus(config.botToken, message.channel, message.statusThreadTs, status)
+                        .pipe(
+                          Effect.catch((failure) =>
+                            Effect.sync(() => {
+                              console.error(
+                                `[slack] ${message.chatKey} status update failed: ${failure.message}`,
+                              );
+                            }),
+                          ),
+                        )
+                    : Effect.void,
+                ),
+              );
 
             const logFeedbackFailure = (kind: string, failure: SlackApiError) =>
               Effect.sync(() => {
@@ -708,6 +752,78 @@ export const makeSlackGateway = (
               Effect.sync(() => {
                 if (deliveryOutcomeUnknown(failure)) deliveryUnknown = true;
                 console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+              });
+
+            const runProgress = (
+              workingMessage: { readonly ts: string } | undefined,
+              initialAtMs: number,
+              statusSignals: Queue.Dequeue<SlackProgressSignal>,
+              textSignals: Queue.Dequeue<SlackProgressSignal>,
+            ): Effect.Effect<never> =>
+              Effect.gen(function* () {
+                let latestText = "";
+                let lastStatus = "is thinking...";
+                let lastPlaceholder: SlackProgressUpdateState = {
+                  atMs: initialAtMs,
+                  text: "",
+                };
+
+                const publishStatus = (status: string) =>
+                  Effect.suspend(() => {
+                    if (!isFresh() || status === lastStatus) return Effect.void;
+                    lastStatus = status;
+                    return updateStatus(status);
+                  });
+                const publishText = () =>
+                  Effect.suspend(() => {
+                    if (
+                      !isFresh() ||
+                      workingMessage === undefined ||
+                      !shouldUpdateSlackProgress(lastPlaceholder, latestText, healthRuntime.now())
+                    ) {
+                      return Effect.void;
+                    }
+                    const text = slackMessageChunks(latestText)[0];
+                    if (text === undefined) return Effect.void;
+                    lastPlaceholder = { atMs: healthRuntime.now(), text: latestText };
+                    return transport
+                      .updateMessage(config.botToken, message.channel, workingMessage.ts, text)
+                      .pipe(
+                        Effect.catch((failure) =>
+                          logFeedbackFailure("progress message update", failure),
+                        ),
+                      );
+                  });
+                while (true) {
+                  const signal = yield* Effect.raceFirst(
+                    Queue.take(statusSignals),
+                    Queue.take(textSignals),
+                  );
+                  if (!isFresh()) continue;
+                  if (signal.kind === "text") {
+                    latestText = signal.snapshot;
+                    yield* publishText();
+                    continue;
+                  }
+                  yield* publishText();
+                  yield* publishStatus(signal.status);
+                }
+              });
+
+            const offerProgressHeartbeats = (
+              signals: Queue.Enqueue<SlackProgressSignal>,
+              activeToolStatus: () => string | undefined,
+            ) =>
+              Effect.gen(function* () {
+                let elapsedSeconds = HEARTBEAT_SECONDS;
+                while (true) {
+                  yield* Effect.sleep(Duration.seconds(HEARTBEAT_SECONDS));
+                  yield* Queue.offer(signals, {
+                    kind: "status",
+                    status: activeToolStatus() ?? `is still working... (${elapsedSeconds}s)`,
+                  });
+                  elapsedSeconds += HEARTBEAT_SECONDS;
+                }
               });
 
             const reaction = (operation: "add" | "remove", name: string) => {
@@ -791,7 +907,24 @@ export const makeSlackGateway = (
 
                     const reply = yield* Effect.scoped(
                       Effect.gen(function* () {
-                        yield* slackHeartbeat(updateStatus).pipe(Effect.forkScoped);
+                        const progressStartedAtMs = healthRuntime.now();
+                        const statusSignals = yield* Queue.sliding<SlackProgressSignal>(1);
+                        const textSignals = yield* Queue.sliding<SlackProgressSignal>(1);
+                        const activeTools = new Map<string, string>();
+                        const activeToolStatus = (): string | undefined => {
+                          const names = [...activeTools.values()];
+                          const name = names[names.length - 1];
+                          return name === undefined ? undefined : `Using ${name}…`;
+                        };
+                        yield* offerProgressHeartbeats(statusSignals, activeToolStatus).pipe(
+                          Effect.forkScoped,
+                        );
+                        yield* runProgress(
+                          workingMessage,
+                          progressStartedAtMs,
+                          statusSignals,
+                          textSignals,
+                        ).pipe(Effect.forkScoped);
                         const resolveFile = transport.downloadFile;
                         const prompt = yield* prepareSlackAttachmentPrompt(
                           message,
@@ -799,10 +932,33 @@ export const makeSlackGateway = (
                             ? undefined
                             : (file) => resolveFile(config.botToken, file),
                         );
-                        return yield* handle.prompt(
-                          prompt.text,
-                          prompt.images.length === 0 ? undefined : { images: prompt.images },
-                        );
+                        return yield* handle.prompt(prompt.text, {
+                          ...(prompt.images.length === 0 ? {} : { images: prompt.images }),
+                          onProgress: (event) => {
+                            if (!isFresh()) return;
+                            if (event.kind === "assistant-text") {
+                              Queue.offerUnsafe(textSignals, {
+                                kind: "text",
+                                snapshot: event.snapshot,
+                              });
+                              return;
+                            }
+                            if (event.phase === "end") {
+                              activeTools.delete(event.toolCallId);
+                            } else {
+                              activeTools.delete(event.toolCallId);
+                              if (activeTools.size >= 16) {
+                                const oldest = activeTools.keys().next().value;
+                                if (oldest !== undefined) activeTools.delete(oldest);
+                              }
+                              activeTools.set(event.toolCallId, event.toolName);
+                            }
+                            Queue.offerUnsafe(statusSignals, {
+                              kind: "status",
+                              status: activeToolStatus() ?? "is thinking...",
+                            });
+                          },
+                        });
                       }),
                     );
                     if (!isFresh()) return yield* Effect.interrupt;
@@ -1004,17 +1160,25 @@ export const makeSlackGateway = (
               (turn) => Deferred.succeed(turn.cancellation, undefined),
               { discard: true },
             );
-            yield* transport
-              .setStatus(config.botToken, message.channel, message.statusThreadTs, "")
-              .pipe(
-                Effect.catch((failure) =>
-                  Effect.sync(() => {
-                    console.error(
-                      `[slack] ${message.chatKey} stop status clear failed: ${failure.message}`,
-                    );
-                  }),
-                ),
-              );
+            const cancelledStatusTargets = uniqueSlackStatusTargets(
+              cancelled.map((turn) => turn.message),
+            );
+            yield* chatState.statusSemaphore.withPermit(
+              Effect.forEach(
+                cancelledStatusTargets,
+                (target) =>
+                  transport.setStatus(config.botToken, target.channel, target.threadTs, "").pipe(
+                    Effect.catch((failure) =>
+                      Effect.sync(() => {
+                        console.error(
+                          `[slack] ${message.chatKey} stop status clear failed: ${failure.message}`,
+                        );
+                      }),
+                    ),
+                  ),
+                { discard: true },
+              ),
+            );
             yield* ingressRuntime.finish(
               target.path,
               message,
