@@ -27,33 +27,48 @@ and optional per-channel activation overrides; channels default to mention-only
 It authenticates the bot, opens Socket Mode with `apps.connections.open`, ACKs
 Socket Mode envelopes, decodes message events, and reconnects with bounded
 backoff ([`src/adapters/slack/socket.ts`](../../src/adapters/slack/socket.ts#L260-L419)).
-Accepted turns use a per-chat semaphore and Pi `ChatHandle.prompt`; the current
-feedback lifecycle is `setStatus("is thinking...")` + a `Working on that…`
-message, then `chat.update` or a failure notice, followed by status cleanup
-([`src/application/slack-gateway.ts`](../../src/application/slack-gateway.ts#L218-L335)).
+Accepted turns enter the durable Slack journal before ACK. Each chat key uses a
+one-permit semaphore and persistent Pi `ChatHandle`; root channel requests and
+their later replies share one thread-root session. Reactions, native status,
+progressive placeholder edits, tool status, cancellation, terminal delivery,
+and content-free health all remain owned by the Slack gateway
+([`src/application/slack-gateway.ts`](../../src/application/slack-gateway.ts)).
 
-This inventory treats those current, uncommitted worktree changes as the
-baseline. They are not proof of a deployed or client-visible Slack result;
-the operations guide explicitly separates startup proof from a live DM/channel
-round trip ([`docs/operations/slack.md`](../operations/slack.md#L298-L311)).
+This inventory began as a pre-implementation snapshot. The detailed source-study
+entries below retain that historical baseline. They are not current-state claims.
+Use the reconciliation table, operations guide, tests, and `LOG.md` for current
+Ziggy behavior.
 
 ### Post-research implementation reconciliation
 
-The detailed gap entries below preserve the source-study snapshot that shaped
-the work. Subsequent 2026-08-08 implementation and live proof supersede these
-specific “Ziggy now” statements:
+The detailed entries preserve the source-study snapshot that shaped the work.
+Implementation through 2026-08-09 changed the live status as follows:
 
 | Entry | Current status |
 | --- | --- |
-| G1 | The small precursor is complete: a valid message is ACKed only after admission to the bounded in-memory queue, and its recent event ID is committed with admission. Durable crash replay remains open. |
-| G3 | Admission now has explicit accepted/ignored outcomes and content-free logs for chat key, activation mode, mention-required ignores, connection, reconnect, and delivery failures. Persisted counters/status remain open. |
-| G6 | Complete and live-proven after installing `reactions:write`: 👀 settles to ✅ on success and ❌ on cancellation/failure without blocking the reply lifecycle. |
-| G7 | Complete for actual Slack threads: each thread root has an isolated Pi session while retaining channel group memory. Configurable reply placement modes remain optional. |
-| G8 | Complete for the current per-chat semaphore: queued turns receive an explicit queued placeholder, then working feedback when admitted. |
-| G9 | Complete: the native status refreshes every 30 seconds while the same scoped turn remains active. |
-| G11 | The high-ROI safe retry slice is complete: updates retry at most four times, while new posts retry only explicit rate limits and never ambiguous network/server outcomes. Durable reconciliation remains open. |
-| G13/G19 | Broadcast mentions are escaped and 4,000-code-point output prefers line/word boundaries. Full entity/code-fence formatting and future media/action security remain open. |
-| G18/G23 | Socket/admission diagnostics and the operations guide are improved, but persisted Slack health, generated manifests, and scope/subscription doctor checks remain open. |
+| G1 | Complete. SQLite admission happens before ACK, and received or foreign-running rows recover after restart. |
+| G2 | Complete. The journal deduplicates the logical channel/source timestamp and optional Slack event ID. |
+| G3 | Complete. Admission has explicit outcomes, content-free diagnostics, visible pending feedback, and health counters. |
+| G4 | Open. One Profile still assumes one Slack workspace identity; Slack Connect isolation is not implemented. |
+| G5 | Partial. Channels default to mention-only and accept per-channel `mention` or `always` overrides. Multi-user allowlists, pairing, and open DMs remain out. |
+| G6 | Complete and live-proven. 👀 settles to ✅, ❌, or 🛑 without blocking the turn. |
+| G7 | Complete. Each root channel request and its later Slack replies share one thread-root Pi session; separate roots remain isolated. |
+| G8 | Complete. Waiting turns show queued feedback, then change to working feedback when admitted. |
+| G9 | Complete. Active turns refresh native status every 30 seconds. |
+| G10 | Complete through a bounded progressive placeholder compositor. Native Slack streaming is not required. |
+| G11 | Safe-send slice complete. Updates retry within bounds; ambiguous new-message posts do not retry and settle as unknown. Delivery reconciliation remains open. |
+| G12 | Partial. One bounded progress owner serializes text and native status, and terminal delivery has explicit outcomes. A general outbound receipt ledger remains out. |
+| G13 | Partial. Standard Markdown, broadcast escaping, and bounded line-aware chunks ship. Block Kit and full entity/code-fence-aware splitting remain open. |
+| G14 | Complete. Bounded Pi assistant and tool events drive progressive text and `Using <tool>…` status with freshness cleanup. |
+| G15 | Inbound image slice complete and live-proven. Outbound file generation and delivery remain open. |
+| G16 | Open. Slash-command registration, Block Kit actions, and approval callbacks are not implemented. |
+| G17 | Open. Ziggy has no general Slack action tool surface. |
+| G18 | Complete for content-free connection and turn health in `serve status` and `doctor`. Workspace/team identity inspection remains part of G4/G23. |
+| G19 | Partial. Owner admission, token/URL redaction, private-file guards, media bounds, and broadcast escaping ship. Future actions need their own policy boundary. |
+| G20 | Complete. Per-chat generations, scoped interruption, and ordered status settlement block stale progress and answers after stop. |
+| G21 | Open for pre-existing human discussion history. A conversation started through a root Squarey request now keeps its own Pi context. Ziggy still does not fetch earlier Slack thread messages when first mentioned later. |
+| G22 | Open. Top-level text and bounded file metadata ship; rich blocks, forwards, and unfurls are not hydrated. |
+| G23 | Partial. Strict local config, current setup docs, runtime health, and live proof ship. Generated manifests and live scope/subscription validation remain open. |
 
 The live record is maintained in
 [`docs/operations/slack.md`](../operations/slack.md#verification-record), and the
@@ -72,7 +87,7 @@ is deliberately expanded.
   OpenClaw supports Socket Mode with a reconnecting receiver ([OpenClaw
   `provider-support.ts:323-383`](./openclaw-slack-source-study.md)). Slack
   Socket Mode is also in the [primary-source index](./slack-agent-feedback-options.md).
-- **Ziggy now:** `handleFrame` ACKs every decoded envelope before routing and
+- **Baseline at research time:** `handleFrame` ACKs every decoded envelope before routing and
   ignores unsupported/malformed payloads ([`socket.ts`](../../src/adapters/slack/socket.ts#L330-L374)).
 - **Benefit:** Slack does not redeliver a valid envelope merely because the
   consumer has not yet finished the agent turn.
@@ -87,7 +102,7 @@ is deliberately expanded.
   watches handler health ([Hermes `adapter.py:1856-1948`, `2167-2189`](./hermes-slack-source-study.md));
   OpenClaw retries recoverable disconnects and cleans up on shutdown ([OpenClaw
   `provider.ts:849-996`](./openclaw-slack-source-study.md)).
-- **Ziggy now:** Socket Mode reconnects through a fresh `connections.open` URL,
+- **Baseline at research time:** Socket Mode reconnects through a fresh `connections.open` URL,
   bounds inbound/command queues, fails closed on overflow, and closes listeners
   through Effect scope ([`socket.ts`](../../src/adapters/slack/socket.ts#L144-L239),
   [`socket.ts`](../../src/adapters/slack/socket.ts#L454-L522)).
@@ -103,7 +118,7 @@ is deliberately expanded.
   ([Hermes `adapter.py:5309-5364`](./hermes-slack-source-study.md)); OpenClaw
   merges `message`/`app_mention` twins and filters self-authored events
   ([OpenClaw `message-handler.ts:110-229`, `provider-support.ts:296-383`](./openclaw-slack-source-study.md)).
-- **Ziggy now:** A bounded in-memory recent-ID set drops repeated `event_id`
+- **Baseline at research time:** A bounded in-memory recent-ID set drops repeated `event_id`
   values; subtype, bot-authored, and self messages are ignored
   ([`socket.ts`](../../src/adapters/slack/socket.ts#L361-L383)).
 - **Benefit:** Basic reconnect redelivery cannot invoke the agent twice.
@@ -118,7 +133,7 @@ is deliberately expanded.
   composes mention/channel gates ([Hermes `adapter.py:5540-5780`](./hermes-slack-source-study.md));
   OpenClaw fails closed when mention detection is unavailable and supports room
   policy ([OpenClaw `prepare.ts:1100-1110`, `1348-1375`](./openclaw-slack-source-study.md)).
-- **Ziggy now:** Only `ownerUserId` is admitted; DMs always run, and channels
+- **Baseline at research time:** Only `ownerUserId` is admitted; DMs always run, and channels
   can require the bot mention or accept all owner messages; mentions are
   stripped before prompting ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L83-L126),
   [`docs/operations/slack.md`](../operations/slack.md#L18-L27)).
@@ -133,7 +148,7 @@ is deliberately expanded.
 
 - **Upstreams:** Both upstreams make session/thread identity explicit (Hermes
   `adapter.py:5562-5611`; OpenClaw `prepare-routing.ts:125-336`).
-- **Ziggy now:** DMs use `user-U...`, channels use `group-slC...`, direct
+- **Baseline at research time:** DMs use `user-U...`, channels use `group-slC...`, direct
   memory is not admitted to channels, and replies preserve an incoming
   `thread_ts` ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L97-L126),
   [`docs/operations/slack.md`](../operations/slack.md#L18-L24)).
@@ -151,7 +166,7 @@ is deliberately expanded.
   `adapter.py:2860-3034`; OpenClaw `context.ts:530-550`). Slack's March 2026
   changelog allows channel apps to use `chat:write`, as recorded with primary
   links in the [feedback report](./slack-agent-feedback-options.md#1-assistantthreadssetstatus).
-- **Ziggy now:** `setStatus` is called immediately after acceptance and cleared
+- **Baseline at research time:** `setStatus` is called immediately after acceptance and cleared
   in `acquireUseRelease`; failures are logged without blocking the model
   ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L226-L255),
   [`api.ts`](../../src/adapters/slack/api.ts#L316-L335)).
@@ -167,7 +182,7 @@ is deliberately expanded.
   final delivery (Hermes `adapter.py:2522-2830`; OpenClaw `draft-stream.ts:71-204`).
   Slack's post/update contracts and accessibility guidance are in the [feedback
   report](./slack-agent-feedback-options.md#3-placeholder-chatpostmessage--chatupdate).
-- **Ziggy now:** The gateway retains the post response `ts`, updates the first
+- **Baseline at research time:** The gateway retains the post response `ts`, updates the first
   message, posts remaining 4,000-code-point chunks, and replaces it with a
   failure notice on an agent failure ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L244-L325),
   [`api.ts`](../../src/adapters/slack/api.ts#L272-L315)).
@@ -184,7 +199,7 @@ is deliberately expanded.
   ([Hermes `base.py:5367-5456`](./hermes-slack-source-study.md)); OpenClaw
   separates read retries from write unknown-send handling ([OpenClaw
   `client-options.ts:28-44`](./openclaw-slack-source-study.md)).
-- **Ziggy now:** HTTP failures are typed, redact tokens, classify 401/403/429/5xx,
+- **Baseline at research time:** HTTP failures are typed, redact tokens, classify 401/403/429/5xx,
   and carry `retry-after`; gateway retries operations marked retriable
   ([`api.ts`](../../src/adapters/slack/api.ts#L97-L185), [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L138-L164)).
 - **Benefit:** Transient failures do not immediately lose a final answer.
@@ -199,7 +214,7 @@ is deliberately expanded.
   formatters (Hermes `adapter.py:3561-3718`; OpenClaw `format.ts:423-541`).
   Slack's first-party `markdown_text`/message guidance is linked in the [feedback
   report](./slack-agent-feedback-options.md#3-placeholder-chatpostmessage--chatupdate).
-- **Ziggy now:** It sends standard Markdown through `markdown_text`, splits at
+- **Baseline at research time:** It sends standard Markdown through `markdown_text`, splits at
   4,000 Unicode code points, and documents scopes, app setup, troubleshooting,
   and live proof ([`api.ts`](../../src/adapters/slack/api.ts#L272-L293),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L129-L135),
@@ -216,7 +231,7 @@ is deliberately expanded.
   streaming, attachments, retry, and cleanup (Hermes test anchors; OpenClaw
   `streaming.test.ts`, `status-reactions.slack-lifecycle.test.ts`, and ingress
   cleanup test).
-- **Ziggy now:** Socket, API, gateway, normalization, status, placeholder, error,
+- **Baseline at research time:** Socket, API, gateway, normalization, status, placeholder, error,
   retry, and cleanup paths have deterministic tests ([`socket.test.ts`](../../src/adapters/slack/socket.test.ts#L119-L278),
   [`api.test.ts`](../../src/adapters/slack/api.test.ts#L10-L161), [`slack-gateway.test.ts`](../../src/application/slack-gateway.test.ts#L23-L284)).
 - **Benefit:** Boundary regressions are caught without live Slack secrets.
@@ -235,7 +250,7 @@ is deliberately expanded.
   ([OpenClaw `ingress.ts:221-363`](./openclaw-slack-source-study.md); the
   durable-before-ack invariant is also summarized there). Hermes is primarily
   in-memory/background dispatch ([Hermes `base.py:6159-6173`](./hermes-slack-source-study.md)).
-- **Ziggy now:** It sends the Socket Mode envelope ACK before putting the
+- **Baseline at research time:** It sends the Socket Mode envelope ACK before putting the
   normalized message into an in-memory bounded queue; a queue overflow fails
   the socket and queued work is lost ([`socket.ts`](../../src/adapters/slack/socket.ts#L330-L394)).
 - **Benefit:** Reconnects, process restarts, and backpressure no longer silently
@@ -258,7 +273,7 @@ is deliberately expanded.
   releases on abandonment/error ([OpenClaw `message-handler.ts:110-363`](./openclaw-slack-source-study.md)).
   Hermes suppresses duplicate timestamps per workspace ([Hermes
   `adapter.py:5309-5318`](./hermes-slack-source-study.md)).
-- **Ziggy now:** It remembers only up to 1,000 event IDs in memory and only
+- **Baseline at research time:** It remembers only up to 1,000 event IDs in memory and only
   subscribes/decodes generic `message` events; distinct event IDs for the same
   post are not merged ([`socket.ts`](../../src/adapters/slack/socket.ts#L70-L93),
   [`socket.ts`](../../src/adapters/slack/socket.ts#L361-L364)).
@@ -277,7 +292,7 @@ is deliberately expanded.
   versus retryable ingress ([OpenClaw `prepare.ts:1100-1110`, `provider.ts:861-996`](./openclaw-slack-source-study.md)).
   Hermes has explicit ignored-channel/bot/authorization gates ([Hermes
   `adapter.py:5249-5364`](./hermes-slack-source-study.md)).
-- **Ziggy now:** `normalizeSlackMessage` returns `undefined` for blank, bot,
+- **Baseline at research time:** `normalizeSlackMessage` returns `undefined` for blank, bot,
   non-owner, unmentioned, and mention-only messages without recording why
   ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L83-L126)).
 - **Benefit:** Operators can distinguish “Slack never delivered it,” “policy
@@ -295,7 +310,7 @@ is deliberately expanded.
   `adapter.py:1856-1948`, `2889-3024`). OpenClaw qualifies peers by team and
   rejects mismatched `api_app_id`/team IDs (OpenClaw `prepare-routing.ts:125-175`,
   `context.ts:649-675`).
-- **Ziggy now:** `auth.test` retains only `user_id`; the Socket Mode message
+- **Baseline at research time:** `auth.test` retains only `user_id`; the Socket Mode message
   schema retains no `team_id`/`api_app_id`, and `chatKey` is only user/channel
   based ([`api.ts`](../../src/adapters/slack/api.ts#L10-L17), [`socket.ts`](../../src/adapters/slack/socket.ts#L79-L89),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L67-L74)).
@@ -313,7 +328,7 @@ is deliberately expanded.
   mention memory, bot policy, and MPIM rules (Hermes `adapter.py:5320-5780`,
   `8252-8370`). OpenClaw supports DM pairing/open policy, room allowlists, and
   ephemeral denial explanations (OpenClaw `dm-auth.ts:20-71`, `context.ts:560-647`).
-- **Ziggy now:** It has one owner, mention-only channel activation by default,
+- **Baseline at research time:** It has one owner, mention-only channel activation by default,
   and per-channel `mention`/`always` overrides inherited by threads. Every
   mention-only thread request must mention the bot; there is no mention-once
   latch, channel user allowlist, pairing, or multi-user admission
@@ -333,7 +348,7 @@ is deliberately expanded.
   optional queued/thinking/tool/done/error/stall reaction controller with
   serialized calls (OpenClaw `status-reactions.ts:56-353`, `dispatch-setup.ts:125-175`).
   Slack `reactions.add/remove` require `reactions:write` ([feedback report §4](./slack-agent-feedback-options.md#4-reactions-reactionsadd--reactionsremove)).
-- **Ziggy now:** No reaction API, `reactions:write` scope, or lifecycle ownership;
+- **Baseline at research time:** No reaction API, `reactions:write` scope, or lifecycle ownership;
   the app uses `chat:write` status plus a placeholder ([`docs/operations/slack.md`](../operations/slack.md#L80-L95),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L244-L325)).
 - **Benefit:** Low-cost durable received/working/done/error markers when Slack
@@ -352,7 +367,7 @@ is deliberately expanded.
   room threads thread-scoped while ordinary DM threads remain a UI affordance,
   configurable through thread history/reply modes (OpenClaw
   `prepare-routing.ts:214-336`).
-- **Ziggy now:** An incoming thread is preserved in delivery, but every channel
+- **Baseline at research time:** An incoming thread is preserved in delivery, but every channel
   top-level and thread message maps to `group-sl<channel>`; there is no explicit
   reply mode or per-thread session ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L117-L126)).
 - **Benefit:** Better context separation for parallel channel threads and a
@@ -369,7 +384,7 @@ is deliberately expanded.
   run freshness (Hermes `base.py:6075-6082`, `6644-6785`; `stream_consumer.py:795-801`).
   OpenClaw rotates/resets delivery trackers for queued follow-ups (OpenClaw
   `dispatch.ts:88-121`, `dispatch-progress.ts:567-617`).
-- **Ziggy now:** A per-chat semaphore serializes `prompt`, but feedback is
+- **Baseline at research time:** A per-chat semaphore serializes `prompt`, but feedback is
   acquired before the permit, so concurrent requests can each post a placeholder
   while waiting; there is no visible queued state or turn ID
   ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L218-L268)).
@@ -386,7 +401,7 @@ is deliberately expanded.
   `still working… (XmYYs)` heartbeat and refreshes typing every two seconds
   (Hermes `adapter.py:2860-2951`, `base.py:5002-5086`). OpenClaw has 10/30-second
   soft/hard stall reactions (OpenClaw `status-reactions.ts:191-353`).
-- **Ziggy now:** It sets static `is thinking...` once, then clears it at turn
+- **Baseline at research time:** It sets static `is thinking...` once, then clears it at turn
   settlement; there is no elapsed status or heartbeat ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L226-L237),
   [`docs/operations/slack.md`](../operations/slack.md#L28-L33)).
 - **Benefit:** Long-running tools/models look alive without spamming messages.
@@ -403,7 +418,7 @@ is deliberately expanded.
   conversation-boundary protection (OpenClaw `streaming.ts:116-352`,
   `draft-stream.ts:71-204`). Slack's `chat.startStream/appendStream/stopStream`
   contracts are linked in the [feedback report §2](./slack-agent-feedback-options.md#2-native-text-streaming-chatstartstream-appendstream-chatstopstream).
-- **Ziggy now:** It waits for complete `ChatHandle.prompt` output and only then
+- **Baseline at research time:** It waits for complete `ChatHandle.prompt` output and only then
   updates/posts final chunks ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L268-L301)).
   Inbound decoding retains `ts` but not `team_id`; native channel streams need
   recipient user/team identity ([`socket.ts`](../../src/adapters/slack/socket.ts#L79-L89),
@@ -424,7 +439,7 @@ is deliberately expanded.
   are not treated as definitely unsent (OpenClaw `client-options.ts:28-44`,
   `send.ts:941-1064`, `streaming.ts:246-352`). Hermes has retryable send results
   and separate final fallback (Hermes `adapter.py:2608-2632`, `base.py:5367-5456`).
-- **Ziggy now:** One generic `retrySlack` retries every `retriable` operation,
+- **Baseline at research time:** One generic `retrySlack` retries every `retriable` operation,
   including `chat.postMessage`; network failure after Slack committed can create
   duplicate placeholders/final chunks ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L138-L164),
   [`api.ts`](../../src/adapters/slack/api.ts#L212-L213)).
@@ -442,7 +457,7 @@ is deliberately expanded.
   returns message IDs/receipts per logical part (OpenClaw `send.ts:63-75`,
   `1096-1455`). Hermes tracks status/reaction identity per workspace/thread
   (Hermes `adapter.py:2889-3024`).
-- **Ziggy now:** Per-chat agent execution is serialized, but placeholder/status,
+- **Baseline at research time:** Per-chat agent execution is serialized, but placeholder/status,
   updates, and automation sends have no keyed outbound queue or per-part receipt
   ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L226-L328),
   [`application/automations.ts`](../../src/application/automations.ts#L200-L224)).
@@ -460,7 +475,7 @@ is deliberately expanded.
   `adapter.py:2541-2582`, `3561-3718`). OpenClaw chunks without splitting Slack
   entities/code markers and falls back from rejected Block Kit (OpenClaw
   `format.ts:423-541`, `send.ts:1215-1392`).
-- **Ziggy now:** It delegates standard Markdown to `markdown_text` and slices
+- **Baseline at research time:** It delegates standard Markdown to `markdown_text` and slices
   raw Unicode code points every 4,000 characters ([`api.ts`](../../src/adapters/slack/api.ts#L272-L293),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L129-L135)).
 - **Benefit:** Code blocks, links, mentions, and long answers remain readable;
@@ -478,7 +493,7 @@ is deliberately expanded.
   (Hermes `run.py:4008-4315`, `25157-25178`). OpenClaw composes tool/reasoning/
   plan/approval progress into draft or native task-card modes (OpenClaw
   `dispatch-progress.ts:326-617`, `dispatch.ts:406-487`).
-- **Ziggy now:** `ChatHandle` exposes only complete `prompt` output to the Slack
+- **Baseline at research time:** `ChatHandle` exposes only complete `prompt` output to the Slack
   gateway; no tool/reasoning/progress callback or temporary message state is
   present ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L22-L47)).
 - **Benefit:** Users can see which long-running tool/plan phase is active instead
@@ -497,7 +512,7 @@ is deliberately expanded.
   to HTTPS Slack hosts, caps concurrency, hydrates thread-root files, and guards
   upload completion (OpenClaw `media.ts:40-379`, `thread.ts:98-170`,
   `client-delivery.ts:240-348`).
-- **Ziggy now:** The inbound schema retains only text, channel/user/type,
+- **Baseline at research time:** The inbound schema retains only text, channel/user/type,
   timestamp, and thread; no file fields, file scopes, download/upload methods,
   or media handoff exist ([`socket.ts`](../../src/adapters/slack/socket.ts#L6-L13),
   [`docs/operations/slack.md`](../operations/slack.md#L80-L95)).
@@ -517,7 +532,7 @@ is deliberately expanded.
   ([Hermes `adapter.py:2052-2156`, `2473-2520`](./hermes-slack-source-study.md)).
   OpenClaw exposes native commands/actions through its plugin route and dispatch
   surface ([OpenClaw `channel.ts:596-614`, `message-action-dispatch.ts:84-363`](./openclaw-slack-source-study.md)).
-- **Ziggy now:** It subscribes to ordinary message events only; the operations
+- **Baseline at research time:** It subscribes to ordinary message events only; the operations
   guide explicitly says Pi `/skill:<name>` is TUI syntax, not a Slack slash
   command ([`socket.ts`](../../src/adapters/slack/socket.ts#L353-L394),
   [`docs/operations/slack.md`](../operations/slack.md#L37-L38)).
@@ -534,7 +549,7 @@ is deliberately expanded.
 - **Upstreams:** OpenClaw action groups cover send/edit/delete, reactions, read,
   pins, files, member info, and emoji list with host-owned requester context
   (OpenClaw `channel-actions.ts:32-85`, `message-action-dispatch.ts:84-363`).
-- **Ziggy now:** The Slack extension's `SKILL.md` documents react, send/edit/
+- **Baseline at research time:** The Slack extension's `SKILL.md` documents react, send/edit/
   delete, read, pins, member info, and emoji actions, but the current Slack
   adapter/gateway source exposes only auth, post/update, status, and Socket Mode
   transport ([`extensions/slack/skills/slack/SKILL.md`](../../extensions/slack/skills/slack/SKILL.md#L1-L143),
@@ -553,7 +568,7 @@ is deliberately expanded.
   retry/backoff/identity health, and cleans all provider resources (OpenClaw
   `provider.ts:861-996`). Hermes has Socket Mode watchdog/task/transport health
   ([Hermes `adapter.py:1183-1196`, `2167-2189`](./hermes-slack-source-study.md)).
-- **Ziggy now:** Resident status proves process/scheduler health; Slack failures
+- **Baseline at research time:** Resident status proves process/scheduler health; Slack failures
   are console lines and `auth.test` returns only the bot user ID. The operations
   guide asks operators to inspect generic logs ([`resident-gateway.ts`](../../src/application/resident-gateway.ts#L120-L140),
   [`docs/operations/slack.md`](../operations/slack.md#L234-L256)).
@@ -571,7 +586,7 @@ is deliberately expanded.
   `message-action-dispatch.ts:84-185`, `media.ts:40-95`). Hermes authorizes before
   file download and escapes broadcast mentions (Hermes `adapter.py:3591-3597`,
   `5540-5560`).
-- **Ziggy now:** Owner-only message admission and token redaction are present,
+- **Baseline at research time:** Owner-only message admission and token redaction are present,
   but no file/action paths exist; `api.test` proves token redaction only for
   adapter errors ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L89-L94),
   [`api.ts`](../../src/adapters/slack/api.ts#L107-L143)).
@@ -590,7 +605,7 @@ is deliberately expanded.
   OpenClaw rotates delivery trackers for queued follow-ups and tracks human
   interposition in draft streams (OpenClaw `dispatch-progress.ts:567-617`,
   `draft-stream.ts:163-204`).
-- **Ziggy now:** Each fork captures its placeholder `ts`, but there is no
+- **Baseline at research time:** Each fork captures its placeholder `ts`, but there is no
   generation/run ID in `InboundMessage` or `ChatState`; concurrent queued work
   can finish after a later request without a freshness check ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L67-L79),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L255-L335)).
@@ -608,7 +623,7 @@ is deliberately expanded.
   agent invocation (Hermes `adapter.py:5780-5925`). OpenClaw resolves thread
   starters and optionally hydrates thread history (OpenClaw
   `prepare-routing.ts:214-336`, `thread.ts:98-170`).
-- **Ziggy now:** It preserves `thread_ts` for reply placement but supplies Pi
+- **Baseline at research time:** It preserves `thread_ts` for reply placement but supplies Pi
   only the incoming text and Ziggy's existing channel session; it never reads a
   Slack thread root or prior human replies ([`socket.ts`](../../src/adapters/slack/socket.ts#L6-L13),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L97-L126)).
@@ -628,7 +643,7 @@ is deliberately expanded.
   (Hermes `adapter.py:5388-5485`, `5780-5925`). OpenClaw normalizes assistant
   edits, message bodies, thread starters, and room context (OpenClaw
   `events/messages.ts:254-320`, `prepare.ts:520-568`).
-- **Ziggy now:** The Socket schema accepts only the top-level Slack `text`
+- **Baseline at research time:** The Socket schema accepts only the top-level Slack `text`
   fallback and rejects every message subtype; blocks, rich-text elements,
   forwarded content, edits, and unfurls are not decoded
   ([`socket.ts`](../../src/adapters/slack/socket.ts#L79-L93),
@@ -648,7 +663,7 @@ is deliberately expanded.
   feature-dependent scopes (Hermes `slack_cli.py:30-163`). OpenClaw documents
   and validates its account modes/scopes and publishes provider health
   (OpenClaw `setup-shared.ts:54-101`, `provider.ts:861-996`).
-- **Ziggy now:** Setup is a manual operations guide; `doctor` validates the
+- **Baseline at research time:** Setup is a manual operations guide; `doctor` validates the
   local config shape, while runtime `auth.test` proves only the bot token/user
   identity. It does not project installed scopes, required event subscriptions,
   bot channel membership, or a live message round trip
@@ -676,7 +691,7 @@ transport/product boundary without a demonstrated need.
   Web API method; the [feedback report §5](./slack-agent-feedback-options.md#5-typing-indicators-what-exists-and-what-does-not)
   cites the official event reference and FAQ. Hermes/OpenClaw's status/reaction
   behavior is the supported modern substitute.
-- **Ziggy now:** Socket Mode has no bot typing API; it uses status + placeholder
+- **Baseline at research time:** Socket Mode has no bot typing API; it uses status + placeholder
   ([`docs/operations/slack.md`](../operations/slack.md#L28-L33)).
 - **Benefit:** A familiar typing affordance, but weaker than a durable status or
   visible answer.
@@ -690,7 +705,7 @@ transport/product boundary without a demonstrated need.
 - **Upstreams:** OpenClaw supports `socket`, `http`, and `relay` account modes
   plus route collision handling (OpenClaw `config-schema.ts:26-65`,
   `provider.ts:299-365`, `http/registry.ts:19-57`).
-- **Ziggy now:** The resident intentionally owns a single Socket Mode loop and
+- **Baseline at research time:** The resident intentionally owns a single Socket Mode loop and
   exposes no public request URL ([`docs/operations/slack.md`](../operations/slack.md#L1-L5),
   [`docs/operations/slack.md`](../operations/slack.md#L293-L296)).
 - **Benefit:** HTTP deployment flexibility or remote relay.
@@ -704,7 +719,7 @@ transport/product boundary without a demonstrated need.
 - **Upstreams:** Hermes/OpenClaw manifests/docs include `assistant:write` for
   Agent/Assistant View; Slack's March 2026 scope update allows ordinary
   channel-based `setStatus` with existing `chat:write` (see [feedback report §1](./slack-agent-feedback-options.md#1-assistantthreadssetstatus)).
-- **Ziggy now:** A blank ordinary Socket Mode app uses `chat:write` and already
+- **Baseline at research time:** A blank ordinary Socket Mode app uses `chat:write` and already
   calls `assistant.threads.setStatus` ([`docs/operations/slack.md`](../operations/slack.md#L58-L95)).
 - **Benefit:** Slack's top-bar/split-plane Agent experience.
 - **Size:** L (Slack app feature migration, scopes, event semantics, UX and live
@@ -719,7 +734,7 @@ transport/product boundary without a demonstrated need.
   rich progress bubbles (OpenClaw `dispatch-progress.ts:567-617`; Hermes
   `run.py:4008-4315`). Slack's streaming chunks support task/plan updates (the
   [feedback report §2](./slack-agent-feedback-options.md#2-native-text-streaming-chatstartstream-appendstream-chatstopstream)).
-- **Ziggy now:** It has no Pi tool-progress event boundary and only needs an
+- **Baseline at research time:** It has no Pi tool-progress event boundary and only needs an
   immediate status/placeholder for the current problem.
 - **Benefit:** Rich planning/task visualization.
 - **Size:** L (same prerequisites as G10/G14 plus Slack task UX).
@@ -731,7 +746,7 @@ transport/product boundary without a demonstrated need.
 
 - **Upstreams:** Hermes/OpenClaw render rich blocks and sophisticated Slack-safe
   Markdown (anchors in G13).
-- **Ziggy now:** `markdown_text` already handles the supported basic output path.
+- **Baseline at research time:** `markdown_text` already handles the supported basic output path.
 - **Benefit:** Better tables, cards, and rich structured messages.
 - **Size:** M/L depending on scope.
 - **Risk:** Format conversion can damage code/links or accidentally trigger
@@ -742,7 +757,7 @@ transport/product boundary without a demonstrated need.
 
 - **Upstreams:** OpenClaw default pairing/open DM policy and room allowlists
   (OpenClaw `dm-auth.ts:20-71`, `context.ts:560-647`).
-- **Ziggy now:** The product deliberately admits one configured owner and
+- **Baseline at research time:** The product deliberately admits one configured owner and
   documents other users as ignored ([`docs/operations/slack.md`](../operations/slack.md#L18-L27)).
 - **Benefit:** Team/bot deployment.
 - **Size:** M/L (identity, policy, memory isolation, config UX).
@@ -755,7 +770,7 @@ transport/product boundary without a demonstrated need.
 
 - **Upstreams:** OpenClaw has specialized coding/web/deploy/browser emojis and
   plugin progress callbacks (OpenClaw `status-reactions.ts:56-188`).
-- **Ziggy now:** It has no reactions and intentionally uses Slack status plus a
+- **Baseline at research time:** It has no reactions and intentionally uses Slack status plus a
   simple placeholder.
 - **Benefit:** More expressive status for tool classes.
 - **Size:** M after G6/G14.
@@ -767,7 +782,7 @@ transport/product boundary without a demonstrated need.
 
 - **Upstreams:** OpenClaw send/edit/delete/read/pin/member/emoji/file actions
   (OpenClaw `channel-actions.ts:32-85`).
-- **Ziggy now:** The extension documents the same shape but no executable adapter
+- **Baseline at research time:** The extension documents the same shape but no executable adapter
   is present (G17).
 - **Benefit:** Broad Slack automation.
 - **Size:** L.
@@ -781,7 +796,7 @@ transport/product boundary without a demonstrated need.
   threaded prompts and explicitly drops its own lifecycle reactions to prevent
   loops (Hermes `adapter.py:4783-4969`). OpenClaw can publish reaction
   notifications through its channel event surface.
-- **Ziggy now:** It does not subscribe to reaction events, and reactions are not
+- **Baseline at research time:** It does not subscribe to reaction events, and reactions are not
   part of its request contract.
 - **Benefit:** A lightweight emoji could mean approve, retry, summarize, or
   hand off without a text command.
@@ -800,7 +815,7 @@ should be resolved before the dependent gaps are called complete.
 
 - **Upstreams:** Hermes/OpenClaw both receive stream/tool callbacks (Hermes
   `run.py:4583-4645`; OpenClaw `dispatch.ts:406-487`).
-- **Ziggy now:** `ChatHandle` exposes `prompt(): Effect<string, ...>` only
+- **Baseline at research time:** `ChatHandle` exposes `prompt(): Effect<string, ...>` only
   ([`src/application/slack-gateway.ts`](../../src/application/slack-gateway.ts#L22-L47)).
 - **Benefit:** Determines whether G10/G14 are feasible without invasive Pi
   adapter changes.
@@ -813,7 +828,7 @@ should be resolved before the dependent gaps are called complete.
 
 - **Upstreams:** Team-qualified keys and mismatch checks are required by both
   upstreams (anchors in G4).
-- **Ziggy now:** `auth.test` decodes only `user_id`; inbound schema omits
+- **Baseline at research time:** `auth.test` decodes only `user_id`; inbound schema omits
   `team_id`/`api_app_id` ([`api.ts`](../../src/adapters/slack/api.ts#L10-L17),
   [`socket.ts`](../../src/adapters/slack/socket.ts#L79-L89)).
 - **Benefit:** Enables G4, native channel streaming recipient fields, and safe
@@ -826,7 +841,7 @@ should be resolved before the dependent gaps are called complete.
 
 - **Upstreams:** OpenClaw durable ingress owns append/replay/adoption lifecycle
   (OpenClaw `ingress.ts:221-363`).
-- **Ziggy now:** The resident has Profile sessions and automation persistence,
+- **Baseline at research time:** The resident has Profile sessions and automation persistence,
   but Slack ingress state is in memory (`Queue`, `Map`, recent IDs)
   ([`socket.ts`](../../src/adapters/slack/socket.ts#L163-L170),
   [`slack-gateway.ts`](../../src/application/slack-gateway.ts#L206-L224)).
@@ -840,7 +855,7 @@ should be resolved before the dependent gaps are called complete.
 
 - **Upstreams:** Hermes late-arrival drain/freshness and OpenClaw adoption/abort
   lifecycle (anchors in G2, G8, G20).
-- **Ziggy now:** Tests assert status cleanup and placeholder update but not a
+- **Baseline at research time:** Tests assert status cleanup and placeholder update but not a
   multi-turn state machine ([`slack-gateway.test.ts`](../../src/application/slack-gateway.test.ts#L89-L217)).
 - **Benefit:** Gives G8/G10/G11/G20 one contract: `received → queued → running →
   delivered/failed/unknown`, with one owner for every feedback message.
@@ -853,7 +868,7 @@ should be resolved before the dependent gaps are called complete.
 
 - **Upstreams:** OpenClaw's zero generic write retries and bounded signed
   reconciliation (OpenClaw `client-options.ts:28-44`, `send.ts:941-1064`).
-- **Ziggy now:** `retrySlack` applies the same loop to status, update, post, and
+- **Baseline at research time:** `retrySlack` applies the same loop to status, update, post, and
   final chunks ([`slack-gateway.ts`](../../src/application/slack-gateway.ts#L138-L164)).
 - **Benefit:** Enables G11 without making transient status failures block turns.
 - **Size:** M for taxonomy; L with metadata reconciliation.
@@ -867,7 +882,7 @@ should be resolved before the dependent gaps are called complete.
   `files:write`; Socket Mode needs `connections:write`; `chat:write` covers
   current status/post/update/stream paths (Slack sources and scope table in the
   [feedback report](./slack-agent-feedback-options.md#comparison-at-a-glance)).
-- **Ziggy now:** The documented app requests only `chat:write`, history scopes,
+- **Baseline at research time:** The documented app requests only `chat:write`, history scopes,
   and `connections:write` ([`docs/operations/slack.md`](../operations/slack.md#L68-L95)).
 - **Benefit:** Keeps least privilege while making scope-dependent features
   explicit and diagnosable.
@@ -881,7 +896,7 @@ should be resolved before the dependent gaps are called complete.
 - **Upstreams:** Both studies distinguish fake/source tests from deployed scope,
   event, client-rendering, and live Socket Mode proof (Hermes verification
   section; OpenClaw minimal operator checklist).
-- **Ziggy now:** Operations verification proves config/startup but explicitly not
+- **Baseline at research time:** Operations verification proves config/startup but explicitly not
   message delivery ([`docs/operations/slack.md`](../operations/slack.md#L298-L311)).
 - **Benefit:** Prevents declaring status/streaming/files complete based only on a
   `{ok:true}` fake response.

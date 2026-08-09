@@ -15,6 +15,7 @@ import {
   prepareSlackAttachmentPrompt,
   resolveSlackChannelMode,
   retrySlackDelivery,
+  slackReplyThreadTs,
   slackHeartbeat,
   slackIngressTerminalState,
   slackMessageChunks,
@@ -56,7 +57,7 @@ describe("Slack gateway boundary", () => {
     expect(
       normalizeSlackMessage(message({ channelType: "channel" }), "UBOT", "U123", "always"),
     ).toEqual({
-      chatKey: "group-slC123",
+      chatKey: "group-slC123-thread-1.0",
       channel: "C123",
       context: { kind: "group", groupId: "slC123" },
       sourceTs: "1.0",
@@ -97,7 +98,7 @@ describe("Slack gateway boundary", () => {
         "mention",
       ),
     ).toEqual({
-      chatKey: "group-slC123",
+      chatKey: "group-slC123-thread-1.0",
       channel: "C123",
       context: { kind: "group", groupId: "slC123" },
       sourceTs: "1.0",
@@ -113,6 +114,43 @@ describe("Slack gateway boundary", () => {
         "mention",
       ),
     ).toBeUndefined();
+  });
+
+  test("keeps a root channel request and its later Slack thread in one Pi session", () => {
+    const root = normalizeSlackMessage(
+      message({ channelType: "channel", ts: "123.456" }),
+      "UBOT",
+      "U123",
+      "always",
+    );
+    const followUp = normalizeSlackMessage(
+      message({ channelType: "channel", ts: "124.000", threadTs: "123.456" }),
+      "UBOT",
+      "U123",
+      "always",
+    );
+
+    expect(root).toMatchObject({
+      chatKey: "group-slC123-thread-123.456",
+      statusThreadTs: "123.456",
+      threadTs: undefined,
+    });
+    expect(followUp).toMatchObject({
+      chatKey: "group-slC123-thread-123.456",
+      statusThreadTs: "123.456",
+      threadTs: "123.456",
+    });
+    expect(root?.chatKey).toBe(followUp?.chatKey);
+    expect(root === undefined ? undefined : slackReplyThreadTs(root)).toBe("123.456");
+    expect(followUp === undefined ? undefined : slackReplyThreadTs(followUp)).toBe("123.456");
+  });
+
+  test("keeps direct-message reply placement unchanged", () => {
+    const root = normalizeSlackMessage(message(), "UBOT", "U123");
+    const thread = normalizeSlackMessage(message({ threadTs: "0.9" }), "UBOT", "U123");
+
+    expect(root === undefined ? undefined : slackReplyThreadTs(root)).toBeUndefined();
+    expect(thread === undefined ? undefined : slackReplyThreadTs(thread)).toBe("0.9");
   });
 
   test("defaults every channel and thread to mention-only unless that channel is always", () => {
@@ -175,7 +213,10 @@ describe("Slack gateway boundary", () => {
         "U123",
         "mention",
       ),
-    ).toMatchObject({ kind: "stop", message: { chatKey: "group-slC123", text: "/stop" } });
+    ).toMatchObject({
+      kind: "stop",
+      message: { chatKey: "group-slC123-thread-1.0", text: "/stop" },
+    });
     expect(classifySlackCommand(message({ text: "/stop now" }), "UBOT", "U123").kind).toBe("turn");
     expect(classifySlackCommand(message({ text: "stop now" }), "UBOT", "U123").kind).toBe("turn");
     expect(classifySlackCommand(message({ text: "/stop" }), "UBOT", "U999")).toEqual({

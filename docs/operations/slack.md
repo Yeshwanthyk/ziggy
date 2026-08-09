@@ -17,10 +17,11 @@ session routing.
 
 - Only messages authored by the configured `ownerUserId` are processed.
 - Direct messages use owner memory and sessions under `sessions/slack/user-<member-id>/`.
-- Channel conversations use channel-scoped group memory. Top-level channel turns retain the existing
-  session under `sessions/slack/group-sl<channel-id>/`, while replies inside a real Slack thread use
-  a thread-root session under `sessions/slack/group-sl<channel-id>-thread-<thread-ts>/`. This keeps
-  separate threads from contaminating one another without exposing owner-DM memory to the channel.
+- Channel conversations use channel-scoped group memory. Every accepted top-level channel request
+  creates or joins its own Slack thread and uses
+  `sessions/slack/group-sl<channel-id>-thread-<root-ts>/`. Later accepted replies in that thread use
+  the same Pi session. Separate roots do not share a transcript or queue, and owner-DM memory is
+  never exposed to the channel.
 - Personal direct-message memory is intentionally not admitted into channel conversations.
 - Other Slack users are ignored.
 - Channel activation is mention-only by default. A `channels` entry can opt one channel into
@@ -34,8 +35,10 @@ session routing.
   success or ❌ on failure. Reactions are best-effort; a missing permission disables them for the
   current resident process without blocking the turn or its other feedback.
 - Accepted messages also post `Working on that…` immediately, then replace that same message with
-  the final answer. This is the client-visible fallback when Slack does not render the native status;
-  a failed turn replaces it with an explicit failure notice instead of leaving stale working text.
+  the final answer. A top-level channel request puts this placeholder in its new Slack thread; an
+  existing thread request keeps it in that thread; and a direct message keeps its current placement.
+  This is the client-visible fallback when Slack does not render the native status. A failed turn
+  replaces it with an explicit failure notice instead of leaving stale working text.
 - During a slow Pi turn, Ziggy progressively edits that same placeholder with bounded assistant text
   snapshots. It requires both 1.5 seconds and at least 48 Unicode code points of meaningful growth
   between edits, coalesces faster deltas, and serializes them with native status updates. While Pi is
@@ -307,7 +310,10 @@ By default, send `@Squarey` followed by the request; Ziggy strips its Slack ment
 Pi. Every request in a thread must mention Squarey too: one earlier mention does not latch activation
 for later replies. A channel configured as `"always"` treats any ordinary owner-authored message as
 a request, both at the root and in its threads. Messages from other users are ignored in both modes,
-and the channel receives isolated group memory rather than the owner's direct-message memory.
+and the channel receives isolated group memory rather than the owner's direct-message memory. A
+top-level request receives its working and final messages in a thread under that request. Later
+accepted replies in that thread continue the same Pi session. Separate top-level requests use
+separate sessions and can run independently.
 
 To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
 mention-only channel. The command affects only that exact chat key: separate channel threads keep
@@ -428,10 +434,20 @@ On 2026-08-08, the manual path above produced these secret-free observations for
   to ✅, health returned to zero active/queued turns, and the completed ingress row contained neither
   prompt text nor private-file metadata.
 
-This record proves the configured workspace's startup, direct-message, channel, thread, queue,
-success-reaction, cancellation-reaction, and PNG image-input paths. It does not prove a different
-Slack workspace, client version, app manifest, provider/model, attachment format, or channel
-membership.
+On 2026-08-09, the thread-first channel path was verified in `#knowledge-base`:
+
+- A root `@Squarey` request received its acknowledgement reaction in the channel while the working
+  and final `ROOT-OK` reply appeared only in the request thread.
+- A second mention in that thread recalled the root request's `ORCHID` token, proving that the root
+  and its accepted thread replies reused one Pi session. `@Squarey stop` also replied `Nothing was
+  running.` in the same thread.
+- A new root mention with a 600x400 PNG accurately identified its yellow background, tall blue
+  rounded rectangle, and red circle. The answer appeared only in the image message's thread.
+
+This record proves the configured workspace's startup, direct-message, thread-first channel,
+thread-session continuity, queue, success-reaction, cancellation-reaction, and PNG image-input
+paths. It does not prove a different Slack workspace, client version, app manifest, provider/model,
+attachment format, or channel membership.
 
 ## Token rotation and removal
 

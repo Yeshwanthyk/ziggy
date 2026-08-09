@@ -174,6 +174,11 @@ export const normalizeSlackUserText = (text: string): string =>
       (_token, entity: keyof typeof SLACK_ENTITY_VALUE) => SLACK_ENTITY_VALUE[entity],
     );
 
+export const slackReplyThreadTs = (
+  message: Pick<SlackIngressPayload, "context" | "statusThreadTs" | "threadTs">,
+): string | undefined =>
+  message.context.kind === "group" ? message.statusThreadTs : message.threadTs;
+
 export const resolveSlackChannelMode = (
   config: Pick<SlackGatewayConfig, "channels">,
   channel: string,
@@ -226,10 +231,8 @@ export const classifySlackMessage = (
 
   // Slack channel IDs are alphanumeric; the "sl" prefix keeps group memory channel-scoped.
   const groupId = `sl${message.channel}`;
-  const chatKey =
-    message.threadTs === undefined
-      ? `group-${groupId}`
-      : `group-${groupId}-thread-${encodeURIComponent(message.threadTs)}`;
+  const conversationThreadTs = message.threadTs ?? message.ts;
+  const chatKey = `group-${groupId}-thread-${encodeURIComponent(conversationThreadTs)}`;
   return {
     kind: "accepted",
     message: {
@@ -240,7 +243,7 @@ export const classifySlackMessage = (
       ...(message.omittedFileCount === undefined
         ? {}
         : { omittedFileCount: message.omittedFileCount }),
-      statusThreadTs: message.threadTs ?? message.ts,
+      statusThreadTs: conversationThreadTs,
       sourceTs: message.ts,
       text: channelText,
       threadTs: message.threadTs,
@@ -723,6 +726,7 @@ export const makeSlackGateway = (
         const processMessage = (turn: ScheduledSlackTurn, chatState: ChatState, queued: boolean) =>
           Effect.gen(function* () {
             const message = turn.message;
+            const replyThreadTs = slackReplyThreadTs(message);
             const isFresh = () => !turn.cancelled && chatState.generation === turn.generation;
             let deliveryUnknown = false;
             const accepted = observe({
@@ -863,7 +867,7 @@ export const makeSlackGateway = (
                   config.botToken,
                   message.channel,
                   queued ? QUEUED_MESSAGE : WORKING_MESSAGE,
-                  message.threadTs,
+                  replyThreadTs,
                 )
                 .pipe(
                   Effect.catch((failure) =>
@@ -1005,7 +1009,7 @@ export const makeSlackGateway = (
                           config.botToken,
                           message.channel,
                           chunk,
-                          message.threadTs,
+                          replyThreadTs,
                         ),
                       ).pipe(
                         Effect.tapError((failure) =>
@@ -1200,7 +1204,12 @@ export const makeSlackGateway = (
             yield* Effect.all(
               [
                 transport
-                  .postMessage(config.botToken, message.channel, acknowledgement, message.threadTs)
+                  .postMessage(
+                    config.botToken,
+                    message.channel,
+                    acknowledgement,
+                    slackReplyThreadTs(message),
+                  )
                   .pipe(
                     Effect.catch((failure) =>
                       Effect.sync(() => {
