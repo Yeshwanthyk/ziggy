@@ -87,6 +87,8 @@ const dependencies = (
       inboundCapacity: 8,
       commandCapacity: 32,
       closeTimeout: Duration.seconds(1),
+      reportConnected: () => undefined,
+      reportConnectionFailure: () => undefined,
       reportCleanupFailure: () => undefined,
       ...overrides,
     },
@@ -230,7 +232,7 @@ describe("Slack socket Effect boundary", () => {
     );
 
     expect(fixture.connections[0]?.state).toBe(3);
-    expect(fixture.connections[0]?.removedListeners).toBe(1);
+    expect(fixture.connections[0]?.removedListeners).toBe(2);
   });
 
   test("reconnect close failures are reported after listeners detach", async () => {
@@ -274,6 +276,7 @@ describe("Slack socket Effect boundary", () => {
     );
 
     expect(Result.isFailure(result) && result.failure.reason).toBe("queue-overflow");
+    expect(fixture.connections[0]?.sent).toEqual([JSON.stringify({ envelope_id: "envelope-1" })]);
     expect(fixture.connections[0]?.removedListeners).toBeGreaterThanOrEqual(3);
   });
 });

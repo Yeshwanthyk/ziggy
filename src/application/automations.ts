@@ -66,7 +66,12 @@ export interface AutomationCapabilities {
   readonly loadSlackConfig: typeof loadSlackGatewayConfig;
   readonly sendTelegram: typeof sendMessage;
   readonly sendDiscord: typeof createMessage;
-  readonly sendSlack: typeof postMessage;
+  readonly sendSlack: (
+    token: string,
+    channel: string,
+    text: string,
+    threadTs?: string,
+  ) => Effect.Effect<void, SlackApiError>;
 }
 
 const liveCapabilities: AutomationCapabilities = {
@@ -78,7 +83,8 @@ const liveCapabilities: AutomationCapabilities = {
   loadSlackConfig: loadSlackGatewayConfig,
   sendTelegram: sendMessage,
   sendDiscord: createMessage,
-  sendSlack: postMessage,
+  sendSlack: (token, channel, text, threadTs) =>
+    postMessage(token, channel, text, threadTs).pipe(Effect.asVoid),
 };
 
 const readAutomation = (

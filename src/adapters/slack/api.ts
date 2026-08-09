@@ -15,6 +15,16 @@ const PostMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   ts: Schema.String,
 });
+const UpdateMessageSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  ts: Schema.String,
+});
+const SetStatusSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+});
+const ReactionSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+});
 const ConnectionsOpenSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   url: Schema.String,
@@ -30,11 +40,28 @@ const decodeAuthTestResponse = Schema.decodeUnknownEffect(
 const decodePostMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([PostMessageSuccess, SlackFailure])),
 );
+const decodeUpdateMessageResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([UpdateMessageSuccess, SlackFailure])),
+);
+const decodeSetStatusResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([SetStatusSuccess, SlackFailure])),
+);
+const decodeReactionResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([ReactionSuccess, SlackFailure])),
+);
 const decodeConnectionsOpenResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ConnectionsOpenSuccess, SlackFailure])),
 );
 
-export type SlackApiOperation = "authTest" | "postMessage" | "connectionsOpen" | "socket";
+export type SlackApiOperation =
+  | "authTest"
+  | "postMessage"
+  | "updateMessage"
+  | "setStatus"
+  | "addReaction"
+  | "removeReaction"
+  | "connectionsOpen"
+  | "socket";
 export type SlackApiErrorReason =
   | "network"
   | "server"
@@ -45,7 +72,16 @@ export type SlackApiErrorReason =
   | "socket";
 
 export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("SlackApiError", {
-  operation: Schema.Literals(["authTest", "postMessage", "connectionsOpen", "socket"]),
+  operation: Schema.Literals([
+    "authTest",
+    "postMessage",
+    "updateMessage",
+    "setStatus",
+    "addReaction",
+    "removeReaction",
+    "connectionsOpen",
+    "socket",
+  ]),
   reason: Schema.Literals([
     "network",
     "server",
@@ -215,7 +251,12 @@ const slackFailure = (
   status: number,
 ): SlackApiError => {
   if (AUTH_ERRORS.has(error)) {
-    return apiError(operation, "authentication", false, new Error(error), token, { status });
+    return apiError(operation, "authentication", false, new Error(error), token, {
+      status,
+      ...(error === "missing_scope"
+        ? { message: `Slack ${operation} is missing a required scope` }
+        : {}),
+    });
   }
   if (error === "ratelimited") {
     return apiError(operation, "rate-limited", true, new Error(error), token, { status });
@@ -246,7 +287,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
   postMessage: (token: string, channel: string, text: string, threadTs?: string) =>
     jsonRequest(client, token, "postMessage", "chat.postMessage", {
       channel,
-      text,
+      markdown_text: text,
       ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "postMessage", response)),
@@ -259,8 +300,92 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
           ),
           Effect.flatMap((envelope) =>
             envelope.ok
-              ? Effect.void
+              ? Effect.succeed({ ts: envelope.ts })
               : Effect.fail(slackFailure(token, "postMessage", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  updateMessage: (token: string, channel: string, ts: string, text: string) =>
+    jsonRequest(client, token, "updateMessage", "chat.update", {
+      channel,
+      ts,
+      markdown_text: text,
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "updateMessage", response)),
+      Effect.flatMap((response) =>
+        decodeUpdateMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("updateMessage", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "updateMessage", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  setStatus: (token: string, channel: string, threadTs: string, status: string) =>
+    jsonRequest(client, token, "setStatus", "assistant.threads.setStatus", {
+      channel_id: channel,
+      thread_ts: threadTs,
+      status,
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "setStatus", response)),
+      Effect.flatMap((response) =>
+        decodeSetStatusResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("setStatus", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "setStatus", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  addReaction: (token: string, channel: string, ts: string, name: string) =>
+    jsonRequest(client, token, "addReaction", "reactions.add", {
+      channel,
+      timestamp: ts,
+      name,
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "addReaction", response)),
+      Effect.flatMap((response) =>
+        decodeReactionResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("addReaction", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "addReaction", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  removeReaction: (token: string, channel: string, ts: string, name: string) =>
+    jsonRequest(client, token, "removeReaction", "reactions.remove", {
+      channel,
+      timestamp: ts,
+      name,
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "removeReaction", response)),
+      Effect.flatMap((response) =>
+        decodeReactionResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("removeReaction", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "removeReaction", envelope.error, response.status)),
           ),
         ),
       ),
@@ -308,8 +433,40 @@ export const postMessage = (
   channel: string,
   text: string,
   threadTs?: string,
-): Effect.Effect<void, SlackApiError> =>
+): Effect.Effect<{ readonly ts: string }, SlackApiError> =>
   withLiveClient((api) => api.postMessage(token, channel, text, threadTs));
+
+export const updateMessage = (
+  token: string,
+  channel: string,
+  ts: string,
+  text: string,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.updateMessage(token, channel, ts, text));
+
+export const setStatus = (
+  token: string,
+  channel: string,
+  threadTs: string,
+  status: string,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.setStatus(token, channel, threadTs, status));
+
+export const addReaction = (
+  token: string,
+  channel: string,
+  ts: string,
+  name: string,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.addReaction(token, channel, ts, name));
+
+export const removeReaction = (
+  token: string,
+  channel: string,
+  ts: string,
+  name: string,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.removeReaction(token, channel, ts, name));
 
 export const connectionsOpen = (
   token: string,

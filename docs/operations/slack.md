@@ -17,13 +17,36 @@ session routing.
 
 - Only messages authored by the configured `ownerUserId` are processed.
 - Direct messages use owner memory and sessions under `sessions/slack/user-<member-id>/`.
-- Channel conversations use channel-scoped group memory and sessions under
-  `sessions/slack/group-sl<channel-id>/`.
+- Channel conversations use channel-scoped group memory. Top-level channel turns retain the existing
+  session under `sessions/slack/group-sl<channel-id>/`, while replies inside a real Slack thread use
+  a thread-root session under `sessions/slack/group-sl<channel-id>-thread-<thread-ts>/`. This keeps
+  separate threads from contaminating one another without exposing owner-DM memory to the channel.
 - Personal direct-message memory is intentionally not admitted into channel conversations.
 - Other Slack users are ignored.
-- Channel messages do not require an `@Squarey` mention after the app has been invited.
+- Channel activation is explicit: `channelMode: "mention"` requires `@Squarey`, while
+  `channelMode: "always"` accepts every owner-authored message delivered from an invited channel.
+  Direct messages are always active. Existing three-field configurations retain `always` for
+  compatibility; `mention` is recommended for newly configured shared channels.
+- Accepted messages immediately show Slack's native `is thinking...` loading status on the source
+  thread. The status is best-effort, never blocks the model turn, and is explicitly cleared after
+  success, failure, or cancellation.
+- Ziggy reacts to the source message with 👀 at admission, removes it at settlement, and adds ✅ on
+  success or ❌ on failure. Reactions are best-effort; a missing permission disables them for the
+  current resident process without blocking the turn or its other feedback.
+- Accepted messages also post `Working on that…` immediately, then replace that same message with
+  the final answer. This is the client-visible fallback when Slack does not render the native status;
+  a failed turn replaces it with an explicit failure notice instead of leaving stale working text.
+- A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
+  `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
+  during a long Pi turn.
 - Replies preserve an incoming Slack thread when one is present and are split at Slack's 4,000
-  Unicode-code-point limit.
+  Unicode-code-point limit, preferring line and word boundaries. Standard Markdown is sent through
+  Slack's `markdown_text` boundary, so constructs such as `**bold**` render without Slack mrkdwn
+  delimiters. Executable `<!channel>`, `<!here>`, and `<!everyone>` output tokens are escaped before
+  delivery.
+- Inbound Socket Mode envelopes are acknowledged only after valid work enters Ziggy's bounded queue.
+  Message edits use at most four idempotent retries. New message posts retry only explicit Slack rate
+  limits, never ambiguous network or server failures that could otherwise duplicate a reply.
 - Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
   not a Slack slash command.
 
@@ -72,10 +95,16 @@ created later. Socket Mode means no public request URL is required.
 Open **OAuth & Permissions**. Under **Bot Token Scopes**, not User Token Scopes, add:
 
 - `chat:write`
+- `reactions:write`
 - `im:history`
 - `channels:history`
 - `groups:history`
 - `mpim:history`
+
+`chat:write` also authorizes `assistant.threads.setStatus`; `reactions:write` authorizes the 👀, ✅,
+and ❌ source-message lifecycle. Since Slack's March 2026 scope update,
+channel-based apps can use that loading state without `assistant:write` or the AI assistant split
+view.
 
 `mpim:history` is only needed for multi-person direct messages, but keeping it with the corresponding
 event below makes the complete DM-and-channel setup explicit.
@@ -127,17 +156,21 @@ A channel ID begins with `C` and is not valid for `ownerUserId`.
 
 ## 8. Create the Profile configuration
 
-Create `<profile>/slack.json` with exactly these fields:
+Create `<profile>/slack.json` with these fields:
 
 ```json
 {
   "botToken": "xoxb-...",
   "appToken": "xapp-...",
-  "ownerUserId": "U..."
+  "ownerUserId": "U...",
+  "channelMode": "mention"
 }
 ```
 
-The decoder rejects missing, empty, or additional fields. Store the file privately:
+`channelMode` accepts only `"mention"` or `"always"`. It is optional only to preserve existing
+three-field Profiles, where omission retains the earlier `"always"` behavior. The decoder rejects
+missing required fields, empty values, unknown modes, and additional fields. Store the file
+privately:
 
 ```sh
 umask 077
@@ -171,9 +204,10 @@ ziggy serve status <profile>
 ziggy serve logs <profile>
 ```
 
-A healthy restart reports a ready supervisor, a running process, and an active scheduler. An empty
-Slack log immediately after startup is normal; authentication or Socket Mode failures appear on
-stderr. Use `--follow` while testing:
+A healthy restart reports a ready supervisor, a running process, and an active scheduler. Slack logs
+then distinguish authenticated socket-supervisor startup, a connected socket, admitted chat keys,
+mention-required ignores, reconnect degradation, and terminal failures without printing message
+content or tokens. Use `--follow` while testing:
 
 ```sh
 ziggy serve logs <profile> --follow
@@ -200,9 +234,10 @@ Invite the app into each channel where it should receive events:
 /invite @Squarey
 ```
 
-Send a normal message as the configured owner. No mention is required. Messages from other users are
-ignored, and the channel receives isolated group memory rather than the owner's direct-message
-memory.
+With `channelMode: "mention"`, send `@Squarey` followed by the request; Ziggy strips its Slack mention
+before prompting Pi. With `channelMode: "always"`, any ordinary owner-authored channel message is a
+request. Messages from other users are ignored in both modes, and the channel receives isolated group
+memory rather than the owner's direct-message memory.
 
 ### Selected extensions
 
@@ -221,11 +256,17 @@ Check, in order:
 3. The app token begins with `xapp-`; the bot token begins with `xoxb-`.
 4. Socket Mode is enabled and the app token has `connections:write`.
 5. The required message events are subscribed.
-6. The app was reinstalled after permission changes.
+6. The app was reinstalled after permission changes, including `reactions:write` for progress
+   reactions.
 7. The bot is invited to the target channel.
 8. The sender is exactly the configured owner.
 9. The resident was restarted after creating or changing `slack.json`.
 10. `ziggy serve logs <profile>` contains no authentication, socket, or provider failure.
+
+For an owner-authored channel message omitted by `channelMode: "mention"`, the log says
+`reason:mention-required`. An accepted message logs its chat key and activation mode. A healthy live
+transport logs `socket connected`; repeated `socket connection degraded` lines mean the resident is
+running but Socket Mode is reconnecting.
 
 Run the read-only projections before editing files:
 
@@ -244,8 +285,24 @@ the bot in the channel. Public and private channels use different Slack event/sc
 ### The bot sees the channel but ignores a message
 
 This is expected when the sender is not `ownerUserId`, the text is blank, or the event was authored
-by the bot itself. Ziggy currently has no multi-user allowlist and intentionally ignores those
-messages.
+by the bot itself. With `channelMode: "mention"`, the message must also contain the app's real Slack
+mention; plain text such as `Squarey` is not an activation. Ziggy currently has no multi-user
+allowlist and intentionally ignores those messages.
+
+### The reply works but no loading status appears
+
+Search `ziggy serve logs <profile>` for `status update failed`. Status delivery is intentionally
+best-effort, so a Slack API failure does not block the model or final reply. Confirm the app was
+reinstalled with `chat:write`, then restart the resident. Client-visible status remains a live Slack
+proof: a successful API response alone does not prove that a particular Slack client displayed it.
+The ordinary `Working on that…` message is the guaranteed visible fallback and should still be
+replaced by the final answer.
+
+### A `Working on that…` message never changes
+
+Search `ziggy serve logs <profile>` for `final working-message update failed`, `postMessage`, or
+`updateMessage`. The placeholder and final edit both use `chat:write`; no reaction or Agent-view
+scope is required. A model failure should replace the placeholder with a failure notice.
 
 ### A selected command-line extension works in the TUI but not under `serve`
 
@@ -271,9 +328,19 @@ On 2026-08-08, the manual path above produced these secret-free observations for
 - `ziggy serve restart` reached `readiness: ready` under launchd.
 - `ziggy serve status` reported the supervisor and process running and the scheduler active.
 - Initial resident stdout and stderr were empty, with no Slack authentication or Socket Mode error.
+- A direct message rendered the immediate working message and its edited final Markdown reply.
+- An owner-authored channel message completed without an app mention under compatibility `always`
+  mode, and a real Slack thread used a distinct thread-root Pi session.
+- Two concurrent direct messages visibly moved from working/queued feedback to independent edited
+  final replies.
+- After installing `reactions:write`, a completed direct message changed its source reaction from 👀
+  to ✅. A controlled resident restart during a second active turn changed 👀 to ❌, edited the
+  placeholder to `I couldn't complete that request.`, and returned with a healthy replacement
+  resident. Conversation history was sufficient for this proof; `reactions:read` was not added.
 
-This record proves configuration and startup, not message delivery. Add a successful DM and channel
-round trip before calling a particular workspace integration complete.
+This record proves the configured workspace's startup, direct-message, channel, thread, queue,
+success-reaction, and cancellation-reaction paths. It does not prove a different Slack workspace,
+client version, app manifest, or channel membership.
 
 ## Token rotation and removal
 
