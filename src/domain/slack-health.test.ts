@@ -18,7 +18,7 @@ describe("Slack health projection", () => {
     });
 
     expect(completed).toEqual({
-      version: 1,
+      version: 2,
       state: "connected",
       updatedAtMs: 6,
       startedAtMs: 1,
@@ -29,11 +29,26 @@ describe("Slack health projection", () => {
       queuedTurnCount: 0,
       acceptedTurnCount: 1,
       completedTurnCount: 1,
+      cancelledTurnCount: 0,
       failedTurnCount: 0,
       lastFailure: null,
     });
     expect(JSON.stringify(completed)).not.toMatch(
       /channel|message|prompt|response|session|token|ts/u,
     );
+  });
+
+  test("counts operator cancellation without fabricating a turn failure", () => {
+    const accepted = evolveSlackHealth(initialSlackHealth(1), {
+      _tag: "accepted",
+      atMs: 2,
+      queued: false,
+    });
+    const cancelled = evolveSlackHealth(accepted, { _tag: "cancelled", atMs: 3 });
+
+    expect(cancelled.activeTurnCount).toBe(0);
+    expect(cancelled.cancelledTurnCount).toBe(1);
+    expect(cancelled.failedTurnCount).toBe(0);
+    expect(cancelled.lastFailure).toBeNull();
   });
 });

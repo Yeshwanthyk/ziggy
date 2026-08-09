@@ -4,9 +4,11 @@ import { Deferred, Effect, Result } from "effect";
 import { SlackApiError } from "../adapters/slack/api";
 import type { SlackInboundMessage } from "../adapters/slack/socket";
 import { ProviderCallError } from "../domain/agent";
+import type { SlackIngressRecord } from "../domain/slack-ingress";
 import { SlackHealthProjectionError } from "../domain/slack-health";
 import type { ZiggyAgentShape } from "./agent";
 import {
+  classifySlackCommand,
   makeSlackGateway,
   normalizeSlackMessage,
   normalizeSlackUserText,
@@ -108,6 +110,31 @@ describe("Slack gateway boundary", () => {
 
   test("keeps direct messages active regardless of channel activation", () => {
     expect(normalizeSlackMessage(message(), "UBOT", "U123", "mention")?.text).toBe("hello");
+  });
+
+  test("classifies only an exact owner-authorized normalized stop command", () => {
+    expect(classifySlackCommand(message({ text: "stop" }), "UBOT", "U123")).toMatchObject({
+      kind: "stop",
+      message: { chatKey: "user-U123", text: "stop" },
+    });
+    expect(classifySlackCommand(message({ text: "/stop" }), "UBOT", "U123")).toMatchObject({
+      kind: "stop",
+      message: { chatKey: "user-U123", text: "/stop" },
+    });
+    expect(
+      classifySlackCommand(
+        message({ channelType: "channel", text: " <@UBOT> /stop " }),
+        "UBOT",
+        "U123",
+        "mention",
+      ),
+    ).toMatchObject({ kind: "stop", message: { chatKey: "group-slC123", text: "/stop" } });
+    expect(classifySlackCommand(message({ text: "/stop now" }), "UBOT", "U123").kind).toBe("turn");
+    expect(classifySlackCommand(message({ text: "stop now" }), "UBOT", "U123").kind).toBe("turn");
+    expect(classifySlackCommand(message({ text: "/stop" }), "UBOT", "U999")).toEqual({
+      kind: "ignored",
+      reason: "not-owner",
+    });
   });
 
   test("decodes Slack entities once without turning nested text into markup", () => {
@@ -321,6 +348,435 @@ describe("Slack gateway boundary", () => {
       }),
     );
   });
+
+  test("stop cancels running and queued turns, then admits a fresh generation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const promptStarted = yield* Deferred.make<void>();
+        const bothPlaceholders = yield* Deferred.make<void>();
+        const allSettled = yield* Deferred.make<void>();
+        const inbound = [
+          message({ ts: "1.0", text: "first", threadTs: "0.9" }),
+          message({ ts: "2.0", text: "second", threadTs: "0.9" }),
+          message({ ts: "3.0", text: "stop", threadTs: "0.9" }),
+          message({ ts: "4.0", text: "fresh", threadTs: "0.9" }),
+        ];
+        const prompts: Array<string> = [];
+        const posts: Array<string> = [];
+        const reactions: Array<string> = [];
+        const statuses: Array<string> = [];
+        const updates: Array<string> = [];
+        const terminal = new Map<string, string>();
+        const journal = new Map<string, "received" | "running" | string>();
+        let promptAborts = 0;
+        let nextCall = 0;
+
+        const ingressRuntime: SlackIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          replayable: () => Effect.succeed([]),
+          admit: (_path, item) =>
+            Effect.sync(() => {
+              journal.set(item.payload.sourceTs, "received");
+              return "accepted" as const;
+            }),
+          start: (_path, payload) =>
+            Effect.sync(() => {
+              if (journal.get(payload.sourceTs) !== "received") return false;
+              journal.set(payload.sourceTs, "running");
+              return true;
+            }),
+          finish: (_path, payload, _ownerId, state) =>
+            Effect.gen(function* () {
+              expect(journal.get(payload.sourceTs)).toBe("running");
+              journal.set(payload.sourceTs, state);
+              terminal.set(payload.sourceTs, state);
+              if (terminal.size === 4) yield* Deferred.succeed(allSettled, undefined);
+            }),
+        };
+        const feedbackFailure = new SlackApiError({
+          operation: "postMessage",
+          reason: "server",
+          retriable: false,
+          message: "stop feedback failed",
+          cause: "fixture",
+        });
+        const transport: SlackTransport = {
+          addReaction: (_token, _channel, ts, name) =>
+            Effect.gen(function* () {
+              reactions.push(`add:${ts}:${name}`);
+              if (ts === "3.0") return yield* feedbackFailure;
+            }),
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          openSocket: (_token, admitInbound) =>
+            Effect.succeed({
+              next: Effect.suspend(() => {
+                const item = inbound[nextCall];
+                nextCall += 1;
+                if (item === undefined || admitInbound === undefined) return Effect.never;
+                const wait =
+                  item.ts === "3.0"
+                    ? Effect.all(
+                        [Deferred.await(promptStarted), Deferred.await(bothPlaceholders)],
+                        { discard: true },
+                      )
+                    : Effect.void;
+                return wait.pipe(
+                  Effect.andThen(admitInbound(item, `event-${item.ts}`)),
+                  Effect.flatMap((decision) =>
+                    decision === "deliver" ? Effect.succeed(item) : Effect.never,
+                  ),
+                );
+              }),
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          setStatus: (_token, _channel, _threadTs, status) =>
+            Effect.sync(() => statuses.push(status)),
+          postMessage: (_token, _channel, text) =>
+            Effect.gen(function* () {
+              posts.push(text);
+              if (text.startsWith("Stopped ")) return yield* feedbackFailure;
+              if (
+                posts.includes("Working on that…") &&
+                posts.includes("Queued behind an earlier request…")
+              ) {
+                yield* Deferred.succeed(bothPlaceholders, undefined);
+              }
+              return { ts: `placeholder-${posts.length}` };
+            }),
+          removeReaction: (_token, _channel, ts, name) =>
+            Effect.sync(() => reactions.push(`remove:${ts}:${name}`)),
+          updateMessage: (_token, _channel, _ts, text) =>
+            Effect.sync(() => {
+              updates.push(text);
+            }),
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({
+              prompt: (text) => {
+                prompts.push(text);
+                if (text === "first") {
+                  return Deferred.succeed(promptStarted, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.onInterrupt(() =>
+                      Effect.sync(() => {
+                        promptAborts += 1;
+                      }),
+                    ),
+                  );
+                }
+                return Effect.succeed(`${text} reply`);
+              },
+              dispose: Effect.void,
+            }),
+        };
+
+        yield* Effect.raceFirst(
+          makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
+            { path: "/tmp/ziggy-slack-stop-test", name: "Test" },
+            { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+          ),
+          Deferred.await(allSettled),
+        );
+
+        expect(prompts).toEqual(["first", "fresh"]);
+        expect(promptAborts).toBe(1);
+        expect(Object.fromEntries(terminal)).toEqual({
+          "1.0": "cancelled",
+          "2.0": "cancelled",
+          "3.0": "completed",
+          "4.0": "completed",
+        });
+        expect(posts).toContain("Stopped 2 requests.");
+        expect(updates.filter((text) => text === "Stopped.")).toHaveLength(2);
+        expect(updates).toContain("fresh reply");
+        expect(updates).not.toContain("first reply");
+        expect(updates).not.toContain("second reply");
+        expect(reactions).toContain("add:1.0:octagonal_sign");
+        expect(reactions).toContain("add:2.0:octagonal_sign");
+        const freshThinkingIndex = statuses.lastIndexOf("is thinking...");
+        expect(freshThinkingIndex).toBeGreaterThan(-1);
+        expect(statuses.slice(freshThinkingIndex)).toEqual(["is thinking...", ""]);
+      }),
+    ));
+
+  test("stop is isolated to its Slack thread chat key", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const bothStarted = yield* Deferred.make<void>();
+        const stopSettled = yield* Deferred.make<void>();
+        const releaseOther = yield* Deferred.make<void>();
+        const allSettled = yield* Deferred.make<void>();
+        const inbound = [
+          message({
+            channelType: "channel",
+            threadTs: "100.000001",
+            ts: "101.000001",
+            text: "first thread",
+          }),
+          message({
+            channelType: "channel",
+            threadTs: "200.000001",
+            ts: "201.000001",
+            text: "other thread",
+          }),
+          message({
+            channelType: "channel",
+            threadTs: "100.000001",
+            ts: "102.000001",
+            text: "/stop",
+          }),
+        ];
+        const started = new Set<string>();
+        const prompted: Array<string> = [];
+        const terminal = new Map<string, string>();
+        const journal = new Map<string, "received" | "running" | string>();
+        let nextCall = 0;
+        let interrupted = 0;
+
+        const ingressRuntime: SlackIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          replayable: () => Effect.succeed([]),
+          admit: (_path, item) =>
+            Effect.sync(() => {
+              journal.set(item.payload.sourceTs, "received");
+              return "accepted" as const;
+            }),
+          start: (_path, payload) =>
+            Effect.sync(() => {
+              if (journal.get(payload.sourceTs) !== "received") return false;
+              journal.set(payload.sourceTs, "running");
+              return true;
+            }),
+          finish: (_path, payload, _ownerId, state) =>
+            Effect.gen(function* () {
+              journal.set(payload.sourceTs, state);
+              terminal.set(payload.sourceTs, state);
+              if (payload.sourceTs === "102.000001") {
+                yield* Deferred.succeed(stopSettled, undefined);
+              }
+              if (terminal.size === 3) yield* Deferred.succeed(allSettled, undefined);
+            }),
+        };
+        const transport: SlackTransport = {
+          addReaction: () => Effect.void,
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          openSocket: (_token, admitInbound) =>
+            Effect.succeed({
+              next: Effect.suspend(() => {
+                const item = inbound[nextCall];
+                nextCall += 1;
+                if (item === undefined || admitInbound === undefined) return Effect.never;
+                const wait = item.text === "/stop" ? Deferred.await(bothStarted) : Effect.void;
+                return wait.pipe(
+                  Effect.andThen(admitInbound(item, `event-${item.ts}`)),
+                  Effect.flatMap((decision) =>
+                    decision === "deliver" ? Effect.succeed(item) : Effect.never,
+                  ),
+                );
+              }),
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          setStatus: () => Effect.void,
+          postMessage: () => Effect.succeed({ ts: "placeholder" }),
+          removeReaction: () => Effect.void,
+          updateMessage: () => Effect.void,
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({
+              prompt: (text) => {
+                prompted.push(text);
+                started.add(text);
+                const signal =
+                  started.size === 2 ? Deferred.succeed(bothStarted, undefined) : Effect.void;
+                return signal.pipe(
+                  Effect.andThen(
+                    text === "other thread"
+                      ? Deferred.await(releaseOther).pipe(Effect.as("other reply"))
+                      : Effect.never,
+                  ),
+                  Effect.onInterrupt(() =>
+                    Effect.sync(() => {
+                      interrupted += 1;
+                    }),
+                  ),
+                );
+              },
+              dispose: Effect.void,
+            }),
+        };
+        const gateway = makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
+          { path: "/tmp/ziggy-slack-stop-isolation-test", name: "Test" },
+          { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+        );
+
+        yield* Effect.raceFirst(
+          gateway,
+          Effect.gen(function* () {
+            yield* Deferred.await(stopSettled);
+            yield* Deferred.succeed(releaseOther, undefined);
+            yield* Deferred.await(allSettled);
+          }),
+        );
+
+        expect(prompted).toEqual(["first thread", "other thread"]);
+        expect(interrupted).toBe(1);
+        expect(Object.fromEntries(terminal)).toEqual({
+          "101.000001": "cancelled",
+          "102.000001": "completed",
+          "201.000001": "completed",
+        });
+      }),
+    ));
+
+  test("bounds durable replay execution after registering the backlog in order", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fourStarted = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const allSettled = yield* Deferred.make<void>();
+        const workRecords: ReadonlyArray<SlackIngressRecord> = Array.from(
+          { length: 5 },
+          (_, index) => ({
+            eventId: `event-${index}`,
+            payload: {
+              chatKey: `user-U${index}`,
+              channel: `D${index}`,
+              context: { kind: "user", userId: "owner" },
+              statusThreadTs: `${index}.0`,
+              sourceTs: `${index}.0`,
+              text: `replay ${index}`,
+            },
+          }),
+        );
+        const records: ReadonlyArray<SlackIngressRecord> = [
+          ...workRecords,
+          {
+            eventId: "event-stop",
+            payload: {
+              chatKey: "user-U0",
+              channel: "D0",
+              context: { kind: "user", userId: "owner" },
+              statusThreadTs: "5.0",
+              sourceTs: "5.0",
+              text: "stop",
+            },
+          },
+        ];
+        const registered: Array<string> = [];
+        const prompted: Array<string> = [];
+        const posts: Array<{ readonly channel: string; readonly text: string }> = [];
+        const statuses: Array<{ readonly channel: string; readonly status: string }> = [];
+        let active = 0;
+        let maxActive = 0;
+        let settled = 0;
+
+        const ingressRuntime: SlackIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          replayable: () => Effect.succeed(records),
+          admit: () => Effect.succeed("accepted"),
+          start: (_path, payload) =>
+            Effect.sync(() => {
+              registered.push(payload.text);
+              return true;
+            }),
+          finish: (_path, payload, _ownerId, state) =>
+            Effect.gen(function* () {
+              expect(state).toBe(payload.text === "replay 0" ? "cancelled" : "completed");
+              settled += 1;
+              if (settled === records.length) yield* Deferred.succeed(allSettled, undefined);
+            }),
+        };
+        const transport: SlackTransport = {
+          addReaction: () => Effect.void,
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          openSocket: () =>
+            Effect.succeed({
+              next: Effect.never,
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          setStatus: (_token, channel, _threadTs, status) =>
+            Effect.sync(() => statuses.push({ channel, status })),
+          postMessage: (_token, channel, text, threadTs) =>
+            Effect.sync(() => {
+              posts.push({ channel, text });
+              return { ts: threadTs ?? "placeholder" };
+            }),
+          removeReaction: () => Effect.void,
+          updateMessage: () => Effect.void,
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({
+              prompt: (text) =>
+                Effect.gen(function* () {
+                  prompted.push(text);
+                  active += 1;
+                  maxActive = Math.max(maxActive, active);
+                  if (active === 4) yield* Deferred.succeed(fourStarted, undefined);
+                  return yield* Deferred.await(release).pipe(Effect.as(`${text} reply`));
+                }).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      active -= 1;
+                    }),
+                  ),
+                ),
+              dispose: Effect.void,
+            }),
+        };
+
+        yield* Effect.raceFirst(
+          makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
+            { path: "/tmp/ziggy-slack-replay-concurrency-test", name: "Test" },
+            { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+          ),
+          Effect.gen(function* () {
+            yield* Deferred.await(fourStarted);
+            expect(registered).toEqual(records.map((record) => record.payload.text));
+            expect(prompted).toHaveLength(4);
+            expect(maxActive).toBe(4);
+            yield* Deferred.succeed(release, undefined);
+            yield* Deferred.await(allSettled);
+          }),
+        );
+
+        expect(prompted.toSorted()).toEqual(
+          workRecords.slice(1).map((record) => record.payload.text),
+        );
+        expect(maxActive).toBe(4);
+        expect(posts).not.toContainEqual({ channel: "D0", text: "Working on that…" });
+        expect(statuses).not.toContainEqual({ channel: "D0", status: "is thinking..." });
+      }),
+    ));
 
   test("runs an authorized threaded DM through the agent and finalizes cleanly", () => {
     const openedChats: Array<{

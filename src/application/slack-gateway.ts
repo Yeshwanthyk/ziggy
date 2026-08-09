@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Context, Duration, Effect, Exit, Layer, Result, Semaphore } from "effect";
+import { Context, Deferred, Duration, Effect, Exit, Layer, Result, Semaphore } from "effect";
 import type * as Scope from "effect/Scope";
 import {
   addReaction,
@@ -54,6 +54,7 @@ const HEARTBEAT_SECONDS = 30;
 const WORKING_MESSAGE = "Working on that…";
 const QUEUED_MESSAGE = "Queued behind an earlier request…";
 const FAILED_MESSAGE = "I couldn't complete that request.";
+const STOPPED_MESSAGE = "Stopped.";
 const SLACK_BROADCAST_MENTION = /<!(?:everyone|channel|here)(?:\|[^>\n]*)?>/gi;
 const SLACK_LINK = /<((?:https?|mailto|tel):[^|>]+)(?:\|([^>]*))?>/giu;
 const SLACK_ENTITY = /&(amp|lt|gt);/gu;
@@ -118,8 +119,18 @@ type InboundMessage = SlackIngressPayload;
 
 interface ChatState {
   readonly semaphore: Semaphore.Semaphore;
+  readonly turns: Set<ScheduledSlackTurn>;
+  generation: number;
   handle?: ChatHandle;
   pending: number;
+}
+
+interface ScheduledSlackTurn {
+  readonly cancellation: Deferred.Deferred<void>;
+  readonly generation: number;
+  readonly message: InboundMessage;
+  cancelled: boolean;
+  terminalAttempted: boolean;
 }
 
 export type SlackAdmissionReason =
@@ -131,6 +142,12 @@ export type SlackAdmissionReason =
 export type SlackAdmission =
   | { readonly kind: "accepted"; readonly message: InboundMessage }
   | { readonly kind: "ignored"; readonly reason: SlackAdmissionReason };
+
+export type SlackCommandAdmission =
+  | { readonly kind: "turn" | "stop"; readonly message: InboundMessage }
+  | { readonly kind: "ignored"; readonly reason: SlackAdmissionReason };
+
+const isSlackStopCommand = (text: string): boolean => text === "stop" || text === "/stop";
 
 export const loadSlackGatewayConfig = loadSlackConfigFile;
 
@@ -212,6 +229,20 @@ export const normalizeSlackMessage = (
 ): InboundMessage | undefined => {
   const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
   return admission.kind === "accepted" ? admission.message : undefined;
+};
+
+export const classifySlackCommand = (
+  message: SlackInboundMessage,
+  botUserId: string,
+  ownerUserId: string,
+  channelMode: typeof SlackChannelMode.Type = "always",
+): SlackCommandAdmission => {
+  const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
+  if (admission.kind === "ignored") return admission;
+  return {
+    kind: isSlackStopCommand(admission.message.text) ? "stop" : "turn",
+    message: admission.message,
+  };
 };
 
 export const escapeSlackBroadcastMentions = (text: string): string =>
@@ -466,7 +497,7 @@ export const makeSlackGateway = (
         const chats = new Map<string, ChatState>();
         let reactionsAvailable = true;
         const admitInbound: SlackSocketInboundAdmit = (inbound, eventId) => {
-          const admission = classifySlackMessage(
+          const admission = classifySlackCommand(
             inbound,
             bot.userId,
             config.ownerUserId,
@@ -543,23 +574,23 @@ export const makeSlackGateway = (
           Effect.forkScoped,
         );
 
-        const processMessage = (message: InboundMessage) =>
+        const chatStateFor = (chatKey: string): ChatState => {
+          const existing = chats.get(chatKey);
+          if (existing !== undefined) return existing;
+          const created: ChatState = {
+            semaphore: Semaphore.makeUnsafe(1),
+            turns: new Set(),
+            generation: 0,
+            pending: 0,
+          };
+          chats.set(chatKey, created);
+          return created;
+        };
+
+        const processMessage = (turn: ScheduledSlackTurn, chatState: ChatState, queued: boolean) =>
           Effect.gen(function* () {
-            const started = yield* ingressRuntime.start(
-              target.path,
-              message,
-              ingressOwnerId,
-              healthRuntime.now(),
-            );
-            if (!started) return;
-            let state = chats.get(message.chatKey);
-            if (state === undefined) {
-              state = { semaphore: Semaphore.makeUnsafe(1), pending: 0 };
-              chats.set(message.chatKey, state);
-            }
-            const chatState = state;
-            const queued = chatState.pending > 0;
-            chatState.pending += 1;
+            const message = turn.message;
+            const isFresh = () => !turn.cancelled && chatState.generation === turn.generation;
             let deliveryUnknown = false;
             const accepted = observe({
               _tag: "accepted",
@@ -613,6 +644,7 @@ export const makeSlackGateway = (
             };
 
             const acquireFeedback = Effect.gen(function* () {
+              if (!isFresh()) return undefined;
               yield* reaction("add", "eyes");
               yield* updateStatus(queued ? "is queued..." : "is thinking...");
               return yield* transport
@@ -636,6 +668,7 @@ export const makeSlackGateway = (
               (workingMessage) =>
                 chatState.semaphore.withPermit(
                   Effect.gen(function* () {
+                    if (!isFresh()) return yield* Effect.interrupt;
                     yield* observe({
                       _tag: "started",
                       atMs: healthRuntime.now(),
@@ -674,11 +707,13 @@ export const makeSlackGateway = (
                         return yield* handle.prompt(message.text);
                       }),
                     );
+                    if (!isFresh()) return yield* Effect.interrupt;
                     const replyChunks = slackMessageChunks(reply);
                     const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
                     const firstChunk = chunks[0];
                     let firstUnsentChunk = 0;
                     if (workingMessage !== undefined && firstChunk !== undefined) {
+                      if (!isFresh()) return yield* Effect.interrupt;
                       const updateResult = yield* retrySlackDelivery("update", () =>
                         transport.updateMessage(
                           config.botToken,
@@ -703,6 +738,7 @@ export const makeSlackGateway = (
                       }
                     }
                     for (const chunk of chunks.slice(firstUnsentChunk)) {
+                      if (!isFresh()) return yield* Effect.interrupt;
                       yield* retrySlackDelivery("post", () =>
                         transport.postMessage(
                           config.botToken,
@@ -723,47 +759,57 @@ export const makeSlackGateway = (
                 ),
               (workingMessage, exit) =>
                 Effect.gen(function* () {
+                  const cancelled = turn.cancelled;
+                  const terminalState = cancelled
+                    ? ("cancelled" as const)
+                    : slackIngressTerminalState(deliveryUnknown, Exit.isSuccess(exit));
                   yield* Effect.all(
                     [
-                      updateStatus(""),
-                      Exit.isFailure(exit) && workingMessage !== undefined
+                      reaction("remove", "eyes"),
+                      reaction(
+                        "add",
+                        terminalState === "completed"
+                          ? "white_check_mark"
+                          : terminalState === "cancelled"
+                            ? "octagonal_sign"
+                            : "x",
+                      ),
+                    ],
+                    { concurrency: "unbounded", discard: true },
+                  );
+                  yield* Effect.all(
+                    [
+                      isFresh() ? updateStatus("") : Effect.void,
+                      workingMessage !== undefined && (cancelled || Exit.isFailure(exit))
                         ? transport
                             .updateMessage(
                               config.botToken,
                               message.channel,
                               workingMessage.ts,
-                              FAILED_MESSAGE,
+                              cancelled ? STOPPED_MESSAGE : FAILED_MESSAGE,
                             )
                             .pipe(
                               Effect.catch((failure) =>
-                                logMessageDeliveryFailure("failure-message update", failure),
+                                logMessageDeliveryFailure(
+                                  cancelled ? "stopped-message update" : "failure-message update",
+                                  failure,
+                                ),
                               ),
                             )
                         : Effect.void,
                     ],
                     { concurrency: "unbounded", discard: true },
                   );
-                  const terminalState = slackIngressTerminalState(
-                    deliveryUnknown,
-                    Exit.isSuccess(exit),
+                  yield* observe(
+                    terminalState === "cancelled"
+                      ? { _tag: "cancelled", atMs: healthRuntime.now() }
+                      : {
+                          _tag: "completed",
+                          atMs: healthRuntime.now(),
+                          succeeded: terminalState === "completed",
+                        },
                   );
-                  yield* Effect.all(
-                    [
-                      Effect.all(
-                        [
-                          reaction("remove", "eyes"),
-                          reaction("add", terminalState === "completed" ? "white_check_mark" : "x"),
-                        ],
-                        { concurrency: "unbounded", discard: true },
-                      ),
-                      observe({
-                        _tag: "completed",
-                        atMs: healthRuntime.now(),
-                        succeeded: terminalState === "completed",
-                      }),
-                    ],
-                    { concurrency: "unbounded", discard: true },
-                  );
+                  turn.terminalAttempted = true;
                   yield* ingressRuntime.finish(
                     target.path,
                     message,
@@ -781,22 +827,161 @@ export const makeSlackGateway = (
                   console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
                 }),
               ),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  chatState.pending = Math.max(0, chatState.pending - 1);
-                }),
-              ),
             );
           });
 
-        yield* Effect.forEach(
-          replayable,
-          (recovered) => {
-            console.log(`[slack] replaying durable ingress ${recovered.payload.chatKey}`);
-            return processMessage(recovered.payload);
-          },
-          { concurrency: 4, discard: true },
-        );
+        const registerMessage = (message: InboundMessage) =>
+          Effect.gen(function* () {
+            const started = yield* ingressRuntime.start(
+              target.path,
+              message,
+              ingressOwnerId,
+              healthRuntime.now(),
+            );
+            if (!started) return;
+            const chatState = chatStateFor(message.chatKey);
+            const queued = chatState.pending > 0;
+            const cancellation = yield* Deferred.make<void>();
+            const turn: ScheduledSlackTurn = {
+              cancellation,
+              generation: chatState.generation,
+              message,
+              cancelled: false,
+              terminalAttempted: false,
+            };
+            chatState.turns.add(turn);
+            chatState.pending += 1;
+            const cancelled = Deferred.await(cancellation).pipe(Effect.as("cancelled" as const));
+            const cleanup = Effect.gen(function* () {
+              if (turn.cancelled && !turn.terminalAttempted) {
+                turn.terminalAttempted = true;
+                yield* ingressRuntime
+                  .finish(target.path, message, ingressOwnerId, "cancelled", healthRuntime.now())
+                  .pipe(
+                    Effect.catch((failure) =>
+                      Effect.sync(() => {
+                        console.error(
+                          `[slack] ${message.chatKey} cancelled ingress settlement failed: ${failure.message}`,
+                        );
+                      }),
+                    ),
+                  );
+              }
+              chatState.turns.delete(turn);
+              chatState.pending = Math.max(0, chatState.pending - 1);
+            });
+            return Effect.suspend(() =>
+              turn.cancelled
+                ? Effect.void
+                : Effect.raceFirst(
+                    processMessage(turn, chatState, queued).pipe(Effect.as("settled" as const)),
+                    cancelled,
+                  ).pipe(Effect.asVoid),
+            ).pipe(Effect.ensuring(cleanup));
+          });
+
+        const scheduleMessage = (message: InboundMessage) =>
+          Effect.gen(function* () {
+            const work = yield* registerMessage(message);
+            if (work !== undefined) yield* work.pipe(Effect.forkScoped);
+          });
+
+        const stopMessage = (message: InboundMessage) =>
+          Effect.gen(function* () {
+            const started = yield* ingressRuntime.start(
+              target.path,
+              message,
+              ingressOwnerId,
+              healthRuntime.now(),
+            );
+            if (!started) return;
+            const chatState = chatStateFor(message.chatKey);
+            chatState.generation += 1;
+            const cancelled = [...chatState.turns].filter(
+              (turn) => turn.generation < chatState.generation && !turn.terminalAttempted,
+            );
+            for (const turn of cancelled) turn.cancelled = true;
+            yield* Effect.forEach(
+              cancelled,
+              (turn) => Deferred.succeed(turn.cancellation, undefined),
+              { discard: true },
+            );
+            yield* transport
+              .setStatus(config.botToken, message.channel, message.statusThreadTs, "")
+              .pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() => {
+                    console.error(
+                      `[slack] ${message.chatKey} stop status clear failed: ${failure.message}`,
+                    );
+                  }),
+                ),
+              );
+            yield* ingressRuntime.finish(
+              target.path,
+              message,
+              ingressOwnerId,
+              "completed",
+              healthRuntime.now(),
+            );
+            const acknowledgement =
+              cancelled.length === 0
+                ? "Nothing was running."
+                : `Stopped ${cancelled.length} ${cancelled.length === 1 ? "request" : "requests"}.`;
+            yield* Effect.all(
+              [
+                transport
+                  .postMessage(config.botToken, message.channel, acknowledgement, message.threadTs)
+                  .pipe(
+                    Effect.catch((failure) =>
+                      Effect.sync(() => {
+                        console.error(
+                          `[slack] ${message.chatKey} stop acknowledgement failed: ${failure.message}`,
+                        );
+                      }),
+                    ),
+                  ),
+                reactionsAvailable
+                  ? transport
+                      .addReaction(
+                        config.botToken,
+                        message.channel,
+                        message.sourceTs,
+                        "white_check_mark",
+                      )
+                      .pipe(
+                        Effect.catch((failure) =>
+                          Effect.sync(() => {
+                            if (failure.reason === "authentication") reactionsAvailable = false;
+                            console.error(
+                              `[slack] ${message.chatKey} stop reaction failed: ${failure.message}`,
+                            );
+                          }),
+                        ),
+                      )
+                  : Effect.void,
+              ],
+              { concurrency: "unbounded", discard: true },
+            ).pipe(Effect.forkScoped);
+          });
+
+        const dispatchMessage = (message: InboundMessage) =>
+          isSlackStopCommand(message.text) ? stopMessage(message) : scheduleMessage(message);
+
+        const replayWork: Array<Effect.Effect<void>> = [];
+        for (const recovered of replayable) {
+          console.log(`[slack] replaying durable ingress ${recovered.payload.chatKey}`);
+          if (isSlackStopCommand(recovered.payload.text)) {
+            yield* stopMessage(recovered.payload);
+          } else {
+            const work = yield* registerMessage(recovered.payload);
+            if (work !== undefined) replayWork.push(work);
+          }
+        }
+        yield* Effect.forEach(replayWork, (work) => work, {
+          concurrency: 4,
+          discard: true,
+        }).pipe(Effect.forkScoped);
 
         while (true) {
           const inbound = yield* socket.next.pipe(
@@ -815,17 +1000,17 @@ export const makeSlackGateway = (
             Effect.mapError(socketFailure),
           );
           yield* observe({ _tag: "inbound", atMs: healthRuntime.now() });
-          const admission = classifySlackMessage(
+          const admission = classifySlackCommand(
             inbound,
             bot.userId,
             config.ownerUserId,
             config.channelMode ?? "always",
           );
-          if (admission.kind === "accepted") {
+          if (admission.kind !== "ignored") {
             console.log(
               `[slack] admitted ${admission.message.chatKey} activation:${config.channelMode ?? "always"}`,
             );
-            yield* processMessage(admission.message).pipe(Effect.forkScoped);
+            yield* dispatchMessage(admission.message);
           } else if (admission.reason === "mention-required") {
             console.log(
               `[slack] ignored owner channel message reason:mention-required channel:${inbound.channel}`,

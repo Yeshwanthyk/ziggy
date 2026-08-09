@@ -21,7 +21,7 @@ export const SlackHealthFailure = Schema.Literals([
 export type SlackHealthFailure = typeof SlackHealthFailure.Type;
 
 export const SlackHealthSnapshot = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   state: SlackHealthState,
   updatedAtMs: NonNegativeInteger,
   startedAtMs: NonNegativeInteger,
@@ -32,6 +32,7 @@ export const SlackHealthSnapshot = Schema.Struct({
   queuedTurnCount: NonNegativeInteger,
   acceptedTurnCount: NonNegativeInteger,
   completedTurnCount: NonNegativeInteger,
+  cancelledTurnCount: NonNegativeInteger,
   failedTurnCount: NonNegativeInteger,
   lastFailure: Schema.NullOr(SlackHealthFailure),
 });
@@ -59,10 +60,11 @@ export type SlackHealthEvent =
   | { readonly _tag: "accepted"; readonly atMs: number; readonly queued: boolean }
   | { readonly _tag: "started"; readonly atMs: number; readonly wasQueued: boolean }
   | { readonly _tag: "completed"; readonly atMs: number; readonly succeeded: boolean }
+  | { readonly _tag: "cancelled"; readonly atMs: number }
   | { readonly _tag: "stopped"; readonly atMs: number };
 
 export const initialSlackHealth = (atMs: number): SlackHealthSnapshot => ({
-  version: 1,
+  version: 2,
   state: "starting",
   updatedAtMs: atMs,
   startedAtMs: atMs,
@@ -73,6 +75,7 @@ export const initialSlackHealth = (atMs: number): SlackHealthSnapshot => ({
   queuedTurnCount: 0,
   acceptedTurnCount: 0,
   completedTurnCount: 0,
+  cancelledTurnCount: 0,
   failedTurnCount: 0,
   lastFailure: null,
 });
@@ -115,6 +118,13 @@ export const evolveSlackHealth = (
         completedTurnCount: current.completedTurnCount + (event.succeeded ? 1 : 0),
         failedTurnCount: current.failedTurnCount + (event.succeeded ? 0 : 1),
         lastFailure: event.succeeded ? current.lastFailure : "turn",
+      };
+    case "cancelled":
+      return {
+        ...base,
+        lastTurnCompletedAtMs: event.atMs,
+        activeTurnCount: Math.max(0, current.activeTurnCount - 1),
+        cancelledTurnCount: current.cancelledTurnCount + 1,
       };
     case "stopped":
       return { ...base, state: "stopped", activeTurnCount: 0, queuedTurnCount: 0 };

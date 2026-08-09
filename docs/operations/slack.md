@@ -39,6 +39,16 @@ session routing.
 - A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
   `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
   during a long Pi turn.
+- Send the exact owner-authored message `stop` to cancel every earlier queued or running request in
+  that direct message, channel, or Slack thread. `/stop` is also accepted when Slack delivers it as
+  message text, but the Slack composer may reserve slash-prefixed text unless that command is
+  registered for the app. In mention-only channels, send `@Squarey stop`; the ordinary mention
+  normalization must leave exactly `stop`. The command is journaled before
+  ACK like other accepted input, but cancellation runs outside the chat queue. It marks cancelled
+  placeholders `Stopped.`, changes their source reaction to 🛑, and posts a short count such as
+  `Stopped 2 requests.` A different channel or thread is unaffected, and the next ordinary message
+  starts on a fresh generation. Stop feedback is best-effort and cannot delay Pi interruption or
+  the owner-fenced `cancelled` journal transition.
 - Replies preserve an incoming Slack thread when one is present and are split at Slack's 4,000
   Unicode-code-point limit, preferring line and word boundaries. Standard Markdown is sent through
   Slack's `markdown_text` boundary, so constructs such as `**bold**` render without Slack mrkdwn
@@ -88,7 +98,8 @@ ziggy serve status <profile>
 
 A resident with no `telegram.json`, `discord.json`, or `slack.json` is valid but scheduler-only.
 When Slack is configured, `serve status` also reports its connection state, observation freshness,
-active and queued turn counts, completed and failed counts, and a bounded failure category. `doctor`
+active and queued turn counts, completed, cancelled, and failed counts, and a bounded failure
+category. An intentional `stop` increments cancellation without fabricating a turn failure. `doctor`
 reports a missing, stale, reconnecting, or failed Slack runtime independently from configuration
 validity. The resident atomically refreshes this projection at
 `<profile>/.runtime/slack-health.json`; inability to write it is logged but never blocks a turn.
@@ -267,6 +278,11 @@ With `channelMode: "mention"`, send `@Squarey` followed by the request; Ziggy st
 before prompting Pi. With `channelMode: "always"`, any ordinary owner-authored channel message is a
 request. Messages from other users are ignored in both modes, and the channel receives isolated group
 memory rather than the owner's direct-message memory.
+
+To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
+mention-only channel. The command affects only that exact chat key: separate channel threads keep
+running. Text such as `stop now` is an ordinary model request, and `stop` from another member is
+ignored. `/stop` has the same gateway meaning if Slack delivers it as message text.
 
 ### Selected extensions
 

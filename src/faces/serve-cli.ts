@@ -71,7 +71,7 @@ const slackLines = (
     lines: [
       `slack: ${stale ? "stale" : snapshot.state}`,
       `slack observed: ${new Date(snapshot.updatedAtMs).toISOString()}`,
-      `slack turns: active ${snapshot.activeTurnCount}, queued ${snapshot.queuedTurnCount}, completed ${snapshot.completedTurnCount}, failed ${snapshot.failedTurnCount}`,
+      `slack turns: active ${snapshot.activeTurnCount}, queued ${snapshot.queuedTurnCount}, completed ${snapshot.completedTurnCount}, cancelled ${snapshot.cancelledTurnCount}, failed ${snapshot.failedTurnCount}`,
       `slack last failure: ${snapshot.lastFailure ?? "none"}`,
     ],
     degraded: stale || snapshot.state !== "connected",

@@ -64,7 +64,7 @@ describe("serve status CLI projection", () => {
           _tag: "observed",
           observedAtMs: 100_000,
           snapshot: {
-            version: 1,
+            version: 2,
             state: "connected",
             updatedAtMs: 99_000,
             startedAtMs: 50_000,
@@ -75,6 +75,7 @@ describe("serve status CLI projection", () => {
             queuedTurnCount: 0,
             acceptedTurnCount: 3,
             completedTurnCount: 2,
+            cancelledTurnCount: 1,
             failedTurnCount: 0,
             lastFailure: null,
           },
@@ -83,7 +84,9 @@ describe("serve status CLI projection", () => {
     );
 
     expect(rendered.text).toContain("slack: connected");
-    expect(rendered.text).toContain("slack turns: active 1, queued 0, completed 2, failed 0");
+    expect(rendered.text).toContain(
+      "slack turns: active 1, queued 0, completed 2, cancelled 1, failed 0",
+    );
     expect(rendered.text).not.toContain("channel");
     expect(rendered.exitCode).toBe(0);
   });
