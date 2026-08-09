@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Context, Duration, Effect, Exit, Layer, Result, Semaphore } from "effect";
 import type * as Scope from "effect/Scope";
@@ -11,16 +12,31 @@ import {
   updateMessage,
 } from "../adapters/slack/api";
 import {
+  admitSlackIngress,
+  finishSlackIngress,
+  initializeSlackIngressDatabase,
+  readReplayableSlackIngress,
+  recoverSlackIngress,
+  startSlackIngress,
+} from "../adapters/bun/slack-ingress-sqlite";
+import {
   type SlackInboundMessage,
   type SlackSocket,
-  type SlackSocketError,
+  SlackSocketError,
+  type SlackSocketInboundAdmit,
   openSlackSocket,
 } from "../adapters/slack/socket";
 import { loadSlackConfigFile } from "../adapters/fs/gateway-config";
 import { writeSlackHealth } from "../adapters/fs/slack-health";
 import { type ZiggyAgentError } from "../domain/agent";
-import { codePointLength, type ChatContext } from "../domain/memory";
+import { codePointLength } from "../domain/memory";
 import { SlackChannelMode, type SlackGatewayConfig } from "../domain/slack";
+import {
+  type SlackIngressDatabaseError,
+  type SlackIngressPayload,
+  type SlackIngressRecord,
+  type SlackIngressTerminalState,
+} from "../domain/slack-ingress";
 import {
   evolveSlackHealth,
   initialSlackHealth,
@@ -47,12 +63,13 @@ const SLACK_ENTITY_VALUE = {
   lt: "<",
 } as const;
 
-export type SlackGatewayError = SlackApiError;
+export type SlackGatewayError = SlackApiError | SlackIngressDatabaseError;
 
 export interface SlackTransport {
   readonly authTest: (token: string) => Effect.Effect<{ readonly userId: string }, SlackApiError>;
   readonly openSocket: (
     appToken: string,
+    admitInbound?: SlackSocketInboundAdmit,
   ) => Effect.Effect<SlackSocket, SlackSocketError, Scope.Scope>;
   readonly postMessage: (
     token: string,
@@ -97,15 +114,7 @@ export class SlackGateway extends Context.Service<SlackGateway, SlackGatewayShap
   "ziggy/SlackGateway",
 ) {}
 
-interface InboundMessage {
-  readonly chatKey: string;
-  readonly channel: string;
-  readonly context: ChatContext;
-  readonly statusThreadTs: string;
-  readonly sourceTs: string;
-  readonly text: string;
-  readonly threadTs: string | undefined;
-}
+type InboundMessage = SlackIngressPayload;
 
 interface ChatState {
   readonly semaphore: Semaphore.Semaphore;
@@ -245,6 +254,12 @@ const retryableDelivery = (kind: SlackDeliveryKind, failure: SlackApiError): boo
 const deliveryOutcomeUnknown = (failure: SlackApiError): boolean =>
   failure.reason === "network" || failure.reason === "server" || failure.reason === "decode";
 
+export const slackIngressTerminalState = (
+  deliveryUnknown: boolean,
+  turnSucceeded: boolean,
+): SlackIngressTerminalState =>
+  deliveryUnknown ? "unknown" : turnSucceeded ? "completed" : "failed";
+
 export const slackHeartbeat = (
   updateStatus: (status: string) => Effect.Effect<void>,
   wait: () => Effect.Effect<void> = () => Effect.sleep(Duration.seconds(HEARTBEAT_SECONDS)),
@@ -316,14 +331,70 @@ const socketFailure = (socketError: SlackSocketError): SlackApiError =>
     cause: socketError,
   });
 
+const ingressSocketFailure = (failure: SlackIngressDatabaseError): SlackSocketError =>
+  new SlackSocketError({
+    operation: "receive",
+    reason: "connection",
+    retriable: false,
+    message: "Slack inbound durability failed",
+    cause: failure,
+  });
+
 const liveSlackTransport: SlackTransport = {
   addReaction,
   authTest,
-  openSocket: openSlackSocket,
+  openSocket: (appToken, admitInbound) => openSlackSocket(appToken, undefined, admitInbound),
   postMessage,
   removeReaction,
   setStatus,
   updateMessage,
+};
+
+export interface SlackIngressRuntime {
+  readonly initialize: (profilePath: string) => Effect.Effect<void, SlackIngressDatabaseError>;
+  readonly recover: (
+    profilePath: string,
+    ownerId: string,
+  ) => Effect.Effect<void, SlackIngressDatabaseError>;
+  readonly replayable: (
+    profilePath: string,
+  ) => Effect.Effect<ReadonlyArray<SlackIngressRecord>, SlackIngressDatabaseError>;
+  readonly admit: (
+    profilePath: string,
+    record: SlackIngressRecord,
+    atMs: number,
+  ) => Effect.Effect<"accepted" | "duplicate", SlackIngressDatabaseError>;
+  readonly start: (
+    profilePath: string,
+    payload: SlackIngressPayload,
+    ownerId: string,
+    atMs: number,
+  ) => Effect.Effect<boolean, SlackIngressDatabaseError>;
+  readonly finish: (
+    profilePath: string,
+    payload: SlackIngressPayload,
+    ownerId: string,
+    state: SlackIngressTerminalState,
+    atMs: number,
+  ) => Effect.Effect<void, SlackIngressDatabaseError>;
+}
+
+const liveSlackIngressRuntime: SlackIngressRuntime = {
+  initialize: initializeSlackIngressDatabase,
+  recover: recoverSlackIngress,
+  replayable: readReplayableSlackIngress,
+  admit: admitSlackIngress,
+  start: startSlackIngress,
+  finish: finishSlackIngress,
+};
+
+const volatileSlackIngressRuntime: SlackIngressRuntime = {
+  initialize: () => Effect.void,
+  recover: () => Effect.void,
+  replayable: () => Effect.succeed([]),
+  admit: () => Effect.succeed("accepted"),
+  start: () => Effect.succeed(true),
+  finish: () => Effect.void,
 };
 
 export interface SlackHealthRuntime {
@@ -351,10 +422,15 @@ export const makeSlackGateway = (
   agent: ZiggyAgentShape,
   transport: SlackTransport = liveSlackTransport,
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
+  ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
 ): SlackGatewayShape => ({
   runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const ingressOwnerId = randomUUID();
+        yield* ingressRuntime.initialize(target.path);
+        yield* ingressRuntime.recover(target.path, ingressOwnerId);
+        const replayable = yield* ingressRuntime.replayable(target.path);
         let health = initialSlackHealth(healthRuntime.now());
         const healthPermit = Semaphore.makeUnsafe(1);
         const observe = (event: SlackHealthEvent): Effect.Effect<void> =>
@@ -389,7 +465,36 @@ export const makeSlackGateway = (
         );
         const chats = new Map<string, ChatState>();
         let reactionsAvailable = true;
-        const socket = yield* transport.openSocket(config.appToken).pipe(
+        const admitInbound: SlackSocketInboundAdmit = (inbound, eventId) => {
+          const admission = classifySlackMessage(
+            inbound,
+            bot.userId,
+            config.ownerUserId,
+            config.channelMode ?? "always",
+          );
+          if (admission.kind === "ignored") {
+            if (admission.reason === "mention-required") {
+              console.log(
+                `[slack] ignored owner channel message reason:mention-required channel:${inbound.channel}`,
+              );
+            }
+            return Effect.succeed("acknowledge");
+          }
+          return ingressRuntime
+            .admit(
+              target.path,
+              {
+                ...(eventId === undefined ? {} : { eventId }),
+                payload: admission.message,
+              },
+              healthRuntime.now(),
+            )
+            .pipe(
+              Effect.map((result) => (result === "accepted" ? "deliver" : "acknowledge")),
+              Effect.mapError(ingressSocketFailure),
+            );
+        };
+        const socket = yield* transport.openSocket(config.appToken, admitInbound).pipe(
           Effect.tapError((failure) =>
             observe({
               _tag: "failed",
@@ -438,211 +543,260 @@ export const makeSlackGateway = (
           Effect.forkScoped,
         );
 
-        const processMessage = (message: InboundMessage) => {
-          let state = chats.get(message.chatKey);
-          if (state === undefined) {
-            state = { semaphore: Semaphore.makeUnsafe(1), pending: 0 };
-            chats.set(message.chatKey, state);
-          }
-          const chatState = state;
-          const queued = chatState.pending > 0;
-          chatState.pending += 1;
-          const accepted = observe({
-            _tag: "accepted",
-            atMs: healthRuntime.now(),
-            queued,
-          });
+        const processMessage = (message: InboundMessage) =>
+          Effect.gen(function* () {
+            const started = yield* ingressRuntime.start(
+              target.path,
+              message,
+              ingressOwnerId,
+              healthRuntime.now(),
+            );
+            if (!started) return;
+            let state = chats.get(message.chatKey);
+            if (state === undefined) {
+              state = { semaphore: Semaphore.makeUnsafe(1), pending: 0 };
+              chats.set(message.chatKey, state);
+            }
+            const chatState = state;
+            const queued = chatState.pending > 0;
+            chatState.pending += 1;
+            let deliveryUnknown = false;
+            const accepted = observe({
+              _tag: "accepted",
+              atMs: healthRuntime.now(),
+              queued,
+            });
 
-          const updateStatus = (status: string) =>
-            transport
-              .setStatus(config.botToken, message.channel, message.statusThreadTs, status)
-              .pipe(
-                Effect.catch((failure) =>
-                  Effect.sync(() => {
-                    console.error(
-                      `[slack] ${message.chatKey} status update failed: ${failure.message}`,
+            const updateStatus = (status: string) =>
+              transport
+                .setStatus(config.botToken, message.channel, message.statusThreadTs, status)
+                .pipe(
+                  Effect.catch((failure) =>
+                    Effect.sync(() => {
+                      console.error(
+                        `[slack] ${message.chatKey} status update failed: ${failure.message}`,
+                      );
+                    }),
+                  ),
+                );
+
+            const logFeedbackFailure = (kind: string, failure: SlackApiError) =>
+              Effect.sync(() => {
+                console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+              });
+
+            const logMessageDeliveryFailure = (kind: string, failure: SlackApiError) =>
+              Effect.sync(() => {
+                if (deliveryOutcomeUnknown(failure)) deliveryUnknown = true;
+                console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+              });
+
+            const reaction = (operation: "add" | "remove", name: string) => {
+              if (!reactionsAvailable) return Effect.void;
+              const effect =
+                operation === "add"
+                  ? transport.addReaction(config.botToken, message.channel, message.sourceTs, name)
+                  : transport.removeReaction(
+                      config.botToken,
+                      message.channel,
+                      message.sourceTs,
+                      name,
                     );
+              return effect.pipe(
+                Effect.catch((failure) =>
+                  Effect.gen(function* () {
+                    if (failure.reason === "authentication") reactionsAvailable = false;
+                    yield* logFeedbackFailure(`${operation} ${name} reaction`, failure);
                   }),
                 ),
               );
+            };
 
-          const logFeedbackFailure = (kind: string, failure: SlackApiError) =>
-            Effect.sync(() => {
-              console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+            const acquireFeedback = Effect.gen(function* () {
+              yield* reaction("add", "eyes");
+              yield* updateStatus(queued ? "is queued..." : "is thinking...");
+              return yield* transport
+                .postMessage(
+                  config.botToken,
+                  message.channel,
+                  queued ? QUEUED_MESSAGE : WORKING_MESSAGE,
+                  message.threadTs,
+                )
+                .pipe(
+                  Effect.catch((failure) =>
+                    logMessageDeliveryFailure("working message", failure).pipe(
+                      Effect.as(undefined),
+                    ),
+                  ),
+                );
             });
 
-          const reaction = (operation: "add" | "remove", name: string) => {
-            if (!reactionsAvailable) return Effect.void;
-            const effect =
-              operation === "add"
-                ? transport.addReaction(config.botToken, message.channel, message.sourceTs, name)
-                : transport.removeReaction(
-                    config.botToken,
-                    message.channel,
-                    message.sourceTs,
-                    name,
-                  );
-            return effect.pipe(
-              Effect.catch((failure) =>
+            const work = Effect.acquireUseRelease(
+              acquireFeedback,
+              (workingMessage) =>
+                chatState.semaphore.withPermit(
+                  Effect.gen(function* () {
+                    yield* observe({
+                      _tag: "started",
+                      atMs: healthRuntime.now(),
+                      wasQueued: queued,
+                    });
+                    if (queued) {
+                      yield* updateStatus("is thinking...");
+                      if (workingMessage !== undefined) {
+                        yield* transport
+                          .updateMessage(
+                            config.botToken,
+                            message.channel,
+                            workingMessage.ts,
+                            WORKING_MESSAGE,
+                          )
+                          .pipe(
+                            Effect.catch((failure) =>
+                              logMessageDeliveryFailure("queued-message update", failure),
+                            ),
+                          );
+                      }
+                    }
+
+                    const handle =
+                      chatState.handle ??
+                      (yield* agent.openChat(
+                        target,
+                        message.context,
+                        join(target.path, "sessions", "slack", message.chatKey),
+                      ));
+                    chatState.handle = handle;
+
+                    const reply = yield* Effect.scoped(
+                      Effect.gen(function* () {
+                        yield* slackHeartbeat(updateStatus).pipe(Effect.forkScoped);
+                        return yield* handle.prompt(message.text);
+                      }),
+                    );
+                    const replyChunks = slackMessageChunks(reply);
+                    const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
+                    const firstChunk = chunks[0];
+                    let firstUnsentChunk = 0;
+                    if (workingMessage !== undefined && firstChunk !== undefined) {
+                      const updateResult = yield* retrySlackDelivery("update", () =>
+                        transport.updateMessage(
+                          config.botToken,
+                          message.channel,
+                          workingMessage.ts,
+                          firstChunk,
+                        ),
+                      ).pipe(Effect.result);
+                      if (Result.isSuccess(updateResult)) {
+                        firstUnsentChunk = 1;
+                      } else {
+                        yield* logFeedbackFailure(
+                          deliveryOutcomeUnknown(updateResult.failure)
+                            ? "final working-message update outcome unknown"
+                            : "final working-message update",
+                          updateResult.failure,
+                        );
+                        if (deliveryOutcomeUnknown(updateResult.failure)) {
+                          deliveryUnknown = true;
+                          firstUnsentChunk = 1;
+                        }
+                      }
+                    }
+                    for (const chunk of chunks.slice(firstUnsentChunk)) {
+                      yield* retrySlackDelivery("post", () =>
+                        transport.postMessage(
+                          config.botToken,
+                          message.channel,
+                          chunk,
+                          message.threadTs,
+                        ),
+                      ).pipe(
+                        Effect.tapError((failure) =>
+                          logMessageDeliveryFailure("final message post", failure),
+                        ),
+                      );
+                    }
+                    console.log(
+                      `[slack] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
+                    );
+                  }),
+                ),
+              (workingMessage, exit) =>
                 Effect.gen(function* () {
-                  if (failure.reason === "authentication") reactionsAvailable = false;
-                  yield* logFeedbackFailure(`${operation} ${name} reaction`, failure);
+                  yield* Effect.all(
+                    [
+                      updateStatus(""),
+                      Exit.isFailure(exit) && workingMessage !== undefined
+                        ? transport
+                            .updateMessage(
+                              config.botToken,
+                              message.channel,
+                              workingMessage.ts,
+                              FAILED_MESSAGE,
+                            )
+                            .pipe(
+                              Effect.catch((failure) =>
+                                logMessageDeliveryFailure("failure-message update", failure),
+                              ),
+                            )
+                        : Effect.void,
+                    ],
+                    { concurrency: "unbounded", discard: true },
+                  );
+                  const terminalState = slackIngressTerminalState(
+                    deliveryUnknown,
+                    Exit.isSuccess(exit),
+                  );
+                  yield* Effect.all(
+                    [
+                      Effect.all(
+                        [
+                          reaction("remove", "eyes"),
+                          reaction("add", terminalState === "completed" ? "white_check_mark" : "x"),
+                        ],
+                        { concurrency: "unbounded", discard: true },
+                      ),
+                      observe({
+                        _tag: "completed",
+                        atMs: healthRuntime.now(),
+                        succeeded: terminalState === "completed",
+                      }),
+                    ],
+                    { concurrency: "unbounded", discard: true },
+                  );
+                  yield* ingressRuntime.finish(
+                    target.path,
+                    message,
+                    ingressOwnerId,
+                    terminalState,
+                    healthRuntime.now(),
+                  );
+                }),
+            );
+
+            yield* accepted.pipe(
+              Effect.andThen(work),
+              Effect.catch((failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError) =>
+                Effect.sync(() => {
+                  console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
+                }),
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  chatState.pending = Math.max(0, chatState.pending - 1);
                 }),
               ),
             );
-          };
-
-          const acquireFeedback = Effect.gen(function* () {
-            yield* reaction("add", "eyes");
-            yield* updateStatus(queued ? "is queued..." : "is thinking...");
-            return yield* transport
-              .postMessage(
-                config.botToken,
-                message.channel,
-                queued ? QUEUED_MESSAGE : WORKING_MESSAGE,
-                message.threadTs,
-              )
-              .pipe(
-                Effect.catch((failure) =>
-                  logFeedbackFailure("working message", failure).pipe(Effect.as(undefined)),
-                ),
-              );
           });
 
-          const work = Effect.acquireUseRelease(
-            acquireFeedback,
-            (workingMessage) =>
-              chatState.semaphore.withPermit(
-                Effect.gen(function* () {
-                  yield* observe({
-                    _tag: "started",
-                    atMs: healthRuntime.now(),
-                    wasQueued: queued,
-                  });
-                  if (queued) {
-                    yield* updateStatus("is thinking...");
-                    if (workingMessage !== undefined) {
-                      yield* transport
-                        .updateMessage(
-                          config.botToken,
-                          message.channel,
-                          workingMessage.ts,
-                          WORKING_MESSAGE,
-                        )
-                        .pipe(
-                          Effect.catch((failure) =>
-                            logFeedbackFailure("queued-message update", failure),
-                          ),
-                        );
-                    }
-                  }
-
-                  const handle =
-                    chatState.handle ??
-                    (yield* agent.openChat(
-                      target,
-                      message.context,
-                      join(target.path, "sessions", "slack", message.chatKey),
-                    ));
-                  chatState.handle = handle;
-
-                  const reply = yield* Effect.scoped(
-                    Effect.gen(function* () {
-                      yield* slackHeartbeat(updateStatus).pipe(Effect.forkScoped);
-                      return yield* handle.prompt(message.text);
-                    }),
-                  );
-                  const replyChunks = slackMessageChunks(reply);
-                  const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
-                  const firstChunk = chunks[0];
-                  let firstUnsentChunk = 0;
-                  if (workingMessage !== undefined && firstChunk !== undefined) {
-                    const updateResult = yield* retrySlackDelivery("update", () =>
-                      transport.updateMessage(
-                        config.botToken,
-                        message.channel,
-                        workingMessage.ts,
-                        firstChunk,
-                      ),
-                    ).pipe(Effect.result);
-                    if (Result.isSuccess(updateResult)) {
-                      firstUnsentChunk = 1;
-                    } else {
-                      yield* logFeedbackFailure(
-                        deliveryOutcomeUnknown(updateResult.failure)
-                          ? "final working-message update outcome unknown"
-                          : "final working-message update",
-                        updateResult.failure,
-                      );
-                      if (deliveryOutcomeUnknown(updateResult.failure)) {
-                        firstUnsentChunk = 1;
-                      }
-                    }
-                  }
-                  for (const chunk of chunks.slice(firstUnsentChunk)) {
-                    yield* retrySlackDelivery("post", () =>
-                      transport.postMessage(
-                        config.botToken,
-                        message.channel,
-                        chunk,
-                        message.threadTs,
-                      ),
-                    );
-                  }
-                  console.log(
-                    `[slack] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
-                  );
-                }),
-              ),
-            (workingMessage, exit) =>
-              Effect.all(
-                [
-                  updateStatus(""),
-                  Effect.all(
-                    [
-                      reaction("remove", "eyes"),
-                      reaction("add", Exit.isSuccess(exit) ? "white_check_mark" : "x"),
-                    ],
-                    { concurrency: "unbounded", discard: true },
-                  ),
-                  Exit.isFailure(exit) && workingMessage !== undefined
-                    ? transport
-                        .updateMessage(
-                          config.botToken,
-                          message.channel,
-                          workingMessage.ts,
-                          FAILED_MESSAGE,
-                        )
-                        .pipe(
-                          Effect.catch((failure) =>
-                            logFeedbackFailure("failure-message update", failure),
-                          ),
-                        )
-                    : Effect.void,
-                  observe({
-                    _tag: "completed",
-                    atMs: healthRuntime.now(),
-                    succeeded: Exit.isSuccess(exit),
-                  }),
-                ],
-                { concurrency: "unbounded", discard: true },
-              ),
-          );
-
-          return accepted.pipe(
-            Effect.andThen(work),
-            Effect.catch((failure: ZiggyAgentError | SlackApiError) =>
-              Effect.sync(() => {
-                console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
-              }),
-            ),
-            Effect.ensuring(
-              Effect.sync(() => {
-                chatState.pending = Math.max(0, chatState.pending - 1);
-              }),
-            ),
-          );
-        };
+        yield* Effect.forEach(
+          replayable,
+          (recovered) => {
+            console.log(`[slack] replaying durable ingress ${recovered.payload.chatKey}`);
+            return processMessage(recovered.payload);
+          },
+          { concurrency: 4, discard: true },
+        );
 
         while (true) {
           const inbound = yield* socket.next.pipe(
@@ -686,6 +840,11 @@ export const SlackGatewayLive = Layer.effect(
   SlackGateway,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
-    return makeSlackGateway(agent, liveSlackTransport, liveSlackHealthRuntime);
+    return makeSlackGateway(
+      agent,
+      liveSlackTransport,
+      liveSlackHealthRuntime,
+      liveSlackIngressRuntime,
+    );
   }),
 );

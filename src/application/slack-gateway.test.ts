@@ -12,7 +12,9 @@ import {
   normalizeSlackUserText,
   retrySlackDelivery,
   slackHeartbeat,
+  slackIngressTerminalState,
   slackMessageChunks,
+  type SlackIngressRuntime,
   type SlackTransport,
 } from "./slack-gateway";
 
@@ -205,6 +207,13 @@ describe("Slack gateway boundary", () => {
     expect(postAttempts).toBe(1);
   });
 
+  test("delivery uncertainty takes precedence over model settlement", () => {
+    expect(slackIngressTerminalState(false, true)).toBe("completed");
+    expect(slackIngressTerminalState(false, false)).toBe("failed");
+    expect(slackIngressTerminalState(true, true)).toBe("unknown");
+    expect(slackIngressTerminalState(true, false)).toBe("unknown");
+  });
+
   test("emits a bounded long-running heartbeat", async () => {
     const statuses: Array<string> = [];
     let waits = 0;
@@ -339,11 +348,13 @@ describe("Slack gateway boundary", () => {
     let nextCall = 0;
     let socketClosed = false;
     let chatDisposed = false;
+    const ingressOperations: Array<string> = [];
+    let ingressOwnerId = "";
 
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Bun test is the Effect execution boundary.
     return Effect.runPromise(
       Effect.gen(function* () {
-        const replied = yield* Deferred.make<void>();
+        const settled = yield* Deferred.make<void>();
         const inbound = Effect.succeed(message({ threadTs: "0.9" }));
         const pending: Effect.Effect<SlackInboundMessage> = Effect.never;
         const transport: SlackTransport = {
@@ -353,13 +364,22 @@ describe("Slack gateway boundary", () => {
             expect(token).toBe("bot-token");
             return Effect.succeed({ userId: "UBOT" });
           },
-          openSocket: (appToken) =>
+          openSocket: (appToken, admitInbound) =>
             Effect.sync(() => {
               expect(appToken).toBe("app-token");
               return {
                 next: Effect.suspend(() => {
                   nextCall += 1;
-                  return nextCall === 1 ? inbound : pending;
+                  if (nextCall !== 1 || admitInbound === undefined) return pending;
+                  return inbound.pipe(
+                    Effect.flatMap((item) =>
+                      admitInbound(item, "event-1").pipe(
+                        Effect.flatMap((decision) =>
+                          decision === "deliver" ? Effect.succeed(item) : pending,
+                        ),
+                      ),
+                    ),
+                  );
                 }),
                 nextConnectionState: Effect.never,
                 close: Effect.sync(() => {
@@ -368,11 +388,8 @@ describe("Slack gateway boundary", () => {
               };
             }),
           setStatus: (_token, channel, threadTs, status) =>
-            Effect.gen(function* () {
+            Effect.sync(() => {
               statuses.push({ channel, threadTs, status });
-              if (status === "") {
-                yield* Deferred.succeed(replied, undefined);
-              }
             }),
           postMessage: (token, channel, text, threadTs) =>
             Effect.sync(() => {
@@ -409,19 +426,55 @@ describe("Slack gateway boundary", () => {
               };
             }),
         };
-        const gateway = makeSlackGateway(agent, transport, {
-          now: () => 100,
-          waitForHeartbeat: Effect.never,
-          write: () =>
-            Effect.fail(
-              new SlackHealthProjectionError({
-                operation: "write",
-                path: "/unwritable/slack-health.json",
-                message: "fixture health write failed",
-                cause: "fixture",
-              }),
-            ),
-        });
+        const ingressRuntime: SlackIngressRuntime = {
+          initialize: () => Effect.sync(() => ingressOperations.push("initialize")),
+          recover: (_path, ownerId) =>
+            Effect.sync(() => {
+              ingressOwnerId = ownerId;
+              ingressOperations.push("recover");
+            }),
+          replayable: () =>
+            Effect.sync(() => {
+              ingressOperations.push("replayable");
+              return [];
+            }),
+          admit: (_path, item) =>
+            Effect.sync(() => {
+              expect(item.eventId).toBe("event-1");
+              ingressOperations.push("admit");
+              return "accepted" as const;
+            }),
+          start: (_path, _payload, ownerId) =>
+            Effect.sync(() => {
+              expect(ownerId).toBe(ingressOwnerId);
+              ingressOperations.push("start");
+              return true;
+            }),
+          finish: (_path, _payload, ownerId, state) =>
+            Effect.gen(function* () {
+              expect(ownerId).toBe(ingressOwnerId);
+              ingressOperations.push(`finish:${state}`);
+              yield* Deferred.succeed(settled, undefined);
+            }),
+        };
+        const gateway = makeSlackGateway(
+          agent,
+          transport,
+          {
+            now: () => 100,
+            waitForHeartbeat: Effect.never,
+            write: () =>
+              Effect.fail(
+                new SlackHealthProjectionError({
+                  operation: "write",
+                  path: "/unwritable/slack-health.json",
+                  message: "fixture health write failed",
+                  cause: "fixture",
+                }),
+              ),
+          },
+          ingressRuntime,
+        );
 
         yield* Effect.raceFirst(
           gateway.runLoop(
@@ -432,7 +485,7 @@ describe("Slack gateway boundary", () => {
               ownerUserId: "U123",
             },
           ),
-          Deferred.await(replied),
+          Deferred.await(settled),
         );
 
         expect(openedChats).toEqual([
@@ -462,6 +515,14 @@ describe("Slack gateway boundary", () => {
         ]);
         expect(socketClosed).toBe(true);
         expect(chatDisposed).toBe(true);
+        expect(ingressOperations).toEqual([
+          "initialize",
+          "recover",
+          "replayable",
+          "admit",
+          "start",
+          "finish:completed",
+        ]);
       }),
     );
   });

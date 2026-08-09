@@ -19,6 +19,7 @@ import {
 import type { ProfileTarget } from "../domain/profile";
 import type { DiscordGatewayConfig } from "../domain/discord";
 import type { SlackGatewayConfig } from "../domain/slack";
+import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import { AutomationScheduler, type AutomationSchedulerShape } from "./automation-scheduler";
 import {
@@ -125,15 +126,18 @@ export const makeResidentGateway = (
             );
           if (config.slack !== undefined)
             branches.push(
-              slack
-                .runLoop(target, config.slack)
-                .pipe(
-                  Effect.catchTag("SlackApiError", (failure: SlackApiError) =>
-                    runtime
-                      .logError(`[gateway] Slack stopped: ${failure.message}`)
-                      .pipe(Effect.andThen(Effect.never)),
-                  ),
+              slack.runLoop(target, config.slack).pipe(
+                Effect.catchTag("SlackApiError", (failure: SlackApiError) =>
+                  runtime
+                    .logError(`[gateway] Slack stopped: ${failure.message}`)
+                    .pipe(Effect.andThen(Effect.never)),
                 ),
+                Effect.catchTag("SlackIngressDatabaseError", (failure: SlackIngressDatabaseError) =>
+                  runtime
+                    .logError(`[gateway] Slack stopped: ${failure.message}`)
+                    .pipe(Effect.andThen(Effect.never)),
+                ),
+              ),
             );
           return yield* Effect.all(branches, { concurrency: "unbounded", discard: true }).pipe(
             Effect.andThen(Effect.never),

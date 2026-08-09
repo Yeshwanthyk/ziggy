@@ -44,7 +44,23 @@ session routing.
   Slack's `markdown_text` boundary, so constructs such as `**bold**` render without Slack mrkdwn
   delimiters. Executable `<!channel>`, `<!here>`, and `<!everyone>` output tokens are escaped before
   delivery.
-- Inbound Socket Mode envelopes are acknowledged only after valid work enters Ziggy's bounded queue.
+- Accepted inbound Socket Mode messages are committed to
+  `<profile>/.runtime/slack-ingress.sqlite` before Ziggy acknowledges the originating live socket.
+  The inbox is independent from the automation scheduler database. Its strict, versioned schema
+  deduplicates the logical Slack message key (`channel` plus source timestamp) and the optional
+  Slack event ID. A duplicate envelope is acknowledged but never prompts the model twice in the
+  same resident lifecycle.
+- On resident startup, rows left `received` or `running` by a prior resident owner are replayed with
+  bounded concurrency. Completed, failed, cancelled, and delivery-unknown rows are terminal and
+  never replayed. Only the resident UUID that claims a row may mark it terminal. Prompt text is
+  cleared at that transition, and old routing/deduplication rows are retained only within a fixed
+  count bound. An ACK is bound to the WebSocket that supplied its envelope and is not attempted
+  after that socket becomes stale or reconnects.
+- This is durable at-least-once ingress, not an exactly-once claim for model execution or outbound
+  Slack delivery. A process loss after the model starts but before its terminal commit can replay
+  the prompt. Ambiguous outbound message posts are still not retried, because doing so could create
+  duplicate Slack replies.
+  Valid work enters Ziggy's bounded in-memory queue only after its durable commit.
   Slack-generated link markup is normalized back to its visible label before prompting, including
   telephone-looking numeric text; HTML entities are decoded, while user and channel mentions remain
   explicit Slack tokens. Mention-only admission still requires the real bot mention in the original

@@ -35,6 +35,12 @@ export interface SlackSocket {
   readonly close: Effect.Effect<void, SlackSocketError>;
 }
 
+export type SlackSocketInboundDecision = "deliver" | "acknowledge";
+export type SlackSocketInboundAdmit = (
+  message: SlackInboundMessage,
+  eventId: string | undefined,
+) => Effect.Effect<SlackSocketInboundDecision, SlackSocketError>;
+
 export type SlackSocketConnectionState =
   | { readonly state: "connected" }
   | {
@@ -171,6 +177,7 @@ const liveDependencies: SlackSocketDependencies = {
 export const openSlackSocket = (
   appToken: string,
   dependencies: SlackSocketDependencies = liveDependencies,
+  admitInbound: SlackSocketInboundAdmit = () => Effect.succeed("deliver"),
 ): Effect.Effect<SlackSocket, SlackSocketError, Scope.Scope> =>
   Effect.gen(function* () {
     const inbound = yield* Queue.dropping<SlackInboundMessage, SlackSocketError>(
@@ -419,6 +426,14 @@ export const openSlackSocket = (
           ts: payload.ts,
           threadTs: payload.thread_ts,
         };
+        const decision = yield* admitInbound(message, eventId);
+        if (decision === "acknowledge") {
+          if (eventId !== undefined) {
+            eventIds.remember(eventId);
+          }
+          acknowledge(connection, envelope.envelope_id);
+          return;
+        }
         if (yield* Queue.offer(inbound, message)) {
           if (eventId !== undefined) {
             eventIds.remember(eventId);

@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- tests are approved Effect execution boundaries */
 import { describe, expect, test } from "bun:test";
-import { Duration, Effect, Fiber, Result } from "effect";
+import { Deferred, Duration, Effect, Fiber, Result } from "effect";
 import { SlackApiError } from "./api";
 import {
   type SlackSocketConnection,
@@ -182,6 +182,81 @@ describe("Slack socket Effect boundary", () => {
     );
 
     expect(received).toMatchObject({ channel: "C1", userId: "U1", ts: "1" });
+  });
+
+  test("acknowledges only after durable admission settles", async () => {
+    const fixture = dependencies();
+    let durable = false;
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const release = yield* Deferred.make<void>();
+          const socket = yield* openSlackSocket("token", fixture.value, () =>
+            Deferred.await(release).pipe(
+              Effect.tap(() => Effect.sync(() => (durable = true))),
+              Effect.as("deliver"),
+            ),
+          );
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          connection?.emitMessage(envelope("durable"));
+          yield* yieldToSupervisor;
+          expect(connection?.sent).toEqual([]);
+          yield* Deferred.succeed(release, undefined);
+          const received = yield* socket.next;
+          expect(durable).toBe(true);
+          expect(received.ts).toBe("durable");
+          expect(connection?.sent).toEqual([JSON.stringify({ envelope_id: "envelope-durable" })]);
+        }),
+      ),
+    );
+  });
+
+  test("acks a durable duplicate without delivering it twice", async () => {
+    const fixture = dependencies();
+    let calls = 0;
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value, () => {
+            calls += 1;
+            return Effect.succeed(calls === 1 ? "deliver" : "acknowledge");
+          });
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          connection?.emitMessage(envelope("duplicate"));
+          expect((yield* socket.next).ts).toBe("duplicate");
+          connection?.emitMessage(envelope("duplicate"));
+          yield* yieldToSupervisor;
+          expect(connection?.sent).toEqual([
+            JSON.stringify({ envelope_id: "envelope-duplicate" }),
+            JSON.stringify({ envelope_id: "envelope-duplicate" }),
+          ]);
+        }),
+      ),
+    );
+  });
+
+  test("does not ack through an originating socket that closes during durable admission", async () => {
+    const fixture = dependencies();
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const release = yield* Deferred.make<void>();
+          const socket = yield* openSlackSocket("token", fixture.value, () =>
+            Deferred.await(release).pipe(Effect.as("deliver")),
+          );
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          connection?.emitMessage(envelope("stale"));
+          yield* yieldToSupervisor;
+          if (connection !== undefined) connection.state = 3;
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* socket.next).ts).toBe("stale");
+          expect(connection?.sent).toEqual([]);
+        }),
+      ),
+    );
   });
 
   test("reconnects through a fresh connections.open URL after disconnect", async () => {
