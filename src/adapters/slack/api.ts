@@ -1,5 +1,25 @@
-import { Effect, Schema } from "effect";
+import { Buffer } from "node:buffer";
+import { Effect, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import type { SlackIngressFileReference } from "../../domain/slack-ingress";
+
+export const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
+export const SLACK_IMAGE_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+export type SlackImageMimeType = (typeof SLACK_IMAGE_MIME_TYPES)[number];
+export interface SlackImageContent {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: SlackImageMimeType;
+}
+interface SlackDownloadAccumulator {
+  readonly chunks: Array<Uint8Array>;
+  readonly size: number;
+}
 
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
@@ -60,6 +80,7 @@ export type SlackApiOperation =
   | "setStatus"
   | "addReaction"
   | "removeReaction"
+  | "downloadFile"
   | "connectionsOpen"
   | "socket";
 export type SlackApiErrorReason =
@@ -79,6 +100,7 @@ export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("Sla
     "setStatus",
     "addReaction",
     "removeReaction",
+    "downloadFile",
     "connectionsOpen",
     "socket",
   ]),
@@ -267,6 +289,24 @@ const slackFailure = (
   });
 };
 
+const slackImageMimeType = (value: string | undefined): SlackImageMimeType | undefined =>
+  SLACK_IMAGE_MIME_TYPES.find((mimeType) => mimeType === value);
+
+export const isSlackPrivateFileUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "files.slack.com" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === ""
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const makeSlackApi = (client: HttpClient.HttpClient) => ({
   authTest: (token: string) =>
     jsonRequest(client, token, "authTest", "auth.test", {}).pipe(
@@ -390,6 +430,120 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
+  downloadFile: (token: string, file: SlackIngressFileReference) => {
+    const mimeType = slackImageMimeType(file.mimeType);
+    if (mimeType === undefined) {
+      return Effect.fail(
+        apiError("downloadFile", "api", false, new Error("unsupported image type"), token, {
+          message: "Slack attachment uses an unsupported image type",
+        }),
+      );
+    }
+    if (file.size === undefined) {
+      return Effect.fail(
+        apiError("downloadFile", "api", false, new Error("missing file size"), token, {
+          message: "Slack attachment size is unavailable",
+        }),
+      );
+    }
+    if (file.size > MAX_SLACK_IMAGE_BYTES) {
+      return Effect.fail(
+        apiError("downloadFile", "api", false, new Error("file too large"), token, {
+          message: "Slack attachment exceeds the 5 MiB limit",
+        }),
+      );
+    }
+    if (file.urlPrivate === undefined || !isSlackPrivateFileUrl(file.urlPrivate)) {
+      return Effect.fail(
+        apiError("downloadFile", "api", false, new Error("invalid private file URL"), token, {
+          message: "Slack attachment URL is unavailable",
+        }),
+      );
+    }
+
+    const outgoing = HttpClientRequest.get(file.urlPrivate).pipe(
+      HttpClientRequest.bearerToken(token),
+    );
+    return client.execute(outgoing).pipe(
+      Effect.mapError(() =>
+        apiError("downloadFile", "network", true, new Error("private file request failed"), token),
+      ),
+      Effect.flatMap((response) =>
+        ensureHttpSuccess(token, "downloadFile", {
+          status: response.status,
+          body: "",
+          retryAfterHeader: response.headers["retry-after"],
+        }).pipe(Effect.as(response)),
+      ),
+      Effect.flatMap((response) =>
+        Effect.gen(function* () {
+          const contentLength = Number(response.headers["content-length"]);
+          if (Number.isFinite(contentLength) && contentLength > MAX_SLACK_IMAGE_BYTES) {
+            return yield* apiError(
+              "downloadFile",
+              "api",
+              false,
+              new Error("content length too large"),
+              token,
+              { message: "Slack attachment download exceeds the 5 MiB limit" },
+            );
+          }
+          const responseMimeType = response.headers["content-type"]
+            ?.split(";", 1)[0]
+            ?.trim()
+            .toLowerCase();
+          if (responseMimeType !== mimeType) {
+            return yield* apiError(
+              "downloadFile",
+              "api",
+              false,
+              new Error("content type mismatch"),
+              token,
+              { message: "Slack attachment response type does not match its metadata" },
+            );
+          }
+          return yield* response.stream.pipe(
+            Stream.runFoldEffect(
+              (): SlackDownloadAccumulator => ({ chunks: [], size: 0 }),
+              (accumulator, chunk) => {
+                const size = accumulator.size + chunk.byteLength;
+                if (size > MAX_SLACK_IMAGE_BYTES) {
+                  return Effect.fail(
+                    apiError("downloadFile", "api", false, new Error("download too large"), token, {
+                      message: "Slack attachment download exceeds the 5 MiB limit",
+                    }),
+                  );
+                }
+                accumulator.chunks.push(chunk);
+                return Effect.succeed({ chunks: accumulator.chunks, size });
+              },
+            ),
+            Effect.mapError((failure) =>
+              failure instanceof SlackApiError
+                ? failure
+                : apiError(
+                    "downloadFile",
+                    "network",
+                    true,
+                    new Error("private file body failed"),
+                    token,
+                  ),
+            ),
+          );
+        }),
+      ),
+      Effect.map(
+        (body): SlackImageContent => ({
+          type: "image",
+          data: Buffer.concat(
+            body.chunks.map((chunk) => Buffer.from(chunk)),
+            body.size,
+          ).toString("base64"),
+          mimeType,
+        }),
+      ),
+    );
+  },
   connectionsOpen: (token: string) =>
     request(client, token, "connectionsOpen", "apps.connections.open", {
       body: "",
@@ -467,6 +621,12 @@ export const removeReaction = (
   name: string,
 ): Effect.Effect<void, SlackApiError> =>
   withLiveClient((api) => api.removeReaction(token, channel, ts, name));
+
+export const downloadFile = (
+  token: string,
+  file: SlackIngressFileReference,
+): Effect.Effect<SlackImageContent, SlackApiError> =>
+  withLiveClient((api) => api.downloadFile(token, file));
 
 export const connectionsOpen = (
   token: string,

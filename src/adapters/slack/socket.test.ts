@@ -184,6 +184,59 @@ describe("Slack socket Effect boundary", () => {
     expect(received).toMatchObject({ channel: "C1", userId: "U1", ts: "1" });
   });
 
+  test("admits a file-only event and bounds an oversized raw file list without redelivery", async () => {
+    const fixture = dependencies();
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          connection?.emitMessage(
+            JSON.stringify({
+              type: "events_api",
+              envelope_id: "envelope-files",
+              payload: {
+                event_id: "event-files",
+                event: {
+                  type: "message",
+                  subtype: "file_share",
+                  channel: "D1",
+                  channel_type: "im",
+                  user: "U1",
+                  text: "",
+                  ts: "files",
+                  files: Array.from({ length: 25 }, (_, index) => ({
+                    id: `F${index}`,
+                    name: `image-${index}.png`,
+                    mimetype: "image/png",
+                    size: 3,
+                    url_private_download: `https://files.slack.com/files-pri/T-F${index}/download`,
+                  })),
+                },
+              },
+            }),
+          );
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received).toMatchObject({
+      text: "",
+      omittedFileCount: 21,
+      files: [
+        { id: "F0", name: "image-0.png", mimeType: "image/png", size: 3 },
+        { id: "F1" },
+        { id: "F2" },
+        { id: "F3" },
+      ],
+    });
+    expect(fixture.connections[0]?.sent).toEqual([
+      JSON.stringify({ envelope_id: "envelope-files" }),
+    ]);
+  });
+
   test("acknowledges only after durable admission settles", async () => {
     const fixture = dependencies();
     let durable = false;

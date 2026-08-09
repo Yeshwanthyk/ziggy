@@ -13,6 +13,7 @@ import {
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
   type InlineExtension,
+  type PromptOptions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Database } from "bun:sqlite";
@@ -96,9 +97,14 @@ export interface PiAgentShape {
 export class PiAgent extends Context.Service<PiAgent, PiAgentShape>()("ziggy/PiAgent") {}
 
 export interface ChatHandle {
-  readonly prompt: (text: string) => Effect.Effect<string, ZiggyAgentError>;
+  readonly prompt: (
+    text: string,
+    options?: ChatPromptOptions,
+  ) => Effect.Effect<string, ZiggyAgentError>;
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
+
+export type ChatPromptOptions = Pick<PromptOptions, "images">;
 
 export type ChatSessionMode = "continue" | "fresh";
 
@@ -707,6 +713,7 @@ export const promptForAssistantText = (
   profilePath: string,
   session: PromptSession,
   text: string,
+  options?: ChatPromptOptions,
 ): Effect.Effect<string, ProviderConfigError | ProviderCallError> =>
   Effect.callback((resume) => {
     let assistantText = "";
@@ -739,7 +746,7 @@ export const promptForAssistantText = (
       if (event.type === "agent_settled") finish(completeAssistant());
     });
 
-    void session.prompt(text).then(
+    void session.prompt(text, options).then(
       () => {
         if (session.isIdle) finish(completeAssistant());
       },
@@ -802,10 +809,10 @@ export const openChat = (
     );
 
     return {
-      prompt: (text) => {
+      prompt: (text, options) => {
         const prepared = prepareProfileAgentPrompt(text, runtime.agents);
         return prepared.ok
-          ? promptForAssistantText(target.path, runtime.session, prepared.text)
+          ? promptForAssistantText(target.path, runtime.session, prepared.text, options)
           : Effect.fail(
               new ProfileAgentMentionInvalid({
                 profilePath: target.path,

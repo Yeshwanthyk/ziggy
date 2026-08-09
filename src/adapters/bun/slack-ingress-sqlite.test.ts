@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- tests are approved Effect execution boundaries */
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -29,6 +29,37 @@ const record = (sourceTs: string, eventId = `event-${sourceTs}`): SlackIngressRe
   },
 });
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+const SCHEMA_V1_FIXTURE = `
+CREATE TABLE slack_ingress (
+  channel TEXT NOT NULL,
+  source_ts TEXT NOT NULL,
+  event_id TEXT UNIQUE,
+  state TEXT NOT NULL CHECK (state IN ('received', 'running', 'completed', 'failed', 'cancelled', 'unknown')),
+  owner_id TEXT,
+  chat_key TEXT NOT NULL,
+  context_kind TEXT NOT NULL CHECK (context_kind IN ('user', 'group')),
+  context_id TEXT NOT NULL,
+  status_thread_ts TEXT NOT NULL,
+  text TEXT NOT NULL,
+  thread_ts TEXT,
+  received_at_ms INTEGER NOT NULL CHECK (received_at_ms >= 0),
+  started_at_ms INTEGER CHECK (started_at_ms >= 0),
+  finished_at_ms INTEGER CHECK (finished_at_ms >= 0),
+  PRIMARY KEY (channel, source_ts),
+  CHECK (length(channel) > 0 AND length(source_ts) > 0 AND length(chat_key) > 0
+    AND length(context_id) > 0 AND length(status_thread_ts) > 0),
+  CHECK ((state IN ('received', 'running') AND length(text) > 0)
+    OR (state IN ('completed', 'failed', 'cancelled', 'unknown') AND length(text) = 0)),
+  CHECK (owner_id IS NULL OR length(owner_id) > 0),
+  CHECK ((state = 'received' AND owner_id IS NULL AND started_at_ms IS NULL AND finished_at_ms IS NULL)
+    OR (state = 'running' AND owner_id IS NOT NULL AND started_at_ms IS NOT NULL AND finished_at_ms IS NULL)
+    OR (state IN ('completed', 'failed', 'cancelled', 'unknown') AND owner_id IS NULL AND started_at_ms IS NOT NULL AND finished_at_ms IS NOT NULL))
+) STRICT;
+CREATE INDEX slack_ingress_replay ON slack_ingress(received_at_ms, channel, source_ts)
+  WHERE state = 'received';
+CREATE INDEX slack_ingress_terminal ON slack_ingress(finished_at_ms DESC, channel, source_ts)
+  WHERE state IN ('completed', 'failed', 'cancelled', 'unknown');
+PRAGMA user_version = 1;`;
 
 describe("Slack durable ingress SQLite boundary", () => {
   test("commits one row per logical source or Slack event ID", async () => {
@@ -46,7 +77,22 @@ describe("Slack durable ingress SQLite boundary", () => {
 
   test("fences running and terminal transitions to the claiming resident owner", async () => {
     const path = await profile();
-    const item = record("1.0");
+    const item: SlackIngressRecord = {
+      ...record("1.0"),
+      payload: {
+        ...record("1.0").payload,
+        text: "",
+        files: [
+          {
+            id: "F1",
+            name: "image.png",
+            mimeType: "image/png",
+            size: 3,
+            urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+          },
+        ],
+      },
+    };
     await run(initializeSlackIngressDatabase(path));
     await run(admitSlackIngress(path, item, 10));
 
@@ -61,9 +107,15 @@ describe("Slack durable ingress SQLite boundary", () => {
     const inspected = new Database(slackIngressDatabasePath(path), { readonly: true });
     expect(
       inspected
-        .query("SELECT state,text FROM slack_ingress WHERE channel='D1' AND source_ts='1.0'")
+        .query(
+          "SELECT state,text,files_json filesJson FROM slack_ingress WHERE channel='D1' AND source_ts='1.0'",
+        )
         .get(),
-    ).toEqual({ state: "completed", text: "" });
+    ).toEqual({
+      state: "completed",
+      text: "",
+      filesJson: '{"files":[],"omittedFileCount":0}',
+    });
     inspected.close(false);
   });
 
@@ -100,6 +152,27 @@ describe("Slack durable ingress SQLite boundary", () => {
     unchanged.close(false);
   });
 
+  test("migrates the exact v1 schema and preserves replayable text", async () => {
+    const path = await profile();
+    const dbPath = slackIngressDatabasePath(path);
+    await mkdir(join(path, ".runtime"));
+    const db = new Database(dbPath, { create: true });
+    db.exec(SCHEMA_V1_FIXTURE);
+    db.query(
+      `INSERT INTO slack_ingress
+       (channel,source_ts,event_id,state,owner_id,chat_key,context_kind,context_id,status_thread_ts,text,thread_ts,received_at_ms,started_at_ms,finished_at_ms)
+       VALUES ('D1','1.0','event-1','received',NULL,'user-U1','user','owner','1.0','prompt 1.0',NULL,10,NULL,NULL)`,
+    ).run();
+    db.close(false);
+
+    await run(initializeSlackIngressDatabase(path));
+
+    expect(await run(readReplayableSlackIngress(path))).toEqual([record("1.0", "event-1")]);
+    const migrated = new Database(dbPath, { readonly: true });
+    expect(migrated.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+    migrated.close(false);
+  });
+
   test("bounds terminal retention without pruning replayable work", async () => {
     const path = await profile();
     await run(initializeSlackIngressDatabase(path));
@@ -107,8 +180,8 @@ describe("Slack durable ingress SQLite boundary", () => {
     const db = new Database(dbPath);
     const insert = db.query(
       `INSERT INTO slack_ingress
-       (channel,source_ts,event_id,state,owner_id,chat_key,context_kind,context_id,status_thread_ts,text,thread_ts,received_at_ms,started_at_ms,finished_at_ms)
-       VALUES ('D1',?,NULL,'completed',NULL,'user-U1','user','owner',?,'',NULL,?,?,?)`,
+       (channel,source_ts,event_id,state,owner_id,chat_key,context_kind,context_id,status_thread_ts,text,files_json,thread_ts,received_at_ms,started_at_ms,finished_at_ms)
+       VALUES ('D1',?,NULL,'completed',NULL,'user-U1','user','owner',?,'','{"files":[],"omittedFileCount":0}',NULL,?,?,?)`,
     );
     db.transaction(() => {
       for (let index = 0; index < 1_001; index += 1) {

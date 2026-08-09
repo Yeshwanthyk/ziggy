@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary, ziggy-effect/no-native-promise-ownership, ziggy-effect/no-error-constructor -- tests are approved execution boundaries and use typed adapter-error fixtures. */
 import { describe, expect, test } from "bun:test";
-import { Deferred, Effect, Result } from "effect";
+import { Deferred, Effect, Fiber, Result } from "effect";
 import { SlackApiError } from "../adapters/slack/api";
 import type { SlackInboundMessage } from "../adapters/slack/socket";
 import { ProviderCallError } from "../domain/agent";
@@ -12,6 +12,7 @@ import {
   makeSlackGateway,
   normalizeSlackMessage,
   normalizeSlackUserText,
+  prepareSlackAttachmentPrompt,
   retrySlackDelivery,
   slackHeartbeat,
   slackIngressTerminalState,
@@ -135,6 +136,91 @@ describe("Slack gateway boundary", () => {
       kind: "ignored",
       reason: "not-owner",
     });
+  });
+
+  test("admits file-only owner messages and renders unavailable attachments without secrets", async () => {
+    const fileOnly = normalizeSlackMessage(
+      message({
+        text: "",
+        files: [
+          {
+            id: "F1",
+            name: "photo\nprivate.png",
+            mimeType: "image/png",
+            size: 3,
+            urlPrivate: "https://files.slack.com/files-pri/T-F1/private-secret",
+          },
+          {
+            id: "F2",
+            name: "large.png",
+            mimeType: "image/png",
+            size: 6 * 1024 * 1024,
+            urlPrivate: "https://files.slack.com/files-pri/T-F2/private-secret",
+          },
+        ],
+        omittedFileCount: 1,
+      }),
+      "UBOT",
+      "U123",
+    );
+    expect(fileOnly).toBeDefined();
+    const resolved =
+      fileOnly === undefined
+        ? { text: "", images: [] }
+        : await Effect.runPromise(
+            prepareSlackAttachmentPrompt(fileOnly, () =>
+              Effect.succeed({ type: "image", data: "AQID", mimeType: "image/png" }),
+            ),
+          );
+
+    expect(resolved.images).toEqual([{ type: "image", data: "AQID", mimeType: "image/png" }]);
+    expect(resolved.text).toContain('name="photo private.png"');
+    expect(resolved.text).toContain("unavailable (larger than 5 MiB)");
+    expect(resolved.text).toContain("1 additional attachment unavailable (maximum 4 per message)");
+    expect(resolved.text).toContain("Please inspect the available Slack attachment(s).");
+    expect(resolved.text).not.toContain("files.slack.com");
+    expect(resolved.text).not.toContain("private-secret");
+  });
+
+  test("interrupts attachment resolution before Pi receives a cancelled turn", async () => {
+    const started = await Effect.runPromise(Deferred.make<void>());
+    let interrupted = 0;
+    const item = normalizeSlackMessage(
+      message({
+        text: "inspect this",
+        files: [
+          {
+            id: "F1",
+            name: "photo.png",
+            mimeType: "image/png",
+            size: 3,
+            urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+          },
+        ],
+      }),
+      "UBOT",
+      "U123",
+    );
+    expect(item).toBeDefined();
+    if (item === undefined) return;
+
+    const fiber = Effect.runFork(
+      prepareSlackAttachmentPrompt(item, () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted += 1;
+            }),
+          ),
+        ),
+      ),
+    );
+    await Effect.runPromise(Deferred.await(started));
+
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(interrupted).toBe(1);
   });
 
   test("decodes Slack entities once without turning nested text into markup", () => {
@@ -784,6 +870,7 @@ describe("Slack gateway boundary", () => {
       readonly sessionDirectory: string;
     }> = [];
     const prompts: Array<string> = [];
+    let promptImages: unknown;
     const posts: Array<{
       readonly token: string;
       readonly channel: string;
@@ -811,7 +898,20 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
-        const inbound = Effect.succeed(message({ threadTs: "0.9" }));
+        const inbound = Effect.succeed(
+          message({
+            threadTs: "0.9",
+            files: [
+              {
+                id: "F1",
+                name: "photo.png",
+                mimeType: "image/png",
+                size: 3,
+                urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+              },
+            ],
+          }),
+        );
         const pending: Effect.Effect<SlackInboundMessage> = Effect.never;
         const transport: SlackTransport = {
           addReaction: (_token, channel, ts, name) =>
@@ -820,6 +920,8 @@ describe("Slack gateway boundary", () => {
             expect(token).toBe("bot-token");
             return Effect.succeed({ userId: "UBOT" });
           },
+          downloadFile: () =>
+            Effect.succeed({ type: "image", data: "AQID", mimeType: "image/png" }),
           openSocket: (appToken, admitInbound) =>
             Effect.sync(() => {
               expect(appToken).toBe("app-token");
@@ -871,9 +973,10 @@ describe("Slack gateway boundary", () => {
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
               return {
-                prompt: (text: string) =>
+                prompt: (text: string, options) =>
                   Effect.sync(() => {
                     prompts.push(text);
+                    promptImages = options?.images;
                     return "hello back";
                   }),
                 dispose: Effect.sync(() => {
@@ -950,7 +1053,10 @@ describe("Slack gateway boundary", () => {
             sessionDirectory: "/tmp/ziggy-slack-gateway-test/sessions/slack/user-U123",
           },
         ]);
-        expect(prompts).toEqual(["hello"]);
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toContain("Slack attachment metadata");
+        expect(prompts[0]).toContain("hello");
+        expect(promptImages).toEqual([{ type: "image", data: "AQID", mimeType: "image/png" }]);
         expect(posts).toEqual([
           {
             token: "bot-token",

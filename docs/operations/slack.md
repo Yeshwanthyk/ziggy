@@ -39,6 +39,13 @@ session routing.
 - A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
   `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
   during a long Pi turn.
+- Owner-authored messages may include up to four PNG, JPEG, WebP, or GIF files, each no larger than
+  5 MiB. File-only messages are valid. Ziggy validates Slack's private-file metadata before using
+  the bot credential, downloads only `https://files.slack.com` content, verifies the response type
+  and a bounded byte stream, and supplies successful images through Pi's native image prompt input.
+  Unsupported, oversized, inaccessible, or excess attachments become concise metadata notices in
+  the prompt instead of failing the whole turn. Private URLs and credentials are never placed in
+  prompts or diagnostics. The configured provider and model must also support image input.
 - Send the exact owner-authored message `stop` to cancel every earlier queued or running request in
   that direct message, channel, or Slack thread. `/stop` is also accepted when Slack delivers it as
   message text, but the Slack composer may reserve slash-prefixed text unless that command is
@@ -62,10 +69,10 @@ session routing.
   same resident lifecycle.
 - On resident startup, rows left `received` or `running` by a prior resident owner are replayed with
   bounded concurrency. Completed, failed, cancelled, and delivery-unknown rows are terminal and
-  never replayed. Only the resident UUID that claims a row may mark it terminal. Prompt text is
-  cleared at that transition, and old routing/deduplication rows are retained only within a fixed
-  count bound. An ACK is bound to the WebSocket that supplied its envelope and is not attempted
-  after that socket becomes stale or reconnects.
+  never replayed. Only the resident UUID that claims a row may mark it terminal. Prompt text and
+  private-file metadata are cleared at that transition, and old routing/deduplication rows are
+  retained only within a fixed count bound. An ACK is bound to the WebSocket that supplied its
+  envelope and is not attempted after that socket becomes stale or reconnects.
 - This is durable at-least-once ingress, not an exactly-once claim for model execution or outbound
   Slack delivery. A process loss after the model starts but before its terminal commit can replay
   the prompt. Ambiguous outbound message posts are still not retried, because doing so could create
@@ -136,15 +143,19 @@ Open **OAuth & Permissions**. Under **Bot Token Scopes**, not User Token Scopes,
 
 - `chat:write`
 - `reactions:write`
+- `files:read`
 - `im:history`
 - `channels:history`
 - `groups:history`
 - `mpim:history`
 
 `chat:write` also authorizes `assistant.threads.setStatus`; `reactions:write` authorizes the 👀, ✅,
-and ❌ source-message lifecycle. Since Slack's March 2026 scope update,
-channel-based apps can use that loading state without `assistant:write` or the AI assistant split
-view.
+and ❌ source-message lifecycle. `files:read` allows the bot to receive usable private-file metadata
+and download owner-attached images. Install or reinstall the app after adding this scope. Without
+it, the text turn still proceeds with an attachment-unavailable notice. Attachments arrive on the
+ordinary message events configured below, so no separate file event subscription is required.
+Since Slack's March 2026 scope update, channel-based apps can use that loading state without
+`assistant:write` or the AI assistant split view.
 
 `mpim:history` is only needed for multi-person direct messages, but keeping it with the corresponding
 event below makes the complete DM-and-channel setup explicit.
@@ -266,6 +277,10 @@ Hi. Who are you?
 Then test owner memory with a harmless fact and confirm it remains available in a later direct
 message.
 
+Attach one supported image with or without accompanying text and confirm the reply addresses the
+image. Also verify that an unsupported or oversized attachment yields an unavailable notice without
+preventing Ziggy from answering the text portion.
+
 ### Channel
 
 Invite the app into each channel where it should receive events:
@@ -302,7 +317,7 @@ Check, in order:
 4. Socket Mode is enabled and the app token has `connections:write`.
 5. The required message events are subscribed.
 6. The app was reinstalled after permission changes, including `reactions:write` for progress
-   reactions.
+   reactions and `files:read` for image input.
 7. The bot is invited to the target channel.
 8. The sender is exactly the configured owner.
 9. The resident was restarted after creating or changing `slack.json`.
@@ -349,6 +364,14 @@ Search `ziggy serve logs <profile>` for `final working-message update failed`, `
 `updateMessage`. The placeholder and final edit both use `chat:write`; no reaction or Agent-view
 scope is required. A model failure should replace the placeholder with a failure notice.
 
+### Text replies work but attached images are unavailable
+
+Check that `files:read` is under **Bot Token Scopes**, reinstall the app after adding it, and restart
+the Ziggy resident. Confirm the file is PNG, JPEG, WebP, or GIF, no larger than 5 MiB, and shared in
+a direct message or channel the bot can access. The configured provider/model must support image
+input. Unsupported or inaccessible files intentionally become bounded notices while the text turn
+continues; Ziggy never forwards a private Slack URL to the model.
+
 ### A selected command-line extension works in the TUI but not under `serve`
 
 A managed service does not inherit the interactive terminal's shell initialization. On macOS,
@@ -366,8 +389,8 @@ connection and does not expose an HTTP callback.
 
 On 2026-08-08, the manual path above produced these secret-free observations for a live Profile:
 
-- `slack.json` had mode `0600`, exactly the three expected keys, and correctly prefixed token and
-  member-ID values.
+- `slack.json` had mode `0600`, the three required keys plus its explicit channel mode, and correctly
+  prefixed token and member-ID values.
 - `ziggy doctor` reported the Profile, model, auth, agents, automations, memory, resources, one
   gateway configuration, sessions, and runtime healthy.
 - `ziggy serve restart` reached `readiness: ready` under launchd.
@@ -382,10 +405,16 @@ On 2026-08-08, the manual path above produced these secret-free observations for
   to ✅. A controlled resident restart during a second active turn changed 👀 to ❌, edited the
   placeholder to `I couldn't complete that request.`, and returned with a healthy replacement
   resident. Conversation history was sufficient for this proof; `reactions:read` was not added.
+- After installing `files:read`, a PNG-only `file_share` direct message showed 👀 and the working
+  placeholder, passed the image to the configured Pi model, and edited the placeholder with an
+  accurate description of the page and its folded upper-right corner. The source reaction changed
+  to ✅, health returned to zero active/queued turns, and the completed ingress row contained neither
+  prompt text nor private-file metadata.
 
 This record proves the configured workspace's startup, direct-message, channel, thread, queue,
-success-reaction, and cancellation-reaction paths. It does not prove a different Slack workspace,
-client version, app manifest, or channel membership.
+success-reaction, cancellation-reaction, and PNG image-input paths. It does not prove a different
+Slack workspace, client version, app manifest, provider/model, attachment format, or channel
+membership.
 
 ## Token rotation and removal
 

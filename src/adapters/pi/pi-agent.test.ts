@@ -74,6 +74,7 @@ describe("Pi prompt cancellation", () => {
   test("interruption aborts the prompt and removes its session listener", async () => {
     let listener: AgentSessionEventListener | undefined;
     let promptStarted = false;
+    let promptOptions: Parameters<Parameters<typeof promptForAssistantText>[1]["prompt"]>[1];
     let unsubscribes = 0;
     let aborts = 0;
     const session: Parameters<typeof promptForAssistantText>[1] = {
@@ -85,8 +86,9 @@ describe("Pi prompt cancellation", () => {
           unsubscribes += 1;
         };
       },
-      prompt: () => {
+      prompt: (_text, options) => {
         promptStarted = true;
+        promptOptions = options;
         return new Promise(() => undefined);
       },
       abort: () => {
@@ -94,18 +96,21 @@ describe("Pi prompt cancellation", () => {
         return Promise.resolve();
       },
     };
-    const fiber = Effect.runFork(promptForAssistantText("/profile", session, "hello"));
+    const images = [{ type: "image" as const, data: "AQID", mimeType: "image/png" }];
+    const fiber = Effect.runFork(promptForAssistantText("/profile", session, "hello", { images }));
     await Effect.runPromise(Effect.yieldNow);
 
     await Effect.runPromise(Fiber.interrupt(fiber));
 
     expect({
       promptStarted,
+      promptOptions,
       listenerPresent: listener !== undefined,
       unsubscribes,
       aborts,
     }).toEqual({
       promptStarted: true,
+      promptOptions: { images },
       listenerPresent: false,
       unsubscribes: 1,
       aborts: 1,

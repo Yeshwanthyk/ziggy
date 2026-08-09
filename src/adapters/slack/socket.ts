@@ -3,6 +3,14 @@ import type * as Scope from "effect/Scope";
 import { type SlackApiError, connectionsOpen } from "./api";
 import { makeRecentIds } from "../bun/recent-ids";
 
+export interface SlackInboundFile {
+  readonly id: string;
+  readonly name?: string;
+  readonly mimeType?: string;
+  readonly size?: number;
+  readonly urlPrivate?: string;
+}
+
 export interface SlackInboundMessage {
   readonly channel: string;
   readonly channelType: "im" | "channel" | "group" | "mpim";
@@ -10,6 +18,8 @@ export interface SlackInboundMessage {
   readonly text: string;
   readonly ts: string;
   readonly threadTs: string | undefined;
+  readonly files?: ReadonlyArray<SlackInboundFile>;
+  readonly omittedFileCount?: number;
 }
 
 export class SlackSocketError extends Schema.TaggedErrorClass<SlackSocketError>()(
@@ -92,24 +102,39 @@ const EventsPayloadSchema = Schema.Struct({
   event_id: Schema.optional(Schema.String),
   event: Schema.optional(Schema.Unknown),
 });
+const BoundedFileText = Schema.String.check(Schema.isMaxLength(4_096));
+const BoundedFileName = Schema.String.check(Schema.isMaxLength(512));
+const SlackMessageFileSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
+  name: Schema.optional(BoundedFileName),
+  title: Schema.optional(BoundedFileName),
+  mimetype: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  size: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  url_private: Schema.optional(BoundedFileText),
+  url_private_download: Schema.optional(BoundedFileText),
+});
 const MessageSchema = Schema.Struct({
   type: Schema.Literal("message"),
-  subtype: Schema.optional(Schema.Unknown),
+  subtype: Schema.optional(Schema.String),
   bot_id: Schema.optional(Schema.Unknown),
   channel: Schema.String,
   channel_type: Schema.Literals(["im", "channel", "group", "mpim"]),
   user: Schema.String.check(Schema.isMinLength(1)),
-  text: Schema.String,
+  text: Schema.optional(Schema.String),
   ts: Schema.String,
   thread_ts: Schema.optional(Schema.String),
+  files: Schema.optional(Schema.Array(Schema.Unknown)),
 });
 
 const decodeEnvelopeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(SocketEnvelopeSchema));
 const decodeEventsPayload = Schema.decodeUnknownEffect(EventsPayloadSchema);
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
+const decodeMessageFile = Schema.decodeUnknownEffect(SlackMessageFileSchema);
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_EVENT_IDS = 1_000;
+const MAX_FILES_PER_TURN = 4;
+const MAX_FILES_TO_DECODE = 20;
 const SOCKET_OPEN = 1;
 const SOCKET_CLOSING = 2;
 const SOCKET_CLOSED = 3;
@@ -408,7 +433,8 @@ export const openSlackSocket = (
         );
         if (
           Option.isNone(decodedMessage) ||
-          decodedMessage.value.subtype !== undefined ||
+          (decodedMessage.value.subtype !== undefined &&
+            decodedMessage.value.subtype !== "file_share") ||
           decodedMessage.value.bot_id !== undefined
         ) {
           if (eventId !== undefined) {
@@ -418,13 +444,34 @@ export const openSlackSocket = (
           return;
         }
         const payload = decodedMessage.value;
+        const rawFiles = payload.files ?? [];
+        const decodedFiles: Array<typeof SlackMessageFileSchema.Type> = [];
+        for (const rawFile of rawFiles.slice(0, MAX_FILES_TO_DECODE)) {
+          const decodedFile = yield* decodeMessageFile(rawFile).pipe(Effect.option);
+          if (Option.isSome(decodedFile)) decodedFiles.push(decodedFile.value);
+        }
+        const files = decodedFiles.slice(0, MAX_FILES_PER_TURN).map((file): SlackInboundFile => {
+          const name = file.name ?? file.title;
+          const urlPrivate = file.url_private_download ?? file.url_private;
+          return {
+            id: file.id,
+            ...(name === undefined ? {} : { name }),
+            ...(file.mimetype === undefined ? {} : { mimeType: file.mimetype }),
+            ...(file.size === undefined ? {} : { size: file.size }),
+            ...(urlPrivate === undefined ? {} : { urlPrivate }),
+          };
+        });
         const message: SlackInboundMessage = {
           channel: payload.channel,
           channelType: payload.channel_type,
           userId: payload.user,
-          text: payload.text,
+          text: payload.text ?? "",
           ts: payload.ts,
           threadTs: payload.thread_ts,
+          ...(files.length === 0 ? {} : { files }),
+          ...(rawFiles.length <= files.length
+            ? {}
+            : { omittedFileCount: rawFiles.length - files.length }),
         };
         const decision = yield* admitInbound(message, eventId);
         if (decision === "acknowledge") {

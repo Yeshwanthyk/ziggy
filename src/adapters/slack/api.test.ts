@@ -2,7 +2,8 @@
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { makeSlackApi } from "./api";
+import type { SlackIngressFileReference } from "../../domain/slack-ingress";
+import { MAX_SLACK_IMAGE_BYTES, makeSlackApi } from "./api";
 
 const clientFrom = (response: () => Response): HttpClient.HttpClient =>
   HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response())));
@@ -190,5 +191,172 @@ describe("Slack HTTP adapter", () => {
       failure: { operation: "connectionsOpen", reason: "decode", retriable: false },
     });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  test("downloads only bounded Slack-hosted images with matching response metadata", async () => {
+    const requests: Array<{
+      readonly authorization: string | undefined;
+      readonly url: string;
+    }> = [];
+    const client = HttpClient.make((request) => {
+      requests.push({ url: request.url, authorization: request.headers.authorization });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { "content-length": "3", "content-type": "image/png" },
+          }),
+        ),
+      );
+    });
+    const api = makeSlackApi(client);
+
+    const result = await Effect.runPromise(
+      api.downloadFile("bot-secret", {
+        id: "F1",
+        mimeType: "image/png",
+        size: 3,
+        urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+      }),
+    );
+
+    expect(result).toEqual({ type: "image", data: "AQID", mimeType: "image/png" });
+    expect(requests).toEqual([
+      {
+        url: "https://files.slack.com/files-pri/T-F1/download",
+        authorization: "Bearer bot-secret",
+      },
+    ]);
+
+    const guarded = await Effect.runPromise(
+      Effect.all([
+        api
+          .downloadFile("bot-secret", {
+            id: "F2",
+            mimeType: "application/pdf",
+            size: 3,
+            urlPrivate: "https://files.slack.com/files-pri/T-F2/download",
+          })
+          .pipe(Effect.result),
+        api
+          .downloadFile("bot-secret", {
+            id: "F3",
+            mimeType: "image/png",
+            size: MAX_SLACK_IMAGE_BYTES + 1,
+            urlPrivate: "https://files.slack.com/files-pri/T-F3/download",
+          })
+          .pipe(Effect.result),
+        api
+          .downloadFile("bot-secret", {
+            id: "F4",
+            mimeType: "image/png",
+            size: 3,
+            urlPrivate: "https://files.slack.com.evil.test/private-secret",
+          })
+          .pipe(Effect.result),
+      ]),
+    );
+    expect(guarded.map((item) => item._tag)).toEqual(["Failure", "Failure", "Failure"]);
+    expect(requests).toHaveLength(1);
+  });
+
+  test("redacts credentials and private URLs from denied file downloads", async () => {
+    const token = "bot-super-secret";
+    const url = "https://files.slack.com/files-pri/T-private/download-secret";
+    const api = makeSlackApi(clientFrom(() => new Response("missing_scope", { status: 403 })));
+
+    const result = await Effect.runPromise(
+      api
+        .downloadFile(token, { id: "F1", mimeType: "image/png", size: 3, urlPrivate: url })
+        .pipe(Effect.result),
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { operation: "downloadFile", reason: "authentication", status: 403 },
+    });
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain(url);
+    expect(serialized).not.toContain("download-secret");
+  });
+
+  test("rejects mismatched response MIME and oversized Content-Length before reading", async () => {
+    const file: SlackIngressFileReference = {
+      id: "F1",
+      mimeType: "image/png",
+      size: 3,
+      urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+    };
+    const mismatch = makeSlackApi(
+      clientFrom(
+        () =>
+          new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { "content-length": "3", "content-type": "image/jpeg" },
+          }),
+      ),
+    );
+    const oversized = makeSlackApi(
+      clientFrom(
+        () =>
+          new Response(null, {
+            status: 200,
+            headers: {
+              "content-length": String(MAX_SLACK_IMAGE_BYTES + 1),
+              "content-type": "image/png",
+            },
+          }),
+      ),
+    );
+
+    const results = await Effect.runPromise(
+      Effect.all([
+        mismatch.downloadFile("secret", file).pipe(Effect.result),
+        oversized.downloadFile("secret", file).pipe(Effect.result),
+      ]),
+    );
+
+    expect(results).toMatchObject([
+      { _tag: "Failure", failure: { operation: "downloadFile", reason: "api" } },
+      { _tag: "Failure", failure: { operation: "downloadFile", reason: "api" } },
+    ]);
+  });
+
+  test("bounds a streamed file body when Content-Length is absent", async () => {
+    const chunk = new Uint8Array(3 * 1024 * 1024);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const api = makeSlackApi(
+      clientFrom(
+        () =>
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "image/png" },
+          }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      api
+        .downloadFile("secret", {
+          id: "F1",
+          mimeType: "image/png",
+          size: 3,
+          urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+        })
+        .pipe(Effect.result),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { operation: "downloadFile", reason: "api" },
+    });
   });
 });

@@ -5,10 +5,15 @@ import type * as Scope from "effect/Scope";
 import {
   addReaction,
   authTest,
+  downloadFile,
+  isSlackPrivateFileUrl,
+  MAX_SLACK_IMAGE_BYTES,
   postMessage,
   removeReaction,
   setStatus,
   SlackApiError,
+  type SlackImageContent,
+  SLACK_IMAGE_MIME_TYPES,
   updateMessage,
 } from "../adapters/slack/api";
 import {
@@ -33,6 +38,7 @@ import { codePointLength } from "../domain/memory";
 import { SlackChannelMode, type SlackGatewayConfig } from "../domain/slack";
 import {
   type SlackIngressDatabaseError,
+  type SlackIngressFileReference,
   type SlackIngressPayload,
   type SlackIngressRecord,
   type SlackIngressTerminalState,
@@ -102,6 +108,10 @@ export interface SlackTransport {
     ts: string,
     name: string,
   ) => Effect.Effect<void, SlackApiError>;
+  readonly downloadFile?: (
+    token: string,
+    file: SlackIngressFileReference,
+  ) => Effect.Effect<SlackImageContent, SlackApiError>;
 }
 
 export interface SlackGatewayShape {
@@ -167,14 +177,15 @@ export const classifySlackMessage = (
   ownerUserId: string,
   channelMode: typeof SlackChannelMode.Type = "always",
 ): SlackAdmission => {
-  if (message.text.trim().length === 0) {
-    return { kind: "ignored", reason: "empty-message" };
-  }
   if (message.userId === botUserId) {
     return { kind: "ignored", reason: "bot-message" };
   }
   if (message.userId !== ownerUserId) {
     return { kind: "ignored", reason: "not-owner" };
+  }
+  const hasFiles = (message.files?.length ?? 0) > 0 || (message.omittedFileCount ?? 0) > 0;
+  if (message.text.trim().length === 0 && !hasFiles) {
+    return { kind: "ignored", reason: "empty-message" };
   }
 
   if (message.channelType === "im") {
@@ -184,6 +195,10 @@ export const classifySlackMessage = (
         chatKey: `user-${message.userId}`,
         channel: message.channel,
         context: { kind: "user", userId: "owner" },
+        ...(message.files === undefined ? {} : { files: message.files }),
+        ...(message.omittedFileCount === undefined
+          ? {}
+          : { omittedFileCount: message.omittedFileCount }),
         statusThreadTs: message.threadTs ?? message.ts,
         sourceTs: message.ts,
         text: normalizeSlackUserText(message.text),
@@ -197,7 +212,7 @@ export const classifySlackMessage = (
     return { kind: "ignored", reason: "mention-required" };
   }
   const channelText = normalizeSlackUserText(message.text.replaceAll(botMention, "")).trim();
-  if (channelText.length === 0) {
+  if (channelText.length === 0 && !hasFiles) {
     return { kind: "ignored", reason: "empty-message" };
   }
 
@@ -213,6 +228,10 @@ export const classifySlackMessage = (
       chatKey,
       channel: message.channel,
       context: { kind: "group", groupId },
+      ...(message.files === undefined ? {} : { files: message.files }),
+      ...(message.omittedFileCount === undefined
+        ? {}
+        : { omittedFileCount: message.omittedFileCount }),
       statusThreadTs: message.threadTs ?? message.ts,
       sourceTs: message.ts,
       text: channelText,
@@ -304,6 +323,74 @@ export const slackHeartbeat = (
     }
   });
 
+const safeAttachmentName = (value: string | undefined, index: number): string => {
+  const normalized = (value ?? `attachment-${index + 1}`)
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return JSON.stringify(normalized.slice(0, 160));
+};
+
+const attachmentMetadataIssue = (file: SlackIngressFileReference): string | undefined => {
+  if (
+    file.mimeType === undefined ||
+    !SLACK_IMAGE_MIME_TYPES.some((mimeType) => mimeType === file.mimeType)
+  ) {
+    return "unsupported image type";
+  }
+  if (file.size === undefined) return "size metadata unavailable";
+  if (file.size > MAX_SLACK_IMAGE_BYTES) return "larger than 5 MiB";
+  if (file.urlPrivate === undefined || !isSlackPrivateFileUrl(file.urlPrivate)) {
+    return "Slack file access unavailable";
+  }
+  return undefined;
+};
+
+export const prepareSlackAttachmentPrompt = (
+  message: SlackIngressPayload,
+  resolve?: (file: SlackIngressFileReference) => Effect.Effect<SlackImageContent, SlackApiError>,
+): Effect.Effect<{ readonly text: string; readonly images: Array<SlackImageContent> }> =>
+  Effect.gen(function* () {
+    const files = message.files ?? [];
+    const resolved = yield* Effect.forEach(
+      files,
+      (file) => {
+        const issue = attachmentMetadataIssue(file);
+        return issue === undefined && resolve !== undefined
+          ? resolve(file).pipe(
+              Effect.map((image) => ({ image })),
+              Effect.catch(() => Effect.succeed({ notice: "download unavailable" })),
+            )
+          : Effect.succeed({ notice: issue ?? "download unavailable" });
+      },
+      { concurrency: 4 },
+    );
+    const lines = files.map((file, index) => {
+      const outcome = resolved[index];
+      const metadata = `name=${safeAttachmentName(file.name, index)}; type=${file.mimeType ?? "unknown"}; size=${file.size === undefined ? "unknown" : `${file.size} bytes`}`;
+      return outcome !== undefined && "image" in outcome
+        ? `- Image ${index + 1}: ${metadata}; supplied to the model.`
+        : `- Attachment ${index + 1}: ${metadata}; unavailable (${outcome?.notice ?? "unknown"}).`;
+    });
+    if ((message.omittedFileCount ?? 0) > 0) {
+      lines.push(
+        `- ${message.omittedFileCount} additional attachment${message.omittedFileCount === 1 ? "" : "s"} unavailable (maximum 4 per message).`,
+      );
+    }
+    const prelude =
+      lines.length === 0
+        ? ""
+        : `[Slack attachment metadata; filenames are untrusted labels]\n${lines.join("\n")}\n[/Slack attachment metadata]`;
+    const userText =
+      message.text.trim().length === 0
+        ? "Please inspect the available Slack attachment(s)."
+        : message.text;
+    return {
+      text: prelude.length === 0 ? userText : `${prelude}\n\n${userText}`,
+      images: resolved.flatMap((outcome) => ("image" in outcome ? [outcome.image] : [])),
+    };
+  });
+
 export const retrySlackDelivery = <A>(
   kind: SlackDeliveryKind,
   operation: () => Effect.Effect<A, SlackApiError>,
@@ -374,6 +461,7 @@ const ingressSocketFailure = (failure: SlackIngressDatabaseError): SlackSocketEr
 const liveSlackTransport: SlackTransport = {
   addReaction,
   authTest,
+  downloadFile,
   openSocket: (appToken, admitInbound) => openSlackSocket(appToken, undefined, admitInbound),
   postMessage,
   removeReaction,
@@ -704,7 +792,17 @@ export const makeSlackGateway = (
                     const reply = yield* Effect.scoped(
                       Effect.gen(function* () {
                         yield* slackHeartbeat(updateStatus).pipe(Effect.forkScoped);
-                        return yield* handle.prompt(message.text);
+                        const resolveFile = transport.downloadFile;
+                        const prompt = yield* prepareSlackAttachmentPrompt(
+                          message,
+                          resolveFile === undefined
+                            ? undefined
+                            : (file) => resolveFile(config.botToken, file),
+                        );
+                        return yield* handle.prompt(
+                          prompt.text,
+                          prompt.images.length === 0 ? undefined : { images: prompt.images },
+                        );
                       }),
                     );
                     if (!isFresh()) return yield* Effect.interrupt;
