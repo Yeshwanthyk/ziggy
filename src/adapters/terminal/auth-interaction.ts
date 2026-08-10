@@ -53,7 +53,6 @@ const readSecret = (signal: AbortSignal | undefined): Promise<string> => {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     const previousRawMode = input.isRaw;
-    const previousEncoding = input.readableEncoding;
     let value = "";
     let settled = false;
 
@@ -61,8 +60,6 @@ const readSecret = (signal: AbortSignal | undefined): Promise<string> => {
       signal?.removeEventListener("abort", onAbort);
       input.removeListener("data", onData);
       input.setRawMode(previousRawMode);
-      input.setEncoding(previousEncoding ?? undefined);
-      input.pause();
       process.stdout.write("\n");
     };
     const finish = (result: { readonly value: string } | { readonly error: Error }) => {
@@ -100,9 +97,7 @@ const readSecret = (signal: AbortSignal | undefined): Promise<string> => {
     };
 
     signal?.addEventListener("abort", onAbort, { once: true });
-    input.setEncoding("utf8");
     input.setRawMode(true);
-    input.resume();
     input.on("data", onData);
   });
 };
