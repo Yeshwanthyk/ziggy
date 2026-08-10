@@ -1,85 +1,59 @@
 ---
 name: apple-reminders
-description: "List, add, edit, complete, or delete Apple Reminders and reminder lists via remindctl."
+description: "Read and safely manage Apple Reminders on macOS. Use for listing reminders or exact create, reschedule, move, complete, and explicitly confirmed delete requests."
 ---
 
-# Apple Reminders CLI (remindctl)
+# Apple Reminders
 
-Use `remindctl` to manage Apple Reminders directly from the terminal.
+Use only the `apple_reminders_*` tools supplied with this skill. Never write or run ad hoc
+AppleScript, shell, `osascript`, or `remindctl` commands. The tools keep AppleScript source fixed,
+pass model data as argv, reject ambiguous targets, perform at most one write, and verify mutations
+by captured reminder ID.
 
-Use this skill for personal to-dos that should sync through Apple Reminders. Use a calendar
-for appointments and the user's chosen project tracker for project work. If "remind me" could
-mean either a device-synced reminder or a notification in the current application, ask which
-destination they want before creating anything.
+## Resolve the request
 
-## Setup
+- Resolve relative dates immediately before the tool call into absolute local calendar components.
+- Treat a date without a time as `kind: "all-day"`.
+- Treat a date with an exact time as `kind: "timed"` and pass 24-hour `hour` and `minute` values.
+- Ask one concise clarification for vague times such as “morning” or “later.” Never invent a time.
+- Preserve the current list for reschedule and complete. Set `source_list` only when the user names
+  it or an earlier tool result establishes it.
+- Require a named or confirmed destination list for create and move.
+- Match reminder and list names exactly and case-sensitively. If a tool reports ambiguity, make no
+  mutation and ask the user to choose the exact source list.
 
-- Install: `brew install steipete/tap/remindctl`
-- macOS-only; grant Reminders permission when prompted
-- Check status: `remindctl status`
-- Request access: `remindctl authorize`
+## Read
 
-## Common Commands
+- Call `apple_reminders_list_incomplete` to list incomplete reminders. Pass `list` only for one
+  exact list.
+- Call `apple_reminders_list_due` with an absolute local `date` to list incomplete timed and
+  all-day reminders due that day. Pass `list` only for one exact list.
+- Use tool output as authoritative. Never claim Reminders access succeeded after a tool failure.
 
-### View Reminders
+## Mutate
 
-```bash
-remindctl                    # Today's reminders
-remindctl today              # Today
-remindctl tomorrow           # Tomorrow
-remindctl week               # This week
-remindctl overdue            # Past due
-remindctl all                # Everything
-remindctl 2026-01-04         # Specific date
-```
+- Call `apple_reminders_create` once with an exact `name`, destination `list`, and optional `due`.
+  It refuses an incomplete exact-name duplicate in that list.
+- Call `apple_reminders_reschedule` once with an exact `name`, optional `source_list`, and required
+  absolute `due`. It preserves the reminder’s list.
+- List moves are currently unsupported because the macOS Reminders AppleScript interface can report
+  a changed container without persisting it. If the user requests one, explain this limit. Do not
+  emulate a move with create-then-delete because that changes identity and can lose metadata.
+- Call `apple_reminders_complete` once with an exact `name` and optional `source_list`. An already
+  completed exact match is reported without another write.
+- Call `apple_reminders_delete` only after the user explicitly confirms deletion of that exact
+  reminder from that exact source list. Then pass `confirmed: true`. Never infer confirmation from
+  a general cleanup request or from an earlier turn.
 
-### Manage Lists
+Do not retry a failed mutation. A timeout, cancellation, Apple Event error, or failed read-back can
+mean the write outcome is uncertain. Report the failure and inspect Reminders with a read tool
+before proposing another mutation.
 
-```bash
-remindctl list               # List all lists
-remindctl list Work          # Show specific list
-remindctl list Projects --create    # Create list
-remindctl list Work --delete        # Delete list
-```
+For a request affecting multiple reminders, resolve the complete exact set first, call one mutation
+at a time, and report each verified result separately. Never imply cross-reminder atomicity.
 
-### Create Reminders
+## Access failures
 
-```bash
-remindctl add "Buy milk"
-remindctl add --title "Call mom" --list Personal --due tomorrow
-remindctl add --title "Meeting prep" --due "2026-02-15 09:00"
-```
-
-### Complete/Delete
-
-```bash
-remindctl complete 1 2 3     # Complete by ID
-remindctl delete 4A83 --force  # Delete by ID
-```
-
-### Output Formats
-
-```bash
-remindctl today --json       # JSON for scripting
-remindctl today --plain      # TSV format
-remindctl today --quiet      # Counts only
-```
-
-## Date Formats
-
-Accepted by `--due` and date filters:
-
-- `today`, `tomorrow`, `yesterday`
-- `YYYY-MM-DD`
-- `YYYY-MM-DD HH:mm`
-- ISO 8601 (`2026-01-04T12:34:56Z`)
-
-## Clarify ambiguous intent
-
-User: "Remind me to check on the deploy in 2 hours"
-
-**Ask:** "Do you want this in Apple Reminders, which syncs to your devices, or as a
-notification in this application?"
-
-- Apple Reminders → use this skill
-- Application notification → use the notification capability available in the current host
+If macOS denies access, ask the user to grant the Ziggy host process access to Reminders in
+**System Settings → Privacy & Security → Automation**, then retry only the read that proved access
+was denied. Do not retry a mutation whose outcome is uncertain.

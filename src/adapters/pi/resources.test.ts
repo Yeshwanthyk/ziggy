@@ -340,7 +340,6 @@ test("the complete repository catalog loads through production paths and Pi mani
     "agent-browser",
     "apple-notes",
     "apple-reminders",
-    "apple-reminders-native",
     "architecture-diagram",
     "blogwatcher",
     "codex",
@@ -387,6 +386,13 @@ test("the complete repository catalog loads through production paths and Pi mani
   ];
   const expectedTools = [
     "agent_browser",
+    "apple_reminders_complete",
+    "apple_reminders_create",
+    "apple_reminders_delete",
+    "apple_reminders_list_due",
+    "apple_reminders_list_incomplete",
+    "apple_reminders_move",
+    "apple_reminders_reschedule",
     "diffs",
     "executor_call",
     "executor_resume",
@@ -454,6 +460,7 @@ test("the complete repository catalog loads through production paths and Pi mani
     productionResources.extensionPaths.map((extensionPath) => basename(dirname(extensionPath))),
   ).toEqual([
     "agent-browser",
+    "apple-reminders",
     "diffs",
     "executor",
     "github",
@@ -464,12 +471,12 @@ test("the complete repository catalog loads through production paths and Pi mani
     "skill-curator",
     "web-search",
   ]);
-  expect(productionResources.skillPaths).toHaveLength(49);
+  expect(productionResources.skillPaths).toHaveLength(48);
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices, 50);
+  assertCatalog(productionServices, 49);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -484,6 +491,6 @@ test("the complete repository catalog loads through production paths and Pi mani
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
-    58,
+    57,
   );
 });

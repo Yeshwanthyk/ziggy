@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "keywords": [
-    "pi-package"
-  ],
+  "description": "Typed native Pi tools for safe Apple Reminders reads and mutations.",
+  "keywords": ["pi-package"],
+  "scripts": {
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint index.ts test",
+    "fmt": "oxfmt index.ts test"
+  },
   "pi": {
-    "skills": [
-      "./skills"
-    ]
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "typebox": "1.1.38"
   }
 }
