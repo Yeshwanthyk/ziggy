@@ -1,9 +1,0 @@
-{
-  "name": "@ziggy/apple-reminders-native",
-  "private": true,
-  "type": "module",
-  "keywords": ["pi-package"],
-  "pi": {
-    "skills": ["./skills"]
-  }
-}
