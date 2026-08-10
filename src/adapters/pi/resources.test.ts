@@ -340,21 +340,15 @@ test("the complete repository catalog loads through production paths and Pi mani
     "agent-browser",
     "apple-notes",
     "apple-reminders",
-    "architecture-diagram",
-    "blogwatcher",
     "codex",
     "coding-agent",
     "diffs",
-    "discord",
     "executor",
     "gh-issues",
     "github",
-    "github-issues",
-    "github-pr-triage",
     "gog",
     "goplaces",
     "here-now",
-    "humanizer",
     "hyperframes",
     "imsg",
     "linear",
@@ -366,17 +360,12 @@ test("the complete repository catalog loads through production paths and Pi mani
     "onepassword",
     "open-computer-use",
     "openai-whisper",
-    "peekaboo",
     "pi-packages",
     "qmd",
     "self-improving-agent",
-    "session-logs",
     "skill-creator",
     "skill-curator",
-    "slack",
     "smart-memory",
-    "summarize",
-    "telephony",
     "things-mac",
     "tmux",
     "wacli",
@@ -399,7 +388,6 @@ test("the complete repository catalog loads through production paths and Pi mani
     "executor_tools_describe",
     "executor_tools_search",
     "executor_tools_sources",
-    "gh_prs",
     "github",
     "lcm_describe",
     "lcm_expand_query",
@@ -464,19 +452,18 @@ test("the complete repository catalog loads through production paths and Pi mani
     "diffs",
     "executor",
     "github",
-    "github-pr-triage",
     "linear",
     "lossless-claw",
     "open-computer-use",
     "skill-curator",
     "web-search",
   ]);
-  expect(productionResources.skillPaths).toHaveLength(48);
+  expect(productionResources.skillPaths).toHaveLength(37);
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices, 49);
+  assertCatalog(productionServices, 37);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -491,6 +478,6 @@ test("the complete repository catalog loads through production paths and Pi mani
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
-    57,
+    45,
   );
 });

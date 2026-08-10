@@ -390,7 +390,7 @@ package has an explicit compiled-mode strategy.
 **Files/symbols:**
 
 - `src/application/profiles.ts` — `resolveSkillSource`, `copySkill`, and embedded-source branch;
-- helper-backed packages currently including `agent-browser`, `diffs`, `github-pr-triage`, `linear`,
+- helper-backed packages currently including `agent-browser`, `diffs`, `linear`,
   `open-computer-use`, `web-search`, plus any generator-discovered skill scripts;
 - package-specific focused tests.
 
