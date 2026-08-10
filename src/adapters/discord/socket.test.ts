@@ -115,6 +115,7 @@ const ready = JSON.stringify({
     session_id: "session-1",
     resume_gateway_url: "wss://resume.discord.test",
     user: { id: "bot" },
+    guilds: [{ id: "guild-1" }],
   },
 });
 const message = (id: string) =>
@@ -157,7 +158,7 @@ describe("Discord socket Effect boundary", () => {
     );
 
     expect(states).toEqual([
-      { state: "connected" },
+      { state: "connected", guildIds: ["guild-1"] },
       { state: "reconnecting", reason: "connection" },
     ]);
   });

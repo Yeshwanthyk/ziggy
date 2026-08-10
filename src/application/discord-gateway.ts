@@ -1,12 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { Context, Deferred, Duration, Effect, Exit, Layer, Queue, Result, Semaphore } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Queue,
+  Result,
+  Semaphore,
+} from "effect";
 import type * as Scope from "effect/Scope";
 import {
   admitDiscordIngress,
   finishDiscordIngress,
   initializeDiscordIngressDatabase,
   readReplayableDiscordIngress,
+  requeueDiscordIngress,
   recoverDiscordIngress,
   startDiscordIngress,
   type DiscordIngressAdmission,
@@ -59,6 +71,7 @@ import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 const DISCORD_MESSAGE_LIMIT = 2_000;
 const MAX_RETRY_SECONDS = 30;
+const MAX_DELIVERY_ATTEMPTS = 4;
 const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
 const PROGRESS_UPDATE_GROWTH = 48;
 const TYPING_REFRESH_SECONDS = 8;
@@ -123,7 +136,10 @@ export interface DiscordTransport {
   readonly downloadAttachment?: (
     attachment: DiscordIngressAttachmentReference,
   ) => Effect.Effect<DiscordImageContent, DiscordApiError>;
-  readonly ensureCommands?: (token: string) => Effect.Effect<void, DiscordApiError>;
+  readonly ensureCommands?: (
+    token: string,
+    guildIds: ReadonlyArray<string>,
+  ) => Effect.Effect<void, DiscordApiError>;
   readonly respondToInteraction?: (
     interactionId: string,
     interactionToken: string,
@@ -160,6 +176,7 @@ interface ScheduledDiscordTurn {
   readonly generation: number;
   readonly message: InboundMessage;
   cancelled: boolean;
+  terminalAttempted: boolean;
 }
 
 interface ChatState {
@@ -346,27 +363,48 @@ export const prepareDiscordAttachmentPrompt = (
     };
   });
 
-const retryDiscord = <A>(
+type DiscordDeliveryKind = "idempotent" | "post";
+
+const retryableDiscordDelivery = (kind: DiscordDeliveryKind, failure: DiscordApiError): boolean =>
+  failure.retriable && (kind === "idempotent" || failure.reason === "rate-limited");
+
+const discordDeliveryOutcomeUnknown = (failure: DiscordApiError): boolean =>
+  failure.reason === "network" ||
+  failure.reason === "server" ||
+  failure.reason === "invalid-response";
+
+export const discordIngressTerminalState = (
+  deliveryUnknown: boolean,
+  turnSucceeded: boolean,
+): DiscordIngressTerminalState =>
+  deliveryUnknown ? "unknown" : turnSucceeded ? "completed" : "failed";
+
+export const retryDiscordDelivery = <A>(
+  kind: DiscordDeliveryKind,
   operation: () => Effect.Effect<A, DiscordApiError>,
+  delay: (seconds: number) => Effect.Effect<void> = (seconds) =>
+    Effect.sleep(Duration.seconds(seconds)),
 ): Effect.Effect<A, DiscordApiError> =>
   Effect.gen(function* () {
-    let attempt = 0;
+    let attempt = 1;
     while (true) {
       const result = yield* operation().pipe(
         Effect.map((value) => ({ ok: true as const, value })),
         Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
       );
       if (result.ok) return result.value;
-      if (!result.error.retriable) return yield* result.error;
-      const exponentialDelay = 2 ** Math.min(attempt, 5);
+      if (!retryableDiscordDelivery(kind, result.error) || attempt >= MAX_DELIVERY_ATTEMPTS) {
+        return yield* result.error;
+      }
+      const exponentialDelay = 2 ** Math.min(attempt - 1, 5);
       const retryDelay = Math.min(
         MAX_RETRY_SECONDS,
         Math.max(1, result.error.retryAfterSeconds ?? exponentialDelay),
       );
       console.error(
-        `[discord] Discord ${result.error.operation} failed; retrying in ${retryDelay}s`,
+        `[discord] Discord ${result.error.operation} failed; retry ${attempt + 1}/${MAX_DELIVERY_ATTEMPTS} in ${retryDelay}s`,
       );
-      yield* Effect.sleep(Duration.seconds(retryDelay));
+      yield* delay(retryDelay);
       attempt += 1;
     }
   });
@@ -468,6 +506,11 @@ export interface DiscordIngressRuntime {
     ownerId: string,
     atMs: number,
   ) => Effect.Effect<boolean, DiscordIngressDatabaseError>;
+  readonly requeue: (
+    profilePath: string,
+    payload: DiscordIngressPayload,
+    ownerId: string,
+  ) => Effect.Effect<void, DiscordIngressDatabaseError>;
   readonly finish: (
     profilePath: string,
     payload: DiscordIngressPayload,
@@ -483,6 +526,7 @@ const liveDiscordIngressRuntime: DiscordIngressRuntime = {
   recover: recoverDiscordIngress,
   readReplayable: readReplayableDiscordIngress,
   start: startDiscordIngress,
+  requeue: requeueDiscordIngress,
   finish: finishDiscordIngress,
 };
 
@@ -492,6 +536,7 @@ const volatileDiscordIngressRuntime: DiscordIngressRuntime = {
   recover: () => Effect.void,
   readReplayable: () => Effect.succeed([]),
   start: () => Effect.succeed(true),
+  requeue: () => Effect.void,
   finish: () => Effect.void,
 };
 
@@ -537,18 +582,7 @@ export const makeDiscordGateway = (
         const socket = yield* transport
           .openSocket(config.botToken, DISCORD_INTENTS)
           .pipe(Effect.mapError(socketFailure));
-        if (transport.ensureCommands !== undefined) {
-          yield* retryDiscord(
-            () => transport.ensureCommands?.(config.botToken) ?? Effect.void,
-          ).pipe(
-            Effect.catch((failure) =>
-              Effect.sync(() => {
-                console.error(`[discord] slash command registration failed: ${failure.message}`);
-              }),
-            ),
-            Effect.forkScoped,
-          );
-        }
+        const reconciledCommandGuildSets = new Set<string>();
         yield* Effect.addFinalizer(() =>
           socket.close.pipe(
             Effect.catch((failure) =>
@@ -561,8 +595,35 @@ export const makeDiscordGateway = (
         yield* socket.nextConnectionState.pipe(
           Effect.flatMap((state) => {
             switch (state.state) {
-              case "connected":
-                return observe({ _tag: "connected", atMs: healthRuntime.now() });
+              case "connected": {
+                const guildIds = [...new Set(state.guildIds)].sort();
+                const guildSet = guildIds.join("\u0000");
+                const reconcileCommands =
+                  transport.ensureCommands === undefined || reconciledCommandGuildSets.has(guildSet)
+                    ? Effect.void
+                    : Effect.sync(() => reconciledCommandGuildSets.add(guildSet)).pipe(
+                        Effect.andThen(
+                          retryDiscordDelivery(
+                            "post",
+                            () =>
+                              transport.ensureCommands?.(config.botToken, guildIds) ?? Effect.void,
+                          ),
+                        ),
+                        Effect.catch((failure) =>
+                          Effect.sync(() => {
+                            reconciledCommandGuildSets.delete(guildSet);
+                            console.error(
+                              `[discord] slash command reconciliation failed: ${failure.message}`,
+                            );
+                          }),
+                        ),
+                        Effect.forkScoped,
+                        Effect.asVoid,
+                      );
+                return observe({ _tag: "connected", atMs: healthRuntime.now() }).pipe(
+                  Effect.andThen(reconcileCommands),
+                );
+              }
               case "reconnecting":
                 return observe({
                   _tag: "reconnecting",
@@ -628,7 +689,7 @@ export const makeDiscordGateway = (
             });
           }
           return Effect.gen(function* () {
-            const channel = yield* retryDiscord(() =>
+            const channel = yield* retryDiscordDelivery("idempotent", () =>
               transport.getChannel(config.botToken, message.channelId),
             );
             if (THREAD_TYPES.has(channel.type) && channel.parent_id != null) {
@@ -643,7 +704,7 @@ export const makeDiscordGateway = (
                 cause: { channelType: channel.type },
               });
             }
-            const thread = yield* retryDiscord(() =>
+            const thread = yield* retryDiscordDelivery("post", () =>
               transport.startThreadFromMessage(
                 config.botToken,
                 channel.id,
@@ -656,7 +717,7 @@ export const makeDiscordGateway = (
         };
 
         const updateFeedback = (message: InboundMessage, placeholderId: string, text: string) =>
-          retryDiscord(() =>
+          retryDiscordDelivery("idempotent", () =>
             transport.updateMessage(config.botToken, message.channelId, placeholderId, text),
           ).pipe(
             Effect.catch((failure) =>
@@ -735,17 +796,22 @@ export const makeDiscordGateway = (
           const message = turn.message;
           const isFresh = () => !turn.cancelled && chatState.generation === turn.generation;
           let placeholderId: string | undefined;
+          let deliveryUnknown = false;
           let started = false;
+          const observeDeliveryFailure = (failure: DiscordApiError) =>
+            Effect.sync(() => {
+              if (discordDeliveryOutcomeUnknown(failure)) deliveryUnknown = true;
+            });
           return Effect.gen(function* () {
             yield* observe({ _tag: "accepted", atMs: healthRuntime.now(), queued });
             yield* reaction(message, "add", "👀");
-            placeholderId = (yield* retryDiscord(() =>
+            placeholderId = (yield* retryDiscordDelivery("post", () =>
               transport.createMessage(
                 config.botToken,
                 message.channelId,
                 queued ? QUEUED_MESSAGE : WORKING_MESSAGE,
               ),
-            )).id;
+            ).pipe(Effect.tapError(observeDeliveryFailure))).id;
             yield* chatState.semaphore.withPermit(
               Effect.gen(function* () {
                 if (!isFresh()) return yield* Effect.interrupt;
@@ -811,20 +877,20 @@ export const makeDiscordGateway = (
                 const first = chunks[0];
                 if (placeholderId !== undefined && first !== undefined) {
                   const firstMessageId = placeholderId;
-                  yield* retryDiscord(() =>
+                  yield* retryDiscordDelivery("idempotent", () =>
                     transport.updateMessage(
                       config.botToken,
                       message.channelId,
                       firstMessageId,
                       first,
                     ),
-                  );
+                  ).pipe(Effect.tapError(observeDeliveryFailure));
                 }
                 for (const chunk of chunks.slice(1)) {
                   if (!isFresh()) return yield* Effect.interrupt;
-                  yield* retryDiscord(() =>
+                  yield* retryDiscordDelivery("post", () =>
                     transport.createMessage(config.botToken, message.channelId, chunk),
-                  );
+                  ).pipe(Effect.tapError(observeDeliveryFailure));
                 }
                 console.log(
                   `[discord] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
@@ -833,11 +899,22 @@ export const makeDiscordGateway = (
             );
           }).pipe(
             Effect.onExit((exit) => {
+              const shutdownInterrupted =
+                !turn.cancelled && Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause);
+              if (shutdownInterrupted) {
+                turn.terminalAttempted = true;
+                return Effect.all(
+                  [
+                    reaction(message, "remove", "👀"),
+                    ingressRuntime.requeue(target.path, message, ingressOwnerId),
+                  ],
+                  { concurrency: "unbounded", discard: true },
+                );
+              }
               const terminalState: DiscordIngressTerminalState = turn.cancelled
                 ? "cancelled"
-                : Exit.isSuccess(exit)
-                  ? "completed"
-                  : "failed";
+                : discordIngressTerminalState(deliveryUnknown, Exit.isSuccess(exit));
+              turn.terminalAttempted = true;
               return Effect.all(
                 [
                   reaction(message, "remove", "👀").pipe(
@@ -845,11 +922,13 @@ export const makeDiscordGateway = (
                       reaction(
                         message,
                         "add",
-                        turn.cancelled ? "🛑" : Exit.isSuccess(exit) ? "✅" : "❌",
+                        turn.cancelled ? "🛑" : terminalState === "completed" ? "✅" : "❌",
                       ),
                     ),
                   ),
-                  placeholderId === undefined || (Exit.isSuccess(exit) && !turn.cancelled)
+                  placeholderId === undefined ||
+                  terminalState === "completed" ||
+                  terminalState === "unknown"
                     ? Effect.void
                     : updateFeedback(
                         message,
@@ -866,7 +945,7 @@ export const makeDiscordGateway = (
                       : {
                           _tag: "completed",
                           atMs: healthRuntime.now(),
-                          succeeded: Exit.isSuccess(exit),
+                          succeeded: terminalState === "completed",
                         },
                   ),
                   ingressRuntime.finish(
@@ -900,6 +979,7 @@ export const makeDiscordGateway = (
               generation: chatState.generation,
               message,
               cancelled: false,
+              terminalAttempted: false,
             };
             chatState.turns.add(turn);
             chatState.pending += 1;
@@ -914,7 +994,28 @@ export const makeDiscordGateway = (
                   }),
               ),
               Effect.ensuring(
-                Effect.sync(() => {
+                Effect.gen(function* () {
+                  if (!turn.terminalAttempted) {
+                    turn.terminalAttempted = true;
+                    const settlement = turn.cancelled
+                      ? ingressRuntime.finish(
+                          target.path,
+                          message,
+                          ingressOwnerId,
+                          "cancelled",
+                          healthRuntime.now(),
+                        )
+                      : ingressRuntime.requeue(target.path, message, ingressOwnerId);
+                    yield* settlement.pipe(
+                      Effect.catch((failure) =>
+                        Effect.sync(() => {
+                          console.error(
+                            `[discord] ${message.chatKey} interrupted ingress settlement failed: ${failure.message}`,
+                          );
+                        }),
+                      ),
+                    );
+                  }
                   chatState.turns.delete(turn);
                   chatState.pending = Math.max(0, chatState.pending - 1);
                 }),
@@ -932,14 +1033,21 @@ export const makeDiscordGateway = (
               healthRuntime.now(),
             );
             if (!started) return;
+            let deliveryUnknown = false;
             yield* Effect.gen(function* () {
               const stopped = yield* cancelChat(message.chatKey);
               const acknowledgement =
                 stopped === 0
                   ? "Nothing was running."
                   : `Stopped ${stopped} ${stopped === 1 ? "request" : "requests"}.`;
-              yield* retryDiscord(() =>
+              yield* retryDiscordDelivery("post", () =>
                 transport.createMessage(config.botToken, message.channelId, acknowledgement),
+              ).pipe(
+                Effect.tapError((failure) =>
+                  Effect.sync(() => {
+                    if (discordDeliveryOutcomeUnknown(failure)) deliveryUnknown = true;
+                  }),
+                ),
               );
               yield* reaction(message, "add", "✅");
             }).pipe(
@@ -948,7 +1056,7 @@ export const makeDiscordGateway = (
                   target.path,
                   message,
                   ingressOwnerId,
-                  Exit.isSuccess(exit) ? "completed" : "failed",
+                  discordIngressTerminalState(deliveryUnknown, Exit.isSuccess(exit)),
                   healthRuntime.now(),
                 ),
               ),
@@ -970,7 +1078,7 @@ export const makeDiscordGateway = (
           if (interaction.channelId === undefined) return Effect.succeed(undefined);
           const resolveChannel: Effect.Effect<DiscordChannel, DiscordApiError> =
             interaction.channelType === undefined
-              ? retryDiscord(() =>
+              ? retryDiscordDelivery("idempotent", () =>
                   transport.getChannel(config.botToken, interaction.channelId ?? ""),
                 )
               : Effect.succeed<DiscordChannel>({

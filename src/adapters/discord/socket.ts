@@ -56,7 +56,7 @@ export interface DiscordSocket {
 }
 
 export type DiscordSocketConnectionState =
-  | { readonly state: "connected" }
+  | { readonly state: "connected"; readonly guildIds: ReadonlyArray<string> }
   | {
       readonly state: "reconnecting";
       readonly reason: "connection" | "queue-overflow" | "socket";
@@ -118,6 +118,7 @@ const ReadySchema = Schema.Struct({
   session_id: Schema.String,
   resume_gateway_url: Schema.String,
   user: Schema.Struct({ id: Schema.String }),
+  guilds: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
 const HelloSchema = Schema.Struct({
   heartbeat_interval: Schema.Finite.check(Schema.isGreaterThan(0)),
@@ -284,6 +285,7 @@ export const openDiscordSocket = (
     let sessionId: string | undefined;
     let resumeGatewayUrl: string | undefined;
     let ownUserId: string | undefined;
+    let guildIds: ReadonlyArray<string> = [];
     let heartbeatAcknowledged = true;
     let stopped = false;
     let failed = false;
@@ -517,17 +519,19 @@ export const openDiscordSocket = (
             sessionId: decodedReady.success.session_id,
             resumeGatewayUrl: decodedReady.success.resume_gateway_url,
             userId: decodedReady.success.user.id,
+            guildIds: decodedReady.success.guilds.map((guild) => guild.id),
           };
           sessionId = ready.sessionId;
           resumeGatewayUrl = ready.resumeGatewayUrl;
           ownUserId = ready.userId;
+          guildIds = ready.guildIds;
           reconnectDelayMs = 1_000;
-          reportState({ state: "connected" });
+          reportState({ state: "connected", guildIds });
           return;
         }
         if (frame.t === "RESUMED") {
           reconnectDelayMs = 1_000;
-          reportState({ state: "connected" });
+          reportState({ state: "connected", guildIds });
           return;
         }
         if (frame.t === "MESSAGE_CREATE") {

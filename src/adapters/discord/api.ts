@@ -135,6 +135,14 @@ export interface DiscordApplicationCommandDefinition {
   readonly contexts: readonly [0, 1];
 }
 
+const LEGACY_KIRI_DISCORD_COMMAND_NAMES = new Set([
+  "kiri-bind",
+  "kiri-run",
+  "kiri-diff",
+  "kiri-status",
+  "kiri-queue",
+]);
+
 export const ZIGGY_DISCORD_COMMANDS: ReadonlyArray<DiscordApplicationCommandDefinition> = [
   {
     name: "status",
@@ -314,7 +322,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
-  ensureCommands: (token: string) =>
+  ensureCommands: (token: string, guildIds: ReadonlyArray<string> = []) =>
     Effect.gen(function* () {
       const applicationResponse = yield* request(
         client,
@@ -341,6 +349,47 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
           }),
         ),
       );
+      const removeLegacyCommands = (
+        commandCollectionUrl: string,
+        commands: ReadonlyArray<typeof ApplicationCommandSuccess.Type>,
+      ) =>
+        Effect.forEach(
+          commands.filter((command) => LEGACY_KIRI_DISCORD_COMMAND_NAMES.has(command.name)),
+          (command) =>
+            request(
+              client,
+              token,
+              "ensureCommands",
+              `${commandCollectionUrl}/${encodeURIComponent(command.id)}`,
+              { method: "DELETE" },
+            ).pipe(
+              Effect.flatMap((response) => ensureSuccess(token, "ensureCommands", response)),
+              Effect.asVoid,
+            ),
+          { discard: true },
+        );
+
+      yield* removeLegacyCommands(commandsUrl, existing);
+      for (const guildId of new Set(guildIds)) {
+        const guildCommandsUrl = `${applicationUrl}/guilds/${encodeURIComponent(guildId)}/commands`;
+        const guildCommandsResponse = yield* request(
+          client,
+          token,
+          "ensureCommands",
+          guildCommandsUrl,
+        ).pipe(Effect.flatMap((response) => ensureSuccess(token, "ensureCommands", response)));
+        const guildCommands = yield* decodeApplicationCommandsResponse(
+          guildCommandsResponse.body,
+        ).pipe(
+          Effect.mapError((cause) =>
+            apiError("ensureCommands", "invalid-response", false, cause, token, {
+              status: guildCommandsResponse.status,
+            }),
+          ),
+        );
+        yield* removeLegacyCommands(guildCommandsUrl, guildCommands);
+      }
+
       for (const expected of ZIGGY_DISCORD_COMMANDS) {
         const current = existing.find(
           (command) => command.name === expected.name && command.type === expected.type,
@@ -661,8 +710,11 @@ export const downloadAttachment = (
 ): Effect.Effect<DiscordImageContent, DiscordApiError> =>
   withLiveClient((api) => api.downloadAttachment(file));
 
-export const ensureDiscordCommands = (token: string): Effect.Effect<void, DiscordApiError> =>
-  withLiveClient((api) => api.ensureCommands(token));
+export const ensureDiscordCommands = (
+  token: string,
+  guildIds: ReadonlyArray<string> = [],
+): Effect.Effect<void, DiscordApiError> =>
+  withLiveClient((api) => api.ensureCommands(token, guildIds));
 
 export const respondToDiscordInteraction = (
   interactionId: string,

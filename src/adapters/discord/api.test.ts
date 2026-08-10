@@ -43,6 +43,45 @@ describe("Discord HTTP adapter", () => {
                   integration_types: [0],
                   contexts: [0, 1],
                 },
+                {
+                  id: "legacy-global-id",
+                  name: "kiri-status",
+                  type: 1,
+                  description: "Legacy Kiri status",
+                },
+                {
+                  id: "unrelated-global-id",
+                  name: "weather",
+                  type: 1,
+                  description: "Unrelated command",
+                },
+              ]),
+              { status: 200 },
+            ),
+          ),
+        );
+      }
+      if (
+        request.url.endsWith("/applications/app-1/guilds/guild-1/commands") &&
+        request.method === "GET"
+      ) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify([
+                {
+                  id: "legacy-guild-id",
+                  name: "kiri-queue",
+                  type: 1,
+                  description: "Legacy Kiri queue",
+                },
+                {
+                  id: "unrelated-guild-id",
+                  name: "deploy",
+                  type: 1,
+                  description: "Unrelated guild command",
+                },
               ]),
               { status: 200 },
             ),
@@ -63,12 +102,12 @@ describe("Discord HTTP adapter", () => {
     });
     const api = makeDiscordApi(client);
 
-    await Effect.runPromise(api.ensureCommands("bot-secret"));
+    await Effect.runPromise(api.ensureCommands("bot-secret", ["guild-1", "guild-1"]));
     await Effect.runPromise(
       api.respondToInteraction("interaction-1", "interaction-secret", "Active: 0 · queued: 0."),
     );
 
-    expect(requests).toHaveLength(4);
+    expect(requests).toHaveLength(7);
     expect(requests[0]).toMatchObject({
       method: "GET",
       url: "https://discord.com/api/v10/oauth2/applications/@me",
@@ -80,6 +119,21 @@ describe("Discord HTTP adapter", () => {
       authorization: "Bot bot-secret",
     });
     expect(requests[2]).toMatchObject({
+      method: "DELETE",
+      url: "https://discord.com/api/v10/applications/app-1/commands/legacy-global-id",
+      authorization: "Bot bot-secret",
+    });
+    expect(requests[3]).toMatchObject({
+      method: "GET",
+      url: "https://discord.com/api/v10/applications/app-1/guilds/guild-1/commands",
+      authorization: "Bot bot-secret",
+    });
+    expect(requests[4]).toMatchObject({
+      method: "DELETE",
+      url: "https://discord.com/api/v10/applications/app-1/guilds/guild-1/commands/legacy-guild-id",
+      authorization: "Bot bot-secret",
+    });
+    expect(requests[5]).toMatchObject({
       method: "POST",
       url: "https://discord.com/api/v10/applications/app-1/commands",
       authorization: "Bot bot-secret",
@@ -91,7 +145,7 @@ describe("Discord HTTP adapter", () => {
         contexts: [0, 1],
       }),
     });
-    expect(requests[3]).toMatchObject({
+    expect(requests[6]).toMatchObject({
       method: "POST",
       url: "https://discord.com/api/v10/interactions/interaction-1/interaction-secret/callback",
       authorization: undefined,

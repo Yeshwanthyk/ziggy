@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary, ziggy-effect/no-native-promise-ownership -- tests are approved execution boundaries */
 import { describe, expect, test } from "bun:test";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Fiber, Result } from "effect";
 import { DiscordApiError } from "../adapters/discord/api";
 import type {
   DiscordInboundInteraction,
@@ -11,10 +11,12 @@ import type { DiscordIngressPayload, DiscordIngressTerminalState } from "../doma
 import type { ZiggyAgentShape } from "./agent";
 import {
   discordMessageChunks,
+  discordIngressTerminalState,
   discordThreadConversation,
   makeDiscordGateway,
   normalizeDiscordMessage,
   prepareDiscordAttachmentPrompt,
+  retryDiscordDelivery,
   shouldUpdateDiscordProgress,
   type DiscordIngressRuntime,
   type DiscordTransport,
@@ -64,6 +66,62 @@ describe("Discord gateway boundary", () => {
   test("rejects non-owner and bot messages", () => {
     expect(normalizeDiscordMessage(message(), "999")).toBeUndefined();
     expect(normalizeDiscordMessage(message({ authorIsBot: true }), "123")).toBeUndefined();
+  });
+
+  test("reconciles global commands and legacy cleanup for READY guilds", async () => {
+    const reconciliations: Array<{
+      readonly token: string;
+      readonly guildIds: ReadonlyArray<string>;
+    }> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const completed = yield* Deferred.make<void>();
+        let connectionStateRead = false;
+        const socket: DiscordSocket = {
+          next: Effect.never,
+          nextConnectionState: Effect.suspend(() => {
+            if (connectionStateRead) return Effect.never;
+            connectionStateRead = true;
+            return Effect.succeed({ state: "connected", guildIds: ["guild-2", "guild-1"] });
+          }),
+          close: Effect.void,
+        };
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () => Effect.succeed(socket),
+          getChannel: () => unexpectedDiscordApiCall("getChannel"),
+          startThreadFromMessage: () => unexpectedDiscordApiCall("startThreadFromMessage"),
+          createMessage: () => unexpectedDiscordApiCall("createMessage"),
+          updateMessage: () => unexpectedDiscordApiCall("updateMessage"),
+          ensureCommands: (token, guildIds) =>
+            Effect.sync(() => {
+              reconciliations.push({ token, guildIds });
+            }).pipe(Effect.andThen(Deferred.succeed(completed, undefined))),
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
+        };
+
+        yield* Effect.raceFirst(
+          makeDiscordGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-discord-command-reconciliation-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          ),
+          Deferred.await(completed),
+        );
+      }),
+    );
+
+    expect(reconciliations).toEqual([{ token: "token", guildIds: ["guild-1", "guild-2"] }]);
   });
 
   test("responds to owner-only status and scoped stop slash commands in a thread", async () => {
@@ -316,6 +374,113 @@ describe("Discord gateway boundary", () => {
   test("chunks by Unicode code point at Discord's limit", () => {
     const chunks = discordMessageChunks("🦆".repeat(2_001));
     expect(chunks.map((chunk) => [...chunk].length)).toEqual([2_000, 1]);
+  });
+
+  test("bounds idempotent retries and never retries an ambiguous POST", async () => {
+    const failure = (operation: "createMessage" | "updateMessage") =>
+      new DiscordApiError({
+        operation,
+        reason: "server",
+        retriable: true,
+        message: "accepted request response lost",
+        cause: { message: "connection closed" },
+      });
+    let updateAttempts = 0;
+    const delays: Array<number> = [];
+    const update = await Effect.runPromise(
+      retryDiscordDelivery(
+        "idempotent",
+        () => {
+          updateAttempts += 1;
+          return Effect.fail(failure("updateMessage"));
+        },
+        (seconds) => Effect.sync(() => delays.push(seconds)),
+      ).pipe(Effect.result),
+    );
+    let postAttempts = 0;
+    const post = await Effect.runPromise(
+      retryDiscordDelivery(
+        "post",
+        () => {
+          postAttempts += 1;
+          return Effect.fail(failure("createMessage"));
+        },
+        () => Effect.void,
+      ).pipe(Effect.result),
+    );
+
+    expect(Result.isFailure(update) && update.failure.reason).toBe("server");
+    expect(updateAttempts).toBe(4);
+    expect(delays).toEqual([1, 2, 4]);
+    expect(Result.isFailure(post) && post.failure.reason).toBe("server");
+    expect(postAttempts).toBe(1);
+    expect(discordIngressTerminalState(true, true)).toBe("unknown");
+    expect(discordIngressTerminalState(true, false)).toBe("unknown");
+  });
+
+  test("does not repeat native thread creation when Discord loses the accepted response", async () => {
+    let threadAttempts = 0;
+    let openChatCalls = 0;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const diagnosticSent = yield* Deferred.make<void>();
+        let delivered = false;
+        const socket: DiscordSocket = {
+          next: Effect.suspend(() => {
+            if (delivered) return Effect.never;
+            delivered = true;
+            return Effect.succeed(message({ guildId: "guild", channelId: "root" }));
+          }),
+          nextConnectionState: Effect.never,
+          close: Effect.void,
+        };
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () => Effect.succeed(socket),
+          getChannel: () => Effect.succeed({ id: "root", type: 0 }),
+          startThreadFromMessage: () => {
+            threadAttempts += 1;
+            return Effect.fail(
+              new DiscordApiError({
+                operation: "startThreadFromMessage",
+                reason: "network",
+                retriable: true,
+                message: "accepted request response lost",
+                cause: { message: "connection closed after write" },
+              }),
+            );
+          },
+          createMessage: () =>
+            Deferred.succeed(diagnosticSent, undefined).pipe(Effect.as({ id: "diagnostic" })),
+          updateMessage: () => Effect.void,
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () => {
+            openChatCalls += 1;
+            return Effect.succeed({ prompt: () => Effect.succeed("reply"), dispose: Effect.void });
+          },
+        };
+
+        yield* Effect.raceFirst(
+          makeDiscordGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-discord-thread-response-loss-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          ),
+          Deferred.await(diagnosticSent),
+        );
+      }),
+    );
+
+    expect(threadAttempts).toBe(1);
+    expect(openChatCalls).toBe(0);
   });
 
   test("bounds visible progress by time and meaningful growth", () => {
@@ -843,6 +1008,7 @@ describe("Discord gateway boundary", () => {
               return "accepted" as const;
             }),
           start: () => Effect.succeed(true),
+          requeue: () => Effect.void,
           finish: (_profilePath, _payload, _ownerId, state) =>
             Effect.sync(() => {
               finishedState = state;
@@ -880,6 +1046,154 @@ describe("Discord gateway boundary", () => {
     expect(admissions).toEqual(["m1", "m1"]);
     expect(prompted).toEqual(["hello"]);
     expect(finishedState).toBe("completed");
+  });
+
+  test("settles an accepted POST with a lost response as unknown without replaying it", async () => {
+    let postAttempts = 0;
+    let promptCalls = 0;
+    let finishedState: DiscordIngressTerminalState | undefined;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const finished = yield* Deferred.make<void>();
+        let delivered = false;
+        const socket: DiscordSocket = {
+          next: Effect.suspend(() => {
+            if (delivered) return Effect.never;
+            delivered = true;
+            return Effect.succeed(message());
+          }),
+          nextConnectionState: Effect.never,
+          close: Effect.void,
+        };
+        const responseLost = new DiscordApiError({
+          operation: "createMessage",
+          reason: "network",
+          retriable: true,
+          message: "accepted request response lost",
+          cause: { message: "connection closed after write" },
+        });
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () => Effect.succeed(socket),
+          getChannel: () => unexpectedDiscordApiCall("getChannel"),
+          startThreadFromMessage: () => unexpectedDiscordApiCall("startThreadFromMessage"),
+          createMessage: () =>
+            Effect.sync(() => {
+              postAttempts += 1;
+            }).pipe(Effect.andThen(Effect.fail(responseLost))),
+          updateMessage: () => Effect.void,
+        };
+        const ingress: DiscordIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          readReplayable: () => Effect.succeed([]),
+          admit: () => Effect.succeed("accepted"),
+          start: () => Effect.succeed(true),
+          requeue: () => Effect.void,
+          finish: (_profilePath, _payload, _ownerId, state) =>
+            Effect.sync(() => {
+              finishedState = state;
+            }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () => {
+            promptCalls += 1;
+            return Effect.succeed({ prompt: () => Effect.succeed("reply"), dispose: Effect.void });
+          },
+        };
+
+        yield* Effect.raceFirst(
+          makeDiscordGateway(agent, transport, undefined, ingress).runLoop(
+            { path: "/tmp/ziggy-discord-response-loss-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          ),
+          Deferred.await(finished),
+        );
+      }),
+    );
+
+    expect(postAttempts).toBe(1);
+    expect(promptCalls).toBe(0);
+    expect(finishedState).toBe("unknown");
+  });
+
+  test("requeues unfinished durable work when the resident shuts down gracefully", async () => {
+    const requeued: Array<DiscordIngressPayload> = [];
+    const finishedStates: Array<DiscordIngressTerminalState> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const promptStarted = yield* Deferred.make<void>();
+        let delivered = false;
+        const socket: DiscordSocket = {
+          next: Effect.suspend(() => {
+            if (delivered) return Effect.never;
+            delivered = true;
+            return Effect.succeed(message());
+          }),
+          nextConnectionState: Effect.never,
+          close: Effect.void,
+        };
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () => Effect.succeed(socket),
+          getChannel: () => unexpectedDiscordApiCall("getChannel"),
+          startThreadFromMessage: () => unexpectedDiscordApiCall("startThreadFromMessage"),
+          createMessage: () => Effect.succeed({ id: "placeholder" }),
+          updateMessage: () => Effect.void,
+        };
+        const ingress: DiscordIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          readReplayable: () => Effect.succeed([]),
+          admit: () => Effect.succeed("accepted"),
+          start: () => Effect.succeed(true),
+          requeue: (_profilePath, payload) =>
+            Effect.sync(() => {
+              requeued.push(payload);
+            }),
+          finish: (_profilePath, _payload, _ownerId, state) =>
+            Effect.sync(() => {
+              finishedStates.push(state);
+            }),
+        };
+        const agent: ZiggyAgentShape = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openChat: () =>
+            Effect.succeed({
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+              dispose: Effect.void,
+            }),
+        };
+
+        const resident = yield* makeDiscordGateway(agent, transport, undefined, ingress)
+          .runLoop(
+            { path: "/tmp/ziggy-discord-graceful-restart-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(promptStarted);
+        yield* Fiber.interrupt(resident);
+      }),
+    );
+
+    expect(requeued.map((payload) => payload.messageId)).toEqual(["m1"]);
+    expect(finishedStates).toEqual([]);
   });
 
   test("replays accepted Discord ingress before waiting for new socket messages", async () => {
@@ -928,6 +1242,7 @@ describe("Discord gateway boundary", () => {
               lifecycle.push(`start:${payload.messageId}`);
               return true;
             }),
+          requeue: () => Effect.void,
           finish: (_profilePath, payload, _ownerId, state) =>
             Effect.sync(() => {
               lifecycle.push(`finish:${payload.messageId}:${state}`);

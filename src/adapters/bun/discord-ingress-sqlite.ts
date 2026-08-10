@@ -429,6 +429,25 @@ export const startDiscordIngress = (
       .immediate(),
   );
 
+export const requeueDiscordIngress = (
+  profilePath: string,
+  payload: DiscordIngressPayload,
+  ownerId: string,
+): Effect.Effect<void, DiscordIngressDatabaseError> =>
+  withDatabase(profilePath, "requeue", (db) => {
+    const changed = db
+      .query(
+        `UPDATE discord_ingress SET state='received',owner_id=NULL,started_at_ms=NULL
+         WHERE message_id=? AND state='running' AND owner_id=?`,
+      )
+      .run(payload.messageId, ownerId).changes;
+    if (changed !== 1) {
+      throw databaseError("requeue owned row", discordIngressDatabasePath(profilePath), {
+        messageId: payload.messageId,
+      });
+    }
+  });
+
 export const finishDiscordIngress = (
   profilePath: string,
   payload: DiscordIngressPayload,

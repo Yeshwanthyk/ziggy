@@ -53,8 +53,10 @@ channel-specific session routing.
   reports that conversation's active and queued counts. `/stop` uses the same scoped cancellation
   path and generation fence as the exact text command `stop`. In a top-level server channel, the
   commands direct the owner to use a Ziggy work thread so session identity remains unambiguous.
-- On resident startup, Ziggy idempotently creates or repairs only its two global commands. It does
-  not bulk-overwrite the command registry or remove commands owned by another integration.
+- After the Gateway READY event, Ziggy idempotently creates or repairs its two global commands and
+  removes the obsolete `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
+  definitions from this application at both global and connected-guild scope. Other command names
+  remain untouched.
 - Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
   not a Discord slash command.
 
@@ -276,8 +278,15 @@ The strict journal fails closed on an unknown or modified schema. Inspect `ziggy
 configured channels remain isolated and continue running. Do not delete or edit
 `.runtime/discord-ingress.sqlite` as a first repair step because it may contain accepted unfinished
 work. Preserve a copy and diagnose the schema or filesystem failure. On an ordinary resident
-restart, Ziggy automatically returns foreign-owner `running` rows to `received` and replays them in
-their original admission order.
+restart, orderly shutdown returns each unfinished owned row to `received` without erasing its
+prompt, while startup recovers any foreign-owner `running` row left by an abrupt stop. Both paths
+replay work in original admission order.
+
+Discord delivery retries are operation-aware and bounded. Reads and updates may be retried up to
+four total attempts. New thread and message POSTs are retried only after an explicit rate-limit
+response; a network, server, or invalid-response failure may mean Discord accepted the write, so
+Ziggy does not repeat it. When that ambiguity occurs after durable admission, the ingress row
+settles as `unknown` rather than replaying a message that may already have been delivered.
 
 ### The wrong messages reach Ziggy
 
@@ -340,10 +349,11 @@ image shows a yellow background with a blue rounded rectangle on the left and a 
 right.` The source message visibly settled with ✅, `serve status` reported Discord connected with
   active `0`, queued `0`, completed `1`, cancelled `0`, failed `0`, and the newest journal row was
   `completed` with zero retained text bytes and empty attachment metadata.
-- The resident registered the narrow global `status` and `stop` command definitions while leaving
-  the existing guild-scoped `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
-  commands intact. Temporary guild copies used for immediate cache testing were removed precisely
-  to prevent duplicate picker entries.
+- The original slash-control proof registered the narrow global `status` and `stop` definitions but
+  left the old guild-scoped `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
+  definitions visible. Current startup reconciliation treats those exact names as obsolete commands
+  owned by this application and deletes them from every guild reported by Gateway READY; genuinely
+  unrelated command names remain untouched.
 - Computer Use in `/Applications/Discord.app` selected `/status` from the native Apps picker and
   received the private response `Ziggy is ready in this thread. Active: 0 · queued: 0.` It then
   selected `/stop` through the same picker and received the private response

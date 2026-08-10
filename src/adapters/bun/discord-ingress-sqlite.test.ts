@@ -12,6 +12,7 @@ import {
   finishDiscordIngress,
   initializeDiscordIngressDatabase,
   readReplayableDiscordIngress,
+  requeueDiscordIngress,
   recoverDiscordIngress,
   startDiscordIngress,
 } from "./discord-ingress-sqlite";
@@ -130,6 +131,33 @@ describe("Discord durable ingress SQLite boundary", () => {
 
     await run(recoverDiscordIngress(path, "new-owner"));
     expect(await run(readReplayableDiscordIngress(path))).toEqual([foreign]);
+  });
+
+  test("requeues an interrupted owned row without erasing its replay payload", async () => {
+    const path = await profile();
+    const item = payload("message-1");
+    await run(initializeDiscordIngressDatabase(path));
+    await run(admitDiscordIngress(path, item, 10));
+    await run(startDiscordIngress(path, item, "owner-a", 20));
+
+    await run(requeueDiscordIngress(path, item, "owner-a"));
+
+    expect(await run(readReplayableDiscordIngress(path))).toEqual([item]);
+    const inspected = new Database(discordIngressDatabasePath(path), { readonly: true });
+    expect(
+      inspected
+        .query(
+          "SELECT state,text,owner_id ownerId,started_at_ms startedAtMs,finished_at_ms finishedAtMs FROM discord_ingress WHERE message_id=?",
+        )
+        .get(item.messageId),
+    ).toEqual({
+      state: "received",
+      text: item.text,
+      ownerId: null,
+      startedAtMs: null,
+      finishedAtMs: null,
+    });
+    inspected.close(false);
   });
 
   test("fails closed for an unknown schema version", async () => {
