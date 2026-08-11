@@ -86,7 +86,7 @@ The public `ExtensionUIContext` supports the following TUI-facing surface:
 - header and widgets above/below the editor: `setHeader` and `setWidget`
   (`:169-190`);
 - focused custom components and overlays: `custom(factory, { overlay,
-  overlayOptions, onHandle })` (`:195-210`);
+overlayOptions, onHandle })` (`:195-210`);
 - editor interaction and replacement: `pasteToEditor`, `setEditorText`,
   `getEditorText`, `editor`, autocomplete wrapping, and
   `setEditorComponent` (`:212-275`);
@@ -106,10 +106,11 @@ convention list shows
 
 ## Consequence for Ziggy vocabulary
 
-A **Ziggy extension** is a repository-owned Pi package under
-`extensions/<id>/`. The package is the unifying distribution boundary; it may
-contain one or more progressively loaded Agent Skills, executable Pi extension
-entrypoints, or both.
+A **Ziggy extension** is a Pi package. Approved bundled packages are declared by repository-root
+`catalog.json`; Profile-owned packages live under `<profile>/extensions/<id>/` without becoming a
+second public catalogue.
+The package is the unifying capability boundary and may contain one or more
+progressively loaded Agent Skills, executable Pi extension entrypoints, or both.
 
 The two resource lifecycles remain distinct inside the package:
 

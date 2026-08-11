@@ -104,8 +104,8 @@ source-lookup tool call and is never needed to run Ziggy.
 | --- | --- | --- |
 | `src/main.ts` — `repositoryRoot` | `import.meta.dir/..` is a physical checkout | Remove production `repositoryRoot`; inject a built-in catalog capability. |
 | `src/adapters/fs/profile-extensions.ts` — `readExtensionPackage`, `scanExtensionShelf`, `setExtensionSelection` | Built-in manifests and resources are read from repository directories at runtime | Profile selection I/O remains filesystem-owned; package lookup/validation comes from generated catalog values. |
-| `src/adapters/pi/resources.ts` — `discoverPiResources` | Returns extension and skill paths | Return selected inline extension factories and embedded skill descriptors, plus optional physical Profile skill paths. |
-| `src/adapters/pi/pi-agent.ts` — `createProfileRuntime` | Passes `additionalExtensionPaths` and repository skill paths | Pass selected factories through `extensionFactories`; merge embedded skills through `skillsOverride`; retain only Profile-local physical paths. |
+| `src/adapters/pi/resources.ts` — `discoverPiResources` | Returns extension and skill paths | Return selected catalogue factories and embedded skill descriptors while preserving selected physical Profile extension and skill paths. |
+| `src/adapters/pi/pi-agent.ts` — `createProfileRuntime` | Passes `additionalExtensionPaths` and repository skill paths | Pass catalogue factories through `extensionFactories`; merge embedded catalogue skills through `skillsOverride`; retain Profile-local physical extension and skill paths. |
 | `src/application/profiles.ts` — `repositorySkillCatalog`, extension list/show/mutate | Lists and copies from repository directories | List/show from catalog metadata; copy embedded skill files into the Profile for `skills add`; selection validation uses catalog IDs. |
 | `src/application/doctor.ts` — resource check | Rediscovers checkout paths | Validate catalog/selection and embedded resource availability without filesystem mutation. |
 | `src/application/setup.ts` and service signatures | Thread `repositoryRoot` through setup/doctor | Remove the argument and consume the catalog capability. |
