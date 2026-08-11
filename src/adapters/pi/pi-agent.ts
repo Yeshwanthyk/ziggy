@@ -63,7 +63,10 @@ import {
   type AutomationTuiDispatch,
   type AutomationTuiHandler,
 } from "./automation-tui";
-import { createProfileExtensionSelectionRunner } from "./profile-extension-selection";
+import {
+  createProfileExtensionSelectionRunner,
+  type ProfileExtensionCatalogOperations,
+} from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
@@ -615,6 +618,7 @@ const createProfileRuntime = (
   context: ChatContext,
   admittedAgents?: ReadonlyArray<ProfileAgent>,
   automationDispatch?: AutomationTuiDispatch,
+  extensionCatalog?: ProfileExtensionCatalogOperations,
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
@@ -633,6 +637,7 @@ const createProfileRuntime = (
           const services = await createAgentSessionServices({
             cwd,
             agentDir,
+<<<<<<< HEAD
             resourceLoaderOptions: (() => {
               const options: ProfileRuntimeResourceLoaderOptions = {
                 systemPrompt: soulPath,
@@ -645,7 +650,13 @@ const createProfileRuntime = (
                   createZiggyTuiExtension(
                     profilePath,
                     agents,
-                    createProfileExtensionSelectionRunner(profilePath, repositoryRoot),
+                    extensionCatalog === undefined
+                      ? undefined
+                      : createProfileExtensionSelectionRunner(
+                          profilePath,
+                          repositoryRoot,
+                          extensionCatalog,
+                        ),
                     automationDispatch,
                   ),
                   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
@@ -1056,6 +1067,7 @@ export const openTui = (
   context: ChatContext,
   repositoryRoot: string,
   automationHandler?: AutomationTuiHandler,
+  extensionCatalog?: ProfileExtensionCatalogOperations,
 ): Effect.Effect<number, OpenTuiError> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1073,6 +1085,7 @@ export const openTui = (
         context,
         undefined,
         automationDispatch,
+        extensionCatalog,
       );
 
       yield* piPromise(target.path, "open interactive mode", async () => {
@@ -1085,14 +1098,21 @@ export const openTui = (
     }),
   );
 
-export const makePiAgentLive = (repositoryRoot: string) =>
-  Layer.succeed(PiAgent, {
-    runSpecialist: (target, agentId, task, context) =>
-      runSpecialist(target, agentId, task, context, repositoryRoot),
-    askOnce: (target, prompt, continueSession, context) =>
-      askOnce(target, prompt, continueSession, context, repositoryRoot),
-    openTui: (target, context, automationHandler) =>
-      openTui(target, context, repositoryRoot, automationHandler),
-    openChat: (target, context, sessionDirectory, sessionMode) =>
-      openChat(target, context, sessionDirectory, repositoryRoot, sessionMode),
-  });
+export const makePiAgent = (
+  repositoryRoot: string,
+  extensionCatalog?: ProfileExtensionCatalogOperations,
+): PiAgentShape => ({
+  runSpecialist: (target, agentId, task, context) =>
+    runSpecialist(target, agentId, task, context, repositoryRoot),
+  askOnce: (target, prompt, continueSession, context) =>
+    askOnce(target, prompt, continueSession, context, repositoryRoot),
+  openTui: (target, context, automationHandler) =>
+    openTui(target, context, repositoryRoot, automationHandler, extensionCatalog),
+  openChat: (target, context, sessionDirectory, sessionMode) =>
+    openChat(target, context, sessionDirectory, repositoryRoot, sessionMode),
+});
+
+export const makePiAgentLive = (
+  repositoryRoot: string,
+  extensionCatalog?: ProfileExtensionCatalogOperations,
+) => Layer.succeed(PiAgent, makePiAgent(repositoryRoot, extensionCatalog));

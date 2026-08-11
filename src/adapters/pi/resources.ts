@@ -1,9 +1,14 @@
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { Effect } from "effect";
-import { readExtensionPackage, readExtensionSelection } from "../fs/profile-extensions";
+import {
+  readExtensionPackage,
+  readExtensionSelection,
+  readSelectedExtensionPackage,
+} from "../fs/profile-extensions";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
+import { APPROVED_BUNDLED_EXTENSION_IDS } from "../../catalog";
 
 export interface PiResources {
   readonly extensionPaths: ReadonlyArray<string>;
@@ -63,24 +68,35 @@ const requiredFile = (filePath: string) =>
 export const discoverPiResources = (
   profilePath: string,
   repositoryRoot: string,
+  approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
   Effect.gen(function* () {
     const selectedIds = yield* readExtensionSelection(profilePath);
     const required = yield* readExtensionPackage(repositoryRoot, "pi-packages");
     const selected = yield* Effect.forEach(selectedIds, (id) =>
-      readExtensionPackage(repositoryRoot, id),
+      readSelectedExtensionPackage(profilePath, repositoryRoot, id, approvedRepositoryIds),
     );
+    const profileExtensionsPath = join(profilePath, "extensions");
+    const isProfileOwned = (packagePath: string) => {
+      const fromProfileShelf = relative(profileExtensionsPath, packagePath);
+      return fromProfileShelf !== ".." && !fromProfileShelf.startsWith(`..${sep}`);
+    };
+    const profileOwned = selected.filter((item) => isProfileOwned(item.packagePath));
+    const catalogue = selected.filter((item) => !isProfileOwned(item.packagePath));
     const profileSkills = yield* existingDirectory(join(profilePath, "skills"));
     const extensionAuthoringSkill = yield* requiredFile(
       join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
     );
     return {
-      extensionPaths: [required, ...selected].flatMap((item) => item.extensionPaths),
+      extensionPaths: [...profileOwned, required, ...catalogue].flatMap(
+        (item) => item.extensionPaths,
+      ),
       skillPaths: [
         ...(profileSkills === undefined ? [] : [profileSkills]),
+        ...profileOwned.flatMap((item) => item.skillPaths),
         ...required.skillPaths,
         extensionAuthoringSkill,
-        ...selected.flatMap((item) => item.skillPaths),
+        ...catalogue.flatMap((item) => item.skillPaths),
       ],
     };
   });

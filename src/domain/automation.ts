@@ -35,6 +35,7 @@ const AutomationSpecialist = Schema.Struct({
 export const Automation = Schema.Struct({
   id: AutomationIdSchema,
   version: Schema.Literal(1),
+  owner: Schema.optional(NonEmpty),
   schedule: Schema.Struct({ cronSource: NonEmpty, timezone: NonEmpty, cron: CronValue }),
   gate: Schema.optional(NonEmpty),
   broadcast: Schema.Array(Schema.Union([Schema.Literals(["origin", "all"]), AutomationTarget])),
@@ -46,6 +47,7 @@ export type Automation = typeof Automation.Type;
 
 const AutomationFileSchema = Schema.Struct({
   version: Schema.Literal(1),
+  owner: Schema.optional(NonEmpty),
   cron: NonEmpty,
   timezone: NonEmpty,
   gate: Schema.optional(NonEmpty),
@@ -490,6 +492,7 @@ export const parseAutomationFile = (
       prompt: decoded.prompt,
       ...Object.fromEntries(
         [
+          decoded.owner !== undefined ? (["owner", decoded.owner] as const) : undefined,
           mention.kind === "tagged"
             ? (["specialist", { agentId: mention.agentId, task: mention.task }] as const)
             : undefined,

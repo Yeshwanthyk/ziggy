@@ -4,6 +4,7 @@ import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli"
 const helpTopics = new Set<string>([
   "help",
   "version",
+  "update",
   "init",
   "profiles",
   "skills",
@@ -121,6 +122,11 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   if (word === "version" || word === "--version" || word === "-V") {
     if (rest.length !== 0) return invalid("usage: ziggy version");
     return { _tag: "Version" };
+  }
+
+  if (word === "update") {
+    if (rest.length !== 0) return invalid("usage: ziggy update");
+    return { _tag: "Update" };
   }
 
   if (word === "tui") {
@@ -421,11 +427,13 @@ const generalHelp = `Usage:
   ziggy serve uninstall <name|path>
   ziggy gateway <name|path>  # compatibility alias
   ziggy help [command]
-  ziggy version`;
+  ziggy version
+  ziggy update`;
 
 const topicHelp = {
   help: "usage: ziggy help [command]",
   version: "usage: ziggy version",
+  update: "usage: ziggy update",
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
   profiles: "usage: ziggy profiles",
   skills:

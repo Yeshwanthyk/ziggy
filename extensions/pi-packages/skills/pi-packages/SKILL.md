@@ -1,15 +1,18 @@
 ---
 name: pi-packages
-description: Inspect and select Ziggy's repository-owned Pi extension packages for a Profile.
+description: Inspect catalogue packages and select catalogue or Profile-owned Pi extensions.
 ---
 
 # Pi packages in Ziggy
 
-Repository capabilities live under `extensions/<id>/`. Each folder is a Pi package containing an
-Agent Skill, executable Pi extension code, or both. `pi-packages` itself and the top-level
-`extension-authoring` skill are required; all other packages are optional per Profile.
+The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Bundled package
+payloads live under `extensions/<id>/`; Profile-specific packages live under
+`<profile>/extensions/<id>/`. Each package may contain an Agent Skill, executable Pi extension
+code, or both. `pi-packages` itself and the top-level `extension-authoring` skill are required; all
+other packages are optional per Profile. A Profile-owned package takes precedence over an approved
+bundled package with the same ID.
 
-Inspect the offline shelf without executing package code:
+Inspect the approved catalogue without executing package code:
 
 ```bash
 ziggy extensions list
@@ -26,10 +29,15 @@ ziggy extensions add <name|path> <id>
 ziggy extensions remove <name|path> <id>
 ```
 
-The checklist and CLI commands change only `<profile>/extensions.json`; they do not copy, install,
-delete, or load package code. Reopen the Profile or restart its resident Ziggy process after a real
-selection change. Required `pi-packages` cannot be added or removed.
+The CLI and TUI use the same lifecycle. Adding installs an approved remote package into
+`<profile>/extensions/<id>/` when needed, validates it, then atomically records the selection in
+`<profile>/extensions.json`. Removing first pauses extension-owned automation, then removes the
+selection without deleting Profile data. Reopen the Profile or restart its resident Ziggy process
+after a real selection change. Required `pi-packages` cannot be added or removed.
 
 Profile-local skills still take precedence over required and selected package skills with the same
-declared name. To create or change a package, read the `extension-authoring` skill and edit its
-folder under `extensions/`.
+declared name. To create or change a Profile-owned package, read the `extension-authoring` skill and
+edit `<profile>/extensions/<id>/`. Do not edit the Ziggy catalogue.
+
+The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
+are replaced by the single optional `self-improvement` package.

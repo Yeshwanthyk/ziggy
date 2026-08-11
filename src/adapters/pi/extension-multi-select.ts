@@ -81,7 +81,7 @@ export class ExtensionMultiSelect {
       const index = first + offset;
       const cursor = index === this.selectedIndex ? "›" : " ";
       const checkbox = this.checked.has(extension.id) ? "[x]" : "[ ]";
-      const label = `${cursor} ${checkbox} ${extension.id} · ${extension.kind} — ${extension.description}`;
+      const label = `${cursor} ${checkbox} ${extension.id} · ${extension.kind} · ${extension.source} — ${extension.description}`;
       lines.push(
         truncateToWidth(
           index === this.selectedIndex

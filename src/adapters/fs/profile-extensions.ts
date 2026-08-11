@@ -14,6 +14,14 @@ const Manifest = Schema.Struct({
     extensions: Schema.optionalKey(Schema.Array(Schema.String)),
     skills: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
+  ziggy: Schema.optionalKey(
+    Schema.Struct({
+      automations: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ id: ExtensionId, path: Schema.String })),
+      ),
+      curatorManaged: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
 });
 const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(Selection));
 const decodeExtensionIds = Schema.decodeUnknownEffect(Schema.Array(ExtensionId));
@@ -31,6 +39,7 @@ export interface ExtensionPackage {
   readonly extensionPaths: ReadonlyArray<string>;
   readonly skillPaths: ReadonlyArray<string>;
   readonly skills: ReadonlyArray<DeclaredSkill>;
+  readonly automations: ReadonlyArray<{ readonly id: string; readonly path: string }>;
   readonly kind: ExtensionKind;
   readonly required: boolean;
 }
@@ -127,7 +136,7 @@ const resolveDeclaredPath = (
   packagePath: string,
   physicalPackagePath: string,
   declared: string,
-  resource: "extension" | "skill",
+  resource: "extension" | "skill" | "automation",
 ) =>
   Effect.gen(function* () {
     const resolved = path.resolve(packagePath, declared);
@@ -160,7 +169,7 @@ const resolveDeclaredPath = (
     }
     const resourceStatus = yield* status(resolved);
     if (
-      resource === "extension"
+      resource === "extension" || resource === "automation"
         ? !resourceStatus.isFile()
         : !resourceStatus.isFile() && !resourceStatus.isDirectory()
     ) {
@@ -170,11 +179,11 @@ const resolveDeclaredPath = (
   });
 
 export const readExtensionPackage = (
-  repositoryRoot: string,
+  shelfOwnerPath: string,
   id: string,
 ): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid | ProfileFileSystemError> =>
   Effect.gen(function* () {
-    const packagePath = path.join(repositoryRoot, "extensions", id);
+    const packagePath = path.join(shelfOwnerPath, "extensions", id);
     const manifestPath = path.join(packagePath, "package.json");
     const packageStatus = yield* Effect.tryPromise({
       try: () => lstat(packagePath),
@@ -211,6 +220,15 @@ export const readExtensionPackage = (
     const skillPaths = yield* Effect.forEach(manifest.pi.skills ?? [], (declared) =>
       resolveDeclaredPath(packagePath, physicalPackagePath, declared, "skill"),
     );
+    const declaredAutomations = manifest.ziggy?.automations ?? [];
+    if (new Set(declaredAutomations.map((item) => item.id)).size !== declaredAutomations.length) {
+      return yield* invalid(manifestPath, `extension '${id}' declares duplicate automation IDs`);
+    }
+    const automations = yield* Effect.forEach(declaredAutomations, (automation) =>
+      resolveDeclaredPath(packagePath, physicalPackagePath, automation.path, "automation").pipe(
+        Effect.map((automationPath) => ({ id: automation.id, path: automationPath })),
+      ),
+    );
     const skills = (yield* Effect.forEach(skillPaths, declaredSkills)).flat();
     const description = manifest.description?.trim() || skills[0]?.description;
     if (description === undefined) {
@@ -228,19 +246,20 @@ export const readExtensionPackage = (
       extensionPaths,
       skillPaths,
       skills,
+      automations,
       kind: hasSkills && hasCode ? "skill+code" : hasSkills ? "skill" : "code",
       required: id === "pi-packages",
     };
   });
 
 export const scanExtensionShelf = (
-  repositoryRoot: string,
+  shelfOwnerPath: string,
 ): Effect.Effect<
   ReadonlyArray<ExtensionPackage>,
   ProfileExtensionInvalid | ProfileFileSystemError
 > =>
   Effect.gen(function* () {
-    const shelfPath = path.join(repositoryRoot, "extensions");
+    const shelfPath = path.join(shelfOwnerPath, "extensions");
     const entries = yield* Effect.tryPromise({
       try: () => readdir(shelfPath, { withFileTypes: true }),
       catch: (cause) => fsError("list", shelfPath, cause),
@@ -249,9 +268,57 @@ export const scanExtensionShelf = (
       entries
         .filter((entry) => entry.isDirectory())
         .sort((left, right) => left.name.localeCompare(right.name)),
-      (entry) => readExtensionPackage(repositoryRoot, entry.name),
+      (entry) => readExtensionPackage(shelfOwnerPath, entry.name),
     );
   });
+
+export const scanOptionalExtensionShelf = (
+  shelfOwnerPath: string,
+): Effect.Effect<
+  ReadonlyArray<ExtensionPackage>,
+  ProfileExtensionInvalid | ProfileFileSystemError
+> =>
+  scanExtensionShelf(shelfOwnerPath).pipe(
+    Effect.catchIf(
+      (error) => Predicate.isTagged(error, "ProfileFileSystemError") && error.code === "ENOENT",
+      () => Effect.succeed([]),
+    ),
+  );
+
+const extensionPackageExists = (shelfOwnerPath: string, id: string) => {
+  const packagePath = path.join(shelfOwnerPath, "extensions", id);
+  return Effect.tryPromise({
+    try: () => lstat(packagePath),
+    catch: (cause) => fsError("inspect", packagePath, cause),
+  }).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (error) => error.code === "ENOENT",
+      () => Effect.succeed(false),
+    ),
+  );
+};
+
+/** Resolve a Profile selection without allowing the catalogue to shadow Profile-owned code. */
+export const readSelectedExtensionPackage = (
+  profilePath: string,
+  repositoryRoot: string,
+  id: string,
+  approvedRepositoryIds?: ReadonlySet<string>,
+): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  extensionPackageExists(profilePath, id).pipe(
+    Effect.flatMap((profileOwned) => {
+      if (!profileOwned && approvedRepositoryIds !== undefined && !approvedRepositoryIds.has(id)) {
+        return Effect.fail(
+          invalid(
+            path.join(profilePath, "extensions.json"),
+            `selected extension '${id}' is neither approved nor Profile-local`,
+          ),
+        );
+      }
+      return readExtensionPackage(profileOwned ? profilePath : repositoryRoot, id);
+    }),
+  );
 
 export const readExtensionSelection = (
   profilePath: string,
@@ -290,6 +357,26 @@ export interface ExtensionSelectionSetResult {
   readonly selected: ReadonlyArray<string>;
 }
 
+/** Remove one admitted ID even when its former catalogue package no longer exists. */
+export const removeExtensionSelection = (
+  profilePath: string,
+  id: string,
+): Effect.Effect<ExtensionSelectionSetResult, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    const selectionPath = path.join(profilePath, "extensions.json");
+    const [decoded] = yield* decodeExtensionIds([id]).pipe(
+      Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
+    );
+    if (decoded === "pi-packages") {
+      return yield* invalid(selectionPath, "required extension 'pi-packages' cannot be removed");
+    }
+    const current = yield* readExtensionSelection(profilePath);
+    const selected = current.filter((item) => item !== decoded);
+    const changed = selected.length !== current.length;
+    if (changed) yield* replaceExtensionSelection(profilePath, selected);
+    return { changed, selected };
+  });
+
 export const setExtensionSelection = (
   profilePath: string,
   repositoryRoot: string,
@@ -310,9 +397,13 @@ export const setExtensionSelection = (
       return yield* invalid(selectionPath, problem);
     }
 
-    yield* Effect.forEach(decoded, (id) => readExtensionPackage(repositoryRoot, id));
+    yield* Effect.forEach(decoded, (id) =>
+      readSelectedExtensionPackage(profilePath, repositoryRoot, id),
+    );
     const current = yield* readExtensionSelection(profilePath);
-    yield* Effect.forEach(current, (id) => readExtensionPackage(repositoryRoot, id));
+    yield* Effect.forEach(current, (id) =>
+      readSelectedExtensionPackage(profilePath, repositoryRoot, id),
+    );
     const selected = [...decoded].sort();
     const changed =
       current.length !== selected.length || current.some((id, index) => id !== selected[index]);

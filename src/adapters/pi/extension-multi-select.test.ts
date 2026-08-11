@@ -15,8 +15,13 @@ test("the extension checklist toggles entries and returns one complete set", () 
   let changes = 0;
   const component = new ExtensionMultiSelect(
     [
-      { id: "alpha", description: "Alpha extension", kind: "skill" },
-      { id: "beta", description: "Beta extension", kind: "skill+code" },
+      { id: "alpha", description: "Alpha extension", kind: "skill", source: "bundled" },
+      {
+        id: "beta",
+        description: "Beta extension",
+        kind: "skill+code",
+        source: "remote-approved",
+      },
     ],
     ["alpha"],
     theme,

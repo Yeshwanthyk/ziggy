@@ -179,11 +179,18 @@ export interface AutomationDefinitionSource {
 export const createAutomationDefinition = (
   target: ProfileTarget,
   id: AutomationId,
+): Effect.Effect<AutomationDefinitionSource, AutomationFileSystemError> =>
+  installAutomationDefinition(target, id, automationDefinitionTemplate(id));
+
+/** Install one already-validated automation definition without replacing either lifecycle form. */
+export const installAutomationDefinition = (
+  target: ProfileTarget,
+  id: AutomationId,
+  source: string,
 ): Effect.Effect<AutomationDefinitionSource, AutomationFileSystemError> => {
   const directory = join(target.path, "automations");
   const path = join(directory, `${id}.md`);
   const pausedPath = join(directory, `${id}.paused.md`);
-  const source = automationDefinitionTemplate(id);
   return Effect.tryPromise({
     try: async () => {
       await physicalDirectory(target.path);

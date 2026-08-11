@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Effect, Exit } from "effect";
 import {
   discoverAutomationSources,
+  installAutomationDefinition,
   pauseAutomationDefinition,
   resumeAutomationDefinition,
 } from "./automation-files";
@@ -31,6 +32,28 @@ afterEach(async () =>
 );
 
 describe("automation filename lifecycle adapter", () => {
+  test("installs an extension-owned definition exclusively without rewriting a collision", async () => {
+    const target = await profile();
+    const owned =
+      "---\nversion: 1\nowner: extension:self-improvement\ncron: 0 3 * * *\ntimezone: UTC\ngate: test -f .runtime/self-improvement/curator-ready\nbroadcast: none\n---\n\nCurate durable learnings.\n";
+
+    const installed = await Effect.runPromise(
+      installAutomationDefinition(target, await id(), owned),
+    );
+    expect(installed).toEqual({
+      path: join(target.path, "automations", "daily.md"),
+      source: owned,
+      lifecycle: "active",
+    });
+    expect(await readFile(installed.path, "utf8")).toBe(owned);
+
+    const duplicate = await Effect.runPromiseExit(
+      installAutomationDefinition(target, await id(), "replacement\n"),
+    );
+    expect(Exit.isFailure(duplicate)).toBeTrue();
+    expect(await readFile(installed.path, "utf8")).toBe(owned);
+  });
+
   test("pause and resume preserve exact Markdown bytes without replacement", async () => {
     const target = await profile();
     const active = join(target.path, "automations", "daily.md");

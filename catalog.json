@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "extensions": [
+    {
+      "id": "acp-router",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/acp-router"
+    },
+    {
+      "id": "agent-browser",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/agent-browser"
+    },
+    {
+      "id": "apple-notes",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/apple-notes"
+    },
+    {
+      "id": "apple-reminders",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/apple-reminders"
+    },
+    {
+      "id": "codex",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/codex"
+    },
+    {
+      "id": "coding-agent",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/coding-agent"
+    },
+    {
+      "id": "diffs",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/diffs"
+    },
+    {
+      "id": "executor",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/executor"
+    },
+    {
+      "id": "gh-issues",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/gh-issues"
+    },
+    {
+      "id": "github",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/github"
+    },
+    {
+      "id": "gog",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/gog"
+    },
+    {
+      "id": "goplaces",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/goplaces"
+    },
+    {
+      "id": "here-now",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/here-now"
+    },
+    {
+      "id": "hyperframes",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/hyperframes"
+    },
+    {
+      "id": "imsg",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/imsg"
+    },
+    {
+      "id": "linear",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/linear"
+    },
+    {
+      "id": "lossless-claw",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/lossless-claw"
+    },
+    {
+      "id": "mcporter",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/mcporter"
+    },
+    {
+      "id": "nano-pdf",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/nano-pdf"
+    },
+    {
+      "id": "notion",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/notion"
+    },
+    {
+      "id": "obsidian",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/obsidian"
+    },
+    {
+      "id": "onepassword",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/onepassword"
+    },
+    {
+      "id": "open-computer-use",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/open-computer-use"
+    },
+    {
+      "id": "openai-whisper",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/openai-whisper"
+    },
+    {
+      "id": "pi-packages",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/pi-packages"
+    },
+    {
+      "id": "qmd",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/qmd"
+    },
+    {
+      "id": "self-improvement",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/self-improvement"
+    },
+    {
+      "id": "things-mac",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/things-mac"
+    },
+    {
+      "id": "tmux",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/tmux"
+    },
+    {
+      "id": "wacli",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/wacli"
+    },
+    {
+      "id": "weather",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/weather"
+    },
+    {
+      "id": "web-search",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/web-search"
+    },
+    {
+      "id": "xurl",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/xurl"
+    }
+  ]
+}

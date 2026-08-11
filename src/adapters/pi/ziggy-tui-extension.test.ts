@@ -344,8 +344,18 @@ describe("Ziggy TUI extension", () => {
       list: () =>
         Promise.resolve({
           available: [
-            { id: "alpha", description: "Alpha extension", kind: "skill" },
-            { id: "beta", description: "Beta extension", kind: "skill+code" },
+            {
+              id: "alpha",
+              description: "Alpha extension",
+              kind: "skill",
+              source: "bundled",
+            },
+            {
+              id: "beta",
+              description: "Beta extension",
+              kind: "skill+code",
+              source: "remote-approved",
+            },
           ],
           selected: ["alpha"],
         }),

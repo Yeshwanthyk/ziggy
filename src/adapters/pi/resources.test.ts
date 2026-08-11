@@ -9,6 +9,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Predicate, Result } from "effect";
+import { APPROVED_BUNDLED_EXTENSION_IDS } from "../../catalog";
 import { discoverPiResources } from "./resources";
 
 const temporaryPaths: Array<string> = [];
@@ -41,25 +42,31 @@ const writePackage = async (
   );
 };
 
-const resolveResources = (profilePath: string, repositoryRoot: string) =>
-  Effect.runPromise(discoverPiResources(profilePath, repositoryRoot));
+const FIXTURE_APPROVED = new Set(["alpha", "beta"]);
+const resolveResources = (
+  profilePath: string,
+  repositoryRoot: string,
+  approvedRepositoryIds: ReadonlySet<string> = FIXTURE_APPROVED,
+) => Effect.runPromise(discoverPiResources(profilePath, repositoryRoot, approvedRepositoryIds));
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-test("discovers repository Pi extensions and skills in Profile-first order", async () => {
+test("discovers selected Profile-owned and catalogue packages in Profile-first order", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
   const repositoryRoot = join(root, "ziggy");
   const alphaPackage = join(repositoryRoot, "extensions", "alpha");
   const betaPackage = join(repositoryRoot, "extensions", "beta");
+  const gammaPackage = join(profilePath, "extensions", "gamma");
 
   const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
   await writeSkill(join(profilePath, "skills", "profile"), "profile", "profile skill");
   await writeSkill(join(alphaPackage, "skills", "alpha"), "alpha", "alpha skill");
   await writeSkill(join(betaPackage, "skills", "beta"), "beta", "beta skill");
+  await writeSkill(join(gammaPackage, "skills", "gamma"), "gamma", "gamma skill");
   await writeSkill(join(requiredPackage, "skills", "required"), "required", "required skill");
   await writeSkill(
     join(repositoryRoot, "skills", "extension-authoring"),
@@ -68,16 +75,22 @@ test("discovers repository Pi extensions and skills in Profile-first order", asy
   );
   await writePackage(alphaPackage, "alpha", { skills: ["./skills"] });
   await writePackage(betaPackage, "beta", { extensions: ["./index.ts"], skills: ["./skills"] });
+  await writePackage(gammaPackage, "gamma", {
+    extensions: ["./index.ts"],
+    skills: ["./skills"],
+  });
   await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
   await writeFile(join(betaPackage, "index.ts"), "export default function () {}\n", "utf8");
-  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["beta"]}\n');
+  await writeFile(join(gammaPackage, "index.ts"), "export default function () {}\n", "utf8");
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["beta","gamma"]}\n');
 
   const resources = await resolveResources(profilePath, repositoryRoot);
 
   expect(resources).toEqual({
-    extensionPaths: [join(betaPackage, "index.ts")],
+    extensionPaths: [join(gammaPackage, "index.ts"), join(betaPackage, "index.ts")],
     skillPaths: [
       join(profilePath, "skills"),
+      join(gammaPackage, "skills"),
       join(requiredPackage, "skills"),
       join(repositoryRoot, "skills", "extension-authoring", "SKILL.md"),
       join(betaPackage, "skills"),
@@ -113,12 +126,54 @@ test("an unselected broken package does not block runtime discovery", async () =
   });
 });
 
-test("Pi keeps Profile skill precedence while loading package extensions", async () => {
+test("runtime rejects an unapproved repository package but accepts the same Profile-local ID", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-approval-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const repositoryRoot = join(root, "ziggy");
+  const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
+  const repositoryPackage = join(repositoryRoot, "extensions", "stray");
+  const profilePackage = join(profilePath, "extensions", "stray");
+
+  await mkdir(profilePath, { recursive: true });
+  await writeSkill(join(requiredPackage, "skills", "required"), "required", "required skill");
+  await writeSkill(join(repositoryPackage, "skills", "stray"), "stray", "stray skill");
+  await writePackage(requiredPackage, "pi-packages", { skills: ["./skills"] });
+  await writePackage(repositoryPackage, "stray", { skills: ["./skills"] });
+  await writeSkill(
+    join(repositoryRoot, "skills", "extension-authoring"),
+    "extension-authoring",
+    "authoring skill",
+  );
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["stray"]}\n');
+
+  const rejected = await Effect.runPromise(
+    discoverPiResources(profilePath, repositoryRoot, new Set()).pipe(Effect.result),
+  );
+  expect(
+    Result.match(rejected, {
+      onFailure: (error) =>
+        Predicate.isTagged(error, "ProfileExtensionInvalid") &&
+        error.message.includes("neither approved nor Profile-local"),
+      onSuccess: () => false,
+    }),
+  ).toBe(true);
+
+  await writeSkill(join(profilePackage, "skills", "stray"), "stray", "Profile-local skill");
+  await writePackage(profilePackage, "stray", { skills: ["./skills"] });
+
+  const accepted = await resolveResources(profilePath, repositoryRoot, new Set());
+  expect(accepted.skillPaths).toContain(join(profilePackage, "skills"));
+  expect(accepted.skillPaths).not.toContain(join(repositoryPackage, "skills"));
+});
+
+test("Pi loads a selected Profile-owned extension and keeps Profile skill precedence", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-pi-resources-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
   const repositoryRoot = join(root, "ziggy");
-  const extensionPackage = join(repositoryRoot, "extensions", "alpha");
+  const extensionPackage = join(profilePath, "extensions", "alpha");
+  const cataloguePackage = join(repositoryRoot, "extensions", "alpha");
   const requiredPackage = join(repositoryRoot, "extensions", "pi-packages");
   const topLevelSkills = join(repositoryRoot, "skills");
 
@@ -135,6 +190,7 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     "extension-only",
     "extension only",
   );
+  await writeSkill(join(cataloguePackage, "skills", "catalogue"), "catalogue", "must not load");
   await writeSkill(join(requiredPackage, "skills", "required"), "required", "required only");
   await writeSkill(
     join(topLevelSkills, "extension-authoring"),
@@ -156,7 +212,12 @@ test("Pi keeps Profile skill precedence while loading package extensions", async
     ].join("\n"),
     "utf8",
   );
+  await writeFile(join(cataloguePackage, "index.ts"), "export default function () {}\n", "utf8");
   await writePackage(extensionPackage, "alpha", {
+    extensions: ["./index.ts"],
+    skills: ["./skills"],
+  });
+  await writePackage(cataloguePackage, "alpha", {
     extensions: ["./index.ts"],
     skills: ["./skills"],
   });
@@ -221,7 +282,7 @@ test("selection decoding fails closed for malformed, duplicate, reserved, and un
   ]) {
     await writeFile(join(profilePath, "extensions.json"), content);
     const result = await Effect.runPromise(
-      discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+      discoverPiResources(profilePath, repositoryRoot, FIXTURE_APPROVED).pipe(Effect.result),
     );
     expect(
       Result.match(result, {
@@ -246,7 +307,7 @@ test("missing or wrong-type mandatory extension-authoring skill fails closed", a
     if (state === "directory") await mkdir(authoringSkillPath, { recursive: true });
 
     const result = await Effect.runPromise(
-      discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+      discoverPiResources(profilePath, repositoryRoot, FIXTURE_APPROVED).pipe(Effect.result),
     );
 
     expect(
@@ -281,7 +342,7 @@ test("a selected package must be a physical shelf directory", async () => {
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
   const result = await Effect.runPromise(
-    discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+    discoverPiResources(profilePath, repositoryRoot, FIXTURE_APPROVED).pipe(Effect.result),
   );
 
   expect(
@@ -317,7 +378,7 @@ test("manifest-declared symlinks cannot escape their package", async () => {
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
   const result = await Effect.runPromise(
-    discoverPiResources(profilePath, repositoryRoot).pipe(Effect.result),
+    discoverPiResources(profilePath, repositoryRoot, FIXTURE_APPROVED).pipe(Effect.result),
   );
 
   expect(
@@ -362,10 +423,7 @@ test("the complete repository catalog loads through production paths and Pi mani
     "openai-whisper",
     "pi-packages",
     "qmd",
-    "self-improving-agent",
-    "skill-creator",
-    "skill-curator",
-    "smart-memory",
+    "self-improvement",
     "things-mac",
     "tmux",
     "wacli",
@@ -395,9 +453,9 @@ test("the complete repository catalog loads through production paths and Pi mani
     "lcm_sessions",
     "linear",
     "open_computer_use",
-    "skill_curator_list",
-    "skill_curator_read",
-    "skill_curator_write",
+    "self_improvement_extension_write",
+    "self_improvement_log",
+    "self_improvement_status",
     "web_search",
   ];
   const packageNames = (await readdir(extensionsRoot, { withFileTypes: true }))
@@ -443,7 +501,11 @@ test("the complete repository catalog loads through production paths and Pi mani
     join(profilePath, "extensions.json"),
     `${JSON.stringify({ extensions: packageNames.filter((name) => name !== "pi-packages") }, null, 2)}\n`,
   );
-  const productionResources = await resolveResources(profilePath, repositoryRoot);
+  const productionResources = await resolveResources(
+    profilePath,
+    repositoryRoot,
+    APPROVED_BUNDLED_EXTENSION_IDS,
+  );
   expect(
     productionResources.extensionPaths.map((extensionPath) => basename(dirname(extensionPath))),
   ).toEqual([
@@ -455,15 +517,15 @@ test("the complete repository catalog loads through production paths and Pi mani
     "linear",
     "lossless-claw",
     "open-computer-use",
-    "skill-curator",
+    "self-improvement",
     "web-search",
   ]);
-  expect(productionResources.skillPaths).toHaveLength(37);
+  expect(productionResources.skillPaths).toHaveLength(34);
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
   );
-  assertCatalog(productionServices, 37);
+  assertCatalog(productionServices, 34);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
@@ -478,6 +540,6 @@ test("the complete repository catalog loads through production paths and Pi mani
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
-    45,
+    42,
   );
 });

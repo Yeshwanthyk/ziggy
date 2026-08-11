@@ -1,8 +1,8 @@
 {
-  "name": "@ziggy/skill-curator",
+  "name": "@ziggy/self-improvement",
   "version": "0.1.0",
   "private": true,
-  "description": "Pi tools and workflow for explicit Profile skill curation.",
+  "description": "Bounded Profile learning observations and Curator-managed skill packages.",
   "keywords": [
     "pi-package"
   ],
@@ -10,8 +10,8 @@
   "scripts": {
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint index.ts test",
-    "fmt": "oxfmt index.ts test skills"
+    "lint": "oxlint index.ts src test",
+    "fmt": "oxfmt index.ts src test skills"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "0.82.0",
@@ -23,6 +23,14 @@
     ],
     "skills": [
       "./skills"
+    ]
+  },
+  "ziggy": {
+    "automations": [
+      {
+        "id": "self-improvement-curator",
+        "path": "./automations/curator.md"
+      }
     ]
   }
 }

@@ -220,61 +220,6 @@ test("addSkill refuses an existing destination without force and force replaces 
   }
 });
 
-test("extension catalog is offline, sorted, and falls back to declared skill metadata", async () => {
-  const fixture = await makeFixture();
-  try {
-    const alpha = path.join(fixture.repositoryRoot, "extensions", "alpha");
-    const beta = path.join(fixture.repositoryRoot, "extensions", "beta");
-    const required = path.join(fixture.repositoryRoot, "extensions", "pi-packages");
-    await writeSkill(
-      path.join(alpha, "skills", "alpha"),
-      "---\nname: alpha-skill\ndescription: Alpha fallback.\n---\n",
-    );
-    await writeFile(
-      path.join(alpha, "package.json"),
-      JSON.stringify({ name: "@ziggy/alpha", pi: { skills: ["./skills"] } }),
-    );
-    await mkdir(beta, { recursive: true });
-    await writeFile(path.join(beta, "explode.ts"), 'throw new Error("must not import")\n');
-    await writeFile(
-      path.join(beta, "package.json"),
-      JSON.stringify({
-        name: "@ziggy/beta",
-        description: "Beta code.",
-        pi: { extensions: ["./explode.ts"] },
-      }),
-    );
-    await writeSkill(
-      path.join(required, "skills", "required"),
-      "---\nname: required\ndescription: Required.\n---\n",
-    );
-    await writeFile(
-      path.join(required, "package.json"),
-      JSON.stringify({
-        name: "@ziggy/pi-packages",
-        description: "Package controls.",
-        pi: { skills: ["./skills"] },
-      }),
-    );
-
-    const catalog = await useProfiles((profiles) =>
-      profiles.listExtensions(fixture.repositoryRoot),
-    );
-    expect(catalog.map((item) => [item.id, item.kind, item.required])).toEqual([
-      ["alpha", "skill", false],
-      ["beta", "code", false],
-      ["pi-packages", "skill", true],
-    ]);
-    expect(catalog[0]?.description).toBe("Alpha fallback.");
-    expect(
-      (await useProfiles((profiles) => profiles.showExtension(fixture.repositoryRoot, "beta")))
-        .extensionPaths,
-    ).toEqual([path.join(beta, "explode.ts")]);
-  } finally {
-    await rm(fixture.root, { recursive: true, force: true });
-  }
-});
-
 test("extension selection writes canonically and preserves bytes on no-op or invalid input", async () => {
   const fixture = await makeFixture();
   try {
@@ -296,6 +241,19 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
     const brokenPackage = path.join(fixture.repositoryRoot, "extensions", "broken");
     await mkdir(brokenPackage, { recursive: true });
     await writeFile(path.join(brokenPackage, "package.json"), "{");
+    const profilePackage = path.join(fixture.profile.path, "extensions", "gamma");
+    await writeSkill(
+      path.join(profilePackage, "skills", "gamma"),
+      "---\nname: gamma\ndescription: Profile-owned gamma.\n---\n",
+    );
+    await writeFile(
+      path.join(profilePackage, "package.json"),
+      JSON.stringify({
+        name: "@ziggy/gamma",
+        description: "Profile-owned gamma",
+        pi: { skills: ["./skills"] },
+      }),
+    );
 
     const selectionPath = path.join(fixture.profile.path, "extensions.json");
     expect(
@@ -324,6 +282,28 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
     await useProfiles((profiles) =>
       profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
     );
+    expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
+    await useProfiles((profiles) =>
+      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "gamma"),
+    );
+    expect(await readFile(selectionPath, "utf8")).toBe(
+      '{\n  "extensions": [\n    "gamma"\n  ]\n}\n',
+    );
+    await useProfiles((profiles) =>
+      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "gamma"),
+    );
+
+    await writeFile(selectionPath, '{"extensions":["retired-package"]}\n');
+    expect(
+      await useProfiles((profiles) =>
+        profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "retired-package"),
+      ),
+    ).toEqual({
+      id: "retired-package",
+      profilePath: fixture.profile.path,
+      changed: true,
+      selected: false,
+    });
     expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
 
     await writeFile(selectionPath, '{"extensions":["alpha","alpha"]}\n');

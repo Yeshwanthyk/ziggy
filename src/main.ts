@@ -8,7 +8,7 @@ import type {
   AutomationTuiHandler,
   AutomationTuiResponse,
 } from "./adapters/pi/automation-tui";
-import { makePiAgentLive } from "./adapters/pi/pi-agent";
+import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
@@ -19,6 +19,10 @@ import {
 } from "./application/automation-definitions";
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
+import {
+  ExtensionCatalogService,
+  ExtensionCatalogServiceLive,
+} from "./application/extension-catalog";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
@@ -28,6 +32,7 @@ import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
+import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
@@ -55,6 +60,8 @@ import { renderDoctor } from "./faces/doctor-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import { renderSession, renderSessionList } from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
+import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
+import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -63,7 +70,15 @@ const resolutionOptions = {
 };
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
-const PiAgentLive = makePiAgentLive(repositoryRoot);
+const ExtensionCatalogProvided = ExtensionCatalogServiceLive.pipe(
+  Layer.provide(ExtensionArchiveClientLive),
+);
+const PiAgentLive = Layer.effect(
+  PiAgent,
+  Effect.gen(function* () {
+    return makePiAgent(repositoryRoot, yield* ExtensionCatalogService);
+  }),
+).pipe(Layer.provide(ExtensionCatalogProvided));
 const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
 const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
 const ProfileAgentsProvided = ProfileAgentsLive.pipe(
@@ -87,6 +102,7 @@ const ResidentProvided = ResidentGatewayLive.pipe(
 const ResidentServiceProvided = ResidentServiceLive.pipe(
   Layer.provide(Layer.merge(ResidentProvided, SchedulerProvided)),
 );
+const SelfUpdateProvided = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));
 
 const fail = (message: string) =>
   Effect.sync(() => {
@@ -136,6 +152,8 @@ const program = Effect.gen(function* () {
   const residentGateway = yield* ResidentGateway;
   const residentService = yield* ResidentService;
   const sessions = yield* Sessions;
+  const extensionCatalog = yield* ExtensionCatalogService;
+  const selfUpdate = yield* SelfUpdate;
 
   switch (command._tag) {
     case "Init": {
@@ -234,25 +252,30 @@ const program = Effect.gen(function* () {
       return;
     }
     case "ExtensionsList": {
-      const extensions = yield* profiles.listExtensions(repositoryRoot);
+      const extensions = yield* extensionCatalog.list(repositoryRoot);
       for (const extension of extensions) {
         console.log(
-          `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.description}`,
+          `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.source}\t${extension.description}`,
         );
       }
       return;
     }
     case "ExtensionsShow": {
-      const extension = yield* profiles.showExtension(repositoryRoot, command.id);
+      const extension = yield* extensionCatalog.show(repositoryRoot, command.id);
       console.log(`id\t${extension.id}`);
       console.log(`kind\t${extension.kind}`);
       console.log(`status\t${extension.required ? "required" : "optional"}`);
       console.log(`description\t${extension.description}`);
-      console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
-      for (const skill of extension.skills) {
+      console.log(`source\t${extension.source}`);
+      console.log(`version\t${extension.version}`);
+      console.log(`installed\t${extension.installed ? "yes" : "no"}`);
+      if (extension.packagePath !== undefined) {
+        console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
+      }
+      for (const skill of extension.skills ?? []) {
         console.log(`skill\t${skill.name} — ${skill.description}`);
       }
-      for (const extensionPath of extension.extensionPaths) {
+      for (const extensionPath of extension.extensionPaths ?? []) {
         console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
       }
       return;
@@ -260,6 +283,11 @@ const program = Effect.gen(function* () {
     case "ExtensionsAdd":
     case "ExtensionsRemove": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+      if (command._tag === "ExtensionsAdd") {
+        yield* extensionCatalog.ensureInstalled(target.path, repositoryRoot, command.id);
+      } else {
+        yield* extensionCatalog.deactivate(target.path, repositoryRoot, command.id);
+      }
       const result = yield* command._tag === "ExtensionsAdd"
         ? profiles.addExtension(target, repositoryRoot, command.id)
         : profiles.removeExtension(target, repositoryRoot, command.id);
@@ -273,6 +301,11 @@ const program = Effect.gen(function* () {
         `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`,
       );
       console.log("reopen the Profile or restart its Ziggy process to apply the change");
+      return;
+    }
+    case "Update": {
+      const updated = yield* selfUpdate.update();
+      console.log(`updated Ziggy at ${updated.path} (${updated.version})`);
       return;
     }
     case "AuthStatus": {
@@ -635,6 +668,10 @@ const program = Effect.gen(function* () {
     ResidentServiceError: (failure) => fail(failure.message),
     SessionReadFailed: (failure) => fail(failure.message),
     SessionNotFound: (failure) => fail(failure.message),
+    ExtensionCatalogInvalid: (failure) => fail(failure.message),
+    ExtensionCatalogUnavailable: (failure) => fail(failure.message),
+    ExtensionCatalogInstallFailed: (failure) => fail(failure.message),
+    ZiggyUpdateUnavailable: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.mergeAll(
@@ -663,6 +700,8 @@ const program = Effect.gen(function* () {
       SchedulerProvided,
       ResidentProvided,
       ResidentServiceProvided,
+      ExtensionCatalogProvided,
+      SelfUpdateProvided,
     ),
   ),
 );

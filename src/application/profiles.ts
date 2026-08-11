@@ -15,11 +15,10 @@ import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
-  readExtensionPackage,
   readExtensionSelection,
-  scanExtensionShelf,
+  readSelectedExtensionPackage,
+  removeExtensionSelection,
   setExtensionSelection,
-  type ExtensionPackage,
 } from "../adapters/fs/profile-extensions";
 import {
   ProfileExtensionInvalid,
@@ -109,13 +108,6 @@ export interface ProfilesApi {
     cwd: string,
     force: boolean,
   ) => Effect.Effect<InstalledSkill, ProfileSkillError>;
-  readonly listExtensions: (
-    repositoryRoot: string,
-  ) => Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionError>;
-  readonly showExtension: (
-    repositoryRoot: string,
-    id: string,
-  ) => Effect.Effect<ExtensionPackage, ProfileExtensionError>;
   readonly addExtension: (
     target: ProfileTarget,
     repositoryRoot: string,
@@ -664,24 +656,6 @@ const addSkill = (
     };
   });
 
-const listExtensions = (repositoryRoot: string) => scanExtensionShelf(repositoryRoot);
-
-const showExtension = (
-  repositoryRoot: string,
-  id: string,
-): Effect.Effect<ExtensionPackage, ProfileExtensionError> =>
-  Effect.gen(function* () {
-    const shelf = yield* scanExtensionShelf(repositoryRoot);
-    const extension = shelf.find((item) => item.id === id);
-    return extension === undefined
-      ? yield* new ProfileExtensionInvalid({
-          path: path.join(repositoryRoot, "extensions", id),
-          message: `unknown extension '${id}'`,
-          cause: undefined,
-        })
-      : extension;
-  });
-
 const verifyExtensionProfile = (target: ProfileTarget) =>
   lstatPath(path.join(target.path, "SOUL.md")).pipe(
     Effect.flatMap((status) =>
@@ -716,7 +690,16 @@ const mutateExtension = (
 ): Effect.Effect<ProfileExtensionMutation, ProfileExtensionError> =>
   Effect.gen(function* () {
     yield* verifyExtensionProfile(target);
-    const extension = yield* readExtensionPackage(repositoryRoot, id);
+    if (!selected) {
+      const result = yield* removeExtensionSelection(target.path, id);
+      return {
+        id,
+        profilePath: target.path,
+        changed: result.changed,
+        selected: false,
+      };
+    }
+    const extension = yield* readSelectedExtensionPackage(target.path, repositoryRoot, id);
     if (extension.required) {
       return yield* new ProfileExtensionInvalid({
         path: extension.packagePath,
@@ -726,15 +709,15 @@ const mutateExtension = (
     }
     const current = yield* readExtensionSelection(target.path);
     yield* Effect.forEach(current, (selectedId) =>
-      readExtensionPackage(repositoryRoot, selectedId),
+      readSelectedExtensionPackage(target.path, repositoryRoot, selectedId),
     );
     const alreadySelected = current.includes(id);
-    if (alreadySelected === selected) {
-      return { id, profilePath: target.path, changed: false, selected };
+    if (alreadySelected) {
+      return { id, profilePath: target.path, changed: false, selected: true };
     }
-    const next = selected ? [...current, id].sort() : current.filter((item) => item !== id);
+    const next = [...current, id].sort();
     const result = yield* setExtensionSelection(target.path, repositoryRoot, next);
-    return { id, profilePath: target.path, changed: result.changed, selected };
+    return { id, profilePath: target.path, changed: result.changed, selected: true };
   });
 
 export const ProfilesLive = Layer.succeed(Profiles, {
@@ -743,8 +726,6 @@ export const ProfilesLive = Layer.succeed(Profiles, {
   listProfiles,
   listSkills,
   addSkill,
-  listExtensions,
-  showExtension,
   addExtension: (target, repositoryRoot, id) => mutateExtension(target, repositoryRoot, id, true),
   removeExtension: (target, repositoryRoot, id) =>
     mutateExtension(target, repositoryRoot, id, false),
