@@ -7,11 +7,12 @@ Read-only distribution report. Ziggy was inspected from the live working tree ba
 revision `bf2e2cecf` rather than the changing latest documentation.
 
 > **Subsequent product decision:** Ziggy will ship as one runtime-complete executable with no
-> required sidecars or startup extraction. The executable will carry a generated static extension
-> and skill catalog; exact Ziggy and Pi source will be fetched from verified public release
-> coordinates only when the agent explicitly needs implementation facts. The implementation packet
-> is `docs/plans/standalone-executable-and-source-lookup.md`. This supersedes the sidecar-first
-> recommendation below while retaining the option analysis as research history.
+> required sidecars or startup extraction. The executable carries Ziggy, Pi, Effect, TypeBox, and
+> two core skills. Optional extension metadata comes from GitHub `catalog.json`; immutable,
+> checksum-pinned release assets install into the chosen Profile before execution. The current
+> implementation packet is `docs/plans/standalone-executable-and-source-lookup.md`. It supersedes
+> both the sidecar-first recommendation and the later static-optional-extension proposal while
+> retaining this report as option-analysis history.
 
 ## Executive finding
 
