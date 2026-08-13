@@ -16,7 +16,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Database } from "bun:sqlite";
-import { Clock, Context, Effect, Layer, Result, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Result, Schema } from "effect";
 import { Type } from "typebox";
 import {
   ProfileNotInitialized,
@@ -45,6 +45,7 @@ import {
   type ProfileTarget,
 } from "../../domain/profile";
 import type { ChatHandle, ChatPromptOptions } from "../../application/agent";
+import { fileSystemCauseDetails } from "../fs/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources, type PiResources } from "./resources";
 import {
@@ -68,7 +69,7 @@ import {
   createZiggyTuiExtension,
 } from "./ziggy-tui-extension";
 
-export interface PiAgentShape {
+export interface PiAgentApi {
   readonly runSpecialist: (
     target: ProfileTarget,
     agentId: string,
@@ -94,7 +95,7 @@ export interface PiAgentShape {
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
 }
 
-export class PiAgent extends Context.Service<PiAgent, PiAgentShape>()("ziggy/PiAgent") {}
+export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
 
 export type ChatSessionMode = "continue" | "fresh";
 
@@ -141,12 +142,8 @@ const requireSoul = (profilePath: string) => {
   const soulPath = join(profilePath, "SOUL.md");
   return Effect.tryPromise({
     try: () => stat(soulPath),
-    catch: (cause) => {
-      const code =
-        cause instanceof Error && "code" in cause && typeof cause.code === "string"
-          ? cause.code
-          : undefined;
-      return code === "ENOENT"
+    catch: (cause) =>
+      fileSystemCauseDetails(cause).code === "ENOENT"
         ? new ProfileNotInitialized({
             profilePath,
             message: `profile is not initialized at ${profilePath}; run 'ziggy init <name|path>'`,
@@ -156,8 +153,7 @@ const requireSoul = (profilePath: string) => {
             operation: "read system prompt",
             message: `could not read ${soulPath}`,
             cause,
-          });
-    },
+          }),
   }).pipe(
     Effect.flatMap((status) =>
       status.isFile()
@@ -193,6 +189,35 @@ const memoryWriteParameters = Type.Object({
   operations: Type.Array(memoryOperationParameters),
 });
 
+interface AgentSessionRuntimeRef {
+  current?: AgentSessionRuntime;
+}
+
+interface ProfileRuntimeResourceLoaderOptions {
+  systemPrompt: string;
+  noExtensions: true;
+  noSkills: true;
+  noPromptTemplates: true;
+  noThemes: true;
+  noContextFiles: true;
+  extensionFactories: InlineExtension[];
+  additionalExtensionPaths?: string[];
+  additionalSkillPaths?: string[];
+}
+
+interface NavigateTreeOptions {
+  summarize?: boolean;
+  customInstructions?: string;
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
+const AssistantTextContent = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+});
+const decodeAssistantTextContent = Schema.decodeUnknownOption(AssistantTextContent);
+
 const toolResult = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
@@ -219,18 +244,13 @@ const memoryIo = <A>(
     catch: (cause) => new MemoryWriteIoError({ operation, path, cause }),
   });
 
-const errorCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 const logMemoryCleanupFailure = (operation: string, path: string, cause: unknown) =>
   Effect.logWarning("Pi memory cleanup failed", { operation, path, cause });
 
 const removeTemporaryMemoryFile = (path: string): Effect.Effect<void> =>
   memoryIo("write", path, () => rm(path)).pipe(
     Effect.catch((failure) =>
-      errorCode(failure.cause) === "ENOENT"
+      fileSystemCauseDetails(failure.cause).code === "ENOENT"
         ? Effect.void
         : logMemoryCleanupFailure("remove temporary file", path, failure.cause),
     ),
@@ -312,7 +332,10 @@ const withMemoryLock = <A, E>(
                   new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
               }).pipe(Effect.result);
               if (Result.isSuccess(acquired)) break;
-              if (errorCode(acquired.failure.cause)?.startsWith("SQLITE_BUSY") !== true)
+              if (
+                fileSystemCauseDetails(acquired.failure.cause).code?.startsWith("SQLITE_BUSY") !==
+                true
+              )
                 return yield* acquired.failure;
               if ((yield* Clock.currentTimeMillis) >= deadline)
                 return yield* new MemoryWriteIoError({
@@ -404,7 +427,9 @@ const readMemoryDocument = (
   ).pipe(
     Effect.map((content) => (content.trim().length === 0 ? undefined : content)),
     Effect.catch((failure) =>
-      errorCode(failure.cause) === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(failure),
+      fileSystemCauseDetails(failure.cause).code === "ENOENT"
+        ? Effect.succeed(undefined)
+        : Effect.fail(failure),
     ),
   );
 
@@ -599,7 +624,7 @@ const createProfileRuntime = (
     const agents = admittedAgents ?? (yield* discoverProfileAgents(profilePath));
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
 
-    const runtimeRef: { current?: AgentSessionRuntime } = {};
+    const runtimeRef: AgentSessionRuntimeRef = {};
     const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
 
     const runtime = yield* piPromise(profilePath, "create agent runtime", async () => {
@@ -608,31 +633,34 @@ const createProfileRuntime = (
           const services = await createAgentSessionServices({
             cwd,
             agentDir,
-            resourceLoaderOptions: {
-              systemPrompt: soulPath,
-              noExtensions: true,
-              noSkills: true,
-              ...(resources.extensionPaths.length === 0
-                ? {}
-                : { additionalExtensionPaths: [...resources.extensionPaths] }),
-              ...(resources.skillPaths.length === 0
-                ? {}
-                : { additionalSkillPaths: [...resources.skillPaths] }),
-              noPromptTemplates: true,
-              noThemes: true,
-              noContextFiles: true,
-              extensionFactories: [
-                createZiggyTuiExtension(
-                  profilePath,
-                  agents,
-                  createProfileExtensionSelectionRunner(profilePath, repositoryRoot),
-                  automationDispatch,
-                ),
-                ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
-                createProfileMemoryExtension(profilePath, paths.documents),
-                createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
-              ],
-            },
+            resourceLoaderOptions: (() => {
+              const options: ProfileRuntimeResourceLoaderOptions = {
+                systemPrompt: soulPath,
+                noExtensions: true,
+                noSkills: true,
+                noPromptTemplates: true,
+                noThemes: true,
+                noContextFiles: true,
+                extensionFactories: [
+                  createZiggyTuiExtension(
+                    profilePath,
+                    agents,
+                    createProfileExtensionSelectionRunner(profilePath, repositoryRoot),
+                    automationDispatch,
+                  ),
+                  ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
+                  createProfileMemoryExtension(profilePath, paths.documents),
+                  createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
+                ],
+              };
+              if (resources.extensionPaths.length > 0) {
+                options.additionalExtensionPaths = [...resources.extensionPaths];
+              }
+              if (resources.skillPaths.length > 0) {
+                options.additionalSkillPaths = [...resources.skillPaths];
+              }
+              return options;
+            })(),
           });
           const specialistRunner =
             agents.length === 0
@@ -657,12 +685,20 @@ const createProfileRuntime = (
               ? []
               : [createAgentRunTool(specialistRunner), createAgentDiscussTool(specialistRunner)]),
           ];
-          const created = await createAgentSessionFromServices({
-            services,
-            sessionManager: runtimeSessionManager,
-            ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-            customTools,
-          });
+          const created = await createAgentSessionFromServices(
+            sessionStartEvent === undefined
+              ? {
+                  services,
+                  sessionManager: runtimeSessionManager,
+                  customTools,
+                }
+              : {
+                  services,
+                  sessionManager: runtimeSessionManager,
+                  sessionStartEvent,
+                  customTools,
+                },
+          );
           return {
             ...created,
             services,
@@ -701,16 +737,25 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
           return { cancelled: result.cancelled };
         },
         navigateTree: async (targetId, options) => {
-          const result = await session.navigateTree(targetId, {
-            ...(options?.summarize === undefined ? {} : { summarize: options.summarize }),
-            ...(options?.customInstructions === undefined
-              ? {}
-              : { customInstructions: options.customInstructions }),
-            ...(options?.replaceInstructions === undefined
-              ? {}
-              : { replaceInstructions: options.replaceInstructions }),
-            ...(options?.label === undefined ? {} : { label: options.label }),
-          });
+          if (
+            options?.summarize === undefined &&
+            options?.customInstructions === undefined &&
+            options?.replaceInstructions === undefined &&
+            options?.label === undefined
+          ) {
+            const result = await session.navigateTree(targetId);
+            return { cancelled: result.cancelled };
+          }
+          const navigateOptions: NavigateTreeOptions = {};
+          if (options?.summarize !== undefined) navigateOptions.summarize = options.summarize;
+          if (options?.customInstructions !== undefined) {
+            navigateOptions.customInstructions = options.customInstructions;
+          }
+          if (options?.replaceInstructions !== undefined) {
+            navigateOptions.replaceInstructions = options.replaceInstructions;
+          }
+          if (options?.label !== undefined) navigateOptions.label = options.label;
+          const result = await session.navigateTree(targetId, navigateOptions);
           return { cancelled: result.cancelled };
         },
         switchSession: (sessionPath, options) => runtime.switchSession(sessionPath, options),
@@ -753,11 +798,12 @@ export const safeProgressToolName = (value: string): string => {
 const assistantTextSnapshot = (content: ReadonlyArray<{ readonly type: string }>): string =>
   boundedCodePoints(
     content
-      .filter(
-        (item): item is { readonly type: "text"; readonly text: string } =>
-          item.type === "text" && "text" in item && typeof item.text === "string",
+      .flatMap((item) =>
+        Option.match(decodeAssistantTextContent(item), {
+          onNone: () => [],
+          onSome: ({ text }) => [text],
+        }),
       )
-      .map((item) => item.text)
       .join(""),
     MAX_PROGRESS_TEXT_CODE_POINTS,
   );

@@ -92,16 +92,18 @@ const safeCause = (cause: unknown, token: string): Error => {
   return new Error(redact(message, token));
 };
 
+interface TelegramApiErrorOptions {
+  readonly status?: number;
+  readonly retryAfterSeconds?: number;
+}
+
 const apiError = (
   operation: TelegramApiOperation,
   reason: TelegramApiErrorReason,
   retriable: boolean,
   cause: unknown,
   token: string,
-  options?: {
-    readonly status?: number;
-    readonly retryAfterSeconds?: number;
-  },
+  options?: TelegramApiErrorOptions,
 ): TelegramApiError =>
   new TelegramApiError({
     operation,
@@ -112,10 +114,10 @@ const apiError = (
         ? `Telegram ${operation} authentication failed`
         : `Telegram ${operation} failed`,
     cause: safeCause(cause, token),
-    ...(options?.status === undefined ? {} : { status: options.status }),
-    ...(options?.retryAfterSeconds === undefined
-      ? {}
-      : { retryAfterSeconds: options.retryAfterSeconds }),
+    ...(options?.status !== undefined ? { status: options.status } : undefined),
+    ...(options?.retryAfterSeconds !== undefined
+      ? { retryAfterSeconds: options.retryAfterSeconds }
+      : undefined),
   });
 
 const classifyFailure = (
@@ -132,7 +134,7 @@ const classifyFailure = (
   if (status === 429) {
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status,
-      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
   if (status >= 500) {
@@ -141,10 +143,14 @@ const classifyFailure = (
   return apiError(operation, "rejected", false, new Error(`HTTP ${status}`), token, { status });
 };
 
+type TelegramRequestBody =
+  | { offset: number; timeout: number; allowed_updates: readonly ["message"] }
+  | { chat_id: number; text: string };
+
 const request = (
   token: string,
   operation: TelegramApiOperation,
-  body: object,
+  body: TelegramRequestBody,
 ): Effect.Effect<RawResponse, TelegramApiError> =>
   Effect.tryPromise({
     try: async (signal) => {

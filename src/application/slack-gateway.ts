@@ -53,7 +53,7 @@ import {
   type SlackHealthSnapshot,
 } from "../domain/slack-health";
 import type { ProfileTarget } from "../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
+import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
 const MAX_RETRY_SECONDS = 30;
@@ -128,14 +128,14 @@ export interface SlackTransport {
   ) => Effect.Effect<SlackImageContent, SlackApiError>;
 }
 
-export interface SlackGatewayShape {
+export interface SlackGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: SlackGatewayConfig,
   ) => Effect.Effect<never, SlackGatewayError>;
 }
 
-export class SlackGateway extends Context.Service<SlackGateway, SlackGatewayShape>()(
+export class SlackGateway extends Context.Service<SlackGateway, SlackGatewayApi>()(
   "ziggy/SlackGateway",
 ) {}
 
@@ -214,22 +214,24 @@ export const classifySlackMessage = (
   }
 
   if (message.channelType === "im") {
-    return {
-      kind: "accepted",
-      message: {
-        chatKey: `user-${message.userId}`,
-        channel: message.channel,
-        context: { kind: "user", userId: "owner" },
-        ...(message.files === undefined ? {} : { files: message.files }),
-        ...(message.omittedFileCount === undefined
-          ? {}
-          : { omittedFileCount: message.omittedFileCount }),
-        statusThreadTs: message.threadTs ?? message.ts,
-        sourceTs: message.ts,
-        text: normalizeSlackUserText(message.text),
-        threadTs: message.threadTs,
-      },
+    const ingressMessage: InboundMessage = {
+      chatKey: `user-${message.userId}`,
+      channel: message.channel,
+      context: { kind: "user", userId: "owner" },
+      statusThreadTs: message.threadTs ?? message.ts,
+      sourceTs: message.ts,
+      text: normalizeSlackUserText(message.text),
+      threadTs: message.threadTs,
+      ...Object.fromEntries(
+        [
+          message.files !== undefined ? (["files", message.files] as const) : undefined,
+          message.omittedFileCount !== undefined
+            ? (["omittedFileCount", message.omittedFileCount] as const)
+            : undefined,
+        ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+      ),
     };
+    return { kind: "accepted", message: ingressMessage };
   }
 
   const botMention = `<@${botUserId}>`;
@@ -246,21 +248,26 @@ export const classifySlackMessage = (
   const groupId = `sl${message.channel}`;
   const conversationThreadTs = message.threadTs ?? message.ts;
   const chatKey = `group-${groupId}-thread-${encodeURIComponent(conversationThreadTs)}`;
+  const ingressMessage: InboundMessage = {
+    chatKey,
+    channel: message.channel,
+    context: { kind: "group", groupId },
+    statusThreadTs: conversationThreadTs,
+    sourceTs: message.ts,
+    text: channelText,
+    threadTs: message.threadTs,
+    ...Object.fromEntries(
+      [
+        message.files !== undefined ? (["files", message.files] as const) : undefined,
+        message.omittedFileCount !== undefined
+          ? (["omittedFileCount", message.omittedFileCount] as const)
+          : undefined,
+      ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+    ),
+  };
   return {
     kind: "accepted",
-    message: {
-      chatKey,
-      channel: message.channel,
-      context: { kind: "group", groupId },
-      ...(message.files === undefined ? {} : { files: message.files }),
-      ...(message.omittedFileCount === undefined
-        ? {}
-        : { omittedFileCount: message.omittedFileCount }),
-      statusThreadTs: conversationThreadTs,
-      sourceTs: message.ts,
-      text: channelText,
-      threadTs: message.threadTs,
-    },
+    message: ingressMessage,
   };
 };
 
@@ -696,11 +703,11 @@ const silentSlackHealthRuntime: SlackHealthRuntime = {
 };
 
 export const makeSlackGateway = (
-  agent: ZiggyAgentShape,
+  agent: ZiggyAgentApi,
   transport: SlackTransport = liveSlackTransport,
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
   ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
-): SlackGatewayShape => ({
+): SlackGatewayApi => ({
   runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -761,10 +768,15 @@ export const makeSlackGateway = (
           return ingressRuntime
             .admit(
               target.path,
-              {
-                ...(eventId === undefined ? {} : { eventId }),
-                payload: admission.message,
-              },
+              (() => {
+                const record = {
+                  payload: admission.message,
+                  ...Object.fromEntries(
+                    eventId === undefined ? [] : ([["eventId", eventId]] as const),
+                  ),
+                };
+                return record;
+              })(),
               healthRuntime.now(),
             )
             .pipe(
@@ -1075,8 +1087,6 @@ export const makeSlackGateway = (
                                 config.ownerUserId,
                               );
                         return yield* handle.prompt(prompt.text, {
-                          ...(prompt.images.length === 0 ? {} : { images: prompt.images }),
-                          ...(ephemeralContext === undefined ? {} : { ephemeralContext }),
                           onProgress: (event) => {
                             if (!isFresh()) return;
                             if (event.kind === "assistant-text") {
@@ -1101,6 +1111,16 @@ export const makeSlackGateway = (
                               status: activeToolStatus() ?? "is thinking...",
                             });
                           },
+                          ...Object.fromEntries(
+                            [
+                              prompt.images.length > 0
+                                ? (["images", prompt.images] as const)
+                                : undefined,
+                              ephemeralContext !== undefined
+                                ? (["ephemeralContext", ephemeralContext] as const)
+                                : undefined,
+                            ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+                          ),
                         });
                       }),
                     );

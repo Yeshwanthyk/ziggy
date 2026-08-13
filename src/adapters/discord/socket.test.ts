@@ -7,6 +7,7 @@ import {
   DiscordSocketError,
   type DiscordSocketConnection,
   type DiscordSocketDependencies,
+  type DiscordWebSocketMessageData,
   openDiscordSocket,
 } from "./socket";
 
@@ -14,7 +15,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
   state = 1;
   readonly sent: Array<string> = [];
   readonly openListeners = new Set<() => void>();
-  readonly messageListeners = new Set<(data: unknown) => void>();
+  readonly messageListeners = new Set<(data: DiscordWebSocketMessageData) => void>();
   readonly errorListeners = new Set<() => void>();
   readonly closeListeners = new Set<(code: number) => void>();
   closeCompletes = true;
@@ -37,7 +38,8 @@ class FakeDiscordConnection implements DiscordSocketConnection {
     }
   };
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
-  onMessage = (listener: (data: unknown) => void) => this.add(this.messageListeners, listener);
+  onMessage = (listener: (data: DiscordWebSocketMessageData) => void) =>
+    this.add(this.messageListeners, listener);
   onError = (listener: () => void) => {
     if (this.errorRegistrationThrows) throw new Error("listener registration failed");
     return this.add(this.errorListeners, listener);
@@ -80,12 +82,7 @@ const apiFailure = (reason: DiscordApiError["reason"]): DiscordApiError =>
     cause: new Error("bootstrap failed"),
   });
 
-const dependencies = (
-  overrides: Partial<DiscordSocketDependencies> = {},
-): {
-  readonly value: DiscordSocketDependencies;
-  readonly connections: Array<FakeDiscordConnection>;
-} => {
+const dependencies = (overrides: Partial<DiscordSocketDependencies> = {}) => {
   const connections: Array<FakeDiscordConnection> = [];
   return {
     connections,
@@ -103,7 +100,7 @@ const dependencies = (
       closeTimeout: Duration.seconds(1),
       reportCleanupFailure: () => undefined,
       ...overrides,
-    },
+    } satisfies DiscordSocketDependencies,
   };
 };
 

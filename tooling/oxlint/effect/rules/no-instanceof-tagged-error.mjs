@@ -4,7 +4,7 @@ const message =
   "Do not use instanceof for tagged errors. Use Effect.catchTag, Effect.catchTags, or Predicate.isTagged. Skill: effect-typed-errors.";
 
 const looksLikeTaggedErrorName = (name) =>
-  typeof name === "string" && name !== "Error" && name.endsWith("Error");
+  name !== undefined && name === String(name) && name !== "Error" && name.endsWith("Error");
 
 export default {
   meta: {

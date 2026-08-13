@@ -11,6 +11,7 @@ import type {
   SessionUsage,
 } from "../../domain/session";
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
+import { fileSystemCauseDetails } from "../fs/cause";
 
 const UsageCost = Schema.Struct({
   input: Schema.Finite,
@@ -83,10 +84,7 @@ const failure = (
   cause: unknown,
 ) => new SessionReadFailed({ path, operation, message, cause });
 
-const errorCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
+const missingPath = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
 
 const io = <A>(
   filePath: string,
@@ -107,17 +105,20 @@ const zeroUsage = (): SessionUsage => ({
   cost: 0,
 });
 
-const addUsage = (total: SessionUsage, next: PiUsage): SessionUsage => ({
-  input: total.input + next.input,
-  output: total.output + next.output,
-  cacheRead: total.cacheRead + next.cacheRead,
-  cacheWrite: total.cacheWrite + next.cacheWrite,
-  ...(total.reasoning === undefined && next.reasoning === undefined
-    ? {}
-    : { reasoning: (total.reasoning ?? 0) + (next.reasoning ?? 0) }),
-  totalTokens: total.totalTokens + next.totalTokens,
-  cost: total.cost + next.cost.total,
-});
+const addUsage = (total: SessionUsage, next: PiUsage): SessionUsage => {
+  const combined = {
+    input: total.input + next.input,
+    output: total.output + next.output,
+    cacheRead: total.cacheRead + next.cacheRead,
+    cacheWrite: total.cacheWrite + next.cacheWrite,
+    totalTokens: total.totalTokens + next.totalTokens,
+    cost: total.cost + next.cost.total,
+  };
+  if (total.reasoning !== undefined || next.reasoning !== undefined) {
+    return { ...combined, reasoning: (total.reasoning ?? 0) + (next.reasoning ?? 0) };
+  }
+  return combined;
+};
 
 const inspectRegularPath = (
   targetPath: string,
@@ -155,7 +156,7 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
   Effect.gen(function* () {
     const status = yield* io(root, "inspect-root", () => lstat(root)).pipe(Effect.result);
     if (status._tag === "Failure") {
-      if (errorCode(status.failure.cause) === "ENOENT") return [];
+      if (missingPath(status.failure.cause)) return [];
       return yield* status.failure;
     }
     if (status.success.isSymbolicLink() || !status.success.isDirectory()) {

@@ -22,14 +22,14 @@ import type { DiscordIngressDatabaseError } from "../domain/discord-ingress";
 import type { SlackGatewayConfig } from "../domain/slack";
 import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
-import { AutomationScheduler, type AutomationSchedulerShape } from "./automation-scheduler";
+import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
 import {
   DiscordGateway,
-  type DiscordGatewayShape,
+  type DiscordGatewayApi,
   loadDiscordGatewayConfig,
 } from "./discord-gateway";
-import { Gateway, type GatewayShape, loadGatewayConfig } from "./gateway";
-import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayShape } from "./slack-gateway";
+import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
+import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
 
 export interface ResidentGatewayConfig {
   readonly telegram: TelegramGatewayConfig | undefined;
@@ -57,12 +57,12 @@ export type ResidentGatewayError =
   | GatewayOwnerError
   | AutomationSchedulerError;
 
-export interface ResidentGatewayShape {
+export interface ResidentGatewayApi {
   readonly run: (target: ProfileTarget) => Effect.Effect<never, ResidentGatewayError>;
   readonly status: (target: ProfileTarget) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
 }
 
-export class ResidentGateway extends Context.Service<ResidentGateway, ResidentGatewayShape>()(
+export class ResidentGateway extends Context.Service<ResidentGateway, ResidentGatewayApi>()(
   "ziggy/ResidentGateway",
 ) {}
 
@@ -85,12 +85,12 @@ const liveRuntime: ResidentGatewayRuntime = {
 };
 
 export const makeResidentGateway = (
-  scheduler: AutomationSchedulerShape,
-  telegram: GatewayShape,
-  discord: DiscordGatewayShape,
-  slack: SlackGatewayShape,
+  scheduler: AutomationSchedulerApi,
+  telegram: GatewayApi,
+  discord: DiscordGatewayApi,
+  slack: SlackGatewayApi,
   runtime: ResidentGatewayRuntime = liveRuntime,
-): ResidentGatewayShape => ({
+): ResidentGatewayApi => ({
   status: (target) => runtime.inspectOwner(target),
   run: (target) =>
     Effect.gen(function* () {

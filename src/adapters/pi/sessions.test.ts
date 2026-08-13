@@ -16,15 +16,36 @@ const usage = (input: number, output: number, cost: number) => ({
   totalTokens: input + output + 3,
   cost: { input: cost / 2, output: cost / 2, cacheRead: 0, cacheWrite: 0, total: cost },
 });
-const header = (id: string, parentSession?: string) => ({
-  type: "session",
-  version: 3,
-  id,
-  timestamp: "2026-08-08T10:00:00.000Z",
-  cwd: "/profile",
-  ...(parentSession === undefined ? {} : { parentSession }),
-});
-const entry = (id: string, parentId: string | null, value: object) => ({
+
+interface TestSessionMessage {
+  readonly role: string;
+  readonly content?:
+    | string
+    | ReadonlyArray<{ readonly type: string; readonly text?: string; readonly thinking?: string }>;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly stopReason?: string;
+  readonly usage?: ReturnType<typeof usage>;
+  readonly timestamp: number;
+}
+
+type TestSessionEntryBody =
+  | { readonly type: "model_change"; readonly provider: string; readonly modelId: string }
+  | { readonly type: "thinking_level_change"; readonly thinkingLevel: string }
+  | { readonly type: "message"; readonly message: TestSessionMessage };
+
+const header = (id: string, parentSession?: string) => {
+  const value = {
+    type: "session" as const,
+    version: 3,
+    id,
+    timestamp: "2026-08-08T10:00:00.000Z",
+    cwd: "/profile",
+  };
+  if (parentSession === undefined) return value;
+  return { ...value, parentSession };
+};
+const entry = (id: string, parentId: string | null, value: TestSessionEntryBody) => ({
   id,
   parentId,
   timestamp: `2026-08-08T10:00:0${id.length}.000Z`,

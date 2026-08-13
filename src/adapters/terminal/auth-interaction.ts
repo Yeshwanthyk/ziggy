@@ -76,7 +76,7 @@ const readSecret = (signal: AbortSignal | undefined): Promise<string> => {
     };
     const onAbort = () => finish({ error: new Error("authentication prompt aborted") });
     const onData = (chunk: string | Buffer) => {
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
       for (const character of text) {
         if (character === "\u0003") {
           finish({ error: new Error("authentication cancelled") });

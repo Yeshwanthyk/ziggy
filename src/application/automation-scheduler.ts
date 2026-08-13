@@ -31,12 +31,12 @@ import {
 } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
 import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
-import { Automations, type AutomationsShape } from "./automations";
+import { Automations, type AutomationsApi } from "./automations";
 
 // oxfmt-ignore
-export interface AutomationSchedulerShape { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
 // oxfmt-ignore
-export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerShape>()("ziggy/AutomationScheduler") {}
+export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerApi>()("ziggy/AutomationScheduler") {}
 // oxfmt-ignore
 interface ValidObservation { readonly id: AutomationId; readonly automation: Automation; readonly fingerprint: string }
 type Observation =
@@ -222,9 +222,9 @@ const scan = (
   });
 
 export const makeAutomationScheduler = (
-  automations: AutomationsShape,
+  automations: AutomationsApi,
   runtime: AutomationSchedulerRuntime = liveSchedulerRuntime,
-): AutomationSchedulerShape => {
+): AutomationSchedulerApi => {
   const run = (
     target: ProfileTarget,
     owner: GatewayOwnerHandle,

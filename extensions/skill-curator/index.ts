@@ -307,7 +307,15 @@ export const writeProfileSkill = async (
   return { name, action: exists ? "replaced" : "created" };
 };
 
-const jsonResult = (payload: unknown) => ({
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | { readonly [key: string]: JsonValue }
+  | readonly JsonValue[];
+
+const jsonResult = (payload: JsonValue) => ({
   content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
   details: payload,
 });

@@ -46,8 +46,8 @@ import {
   type ResidentServiceManager,
   type ResidentServiceWriteResult,
 } from "../domain/resident-service";
-import { AutomationScheduler, type AutomationSchedulerShape } from "./automation-scheduler";
-import { ResidentGateway, type ResidentGatewayShape } from "./resident-gateway";
+import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
+import { ResidentGateway, type ResidentGatewayApi } from "./resident-gateway";
 
 export type ResidentSupervisorStatus =
   | { readonly state: "running"; readonly pid?: number }
@@ -83,7 +83,7 @@ export interface ResidentLogsResult {
   readonly exitCode: number;
 }
 
-export interface ResidentServiceShape {
+export interface ResidentServiceApi {
   readonly install: (
     target: ProfileTarget,
     options: { readonly force: boolean; readonly start: boolean },
@@ -116,7 +116,7 @@ export interface ResidentServiceShape {
   readonly status: (target: ProfileTarget) => Effect.Effect<ResidentServiceStatus>;
 }
 
-export class ResidentService extends Context.Service<ResidentService, ResidentServiceShape>()(
+export class ResidentService extends Context.Service<ResidentService, ResidentServiceApi>()(
   "ziggy/ResidentService",
 ) {}
 
@@ -314,7 +314,7 @@ const startDefinition = (
 const waitForReady = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayShape,
+  gateway: ResidentGatewayApi,
   runtime: ResidentServiceRuntime,
   previous?: GatewayOwnerStatus,
 ) =>
@@ -341,13 +341,14 @@ const waitForReady = (
       }
       if (attempt < 19) yield* runtime.sleep(250);
     }
-    return { ready: false, ...(observed === undefined ? {} : { owner: observed }) } as const;
+    if (observed === undefined) return { ready: false } as const;
+    return { ready: false, owner: observed } as const;
   });
 
 const waitForStopped = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayShape,
+  gateway: ResidentGatewayApi,
   runtime: ResidentServiceRuntime,
 ) =>
   Effect.gen(function* () {
@@ -367,14 +368,15 @@ const waitForStopped = (
       }
       if (attempt < 19) yield* runtime.sleep(250);
     }
-    return { ready: false, ...(observed === undefined ? {} : { owner: observed }) } as const;
+    if (observed === undefined) return { ready: false } as const;
+    return { ready: false, owner: observed } as const;
   });
 
 export const makeResidentService = (
-  gateway: ResidentGatewayShape,
-  scheduler: AutomationSchedulerShape,
+  gateway: ResidentGatewayApi,
+  scheduler: AutomationSchedulerApi,
   runtime: ResidentServiceRuntime = liveRuntime,
-): ResidentServiceShape => {
+): ResidentServiceApi => {
   const lifecycleBase = (definition: ResidentServiceDefinition) => ({
     manager: definition.manager,
     identity:
@@ -425,14 +427,19 @@ export const makeResidentService = (
             );
           }
         }
-        let readiness: { readonly ready?: boolean; readonly owner?: GatewayOwnerStatus } = {};
-        if (options.start) {
-          if (definition.manager === "launchd" && write === "replaced") {
-            yield* runtime.commands.run(launchdBootoutCommand(runtime.uid, definition.identity));
-          }
-          yield* startDefinition(definition, runtime, "start");
-          readiness = yield* waitForReady(target, definition, gateway, runtime);
+        if (!options.start) {
+          return {
+            action: "install" as const,
+            ...lifecycleBase(definition),
+            write,
+            warnings,
+          };
         }
+        if (definition.manager === "launchd" && write === "replaced") {
+          yield* runtime.commands.run(launchdBootoutCommand(runtime.uid, definition.identity));
+        }
+        yield* startDefinition(definition, runtime, "start");
+        const readiness = yield* waitForReady(target, definition, gateway, runtime);
         return {
           action: "install" as const,
           ...lifecycleBase(definition),

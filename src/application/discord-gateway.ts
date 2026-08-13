@@ -66,7 +66,7 @@ import {
 } from "../domain/discord-health";
 import { codePointLength } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
+import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 const DISCORD_MESSAGE_LIMIT = 2_000;
@@ -147,14 +147,14 @@ export interface DiscordTransport {
   ) => Effect.Effect<void, DiscordApiError>;
 }
 
-export interface DiscordGatewayShape {
+export interface DiscordGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: DiscordGatewayConfig,
   ) => Effect.Effect<never, DiscordGatewayError>;
 }
 
-export class DiscordGateway extends Context.Service<DiscordGateway, DiscordGatewayShape>()(
+export class DiscordGateway extends Context.Service<DiscordGateway, DiscordGatewayApi>()(
   "ziggy/DiscordGateway",
 ) {}
 
@@ -214,10 +214,16 @@ export const normalizeDiscordMessage = (
     guildId: message.guildId,
     authorId: message.authorId,
     text: message.content,
-    ...(message.attachments.length === 0 ? {} : { attachments: message.attachments }),
-    ...(message.omittedAttachmentCount === 0
-      ? {}
-      : { omittedAttachmentCount: message.omittedAttachmentCount }),
+    ...Object.fromEntries(
+      [
+        message.attachments.length > 0
+          ? (["attachments", message.attachments] as const)
+          : undefined,
+        message.omittedAttachmentCount > 0
+          ? (["omittedAttachmentCount", message.omittedAttachmentCount] as const)
+          : undefined,
+      ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+    ),
   };
 };
 
@@ -541,11 +547,11 @@ const volatileDiscordIngressRuntime: DiscordIngressRuntime = {
 };
 
 export const makeDiscordGateway = (
-  agent: ZiggyAgentShape,
+  agent: ZiggyAgentApi,
   transport: DiscordTransport = liveDiscordTransport,
   healthRuntime: DiscordHealthRuntime = silentDiscordHealthRuntime,
   ingressRuntime: DiscordIngressRuntime = volatileDiscordIngressRuntime,
-): DiscordGatewayShape => ({
+): DiscordGatewayApi => ({
   runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -862,12 +868,14 @@ export const makeDiscordGateway = (
                       transport.downloadAttachment,
                     );
                     return yield* handle.prompt(prompt.text, {
-                      ...(prompt.images.length === 0 ? {} : { images: prompt.images }),
                       onProgress: (event) => {
                         if (isFresh() && event.kind === "assistant-text") {
                           Queue.offerUnsafe(progress, event.snapshot);
                         }
                       },
+                      ...Object.fromEntries(
+                        prompt.images.length > 0 ? ([["images", prompt.images]] as const) : [],
+                      ),
                     });
                   }),
                 );

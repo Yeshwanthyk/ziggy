@@ -40,11 +40,14 @@ const formatSuccess = (result: ExecResult): string => {
 };
 
 export const runExecutorCommand = async (exec: ExtensionAPI["exec"], options: RunOptions) => {
-  const result = await exec(options.command, [...options.args], {
+  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
     cwd: options.cwd,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
     timeout: options.timeout,
-  });
+  };
+  if (options.signal !== undefined) {
+    execOptions.signal = options.signal;
+  }
+  const result = await exec(options.command, [...options.args], execOptions);
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
 

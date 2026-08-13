@@ -1,11 +1,14 @@
-// oxlint-disable ziggy/no-unsafe-typescript-syntax
+// oxlint-disable ziggy/no-unsafe-typescript-syntax, ziggy/require-safety-comment-for-type-assertion, ziggy/no-chained-type-assertions -- Pi extension factory handlers are registered through untyped test doubles; assertions bridge Pi's event-specific handler overloads.
 import { describe, expect, test } from "bun:test";
 import type {
   BeforeAgentStartEvent,
+  BuildSystemPromptOptions,
   InputEvent,
+  KeybindingsManager,
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import type {
   AutomationTuiDispatch,
   AutomationTuiRequest,
@@ -19,16 +22,15 @@ import {
 
 type Extension = ReturnType<typeof createZiggyTuiExtension>;
 type ExtensionApi = Parameters<Extension["factory"]>[0];
-type TestProvider = {
-  getSuggestions(...args: ReadonlyArray<unknown>): Promise<unknown>;
-  applyCompletion(...args: ReadonlyArray<unknown>): unknown;
-};
+type TestProvider = AutocompleteProvider;
 type Ui = {
   setTitle(title: string): void;
   setHeader(factory: () => { invalidate(): void; render(width: number): string[] }): void;
   setFooter(factory: () => { invalidate(): void; render(width: number): string[] }): void;
   addAutocompleteProvider(factory: (current: TestProvider) => TestProvider): void;
 };
+
+const emptySystemPromptOptions = { cwd: "/profiles/ziggy-dev" } satisfies BuildSystemPromptOptions;
 
 const sessionStartEvent: SessionStartEvent = {
   type: "session_start",
@@ -210,7 +212,7 @@ describe("Ziggy TUI extension", () => {
     sessionHandlers[0]?.(sessionStartEvent, { mode: "tui", ui: harness.ui });
     const provider = harness.autocompleteFactories[0]?.({
       getSuggestions: async () => ({ items: [], prefix: "" }),
-      applyCompletion: (...args: ReadonlyArray<unknown>) => args,
+      applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
     });
     if (provider === undefined) throw new Error("autocomplete provider was not registered");
     const suggestions = await provider.getSuggestions(["@research"], 0, 9, {
@@ -289,7 +291,7 @@ describe("Ziggy TUI extension", () => {
         type: "before_agent_start",
         prompt: "task",
         systemPrompt: "base",
-        systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+        systemPromptOptions: emptySystemPromptOptions,
       },
       context,
     );
@@ -318,7 +320,7 @@ describe("Ziggy TUI extension", () => {
           type: "before_agent_start",
           prompt: "task",
           systemPrompt: "base",
-          systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+          systemPromptOptions: emptySystemPromptOptions,
         },
         { mode: "print" },
       ).systemPrompt,
@@ -329,7 +331,7 @@ describe("Ziggy TUI extension", () => {
           type: "before_agent_start",
           prompt: "task",
           systemPrompt: "base",
-          systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],
+          systemPromptOptions: emptySystemPromptOptions,
         },
         { mode: "print" },
       ).systemPrompt,
@@ -365,7 +367,17 @@ describe("Ziggy TUI extension", () => {
       mode: "tui",
       ui: {
         ...commandUi(harness),
-        custom: async <Result>() => ["alpha", "beta"] as Result,
+        custom: async <Result>(
+          _factory: (
+            _tui: { requestRender(): void },
+            _theme: {
+              fg(_color: "accent" | "muted" | "text" | "dim", text: string): string;
+              bold(text: string): string;
+            },
+            _keybindings: KeybindingsManager,
+            _done: (result: Result) => void,
+          ) => { invalidate(): void; render(_width: number): string[] },
+        ): Promise<Result> => ["alpha", "beta"] as Result,
       },
     });
 
@@ -422,11 +434,10 @@ describe("Ziggy TUI extension", () => {
           };
           break;
         case "runs":
-          response = {
-            kind: "runs",
-            ...(request.id === undefined ? {} : { automationId: request.id }),
-            text: "daily completed scheduled",
-          };
+          response =
+            request.id === undefined
+              ? { kind: "runs", text: "daily completed scheduled" }
+              : { kind: "runs", automationId: request.id, text: "daily completed scheduled" };
           break;
         case "pause":
         case "resume":

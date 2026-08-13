@@ -7,6 +7,10 @@ import {
   expandProfileQuery,
   listProfileSessions,
   searchProfileSessions,
+  type ExpandedMatch,
+  type SearchResult,
+  type SessionDescription,
+  type SessionSummary,
 } from "./src/store.ts";
 
 const LimitParameter = Type.Optional(
@@ -25,7 +29,14 @@ const SessionFilterParameter = Type.Optional(
   }),
 );
 
-const jsonResult = (payload: unknown) => ({
+type ToolPayload =
+  | ReadonlyArray<SessionSummary>
+  | ReadonlyArray<SearchResult>
+  | ReadonlyArray<ExpandedMatch>
+  | SessionDescription
+  | { readonly error: string };
+
+const jsonResult = (payload: ToolPayload) => ({
   content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
   details: payload,
 });
@@ -35,7 +46,7 @@ const toolFailure = () =>
     error: "Lossless Claw could not read the persisted session index.",
   });
 
-const runTool = <Result>(operation: () => Result) => {
+const runTool = (operation: () => ToolPayload) => {
   try {
     return jsonResult(operation());
   } catch {

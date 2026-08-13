@@ -40,7 +40,7 @@ export function getPropertyName(node) {
   if (!node) return undefined;
   if (node.type === "Identifier") return node.name;
   if (node.type === "PrivateIdentifier") return node.name;
-  if (node.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node.type === "Literal" && node.value === String(node.value)) return node.value;
   if (node.type === "StringLiteral") return node.value;
   return undefined;
 }
@@ -58,7 +58,8 @@ export function isIdentifier(node, name) {
 
 export function isStringLiteral(node) {
   return (
-    (node?.type === "Literal" && typeof node.value === "string") || node?.type === "StringLiteral"
+    (node?.type === "Literal" && node.value === String(node.value)) ||
+    node?.type === "StringLiteral"
   );
 }
 
@@ -81,7 +82,8 @@ function isPromiseType(node) {
 }
 
 export function containsPromiseType(node) {
-  if (!node || typeof node !== "object") return false;
+  if (!(node instanceof Object)) return false;
+  if (!("type" in node)) return false;
   if (isPromiseType(node)) return true;
 
   switch (node.type) {

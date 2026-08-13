@@ -234,11 +234,14 @@ export const runAppleReminders = async (
   signal: AbortSignal | undefined,
 ) => {
   const argv = appleRemindersArguments(invocation);
-  const result = await exec(OSASCRIPT, [SCRIPT_PATH, ...argv], {
+  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
     cwd,
-    ...(signal === undefined ? {} : { signal }),
     timeout: TIMEOUT_MS,
-  });
+  };
+  if (signal !== undefined) {
+    execOptions.signal = signal;
+  }
+  const result = await exec(OSASCRIPT, [SCRIPT_PATH, ...argv], execOptions);
 
   if (result.code !== 0) {
     const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;

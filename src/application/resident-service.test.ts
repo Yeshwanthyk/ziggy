@@ -8,8 +8,8 @@ import { Effect, Result } from "effect";
 import { makeResidentPlatformCommands } from "../adapters/bun/resident-service";
 import { AutomationProjectionError } from "../domain/automation";
 import { ResidentServiceError, type ResidentLaunchVector } from "../domain/resident-service";
-import type { AutomationSchedulerShape } from "./automation-scheduler";
-import type { ResidentGatewayShape } from "./resident-gateway";
+import type { AutomationSchedulerApi } from "./automation-scheduler";
+import type { ResidentGatewayApi } from "./resident-gateway";
 import { makeResidentService, type ResidentServiceRuntime } from "./resident-service";
 
 const paths: Array<string> = [];
@@ -24,7 +24,7 @@ afterEach(async () =>
   Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
 
-const gateway = (state: "running" | "stopped" = "running"): ResidentGatewayShape => ({
+const gateway = (state: "running" | "stopped" = "running"): ResidentGatewayApi => ({
   run: () => Effect.never,
   status: (target) =>
     Effect.succeed(
@@ -39,7 +39,7 @@ const gateway = (state: "running" | "stopped" = "running"): ResidentGatewayShape
     ),
 });
 
-const scheduler = (fail = false): AutomationSchedulerShape => ({
+const scheduler = (fail = false): AutomationSchedulerApi => ({
   run: () => Effect.never,
   runs: () => Effect.succeed([]),
   status: (target) =>

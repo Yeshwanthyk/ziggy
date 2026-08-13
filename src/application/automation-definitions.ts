@@ -55,7 +55,7 @@ export type AutomationDefinitionsError =
   | AutomationNotFound
   | AutomationPaused;
 
-export interface AutomationDefinitionsShape {
+export interface AutomationDefinitionsApi {
   readonly create: (
     target: ProfileTarget,
     id: string,
@@ -89,7 +89,7 @@ export interface AutomationDefinitionsShape {
 
 export class AutomationDefinitions extends Context.Service<
   AutomationDefinitions,
-  AutomationDefinitionsShape
+  AutomationDefinitionsApi
 >()("ziggy/AutomationDefinitions") {}
 
 const validProjection = (
@@ -152,7 +152,7 @@ const catalog = (target: ProfileTarget) =>
     return rows;
   });
 
-export const makeAutomationDefinitions = (): AutomationDefinitionsShape => ({
+export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
   create: (target, idSource) =>
     Effect.gen(function* () {
       const id = yield* validateAutomationId(idSource);

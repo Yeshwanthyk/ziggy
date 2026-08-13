@@ -3,6 +3,7 @@ import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Effect, Schema } from "effect";
+import { fileSystemCauseDetails } from "../fs/cause";
 import {
   acquireGatewayOwner,
   isGatewayOwnerAuthority,
@@ -168,7 +169,7 @@ const expectedObjects = [
   "automation_target_outcome",
   "scheduler_state",
 ];
-const V1_SHAPE = "8a434e79ca29e3e9f9bdd075602ceaa025879da471e00b3cfe3bcb53fe8dc19e";
+const V1_FINGERPRINT = "8a434e79ca29e3e9f9bdd075602ceaa025879da471e00b3cfe3bcb53fe8dc19e";
 const schemaObjects = (db: Database) =>
   decodeMaster(
     db
@@ -177,30 +178,30 @@ const schemaObjects = (db: Database) =>
       )
       .all(),
   );
-const schemaShape = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
+const schemaFingerprint = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
   createHash("sha256").update(JSON.stringify(objects)).digest("hex");
-const expectedV2Shape = (() => {
+const expectedV2Fingerprint = (() => {
   const db = new Database(":memory:", { strict: true });
   try {
     db.exec(SCHEMA_V2);
-    return schemaShape(schemaObjects(db));
+    return schemaFingerprint(schemaObjects(db));
   } finally {
     db.close(false);
   }
 })();
 const schemaVersion = (db: Database): number =>
   decodeVersion(db.query("PRAGMA user_version").get())?.user_version ?? -1;
-const validateShape = (db: Database, path: string, version: 1 | 2): void => {
+const validateFingerprint = (db: Database, path: string, version: 1 | 2): void => {
   const objects = schemaObjects(db);
-  const expectedShape = version === 1 ? V1_SHAPE : expectedV2Shape;
+  const expectedFingerprint = version === 1 ? V1_FINGERPRINT : expectedV2Fingerprint;
   if (
     schemaVersion(db) !== version ||
     objects.map((row) => row.name).join("|") !== expectedObjects.join("|") ||
-    schemaShape(objects) !== expectedShape
+    schemaFingerprint(objects) !== expectedFingerprint
   )
     throw dbError("validate schema", path, { version: schemaVersion(db), objects });
 };
-const validateSchema = (db: Database, path: string): void => validateShape(db, path, 2);
+const validateSchema = (db: Database, path: string): void => validateFingerprint(db, path, 2);
 
 const statementFor = (schema: string, prefix: string): string => {
   const statement = schema.split(";").find((part) => part.trimStart().startsWith(prefix));
@@ -209,7 +210,7 @@ const statementFor = (schema: string, prefix: string): string => {
 };
 
 const migrateV1ToV2 = (db: Database, path: string, isAlive: (pid: number) => boolean): void => {
-  validateShape(db, path, 1);
+  validateFingerprint(db, path, 1);
   db.exec("PRAGMA foreign_keys = OFF");
   db.transaction(() => {
     const owners = decodeOwners(
@@ -251,7 +252,7 @@ const migrateV1ToV2 = (db: Database, path: string, isAlive: (pid: number) => boo
     db.exec("PRAGMA user_version = 2");
   }).immediate();
   db.exec("PRAGMA foreign_keys = ON");
-  validateShape(db, path, 2);
+  validateFingerprint(db, path, 2);
 };
 
 const withWritable = <A>(
@@ -350,7 +351,7 @@ export const initializeAutomationDatabase = (
               if (version === 0 && objects.length === 0)
                 db.transaction(() => db.exec(SCHEMA_V2)).immediate();
               else if (version === 1) migrateV1ToV2(db, path, isAlive);
-              else validateShape(db, path, 2);
+              else validateFingerprint(db, path, 2);
             },
             catch: (cause) =>
               cause instanceof AutomationDatabaseError ? cause : dbError("initialize", path, cause),
@@ -568,7 +569,7 @@ const ensureManualDatabase = (
     try: () => {
       const db = new Database(path, { readonly: true, create: false, strict: true });
       try {
-        validateShape(db, path, 2);
+        validateFingerprint(db, path, 2);
       } finally {
         db.close(false);
       }
@@ -680,8 +681,7 @@ export const automationRunStore = makeAutomationRunStore(process.pid);
 
 export const makeLiveManualRunId = (): string => manualRunId(randomUUID());
 
-const missing = (cause: unknown): boolean =>
-  typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT";
+const missing = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
 
 // oxfmt-ignore
 const openReadonlyIfPresent = <A>(profilePath: string, operation: string, absent: A, use: (db: Database) => A): Effect.Effect<A, AutomationProjectionError> => {

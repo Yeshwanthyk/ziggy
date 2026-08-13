@@ -181,20 +181,20 @@ const schemaObjects = (db: Database) =>
       )
       .all(),
   );
-const schemaShape = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
+const schemaFingerprint = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
   createHash("sha256").update(JSON.stringify(objects)).digest("hex");
 const expectedObjects = ["slack_ingress", "slack_ingress_replay", "slack_ingress_terminal"];
-const expectedShape = (schema: string) => {
+const expectedFingerprint = (schema: string) => {
   const db = new Database(":memory:", { strict: true });
   try {
     db.exec(schema);
-    return schemaShape(schemaObjects(db));
+    return schemaFingerprint(schemaObjects(db));
   } finally {
     db.close(false);
   }
 };
-const expectedShapeV1 = expectedShape(SCHEMA_V1);
-const expectedShapeV2 = expectedShape(SCHEMA_V2);
+const expectedFingerprintV1 = expectedFingerprint(SCHEMA_V1);
+const expectedFingerprintV2 = expectedFingerprint(SCHEMA_V2);
 
 const validateSchemaVersion = (db: Database, path: string, expectedVersion: 1 | 2): void => {
   const actualVersion = decodeVersion(
@@ -204,7 +204,8 @@ const validateSchemaVersion = (db: Database, path: string, expectedVersion: 1 | 
   if (
     actualVersion !== expectedVersion ||
     objects.map((row) => row.name).join("|") !== expectedObjects.join("|") ||
-    schemaShape(objects) !== (expectedVersion === 1 ? expectedShapeV1 : expectedShapeV2)
+    schemaFingerprint(objects) !==
+      (expectedVersion === 1 ? expectedFingerprintV1 : expectedFingerprintV2)
   ) {
     throw databaseError("validate schema", path, { actualVersion, objects });
   }
@@ -396,24 +397,29 @@ export const readReplayableSlackIngress = (
         .all(),
     ).map((row): SlackIngressRecord => {
       const storedFiles = decodeStoredFilesJson(row.filesJson);
+      const payload: SlackIngressPayload = {
+        chatKey: row.chatKey,
+        channel: row.channel,
+        context:
+          row.contextKind === "user"
+            ? { kind: "user", userId: row.contextId }
+            : { kind: "group", groupId: row.contextId },
+        statusThreadTs: row.statusThreadTs,
+        sourceTs: row.sourceTs,
+        text: row.text,
+        ...Object.fromEntries(
+          [
+            storedFiles.files.length > 0 ? (["files", storedFiles.files] as const) : undefined,
+            storedFiles.omittedFileCount > 0
+              ? (["omittedFileCount", storedFiles.omittedFileCount] as const)
+              : undefined,
+            row.threadTs !== null ? (["threadTs", row.threadTs] as const) : undefined,
+          ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+        ),
+      };
       return {
-        ...(row.eventId === null ? {} : { eventId: row.eventId }),
-        payload: {
-          chatKey: row.chatKey,
-          channel: row.channel,
-          context:
-            row.contextKind === "user"
-              ? { kind: "user", userId: row.contextId }
-              : { kind: "group", groupId: row.contextId },
-          ...(storedFiles.files.length === 0 ? {} : { files: storedFiles.files }),
-          ...(storedFiles.omittedFileCount === 0
-            ? {}
-            : { omittedFileCount: storedFiles.omittedFileCount }),
-          statusThreadTs: row.statusThreadTs,
-          sourceTs: row.sourceTs,
-          text: row.text,
-          ...(row.threadTs === null ? {} : { threadTs: row.threadTs }),
-        },
+        payload,
+        ...Object.fromEntries(row.eventId === null ? [] : ([["eventId", row.eventId]] as const)),
       };
     }),
   );

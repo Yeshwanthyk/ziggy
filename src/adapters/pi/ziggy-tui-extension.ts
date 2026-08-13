@@ -4,6 +4,7 @@ import type {
   BeforeAgentStartEvent,
   InlineExtension,
   InputEvent,
+  KeybindingsManager,
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -76,7 +77,7 @@ interface ZiggyTuiCommandContext {
       factory: (
         tui: ExtensionSelectionTui,
         theme: ExtensionSelectionTheme,
-        keybindings: unknown,
+        keybindings: KeybindingsManager,
         done: (result: Result) => void,
       ) => TextComponent,
     ): Promise<Result>;

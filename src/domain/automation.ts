@@ -73,7 +73,7 @@ const targetFromSource = (source: string): AutomationTarget | undefined => {
         _tag: "slack",
         target: source,
         channelId: slack[1],
-        ...(slack[2] === undefined ? {} : { threadTs: slack[2] }),
+        ...Object.fromEntries(slack[2] === undefined ? [] : ([["threadTs", slack[2]]] as const)),
       };
 };
 
@@ -484,14 +484,18 @@ export const parseAutomationFile = (
       );
     return {
       id,
-      version: 1,
+      version: 1 as const,
       schedule: { cronSource: decoded.cron, timezone: decoded.timezone, cron: cron.success },
       broadcast,
       prompt: decoded.prompt,
-      ...(mention.kind === "tagged"
-        ? { specialist: { agentId: mention.agentId, task: mention.task } }
-        : {}),
-      ...(decoded.gate === undefined ? {} : { gate: decoded.gate }),
-      ...(origin === undefined ? {} : { origin }),
+      ...Object.fromEntries(
+        [
+          mention.kind === "tagged"
+            ? (["specialist", { agentId: mention.agentId, task: mention.task }] as const)
+            : undefined,
+          decoded.gate !== undefined ? (["gate", decoded.gate] as const) : undefined,
+          origin !== undefined ? (["origin", origin] as const) : undefined,
+        ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+      ),
     };
   });

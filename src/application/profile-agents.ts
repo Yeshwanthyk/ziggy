@@ -15,8 +15,8 @@ import {
   type ProfileFileSystemError,
   type ProfileTarget,
 } from "../domain/profile";
-import { ZiggyAgent, type ZiggyAgentShape } from "./agent";
-import { Models, type ModelsError, type ModelsShape } from "./models";
+import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
+import { Models, type ModelsError, type ModelsApi } from "./models";
 
 const decodeAgentId = Schema.decodeUnknownEffect(ProfileAgentId);
 const blockedTools = new Set(["memory_write", "agent_run", "agent_discuss"]);
@@ -44,7 +44,7 @@ export type ProfileAgentsError =
   | ModelsError
   | ProfileSpecialistError;
 
-export interface ProfileAgentsShape {
+export interface ProfileAgentsApi {
   readonly create: (
     target: ProfileTarget,
     id: string,
@@ -70,18 +70,22 @@ export interface ProfileAgentsShape {
   ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
 }
 
-export class ProfileAgents extends Context.Service<ProfileAgents, ProfileAgentsShape>()(
+export class ProfileAgents extends Context.Service<ProfileAgents, ProfileAgentsApi>()(
   "ziggy/ProfileAgents",
 ) {}
 
 const projection = (profilePath: string, agent: ProfileAgent): ProfileAgentProjection => ({
   id: agent.id,
   description: agent.description,
-  ...(agent.provider === undefined ? {} : { provider: agent.provider }),
-  ...(agent.model === undefined ? {} : { model: agent.model }),
-  ...(agent.thinking === undefined ? {} : { thinking: agent.thinking }),
   tools: agent.tools ?? [],
   path: relative(profilePath, join(profilePath, "agents", `${agent.id}.md`)),
+  ...Object.fromEntries(
+    [
+      agent.provider !== undefined ? (["provider", agent.provider] as const) : undefined,
+      agent.model !== undefined ? (["model", agent.model] as const) : undefined,
+      agent.thinking !== undefined ? (["thinking", agent.thinking] as const) : undefined,
+    ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+  ),
 });
 
 const validAgentId = (id: string): Effect.Effect<string, ProfileAgentInvalid> =>
@@ -132,9 +136,9 @@ const runtimePolicyError = (
 };
 
 export const makeProfileAgents = (
-  agentRuntime: ZiggyAgentShape,
-  modelsRuntime: ModelsShape,
-): ProfileAgentsShape => ({
+  agentRuntime: ZiggyAgentApi,
+  modelsRuntime: ModelsApi,
+): ProfileAgentsApi => ({
   create: (target, idSource) =>
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);

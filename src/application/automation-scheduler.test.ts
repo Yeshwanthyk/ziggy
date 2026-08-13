@@ -19,8 +19,8 @@ import {
 import { automationFileStore } from "../adapters/fs/automation-files";
 import { AutomationDatabaseError, AutomationSchedulerError } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
-import type { ZiggyAgentShape } from "./agent";
-import { type AutomationCapabilities, type AutomationsShape, makeAutomations } from "./automations";
+import type { ZiggyAgentApi } from "./agent";
+import { type AutomationCapabilities, type AutomationsApi, makeAutomations } from "./automations";
 import { makeAutomationScheduler } from "./automation-scheduler";
 
 const paths: Array<string> = [];
@@ -159,7 +159,7 @@ describe("automation scheduler engine", () => {
       ["second", definition("2 * * * *")],
     ]);
     const dispatched: Array<string> = [];
-    const automations: AutomationsShape = {
+    const automations: AutomationsApi = {
       run: (_target, id) =>
         Effect.sync(() => {
           dispatched.push(id);
@@ -243,7 +243,7 @@ describe("automation scheduler engine", () => {
         yield* TestClock.setTime(start);
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -453,7 +453,7 @@ describe("automation scheduler engine", () => {
       message: "injected lifecycle write failure",
       cause: "fixture",
     });
-    const agent: ZiggyAgentShape = {
+    const agent: ZiggyAgentApi = {
       runOnce: () => Effect.succeed(0),
       runSpecialist: () =>
         Effect.succeed({

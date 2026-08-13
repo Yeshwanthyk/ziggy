@@ -3,10 +3,10 @@ import type { AuthInteraction, ProviderAuthStatus } from "../adapters/pi/auth";
 import type { KnownModel } from "../adapters/pi/models";
 import { SetupIncomplete, type SetupResult } from "../domain/setup";
 import type { ProfileTarget } from "../domain/profile";
-import { Auth, type AuthError, type AuthShape } from "./auth";
-import { Doctor, type DoctorShape } from "./doctor";
-import { Models, type ModelsError, type ModelsShape } from "./models";
-import { Profiles, type ProfileError, type ProfilesShape } from "./profiles";
+import { Auth, type AuthError, type AuthApi } from "./auth";
+import { Doctor, type DoctorApi } from "./doctor";
+import { Models, type ModelsError, type ModelsApi } from "./models";
+import { Profiles, type ProfileError, type ProfilesApi } from "./profiles";
 
 export type SetupError = ProfileError | AuthError | ModelsError | SetupIncomplete;
 
@@ -31,7 +31,7 @@ export interface SetupOptions {
   readonly thinking?: string;
 }
 
-export interface SetupShape {
+export interface SetupApi {
   readonly initialize: (
     target: ProfileTarget,
     registryPath: string,
@@ -41,7 +41,7 @@ export interface SetupShape {
   ) => Effect.Effect<SetupResult, SetupError>;
 }
 
-export class Setup extends Context.Service<Setup, SetupShape>()("ziggy/Setup") {}
+export class Setup extends Context.Service<Setup, SetupApi>()("ziggy/Setup") {}
 
 const incomplete = (profilePath: string, message: string): SetupIncomplete =>
   new SetupIncomplete({
@@ -77,11 +77,11 @@ const modelChoices = (models: ReadonlyArray<KnownModel>): ReadonlyArray<SetupCho
   models.map((model) => ({ id: model.modelId, label: `${model.name} (${model.modelId})` }));
 
 export const makeSetup = (
-  profiles: ProfilesShape,
-  auth: AuthShape,
-  models: ModelsShape,
-  doctor: DoctorShape,
-): SetupShape => ({
+  profiles: ProfilesApi,
+  auth: AuthApi,
+  models: ModelsApi,
+  doctor: DoctorApi,
+): SetupApi => ({
   initialize: (target, registryPath, repositoryRoot, options, interaction) =>
     Effect.gen(function* () {
       const initialized = yield* profiles.initProfile(target, {

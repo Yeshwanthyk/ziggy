@@ -5,7 +5,7 @@ import type { SessionMetadata, SessionNotFound, SessionReadFailed } from "../dom
 
 export type SessionsError = SessionReadFailed | SessionNotFound;
 
-export interface SessionsShape {
+export interface SessionsApi {
   readonly list: (
     target: ProfileTarget,
   ) => Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed>;
@@ -15,7 +15,7 @@ export interface SessionsShape {
   ) => Effect.Effect<SessionMetadata, SessionsError>;
 }
 
-export class Sessions extends Context.Service<Sessions, SessionsShape>()("ziggy/Sessions") {}
+export class Sessions extends Context.Service<Sessions, SessionsApi>()("ziggy/Sessions") {}
 
 export const SessionsLive = Layer.succeed(Sessions, {
   list: (target) => listProfileSessions(target.path),

@@ -24,11 +24,14 @@ export const runWebSearch = async (
   cwd: string,
   signal: AbortSignal | undefined,
 ): Promise<{ stdout: string; stderr: string; code: number }> => {
-  const result = await pi.exec(process.execPath, [executable, ...args], {
+  const execOptions: Parameters<Pick<ExtensionAPI, "exec">["exec"]>[2] = {
     cwd,
-    ...(signal ? { signal } : {}),
     timeout: TIMEOUT_MS,
-  });
+  };
+  if (signal) {
+    execOptions.signal = signal;
+  }
+  const result = await pi.exec(process.execPath, [executable, ...args], execOptions);
   const stdout = display(result.stdout);
   const stderr = display(result.stderr);
   const streams = `stdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;

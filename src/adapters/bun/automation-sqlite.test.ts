@@ -466,6 +466,7 @@ describe("automation SQLite", () => {
     await run(automationRunStore.start(path, runId, 110, null));
 
     const malformedTerminal = await run(
+      // oxlint-disable-next-line ziggy/no-reflect-apply -- finish rejects malformed terminal at schema decode; test must bypass the typed contract
       Reflect.apply(automationRunStore.finish, automationRunStore, [
         path,
         runId,
@@ -480,6 +481,7 @@ describe("automation SQLite", () => {
       ]).pipe(Effect.result),
     );
     const malformedOccurrence = await run(
+      // oxlint-disable-next-line ziggy/no-reflect-apply -- commitScheduleTick rejects malformed mutations at schema decode; test must bypass the typed contract
       Reflect.apply(commitScheduleTick, undefined, [
         path,
         100,

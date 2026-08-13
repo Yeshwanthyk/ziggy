@@ -46,7 +46,7 @@ export interface ChatHandle {
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
 
-export interface ZiggyAgentShape {
+export interface ZiggyAgentApi {
   readonly runOnce: (
     target: ProfileTarget,
     prompt: string,
@@ -72,9 +72,7 @@ export interface ZiggyAgentShape {
   ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
 }
 
-export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentShape>()(
-  "ziggy/ZiggyAgent",
-) {}
+export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentApi>()("ziggy/ZiggyAgent") {}
 
 export const ZiggyAgentLive = Layer.effect(
   ZiggyAgent,

@@ -5,6 +5,7 @@ import { SlackApiError } from "./api";
 import {
   type SlackSocketConnection,
   type SlackSocketDependencies,
+  type SlackWebSocketMessageData,
   openSlackSocket,
 } from "./socket";
 
@@ -12,7 +13,7 @@ class FakeSlackConnection implements SlackSocketConnection {
   state = 1;
   readonly sent: Array<string> = [];
   readonly openListeners = new Set<() => void>();
-  readonly messageListeners = new Set<(data: unknown) => void>();
+  readonly messageListeners = new Set<(data: SlackWebSocketMessageData) => void>();
   readonly errorListeners = new Set<() => void>();
   readonly closeListeners = new Set<() => void>();
   closeThrows = false;
@@ -31,7 +32,8 @@ class FakeSlackConnection implements SlackSocketConnection {
     }
   };
   onOpen = (listener: () => void) => this.add(this.openListeners, listener);
-  onMessage = (listener: (data: unknown) => void) => this.add(this.messageListeners, listener);
+  onMessage = (listener: (data: SlackWebSocketMessageData) => void) =>
+    this.add(this.messageListeners, listener);
   onError = (listener: () => void) => {
     if (this.errorRegistrationThrows) throw new Error("listener registration failed");
     return this.add(this.errorListeners, listener);
@@ -67,12 +69,7 @@ const apiFailure = (reason: SlackApiError["reason"]): SlackApiError =>
     cause: new Error("bootstrap failed"),
   });
 
-const dependencies = (
-  overrides: Partial<SlackSocketDependencies> = {},
-): {
-  readonly value: SlackSocketDependencies;
-  readonly connections: Array<FakeSlackConnection>;
-} => {
+const dependencies = (overrides: Partial<SlackSocketDependencies> = {}) => {
   const connections: Array<FakeSlackConnection> = [];
   return {
     connections,
@@ -91,7 +88,7 @@ const dependencies = (
       reportConnectionFailure: () => undefined,
       reportCleanupFailure: () => undefined,
       ...overrides,
-    },
+    } satisfies SlackSocketDependencies,
   };
 };
 

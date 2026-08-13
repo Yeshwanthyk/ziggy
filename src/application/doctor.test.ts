@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect } from "effect";
 import { expect, test } from "bun:test";
-import type { AuthShape } from "./auth";
+import type { AuthApi } from "./auth";
 import { makeDoctor } from "./doctor";
-import type { ModelsShape } from "./models";
+import type { ModelsApi } from "./models";
 import { renderDoctor } from "../faces/doctor-cli";
 
 const tree = async (root: string): Promise<ReadonlyArray<string>> => {
@@ -32,7 +32,7 @@ const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   return output;
 };
 
-const auth: AuthShape = {
+const auth: AuthApi = {
   status: () =>
     Effect.succeed([
       {
@@ -58,7 +58,7 @@ const auth: AuthShape = {
   login: () => Effect.die("not used"),
 };
 
-const models: ModelsShape = {
+const models: ModelsApi = {
   status: () =>
     Effect.succeed({
       providerId: "anthropic",

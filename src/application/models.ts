@@ -25,7 +25,7 @@ export type ModelsError =
   | ModelThinkingUnsupported
   | ModelSettingsWriteFailed;
 
-export interface ModelsShape {
+export interface ModelsApi {
   readonly status: (target: ProfileTarget) => Effect.Effect<ModelStatus, ModelsError>;
   readonly readOnlyStatus: (target: ProfileTarget) => Effect.Effect<ModelStatus, ModelsError>;
   readonly list: (
@@ -40,7 +40,7 @@ export interface ModelsShape {
   ) => Effect.Effect<ModelSelection, ModelsError>;
 }
 
-export class Models extends Context.Service<Models, ModelsShape>()("ziggy/Models") {}
+export class Models extends Context.Service<Models, ModelsApi>()("ziggy/Models") {}
 
 export const ModelsLive = Layer.succeed(Models, {
   status: (target) => getModelStatusReadOnly(target.path),

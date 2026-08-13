@@ -58,12 +58,14 @@ export type SlackSocketConnectionState =
       readonly failure: "connection" | "queue-overflow" | "socket";
     };
 
+export type SlackWebSocketMessageData = string | Uint8Array;
+
 export interface SlackSocketConnection {
   readonly readyState: () => number;
   readonly send: (data: string) => void;
   readonly close: (code?: number) => void;
   readonly onOpen: (listener: () => void) => () => void;
-  readonly onMessage: (listener: (data: unknown) => void) => () => void;
+  readonly onMessage: (listener: (data: SlackWebSocketMessageData) => void) => () => void;
   readonly onError: (listener: () => void) => () => void;
   readonly onClose: (listener: () => void) => () => void;
 }
@@ -131,6 +133,26 @@ const decodeEventsPayload = Schema.decodeUnknownEffect(EventsPayloadSchema);
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
 const decodeMessageFile = Schema.decodeUnknownEffect(SlackMessageFileSchema);
 
+const websocketMessageText = (data: SlackWebSocketMessageData): string =>
+  ArrayBuffer.isView(data) ? new TextDecoder().decode(data) : data;
+
+const normalizeWebSocketMessageData = (
+  data: MessageEvent["data"],
+): SlackWebSocketMessageData | undefined => {
+  if (ArrayBuffer.isView(data)) {
+    return data instanceof Uint8Array
+      ? data
+      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (data instanceof Blob) {
+    return undefined;
+  }
+  return data;
+};
+
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_EVENT_IDS = 1_000;
 const MAX_FILES_PER_TURN = 4;
@@ -167,7 +189,12 @@ const liveConnection = (url: string): SlackSocketConnection => {
       return () => socket.removeEventListener("open", listener);
     },
     onMessage: (listener) => {
-      const handle = (event: MessageEvent) => listener(event.data);
+      const handle = (event: MessageEvent) => {
+        const data = normalizeWebSocketMessageData(event.data);
+        if (data !== undefined) {
+          listener(data);
+        }
+      };
       socket.addEventListener("message", handle);
       return () => socket.removeEventListener("message", handle);
     },
@@ -346,9 +373,7 @@ export const openSlackSocket = (
               );
               removers.push(
                 connection.onMessage((data) => {
-                  if (typeof data === "string") {
-                    offerCommand({ _tag: "Frame", connection, text: data });
-                  }
+                  offerCommand({ _tag: "Frame", connection, text: websocketMessageText(data) });
                 }),
               );
               removers.push(
@@ -455,10 +480,10 @@ export const openSlackSocket = (
           const urlPrivate = file.url_private_download ?? file.url_private;
           return {
             id: file.id,
-            ...(name === undefined ? {} : { name }),
-            ...(file.mimetype === undefined ? {} : { mimeType: file.mimetype }),
-            ...(file.size === undefined ? {} : { size: file.size }),
-            ...(urlPrivate === undefined ? {} : { urlPrivate }),
+            ...(name !== undefined ? { name } : undefined),
+            ...(file.mimetype !== undefined ? { mimeType: file.mimetype } : undefined),
+            ...(file.size !== undefined ? { size: file.size } : undefined),
+            ...(urlPrivate !== undefined ? { urlPrivate } : undefined),
           };
         });
         const message: SlackInboundMessage = {
@@ -468,10 +493,10 @@ export const openSlackSocket = (
           text: payload.text ?? "",
           ts: payload.ts,
           threadTs: payload.thread_ts,
-          ...(files.length === 0 ? {} : { files }),
-          ...(rawFiles.length <= files.length
-            ? {}
-            : { omittedFileCount: rawFiles.length - files.length }),
+          ...(files.length > 0 ? { files } : undefined),
+          ...(rawFiles.length > files.length
+            ? { omittedFileCount: rawFiles.length - files.length }
+            : undefined),
         };
         const decision = yield* admitInbound(message, eventId);
         if (decision === "acknowledge") {

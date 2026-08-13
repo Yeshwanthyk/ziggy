@@ -23,6 +23,7 @@ import {
   selectSpecialist,
   usageFromMessages,
   useSpecialistChild,
+  type AgentRunInput,
   type MakeSpecialistRunnerOptions,
   type SpecialistSelectionParent,
   type SpecialistChildRuntime,
@@ -58,7 +59,7 @@ const result: SpecialistRunResult = {
 
 const invoke = async (
   tool: ReturnType<typeof createAgentRunTool>,
-  input: unknown,
+  input: AgentRunInput,
   signal?: AbortSignal,
 ) => tool.execute("call-1", input, signal);
 
@@ -97,19 +98,24 @@ const makeModel = (
   id: string,
   reasoning: boolean,
   thinkingLevelMap?: Model<Api>["thinkingLevelMap"],
-): Model<Api> => ({
-  id,
-  name: id,
-  api: "openai-completions",
-  provider,
-  baseUrl: "https://example.test",
-  reasoning,
-  ...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
-  input: ["text"],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  contextWindow: 1000,
-  maxTokens: 100,
-});
+): Model<Api> => {
+  const model: Model<Api> = {
+    id,
+    name: id,
+    api: "openai-completions",
+    provider,
+    baseUrl: "https://example.test",
+    reasoning,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000,
+    maxTokens: 100,
+  };
+  if (thinkingLevelMap !== undefined) {
+    model.thinkingLevelMap = thinkingLevelMap;
+  }
+  return model;
+};
 
 const failureOf = <E>(exit: Exit.Exit<unknown, E>): E => {
   expect(Exit.isFailure(exit)).toBe(true);
@@ -140,7 +146,7 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
     },
     services: {
       modelRuntime: {
-        getProvider: (id: string) => (id.length === 0 ? undefined : { id }),
+        getProvider: () => undefined,
         getModel: (provider: string, id: string) =>
           provider === model.provider && id === model.id ? model : undefined,
         hasConfiguredAuth: () => true,
@@ -192,7 +198,8 @@ describe("agent_run TUI tool", () => {
       },
     };
 
-    const response = await invoke(createAgentRunTool(runner), {
+    const tool = createAgentRunTool(runner);
+    const response = await tool.execute("call-1", {
       agent: "research-helper",
       prompt: "Find the answer",
       unexpected: true,

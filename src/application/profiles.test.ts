@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect, Predicate, Result } from "effect";
 import { expect, test } from "bun:test";
-import { Profiles, ProfilesLive, type ProfilesShape } from "./profiles";
+import { Profiles, ProfilesLive, type ProfilesApi } from "./profiles";
 
 const makeFixture = async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-profiles-test-"));
@@ -55,7 +55,7 @@ const writeSkill = async (skillPath: string, body: string, assets: Record<string
 };
 
 const useProfiles = <Value, Error>(
-  operation: (profiles: ProfilesShape) => Effect.Effect<Value, Error>,
+  operation: (profiles: ProfilesApi) => Effect.Effect<Value, Error>,
 ): Promise<Value> =>
   Effect.runPromise(
     Effect.gen(function* () {

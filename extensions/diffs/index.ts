@@ -4,7 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 const TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 1_000;
@@ -60,7 +60,7 @@ const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void =>
 };
 
 const execute = (
-  input: unknown,
+  input: Static<typeof Parameters>,
   cwd: string,
   signal: AbortSignal | undefined,
 ): Promise<{ stdout: string; stderr: string }> =>

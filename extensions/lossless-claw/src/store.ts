@@ -255,6 +255,7 @@ const discoverSessionFiles = (profile: string): ReadonlyArray<DiscoveredFile> =>
   });
 };
 
+// oxlint-disable-next-line ziggy/no-unknown-parameters -- JSON.stringify encode boundary for decoded Schema.Unknown tool arguments.
 const stringifyArguments = (value: unknown): string => {
   if (value === undefined) {
     return "";
@@ -266,7 +267,7 @@ const stringifyArguments = (value: unknown): string => {
 const messageText = (
   message: Schema.Schema.Type<typeof MessageSchema>,
 ): { readonly role: string; readonly text: string } | undefined => {
-  if (typeof message.content === "string") {
+  if (Predicate.isString(message.content)) {
     const text = message.content.trim();
     return text.length === 0 ? undefined : { role: message.role, text };
   }
@@ -563,10 +564,10 @@ export const listProfileSessions = (
 ): ReadonlyArray<SessionSummary> =>
   withFreshIndex(profile, (database) => {
     const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
-    const bindings: Record<string, string | number | null> = {
+    const bindings = {
       since: input.since ?? null,
       limit,
-    };
+    } satisfies Record<string, string | number | null>;
     const rows = database
       .query<SessionDatabaseRow, Record<string, string | number | null>>(
         `SELECT
@@ -702,14 +703,14 @@ const runSearch = (
   }
 
   const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
-  const bindingsBase: Record<string, string | number | null> = {
+  const bindingsBase = {
     session: input.session ?? null,
     role: input.role ?? null,
     since: input.since ?? null,
     until: input.until ?? null,
     active_only: input.activeOnly === true ? 1 : 0,
     limit,
-  };
+  } satisfies Record<string, string | number | null>;
   const statement = database.query<SearchDatabaseRow, Record<string, string | number | null>>(
     `SELECT
       e.rowid AS row_id,
@@ -737,10 +738,10 @@ const runSearch = (
   const selected = new Map<number, SearchResult>();
 
   const collect = (match: "and" | "or", expression: string): void => {
-    const bindings: Record<string, string | number | null> = {
+    const bindings = {
       ...bindingsBase,
       match: expression,
-    };
+    } satisfies Record<string, string | number | null>;
     for (const row of statement.all(bindings)) {
       if (!selected.has(row.row_id) && selected.size < limit) {
         selected.set(row.row_id, {

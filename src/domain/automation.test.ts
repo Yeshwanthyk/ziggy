@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import {
   AutomationPaused,
+  type AutomationBroadcastToken,
   automationScheduleFingerprint,
   manualRunId,
   parseAutomationFile,
@@ -11,6 +12,9 @@ import {
   scheduledRunId,
   validateAutomationId,
 } from "./automation";
+
+const broadcastTokenSource = (token: AutomationBroadcastToken): string =>
+  token === "origin" || token === "all" ? token : token.target;
 
 const source = (fields: ReadonlyArray<string>, body = "Do the work.") =>
   ["---", "version: 1", ...fields, "---", body, ""].join("\n");
@@ -63,9 +67,7 @@ describe("automation definition", () => {
       cronSource: automation.schedule.cronSource,
       timezone: automation.schedule.timezone,
       gate: automation.gate,
-      broadcast: automation.broadcast.map((token) =>
-        typeof token === "string" ? token : token.target,
-      ),
+      broadcast: automation.broadcast.map(broadcastTokenSource),
       origin: automation.origin?.target,
       prompt: automation.prompt,
     }).toEqual({
@@ -188,9 +190,10 @@ describe("automation definition", () => {
       "timezone: UTC",
       "broadcast: telegram:chat:1,telegram:chat:1",
     ]);
-    expect(
-      duplicate.broadcast.map((token) => (typeof token === "string" ? token : token.target)),
-    ).toEqual(["telegram:chat:1", "telegram:chat:1"]);
+    expect(duplicate.broadcast.map(broadcastTokenSource)).toEqual([
+      "telegram:chat:1",
+      "telegram:chat:1",
+    ]);
   });
 
   test("routes a leading Profile agent mention and strips only its tag", async () => {

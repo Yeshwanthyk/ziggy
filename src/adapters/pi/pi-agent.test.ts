@@ -50,7 +50,7 @@ const invokeMemoryHandler = async (
   }
 
   const extension = createProfileMemoryExtension(profilePath, paths.documents);
-  if (typeof extension === "function") {
+  if (!("hidden" in extension)) {
     throw new Error("expected named inline extension");
   }
   expect(extension.hidden).toBe(true);

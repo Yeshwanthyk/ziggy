@@ -8,16 +8,16 @@ import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
 import { DiscordApiError } from "../adapters/discord/api";
 import { AutomationSchedulerError } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
-import type { AutomationSchedulerShape } from "./automation-scheduler";
-import type { DiscordGatewayShape } from "./discord-gateway";
-import type { GatewayShape } from "./gateway";
+import type { AutomationSchedulerApi } from "./automation-scheduler";
+import type { DiscordGatewayApi } from "./discord-gateway";
+import type { GatewayApi } from "./gateway";
 import {
   loadResidentGatewayConfig,
   makeResidentGateway,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
 } from "./resident-gateway";
-import type { SlackGatewayShape } from "./slack-gateway";
+import type { SlackGatewayApi } from "./slack-gateway";
 
 const paths: Array<string> = [];
 const telegram = { botToken: "telegram-token", ownerUserId: 7 };
@@ -44,15 +44,15 @@ const exists = (path: string) => Bun.file(path).exists();
 const isGatewayConfigError = Predicate.isTagged("GatewayConfigError");
 const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect));
-const scheduler = (run: AutomationSchedulerShape["run"]): AutomationSchedulerShape => ({
+const scheduler = (run: AutomationSchedulerApi["run"]): AutomationSchedulerApi => ({
   run,
   status: () => Effect.never,
   runs: () => Effect.never,
 });
 const loops = (run: (name: string) => Effect.Effect<never, never>) => ({
-  telegram: { runLoop: () => run("telegram") } satisfies GatewayShape,
-  discord: { runLoop: () => run("discord") } satisfies DiscordGatewayShape,
-  slack: { runLoop: () => run("slack") } satisfies SlackGatewayShape,
+  telegram: { runLoop: () => run("telegram") } satisfies GatewayApi,
+  discord: { runLoop: () => run("discord") } satisfies DiscordGatewayApi,
+  slack: { runLoop: () => run("slack") } satisfies SlackGatewayApi,
 });
 const runtime = (config: ResidentGatewayConfig, events: Array<string>): ResidentGatewayRuntime => ({
   loadConfig: () => Effect.succeed(config),
@@ -190,7 +190,7 @@ describe("resident gateway supervision", () => {
               }),
             ),
           ),
-      } satisfies DiscordGatewayShape,
+      } satisfies DiscordGatewayApi,
     };
     const host = makeResidentGateway(
       scheduler(() =>

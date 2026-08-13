@@ -21,6 +21,7 @@ import {
   ModelUnknown,
   ProfileNotInitialized,
 } from "../../domain/agent";
+import { fileSystemCauseDetails } from "../fs/cause";
 
 export interface ModelStatus {
   readonly providerId: string | undefined;
@@ -52,7 +53,7 @@ interface PiModelsSession {
     thinking?: string,
   ) => ModelSelection | undefined;
   readonly flush: () => Promise<void>;
-  readonly drainSettingsError: () => unknown | undefined;
+  readonly drainSettingsError: () => Error | undefined;
 }
 
 export type PiModelsSessionFactory = (profilePath: string) => Promise<PiModelsSession>;
@@ -138,10 +139,7 @@ const createPiModelsSession: PiModelsSessionFactory = (profilePath) =>
 const createPiReadOnlyModelsSession: PiModelsSessionFactory = (profilePath) =>
   createPiModelsSessionWith(profilePath, true);
 
-const causeCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
+const missingSoul = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
 
 const requireSoul = (
   profilePath: string,
@@ -149,7 +147,7 @@ const requireSoul = (
   Effect.tryPromise({
     try: () => stat(join(profilePath, "SOUL.md")),
     catch: (cause) =>
-      causeCode(cause) === "ENOENT"
+      missingSoul(cause)
         ? new ProfileNotInitialized({
             profilePath,
             message: `profile is not initialized at ${profilePath}; run 'ziggy init <name|path>'`,

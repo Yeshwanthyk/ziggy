@@ -5,8 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
-import type { ZiggyAgentShape } from "./agent";
-import type { ModelsShape } from "./models";
+import type { ZiggyAgentApi } from "./agent";
+import type { ModelsApi } from "./models";
 import { makeProfileAgents } from "./profile-agents";
 
 const paths: Array<string> = [];
@@ -18,7 +18,7 @@ const profile = async () => {
   return { path, name: "Test" };
 };
 
-const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentShape => ({
+const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
   runOnce: () => Effect.succeed(0),
   openTui: () => Effect.succeed(0),
   openChat: () => Effect.succeed({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
@@ -32,7 +32,7 @@ const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentShape => ({
     }),
 });
 
-const models: ModelsShape = {
+const models: ModelsApi = {
   status: () =>
     Effect.succeed({
       providerId: "openai",

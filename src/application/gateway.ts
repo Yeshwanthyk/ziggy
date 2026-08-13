@@ -7,7 +7,7 @@ import {
   type TelegramApiError,
   type TelegramUpdate,
 } from "../adapters/telegram/api";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentShape } from "./agent";
+import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
@@ -34,14 +34,14 @@ export interface TelegramTransport {
   ) => Effect.Effect<void, TelegramApiError>;
 }
 
-export interface GatewayShape {
+export interface GatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: TelegramGatewayConfig,
   ) => Effect.Effect<never, GatewayError>;
 }
 
-export class Gateway extends Context.Service<Gateway, GatewayShape>()("ziggy/Gateway") {}
+export class Gateway extends Context.Service<Gateway, GatewayApi>()("ziggy/Gateway") {}
 
 interface InboundMessage {
   readonly chatKey: string;
@@ -153,9 +153,9 @@ const liveTelegramTransport: TelegramTransport = {
 };
 
 export const makeTelegramGateway = (
-  agent: ZiggyAgentShape,
+  agent: ZiggyAgentApi,
   transport: TelegramTransport = liveTelegramTransport,
-): GatewayShape => ({
+): GatewayApi => ({
   runLoop: (target, config) =>
     Effect.scoped(
       Effect.gen(function* () {

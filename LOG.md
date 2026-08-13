@@ -264,4 +264,6 @@ results.
 
 **Terminal secret-input ownership correction.** Stopped the secret prompt from changing stdin's process-global encoding and flow state. The terminal adapter now owns only raw-mode toggling and its temporary data listener, leaving the surrounding Pi/readline runtime responsible for stream encoding, resume, and pause behavior.
 
-**Type-safety Oxlint rules added.** Ported the anti-slop rule set into Ziggy's existing `.mjs` plugin layout as `ziggy/*` next to `ziggy/no-unsafe-typescript-syntax`, without a separate `anti-slop` plugin or `@oxlint/plugins`. Existing source is not yet cleaned up against the new rules.
+**Type-safety Oxlint rules added.** Ported the anti-slop rule set into Ziggy's existing `.mjs` plugin layout as `ziggy/*` next to `ziggy/no-unsafe-typescript-syntax`, without a separate `anti-slop` plugin or `@oxlint/plugins`.
+
+**Type-safety source cleanup.** Renamed Effect service `*Shape` identifiers to `*Api` (and SQLite `*Shape` fingerprints to `*Fingerprint`) so `ziggy/no-shape-in-symbol-names` can stay an error. Replaced runtime `typeof` / `"code" in cause` probes with `fileSystemCauseDetails`, named adapter request/runtime types, Schema decoding at Pi/session boundaries, and explicit optional-object construction instead of empty-object spreads. Targeted disables remain only at Pi `ToolDefinition.execute`, JSON.stringify encode, Reflect.apply schema-rejection tests, and untyped Pi TUI test doubles. `bun run check` is green.

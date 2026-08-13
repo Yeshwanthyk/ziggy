@@ -168,16 +168,18 @@ const safeCause = (cause: unknown, token: string): Error => {
   return new Error(redact(message, token));
 };
 
+interface DiscordApiErrorOptions {
+  readonly status?: number;
+  readonly retryAfterSeconds?: number;
+}
+
 const apiError = (
   operation: DiscordApiOperation,
   reason: DiscordApiErrorReason,
   retriable: boolean,
   cause: unknown,
   token: string,
-  options?: {
-    readonly status?: number;
-    readonly retryAfterSeconds?: number;
-  },
+  options?: DiscordApiErrorOptions,
 ): DiscordApiError =>
   new DiscordApiError({
     operation,
@@ -188,10 +190,10 @@ const apiError = (
         ? `Discord ${operation} authentication failed`
         : `Discord ${operation} failed`,
     cause: safeCause(cause, token),
-    ...(options?.status === undefined ? {} : { status: options.status }),
-    ...(options?.retryAfterSeconds === undefined
-      ? {}
-      : { retryAfterSeconds: options.retryAfterSeconds }),
+    ...(options?.status !== undefined ? { status: options.status } : undefined),
+    ...(options?.retryAfterSeconds !== undefined
+      ? { retryAfterSeconds: options.retryAfterSeconds }
+      : undefined),
   });
 
 const retryAfterHeader = (value: string | undefined): number | undefined => {
@@ -216,7 +218,7 @@ const classifyFailure = (
   if (status === 429) {
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status,
-      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
   if (status >= 500) {

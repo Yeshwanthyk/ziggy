@@ -6,7 +6,7 @@ import type { SlackInboundMessage } from "../adapters/slack/socket";
 import { ProviderCallError } from "../domain/agent";
 import type { SlackIngressRecord } from "../domain/slack-ingress";
 import { SlackHealthProjectionError } from "../domain/slack-health";
-import type { ZiggyAgentShape } from "./agent";
+import type { ZiggyAgentApi } from "./agent";
 import {
   classifySlackCommand,
   makeSlackGateway,
@@ -563,7 +563,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -728,7 +728,7 @@ describe("Slack gateway boundary", () => {
               }
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -912,22 +912,26 @@ describe("Slack gateway boundary", () => {
               return {
                 messages: [
                   { ts: threadTs, userId: "U123", text: `parent ${threadTs}` },
-                  {
-                    ts: latestTs,
-                    userId: "U999",
-                    text: "prior reply",
-                    ...(threadTs !== "100.000001"
-                      ? {}
-                      : {
-                          files: ["F1", "F2", "F3"].map((id) => ({
-                            id,
-                            name: `${id}.png`,
-                            mimeType: "image/png",
-                            size: 3,
-                            urlPrivate: `https://files.slack.com/files-pri/T-${id}/download`,
-                          })),
-                        }),
-                  },
+                  (() => {
+                    const reply = {
+                      ts: latestTs,
+                      userId: "U999",
+                      text: "prior reply",
+                    };
+                    if (threadTs === "100.000001") {
+                      return {
+                        ...reply,
+                        files: ["F1", "F2", "F3"].map((id) => ({
+                          id,
+                          name: `${id}.png`,
+                          mimeType: "image/png",
+                          size: 3,
+                          urlPrivate: `https://files.slack.com/files-pri/T-${id}/download`,
+                        })),
+                      };
+                    }
+                    return reply;
+                  })(),
                 ],
                 truncated: false,
               };
@@ -958,7 +962,7 @@ describe("Slack gateway boundary", () => {
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1114,7 +1118,7 @@ describe("Slack gateway boundary", () => {
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1292,7 +1296,7 @@ describe("Slack gateway boundary", () => {
             });
           },
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1539,7 +1543,7 @@ describe("Slack gateway boundary", () => {
               expect(text).toBe("I couldn't complete that request.");
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({

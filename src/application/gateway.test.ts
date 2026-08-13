@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { TelegramUpdate } from "../adapters/telegram/api";
-import type { ZiggyAgentShape } from "./agent";
+import type { ZiggyAgentApi } from "./agent";
 import {
   makeTelegramGateway,
   nextTelegramOffset,
@@ -96,7 +96,7 @@ describe("Telegram gateway startup", () => {
               yield* Deferred.succeed(replied, undefined);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({

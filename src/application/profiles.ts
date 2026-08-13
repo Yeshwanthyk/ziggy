@@ -85,7 +85,7 @@ export type ProfileError =
   | ProfileSkillError
   | ProfileExtensionInvalid;
 
-export interface ProfilesShape {
+export interface ProfilesApi {
   readonly initProfile: (
     target: ProfileTarget,
     options?: InitProfileOptions,
@@ -128,7 +128,7 @@ export interface ProfilesShape {
   ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
 }
 
-export class Profiles extends Context.Service<Profiles, ProfilesShape>()("ziggy/Profiles") {}
+export class Profiles extends Context.Service<Profiles, ProfilesApi>()("ziggy/Profiles") {}
 
 const fileSystemError = (
   operation: string,

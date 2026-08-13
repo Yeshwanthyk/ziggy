@@ -88,27 +88,39 @@ const parseFrontmatter = (
   return Effect.succeed({ fields, body });
 };
 
+interface ProfileAgentDecodeInput {
+  readonly id: string;
+  readonly version: number | string | undefined;
+  readonly description: string | undefined;
+  readonly body: string;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly thinking?: string;
+  readonly tools?: ReadonlyArray<string>;
+}
+
 const rawAgent = (
   id: string,
   fields: ReadonlyMap<string, string>,
   body: string,
-): Readonly<Record<string, unknown>> => {
-  const raw: Record<string, unknown> = {
-    id,
-    version: fields.get("version") === "1" ? 1 : fields.get("version"),
-    description: fields.get("description"),
-    body,
-  };
-  for (const name of ["provider", "model", "thinking"] as const) {
-    const value = fields.get(name);
-    if (value !== undefined) raw[name] = value;
-  }
-  const tools = fields.get("tools");
-  if (tools !== undefined) {
-    raw.tools = tools.split(",").map((tool) => tool.trim());
-  }
-  return raw;
-};
+): ProfileAgentDecodeInput => ({
+  id,
+  version: fields.get("version") === "1" ? 1 : fields.get("version"),
+  description: fields.get("description"),
+  body,
+  ...Object.fromEntries([
+    ...(["provider", "model", "thinking"] as const).flatMap((name) => {
+      const value = fields.get(name);
+      return value === undefined ? [] : [[name, value] as const];
+    }),
+    (() => {
+      const tools = fields.get("tools");
+      return tools === undefined
+        ? []
+        : [["tools", tools.split(",").map((tool) => tool.trim())] as const];
+    })(),
+  ]),
+});
 
 export const decodeProfileAgentSource = (targetPath: string, text: string) =>
   Effect.gen(function* () {

@@ -54,7 +54,7 @@ interface SearchOutput {
   results: SearchResult[];
 }
 
-const parseArgs = (args: string[]): { query: string; count: number } => {
+const parseArgs = (args: string[]) => {
   let count = 5;
   const words: string[] = [];
   for (let index = 0; index < args.length; index += 1) {

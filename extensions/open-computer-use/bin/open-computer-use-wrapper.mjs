@@ -30,8 +30,16 @@ function fail(message, details = {}) {
   process.exit(1);
 }
 
+function isString(value) {
+  return value === String(value);
+}
+
+function isPlainObject(value) {
+  return value instanceof Object && !Array.isArray(value);
+}
+
 function asString(value, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return isString(value) && value.trim() ? value.trim() : fallback;
 }
 
 function hasOwn(object, key) {
@@ -151,7 +159,7 @@ function stripDataUrl(value) {
 }
 
 function looksLikePngBase64(value) {
-  if (typeof value !== "string" || value.length < 32) return false;
+  if (!isString(value) || value.length < 32) return false;
   const raw = stripDataUrl(value);
   if (!/^[A-Za-z0-9+/=\r\n]+$/.test(raw) || raw.length % 4 !== 0) return false;
   try {
@@ -180,7 +188,7 @@ function writeScreenshot(value, state) {
 }
 
 function replaceImages(value, state, parentKey = "") {
-  if (typeof value === "string") {
+  if (isString(value)) {
     if (
       (IMAGE_KEY_RE.test(parentKey) || parentKey.toLowerCase().includes("screenshot")) &&
       looksLikePngBase64(value)
@@ -190,12 +198,8 @@ function replaceImages(value, state, parentKey = "") {
     return value;
   }
   if (Array.isArray(value)) return value.map((item) => replaceImages(item, state));
-  if (value && typeof value === "object") {
-    if (
-      value.type === "image" &&
-      typeof value.data === "string" &&
-      looksLikePngBase64(value.data)
-    ) {
+  if (isPlainObject(value)) {
+    if (value.type === "image" && isString(value.data) && looksLikePngBase64(value.data)) {
       return { ...value, data: writeScreenshot(value.data, state) };
     }
     const next = {};
@@ -225,7 +229,7 @@ function truncateString(value, budget) {
 }
 
 function findLongestString(value, parent = null, key = null, best = null) {
-  if (typeof value === "string") {
+  if (isString(value)) {
     if (!best || Buffer.byteLength(value) > Buffer.byteLength(best.value)) {
       return { parent, key, value };
     }
@@ -237,7 +241,7 @@ function findLongestString(value, parent = null, key = null, best = null) {
       best,
     );
   }
-  if (value && typeof value === "object") {
+  if (isPlainObject(value)) {
     return Object.entries(value).reduce(
       (current, [childKey, child]) => findLongestString(child, value, childKey, current),
       best,
@@ -261,11 +265,11 @@ function truncateObjectStrings(value) {
 function truncateLargeText(value) {
   let encoded = JSON.stringify(value);
   if (Buffer.byteLength(encoded) <= OUTPUT_LIMIT) return value;
-  if (typeof value.output === "string") {
+  if (isString(value.output)) {
     value.output = truncateString(value.output, Math.max(1024, OUTPUT_LIMIT - 1024));
     return value;
   }
-  if (value.data && typeof value.data === "object") value.data = truncateObjectStrings(value.data);
+  if (value.data && isPlainObject(value.data)) value.data = truncateObjectStrings(value.data);
   encoded = JSON.stringify(value);
   if (Buffer.byteLength(encoded) <= OUTPUT_LIMIT) return value;
   return {
@@ -370,13 +374,19 @@ child.on("exit", (code) => {
   cleanupTempFiles();
   const state = { profilePath, screenshotDirectory, screenshots: [] };
   const cleaned = replaceImages(parseOutput(stdout), state);
-  const response = truncateLargeText({
+  const responseBase = {
     success: code === 0,
     action: input.action ?? "get_app_state",
     ...cleaned,
-    ...(state.screenshots.length ? { screenshots: state.screenshots } : {}),
-    ...(stderr.trim() ? { stderr: stderr.trim() } : {}),
-  });
+  };
+  if (state.screenshots.length) {
+    responseBase.screenshots = state.screenshots;
+  }
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    responseBase.stderr = trimmedStderr;
+  }
+  const response = truncateLargeText(responseBase);
   process.stdout.write(`${JSON.stringify(response)}\n`);
   process.exit(code ?? 1);
 });

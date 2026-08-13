@@ -20,7 +20,7 @@ import { TelegramApiError } from "../adapters/telegram/api";
 import { ProviderCallError, ProviderConfigError, SpecialistAgentNotFound } from "../domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
-import type { ZiggyAgentShape } from "./agent";
+import type { ZiggyAgentApi } from "./agent";
 import { makeAutomationDefinitions } from "./automation-definitions";
 import { type AutomationCapabilities, makeAutomations } from "./automations";
 
@@ -65,7 +65,7 @@ const harness = (
     readonly store?: AutomationRunStore;
   } = {},
 ) => {
-  const agent: ZiggyAgentShape = {
+  const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
     runSpecialist: (_target, agentId, task, context) =>
       Effect.sync(() => {

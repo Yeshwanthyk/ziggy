@@ -47,7 +47,7 @@ const runtime = (
 ): PiAuthRuntime => ({
   getProviders: () => options.providers ?? [],
   checkAuth: options.checkAuth ?? (() => Promise.resolve(undefined)),
-  login: options.login ?? (() => Promise.resolve(undefined)),
+  login: options.login ?? (() => Promise.resolve({ type: "api_key" })),
 });
 
 const interaction: AuthInteraction = {

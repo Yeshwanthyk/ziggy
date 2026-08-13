@@ -1,7 +1,5 @@
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli";
-
-const decodeArguments = Schema.decodeUnknownEffect(Schema.Array(Schema.String));
 
 const helpTopics = new Set<string>([
   "help",
@@ -92,15 +90,20 @@ const parseInit = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid =>
   if (minimal && (providerId !== undefined || modelId !== undefined || thinking !== undefined)) {
     return invalid("--minimal cannot be combined with provider, model, or thinking setup");
   }
-  return {
+  const command = {
     _tag: "Init",
     target,
     minimal,
     nonInteractive,
-    ...(providerId === undefined ? {} : { providerId }),
-    ...(modelId === undefined ? {} : { modelId }),
-    ...(thinking === undefined ? {} : { thinking }),
-  };
+    ...Object.fromEntries(
+      [
+        providerId !== undefined ? (["providerId", providerId] as const) : undefined,
+        modelId !== undefined ? (["modelId", modelId] as const) : undefined,
+        thinking !== undefined ? (["thinking", thinking] as const) : undefined,
+      ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+    ),
+  } satisfies Extract<CliCommand, { _tag: "Init" }>;
+  return command;
 };
 
 const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
@@ -385,14 +388,12 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   return { _tag: "Tui", target: word };
 };
 
-export const decodeCliCommand = (input: unknown): Effect.Effect<CliCommand, CliInputInvalid> =>
-  decodeArguments(input).pipe(
-    Effect.mapError(() => invalid("command arguments must be strings")),
-    Effect.flatMap((args) => {
-      const parsed = parseTypedArguments(args);
-      return parsed._tag === "CliInputInvalid" ? Effect.fail(parsed) : Effect.succeed(parsed);
-    }),
-  );
+export const decodeCliCommand = (
+  input: ReadonlyArray<string>,
+): Effect.Effect<CliCommand, CliInputInvalid> => {
+  const parsed = parseTypedArguments(input);
+  return parsed._tag === "CliInputInvalid" ? Effect.fail(parsed) : Effect.succeed(parsed);
+};
 
 const generalHelp = `Usage:
   ziggy [<name|path>]
@@ -422,7 +423,7 @@ const generalHelp = `Usage:
   ziggy help [command]
   ziggy version`;
 
-const topicHelp: Record<HelpTopic, string> = {
+const topicHelp = {
   help: "usage: ziggy help [command]",
   version: "usage: ziggy version",
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
@@ -446,7 +447,7 @@ const topicHelp: Record<HelpTopic, string> = {
   serve: serveHelp,
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",
-};
+} satisfies Record<HelpTopic, string>;
 
 export const renderHelp = (topic?: HelpTopic): string =>
   topic === undefined ? generalHelp : topicHelp[topic];

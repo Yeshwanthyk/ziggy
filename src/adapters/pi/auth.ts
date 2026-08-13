@@ -8,6 +8,7 @@ import type {
   ModelsStore,
 } from "@earendil-works/pi-ai";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
+import type { Credential } from "@earendil-works/pi-ai";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import {
@@ -17,6 +18,7 @@ import {
   ProfileNotInitialized,
   ProviderConfigError,
 } from "../../domain/agent";
+import { fileSystemCauseDetails } from "../fs/cause";
 
 export type ProviderAuthType = "api_key" | "oauth";
 export type { AuthEvent, AuthInteraction, AuthPrompt };
@@ -59,15 +61,12 @@ export interface PiAuthRuntime {
     providerId: string,
     type: ProviderAuthType,
     interaction: AuthInteraction,
-  ) => Promise<unknown>;
+  ) => Promise<Credential>;
 }
 
 export type PiAuthRuntimeFactory = (profilePath: string) => Promise<PiAuthRuntime>;
 
-const causeCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
+const missingSoul = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
 
 const requireSoul = (
   profilePath: string,
@@ -76,7 +75,7 @@ const requireSoul = (
   return Effect.tryPromise({
     try: () => stat(soulPath),
     catch: (cause) =>
-      causeCode(cause) === "ENOENT"
+      missingSoul(cause)
         ? new ProfileNotInitialized({
             profilePath,
             message: `profile is not initialized at ${profilePath}; run 'ziggy init <name|path>'`,

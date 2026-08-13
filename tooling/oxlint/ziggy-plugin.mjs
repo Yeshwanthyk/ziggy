@@ -6,7 +6,7 @@ import noObjectParameters from "./ziggy/rules/no-object-parameters.mjs";
 import noReflectApply from "./ziggy/rules/no-reflect-apply.mjs";
 import noReflectGet from "./ziggy/rules/no-reflect-get.mjs";
 import noRuntimeTypeof from "./ziggy/rules/no-runtime-typeof.mjs";
-import noShapeInSymbolNames from "./ziggy/rules/no-shape-in-symbol-names.mjs";
+import forbiddenTermInSymbolNames from "./ziggy/rules/no-shape-in-symbol-names.mjs";
 import noUnknownParameters from "./ziggy/rules/no-unknown-parameters.mjs";
 import noUnknownReturns from "./ziggy/rules/no-unknown-returns.mjs";
 import noUnknownTypeAliases from "./ziggy/rules/no-unknown-type-aliases.mjs";
@@ -26,7 +26,7 @@ export default {
     "no-reflect-apply": noReflectApply,
     "no-reflect-get": noReflectGet,
     "no-runtime-typeof": noRuntimeTypeof,
-    "no-shape-in-symbol-names": noShapeInSymbolNames,
+    "no-shape-in-symbol-names": forbiddenTermInSymbolNames,
     "no-unknown-parameters": noUnknownParameters,
     "no-unknown-returns": noUnknownReturns,
     "no-unknown-type-aliases": noUnknownTypeAliases,

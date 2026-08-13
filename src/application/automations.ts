@@ -32,7 +32,7 @@ import {
 } from "../domain/automation";
 import type { ProfileSpecialistError } from "../domain/agent";
 import type { ProfileTarget } from "../domain/profile";
-import { ZiggyAgent, type ZiggyAgentShape } from "./agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
 import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
 import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
@@ -46,14 +46,14 @@ export type AutomationError =
   | AutomationDatabaseError
   | ProfileSpecialistError;
 
-export interface AutomationsShape {
+export interface AutomationsApi {
   readonly run: (
     target: ProfileTarget,
     automationId: string,
     trigger: AutomationTrigger,
   ) => Effect.Effect<AutomationRunOutcome, AutomationError>;
 }
-export class Automations extends Context.Service<Automations, AutomationsShape>()(
+export class Automations extends Context.Service<Automations, AutomationsApi>()(
   "ziggy/Automations",
 ) {}
 
@@ -256,10 +256,10 @@ const gateFailureCategory = (
 const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
 export const makeAutomations = (
-  agent: ZiggyAgentShape,
+  agent: ZiggyAgentApi,
   capabilities: AutomationCapabilities = liveCapabilities,
   runtime: AutomationRunRuntime = liveRunRuntime,
-): AutomationsShape => ({
+): AutomationsApi => ({
   run: (target, automationIdSource, trigger) =>
     Effect.gen(function* () {
       const automationId = yield* validateAutomationId(automationIdSource);

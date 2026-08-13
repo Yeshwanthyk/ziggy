@@ -140,20 +140,25 @@ const program = Effect.gen(function* () {
   switch (command._tag) {
     case "Init": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+      const initOptions = {
+        minimal: command.minimal,
+        interactive:
+          !command.nonInteractive && process.stdin.isTTY === true && process.stdout.isTTY === true,
+        ...Object.fromEntries(
+          [
+            command.providerId !== undefined
+              ? (["providerId", command.providerId] as const)
+              : undefined,
+            command.modelId !== undefined ? (["modelId", command.modelId] as const) : undefined,
+            command.thinking !== undefined ? (["thinking", command.thinking] as const) : undefined,
+          ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+        ),
+      };
       const result = yield* setup.initialize(
         target,
         resolveProfilesRegistry(resolutionOptions),
         repositoryRoot,
-        {
-          minimal: command.minimal,
-          interactive:
-            !command.nonInteractive &&
-            process.stdin.isTTY === true &&
-            process.stdout.isTTY === true,
-          ...(command.providerId === undefined ? {} : { providerId: command.providerId }),
-          ...(command.modelId === undefined ? {} : { modelId: command.modelId }),
-          ...(command.thinking === undefined ? {} : { thinking: command.thinking }),
-        },
+        initOptions,
         terminalSetupInteraction(target.path),
       );
       console.log(
@@ -530,8 +535,10 @@ const program = Effect.gen(function* () {
               const runs = yield* automationScheduler.runs(target, automationId);
               return {
                 kind: "runs",
-                ...(request.id === undefined ? {} : { automationId: request.id }),
                 text: renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
+                ...Object.fromEntries(
+                  request.id === undefined ? [] : ([["automationId", request.id]] as const),
+                ),
               } satisfies AutomationTuiResponse;
             }
             case "pause":
@@ -660,14 +667,15 @@ const program = Effect.gen(function* () {
   ),
 );
 
-BunRuntime.runMain(program, {
-  disableErrorReporting: true,
-  ...(isForegroundResidentArguments(process.argv.slice(2))
+BunRuntime.runMain(
+  program,
+  isForegroundResidentArguments(process.argv.slice(2))
     ? {
+        disableErrorReporting: true,
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);
           else Runtime.defaultTeardown(exit, onExit);
         },
       }
-    : {}),
-});
+    : { disableErrorReporting: true },
+);

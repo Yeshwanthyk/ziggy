@@ -8,7 +8,7 @@ import type {
   DiscordSocket,
 } from "../adapters/discord/socket";
 import type { DiscordIngressPayload, DiscordIngressTerminalState } from "../domain/discord-ingress";
-import type { ZiggyAgentShape } from "./agent";
+import type { ZiggyAgentApi } from "./agent";
 import {
   discordMessageChunks,
   discordIngressTerminalState,
@@ -99,7 +99,7 @@ describe("Discord gateway boundary", () => {
               reconciliations.push({ token, guildIds });
             }).pipe(Effect.andThen(Deferred.succeed(completed, undefined))),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -182,7 +182,7 @@ describe("Discord gateway boundary", () => {
               ),
             ),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -313,7 +313,7 @@ describe("Discord gateway boundary", () => {
           downloadAttachment: () =>
             Effect.succeed({ type: "image", data: "AQID", mimeType: "image/png" }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -455,7 +455,7 @@ describe("Discord gateway boundary", () => {
             Deferred.succeed(diagnosticSent, undefined).pipe(Effect.as({ id: "diagnostic" })),
           updateMessage: () => Effect.void,
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -527,7 +527,7 @@ describe("Discord gateway boundary", () => {
               events.push(`updateMessage:${token}:${channelId}:${messageId}:${text}`);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -630,7 +630,7 @@ describe("Discord gateway boundary", () => {
               feedback.push(`remove:${token}:${channelId}:${messageId}:${emoji}`);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -712,7 +712,7 @@ describe("Discord gateway boundary", () => {
               }
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -823,7 +823,7 @@ describe("Discord gateway boundary", () => {
               visible.push(`reaction:remove:${emoji}`);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -929,7 +929,7 @@ describe("Discord gateway boundary", () => {
               }
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1014,7 +1014,7 @@ describe("Discord gateway boundary", () => {
               finishedState = state;
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1096,7 +1096,7 @@ describe("Discord gateway boundary", () => {
               finishedState = state;
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1165,7 +1165,7 @@ describe("Discord gateway boundary", () => {
               finishedStates.push(state);
             }),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({
@@ -1248,7 +1248,7 @@ describe("Discord gateway boundary", () => {
               lifecycle.push(`finish:${payload.messageId}:${state}`);
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
-        const agent: ZiggyAgentShape = {
+        const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({

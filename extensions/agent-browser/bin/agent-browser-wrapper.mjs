@@ -27,8 +27,12 @@ function fail(message, details = {}) {
   process.exit(1);
 }
 
+function isString(value) {
+  return value === String(value);
+}
+
 function asString(value, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+  return isString(value) && value.trim() ? value.trim() : fallback;
 }
 
 function asStringArray(value) {
@@ -228,15 +232,17 @@ child.on("error", (error) => {
 });
 child.on("exit", (code) => {
   cleanupTermination();
-  process.stdout.write(
-    `${JSON.stringify({
-      success: code === 0,
-      action: input.action ?? "status",
-      browserProfile,
-      session,
-      ...parseOutput(stdout),
-      ...(stderr.trim() ? { stderr: stderr.trim() } : {}),
-    })}\n`,
-  );
+  const result = {
+    success: code === 0,
+    action: input.action ?? "status",
+    browserProfile,
+    session,
+    ...parseOutput(stdout),
+  };
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) {
+    result.stderr = trimmedStderr;
+  }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(code ?? 1);
 });

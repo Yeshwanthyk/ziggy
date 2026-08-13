@@ -16,6 +16,7 @@ import {
   getSupportedThinkingLevels,
   type Api,
   type Model,
+  type Provider,
   type Usage,
 } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
@@ -195,7 +196,7 @@ export interface SpecialistSelectionParent {
   >;
   readonly services: {
     readonly modelRuntime: {
-      readonly getProvider: (providerId: string) => unknown;
+      readonly getProvider: (providerId: string) => Provider<Api> | undefined;
       readonly getModel: (providerId: string, modelId: string) => Model<Api> | undefined;
       readonly hasConfiguredAuth: (providerId: string) => boolean;
     };
@@ -225,6 +226,17 @@ const specialistFailure = (
     cause,
   });
 
+interface SpecialistResourceLoaderOptions {
+  systemPrompt: string;
+  noExtensions: true;
+  noSkills: true;
+  noPromptTemplates: true;
+  noThemes: true;
+  noContextFiles: true;
+  additionalExtensionPaths?: string[];
+  additionalSkillPaths?: string[];
+}
+
 export interface SpecialistExecutionEnvironment {
   readonly services: AgentSessionServices;
   readonly resources: PiResources;
@@ -247,30 +259,44 @@ export const specialistRuntime = (
             cwd,
             agentDir,
             modelRuntime: environment.services.modelRuntime,
-            resourceLoaderOptions: {
-              systemPrompt: agent.body,
-              noExtensions: true,
-              noSkills: true,
-              ...(environment.resources.extensionPaths.length === 0
-                ? {}
-                : { additionalExtensionPaths: [...environment.resources.extensionPaths] }),
-              ...(environment.resources.skillPaths.length === 0
-                ? {}
-                : { additionalSkillPaths: [...environment.resources.skillPaths] }),
-              noPromptTemplates: true,
-              noThemes: true,
-              noContextFiles: true,
-            },
+            resourceLoaderOptions: (() => {
+              const options: SpecialistResourceLoaderOptions = {
+                systemPrompt: agent.body,
+                noExtensions: true,
+                noSkills: true,
+                noPromptTemplates: true,
+                noThemes: true,
+                noContextFiles: true,
+              };
+              if (environment.resources.extensionPaths.length > 0) {
+                options.additionalExtensionPaths = [...environment.resources.extensionPaths];
+              }
+              if (environment.resources.skillPaths.length > 0) {
+                options.additionalSkillPaths = [...environment.resources.skillPaths];
+              }
+              return options;
+            })(),
           });
-          const created = await createAgentSessionFromServices({
-            services,
-            sessionManager: runtimeSessionManager,
-            ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-            model,
-            thinkingLevel: thinking,
-            tools: [...tools],
-            noTools: "all",
-          });
+          const created = await createAgentSessionFromServices(
+            sessionStartEvent === undefined
+              ? {
+                  services,
+                  sessionManager: runtimeSessionManager,
+                  model,
+                  thinkingLevel: thinking,
+                  tools: [...tools],
+                  noTools: "all" as const,
+                }
+              : {
+                  services,
+                  sessionManager: runtimeSessionManager,
+                  sessionStartEvent,
+                  model,
+                  thinkingLevel: thinking,
+                  tools: [...tools],
+                  noTools: "all" as const,
+                },
+          );
           return { ...created, services, diagnostics: services.diagnostics };
         },
         { cwd: profilePath, agentDir: profilePath, sessionManager },
@@ -388,26 +414,36 @@ const zeroUsage = (): Usage => ({
 });
 
 /** Add Pi usage without mutating either caller-owned value. */
-export const addUsage = (left: Usage, right: Usage): Usage => ({
-  input: left.input + right.input,
-  output: left.output + right.output,
-  cacheRead: left.cacheRead + right.cacheRead,
-  cacheWrite: left.cacheWrite + right.cacheWrite,
-  ...(left.cacheWrite1h === undefined && right.cacheWrite1h === undefined
-    ? {}
-    : { cacheWrite1h: (left.cacheWrite1h ?? 0) + (right.cacheWrite1h ?? 0) }),
-  ...(left.reasoning === undefined && right.reasoning === undefined
-    ? {}
-    : { reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0) }),
-  totalTokens: left.totalTokens + right.totalTokens,
-  cost: {
-    input: left.cost.input + right.cost.input,
-    output: left.cost.output + right.cost.output,
-    cacheRead: left.cost.cacheRead + right.cost.cacheRead,
-    cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
-    total: left.cost.total + right.cost.total,
-  },
-});
+export const addUsage = (left: Usage, right: Usage): Usage => {
+  const combined = {
+    input: left.input + right.input,
+    output: left.output + right.output,
+    cacheRead: left.cacheRead + right.cacheRead,
+    cacheWrite: left.cacheWrite + right.cacheWrite,
+    totalTokens: left.totalTokens + right.totalTokens,
+    cost: {
+      input: left.cost.input + right.cost.input,
+      output: left.cost.output + right.cost.output,
+      cacheRead: left.cost.cacheRead + right.cost.cacheRead,
+      cacheWrite: left.cost.cacheWrite + right.cost.cacheWrite,
+      total: left.cost.total + right.cost.total,
+    },
+  };
+  if (left.cacheWrite1h !== undefined || right.cacheWrite1h !== undefined) {
+    if (left.reasoning !== undefined || right.reasoning !== undefined) {
+      return {
+        ...combined,
+        cacheWrite1h: (left.cacheWrite1h ?? 0) + (right.cacheWrite1h ?? 0),
+        reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0),
+      };
+    }
+    return { ...combined, cacheWrite1h: (left.cacheWrite1h ?? 0) + (right.cacheWrite1h ?? 0) };
+  }
+  if (left.reasoning !== undefined || right.reasoning !== undefined) {
+    return { ...combined, reasoning: (left.reasoning ?? 0) + (right.reasoning ?? 0) };
+  }
+  return combined;
+};
 
 /** Aggregate only public Pi message usage; tool-result usage is intentionally included. */
 export const usageFromMessages = (messages: ReadonlyArray<AgentMessage>): Usage => {
@@ -490,14 +526,16 @@ const discussionParticipant = (result: SpecialistRunResult): AgentDiscussionPart
   usage: result.usage,
 });
 
+interface DiscussionRun {
+  readonly usage: () => Usage;
+  readonly effect: Effect.Effect<AgentDiscussionResult, SpecialistRunnerError>;
+}
+
 const runDiscussion = (
   runner: SpecialistRunner,
   input: AgentDiscussionInput,
   signal?: AbortSignal,
-): {
-  readonly usage: () => Usage;
-  readonly effect: Effect.Effect<AgentDiscussionResult, SpecialistRunnerError>;
-} => {
+): DiscussionRun => {
   // Keep this per-invocation accumulator outside the Effect so a typed failure can
   // still publish usage for children that completed before the failing child.
   let combinedUsage = zeroUsage();
@@ -699,11 +737,16 @@ const textResult = (
   text: string,
   details: SpecialistToolDetails,
   usage?: Usage,
-): AgentToolResult<SpecialistToolDetails> => ({
-  content: [{ type: "text" as const, text }],
-  details,
-  ...(usage === undefined ? {} : { usage }),
-});
+): AgentToolResult<SpecialistToolDetails> => {
+  const result: AgentToolResult<SpecialistToolDetails> = {
+    content: [{ type: "text" as const, text }],
+    details,
+  };
+  if (usage !== undefined) {
+    result.usage = usage;
+  }
+  return result;
+};
 
 const compactPrompt = (prompt: string): string => {
   const singleLine = prompt.replace(/\s+/g, " ").trim();
@@ -738,6 +781,7 @@ export const renderAgentRunResult = (details: SpecialistToolDetails, expanded: b
 export type AgentRunTool = Omit<ToolDefinition, "execute"> & {
   execute(
     toolCallId: string,
+    // oxlint-disable-next-line ziggy/no-unknown-parameters -- Pi ToolDefinition requires untyped execute input at the SDK boundary.
     input: unknown,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<unknown>,
@@ -785,11 +829,16 @@ const discussionTextResult = (
   text: string,
   details: AgentDiscussionToolDetails,
   usage?: Usage,
-): AgentToolResult<AgentDiscussionToolDetails> => ({
-  content: [{ type: "text" as const, text }],
-  details,
-  ...(usage === undefined ? {} : { usage }),
-});
+): AgentToolResult<AgentDiscussionToolDetails> => {
+  const result: AgentToolResult<AgentDiscussionToolDetails> = {
+    content: [{ type: "text" as const, text }],
+    details,
+  };
+  if (usage !== undefined) {
+    result.usage = usage;
+  }
+  return result;
+};
 
 const discussionSynthesisInstruction =
   "Synthesize the final answer to the user's topic from this transcript. Do not call another discussion or specialist provider.";
@@ -842,6 +891,7 @@ export const renderAgentDiscussResult = (
 export type AgentDiscussTool = Omit<ToolDefinition, "execute"> & {
   execute(
     toolCallId: string,
+    // oxlint-disable-next-line ziggy/no-unknown-parameters -- Pi ToolDefinition requires untyped execute input at the SDK boundary.
     input: unknown,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<unknown>,

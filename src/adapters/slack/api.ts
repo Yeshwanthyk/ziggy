@@ -197,17 +197,19 @@ const safeCause = (cause: unknown, token: string): Error => {
   return new Error(redact(message, token));
 };
 
+interface SlackApiErrorOptions {
+  readonly status?: number;
+  readonly retryAfterSeconds?: number;
+  readonly message?: string;
+}
+
 const apiError = (
   operation: SlackApiOperation,
   reason: SlackApiErrorReason,
   retriable: boolean,
   cause: unknown,
   token: string,
-  options?: {
-    readonly status?: number;
-    readonly retryAfterSeconds?: number;
-    readonly message?: string;
-  },
+  options?: SlackApiErrorOptions,
 ): SlackApiError =>
   new SlackApiError({
     operation,
@@ -221,10 +223,10 @@ const apiError = (
       token,
     ),
     cause: safeCause(cause, token),
-    ...(options?.status === undefined ? {} : { status: options.status }),
-    ...(options?.retryAfterSeconds === undefined
-      ? {}
-      : { retryAfterSeconds: options.retryAfterSeconds }),
+    ...(options?.status !== undefined ? { status: options.status } : undefined),
+    ...(options?.retryAfterSeconds !== undefined
+      ? { retryAfterSeconds: options.retryAfterSeconds }
+      : undefined),
   });
 
 const retryAfterHeader = (value: string | undefined): number | undefined => {
@@ -256,7 +258,7 @@ const classifyHttpFailure = (
     const retryAfterSeconds = retryAfterHeader(response.retryAfterHeader);
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status: response.status,
-      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
   if (response.status >= 500) {
@@ -298,12 +300,21 @@ const request = (
   );
 };
 
+type SlackPostMessageBody = { channel: string; markdown_text: string; thread_ts?: string };
+
+type SlackJsonRequestBody =
+  | Record<string, never>
+  | SlackPostMessageBody
+  | { channel: string; ts: string; markdown_text: string }
+  | { channel_id: string; thread_ts: string; status: string }
+  | { channel: string; timestamp: string; name: string };
+
 const jsonRequest = (
   client: HttpClient.HttpClient,
   token: string,
   operation: SlackApiOperation,
   method: string,
-  body: object,
+  body: SlackJsonRequestBody,
 ): Effect.Effect<RawResponse, SlackApiError> =>
   request(client, token, operation, method, {
     body: JSON.stringify(body),
@@ -355,7 +366,7 @@ const slackFailure = (
       status,
       ...(error === "missing_scope"
         ? { message: `Slack ${operation} is missing a required scope` }
-        : {}),
+        : undefined),
     });
   }
   if (error === "ratelimited") {
@@ -456,21 +467,21 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
               const urlPrivate = file.url_private_download ?? file.url_private;
               return {
                 id: file.id,
-                ...(name === undefined ? {} : { name }),
-                ...(file.mimetype === undefined ? {} : { mimeType: file.mimetype }),
-                ...(file.size === undefined ? {} : { size: file.size }),
-                ...(urlPrivate === undefined ? {} : { urlPrivate }),
+                ...(name !== undefined ? { name } : undefined),
+                ...(file.mimetype !== undefined ? { mimeType: file.mimetype } : undefined),
+                ...(file.size !== undefined ? { size: file.size } : undefined),
+                ...(urlPrivate !== undefined ? { urlPrivate } : undefined),
               };
             });
           messages.push({
             ts: message.ts,
             text: message.text ?? "",
-            ...(message.user === undefined ? {} : { userId: message.user }),
-            ...(message.bot_id === undefined ? {} : { botId: message.bot_id }),
-            ...(files.length === 0 ? {} : { files }),
-            ...(rawFiles.length <= files.length
-              ? {}
-              : { omittedFileCount: rawFiles.length - files.length }),
+            ...(message.user !== undefined ? { userId: message.user } : undefined),
+            ...(message.bot_id !== undefined ? { botId: message.bot_id } : undefined),
+            ...(files.length > 0 ? { files } : undefined),
+            ...(rawFiles.length > files.length
+              ? { omittedFileCount: rawFiles.length - files.length }
+              : undefined),
           });
         }
 
@@ -497,7 +508,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     jsonRequest(client, token, "postMessage", "chat.postMessage", {
       channel,
       markdown_text: text,
-      ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+      ...(threadTs !== undefined ? { thread_ts: threadTs } : undefined),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "postMessage", response)),
       Effect.flatMap((response) =>

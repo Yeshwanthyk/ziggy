@@ -55,9 +55,7 @@ const schedulerLines = (status: AutomationStatusProjection): ReadonlyArray<strin
   ];
 };
 
-const slackLines = (
-  projection: SlackHealthProjection,
-): { readonly lines: ReadonlyArray<string>; readonly degraded: boolean } => {
+const slackLines = (projection: SlackHealthProjection) => {
   if (projection._tag === "not-configured") {
     return { lines: ["slack: not configured"], degraded: false };
   }
@@ -79,9 +77,7 @@ const slackLines = (
   };
 };
 
-const discordLines = (
-  projection: DiscordHealthProjection,
-): { readonly lines: ReadonlyArray<string>; readonly degraded: boolean } => {
+const discordLines = (projection: DiscordHealthProjection) => {
   if (projection._tag === "not-configured") {
     return { lines: ["discord: not configured"], degraded: false };
   }

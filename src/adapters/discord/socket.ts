@@ -67,12 +67,14 @@ export type DiscordSocketConnectionState =
     }
   | { readonly state: "stopped" };
 
+export type DiscordWebSocketMessageData = string | Uint8Array;
+
 export interface DiscordSocketConnection {
   readonly readyState: () => number;
   readonly send: (data: string) => void;
   readonly close: (code?: number) => void;
   readonly onOpen: (listener: () => void) => () => void;
-  readonly onMessage: (listener: (data: unknown) => void) => () => void;
+  readonly onMessage: (listener: (data: DiscordWebSocketMessageData) => void) => () => void;
   readonly onError: (listener: () => void) => () => void;
   readonly onClose: (listener: (code: number) => void) => () => void;
 }
@@ -181,6 +183,38 @@ const normalizeGatewayFrame = (decoded: typeof GatewayFrameSchema.Type) => ({
 });
 type GatewayFrame = ReturnType<typeof normalizeGatewayFrame>;
 
+type DiscordGatewayOutboundPayload =
+  | { op: 1; d: number | null }
+  | { op: 6; d: { token: string; session_id: string; seq: number } }
+  | {
+      op: 2;
+      d: {
+        token: string;
+        intents: number;
+        properties: { os: string; browser: string; device: string };
+      };
+    };
+
+const websocketMessageText = (data: DiscordWebSocketMessageData): string =>
+  ArrayBuffer.isView(data) ? new TextDecoder().decode(data) : data;
+
+const normalizeWebSocketMessageData = (
+  data: MessageEvent["data"],
+): DiscordWebSocketMessageData | undefined => {
+  if (ArrayBuffer.isView(data)) {
+    return data instanceof Uint8Array
+      ? data
+      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (data instanceof Blob) {
+    return undefined;
+  }
+  return data;
+};
+
 const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
 const GATEWAY_QUERY = "v=10&encoding=json";
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -205,7 +239,7 @@ const error = (
         ? "Discord gateway authentication failed"
         : `Discord gateway ${reason.replaceAll("-", " ")}`,
     cause,
-    ...(closeCode === undefined ? {} : { closeCode }),
+    ...(closeCode !== undefined ? { closeCode } : undefined),
   });
 
 const gatewaySocketUrl = (baseUrl: string): Effect.Effect<string, DiscordSocketError> =>
@@ -229,7 +263,12 @@ const liveConnection = (url: string): DiscordSocketConnection => {
       return () => socket.removeEventListener("open", listener);
     },
     onMessage: (listener) => {
-      const handle = (event: MessageEvent) => listener(event.data);
+      const handle = (event: MessageEvent) => {
+        const data = normalizeWebSocketMessageData(event.data);
+        if (data !== undefined) {
+          listener(data);
+        }
+      };
       socket.addEventListener("message", handle);
       return () => socket.removeEventListener("message", handle);
     },
@@ -404,7 +443,10 @@ export const openDiscordSocket = (
       scheduleReconnect(delay, mode);
     };
 
-    const send = (connection: DiscordSocketConnection, payload: object): boolean => {
+    const send = (
+      connection: DiscordSocketConnection,
+      payload: DiscordGatewayOutboundPayload,
+    ): boolean => {
       if (current?.connection !== connection || connection.readyState() !== SOCKET_OPEN) {
         return false;
       }
@@ -454,9 +496,11 @@ export const openDiscordSocket = (
             try: () => {
               removers.push(
                 connection.onMessage((data) => {
-                  if (typeof data === "string") {
-                    offerCommand({ _tag: "Frame", connection, text: data });
-                  }
+                  offerCommand({
+                    _tag: "Frame",
+                    connection,
+                    text: websocketMessageText(data),
+                  });
                 }),
               );
               removers.push(
@@ -550,18 +594,18 @@ export const openDiscordSocket = (
               ? [
                   {
                     id: decodedAttachment.value.id,
-                    ...(decodedAttachment.value.filename === undefined
-                      ? {}
-                      : { filename: decodedAttachment.value.filename }),
-                    ...(decodedAttachment.value.content_type === undefined
-                      ? {}
-                      : { mimeType: decodedAttachment.value.content_type }),
-                    ...(decodedAttachment.value.size === undefined
-                      ? {}
-                      : { size: decodedAttachment.value.size }),
-                    ...(decodedAttachment.value.url === undefined
-                      ? {}
-                      : { url: decodedAttachment.value.url }),
+                    ...(decodedAttachment.value.filename !== undefined
+                      ? { filename: decodedAttachment.value.filename }
+                      : undefined),
+                    ...(decodedAttachment.value.content_type !== undefined
+                      ? { mimeType: decodedAttachment.value.content_type }
+                      : undefined),
+                    ...(decodedAttachment.value.size !== undefined
+                      ? { size: decodedAttachment.value.size }
+                      : undefined),
+                    ...(decodedAttachment.value.url !== undefined
+                      ? { url: decodedAttachment.value.url }
+                      : undefined),
                   },
                 ]
               : [],

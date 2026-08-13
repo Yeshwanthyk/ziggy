@@ -36,11 +36,14 @@ export const runGithubCommand = async (
   cwd: string,
   signal: AbortSignal | undefined,
 ) => {
-  const result = await exec("gh", [...args], {
+  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
     cwd,
-    ...(signal === undefined ? {} : { signal }),
     timeout: 30_000,
-  });
+  };
+  if (signal !== undefined) {
+    execOptions.signal = signal;
+  }
+  const result = await exec("gh", [...args], execOptions);
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
   if (result.code !== 0) {

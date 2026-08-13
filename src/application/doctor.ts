@@ -13,21 +13,21 @@ import { discoverPiResources } from "../adapters/pi/resources";
 import { listProfileSessions } from "../adapters/pi/sessions";
 import { readSlackHealth } from "../adapters/fs/slack-health";
 import { readDiscordHealth } from "../adapters/fs/discord-health";
-import { type AuthShape, Auth } from "./auth";
-import { type ModelsShape, Models } from "./models";
+import { type AuthApi, Auth } from "./auth";
+import { type ModelsApi, Models } from "./models";
 import { parseAutomationFile } from "../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../domain/memory";
 import { type DoctorCheck, type DoctorReport, doctorReport } from "../domain/doctor";
 import type { ProfileTarget } from "../domain/profile";
 
-export interface DoctorShape {
+export interface DoctorApi {
   readonly check: (
     target: ProfileTarget,
     repositoryRoot: string,
   ) => Effect.Effect<DoctorReport, never>;
 }
 
-export class Doctor extends Context.Service<Doctor, DoctorShape>()("ziggy/Doctor") {}
+export class Doctor extends Context.Service<Doctor, DoctorApi>()("ziggy/Doctor") {}
 
 const ok = (id: string, message: string): DoctorCheck => ({ id, severity: "ok", message });
 const warn = (id: string, message: string): DoctorCheck => ({ id, severity: "warn", message });
@@ -71,7 +71,7 @@ const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
       : error("profile", `SOUL.md must be a regular non-symlink file: ${soulPath}`);
   });
 
-const modelCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<DoctorCheck> =>
+const modelCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<DoctorCheck> =>
   models.readOnlyStatus(target).pipe(
     Effect.map((status) =>
       status.providerId === undefined || status.modelId === undefined
@@ -88,8 +88,8 @@ const modelCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<D
 
 const authCheck = (
   target: ProfileTarget,
-  auth: AuthShape,
-  models: ModelsShape,
+  auth: AuthApi,
+  models: ModelsApi,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
     const status = yield* models.readOnlyStatus(target);
@@ -106,7 +106,7 @@ const authCheck = (
     ),
   );
 
-const agentsCheck = (target: ProfileTarget, models: ModelsShape): Effect.Effect<DoctorCheck> =>
+const agentsCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
     const agents = yield* discoverProfileAgents(target.path);
     const known = agents.some((agent) => agent.provider !== undefined)
@@ -357,7 +357,7 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
       : error("runtime", "Resident runtime path must be a regular directory");
   });
 
-export const makeDoctor = (auth: AuthShape, models: ModelsShape): DoctorShape => ({
+export const makeDoctor = (auth: AuthApi, models: ModelsApi): DoctorApi => ({
   check: (target, repositoryRoot) =>
     Effect.gen(function* () {
       const checks = [

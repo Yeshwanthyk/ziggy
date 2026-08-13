@@ -23,7 +23,7 @@ export type AuthError =
   | AuthTypeUnsupported
   | AuthFlowFailed;
 
-export interface AuthShape {
+export interface AuthApi {
   readonly status: (
     target: ProfileTarget,
   ) => Effect.Effect<ReadonlyArray<ProviderAuthStatus>, AuthError>;
@@ -38,7 +38,7 @@ export interface AuthShape {
   ) => Effect.Effect<ProviderLoginResult, AuthError>;
 }
 
-export class Auth extends Context.Service<Auth, AuthShape>()("ziggy/Auth") {}
+export class Auth extends Context.Service<Auth, AuthApi>()("ziggy/Auth") {}
 
 export const defaultAuthType = (provider: ProviderAuthStatus): ProviderAuthType =>
   provider.supportsOauth && !provider.supportsApiKeyLogin ? "oauth" : "api_key";

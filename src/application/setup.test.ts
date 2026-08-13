@@ -3,10 +3,10 @@
 /* oxlint-disable ziggy-effect/no-effect-escape-hatch -- unreachable fake methods fail tests immediately */
 import { Effect, Exit } from "effect";
 import { expect, test } from "bun:test";
-import type { AuthShape } from "./auth";
-import type { DoctorShape } from "./doctor";
-import type { ModelsShape } from "./models";
-import type { ProfilesShape } from "./profiles";
+import type { AuthApi } from "./auth";
+import type { DoctorApi } from "./doctor";
+import type { ModelsApi } from "./models";
+import type { ProfilesApi } from "./profiles";
 import { makeSetup, type SetupInteraction } from "./setup";
 import type { DoctorReport } from "../domain/doctor";
 import { ProfileFileSystemError } from "../domain/profile";
@@ -18,7 +18,7 @@ const report: DoctorReport = {
   hasErrors: false,
 };
 
-const profiles = (events: string[], registerFails = false): ProfilesShape => ({
+const profiles = (events: string[], registerFails = false): ProfilesApi => ({
   initProfile: (_target, options) => {
     events.push(`init:${options?.createStarterDirectories === true}`);
     return Effect.succeed({
@@ -50,7 +50,7 @@ const profiles = (events: string[], registerFails = false): ProfilesShape => ({
   removeExtension: () => Effect.die("unused"),
 });
 
-const auth = (events: string[], configured = true): AuthShape => ({
+const auth = (events: string[], configured = true): AuthApi => ({
   status: () => {
     events.push("auth-status");
     return Effect.succeed([
@@ -86,7 +86,7 @@ const auth = (events: string[], configured = true): AuthShape => ({
 const models = (
   events: string[],
   current: { providerId: string | undefined; modelId: string | undefined; thinking: string },
-): ModelsShape => ({
+): ModelsApi => ({
   status: () => {
     events.push("model-status");
     return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
@@ -115,7 +115,7 @@ const models = (
   },
 });
 
-const doctor = (events: string[]): DoctorShape => ({
+const doctor = (events: string[]): DoctorApi => ({
   check: () => {
     events.push("doctor");
     return Effect.succeed(report);
@@ -138,11 +138,11 @@ const interaction = (events: string[]): SetupInteraction => ({
 
 test("existing guided setup resumes configured auth and model without resetting or prompting", async () => {
   const events: string[] = [];
-  const current: {
-    providerId: string | undefined;
-    modelId: string | undefined;
-    thinking: string;
-  } = { providerId: "anthropic", modelId: "claude", thinking: "high" };
+  const current = {
+    providerId: "anthropic",
+    modelId: "claude",
+    thinking: "high",
+  } satisfies Parameters<typeof models>[1];
   const setup = makeSetup(profiles(events), auth(events), models(events, current), doctor(events));
 
   const result = await Effect.runPromise(
@@ -173,11 +173,11 @@ test("existing guided setup resumes configured auth and model without resetting 
 
 test("explicit non-interactive setup selects through Models without prompting", async () => {
   const events: string[] = [];
-  const current: {
-    providerId: string | undefined;
-    modelId: string | undefined;
-    thinking: string;
-  } = { providerId: undefined, modelId: undefined, thinking: "medium" };
+  const current = {
+    providerId: undefined,
+    modelId: undefined,
+    thinking: "medium",
+  } satisfies Parameters<typeof models>[1];
   const setup = makeSetup(profiles(events), auth(events), models(events, current), doctor(events));
 
   await Effect.runPromise(
@@ -203,11 +203,11 @@ test("explicit non-interactive setup selects through Models without prompting", 
 
 test("non-interactive setup fails rather than prompting and registry failures remain visible", async () => {
   const missingEvents: string[] = [];
-  const current: {
-    providerId: string | undefined;
-    modelId: string | undefined;
-    thinking: string;
-  } = { providerId: undefined, modelId: undefined, thinking: "medium" };
+  const current = {
+    providerId: undefined,
+    modelId: undefined,
+    thinking: "medium",
+  } satisfies Parameters<typeof models>[1];
   const missing = makeSetup(
     profiles(missingEvents),
     auth(missingEvents),
