@@ -1,4 +1,4 @@
-const rule = {
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -34,14 +34,5 @@ const rule = {
         context.report({ messageId: "noNonNull", node });
       },
     };
-  },
-};
-
-export default {
-  meta: {
-    name: "ziggy",
-  },
-  rules: {
-    "no-unsafe-typescript-syntax": rule,
   },
 };

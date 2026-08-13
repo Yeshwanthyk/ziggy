@@ -1,8 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
-
-import type { ESTree } from "@oxlint/plugins";
-
-function referencedAliasName(type: ESTree.TSType): string | null {
+function referencedAliasName(type) {
   if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
   if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;
   return type.typeArguments === null ||
@@ -11,9 +7,7 @@ function referencedAliasName(type: ESTree.TSType): string | null {
     ? type.typeName.name
     : null;
 }
-
-/** Ban named aliases that merely conceal TypeScript's unknown top type. */
-export const noUnknownTypeAliasesRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -26,9 +20,8 @@ export const noUnknownTypeAliasesRule = defineRule({
     },
   },
   create(context) {
-    const aliases = new Map<string, ESTree.TSTypeAliasDeclaration>();
-
-    const resolvesToUnknown = (type: ESTree.TSType, visited = new Set<string>()): boolean => {
+    const aliases = new Map();
+    const resolvesToUnknown = (type, visited = new Set()) => {
       if (type.type === "TSUnknownKeyword") return true;
       if (type.type === "TSParenthesizedType")
         return resolvesToUnknown(type.typeAnnotation, visited);
@@ -45,7 +38,6 @@ export const noUnknownTypeAliasesRule = defineRule({
       nextVisited.add(name);
       return resolvesToUnknown(alias.typeAnnotation, nextVisited);
     };
-
     return {
       Program(node) {
         for (const statement of node.body) {
@@ -66,4 +58,4 @@ export const noUnknownTypeAliasesRule = defineRule({
       },
     };
   },
-});
+};

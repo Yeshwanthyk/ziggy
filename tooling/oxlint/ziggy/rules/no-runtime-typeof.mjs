@@ -1,7 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
-
-/** Disallow runtime typeof checks that narrow unparsed values instead of decoding them. */
-export const noRuntimeTypeofRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -22,4 +19,4 @@ export const noRuntimeTypeofRule = defineRule({
       },
     };
   },
-});
+};

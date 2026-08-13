@@ -1,14 +1,8 @@
-import { defineRule } from "@oxlint/plugins";
-import type { ESTree } from "@oxlint/plugins";
-
 const FORBIDDEN_SYMBOL_NAME = "shape";
-
-function containsForbiddenSymbolName(name: string): boolean {
+function containsForbiddenSymbolName(name) {
   return name.toLowerCase().includes(FORBIDDEN_SYMBOL_NAME);
 }
-
-/** Ban the case-insensitive substring "shape" in every JavaScript and TypeScript symbol name. */
-export const noForbiddenTermInSymbolNamesRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -21,7 +15,7 @@ export const noForbiddenTermInSymbolNamesRule = defineRule({
     },
   },
   create(context) {
-    const reportForbiddenSymbolName = (node: ESTree.Node & { name: string }) => {
+    const reportForbiddenSymbolName = (node) => {
       if (!containsForbiddenSymbolName(node.name)) return;
       context.report({
         node,
@@ -29,11 +23,10 @@ export const noForbiddenTermInSymbolNamesRule = defineRule({
         data: { name: node.name },
       });
     };
-
     return {
       Identifier: reportForbiddenSymbolName,
       PrivateIdentifier: reportForbiddenSymbolName,
       JSXIdentifier: reportForbiddenSymbolName,
     };
   },
-});
+};

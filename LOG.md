@@ -264,4 +264,4 @@ results.
 
 **Terminal secret-input ownership correction.** Stopped the secret prompt from changing stdin's process-global encoding and flow state. The terminal adapter now owns only raw-mode toggling and its temporary data listener, leaving the surrounding Pi/readline runtime responsible for stream encoding, resume, and pause behavior.
 
-**Anti-slop Oxlint rules vendored.** Copied [dmmulroy/anti-slop](https://github.com/dmmulroy/anti-slop) into `tooling/oxlint/anti-slop/` (plugin source only), registered it next to the existing Ziggy plugins, and enabled all 15 rules at error. Added `@oxlint/plugins@1.75.0` to match the pinned oxlint. Existing source is not yet cleaned up against the new rules.
+**Type-safety Oxlint rules added.** Ported the anti-slop rule set into Ziggy's existing `.mjs` plugin layout as `ziggy/*` next to `ziggy/no-unsafe-typescript-syntax`, without a separate `anti-slop` plugin or `@oxlint/plugins`. Existing source is not yet cleaned up against the new rules.

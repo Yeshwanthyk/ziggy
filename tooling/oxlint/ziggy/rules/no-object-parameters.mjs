@@ -1,18 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
-
-import type { ESTree, SourceCode } from "@oxlint/plugins";
-
-type Parameter = ESTree.ParamPattern;
-type ParameterOwner =
-  | ESTree.ArrowFunctionExpression
-  | ESTree.Function
-  | ESTree.TSCallSignatureDeclaration
-  | ESTree.TSConstructSignatureDeclaration
-  | ESTree.TSConstructorType
-  | ESTree.TSFunctionType
-  | ESTree.TSMethodSignature;
-
-function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | null | undefined {
+function parameterAnnotation(parameter) {
   if (parameter.type === "TSParameterProperty") {
     return parameterAnnotation(parameter.parameter);
   }
@@ -24,16 +10,14 @@ function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | nu
   }
   return parameter.typeAnnotation;
 }
-
-function parameterName(parameter: Parameter, sourceCode: SourceCode): string {
+function parameterName(parameter, sourceCode) {
   return parameter.type === "Identifier"
     ? parameter.name
     : sourceCode.getText(parameter).replace(/\s*:\s*object\s*$/u, "");
 }
-
-function lexicalTypeParameterNames(node: ESTree.Node): ReadonlySet<string> {
-  const names = new Set<string>();
-  let current: ESTree.Node | null = node;
+function lexicalTypeParameterNames(node) {
+  const names = new Set();
+  let current = node;
   while (current !== null && current.type !== "Program") {
     if ("typeParameters" in current) {
       for (const parameter of current.typeParameters?.params ?? []) {
@@ -46,9 +30,7 @@ function lexicalTypeParameterNames(node: ESTree.Node): ReadonlySet<string> {
   }
   return names;
 }
-
-/** Ban the broad object type on function inputs, including local aliases to object. */
-export const noObjectParametersRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -61,13 +43,8 @@ export const noObjectParametersRule = defineRule({
     },
   },
   create(context) {
-    const aliases = new Map<string, ESTree.TSType>();
-
-    const resolvesToObject = (
-      type: ESTree.TSType,
-      shadowedAliases: ReadonlySet<string>,
-      visited = new Set<string>(),
-    ): boolean => {
+    const aliases = new Map();
+    const resolvesToObject = (type, shadowedAliases, visited = new Set()) => {
       if (type.type === "TSObjectKeyword") return true;
       if (type.type === "TSParenthesizedType")
         return resolvesToObject(type.typeAnnotation, shadowedAliases, visited);
@@ -91,8 +68,7 @@ export const noObjectParametersRule = defineRule({
       nextVisited.add(type.typeName.name);
       return resolvesToObject(alias, shadowedAliases, nextVisited);
     };
-
-    const checkParameters = (node: ParameterOwner) => {
+    const checkParameters = (node) => {
       const shadowedAliases = lexicalTypeParameterNames(node);
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
@@ -105,7 +81,6 @@ export const noObjectParametersRule = defineRule({
         });
       }
     };
-
     return {
       Program(node) {
         for (const statement of node.body) {
@@ -131,4 +106,4 @@ export const noObjectParametersRule = defineRule({
       TSMethodSignature: checkParameters,
     };
   },
-});
+};

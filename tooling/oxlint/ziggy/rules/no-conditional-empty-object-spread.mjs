@@ -1,19 +1,14 @@
-import { defineRule } from "@oxlint/plugins";
-import type { ESTree } from "@oxlint/plugins";
-
-function unwrapParentheses(node: ESTree.Expression): ESTree.Expression {
+function unwrapParentheses(node) {
   let current = node;
   while (current.type === "ParenthesizedExpression") {
     current = current.expression;
   }
   return current;
 }
-
-function isEmptyObjectExpression(node: ESTree.Expression): boolean {
+function isEmptyObjectExpression(node) {
   return node.type === "ObjectExpression" && node.properties.length === 0;
 }
-
-function isConditionalEmptyObjectSpread(node: ESTree.Expression): boolean {
+function isConditionalEmptyObjectSpread(node) {
   const conditional = unwrapParentheses(node);
   return (
     conditional.type === "ConditionalExpression" &&
@@ -21,9 +16,7 @@ function isConditionalEmptyObjectSpread(node: ESTree.Expression): boolean {
       isEmptyObjectExpression(conditional.alternate))
   );
 }
-
-/** Ban conditional empty-object spreads without changing their omission semantics. */
-export const noConditionalEmptyObjectSpreadRule = defineRule({
+export default {
   meta: {
     type: "suggestion",
     docs: {
@@ -39,11 +32,10 @@ export const noConditionalEmptyObjectSpreadRule = defineRule({
     return {
       SpreadElement(node) {
         if (node.parent.type !== "ObjectExpression") return;
-
         if (isConditionalEmptyObjectSpread(node.argument)) {
           context.report({ node, messageId: "avoid" });
         }
       },
     };
   },
-});
+};

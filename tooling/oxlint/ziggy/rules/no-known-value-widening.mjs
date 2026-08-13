@@ -1,18 +1,9 @@
-import { defineRule } from "@oxlint/plugins";
-
 import {
   classifyWideningTarget,
   createTypeEnvironment,
   isKnownEvidenceExpression,
-  type TypeEnvironment,
-  type WideningTarget,
-} from "../shared/dictionary-types.ts";
-
-import type { ESTree, Scope, SourceCode, Variable } from "@oxlint/plugins";
-
-type FunctionExpression = ESTree.ArrowFunctionExpression | ESTree.Function;
-
-function unwrapExpression(expression: ESTree.Expression): ESTree.Expression {
+} from "../dictionary-types.mjs";
+function unwrapExpression(expression) {
   let current = expression;
   while (
     current.type === "ParenthesizedExpression" ||
@@ -25,12 +16,8 @@ function unwrapExpression(expression: ESTree.Expression): ESTree.Expression {
   }
   return current;
 }
-
-function resolveVariable(
-  sourceCode: SourceCode,
-  identifier: ESTree.IdentifierReference,
-): Variable | null {
-  let scope: Scope | null = sourceCode.getScope(identifier);
+function resolveVariable(sourceCode, identifier) {
+  let scope = sourceCode.getScope(identifier);
   while (scope !== null) {
     const variable = scope.set.get(identifier.name);
     if (variable !== undefined) return variable;
@@ -38,28 +25,21 @@ function resolveVariable(
   }
   return null;
 }
-
-function variableDeclarator(variable: Variable): ESTree.VariableDeclarator | null {
+function variableDeclarator(variable) {
   if (variable.defs.length !== 1) return null;
   const [definition] = variable.defs;
   return definition?.type === "Variable" && definition.node.type === "VariableDeclarator"
     ? definition.node
     : null;
 }
-
-function isStableConstVariable(variable: Variable, declarator: ESTree.VariableDeclarator): boolean {
+function isStableConstVariable(variable, declarator) {
   return (
     declarator.parent.type === "VariableDeclaration" &&
     declarator.parent.kind === "const" &&
     variable.references.every((reference) => reference.init || !reference.isWrite())
   );
 }
-
-function hasKnownEvidence(
-  sourceCode: SourceCode,
-  expression: ESTree.Expression,
-  visitedVariables = new Set<Variable>(),
-): boolean {
+function hasKnownEvidence(sourceCode, expression, visitedVariables = new Set()) {
   if (isKnownEvidenceExpression(expression)) return true;
   const unwrapped = unwrapExpression(expression);
   if (unwrapped.type !== "Identifier") return false;
@@ -76,18 +56,13 @@ function hasKnownEvidence(
   visitedVariables.add(variable);
   return hasKnownEvidence(sourceCode, declarator.init, visitedVariables);
 }
-
-function annotationTarget(
-  annotation: ESTree.TSTypeAnnotation | null | undefined,
-  environment: TypeEnvironment,
-): WideningTarget | null {
+function annotationTarget(annotation, environment) {
   return annotation === null || annotation === undefined
     ? null
     : classifyWideningTarget(annotation.typeAnnotation, environment);
 }
-
-function enclosingFunction(node: ESTree.Node): FunctionExpression | null {
-  let current: ESTree.Node | null = node.parent;
+function enclosingFunction(node) {
+  let current = node.parent;
   while (current !== null && current.type !== "Program") {
     if (
       current.type === "ArrowFunctionExpression" ||
@@ -100,14 +75,12 @@ function enclosingFunction(node: ESTree.Node): FunctionExpression | null {
   }
   return null;
 }
-
-function sourceKeyName(sourceCode: SourceCode, key: ESTree.PropertyKey): string {
+function sourceKeyName(sourceCode, key) {
   if (key.type === "Identifier" || key.type === "PrivateIdentifier") return key.name;
   if (key.type === "Literal") return String(key.value);
   return sourceCode.getText(key);
 }
-
-function functionName(sourceCode: SourceCode, owner: FunctionExpression | null): string {
+function functionName(sourceCode, owner) {
   if (owner === null) return "anonymous function";
   if (owner.id !== null) return owner.id.name;
   const parent = owner.parent;
@@ -116,22 +89,17 @@ function functionName(sourceCode: SourceCode, owner: FunctionExpression | null):
   if (parent.type === "MethodDefinition") return sourceKeyName(sourceCode, parent.key);
   return "anonymous function";
 }
-
-function isEmptyObjectExpression(expression: ESTree.Expression): boolean {
+function isEmptyObjectExpression(expression) {
   const unwrapped = unwrapExpression(expression);
   return unwrapped.type === "ObjectExpression" && unwrapped.properties.length === 0;
 }
-
-function isDictionaryAccumulatorTarget(destination: WideningTarget): boolean {
+function isDictionaryAccumulatorTarget(destination) {
   return destination.kind === "open dictionary" || destination.kind === "generic container";
 }
-
-function hasParentAssertion(node: ESTree.Node): boolean {
+function hasParentAssertion(node) {
   return node.parent?.type === "TSAsExpression" || node.parent?.type === "TSTypeAssertion";
 }
-
-/** Detect sound syntactic cases where a known value is explicitly widened and loses evidence. */
-export const noKnownValueWideningRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -144,13 +112,8 @@ export const noKnownValueWideningRule = defineRule({
     },
   },
   createOnce(context) {
-    let environment: TypeEnvironment | null = null;
-
-    const reportFlow = (
-      expression: ESTree.Expression,
-      destination: WideningTarget | null,
-      subject: string,
-    ) => {
+    let environment = null;
+    const reportFlow = (expression, destination, subject) => {
       if (destination === null) return;
       if (isDictionaryAccumulatorTarget(destination) && isEmptyObjectExpression(expression)) {
         return;
@@ -162,10 +125,8 @@ export const noKnownValueWideningRule = defineRule({
         data: { subject, target: destination.kind },
       });
     };
-
-    const targetFromAnnotation = (annotation: ESTree.TSTypeAnnotation | null | undefined) =>
+    const targetFromAnnotation = (annotation) =>
       environment === null ? null : annotationTarget(annotation, environment);
-
     return {
       Program(node) {
         environment = createTypeEnvironment(node);
@@ -241,4 +202,4 @@ export const noKnownValueWideningRule = defineRule({
       },
     };
   },
-});
+};

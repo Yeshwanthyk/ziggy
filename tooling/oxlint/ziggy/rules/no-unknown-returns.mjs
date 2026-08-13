@@ -1,17 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
-
-import type { ESTree } from "@oxlint/plugins";
-
-type FunctionWithReturnType =
-  | ESTree.ArrowFunctionExpression
-  | ESTree.Function
-  | ESTree.TSCallSignatureDeclaration
-  | ESTree.TSConstructSignatureDeclaration
-  | ESTree.TSConstructorType
-  | ESTree.TSFunctionType
-  | ESTree.TSMethodSignature;
-
-function referencedAliasName(type: ESTree.TSType): string | null {
+function referencedAliasName(type) {
   if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
   if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;
   return type.typeArguments === null ||
@@ -20,10 +7,9 @@ function referencedAliasName(type: ESTree.TSType): string | null {
     ? type.typeName.name
     : null;
 }
-
-function lexicalTypeParameterNames(node: ESTree.Node): ReadonlySet<string> {
-  const names = new Set<string>();
-  let current: ESTree.Node | null = node;
+function lexicalTypeParameterNames(node) {
+  const names = new Set();
+  let current = node;
   while (current !== null && current.type !== "Program") {
     if ("typeParameters" in current) {
       for (const parameter of current.typeParameters?.params ?? []) {
@@ -34,9 +20,7 @@ function lexicalTypeParameterNames(node: ESTree.Node): ReadonlySet<string> {
   }
   return names;
 }
-
-/** Ban function contracts that return unknown instead of a parsed domain type. */
-export const noUnknownReturnsRule = defineRule({
+export default {
   meta: {
     type: "problem",
     docs: {
@@ -49,13 +33,8 @@ export const noUnknownReturnsRule = defineRule({
     },
   },
   create(context) {
-    const aliases = new Map<string, ESTree.TSTypeAliasDeclaration>();
-
-    const resolvesToUnknown = (
-      type: ESTree.TSType,
-      shadowedAliases: ReadonlySet<string>,
-      visited = new Set<string>(),
-    ): boolean => {
+    const aliases = new Map();
+    const resolvesToUnknown = (type, shadowedAliases, visited = new Set()) => {
       if (type.type === "TSUnknownKeyword") return true;
       if (type.type === "TSParenthesizedType") {
         return resolvesToUnknown(type.typeAnnotation, shadowedAliases, visited);
@@ -84,14 +63,12 @@ export const noUnknownReturnsRule = defineRule({
       nextVisited.add(name);
       return resolvesToUnknown(alias.typeAnnotation, shadowedAliases, nextVisited);
     };
-
-    const checkReturnType = (node: FunctionWithReturnType) => {
+    const checkReturnType = (node) => {
       const annotation = node.returnType;
       if (annotation === null || annotation === undefined) return;
       if (!resolvesToUnknown(annotation.typeAnnotation, lexicalTypeParameterNames(node))) return;
       context.report({ node: annotation.typeAnnotation, messageId: "unknownReturn" });
     };
-
     return {
       Program(node) {
         for (const statement of node.body) {
@@ -114,4 +91,4 @@ export const noUnknownReturnsRule = defineRule({
       TSMethodSignature: checkReturnType,
     };
   },
-});
+};
