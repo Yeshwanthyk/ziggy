@@ -29,11 +29,12 @@ ziggy extensions add <name|path> <id>
 ziggy extensions remove <name|path> <id>
 ```
 
-The CLI and TUI use the same lifecycle. Adding installs an approved remote package into
-`<profile>/extensions/<id>/` when needed, validates it, then atomically records the selection in
-`<profile>/extensions.json`. Removing first pauses extension-owned automation, then removes the
-selection without deleting Profile data. Reopen the Profile or restart its resident Ziggy process
-after a real selection change. Required `pi-packages` cannot be added or removed.
+The CLI and TUI use the same lifecycle. Adding selects an ID already compiled into Ziggy, validates
+it, provisions owned automations from embedded files, then atomically records the selection in
+`<profile>/extensions.json`. It does not copy a bundled package into the Profile. Removing first
+pauses extension-owned automation, then removes the selection without deleting Profile data. Reopen
+the Profile or restart its resident Ziggy process after a real selection change. Required
+`pi-packages` cannot be added or removed.
 
 Profile-local skills still take precedence over required and selected package skills with the same
 declared name. To create or change a Profile-owned package, read the `extension-authoring` skill and
