@@ -734,13 +734,23 @@ transport/product boundary without a demonstrated need.
   rich progress bubbles (OpenClaw `dispatch-progress.ts:567-617`; Hermes
   `run.py:4008-4315`). Slack's streaming chunks support task/plan updates (the
   [feedback report §2](./slack-agent-feedback-options.md#2-native-text-streaming-chatstartstream-appendstream-chatstopstream)).
-- **Baseline at research time:** It has no Pi tool-progress event boundary and only needs an
-  immediate status/placeholder for the current problem.
-- **Benefit:** Rich planning/task visualization.
-- **Size:** L (same prerequisites as G10/G14 plus Slack task UX).
-- **Risk:** Client/version support, rate limits, sensitive tool detail, and
-  visual complexity before basic delivery correctness.
-- **Priority:** P3; prefer plain streaming/draft first.
+  Hermes `main` as of 2026-08-13 still has no `chat.startStream` / `task_update`
+  path; native cards remain open PRs (#29496, #59010). Hermes did merge live
+  per-tool Assistant status (#67080).
+- **Current Ziggy baseline:** G10/G14 are complete. The placeholder compositor
+  and `Using <tool>…` status are the live progress path. Native cards were
+  deferred until that path existed.
+- **Benefit:** Linear-style live coding-session cards: current action, file
+  paths, collapsible plan of tool calls.
+- **Follow-up plan:** [Slack live cards for Ziggy](./slack-live-cards-plan.md).
+  Native streaming is now the next Slack surface, not a substitute for the
+  shipped placeholder/status stack.
+- **Risk:** Client/version support, ~306s stream lifetime, recipient team/user
+  IDs, sensitive tool args, and visual complexity if both placeholder and
+  native writers run on one turn.
+- **Priority:** P1 for the owner Slack face once Slices 0–2 in the live-cards
+  plan are approved; P3 remains correct for reasoning cards, subagent streams,
+  and Block Kit beyond task/plan chunks.
 
 ### O5. Full upstream formatting parity and arbitrary Block Kit
 
