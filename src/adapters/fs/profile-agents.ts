@@ -99,28 +99,33 @@ interface ProfileAgentDecodeInput {
   readonly tools?: ReadonlyArray<string>;
 }
 
+type ProfileAgentDecodeDraft = {
+  -readonly [K in keyof ProfileAgentDecodeInput]: ProfileAgentDecodeInput[K];
+};
+
 const rawAgent = (
   id: string,
   fields: ReadonlyMap<string, string>,
   body: string,
-): ProfileAgentDecodeInput => ({
-  id,
-  version: fields.get("version") === "1" ? 1 : fields.get("version"),
-  description: fields.get("description"),
-  body,
-  ...Object.fromEntries([
-    ...(["provider", "model", "thinking"] as const).flatMap((name) => {
-      const value = fields.get(name);
-      return value === undefined ? [] : [[name, value] as const];
-    }),
-    (() => {
-      const tools = fields.get("tools");
-      return tools === undefined
-        ? []
-        : [["tools", tools.split(",").map((tool) => tool.trim())] as const];
-    })(),
-  ]),
-});
+): ProfileAgentDecodeInput => {
+  const raw: ProfileAgentDecodeDraft = {
+    id,
+    version: fields.get("version") === "1" ? 1 : fields.get("version"),
+    description: fields.get("description"),
+    body,
+  };
+  for (const name of ["provider", "model", "thinking"] as const) {
+    const value = fields.get(name);
+    if (value !== undefined) {
+      raw[name] = value;
+    }
+  }
+  const tools = fields.get("tools");
+  if (tools !== undefined) {
+    raw.tools = tools.split(",").map((tool) => tool.trim());
+  }
+  return raw;
+};
 
 export const decodeProfileAgentSource = (targetPath: string, text: string) =>
   Effect.gen(function* () {

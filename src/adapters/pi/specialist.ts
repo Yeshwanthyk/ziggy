@@ -16,7 +16,6 @@ import {
   getSupportedThinkingLevels,
   type Api,
   type Model,
-  type Provider,
   type Usage,
 } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
@@ -196,7 +195,7 @@ export interface SpecialistSelectionParent {
   >;
   readonly services: {
     readonly modelRuntime: {
-      readonly getProvider: (providerId: string) => Provider<Api> | undefined;
+      readonly getProvider: (providerId: string) => { readonly id: string } | undefined;
       readonly getModel: (providerId: string, modelId: string) => Model<Api> | undefined;
       readonly hasConfiguredAuth: (providerId: string) => boolean;
     };

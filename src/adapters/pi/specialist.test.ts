@@ -146,7 +146,7 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
     },
     services: {
       modelRuntime: {
-        getProvider: () => undefined,
+        getProvider: (id: string) => (id.length === 0 ? undefined : { id }),
         getModel: (provider: string, id: string) =>
           provider === model.provider && id === model.id ? model : undefined,
         hasConfiguredAuth: () => true,
