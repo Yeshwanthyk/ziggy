@@ -2,10 +2,10 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun test callbacks are the Promise boundary */
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import type { ZiggyReleaseClientShape } from "../adapters/github/self-update";
+import type { ZiggyReleaseClientApi } from "../adapters/github/self-update";
 import { makeSelfUpdate } from "./self-update";
 
-const releaseClient = (onDownload: () => void): ZiggyReleaseClientShape => ({
+const releaseClient = (onDownload: () => void): ZiggyReleaseClientApi => ({
   downloadLatest: () =>
     Effect.sync(() => {
       onDownload();

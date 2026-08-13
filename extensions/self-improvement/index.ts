@@ -2,15 +2,21 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi tools return bounded, stable boundary errors. */
 /* oxlint-disable ziggy-effect/no-promise-catch -- Observer cleanup is intentionally best effort. */
 import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   appendReviewLog,
+  decodeSessionEntries,
   observeCompletedForegroundSession,
   readStatus,
   writeCuratorExtension,
+  type ExtensionWriteInput,
+  type ReviewLogInput,
 } from "./src/manager.ts";
 
-const jsonResult = (payload: unknown) => ({
+const ErrorMessage = Type.Object({ message: Type.String() }, { additionalProperties: true });
+
+const jsonResult = <T>(payload: T) => ({
   content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
   details: payload,
 });
@@ -18,10 +24,7 @@ const jsonResult = (payload: unknown) => ({
 const errorResult = (cause: unknown) =>
   jsonResult({
     ok: false,
-    error:
-      typeof cause === "object" && cause !== null && "message" in cause
-        ? String(cause.message)
-        : String(cause),
+    error: Check(ErrorMessage, cause) ? cause.message : String(cause),
   });
 
 const logParameters = Type.Object({
@@ -49,7 +52,7 @@ export default function selfImprovement(pi: ExtensionAPI): void {
     void observeCompletedForegroundSession({
       profilePath: ctx.cwd,
       sessionFile: ctx.sessionManager.getSessionFile(),
-      entries: ctx.sessionManager.getEntries(),
+      entries: decodeSessionEntries(ctx.sessionManager.getEntries()),
     }).catch(() => undefined);
   });
 
@@ -76,12 +79,17 @@ export default function selfImprovement(pi: ExtensionAPI): void {
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
-        const result = await appendReviewLog(ctx.cwd, {
+        const logInput: ReviewLogInput = {
           decision: parameters.decision,
           detail: parameters.detail,
-          ...(parameters.evidence === undefined ? {} : { evidence: parameters.evidence }),
-          ...(parameters.clearReady === undefined ? {} : { clearReady: parameters.clearReady }),
-        });
+        };
+        if (parameters.evidence !== undefined) {
+          logInput.evidence = parameters.evidence;
+        }
+        if (parameters.clearReady !== undefined) {
+          logInput.clearReady = parameters.clearReady;
+        }
+        const result = await appendReviewLog(ctx.cwd, logInput);
         return jsonResult({ ok: true, ...result });
       } catch (cause) {
         return errorResult(cause);
@@ -98,16 +106,17 @@ export default function selfImprovement(pi: ExtensionAPI): void {
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
-        return jsonResult(
-          await writeCuratorExtension(ctx.cwd, {
-            id: parameters.id,
-            body: parameters.body,
-            ...(parameters.replace === undefined ? {} : { replace: parameters.replace }),
-            ...(parameters.expectedOldSha256 === undefined
-              ? {}
-              : { expectedOldSha256: parameters.expectedOldSha256 }),
-          }),
-        );
+        const writeInput: ExtensionWriteInput = {
+          id: parameters.id,
+          body: parameters.body,
+        };
+        if (parameters.replace !== undefined) {
+          writeInput.replace = parameters.replace;
+        }
+        if (parameters.expectedOldSha256 !== undefined) {
+          writeInput.expectedOldSha256 = parameters.expectedOldSha256;
+        }
+        return jsonResult(await writeCuratorExtension(ctx.cwd, writeInput));
       } catch (cause) {
         return errorResult(cause);
       }

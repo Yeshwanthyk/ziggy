@@ -8,6 +8,7 @@ import {
   observeCompletedForegroundSession,
   readStatus,
   writeCuratorExtension,
+  type SessionEntry,
 } from "../src/manager.ts";
 
 const roots: string[] = [];
@@ -16,7 +17,7 @@ const makeProfile = async (): Promise<string> => {
   roots.push(profile);
   return profile;
 };
-const entries = (stopReason = "stop"): ReadonlyArray<unknown> => [
+const entries = (stopReason = "stop"): ReadonlyArray<SessionEntry> => [
   { type: "message", message: { role: "user" } },
   { type: "message", message: { role: "assistant", stopReason } },
 ];

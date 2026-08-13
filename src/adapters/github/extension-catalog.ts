@@ -5,7 +5,7 @@ import {
   type GitHubExtensionCatalogEntry,
 } from "../../domain/extension-catalog";
 
-export interface ExtensionArchiveClientShape {
+export interface ExtensionArchiveClientApi {
   readonly download: (
     entry: GitHubExtensionCatalogEntry,
   ) => Effect.Effect<Uint8Array, ExtensionCatalogUnavailable>;
@@ -13,12 +13,12 @@ export interface ExtensionArchiveClientShape {
 
 export class ExtensionArchiveClient extends Context.Service<
   ExtensionArchiveClient,
-  ExtensionArchiveClientShape
+  ExtensionArchiveClientApi
 >()("ziggy/ExtensionArchiveClient") {}
 
 export const makeExtensionArchiveClient = (
   client: HttpClient.HttpClient,
-): ExtensionArchiveClientShape => ({
+): ExtensionArchiveClientApi => ({
   download: (entry) =>
     client.execute(HttpClientRequest.get(entry.archiveUrl)).pipe(
       Effect.flatMap((response) =>

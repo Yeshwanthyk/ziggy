@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Predicate } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ZiggyUpdateUnavailable } from "../../domain/extension-catalog";
 
-export interface ZiggyReleaseClientShape {
+export interface ZiggyReleaseClientApi {
   readonly downloadLatest: () => Effect.Effect<
     { readonly version: string; readonly executable: Uint8Array; readonly sha256: string },
     ZiggyUpdateUnavailable
@@ -11,7 +11,7 @@ export interface ZiggyReleaseClientShape {
 
 export class ZiggyReleaseClient extends Context.Service<
   ZiggyReleaseClient,
-  ZiggyReleaseClientShape
+  ZiggyReleaseClientApi
 >()("ziggy/ZiggyReleaseClient") {}
 
 const requestBytes = (client: HttpClient.HttpClient, url: string, operation: string) =>
@@ -46,7 +46,7 @@ export const makeZiggyReleaseClient = (
   client: HttpClient.HttpClient,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
-): ZiggyReleaseClientShape => {
+): ZiggyReleaseClientApi => {
   const target = `${platform}-${arch}`;
   const base = `https://github.com/Yeshwanthyk/ziggy/releases/latest/download/ziggy-${target}`;
   return {

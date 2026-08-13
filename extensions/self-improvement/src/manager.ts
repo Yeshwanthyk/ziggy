@@ -3,11 +3,12 @@
 /* oxlint-disable ziggy-effect/no-error-constructor -- Errors are the standalone Pi tool boundary. */
 /* oxlint-disable ziggy-effect/no-json-parse -- This package's bounded state file is decoded immediately and never enters domain code. */
 /* oxlint-disable ziggy-effect/no-promise-catch -- Cleanup is intentionally best effort at the filesystem boundary. */
-/* oxlint-disable ziggy/no-unsafe-typescript-syntax -- Small JSON/frontmatter boundary values are validated immediately. */
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { appendFile, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
 const MAX_LOG_DETAIL = 2_000;
 const MAX_EVIDENCE = 500;
@@ -19,11 +20,70 @@ const DESCRIPTION_MAX = 1_024;
 
 export type ReviewDecision = "applied" | "no-op" | "staged" | "error";
 
+const NodeError = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
+const CuratorStateValue = Type.Object({
+  version: Type.Literal(1),
+  completedSessionIds: Type.Array(Type.String({ minLength: 1, maxLength: 512 })),
+  lastObservedAt: Type.Optional(Type.String()),
+});
+const SessionMessageValue = Type.Object(
+  {
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+const SessionEntryValue = Type.Object(
+  {
+    type: Type.Optional(Type.String()),
+    message: Type.Optional(SessionMessageValue),
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+const ManagedManifest = Type.Object(
+  {
+    name: Type.String(),
+    ziggy: Type.Object({ curatorManaged: Type.Literal(true) }, { additionalProperties: true }),
+    pi: Type.Object(
+      {
+        skills: Type.Array(Type.String()),
+        extensions: Type.Optional(Type.Array(Type.String())),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+
+export type SessionEntry = Static<typeof SessionEntryValue>;
+
+export const decodeSessionEntries = (
+  entries: ReadonlyArray<SessionEntry>,
+): ReadonlyArray<SessionEntry> => entries.filter((entry) => Check(SessionEntryValue, entry));
+
+export interface SessionMessageView {
+  role?: string;
+  stopReason?: string;
+}
+
 export interface ObservationInput {
   readonly profilePath: string;
   readonly sessionFile: string | undefined;
-  readonly entries: ReadonlyArray<unknown>;
+  readonly entries: ReadonlyArray<SessionEntry>;
   readonly observedAt?: Date;
+}
+
+export interface ReviewLogInput {
+  decision: ReviewDecision;
+  detail: string;
+  evidence?: string;
+  clearReady?: boolean;
+  at?: Date;
 }
 
 export interface CuratorState {
@@ -42,8 +102,8 @@ export interface CuratorStatus extends CuratorState {
 export interface ExtensionWriteInput {
   readonly id: string;
   readonly body: string;
-  readonly replace?: boolean;
-  readonly expectedOldSha256?: string;
+  replace?: boolean;
+  expectedOldSha256?: string;
 }
 
 interface ParsedSkill {
@@ -64,36 +124,19 @@ const ensureRuntime = async (profilePath: string): Promise<void> => {
 };
 
 const errorCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
+  Check(NodeError, cause) ? cause.code : undefined;
 
 const defaultState = (): CuratorState => ({ version: 1, completedSessionIds: [] });
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const decodeState = (value: unknown): CuratorState => {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.completedSessionIds))
-    throw new Error("invalid self-improvement state.json");
-  if (
-    value.completedSessionIds.some(
-      (item) => typeof item !== "string" || item.length === 0 || item.length > 512,
-    )
-  )
-    throw new Error("invalid completed session IDs in self-improvement state.json");
-  if (value.lastObservedAt !== undefined && typeof value.lastObservedAt !== "string")
-    throw new Error("invalid lastObservedAt in self-improvement state.json");
-  return {
-    version: 1,
-    completedSessionIds: [...new Set(value.completedSessionIds)].slice(-MAX_SESSION_IDS),
-    ...(value.lastObservedAt === undefined ? {} : { lastObservedAt: value.lastObservedAt }),
-  };
-};
-
 const readState = async (profilePath: string): Promise<CuratorState> => {
   try {
-    return decodeState(JSON.parse(await readFile(statePath(profilePath), "utf8")));
+    const parsed = JSON.parse(await readFile(statePath(profilePath), "utf8"));
+    if (!Check(CuratorStateValue, parsed)) throw new Error("invalid self-improvement state.json");
+    const completedSessionIds = [...new Set(parsed.completedSessionIds)].slice(-MAX_SESSION_IDS);
+    if (parsed.lastObservedAt === undefined) {
+      return { version: 1, completedSessionIds };
+    }
+    return { version: 1, completedSessionIds, lastObservedAt: parsed.lastObservedAt };
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return defaultState();
     throw cause;
@@ -178,9 +221,12 @@ const parseSkillFrontmatter = (id: string, body: string): ParsedSkill => {
   for (const line of (match[1] ?? "").split(/\r?\n/)) {
     const parsed = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line);
     if (parsed === null) throw new Error("SKILL.md frontmatter contains an invalid line");
-    const key = parsed[1] as string;
+    const key = parsed[1];
+    const rawValue = parsed[2];
+    if (key === undefined || rawValue === undefined)
+      throw new Error("SKILL.md frontmatter contains an invalid line");
     if (fields.has(key)) throw new Error(`SKILL.md frontmatter repeats '${key}'`);
-    let value = (parsed[2] as string).trim();
+    let value = rawValue.trim();
     if (
       value.length >= 2 &&
       ((value.startsWith('"') && value.endsWith('"')) ||
@@ -196,17 +242,26 @@ const parseSkillFrontmatter = (id: string, body: string): ParsedSkill => {
   return { name, description: textField(description ?? "", "description", DESCRIPTION_MAX) };
 };
 
-const looksLikeMessage = (
-  entry: unknown,
-): { readonly role?: unknown; readonly stopReason?: unknown } => {
-  if (!isRecord(entry)) return {};
-  const message = isRecord(entry.message) ? entry.message : entry;
-  return { role: message.role, stopReason: message.stopReason };
+const toSessionMessageView = (source: {
+  readonly role?: string;
+  readonly stopReason?: string;
+}): SessionMessageView => {
+  const view: SessionMessageView = {};
+  if (source.role !== undefined) {
+    view.role = source.role;
+  }
+  if (source.stopReason !== undefined) {
+    view.stopReason = source.stopReason;
+  }
+  return view;
 };
+
+const looksLikeMessage = (entry: SessionEntry): SessionMessageView =>
+  toSessionMessageView(entry.message ?? entry);
 
 const eligibleSession = (
   sessionFile: string | undefined,
-  entries: ReadonlyArray<unknown>,
+  entries: ReadonlyArray<SessionEntry>,
 ): string | undefined => {
   if (sessionFile === undefined || sessionFile.length === 0) return undefined;
   const normalized = sessionFile.replaceAll("\\", "/");
@@ -216,7 +271,7 @@ const eligibleSession = (
     normalized.includes("/sessions/specialists/")
   )
     return undefined;
-  const messages = entries.filter((entry) => isRecord(entry) && entry.type === "message");
+  const messages = entries.filter((entry) => entry.type === "message");
   if (messages.length === 0 || !messages.some((entry) => looksLikeMessage(entry).role === "user"))
     return undefined;
   const assistantMessages = messages.filter(
@@ -298,13 +353,7 @@ export const readStatus = async (profilePath: string): Promise<CuratorStatus> =>
 
 export const appendReviewLog = async (
   profilePath: string,
-  input: {
-    readonly decision: ReviewDecision;
-    readonly detail: string;
-    readonly evidence?: string;
-    readonly clearReady?: boolean;
-    readonly at?: Date;
-  },
+  input: ReviewLogInput,
 ): Promise<{ readonly path: string; readonly clearedReady: boolean }> => {
   await ensureRuntime(profilePath);
   if (input.clearReady === true && input.decision !== "applied" && input.decision !== "no-op")
@@ -347,16 +396,11 @@ const packageManifest = (id: string, description: string): string =>
     null,
   )}\n`;
 
-const managedManifest = (id: string, value: unknown): boolean =>
-  isRecord(value) &&
+const managedManifest = (id: string, value: Static<typeof ManagedManifest>): boolean =>
   value.name === `@ziggy/${id}` &&
-  isRecord(value.ziggy) &&
-  value.ziggy.curatorManaged === true &&
-  isRecord(value.pi) &&
-  Array.isArray(value.pi.skills) &&
   value.pi.skills.length === 1 &&
   value.pi.skills[0] === "./skills" &&
-  !Array.isArray(value.pi.extensions);
+  value.pi.extensions === undefined;
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -413,8 +457,8 @@ export const writeCuratorExtension = async (
     const manifestStatus = await lstat(packageJsonPath);
     if (manifestStatus.isSymbolicLink() || !manifestStatus.isFile())
       throw new Error("managed package.json must be a regular file");
-    const manifest = JSON.parse(await readFile(packageJsonPath, "utf8")) as unknown;
-    if (!managedManifest(id, manifest))
+    const manifest = JSON.parse(await readFile(packageJsonPath, "utf8"));
+    if (!Check(ManagedManifest, manifest) || !managedManifest(id, manifest))
       throw new Error("replacement requires ziggy.curatorManaged package manifest");
     const currentSkill = await checkedSkillFile(profilePath, id);
     const currentBody = await readFile(currentSkill, "utf8");

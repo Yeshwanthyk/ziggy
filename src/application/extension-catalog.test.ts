@@ -5,13 +5,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import type { ExtensionArchiveClientShape } from "../adapters/github/extension-catalog";
+import type { ExtensionArchiveClientApi } from "../adapters/github/extension-catalog";
 import { ExtensionCatalogUnavailable, type ExtensionCatalog } from "../domain/extension-catalog";
 import { makeExtensionCatalogLive } from "./extension-catalog";
 
 const roots: string[] = [];
 const repositoryRoot = join(import.meta.dir, "../..");
-const noDownload: ExtensionArchiveClientShape = {
+const noDownload: ExtensionArchiveClientApi = {
   download: () =>
     Effect.fail(
       new ExtensionCatalogUnavailable({

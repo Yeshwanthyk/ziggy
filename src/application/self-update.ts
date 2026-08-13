@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { installSelfUpdate, type SelfUpdateInstaller } from "../adapters/fs/self-update";
-import { ZiggyReleaseClient, type ZiggyReleaseClientShape } from "../adapters/github/self-update";
+import { ZiggyReleaseClient, type ZiggyReleaseClientApi } from "../adapters/github/self-update";
 import { ZiggyUpdateUnavailable } from "../domain/extension-catalog";
 
 export interface SelfUpdateResult {
@@ -8,13 +8,11 @@ export interface SelfUpdateResult {
   readonly version: string;
 }
 
-export interface SelfUpdateShape {
+export interface SelfUpdateApi {
   readonly update: () => Effect.Effect<SelfUpdateResult, ZiggyUpdateUnavailable>;
 }
 
-export class SelfUpdate extends Context.Service<SelfUpdate, SelfUpdateShape>()(
-  "ziggy/SelfUpdate",
-) {}
+export class SelfUpdate extends Context.Service<SelfUpdate, SelfUpdateApi>()("ziggy/SelfUpdate") {}
 
 export interface SelfUpdateRuntime {
   readonly standalone: boolean;
@@ -28,10 +26,10 @@ const liveRuntime: SelfUpdateRuntime = {
 };
 
 export const makeSelfUpdate = (
-  client: ZiggyReleaseClientShape,
+  client: ZiggyReleaseClientApi,
   runtime: SelfUpdateRuntime = liveRuntime,
   installer: SelfUpdateInstaller = installSelfUpdate,
-): SelfUpdateShape => ({
+): SelfUpdateApi => ({
   update: () =>
     Effect.gen(function* () {
       if (!runtime.standalone) {

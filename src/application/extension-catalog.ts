@@ -11,7 +11,7 @@ import {
 } from "../domain/extension-catalog";
 import {
   ExtensionArchiveClient,
-  type ExtensionArchiveClientShape,
+  type ExtensionArchiveClientApi,
 } from "../adapters/github/extension-catalog";
 import {
   makeExtensionInstaller,
@@ -44,7 +44,7 @@ export interface ExtensionCatalogListing {
   readonly extensionPaths?: ReadonlyArray<string>;
 }
 
-export interface ExtensionCatalogShape {
+export interface ExtensionCatalogApi {
   readonly list: (
     repositoryRoot: string,
   ) => Effect.Effect<
@@ -75,7 +75,7 @@ export interface ExtensionCatalogShape {
 
 export class ExtensionCatalogService extends Context.Service<
   ExtensionCatalogService,
-  ExtensionCatalogShape
+  ExtensionCatalogApi
 >()("ziggy/ExtensionCatalogService") {}
 
 const packageListing = (
@@ -209,10 +209,10 @@ const pauseOwnedAutomations = (profilePath: string, packageInfo: ExtensionPackag
   );
 
 const makeExtensionCatalogService = (
-  archiveClient: ExtensionArchiveClientShape,
+  archiveClient: ExtensionArchiveClientApi,
   catalog: ExtensionCatalog,
   extractor?: ExtensionArchiveExtractor,
-): ExtensionCatalogShape => {
+): ExtensionCatalogApi => {
   const installer = makeExtensionInstaller(archiveClient, extractor);
   const entryFor = (id: string) => catalog.extensions.find((entry) => entry.id === id);
 
@@ -330,7 +330,7 @@ const makeExtensionCatalogService = (
 };
 
 export const makeExtensionCatalogLive = (
-  archiveClient: ExtensionArchiveClientShape,
+  archiveClient: ExtensionArchiveClientApi,
   catalog: ExtensionCatalog = BUILTIN_EXTENSION_CATALOG,
   extractor?: ExtensionArchiveExtractor,
 ) => makeExtensionCatalogService(archiveClient, catalog, extractor);

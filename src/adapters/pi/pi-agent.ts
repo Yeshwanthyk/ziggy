@@ -637,7 +637,6 @@ const createProfileRuntime = (
           const services = await createAgentSessionServices({
             cwd,
             agentDir,
-<<<<<<< HEAD
             resourceLoaderOptions: (() => {
               const options: ProfileRuntimeResourceLoaderOptions = {
                 systemPrompt: soulPath,
@@ -1101,7 +1100,7 @@ export const openTui = (
 export const makePiAgent = (
   repositoryRoot: string,
   extensionCatalog?: ProfileExtensionCatalogOperations,
-): PiAgentShape => ({
+): PiAgentApi => ({
   runSpecialist: (target, agentId, task, context) =>
     runSpecialist(target, agentId, task, context, repositoryRoot),
   askOnce: (target, prompt, continueSession, context) =>

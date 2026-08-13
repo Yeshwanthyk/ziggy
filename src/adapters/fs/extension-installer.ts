@@ -7,7 +7,7 @@ import {
   type BundledExtensionCatalogEntry,
   type GitHubExtensionCatalogEntry,
 } from "../../domain/extension-catalog";
-import type { ExtensionArchiveClientShape } from "../github/extension-catalog";
+import type { ExtensionArchiveClientApi } from "../github/extension-catalog";
 import { fileSystemCauseDetails } from "./cause";
 import { readExtensionPackage } from "./profile-extensions";
 
@@ -262,7 +262,7 @@ const publishSource = (
 };
 
 export const makeExtensionInstaller = (
-  client: ExtensionArchiveClientShape,
+  client: ExtensionArchiveClientApi,
   extractor: ExtensionArchiveExtractor = systemTarExtractor,
 ) => ({
   installBundled: (
