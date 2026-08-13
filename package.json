@@ -10,17 +10,23 @@
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src extensions tooling",
-    "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\"",
+    "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\"",
     "generate:catalog": "bun tooling/generate-builtin-catalog.mjs",
     "check:catalog": "bun tooling/generate-builtin-catalog.mjs --check",
-    "test": "bun test ./src ./extensions && bun run test:helpers",
+    "generate:pi-docs": "bun tooling/generate-pi-docs.mjs",
+    "check:pi-docs": "bun tooling/generate-pi-docs.mjs --check",
+    "build:binary": "bun tooling/build-standalone-executable.mjs",
+    "build:binary:dev": "bun tooling/build-standalone-executable.mjs --development",
+    "smoke:binary": "bun tooling/smoke-standalone-executable.mjs",
+    "smoke:binary:dev": "bun tooling/smoke-standalone-executable.mjs --allow-development --artifact /tmp/ziggy-standalone-dev/ziggy",
+    "test": "bun test ./src ./extensions ./tooling && bun run test:helpers",
     "test:helpers": "bun run --cwd extensions/here-now test",
-    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" && bun run lint && bun run typecheck && bun run check:catalog"
+    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run check:catalog && bun run check:pi-docs"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.82.0",
-    "effect": "4.0.0-beta.99",
-    "@effect/platform-bun": "4.0.0-beta.99"
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@effect/platform-bun": "4.0.0-beta.99",
+    "effect": "4.0.0-beta.99"
   },
   "devDependencies": {
     "@effect/tsgo": "0.21.0",

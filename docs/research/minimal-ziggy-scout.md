@@ -4,7 +4,7 @@ A folder that is an assistant. Drop the binary, `ziggy init`, shape `SOUL.md`, t
 
 Two standing principles: the Profile is plain visible files — open the folder and grok the whole assistant at a glance. And every face — TUI, CLI, gateway channels (Telegram first; Slack, GUI, anything after) — talks to the same client-neutral core; nothing is gated to one client.
 
-One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.82.0` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
+One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.84.1` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
 
 Start local and in-process: `init`, TUI, CLI. No daemon, attach client, socket protocol, replay layer, or compiled-executable gate. A resident gateway arrives only when the first channel needs an independent lifetime; from then on the gateway owns live sessions for its Profile and local faces attach.
 
@@ -14,7 +14,7 @@ Start local and in-process: `init`, TUI, CLI. No daemon, attach client, socket p
 
 **Ziggy owns:** Profile discovery/init policy; which Pi resources are admitted; `SOUL.md`, `MEMORY.md`, `USER.md`, Profile agent and automation files, later channel routing; Effect services and typed product errors; parent/child session relation policy; process ownership once a gateway exists; command naming and user-facing composition; the sole approved extension catalogue in repository-root `catalog.json`; bundled package payloads compiled from `extensions/`; and Profile-owned Pi packages under `<profile>/extensions/`. A package may contain progressively loaded Agent Skills, executable Pi extensions, or both. One hidden internal Pi extension shapes the TUI.
 
-Every production Profile agent execution uses a persistent Pi session manager. A successful direct agent or tagged automation run materializes one root JSONL; a successful `agent_run` or `agent_discuss` participant materializes one child whose Pi header points to the parent session file. The successful parent Pi tool result keeps only bounded output, nested usage, and a child session reference. The isolated child JSONL keeps the complete transcript. Pi v0.82.0 creates JSONL lazily on the first assistant message, so an earlier failure or cancellation can leave no file through the public API. Ziggy does not fabricate transcript entries, copy transcripts, or maintain a second session registry.
+Every production Profile agent execution uses a persistent Pi session manager. A successful direct agent or tagged automation run materializes one root JSONL; a successful `agent_run` or `agent_discuss` participant materializes one child whose Pi header points to the parent session file. The successful parent Pi tool result keeps only bounded output, nested usage, and a child session reference. The isolated child JSONL keeps the complete transcript. Pi v0.84.1 creates JSONL lazily on the first assistant message, so an earlier failure or cancellation can leave no file through the public API. Ziggy does not fabricate transcript entries, copy transcripts, or maintain a second session registry.
 
 ## Adapter recipe
 
@@ -24,7 +24,7 @@ The one Pi-importing adapter constructs a runtime per Profile:
 2. `SessionManager.create(profilePath, join(profilePath, "sessions"))` — Pi supports a custom session directory; its JSONL is already append-only, tree-structured, versioned.
 3. `createAgentSessionServices({ cwd: profilePath, agentDir: profilePath, resourceLoaderOptions })` → `createAgentSessionFromServices(...)` → `createAgentSessionRuntime(...)`.
 4. Before constructing Pi, decode `<profile>/extensions.json` (missing means no optional packages), resolve each selected ID from `<profile>/extensions/<id>/` first or from an ID compiled into Ziggy from `catalog.json`, and close over Profile paths plus bundled factories and embedded skill files. The repository package folder is generator input, not a runtime catalogue: an unapproved ID is rejected. Keep Pi discovery disabled. Skills load Profile-local roots first, required `pi-packages` second, required `extension-authoring` and `ziggy-operations` next, then selected approved packages in ID order. Executable code comes from required or selected bundled factories, or from Profile-owned package manifests. Selection changes apply only to a newly opened runtime or restarted resident process.
-5. Use Pi's `ModelRuntime` and `SettingsManager` pointed at Profile-local `auth.json`, `models.json`, and settings. No Ziggy provider or session formats.
+5. Use Pi's `ModelRuntime` and `SettingsManager` pointed at Profile-local `auth.json`, `models.json`, and settings. The Profile setting is authoritative when Ziggy constructs any new or resumed runtime: resolve it through those Pi services and pass it explicitly to `createAgentSessionFromServices`. Never rewrite session JSONL to publish a Profile model change. An already-open TUI or resident chat keeps its in-memory model until reopened or restarted. No Ziggy provider or session formats.
 
 See `docs/research/pi-sdk-surface.md` for exact signatures.
 
@@ -84,7 +84,7 @@ Invariants carried throughout: no durable fact has two writable authorities; Ses
 
 ## Baseline
 
-Pinned exactly: `@earendil-works/pi-coding-agent@0.82.0`, `effect@4.0.0-beta.99`, `@effect/platform-bun@4.0.0-beta.99`, `@effect/tsgo@0.21.0`, `typescript@7.0.2`, Bun `1.3.13`, exact `oxfmt`/`oxlint`.
+Pinned exactly: `@earendil-works/pi-coding-agent@0.84.1`, `effect@4.0.0-beta.99`, `@effect/platform-bun@4.0.0-beta.99`, `@effect/tsgo@0.21.0`, `typescript@7.0.2`, Bun `1.3.13`, exact `oxfmt`/`oxlint`.
 
 Effect usage: `Context.Service` for capabilities, Layers for construction, Schema decoding at filesystem/CLI boundaries, `Schema.TaggedErrorClass` for expected failures, scopes/acquire-release for runtime ownership. Each Pi Promise wrapped once with `Effect.tryPromise`; no native Promises escape Ziggy services. Small total functions stay plain expressions inside services.
 

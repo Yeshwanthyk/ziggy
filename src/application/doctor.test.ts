@@ -109,6 +109,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "automations",
       "memory",
       "resources",
+      "pi_docs",
       "gateways",
       "discord-runtime",
       "slack-runtime",
@@ -128,8 +129,12 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "ok",
       "ok",
       "ok",
+      "ok",
     ]);
     expect(rendered.exitCode).toBe(0);
+    expect(report.checks.find((check) => check.id === "pi_docs")?.message).toMatch(
+      /^@earendil-works\/pi-coding-agent@0\.84\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
+    );
     expect(
       rendered.text.split("\n").map((line) => line.split("\t").slice(0, 2).join("\t")),
     ).toEqual([
@@ -140,6 +145,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "OK\tautomations",
       "OK\tmemory",
       "OK\tresources",
+      "OK\tpi_docs",
       "OK\tgateways",
       "OK\tdiscord-runtime",
       "OK\tslack-runtime",

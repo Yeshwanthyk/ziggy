@@ -10,7 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Effect, Fiber, Predicate } from "effect";
-import { ProviderCallError } from "../../domain/agent";
+import { ProviderCallError, ProviderConfigError } from "../../domain/agent";
 import { memoryFilePaths, type ChatContext } from "../../domain/memory";
 import type { ChatProgressEvent } from "../../application/agent";
 import { createProfileAgentChildSession } from "./session-lineage";
@@ -67,6 +67,33 @@ describe("Pi provider failure classification", () => {
         profilePath: "/profile",
         operation: "call provider",
         message: "provider request failed",
+        cause,
+      }),
+    );
+  });
+
+  test("open interactive mode reports the cause without inventing models.json copy", () => {
+    const cause = new Error("ENOENT: no such file or directory, open '/commands/theme/dark.json'");
+
+    expect(providerError("/profile", "open interactive mode", cause)).toEqual(
+      new ProviderConfigError({
+        profilePath: "/profile",
+        operation: "open interactive mode",
+        message:
+          "open interactive mode failed: ENOENT: no such file or directory, open '/commands/theme/dark.json'",
+        cause,
+      }),
+    );
+  });
+
+  test("select model still uses the canned auth/models.json configuration copy", () => {
+    const cause = new Error("no default model");
+
+    expect(providerError("/profile", "select model", cause)).toEqual(
+      new ProviderConfigError({
+        profilePath: "/profile",
+        operation: "select model",
+        message: `provider configuration failed; place credentials in ${join("/profile", "auth.json")} and model configuration in ${join("/profile", "models.json")}`,
         cause,
       }),
     );
@@ -159,6 +186,121 @@ describe("Pi ephemeral prompt context", () => {
       expect(transcript).not.toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
     } finally {
       server.stop(true);
+    }
+  });
+});
+
+describe("Profile-authoritative model selection", () => {
+  test("a resumed session uses the Profile model instead of its historical model", async () => {
+    const oldRequests: Array<string> = [];
+    const newRequests: Array<string> = [];
+    const serveModel = (requests: Array<string>, model: string) =>
+      Bun.serve({
+        port: 0,
+        fetch: async (request) => {
+          requests.push(JSON.stringify(await request.json()));
+          return new Response(
+            [
+              `data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"${model}","choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},"finish_reason":null}]}`,
+              `data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"${model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+              "data: [DONE]",
+              "",
+            ].join("\n\n"),
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      });
+    const oldServer = serveModel(oldRequests, "old-model");
+    const newServer = serveModel(newRequests, "new-model");
+
+    try {
+      const profilePath = await temporaryProfile();
+      const sessionDirectory = join(profilePath, "sessions", "slack-thread");
+      await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+      await writeFile(
+        join(profilePath, "models.json"),
+        JSON.stringify({
+          providers: {
+            old: {
+              baseUrl: `http://127.0.0.1:${oldServer.port}/v1`,
+              api: "openai-completions",
+              apiKey: "old-key",
+              models: [{ id: "old-model" }],
+            },
+            current: {
+              baseUrl: `http://127.0.0.1:${newServer.port}/v1`,
+              api: "openai-completions",
+              apiKey: "current-key",
+              models: [{ id: "new-model" }],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const historical = SessionManager.create(profilePath, sessionDirectory);
+      historical.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: "historical request" }],
+        timestamp: Date.now(),
+      });
+      historical.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "historical answer" }],
+        api: "openai-completions",
+        provider: "old",
+        model: "old-model",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      historical.appendModelChange("old", "old-model");
+      const sessionFile = historical.getSessionFile();
+      if (sessionFile === undefined) throw new Error("expected a persisted historical session");
+
+      await writeFile(
+        join(profilePath, "settings.json"),
+        JSON.stringify({
+          defaultProvider: "current",
+          defaultModel: "new-model",
+          defaultThinkingLevel: "medium",
+        }),
+        "utf8",
+      );
+
+      const handle = await Effect.runPromise(
+        openChat(
+          { path: profilePath, name: "Profile" },
+          { kind: "group", groupId: "slC123" },
+          sessionDirectory,
+          process.cwd(),
+          "continue",
+        ),
+      );
+      try {
+        expect(await Effect.runPromise(handle.prompt("current request"))).toBe("answer");
+      } finally {
+        await Effect.runPromise(handle.dispose);
+      }
+
+      expect({ oldRequests: oldRequests.length, newRequests: newRequests.length }).toEqual({
+        oldRequests: 0,
+        newRequests: 1,
+      });
+      expect(SessionManager.open(sessionFile).buildSessionContext().model).toEqual({
+        provider: "current",
+        modelId: "new-model",
+      });
+    } finally {
+      oldServer.stop(true);
+      newServer.stop(true);
     }
   });
 });

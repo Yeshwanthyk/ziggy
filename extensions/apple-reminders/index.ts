@@ -2,11 +2,11 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires rejected tool Promises to mark failed executions. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { fileURLToPath } from "node:url";
 import { Type, type Static } from "typebox";
+import scriptPath from "./scripts/reminders.applescript" with { type: "file" };
 
 const OSASCRIPT = "/usr/bin/osascript";
-const SCRIPT_PATH = fileURLToPath(new URL("./scripts/reminders.applescript", import.meta.url));
+const SCRIPT_PATH = scriptPath;
 const TIMEOUT_MS = 45_000;
 const OUTPUT_LIMIT = 32 * 1024;
 

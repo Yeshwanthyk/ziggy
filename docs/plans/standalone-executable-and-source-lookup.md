@@ -1,7 +1,8 @@
 ---
 shaping: true
-status: selected-for-implementation
+status: implemented
 updated: 2026-08-13
+build-smoke: in-tree
 ---
 
 # Standalone Ziggy with bundled extensions in one executable
@@ -16,25 +17,24 @@ updated: 2026-08-13
 This is the implementation authority for the next Ziggy milestone.
 
 Ziggy is one complete executable. Optional extensions are selected, not installed-from-network.
-Setup docs ship as skill `references/` (`ziggy-operations`). Pi docs later follow Pi's own npm
-`docs/` + `examples/` advertisement pattern.
+Setup docs ship as skill `references/` (`ziggy-operations`). Pinned Pi README and `docs/*.md` compile as Bun file embeds and are read by the hidden `pi_docs` tool; there is no `source_lookup`.
 
-The work ends when `/Users/yesh/commands/ziggy` works without Homebrew Bun, this source checkout,
-repository package folders, or `node_modules`, and the Squarey Profile passes the acceptance checks
-in this document.
+The work ends when `/Users/yesh/commands/ziggy` is the compiled executable, Squarey selects bundled packages without a Profile copy of `self-improvement`, and `doctor` / `extensions` / `skills list` work from that artifact without the checkout.
 
 ## Selected shape (restored)
 
 | Part | Mechanism |
 | ---- | --------- |
 | S1 | `catalog.json` is generator input. A build-time scan emits `src/generated/builtin-catalog-metadata.ts`, `src/generated/builtin-files.ts`, and `src/adapters/pi/generated/builtin-resources.ts`. |
-| S2 | `extensions list` / `show` read generated metadata. They do not scan a checkout folder. |
+| S2 | `extensions list` / `show` and `skills list` read generated metadata. They do not scan a checkout folder. |
 | S3 | `extensions add` writes `extensions.json` and provisions owned automations from embedded files. It does not copy a bundled package into the Profile. |
 | S4 | Runtime `extensionFactories` = Ziggy hidden factories + selected bundled factories. `additionalExtensionPaths` = Profile-owned packages only. |
 | S5 | Skills: Profile dir first, then required embedded (`pi-packages`, `extension-authoring`, `ziggy-operations`), then selected package skills. |
 | S6 | Profile-owned `<profile>/extensions/<id>/` still wins on ID collision. |
 | S7 | Optional external CLIs (`gh`, browsers, Apple apps) stay prerequisites, not packed in. |
-| S8 | Later: Pi 0.84.1, helper-script embedding, resident self-launch, macOS arm64 clean-room. |
+| S8 | Compiled self-launch: `[process.execPath, "serve", profile]`. Helper scripts used by compiled factories are Bun `type: "file"` embeds. Compiled TUI leases Pi 0.84.1 theme, clankolas, export-html, and photon embeds into a temporary `PI_PACKAGE_DIR` layout for `initTheme()`, then restores env and removes it; source mode leaves Pi's npm layout. |
+| S9 | `tooling/build-standalone-executable.mjs` compiles `src/main.ts` for pinned Bun 1.3.13 / darwin-arm64 with no bunfig/dotenv/tsconfig/package autoload. Sidecar `.build.json` records artifact sha/bytes, source commit + dirty entries, Bun/target/build args, `bun.lock` SHA, builtin catalog fingerprint, Pi docs fingerprint/version/count, and `releaseReady`. There is no source manifest or `source_lookup`. |
+| S10 | `tooling/smoke-standalone-executable.mjs` copies only the binary into an isolated HOME/TMPDIR/XDG/ZIGGY_HOME/PATH, denies network and every git worktree via `sandbox-exec`, and checks version/help, minimal init, bundled `self-improvement` list/show/add without a Profile copy, curator automation, skills list (curator + core docs), models status, and doctor resources + pinned `pi_docs`. |
 
 The remainder of this file is the superseded GitHub-install plan, kept as research context.
 

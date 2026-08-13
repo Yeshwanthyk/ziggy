@@ -13,6 +13,8 @@ import {
 } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
+import { BUNDLED_SKILLS, bundledSkill, type BundledSkill } from "../catalog";
+import { bundledFilePath } from "../generated/builtin-files";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
   readExtensionSelection,
@@ -186,48 +188,6 @@ const hasDirectSkillFile = (directoryPath: string) =>
       () => Effect.succeed(false),
     ),
   );
-
-const addSkillDirectories = (
-  catalog: Map<string, string>,
-  directoryPath: string,
-  replace: boolean,
-) =>
-  Effect.gen(function* () {
-    const entries = (yield* readDirectory(directoryPath)).sort((left, right) =>
-      left.name.localeCompare(right.name),
-    );
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !SKILL_ID.test(entry.name)) {
-        continue;
-      }
-      const skillPath = path.join(directoryPath, entry.name);
-      if (!(yield* hasDirectSkillFile(skillPath))) {
-        continue;
-      }
-      if (replace || !catalog.has(entry.name)) {
-        catalog.set(entry.name, skillPath);
-      }
-    }
-  });
-
-const repositorySkillCatalog = (repositoryRoot: string) =>
-  Effect.gen(function* () {
-    const catalog = new Map<string, string>();
-    const extensionsDirectory = path.join(repositoryRoot, "extensions");
-    const extensions = (yield* readDirectory(extensionsDirectory))
-      .filter((entry) => entry.isDirectory())
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    for (const extension of extensions) {
-      yield* addSkillDirectories(
-        catalog,
-        path.join(extensionsDirectory, extension.name, "skills"),
-        false,
-      );
-    }
-    yield* addSkillDirectories(catalog, path.join(repositoryRoot, "skills"), false);
-    return catalog;
-  });
 
 const verifyInitializedProfile = (target: ProfileTarget) =>
   lstatPath(path.join(target.path, "SOUL.md")).pipe(
@@ -474,22 +434,21 @@ const listInstalledSkills = (target: ProfileTarget) =>
 
 const listSkills = (
   target: ProfileTarget,
-  repositoryRoot: string,
+  _repositoryRoot: string,
 ): Effect.Effect<ProfileSkills, ProfileSkillError> =>
   Effect.gen(function* () {
     yield* verifyInitializedProfile(target);
-    const catalog = yield* repositorySkillCatalog(repositoryRoot);
     const installed = yield* listInstalledSkills(target);
     return {
       installed,
-      available: [...catalog.entries()]
-        .map(([id, skillPath]) => ({ id, path: skillPath }))
-        .sort((left, right) => left.id.localeCompare(right.id)),
+      available: BUNDLED_SKILLS.map((skill) => ({
+        id: skill.id,
+        path: skill.logicalPath,
+      })),
     };
   });
 
 const resolveSkillSource = (
-  repositoryRoot: string,
   source: string,
   cwd: string,
 ): Effect.Effect<{ readonly id: string; readonly sourcePath: string }, ProfileSkillError> =>
@@ -501,15 +460,14 @@ const resolveSkillSource = (
           message: `invalid skill ID '${source}'; use lowercase letters, numbers, and hyphens`,
         });
       }
-      const catalog = yield* repositorySkillCatalog(repositoryRoot);
-      const sourcePath = catalog.get(source);
-      if (sourcePath === undefined) {
+      const skill = bundledSkill(source);
+      if (skill === undefined) {
         return yield* new ProfileSkillNotFound({
           source,
-          message: `skill '${source}' was not found in ${repositoryRoot}`,
+          message: `skill '${source}' is not a bundled Ziggy skill`,
         });
       }
-      return { id: source, sourcePath };
+      return { id: skill.id, sourcePath: skill.logicalPath };
     }
 
     const sourcePath = path.resolve(cwd, source);
@@ -635,18 +593,144 @@ const copySkill = (
     return destinationExists;
   });
 
+const copyBundledSkill = (
+  skill: BundledSkill,
+  destinationPath: string,
+  force: boolean,
+): Effect.Effect<boolean, ProfileSkillError> =>
+  Effect.gen(function* () {
+    const destinationExists = yield* pathExists(destinationPath);
+    if (destinationExists && !force) {
+      return yield* new ProfileSkillExists({
+        path: destinationPath,
+        message: `skill is already installed at ${destinationPath}; pass --force to replace it`,
+      });
+    }
+
+    const skillsDirectory = path.dirname(destinationPath);
+    yield* Effect.tryPromise({
+      try: () => mkdir(skillsDirectory, { recursive: true }),
+      catch: (cause) => fileSystemError("create directory", skillsDirectory, cause),
+    });
+
+    const suffix = randomUUID();
+    const stagingPath = path.join(
+      skillsDirectory,
+      `.${path.basename(destinationPath)}-stage-${suffix}`,
+    );
+    const backupPath = path.join(
+      skillsDirectory,
+      `.${path.basename(destinationPath)}-backup-${suffix}`,
+    );
+    const skillRoot = path.posix.dirname(skill.logicalPath);
+    const copyToStaging = Effect.gen(function* () {
+      yield* Effect.tryPromise({
+        try: () => mkdir(stagingPath, { recursive: true }),
+        catch: (cause) => fileSystemError("stage skill", stagingPath, cause),
+      });
+      yield* Effect.forEach(
+        skill.files,
+        (file) =>
+          Effect.gen(function* () {
+            const embedded = bundledFilePath(file);
+            if (embedded === undefined) {
+              return yield* new ProfileSkillInvalid({
+                path: file,
+                message: `bundled skill file is missing: ${file}`,
+              });
+            }
+            const relative = path.posix.relative(skillRoot, file);
+            const target = path.join(stagingPath, ...relative.split("/"));
+            yield* Effect.tryPromise({
+              try: () => mkdir(path.dirname(target), { recursive: true }),
+              catch: (cause) => fileSystemError("create directory", path.dirname(target), cause),
+            });
+            // copyFile cannot read Bun compiled `$bunfs` embeds; read/write can.
+            const bytes = yield* Effect.tryPromise({
+              try: () => readFile(embedded),
+              catch: (cause) => fileSystemError("stage skill", target, cause),
+            });
+            const status = yield* Effect.tryPromise({
+              try: () => stat(embedded),
+              catch: (cause) => fileSystemError("stage skill", target, cause),
+            });
+            yield* Effect.tryPromise({
+              try: () => writeFile(target, bytes, { mode: status.mode }),
+              catch: (cause) => fileSystemError("stage skill", target, cause),
+            });
+          }),
+        { discard: true },
+      );
+    });
+    const renameSkill = (from: string, to: string) =>
+      Effect.tryPromise({
+        try: () => rename(from, to),
+        catch: (cause) => fileSystemError("rename", to, cause),
+      });
+    const removeTree = (treePath: string) =>
+      Effect.tryPromise({
+        try: () => rm(treePath, { recursive: true, force: true }),
+        catch: (cause) => fileSystemError("remove", treePath, cause),
+      });
+
+    const install = Effect.gen(function* () {
+      yield* copyToStaging;
+      if (!destinationExists) {
+        yield* renameSkill(stagingPath, destinationPath);
+        return;
+      }
+
+      yield* renameSkill(destinationPath, backupPath);
+      yield* renameSkill(stagingPath, destinationPath).pipe(
+        Effect.catch((promotionError) =>
+          renameSkill(backupPath, destinationPath).pipe(
+            Effect.catch(() => Effect.fail(promotionError)),
+            Effect.andThen(Effect.fail(promotionError)),
+          ),
+        ),
+      );
+      yield* removeTree(backupPath);
+    });
+    yield* install.pipe(
+      Effect.ensuring(removeTree(stagingPath).pipe(Effect.catch(() => Effect.void))),
+    );
+    return destinationExists;
+  });
+
 const addSkill = (
   target: ProfileTarget,
-  repositoryRoot: string,
+  _repositoryRoot: string,
   source: string,
   cwd: string,
   force: boolean,
 ): Effect.Effect<InstalledSkill, ProfileSkillError> =>
   Effect.gen(function* () {
     yield* verifyInitializedProfile(target);
-    const resolved = yield* resolveSkillSource(repositoryRoot, source, cwd);
-    yield* validateSkillSource(resolved.sourcePath);
+    const resolved = yield* resolveSkillSource(source, cwd);
     const destinationPath = path.join(target.path, "skills", resolved.id);
+    if (!hasPathSyntax(source)) {
+      const skill = bundledSkill(resolved.id);
+      if (skill === undefined) {
+        return yield* new ProfileSkillNotFound({
+          source,
+          message: `skill '${source}' is not a bundled Ziggy skill`,
+        });
+      }
+      if (skill.required) {
+        return yield* new ProfileSkillInvalid({
+          path: skill.logicalPath,
+          message: `skill '${skill.id}' is built into Ziggy and cannot be copied into a Profile`,
+        });
+      }
+      const replaced = yield* copyBundledSkill(skill, destinationPath, force);
+      return {
+        id: resolved.id,
+        sourcePath: resolved.sourcePath,
+        destinationPath,
+        replaced,
+      };
+    }
+    yield* validateSkillSource(resolved.sourcePath);
     const replaced = yield* copySkill(resolved.sourcePath, destinationPath, force);
     return {
       id: resolved.id,

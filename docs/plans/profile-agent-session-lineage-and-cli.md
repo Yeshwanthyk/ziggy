@@ -335,7 +335,9 @@ ziggy models set <name|path> <provider>/<model> [--thinking <level>]
 `models status` prints the effective provider, model, reasoning level, and auth state.
 
 `models set` validates the model through Pi. It writes settings through Pi. It flushes before the
-command exits.
+command exits. Ziggy treats that Profile setting as authoritative whenever it constructs a new or
+resumed runtime, without rewriting Pi session history. An already-open TUI or resident chat keeps
+its in-memory model until the TUI is reopened or the resident is restarted.
 
 ### Profile agents
 

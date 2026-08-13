@@ -9,6 +9,7 @@ import {
   loadSlackConfigFile,
   loadTelegramConfigFile,
 } from "../adapters/fs/gateway-config";
+import { describePinnedPiDocs, loadPinnedPiDocs } from "../adapters/pi/pi-docs";
 import { discoverPiResources } from "../adapters/pi/resources";
 import { listProfileSessions } from "../adapters/pi/sessions";
 import { readSlackHealth } from "../adapters/fs/slack-health";
@@ -236,6 +237,13 @@ const resourcesCheck = (
     ),
   );
 
+const piDocsCheck = (): DoctorCheck => {
+  const documents = loadPinnedPiDocs();
+  return documents.length === 0 || documents.some((document) => document.content.length === 0)
+    ? error("pi_docs", "Pinned Pi docs are missing or empty")
+    : ok("pi_docs", describePinnedPiDocs(documents));
+};
+
 const gatewayCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
     const configs = [
@@ -368,6 +376,7 @@ export const makeDoctor = (auth: AuthApi, models: ModelsApi): DoctorApi => ({
         yield* automationsCheck(target),
         yield* memoryCheck(target),
         yield* resourcesCheck(target, repositoryRoot),
+        piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),
         yield* slackRuntimeCheck(target),

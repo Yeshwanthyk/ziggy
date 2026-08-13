@@ -37,6 +37,7 @@ import {
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { promptForAssistantText } from "./pi-agent";
+import { createPiDocsExtension } from "./pi-docs";
 import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";
 
@@ -268,10 +269,11 @@ export const specialistRuntime = (
                 noPromptTemplates: true,
                 noThemes: true,
                 noContextFiles: true,
+                extensionFactories: [
+                  createPiDocsExtension(),
+                  ...environment.resources.extensionFactories,
+                ],
               };
-              if (environment.resources.extensionFactories.length > 0) {
-                options.extensionFactories = [...environment.resources.extensionFactories];
-              }
               if (environment.resources.extensionPaths.length > 0) {
                 options.additionalExtensionPaths = [...environment.resources.extensionPaths];
               }

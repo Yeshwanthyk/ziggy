@@ -2,11 +2,10 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
+import LINEAR_SCRIPT from "./scripts/linear_api.py" with { type: "file" };
 
 const OUTPUT_LIMIT = 32 * 1024;
-const LINEAR_SCRIPT = fileURLToPath(new URL("./scripts/linear_api.py", import.meta.url));
 
 const Parameters = Type.Object(
   {

@@ -9,6 +9,7 @@ import type {
   AutomationTuiResponse,
 } from "./adapters/pi/automation-tui";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
+import { bootstrapPiStandaloneRuntime } from "./adapters/pi/standalone-runtime";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
@@ -68,6 +69,8 @@ const resolutionOptions = {
   homedir: homedir(),
   ziggyHome: process.env.ZIGGY_HOME,
 };
+
+bootstrapPiStandaloneRuntime();
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 const ExtensionCatalogProvided = ExtensionCatalogServiceLive.pipe(

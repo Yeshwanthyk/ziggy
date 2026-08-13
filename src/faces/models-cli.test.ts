@@ -30,6 +30,8 @@ describe("models CLI rendering", () => {
   test("renders a flushed selection", () => {
     expect(
       renderModelSelection({ providerId: "anthropic", modelId: "claude", thinking: "high" }),
-    ).toBe("selected anthropic/claude with thinking high");
+    ).toBe(
+      "selected anthropic/claude with thinking high\nnew and resumed sessions use this selection when they open\nreopen an active TUI or run `ziggy serve restart <name|path>` for resident chats",
+    );
   });
 });

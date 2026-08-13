@@ -12,6 +12,7 @@ import {
   type AgentSessionRuntime,
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
+  type CreateAgentSessionFromServicesOptions,
   type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -67,6 +68,8 @@ import {
   createProfileExtensionSelectionRunner,
   type ProfileExtensionCatalogOperations,
 } from "./profile-extension-selection";
+import { leaseCompiledPiTuiAssets } from "./tui-themes";
+import { createPiDocsExtension } from "./pi-docs";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
@@ -114,7 +117,16 @@ export const providerError = (
     return cause;
   }
 
-  if (operation !== "call provider") {
+  if (operation === "call provider") {
+    return new ProviderCallError({
+      profilePath,
+      operation,
+      message: "provider request failed",
+      cause,
+    });
+  }
+
+  if (operation === "select model") {
     return new ProviderConfigError({
       profilePath,
       operation,
@@ -123,10 +135,10 @@ export const providerError = (
     });
   }
 
-  return new ProviderCallError({
+  return new ProviderConfigError({
     profilePath,
     operation,
-    message: "provider request failed",
+    message: `${operation} failed: ${causeMessage(cause)}`,
     cause,
   });
 };
@@ -661,6 +673,7 @@ const createProfileRuntime = (
                   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                   createProfileMemoryExtension(profilePath, paths.documents),
                   createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
+                  createPiDocsExtension(),
                   ...resources.extensionFactories,
                 ],
               };
@@ -696,20 +709,24 @@ const createProfileRuntime = (
               ? []
               : [createAgentRunTool(specialistRunner), createAgentDiscussTool(specialistRunner)]),
           ];
-          const created = await createAgentSessionFromServices(
-            sessionStartEvent === undefined
-              ? {
-                  services,
-                  sessionManager: runtimeSessionManager,
-                  customTools,
-                }
-              : {
-                  services,
-                  sessionManager: runtimeSessionManager,
-                  sessionStartEvent,
-                  customTools,
-                },
-          );
+          const defaultProvider = services.settingsManager.getDefaultProvider();
+          const defaultModelId = services.settingsManager.getDefaultModel();
+          const configuredModel =
+            defaultProvider === undefined || defaultModelId === undefined
+              ? undefined
+              : services.modelRuntime.getModel(defaultProvider, defaultModelId);
+          const configuredThinking = services.settingsManager.getDefaultThinkingLevel();
+          const sessionOptions: CreateAgentSessionFromServicesOptions = {
+            services,
+            sessionManager: runtimeSessionManager,
+            customTools,
+          };
+          if (sessionStartEvent !== undefined) sessionOptions.sessionStartEvent = sessionStartEvent;
+          if (configuredModel !== undefined) sessionOptions.model = configuredModel;
+          if (configuredThinking !== undefined) {
+            sessionOptions.thinkingLevel = configuredThinking;
+          }
+          const created = await createAgentSessionFromServices(sessionOptions);
           return {
             ...created,
             services,
@@ -1072,6 +1089,14 @@ export const openTui = (
   Effect.scoped(
     Effect.gen(function* () {
       const soulPath = yield* requireSoul(target.path);
+      const assets = yield* piPromise(target.path, "prepare Pi package assets", () =>
+        leaseCompiledPiTuiAssets(),
+      );
+      yield* Effect.addFinalizer(() =>
+        piPromise(target.path, "remove Pi package assets", assets.release).pipe(
+          Effect.catch((failure) => Effect.logWarning("Pi asset cleanup failed", { failure })),
+        ),
+      );
       const sessionManager = createLocalSessionManager(target.path, "main");
       const automationDispatch =
         automationHandler === undefined

@@ -19,4 +19,8 @@ export const renderModels = (models: ReadonlyArray<KnownModel>): string => {
 };
 
 export const renderModelSelection = (selection: ModelSelection): string =>
-  `selected ${selection.providerId}/${selection.modelId}${selection.thinking === undefined ? "" : ` with thinking ${selection.thinking}`}`;
+  [
+    `selected ${selection.providerId}/${selection.modelId}${selection.thinking === undefined ? "" : ` with thinking ${selection.thinking}`}`,
+    "new and resumed sessions use this selection when they open",
+    "reopen an active TUI or run `ziggy serve restart <name|path>` for resident chats",
+  ].join("\n");

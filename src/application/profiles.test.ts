@@ -1,11 +1,12 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup exercises the Node filesystem adapter */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- test cleanup requires finally around temporary directories */
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect, Predicate, Result } from "effect";
 import { expect, test } from "bun:test";
+import { bundledFilePath } from "../generated/builtin-files";
 import { Profiles, ProfilesLive, type ProfilesApi } from "./profiles";
 
 const makeFixture = async () => {
@@ -137,30 +138,47 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
   }
 });
 
-test("addSkill prefers an extension-owned skill and copies its supporting tree", async () => {
+test("addSkill copies a bundled skill tree without scanning a checkout", async () => {
   const fixture = await makeFixture();
   try {
-    await writeSkill(path.join(fixture.repositoryRoot, "skills", "github"), "top-level\n");
-    await writeSkill(
-      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
-      "extension-owned\n",
-      { "scripts/review.ts": "export const review = true;\n" },
-    );
-
     const installed = await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "github", fixture.root, false),
+      profiles.addSkill(fixture.profile, "/does-not-exist", "here-now", fixture.root, false),
     );
 
-    const destination = path.join(fixture.profile.path, "skills", "github");
+    const destination = path.join(fixture.profile.path, "skills", "here-now");
     expect(installed).toEqual({
-      id: "github",
-      sourcePath: path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
+      id: "here-now",
+      sourcePath: "extensions/here-now/skills/here-now/SKILL.md",
       destinationPath: destination,
       replaced: false,
     });
-    expect(await readFile(path.join(destination, "SKILL.md"), "utf8")).toBe("extension-owned\n");
-    expect(await readFile(path.join(destination, "scripts", "review.ts"), "utf8")).toBe(
-      "export const review = true;\n",
+    const skillMd = bundledFilePath("extensions/here-now/skills/here-now/SKILL.md") ?? "";
+    const driveSh = bundledFilePath("extensions/here-now/skills/here-now/scripts/drive.sh") ?? "";
+    expect(skillMd.length).toBeGreaterThan(0);
+    expect(driveSh.length).toBeGreaterThan(0);
+    expect(await readFile(path.join(destination, "SKILL.md"))).toEqual(await readFile(skillMd));
+    expect(await readFile(path.join(destination, "scripts", "drive.sh"))).toEqual(
+      await readFile(driveSh),
+    );
+    expect((await stat(path.join(destination, "scripts", "drive.sh"))).mode & 0o777).toBe(
+      (await stat(driveSh)).mode & 0o777,
+    );
+
+    const curator = await useProfiles((profiles) =>
+      profiles.addSkill(fixture.profile, "/does-not-exist", "curator", fixture.root, false),
+    );
+    const curatorDestination = path.join(fixture.profile.path, "skills", "curator");
+    const curatorEmbed =
+      bundledFilePath("extensions/self-improvement/skills/curator/SKILL.md") ?? "";
+    expect(curatorEmbed.length).toBeGreaterThan(0);
+    expect(curator).toEqual({
+      id: "curator",
+      sourcePath: "extensions/self-improvement/skills/curator/SKILL.md",
+      destinationPath: curatorDestination,
+      replaced: false,
+    });
+    expect(await readFile(path.join(curatorDestination, "SKILL.md"))).toEqual(
+      await readFile(curatorEmbed),
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -170,10 +188,10 @@ test("addSkill prefers an extension-owned skill and copies its supporting tree",
 test("addSkill refuses an existing destination without force and force replaces its whole tree", async () => {
   const fixture = await makeFixture();
   try {
-    const source = path.join(fixture.repositoryRoot, "skills", "weather");
+    const source = path.join(fixture.root, "weather");
     await writeSkill(source, "version one\n", { "scripts/weather.ts": "v1\n" });
     await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "weather", fixture.root, false),
+      profiles.addSkill(fixture.profile, "/does-not-exist", source, fixture.root, false),
     );
 
     const destination = path.join(fixture.profile.path, "skills", "weather");
@@ -185,8 +203,8 @@ test("addSkill refuses an existing destination without force and force replaces 
         const profiles = yield* Profiles;
         return yield* profiles.addSkill(
           fixture.profile,
-          fixture.repositoryRoot,
-          "weather",
+          "/does-not-exist",
+          source,
           fixture.root,
           false,
         );
@@ -202,7 +220,7 @@ test("addSkill refuses an existing destination without force and force replaces 
     expect(await readFile(path.join(destination, "stale.txt"), "utf8")).toBe("must disappear\n");
 
     const replaced = await useProfiles((profiles) =>
-      profiles.addSkill(fixture.profile, fixture.repositoryRoot, "weather", fixture.root, true),
+      profiles.addSkill(fixture.profile, "/does-not-exist", source, fixture.root, true),
     );
     expect(replaced).toEqual({
       id: "weather",
@@ -311,27 +329,56 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
   }
 });
 
-test("listSkills sorts IDs and gives extension-owned collisions precedence", async () => {
+test("listSkills reads bundled metadata and ignores a checkout folder", async () => {
   const fixture = await makeFixture();
   try {
     await writeSkill(path.join(fixture.repositoryRoot, "skills", "zebra"), "zebra\n");
-    await writeSkill(path.join(fixture.repositoryRoot, "skills", "github"), "top-level\n");
-    await writeSkill(
-      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
-      "extension-owned\n",
-    );
     await writeSkill(path.join(fixture.profile.path, "skills", "zebra"), "installed\n");
     await mkdir(path.join(fixture.profile.path, "skills", "incomplete"), { recursive: true });
 
     const listing = await useProfiles((profiles) =>
-      profiles.listSkills(fixture.profile, fixture.repositoryRoot),
+      profiles.listSkills(fixture.profile, "/does-not-exist"),
     );
 
     expect(listing.installed.map((skill) => skill.id)).toEqual(["zebra"]);
-    expect(listing.available.map((skill) => skill.id)).toEqual(["github", "zebra"]);
+    expect(listing.available.map((skill) => skill.id)).toContain("github");
+    expect(listing.available.map((skill) => skill.id)).toContain("curator");
+    expect(listing.available.map((skill) => skill.id)).toContain("ziggy-operations");
+    expect(listing.available.map((skill) => skill.id)).not.toContain("zebra");
     expect(listing.available.find((skill) => skill.id === "github")?.path).toBe(
-      path.join(fixture.repositoryRoot, "extensions", "github", "skills", "github"),
+      "extensions/github/skills/github/SKILL.md",
     );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("addSkill refuses to copy a skill that is already built into Ziggy", async () => {
+  const fixture = await makeFixture();
+  try {
+    const refusal = await Effect.runPromise(
+      Effect.gen(function* () {
+        const profiles = yield* Profiles;
+        return yield* profiles.addSkill(
+          fixture.profile,
+          "/does-not-exist",
+          "ziggy-operations",
+          fixture.root,
+          false,
+        );
+      }).pipe(Effect.provide(ProfilesLive), Effect.result),
+    );
+    expect(
+      Result.match(refusal, {
+        onFailure: (error) =>
+          Predicate.isTagged("ProfileSkillInvalid")(error) &&
+          error.message.includes("built into Ziggy"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
+    await expect(
+      readFile(path.join(fixture.profile.path, "skills", "ziggy-operations", "SKILL.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

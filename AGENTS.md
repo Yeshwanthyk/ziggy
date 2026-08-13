@@ -1,7 +1,7 @@
 # What ziggy is
 
 Ziggy is a folder that is an assistant: one Bun/TypeScript runtime wrapping the published
-`@earendil-works/pi-coding-agent@0.82.0`. Pi owns the agent loop, providers, sessions, and TUI;
+`@earendil-works/pi-coding-agent@0.84.1`. Pi owns the agent loop, providers, sessions, and TUI;
 Ziggy owns Profile policy and composition.
 
 # Architecture
