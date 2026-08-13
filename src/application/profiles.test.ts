@@ -223,24 +223,6 @@ test("addSkill refuses an existing destination without force and force replaces 
 test("extension selection writes canonically and preserves bytes on no-op or invalid input", async () => {
   const fixture = await makeFixture();
   try {
-    for (const id of ["alpha", "beta", "pi-packages"]) {
-      const packagePath = path.join(fixture.repositoryRoot, "extensions", id);
-      await writeSkill(
-        path.join(packagePath, "skills", id),
-        `---\nname: ${id}\ndescription: ${id} skill.\n---\n`,
-      );
-      await writeFile(
-        path.join(packagePath, "package.json"),
-        JSON.stringify({
-          name: `@ziggy/${id}`,
-          description: `${id} package`,
-          pi: { skills: ["./skills"] },
-        }),
-      );
-    }
-    const brokenPackage = path.join(fixture.repositoryRoot, "extensions", "broken");
-    await mkdir(brokenPackage, { recursive: true });
-    await writeFile(path.join(brokenPackage, "package.json"), "{");
     const profilePackage = path.join(fixture.profile.path, "extensions", "gamma");
     await writeSkill(
       path.join(profilePackage, "skills", "gamma"),
@@ -259,28 +241,28 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
     expect(
       (
         await useProfiles((profiles) =>
-          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta"),
+          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "weather"),
         )
       ).changed,
     ).toBe(true);
     await useProfiles((profiles) =>
-      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github"),
     );
-    const canonical = '{\n  "extensions": [\n    "alpha",\n    "beta"\n  ]\n}\n';
+    const canonical = '{\n  "extensions": [\n    "github",\n    "weather"\n  ]\n}\n';
     expect(await readFile(selectionPath, "utf8")).toBe(canonical);
     expect(
       (
         await useProfiles((profiles) =>
-          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github"),
         )
       ).changed,
     ).toBe(false);
     expect(await readFile(selectionPath, "utf8")).toBe(canonical);
     await useProfiles((profiles) =>
-      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "beta"),
+      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "weather"),
     );
     await useProfiles((profiles) =>
-      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "alpha"),
+      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "github"),
     );
     expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
     await useProfiles((profiles) =>
@@ -306,12 +288,12 @@ test("extension selection writes canonically and preserves bytes on no-op or inv
     });
     expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
 
-    await writeFile(selectionPath, '{"extensions":["alpha","alpha"]}\n');
+    await writeFile(selectionPath, '{"extensions":["weather","weather"]}\n');
     const invalidBytes = await readFile(selectionPath, "utf8");
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const profiles = yield* Profiles;
-        return yield* profiles.addExtension(fixture.profile, fixture.repositoryRoot, "beta");
+        return yield* profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github");
       }).pipe(Effect.provide(ProfilesLive), Effect.result),
     );
     expect(

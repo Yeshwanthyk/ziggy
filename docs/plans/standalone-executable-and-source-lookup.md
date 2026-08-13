@@ -1,10 +1,46 @@
 ---
 shaping: true
 status: selected-for-implementation
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
-# Standalone Ziggy with a GitHub extension catalogue
+# Standalone Ziggy with bundled extensions in one executable
+
+> **Decision, 2026-08-13:** restore compile-all. Approved repository packages are compiled into
+> the one Ziggy executable. They are ~400 KB of real files; Bun+Pi+Effect dominate binary size.
+> Do **not** download extension code from GitHub to run it. `extensions.json` only enables IDs
+> already in the binary. Profile-local `<profile>/extensions/<id>/` still wins on collision.
+> There is no `source_lookup`. The GitHub-install shape below is historical and is not the
+> selected implementation.
+
+This is the implementation authority for the next Ziggy milestone.
+
+Ziggy is one complete executable. Optional extensions are selected, not installed-from-network.
+Setup docs ship as skill `references/` (`ziggy-operations`). Pi docs later follow Pi's own npm
+`docs/` + `examples/` advertisement pattern.
+
+The work ends when `/Users/yesh/commands/ziggy` works without Homebrew Bun, this source checkout,
+repository package folders, or `node_modules`, and the Squarey Profile passes the acceptance checks
+in this document.
+
+## Selected shape (restored)
+
+| Part | Mechanism |
+| ---- | --------- |
+| S1 | `catalog.json` is generator input. A build-time scan emits `src/generated/builtin-catalog-metadata.ts`, `src/generated/builtin-files.ts`, and `src/adapters/pi/generated/builtin-resources.ts`. |
+| S2 | `extensions list` / `show` read generated metadata. They do not scan a checkout folder. |
+| S3 | `extensions add` writes `extensions.json` and provisions owned automations from embedded files. It does not copy a bundled package into the Profile. |
+| S4 | Runtime `extensionFactories` = Ziggy hidden factories + selected bundled factories. `additionalExtensionPaths` = Profile-owned packages only. |
+| S5 | Skills: Profile dir first, then required embedded (`pi-packages`, `extension-authoring`, `ziggy-operations`), then selected package skills. |
+| S6 | Profile-owned `<profile>/extensions/<id>/` still wins on ID collision. |
+| S7 | Optional external CLIs (`gh`, browsers, Apple apps) stay prerequisites, not packed in. |
+| S8 | Later: Pi 0.84.1, helper-script embedding, resident self-launch, macOS arm64 clean-room. |
+
+The remainder of this file is the superseded GitHub-install plan, kept as research context.
+
+---
+
+# Historical: Standalone Ziggy with a GitHub extension catalogue
 
 This is the implementation authority for the next Ziggy milestone.
 

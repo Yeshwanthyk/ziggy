@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
-import { BUILTIN_EXTENSION_CATALOG } from "../catalog";
+import { BUILTIN_EXTENSION_CATALOG, bundledPackageMetadata } from "../catalog";
 import {
   ExtensionCatalog,
   ExtensionCatalogInstallFailed,
@@ -18,6 +18,7 @@ import {
   type ExtensionArchiveExtractor,
 } from "../adapters/fs/extension-installer";
 import {
+  bundledExtensionPackage,
   readExtensionPackage,
   readSelectedExtensionPackage,
   type ExtensionPackage,
@@ -78,21 +79,36 @@ export class ExtensionCatalogService extends Context.Service<
   ExtensionCatalogApi
 >()("ziggy/ExtensionCatalogService") {}
 
-const packageListing = (
-  packageInfo: ExtensionPackage,
+const bundledListing = (
+  id: string,
   version: string,
-): ExtensionCatalogListing => ({
-  id: packageInfo.id,
-  version,
-  description: packageInfo.description,
-  kind: packageInfo.kind,
-  required: packageInfo.required,
-  source: "bundled",
-  installed: true,
-  packagePath: packageInfo.packagePath,
-  skills: packageInfo.skills,
-  extensionPaths: packageInfo.extensionPaths,
-});
+): Effect.Effect<ExtensionCatalogListing, ExtensionCatalogInvalid> => {
+  const metadata = bundledPackageMetadata(id);
+  if (metadata === undefined) {
+    return Effect.fail(
+      new ExtensionCatalogInvalid({
+        source: id,
+        message: `approved extension '${id}' is missing from the bundled catalog`,
+        cause: undefined,
+      }),
+    );
+  }
+  return Effect.succeed({
+    id: metadata.id,
+    version,
+    description: metadata.description,
+    kind: metadata.kind,
+    required: metadata.required,
+    source: "bundled" as const,
+    installed: true,
+    packagePath: metadata.sourcePath,
+    skills: metadata.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+    })),
+    extensionPaths: [...metadata.executables],
+  });
+};
 
 const remoteListing = (
   entry: GitHubExtensionCatalogEntry,
@@ -216,12 +232,10 @@ const makeExtensionCatalogService = (
   const installer = makeExtensionInstaller(archiveClient, extractor);
   const entryFor = (id: string) => catalog.extensions.find((entry) => entry.id === id);
 
-  const list = (repositoryRoot: string) =>
+  const list = (_repositoryRoot: string) =>
     Effect.forEach(catalog.extensions, (entry) =>
       entry.source === "bundled"
-        ? readExtensionPackage(repositoryRoot, entry.id).pipe(
-            Effect.map((packageInfo) => packageListing(packageInfo, entry.version)),
-          )
+        ? bundledListing(entry.id, entry.version)
         : Effect.succeed(remoteListing(entry, false)),
     ).pipe(
       Effect.map((items) => [...items].sort((left, right) => left.id.localeCompare(right.id))),
@@ -243,7 +257,7 @@ const makeExtensionCatalogService = (
       }),
     );
 
-  const ensureInstalled = (profilePath: string, repositoryRoot: string, id: string) =>
+  const ensureInstalled = (profilePath: string, _repositoryRoot: string, id: string) =>
     Effect.gen(function* () {
       const entry = entryFor(id);
       const profilePackagePath = `${profilePath}/extensions/${id}`;
@@ -267,34 +281,62 @@ const makeExtensionCatalogService = (
             }),
         ),
       );
-      if (!profileOwned) {
-        if (entry === undefined) {
-          return yield* Effect.fail(
-            new ExtensionCatalogInvalid({
-              source: id,
-              message: `unknown extension '${id}'; it is neither approved nor Profile-local`,
-              cause: undefined,
-            }),
-          );
-        }
-        yield* entry.source === "bundled"
-          ? installer.installBundled(profilePath, repositoryRoot, entry)
-          : installer.installGitHub(profilePath, entry);
+      if (profileOwned) {
+        const installed = yield* readExtensionPackage(profilePath, id).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ExtensionCatalogInstallFailed({
+                id,
+                path: profilePackagePath,
+                reason: "validation",
+                message: "installed Profile extension failed validation",
+                cause,
+              }),
+          ),
+        );
+        yield* provisionAutomations(profilePath, installed);
+        return profilePackagePath;
       }
-      const installed = yield* readSelectedExtensionPackage(profilePath, repositoryRoot, id).pipe(
+      if (entry === undefined) {
+        return yield* Effect.fail(
+          new ExtensionCatalogInvalid({
+            source: id,
+            message: `unknown extension '${id}'; it is neither approved nor Profile-local`,
+            cause: undefined,
+          }),
+        );
+      }
+      if (entry.source === "github") {
+        yield* installer.installGitHub(profilePath, entry);
+        const installed = yield* readExtensionPackage(profilePath, id).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ExtensionCatalogInstallFailed({
+                id,
+                path: profilePackagePath,
+                reason: "validation",
+                message: "installed Profile extension failed validation",
+                cause,
+              }),
+          ),
+        );
+        yield* provisionAutomations(profilePath, installed);
+        return profilePackagePath;
+      }
+      const installed = yield* bundledExtensionPackage(id).pipe(
         Effect.mapError(
           (cause) =>
             new ExtensionCatalogInstallFailed({
               id,
-              path: profilePackagePath,
+              path: entry.path,
               reason: "validation",
-              message: "installed Profile extension failed validation",
+              message: "bundled extension failed validation",
               cause,
             }),
         ),
       );
       yield* provisionAutomations(profilePath, installed);
-      return profilePackagePath;
+      return installed.packagePath;
     });
 
   const deactivate = (profilePath: string, repositoryRoot: string, id: string) =>

@@ -661,6 +661,7 @@ const createProfileRuntime = (
                   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                   createProfileMemoryExtension(profilePath, paths.documents),
                   createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
+                  ...resources.extensionFactories,
                 ],
               };
               if (resources.extensionPaths.length > 0) {

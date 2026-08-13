@@ -9,6 +9,7 @@ import {
   type AgentToolResult,
   type AgentToolUpdateCallback,
   type ExtensionContext,
+  type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -232,6 +233,7 @@ interface SpecialistResourceLoaderOptions {
   noPromptTemplates: true;
   noThemes: true;
   noContextFiles: true;
+  extensionFactories?: InlineExtension[];
   additionalExtensionPaths?: string[];
   additionalSkillPaths?: string[];
 }
@@ -267,6 +269,9 @@ export const specialistRuntime = (
                 noThemes: true,
                 noContextFiles: true,
               };
+              if (environment.resources.extensionFactories.length > 0) {
+                options.extensionFactories = [...environment.resources.extensionFactories];
+              }
               if (environment.resources.extensionPaths.length > 0) {
                 options.additionalExtensionPaths = [...environment.resources.extensionPaths];
               }

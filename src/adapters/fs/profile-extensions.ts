@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { lstat, open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
+import { APPROVED_BUNDLED_EXTENSION_IDS, bundledPackageMetadata } from "../../catalog";
+import { bundledFilePath } from "../../generated/builtin-files";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "./cause";
 
@@ -252,6 +254,51 @@ export const readExtensionPackage = (
     };
   });
 
+const requiredBundledFile = (logicalPath: string, id: string) => {
+  const filePath = bundledFilePath(logicalPath);
+  return filePath === undefined
+    ? Effect.fail(
+        invalid(logicalPath, `bundled extension '${id}' is missing embedded file ${logicalPath}`),
+      )
+    : Effect.succeed(filePath);
+};
+
+/** Resolve an approved bundled package from compile-in metadata, not a checkout folder. */
+export const bundledExtensionPackage = (
+  id: string,
+): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid> =>
+  Effect.gen(function* () {
+    const metadata = bundledPackageMetadata(id);
+    if (metadata === undefined) {
+      return yield* invalid(id, `unknown extension '${id}'`);
+    }
+    const skillPaths: Array<string> = [];
+    for (const skill of metadata.skills) {
+      skillPaths.push(yield* requiredBundledFile(skill.logicalPath, id));
+    }
+    const automations: Array<{ readonly id: string; readonly path: string }> = [];
+    for (const automation of metadata.automations) {
+      automations.push({
+        id: automation.id,
+        path: yield* requiredBundledFile(automation.logicalPath, id),
+      });
+    }
+    return {
+      id: metadata.id,
+      description: metadata.description,
+      packagePath: metadata.sourcePath,
+      extensionPaths: [],
+      skillPaths,
+      skills: metadata.skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+      })),
+      automations,
+      kind: metadata.kind,
+      required: metadata.required,
+    };
+  });
+
 export const scanExtensionShelf = (
   shelfOwnerPath: string,
 ): Effect.Effect<
@@ -302,13 +349,16 @@ const extensionPackageExists = (shelfOwnerPath: string, id: string) => {
 /** Resolve a Profile selection without allowing the catalogue to shadow Profile-owned code. */
 export const readSelectedExtensionPackage = (
   profilePath: string,
-  repositoryRoot: string,
+  _repositoryRoot: string,
   id: string,
-  approvedRepositoryIds?: ReadonlySet<string>,
+  approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid | ProfileFileSystemError> =>
   extensionPackageExists(profilePath, id).pipe(
     Effect.flatMap((profileOwned) => {
-      if (!profileOwned && approvedRepositoryIds !== undefined && !approvedRepositoryIds.has(id)) {
+      if (profileOwned) {
+        return readExtensionPackage(profilePath, id);
+      }
+      if (!approvedRepositoryIds.has(id)) {
         return Effect.fail(
           invalid(
             path.join(profilePath, "extensions.json"),
@@ -316,7 +366,7 @@ export const readSelectedExtensionPackage = (
           ),
         );
       }
-      return readExtensionPackage(profileOwned ? profilePath : repositoryRoot, id);
+      return bundledExtensionPackage(id);
     }),
   );
 

@@ -228,7 +228,7 @@ const resourcesCheck = (
     Effect.map((resources) =>
       ok(
         "resources",
-        `${resources.extensionPaths.length} extension entrypoints and ${resources.skillPaths.length} skill roots selected`,
+        `${resources.extensionFactories.length} bundled factories, ${resources.extensionPaths.length} Profile extension entrypoints, and ${resources.skillPaths.length} skill roots selected`,
       ),
     ),
     Effect.catch(() =>

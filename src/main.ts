@@ -270,13 +270,17 @@ const program = Effect.gen(function* () {
       console.log(`version\t${extension.version}`);
       console.log(`installed\t${extension.installed ? "yes" : "no"}`);
       if (extension.packagePath !== undefined) {
-        console.log(`path\t${path.relative(repositoryRoot, extension.packagePath)}`);
+        console.log(
+          `path\t${path.isAbsolute(extension.packagePath) ? path.relative(repositoryRoot, extension.packagePath) : extension.packagePath}`,
+        );
       }
       for (const skill of extension.skills ?? []) {
         console.log(`skill\t${skill.name} — ${skill.description}`);
       }
       for (const extensionPath of extension.extensionPaths ?? []) {
-        console.log(`executable\t${path.relative(repositoryRoot, extensionPath)}`);
+        console.log(
+          `executable\t${path.isAbsolute(extensionPath) ? path.relative(repositoryRoot, extensionPath) : extensionPath}`,
+        );
       }
       return;
     }

@@ -33,9 +33,6 @@ test("the TUI selection runner lists optional packages and atomically saves a fu
   const profilePath = join(root, "profile");
   try {
     await mkdir(profilePath, { recursive: true });
-    await writePackage(repositoryRoot, "alpha", "Alpha extension");
-    await writePackage(repositoryRoot, "beta", "Beta extension");
-    await writePackage(repositoryRoot, "pi-packages", "Required package");
     await writePackage(profilePath, "gamma", "Profile-owned extension");
     await writePackage(profilePath, "alpha", "Profile-owned Alpha");
     await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
@@ -53,8 +50,8 @@ test("the TUI selection runner lists optional packages and atomically saves a fu
             source: "bundled",
           },
           {
-            id: "beta",
-            description: "Beta extension",
+            id: "weather",
+            description: "Weather extension",
             kind: "skill",
             required: false,
             source: "bundled",
@@ -83,7 +80,7 @@ test("the TUI selection runner lists optional packages and atomically saves a fu
             );
             return join(profilePath, "extensions", "remote");
           }
-          return repositoryRoot;
+          return id === "weather" ? "extensions/weather" : repositoryRoot;
         }),
       deactivate: (_profilePath, _repositoryRoot, id) =>
         Effect.sync(() => {
@@ -93,7 +90,6 @@ test("the TUI selection runner lists optional packages and atomically saves a fu
     expect(await runner.list()).toEqual({
       available: [
         { id: "alpha", description: "Profile-owned Alpha", kind: "skill", source: "profile" },
-        { id: "beta", description: "Beta extension", kind: "skill", source: "bundled" },
         {
           id: "gamma",
           description: "Profile-owned extension",
@@ -106,21 +102,22 @@ test("the TUI selection runner lists optional packages and atomically saves a fu
           kind: "remote",
           source: "remote-approved",
         },
+        { id: "weather", description: "Weather extension", kind: "skill", source: "bundled" },
       ],
       selected: ["alpha"],
     });
-    expect(await runner.setSelected(["beta", "gamma", "remote"])).toEqual({
+    expect(await runner.setSelected(["weather", "gamma", "remote"])).toEqual({
       changed: true,
-      selected: ["beta", "gamma", "remote"],
+      selected: ["gamma", "remote", "weather"],
     });
-    expect(installed).toEqual(["beta", "gamma", "remote"]);
+    expect(installed).toEqual(["gamma", "remote", "weather"]);
     expect(deactivated).toEqual(["alpha"]);
     expect(await readFile(join(profilePath, "extensions.json"), "utf8")).toBe(
-      '{\n  "extensions": [\n    "beta",\n    "gamma",\n    "remote"\n  ]\n}\n',
+      '{\n  "extensions": [\n    "gamma",\n    "remote",\n    "weather"\n  ]\n}\n',
     );
-    expect(await runner.setSelected(["remote", "gamma", "beta"])).toEqual({
+    expect(await runner.setSelected(["remote", "gamma", "weather"])).toEqual({
       changed: false,
-      selected: ["beta", "gamma", "remote"],
+      selected: ["gamma", "remote", "weather"],
     });
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -6,11 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import type { ExtensionArchiveClientApi } from "../adapters/github/extension-catalog";
-import { ExtensionCatalogUnavailable, type ExtensionCatalog } from "../domain/extension-catalog";
+import { ExtensionCatalogUnavailable } from "../domain/extension-catalog";
 import { makeExtensionCatalogLive } from "./extension-catalog";
 
 const roots: string[] = [];
-const repositoryRoot = join(import.meta.dir, "../..");
 const noDownload: ExtensionArchiveClientApi = {
   download: () =>
     Effect.fail(
@@ -31,24 +30,6 @@ const makeProfile = async () => {
   return profilePath;
 };
 
-const writeSkillPackage = async (repositoryPath: string, id: string, description: string) => {
-  const skillPath = join(repositoryPath, "extensions", id, "skills", id);
-  await mkdir(skillPath, { recursive: true });
-  await writeFile(
-    join(repositoryPath, "extensions", id, "package.json"),
-    `${JSON.stringify({
-      name: `@ziggy/${id}`,
-      version: "0.1.0",
-      description,
-      pi: { skills: ["./skills"] },
-    })}\n`,
-  );
-  await writeFile(
-    join(skillPath, "SKILL.md"),
-    `---\nname: ${id}\ndescription: ${description}\n---\n`,
-  );
-};
-
 const withCatalog = async <A>(
   use: (profilePath: string, catalog: ReturnType<typeof makeExtensionCatalogLive>) => Promise<A>,
 ) => use(await makeProfile(), makeExtensionCatalogLive(noDownload));
@@ -58,66 +39,49 @@ afterEach(async () => {
 });
 
 describe("approved extension catalogue", () => {
-  test("lists only JSON-approved packages and rejects an unlisted repository directory", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ziggy-catalog-authority-"));
-    roots.push(root);
-    const repositoryPath = join(root, "repository");
+  test("lists bundled metadata without scanning a checkout and rejects unknown IDs", async () => {
     const profilePath = await makeProfile();
-    await writeSkillPackage(repositoryPath, "approved", "Approved package");
-    await writeSkillPackage(repositoryPath, "stray", "Unapproved package");
-    const catalog: ExtensionCatalog = {
-      version: 1,
-      extensions: [
-        {
-          id: "approved",
-          version: "0.1.0",
-          source: "bundled",
-          path: "./extensions/approved",
-        },
-      ],
-    };
-    const service = makeExtensionCatalogLive(noDownload, catalog);
+    const catalog = makeExtensionCatalogLive(noDownload);
+    const listed = await Effect.runPromise(catalog.list("/does-not-exist"));
+    const selfImprovement = listed.find((entry) => entry.id === "self-improvement");
 
-    expect(await Effect.runPromise(service.list(repositoryPath))).toEqual([
-      {
-        id: "approved",
-        version: "0.1.0",
-        description: "Approved package",
-        kind: "skill",
-        required: false,
-        source: "bundled",
-        installed: true,
-        packagePath: join(repositoryPath, "extensions", "approved"),
-        skills: [{ name: "approved", description: "Approved package" }],
-        extensionPaths: [],
-      },
-    ]);
+    expect(listed.some((entry) => entry.id === "stray")).toBe(false);
+    expect(selfImprovement).toMatchObject({
+      id: "self-improvement",
+      source: "bundled",
+      installed: true,
+      required: false,
+      packagePath: "extensions/self-improvement",
+      kind: "skill+code",
+    });
     const failure = await Effect.runPromise(
-      Effect.flip(service.ensureInstalled(profilePath, repositoryPath, "stray")),
+      Effect.flip(catalog.ensureInstalled(profilePath, "/does-not-exist", "stray")),
     );
     expect(failure._tag).toBe("ExtensionCatalogInvalid");
   });
 
-  test("installs the Curator package and its owned automation into only the Profile", async () => {
+  test("selecting a bundled package provisions owned automations without copying the package", async () => {
     await withCatalog(async (profilePath, catalog) => {
       const installed = await Effect.runPromise(
-        catalog.ensureInstalled(profilePath, repositoryRoot, "self-improvement"),
+        catalog.ensureInstalled(profilePath, "/does-not-exist", "self-improvement"),
       );
-      expect(installed).toBe(join(profilePath, "extensions", "self-improvement"));
-      expect(await readFile(join(installed, "package.json"), "utf8")).toContain(
-        '"name": "@ziggy/self-improvement"',
-      );
+      expect(installed).toBe("extensions/self-improvement");
+      await expect(
+        readFile(join(profilePath, "extensions", "self-improvement", "package.json"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
       expect(
         await readFile(join(profilePath, "automations", "self-improvement-curator.md"), "utf8"),
       ).toContain("owner: extension:self-improvement");
 
       expect(
         await Effect.runPromise(
-          catalog.ensureInstalled(profilePath, repositoryRoot, "self-improvement"),
+          catalog.ensureInstalled(profilePath, "/does-not-exist", "self-improvement"),
         ),
       ).toBe(installed);
 
-      await Effect.runPromise(catalog.deactivate(profilePath, repositoryRoot, "self-improvement"));
+      await Effect.runPromise(
+        catalog.deactivate(profilePath, "/does-not-exist", "self-improvement"),
+      );
       expect(
         await readFile(
           join(profilePath, "automations", "self-improvement-curator.paused.md"),
@@ -134,7 +98,7 @@ describe("approved extension catalogue", () => {
       await writeFile(automationPath, "human-owned\n");
 
       const failure = await Effect.runPromise(
-        Effect.flip(catalog.ensureInstalled(profilePath, repositoryRoot, "self-improvement")),
+        Effect.flip(catalog.ensureInstalled(profilePath, "/does-not-exist", "self-improvement")),
       );
 
       expect(failure._tag).toBe("ExtensionCatalogInstallFailed");

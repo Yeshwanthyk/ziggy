@@ -1,5 +1,9 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": ["vendor/effect/**"],
+  "ignorePatterns": [
+    "vendor/effect/**",
+    "src/generated/**",
+    "src/adapters/pi/generated/**"
+  ],
   "printWidth": 100
 }

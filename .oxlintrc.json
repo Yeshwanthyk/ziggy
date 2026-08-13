@@ -1,6 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": ["dist/**", "coverage/**", "vendor/effect/**"],
+  "ignorePatterns": [
+    "dist/**",
+    "coverage/**",
+    "vendor/effect/**",
+    "src/generated/**",
+    "src/adapters/pi/generated/**"
+  ],
   "jsPlugins": ["./tooling/oxlint/ziggy-plugin.mjs", "./tooling/oxlint/effect-plugin.mjs"],
   "options": {
     "reportUnusedDisableDirectives": "error"

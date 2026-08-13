@@ -5,12 +5,12 @@ description: Inspect catalogue packages and select catalogue or Profile-owned Pi
 
 # Pi packages in Ziggy
 
-The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Bundled package
-payloads live under `extensions/<id>/`; Profile-specific packages live under
-`<profile>/extensions/<id>/`. Each package may contain an Agent Skill, executable Pi extension
-code, or both. `pi-packages` itself and the top-level `extension-authoring` skill are required; all
-other packages are optional per Profile. A Profile-owned package takes precedence over an approved
-bundled package with the same ID.
+The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Approved packages
+are compiled into the Ziggy executable; `extensions.json` selects IDs already in that binary.
+Profile-specific packages live under `<profile>/extensions/<id>/`. Each package may contain an
+Agent Skill, executable Pi extension code, or both. `pi-packages`, `extension-authoring`, and
+`ziggy-operations` are required; all other packages are optional per Profile. A Profile-owned
+package takes precedence over an approved bundled package with the same ID.
 
 Inspect the approved catalogue without executing package code:
 

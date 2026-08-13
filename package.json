@@ -10,10 +10,12 @@
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src extensions tooling",
-    "fmt": "oxfmt \"src/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\"",
+    "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\"",
+    "generate:catalog": "bun tooling/generate-builtin-catalog.mjs",
+    "check:catalog": "bun tooling/generate-builtin-catalog.mjs --check",
     "test": "bun test ./src ./extensions && bun run test:helpers",
     "test:helpers": "bun run --cwd extensions/here-now test",
-    "check": "oxfmt --check \"src/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" && bun run lint && bun run typecheck"
+    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" && bun run lint && bun run typecheck && bun run check:catalog"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.82.0",
