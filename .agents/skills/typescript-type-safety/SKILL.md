@@ -67,15 +67,5 @@ the subject of that test.
 Prefer schema-derived types for decoded data and `ReturnType`-derived types for single-owner
 runtime objects. Do not create a duplicate interface solely to make an assertion compile.
 
-`bun run lint` enforces this skill through `ziggy/no-unsafe-typescript-syntax` (no `any`, no `!`,
-no type assertions except `as const`) and the vendored `anti-slop/*` rules in
-`tooling/oxlint/anti-slop/`: chained assertions, empty-object spreads, known-value widening,
-module mocking, `object` parameters, `Reflect.get`/`Reflect.apply`, runtime `typeof`, `shape` in
-symbol names, `unknown` parameters/returns/aliases, unsafe dictionary types, widen-then-assert,
-and undocumented assertions.
-
-Keep `unknown` only at a decode boundary (`Schema.decodeUnknownEffect`, `cause` on tagged errors,
-Pi `execute` input). Do not probe it with `typeof`, `"field" in value`, or `Reflect.get`.
-
 Run `bun run typecheck`, `bun run lint`, and `bun run fmt`. When Effect v4 typing is uncertain,
 inspect `vendor/effect`, pinned to `effect@4.0.0-beta.99`, and align with the library's own usage.
