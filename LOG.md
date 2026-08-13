@@ -263,3 +263,5 @@ results.
 **Repository extension shelf pruning.** Removed eleven obsolete or superseded extension packages, including duplicate channel guidance, duplicate GitHub issue tooling, the retired PR-triage helper, and unused standalone skill bundles. Updated complete-catalog expectations, helper test commands, and the standalone executable plan so production resource proofs describe the remaining shelf exactly.
 
 **Terminal secret-input ownership correction.** Stopped the secret prompt from changing stdin's process-global encoding and flow state. The terminal adapter now owns only raw-mode toggling and its temporary data listener, leaving the surrounding Pi/readline runtime responsible for stream encoding, resume, and pause behavior.
+
+**Anti-slop Oxlint rules vendored.** Copied [dmmulroy/anti-slop](https://github.com/dmmulroy/anti-slop) into `tooling/oxlint/anti-slop/` (plugin source only), registered it next to the existing Ziggy plugins, and enabled all 15 rules at error. Added `@oxlint/plugins@1.75.0` to match the pinned oxlint. `typescript-type-safety` now points at these lints. Existing source is not yet cleaned up against the new rules.
