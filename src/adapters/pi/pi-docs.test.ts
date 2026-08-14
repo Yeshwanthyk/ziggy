@@ -21,6 +21,7 @@ import {
   PI_DOCS_MAX_RESULTS,
   PI_DOCS_PATH_MAX_CODE_POINTS,
   PI_DOCS_QUERY_MAX_CODE_POINTS,
+  piDocsParameters,
   createPiDocsExtension,
   createPiDocsTool,
   listPinnedPiDocs,
@@ -192,6 +193,13 @@ describe("pinned Pi docs search and read", () => {
     expect(unknown).toBe(
       JSON.stringify({ ok: false, error: "unknown_path", path: "docs/not-real.md" }),
     );
+  });
+});
+
+describe("pi docs provider schema", () => {
+  test("serializes as an object-root schema for Console Go", () => {
+    expect(Object.keys(piDocsParameters)).toEqual(expect.arrayContaining(["anyOf", "type"]));
+    expect(JSON.stringify(piDocsParameters)).toContain('"type":"object"');
   });
 });
 

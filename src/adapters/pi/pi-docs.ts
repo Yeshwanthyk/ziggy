@@ -22,7 +22,7 @@ export interface PiDocDocument {
   readonly content: string;
 }
 
-export const piDocsParameters = Type.Union([
+const piDocsParameterVariants = Type.Union([
   Type.Object(
     {
       action: Type.Literal("list"),
@@ -46,6 +46,14 @@ export const piDocsParameters = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
+// Console Go requires every tool schema to declare a top-level object type. The
+// variants are already all objects, so this redundant assertion preserves their
+// branch-specific validation while satisfying that provider contract.
+export const piDocsParameters = Type.Unsafe<Static<typeof piDocsParameterVariants>>({
+  ...piDocsParameterVariants,
+  type: "object",
+});
 
 export type PiDocsAction = Static<typeof piDocsParameters>;
 
