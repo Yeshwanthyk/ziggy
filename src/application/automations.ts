@@ -30,7 +30,7 @@ import {
   scheduledRunId,
   validateAutomationId,
 } from "../domain/automation";
-import type { ProfileSpecialistError } from "../domain/agent";
+import type { ChatModelOverride, ProfileSpecialistError } from "../domain/agent";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
@@ -255,6 +255,19 @@ const gateFailureCategory = (
 // oxfmt-ignore
 const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
+const chatModelOverride = (automation: Automation): ChatModelOverride | undefined => {
+  if (automation.provider !== undefined && automation.model !== undefined) {
+    return automation.thinking === undefined
+      ? { provider: automation.provider, model: automation.model }
+      : {
+          provider: automation.provider,
+          model: automation.model,
+          thinking: automation.thinking,
+        };
+  }
+  return automation.thinking === undefined ? undefined : { thinking: automation.thinking };
+};
+
 export const makeAutomations = (
   agent: ZiggyAgentApi,
   capabilities: AutomationCapabilities = liveCapabilities,
@@ -335,6 +348,7 @@ export const makeAutomations = (
                   { kind: "local" },
                   join(target.path, "sessions", "automations", automation.id),
                   "fresh",
+                  chatModelOverride(automation),
                 ),
                 (handle) => handle.prompt(automation.prompt),
                 (handle) =>

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Cron, DateTime, Effect, Option, Result, Schema } from "effect";
-import { parseLeadingProfileAgentMention } from "./profile";
+import { parseLeadingProfileAgentMention, ProfileAgentThinking } from "./profile";
 
 const AutomationIdSchema = Schema.String.check(
   Schema.makeFilter((value) => /^[a-z0-9-]+$/.test(value) && value.length <= 80, {
@@ -42,7 +42,15 @@ export const Automation = Schema.Struct({
   origin: Schema.optional(AutomationTarget),
   prompt: NonEmpty,
   specialist: Schema.optional(AutomationSpecialist),
-});
+  provider: Schema.optionalKey(Schema.NonEmptyString),
+  model: Schema.optionalKey(Schema.NonEmptyString),
+  thinking: Schema.optionalKey(ProfileAgentThinking),
+}).check(
+  Schema.makeFilter(
+    (automation) => (automation.provider === undefined) === (automation.model === undefined),
+    { expected: "provider and model must be provided together" },
+  ),
+);
 export type Automation = typeof Automation.Type;
 
 const AutomationFileSchema = Schema.Struct({
@@ -54,6 +62,9 @@ const AutomationFileSchema = Schema.Struct({
   broadcast: NonEmpty,
   origin: Schema.optional(NonEmpty),
   prompt: NonEmpty,
+  provider: Schema.optionalKey(NonEmpty),
+  model: Schema.optionalKey(NonEmpty),
+  thinking: Schema.optionalKey(ProfileAgentThinking),
 });
 
 const targetFromSource = (source: string): AutomationTarget | undefined => {
@@ -453,13 +464,26 @@ export const parseAutomationFile = (
       ),
     );
     if (
-      [decoded.cron, decoded.timezone, decoded.broadcast, decoded.gate, decoded.origin].some(
-        (value) => value !== undefined && value !== value.trim(),
-      )
+      [
+        decoded.cron,
+        decoded.timezone,
+        decoded.broadcast,
+        decoded.gate,
+        decoded.origin,
+        decoded.provider,
+        decoded.model,
+        decoded.thinking,
+      ].some((value) => value !== undefined && value !== value.trim())
     ) {
       return yield* invalid(
         filePath,
         `invalid automation ${id}: frontmatter values must not have leading or trailing whitespace`,
+      );
+    }
+    if ((decoded.provider === undefined) !== (decoded.model === undefined)) {
+      return yield* invalid(
+        filePath,
+        `invalid automation ${id}: provider and model must be provided together`,
       );
     }
     if (
@@ -498,6 +522,9 @@ export const parseAutomationFile = (
             : undefined,
           decoded.gate !== undefined ? (["gate", decoded.gate] as const) : undefined,
           origin !== undefined ? (["origin", origin] as const) : undefined,
+          decoded.provider !== undefined ? (["provider", decoded.provider] as const) : undefined,
+          decoded.model !== undefined ? (["model", decoded.model] as const) : undefined,
+          decoded.thinking !== undefined ? (["thinking", decoded.thinking] as const) : undefined,
         ].flatMap((entry) => (entry === undefined ? [] : [entry])),
       ),
     };

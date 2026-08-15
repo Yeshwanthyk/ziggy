@@ -16,6 +16,8 @@ import {
   type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Database } from "bun:sqlite";
 import { Clock, Context, Effect, Layer, Option, Result, Schema } from "effect";
 import { Type } from "typebox";
@@ -24,6 +26,7 @@ import {
   ProviderCallError,
   ProviderConfigError,
   SpecialistAgentNotFound,
+  type ChatModelOverride,
   type OpenTuiError,
   type ProfileAgentRunContext,
   type ProfileAgentRunResult,
@@ -99,6 +102,7 @@ export interface PiAgentApi {
     context: ChatContext,
     sessionDirectory: string,
     sessionMode?: ChatSessionMode,
+    modelOverride?: ChatModelOverride,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
 }
 
@@ -623,24 +627,109 @@ interface ProfileRuntime extends AgentSessionRuntime {
   readonly ephemeralPromptContext: EphemeralPromptContextState;
 }
 
+interface ProfileRuntimeOptions {
+  admittedAgents?: ReadonlyArray<ProfileAgent>;
+  automationDispatch?: AutomationTuiDispatch;
+  extensionCatalog?: ProfileExtensionCatalogOperations;
+  modelOverride?: ChatModelOverride;
+}
+
+const configuredSessionModelError = (profilePath: string, message: string) =>
+  new ProviderConfigError({
+    profilePath,
+    operation: "select model",
+    message,
+    cause: undefined,
+  });
+
+const applyConfiguredSessionModel = (
+  profilePath: string,
+  services: {
+    readonly settingsManager: {
+      readonly getDefaultProvider: () => string | undefined;
+      readonly getDefaultModel: () => string | undefined;
+      readonly getDefaultThinkingLevel: () => ThinkingLevel | undefined;
+    };
+    readonly modelRuntime: {
+      readonly getProvider: (providerId: string) => object | undefined;
+      readonly getModel: (providerId: string, modelId: string) => Model<Api> | undefined;
+      readonly hasConfiguredAuth: (providerId: string) => boolean;
+    };
+  },
+  sessionOptions: CreateAgentSessionFromServicesOptions,
+  override: ChatModelOverride | undefined,
+): void => {
+  const overrideProvider = override?.provider;
+  const overrideModel = override?.model;
+  if ((overrideProvider === undefined) !== (overrideModel === undefined)) {
+    throw configuredSessionModelError(profilePath, "provider and model must be provided together");
+  }
+
+  const providerId = overrideProvider ?? services.settingsManager.getDefaultProvider();
+  const modelId = overrideModel ?? services.settingsManager.getDefaultModel();
+  const thinking = override?.thinking ?? services.settingsManager.getDefaultThinkingLevel();
+  const model =
+    providerId === undefined || modelId === undefined
+      ? undefined
+      : services.modelRuntime.getModel(providerId, modelId);
+
+  if (overrideProvider !== undefined) {
+    if (services.modelRuntime.getProvider(overrideProvider) === undefined) {
+      throw configuredSessionModelError(
+        profilePath,
+        `provider is not configured in the Profile model registry: ${overrideProvider}`,
+      );
+    }
+    if (model === undefined) {
+      throw configuredSessionModelError(
+        profilePath,
+        `model is not configured in the Profile model registry: ${overrideProvider}/${overrideModel}`,
+      );
+    }
+    if (!services.modelRuntime.hasConfiguredAuth(overrideProvider)) {
+      throw configuredSessionModelError(
+        profilePath,
+        `provider auth is not configured in the Profile: ${overrideProvider}`,
+      );
+    }
+  } else if (override?.thinking !== undefined && model === undefined) {
+    throw configuredSessionModelError(
+      profilePath,
+      "thinking override requires a configured Profile model",
+    );
+  }
+
+  if (
+    model !== undefined &&
+    thinking !== undefined &&
+    !getSupportedThinkingLevels(model).some((level) => level === thinking)
+  ) {
+    throw configuredSessionModelError(
+      profilePath,
+      `thinking level is not supported by ${providerId}/${modelId}: ${thinking}`,
+    );
+  }
+
+  if (model !== undefined) sessionOptions.model = model;
+  if (thinking !== undefined) sessionOptions.thinkingLevel = thinking;
+};
+
 const createProfileRuntime = (
   profilePath: string,
   repositoryRoot: string,
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
-  admittedAgents?: ReadonlyArray<ProfileAgent>,
-  automationDispatch?: AutomationTuiDispatch,
-  extensionCatalog?: ProfileExtensionCatalogOperations,
+  runtimeOptions: ProfileRuntimeOptions = {},
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
     if (!paths.ok) {
       return yield* paths.error;
     }
-    const agents = admittedAgents ?? (yield* discoverProfileAgents(profilePath));
-    if (extensionCatalog?.materialize !== undefined) {
-      yield* extensionCatalog.materialize(profilePath, repositoryRoot).pipe(
+    const agents = runtimeOptions.admittedAgents ?? (yield* discoverProfileAgents(profilePath));
+    if (runtimeOptions.extensionCatalog?.materialize !== undefined) {
+      yield* runtimeOptions.extensionCatalog.materialize(profilePath, repositoryRoot).pipe(
         Effect.mapError(
           (cause) =>
             new ProfileExtensionInvalid({
@@ -675,14 +764,14 @@ const createProfileRuntime = (
                   createZiggyTuiExtension(
                     profilePath,
                     agents,
-                    extensionCatalog === undefined
+                    runtimeOptions.extensionCatalog === undefined
                       ? undefined
                       : createProfileExtensionSelectionRunner(
                           profilePath,
                           repositoryRoot,
-                          extensionCatalog,
+                          runtimeOptions.extensionCatalog,
                         ),
-                    automationDispatch,
+                    runtimeOptions.automationDispatch,
                   ),
                   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                   createProfileMemoryExtension(profilePath, paths.documents),
@@ -722,23 +811,18 @@ const createProfileRuntime = (
               ? []
               : [createAgentRunTool(specialistRunner), createAgentDiscussTool(specialistRunner)]),
           ];
-          const defaultProvider = services.settingsManager.getDefaultProvider();
-          const defaultModelId = services.settingsManager.getDefaultModel();
-          const configuredModel =
-            defaultProvider === undefined || defaultModelId === undefined
-              ? undefined
-              : services.modelRuntime.getModel(defaultProvider, defaultModelId);
-          const configuredThinking = services.settingsManager.getDefaultThinkingLevel();
           const sessionOptions: CreateAgentSessionFromServicesOptions = {
             services,
             sessionManager: runtimeSessionManager,
             customTools,
           };
           if (sessionStartEvent !== undefined) sessionOptions.sessionStartEvent = sessionStartEvent;
-          if (configuredModel !== undefined) sessionOptions.model = configuredModel;
-          if (configuredThinking !== undefined) {
-            sessionOptions.thinkingLevel = configuredThinking;
-          }
+          applyConfiguredSessionModel(
+            profilePath,
+            services,
+            sessionOptions,
+            runtimeOptions.modelOverride,
+          );
           const created = await createAgentSessionFromServices(sessionOptions);
           return {
             ...created,
@@ -993,6 +1077,7 @@ export const openChat = (
   sessionDirectory: string,
   repositoryRoot: string,
   sessionMode: ChatSessionMode = "continue",
+  modelOverride?: ChatModelOverride,
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
@@ -1004,6 +1089,7 @@ export const openChat = (
         ? SessionManager.continueRecent(target.path, sessionDirectory)
         : SessionManager.create(target.path, sessionDirectory),
       context,
+      modelOverride === undefined ? undefined : { modelOverride },
     );
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
     const disposeBestEffort = dispose.pipe(
@@ -1092,7 +1178,7 @@ export const runSpecialist = (
         soulPath,
         rootManager,
         { kind: "local" },
-        agents,
+        { admittedAgents: agents },
       ),
       (runtime) =>
         selectSpecialist(
@@ -1162,15 +1248,16 @@ export const openTui = (
         automationHandler === undefined
           ? undefined
           : yield* makeAutomationTuiDispatch(automationHandler);
+      const runtimeOptions: ProfileRuntimeOptions = {};
+      if (automationDispatch !== undefined) runtimeOptions.automationDispatch = automationDispatch;
+      if (extensionCatalog !== undefined) runtimeOptions.extensionCatalog = extensionCatalog;
       const runtime = yield* createProfileRuntime(
         target.path,
         repositoryRoot,
         soulPath,
         sessionManager,
         context,
-        undefined,
-        automationDispatch,
-        extensionCatalog,
+        runtimeOptions,
       );
 
       yield* piPromise(target.path, "open interactive mode", async () => {
@@ -1193,8 +1280,8 @@ export const makePiAgent = (
     askOnce(target, prompt, continueSession, context, repositoryRoot),
   openTui: (target, context, automationHandler) =>
     openTui(target, context, repositoryRoot, automationHandler, extensionCatalog),
-  openChat: (target, context, sessionDirectory, sessionMode) =>
-    openChat(target, context, sessionDirectory, repositoryRoot, sessionMode),
+  openChat: (target, context, sessionDirectory, sessionMode, modelOverride) =>
+    openChat(target, context, sessionDirectory, repositoryRoot, sessionMode, modelOverride),
 });
 
 export const makePiAgentLive = (

@@ -1,10 +1,11 @@
 import { Schema } from "effect";
 import type { MemoryIdInvalid } from "./memory";
-import type {
-  ProfileAgentInvalid,
-  ProfileAgentMentionInvalid,
-  ProfileExtensionInvalid,
-  ProfileFileSystemError,
+import {
+  type ProfileAgentInvalid,
+  type ProfileAgentMentionInvalid,
+  ProfileAgentThinking,
+  type ProfileExtensionInvalid,
+  type ProfileFileSystemError,
 } from "./profile";
 
 /** Read-only projection of one Pi-owned session. */
@@ -22,6 +23,19 @@ export interface ProfileAgentRunResult {
 export interface ProfileAgentRunContext {
   readonly sessionDirectory: string;
 }
+
+/** Optional per-session model policy. Omitted keys inherit the Profile default. */
+export const ChatModelOverride = Schema.Struct({
+  provider: Schema.optionalKey(Schema.NonEmptyString),
+  model: Schema.optionalKey(Schema.NonEmptyString),
+  thinking: Schema.optionalKey(ProfileAgentThinking),
+}).check(
+  Schema.makeFilter(
+    (override) => (override.provider === undefined) === (override.model === undefined),
+    { expected: "provider and model must be provided together" },
+  ),
+);
+export type ChatModelOverride = typeof ChatModelOverride.Type;
 
 export class ProfileNotInitialized extends Schema.TaggedErrorClass<ProfileNotInitialized>()(
   "ProfileNotInitialized",
