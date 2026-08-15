@@ -6,6 +6,17 @@ description: Write focused, deterministic tests for real Ziggy invariants while 
 Add a test only when it protects a real invariant. Ziggy does not need test-framework ceremony,
 test-only architecture, or coverage-driven duplication.
 
+Core tests live in a parallel `test/` tree that mirrors `src/` (`src/adapters/pi/auth.ts` →
+`test/adapters/pi/auth.test.ts`). Import Ziggy source through package exports, the same way Effect
+imports `effect/Deferred`, not with `../../`:
+
+```ts
+import { makePiAuth } from "ziggy/adapters/pi/auth";
+```
+
+`package.json` maps `"./*"` to `"./src/*.ts"`. Extension suites stay in `extensions/*/test/`; tooling
+tests stay next to `tooling/`.
+
 ## Test the contract
 
 1. Name the invariant that could regress.

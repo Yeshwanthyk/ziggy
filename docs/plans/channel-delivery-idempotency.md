@@ -43,9 +43,9 @@ same slice.
 ## Proof
 
 ```sh
-bun test src/application/gateway.test.ts \
-  src/application/discord-gateway.test.ts \
-  src/application/slack-gateway.test.ts \
-  src/adapters/discord/socket.test.ts
+bun test test/application/gateway.test.ts \
+  test/application/discord-gateway.test.ts \
+  test/application/slack-gateway.test.ts \
+  test/adapters/discord/socket.test.ts
 bun run check
 ```

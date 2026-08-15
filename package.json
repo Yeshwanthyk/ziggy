@@ -6,11 +6,14 @@
   "bin": {
     "ziggy": "./src/main.ts"
   },
+  "exports": {
+    "./*": "./src/*.ts"
+  },
   "scripts": {
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src extensions tooling",
-    "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\"",
+    "lint": "oxlint src test extensions tooling",
+    "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\"",
     "generate:catalog": "bun tooling/generate-builtin-catalog.mjs",
     "check:catalog": "bun tooling/generate-builtin-catalog.mjs --check",
     "generate:pi-docs": "bun tooling/generate-pi-docs.mjs",
@@ -19,9 +22,9 @@
     "build:binary:dev": "bun tooling/build-standalone-executable.mjs --development",
     "smoke:binary": "bun tooling/smoke-standalone-executable.mjs",
     "smoke:binary:dev": "bun tooling/smoke-standalone-executable.mjs --allow-development --artifact /tmp/ziggy-standalone-dev/ziggy",
-    "test": "bun test ./src ./extensions ./tooling && bun run test:helpers",
+    "test": "bun test ./test ./extensions ./tooling && bun run test:helpers",
     "test:helpers": "bun run --cwd extensions/here-now test",
-    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run check:catalog && bun run check:pi-docs"
+    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run check:catalog && bun run check:pi-docs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.1",

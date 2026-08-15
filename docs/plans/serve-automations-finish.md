@@ -295,8 +295,8 @@ still admit exactly one owner.
 - Extend `GatewayOwnerHandle` with PID and acquisition time if needed by later chunks.
 - Keep `inspectGatewayOwner` read-only.
 - Update `src/domain/gateway.ts` only for typed lease or projection failures.
-- Extend `src/adapters/bun/gateway-owner.test.ts`.
-- Extend the subprocess proofs in `src/application/resident-gateway.test.ts`.
+- Extend `test/adapters/bun/gateway-owner.test.ts`.
+- Extend the subprocess proofs in `test/application/resident-gateway.test.ts`.
 
 **Boundary change**
 

@@ -76,7 +76,7 @@ try {
   assertStandaloneWorktreePolicy(development, dirtyEntries);
 
   run([process.execPath, "run", "check"], "bun run check");
-  run([process.execPath, "test", "./src", "./extensions", "./tooling"], "focused Bun tests");
+  run([process.execPath, "test", "./test", "./extensions", "./tooling"], "focused Bun tests");
   run([process.execPath, "run", "test:helpers"], "helper tests");
 
   mkdirSync(path.dirname(normalizedOutput), { recursive: true });

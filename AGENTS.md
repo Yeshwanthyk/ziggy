@@ -44,6 +44,7 @@ When in doubt about Effect v4 idioms or good practices, read the pinned Effect s
 - Keep `LOG.md` updated per logical block.
 - Commit in logical blocks.
 - No tests for the sake of tests; add focused tests only for real invariants.
+- Core tests live in `test/` mirroring `src/` and import Ziggy through `ziggy/...` package exports.
 - Never overwrite human-owned Profile files such as `SOUL.md`.
 - Treat `docs/research/minimal-ziggy-scout.md` as the specification.
 - Treat `docs/research/pi-sdk-surface.md` as the source for Pi API facts.

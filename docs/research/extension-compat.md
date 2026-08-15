@@ -34,6 +34,6 @@ adapted as a native Pi package or it is not loaded.
 
 ## Proof
 
-`src/adapters/pi/resources.test.ts` loads the complete catalog through both Ziggy's production
+`test/adapters/pi/resources.test.ts` loads the complete catalog through both Ziggy's production
 resource paths and Pi package manifests. It asserts package inventory, skill diagnostics,
 registered tools, and the active Pi tool surface.

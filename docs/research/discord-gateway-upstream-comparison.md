@@ -71,12 +71,12 @@ would cross Ziggy's current product boundary.
 - `[Fact]` `<profile>/discord.json` is optional. A present file is decoded
   during resident preflight; a malformed present file fails before ownership,
   scheduler, or channel work (`src/application/resident-gateway.ts:39-51`,
-  `src/application/resident-gateway.test.ts:22-98`). With no channel config,
+  `test/application/resident-gateway.test.ts:22-98`). With no channel config,
   the resident is valid and scheduler-only (`src/application/resident-gateway.ts:99-127`).
 - `[Fact]` the single resident owns scheduler, Telegram, Discord, and Slack;
   a typed Discord failure is logged as `[gateway] Discord stopped: ...` and
   isolated from siblings (`src/application/resident-gateway.ts:94-145`,
-  `src/application/resident-gateway.test.ts:100-143`).
+  `test/application/resident-gateway.test.ts:100-143`).
 - `[Fact]` `ziggy serve status` reports managed service/supervisor/process/
   scheduler/Slack projections, but no Discord projection; `ziggy serve logs`
   exposes service stdout/stderr (`src/application/resident-service.ts:51-78,
@@ -100,7 +100,7 @@ MessageContent` (`src/application/discord-gateway.ts:18-20`; the value passed
 - `[Fact]` inbound and command queues are bounded; overflow fails closed. The
   socket uses a recent-ID set capped at 1,000 and drops duplicate message IDs
   in memory (`src/adapters/discord/socket.ts:208-224, 447-474`;
-  `src/adapters/discord/socket.test.ts:239-256`).
+  `test/adapters/discord/socket.test.ts:239-256`).
 - `[Inference]` transport reconnection is stronger than the operator
   projection: READY/RESUMED and heartbeat are authoritative inside the socket,
   but they are not persisted or displayed outside the running fiber.
@@ -110,12 +110,12 @@ MessageContent` (`src/application/discord-gateway.ts:18-20`; the value passed
 - `[Fact]` admission is owner-only, bot/self messages are ignored, blank text
   is ignored, DMs map to `user-<owner-id>`, and guild messages map to
   `group-dc<channel-id>` (`src/application/discord-gateway.ts:47-90`; tests
-  `src/application/discord-gateway.test.ts:23-45`).
+  `test/application/discord-gateway.test.ts:23-45`).
 - `[Fact]` each chat key gets one semaphore and one Pi `ChatHandle`; the handle
   is opened through the existing `ZiggyAgent.openChat` at
   `sessions/discord/<chat-key>` and replies are posted in Unicode-code-point
   chunks of at most 2,000 (`src/application/discord-gateway.ts:181-207`;
-  tests `src/application/discord-gateway.test.ts:47-121`).
+  tests `test/application/discord-gateway.test.ts:47-121`).
 - `[Fact]` the current path has no explicit accepted/queued/working/progress/
   cancelled/delivered state. Admission forks `processMessage`; a per-chat
   semaphore makes later turns wait, the Pi prompt runs, output posts, then one
@@ -343,9 +343,9 @@ intended DM/channel/thread.
 ## Baseline verification
 
 The focused baseline suite passed on Bun 1.3.13: 35 tests, 0 failures, across
-`src/application/discord-gateway.test.ts`,
-`src/adapters/discord/socket.test.ts`, `src/adapters/discord/api.test.ts`,
-`src/application/resident-gateway.test.ts`, `src/application/doctor.test.ts`,
-and `src/faces/serve-cli.test.ts`. This is local/fake transport proof only; it
+`test/application/discord-gateway.test.ts`,
+`test/adapters/discord/socket.test.ts`, `test/adapters/discord/api.test.ts`,
+`test/application/resident-gateway.test.ts`, `test/application/doctor.test.ts`,
+and `test/faces/serve-cli.test.ts`. This is local/fake transport proof only; it
 does not prove Discord Developer Portal intents, installation permissions,
 Gateway authentication, a live reply, or deployed status freshness.

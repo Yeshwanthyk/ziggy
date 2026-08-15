@@ -626,11 +626,11 @@ Production changes are limited to:
 
 Focused tests are limited to:
 
-1. `src/domain/automation.test.ts`.
-2. `src/adapters/bun/automation-sqlite.test.ts`.
-3. `src/application/automations.test.ts`.
-4. `src/application/automation-scheduler.test.ts`.
-5. `src/faces/automation-cli.test.ts`.
+1. `test/domain/automation.test.ts`.
+2. `test/adapters/bun/automation-sqlite.test.ts`.
+3. `test/application/automations.test.ts`.
+4. `test/application/automation-scheduler.test.ts`.
+5. `test/faces/automation-cli.test.ts`.
 
 No dependency or lockfile change is allowed. Do not add a repository layer, generic SQLite service,
 ORM, migration helper, scheduler host, or second execution service.
@@ -701,18 +701,18 @@ Run the focused files first:
 
 ```sh
 bun test \
-  src/domain/automation.test.ts \
-  src/adapters/bun/automation-sqlite.test.ts \
-  src/application/automations.test.ts \
-  src/application/automation-scheduler.test.ts \
-  src/faces/automation-cli.test.ts
+  test/domain/automation.test.ts \
+  test/adapters/bun/automation-sqlite.test.ts \
+  test/application/automations.test.ts \
+  test/application/automation-scheduler.test.ts \
+  test/faces/automation-cli.test.ts
 ```
 
 Then run:
 
 ```sh
 bun run check
-bun test ./src ./extensions && bun run test:helpers
+bun test ./test ./extensions && bun run test:helpers
 ```
 
 ## Hard size ceiling

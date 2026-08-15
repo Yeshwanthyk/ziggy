@@ -10,7 +10,10 @@ export function toRepoRelative(filename) {
 export function isTestLike(filename) {
   const normalized = toRepoRelative(filename);
   return (
-    /(\.|\/)(test|spec|e2e|node\.test)\.tsx?$/.test(normalized) || normalized.startsWith("tests/")
+    /(\.|\/)(test|spec|e2e|node\.test)\.tsx?$/.test(normalized) ||
+    normalized === "test" ||
+    normalized.startsWith("test/") ||
+    normalized.startsWith("tests/")
   );
 }
 
@@ -19,7 +22,8 @@ export function isDeclarationFile(filename) {
 }
 
 export function isAdapterFile(filename) {
-  return toRepoRelative(filename).startsWith("src/adapters/");
+  const normalized = toRepoRelative(filename);
+  return normalized.startsWith("src/adapters/") || normalized.startsWith("test/adapters/");
 }
 
 export function unwrapExpression(node) {

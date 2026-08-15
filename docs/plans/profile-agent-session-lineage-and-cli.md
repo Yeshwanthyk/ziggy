@@ -458,8 +458,8 @@ Every `agent_run` and discussion participant gets a persistent Pi child session.
   session module.
 - Extend `SpecialistToolDetails` and discussion participant details with the child reference.
 - Update renderers to show the child session ID in expanded output.
-- Update `src/adapters/pi/specialist.test.ts`.
-- Update `src/adapters/pi/pi-agent.test.ts` with a real SDK persistence proof.
+- Update `test/adapters/pi/specialist.test.ts`.
+- Update `test/adapters/pi/pi-agent.test.ts` with a real SDK persistence proof.
 
 **Execution path**
 
@@ -599,7 +599,7 @@ The CLI has one decoded command value, exact arity, stable help, and clear reser
 
 - Add `src/domain/cli.ts` for schemas and a command union.
 - Add `src/faces/cli.ts` for argument decoding and help rendering.
-- Add `src/faces/cli.test.ts`.
+- Add `test/faces/cli.test.ts`.
 - Reduce the switch and raw argument handling in `src/main.ts`.
 - Read version from `package.json` without adding a package or runtime registry.
 
@@ -726,11 +726,11 @@ A first-time operator can run init and then open Ziggy successfully.
 **Files and symbols**
 
 - Tighten `initProfile` in `src/application/profiles.ts`.
-- Add focused init and registry tests in `src/application/profiles.test.ts`.
+- Add focused init and registry tests in `test/application/profiles.test.ts`.
 - Add `src/application/setup.ts` to coordinate Profiles, Auth, Models, and Doctor.
 - Add `src/adapters/terminal/setup-interaction.ts` for terminal choices.
 - Reuse `src/adapters/terminal/auth-interaction.ts` for provider login.
-- Add init rendering and parser tests in `src/faces/cli.test.ts` or a focused init face test.
+- Add init rendering and parser tests in `test/faces/cli.test.ts` or a focused init face test.
 
 **Behavior details**
 
@@ -928,7 +928,7 @@ Each chunk runs its focused tests first. Every code chunk then runs:
 
 ```sh
 bun run check
-bun test ./src ./extensions && bun run test:helpers
+bun test ./test ./extensions && bun run test:helpers
 ```
 
 Live provider proof is needed only for the final setup acceptance. Unit and SDK integration tests

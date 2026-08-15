@@ -31,5 +31,5 @@ Run `ziggy help` for the complete command surface.
 ```sh
 bun install --frozen-lockfile
 bun run check
-bun test ./src ./extensions && bun run test:helpers
+bun test ./test ./extensions ./tooling && bun run test:helpers
 ```

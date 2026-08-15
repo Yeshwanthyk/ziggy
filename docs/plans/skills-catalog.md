@@ -49,8 +49,8 @@ Generated package code belongs under `<profile>/extensions/<id>/`; its runtime s
 ## Proof
 
 ```sh
-bun test src/application/profiles.test.ts
-bun test src/adapters/pi/resources.test.ts
+bun test test/application/profiles.test.ts
+bun test test/adapters/pi/resources.test.ts
 bun run check
 bun test
 ```

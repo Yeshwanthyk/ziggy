@@ -232,8 +232,8 @@ is deliberately expanded.
   `streaming.test.ts`, `status-reactions.slack-lifecycle.test.ts`, and ingress
   cleanup test).
 - **Baseline at research time:** Socket, API, gateway, normalization, status, placeholder, error,
-  retry, and cleanup paths have deterministic tests ([`socket.test.ts`](../../src/adapters/slack/socket.test.ts#L119-L278),
-  [`api.test.ts`](../../src/adapters/slack/api.test.ts#L10-L161), [`slack-gateway.test.ts`](../../src/application/slack-gateway.test.ts#L23-L284)).
+  retry, and cleanup paths have deterministic tests ([`socket.test.ts`](../../test/adapters/slack/socket.test.ts#L119-L278),
+  [`api.test.ts`](../../test/adapters/slack/api.test.ts#L10-L161), [`slack-gateway.test.ts`](../../test/application/slack-gateway.test.ts#L23-L284)).
 - **Benefit:** Boundary regressions are caught without live Slack secrets.
 - **Size:** S (already present).
 - **Risk:** Fake transport cannot prove Slack client rendering, app scopes,
@@ -856,7 +856,7 @@ should be resolved before the dependent gaps are called complete.
 - **Upstreams:** Hermes late-arrival drain/freshness and OpenClaw adoption/abort
   lifecycle (anchors in G2, G8, G20).
 - **Baseline at research time:** Tests assert status cleanup and placeholder update but not a
-  multi-turn state machine ([`slack-gateway.test.ts`](../../src/application/slack-gateway.test.ts#L89-L217)).
+  multi-turn state machine ([`slack-gateway.test.ts`](../../test/application/slack-gateway.test.ts#L89-L217)).
 - **Benefit:** Gives G8/G10/G11/G20 one contract: `received → queued → running →
   delivered/failed/unknown`, with one owner for every feedback message.
 - **Size:** S/M for model + focused tests.
