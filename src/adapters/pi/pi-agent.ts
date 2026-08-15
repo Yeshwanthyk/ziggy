@@ -51,7 +51,12 @@ import {
   type ProfileAgent,
   type ProfileTarget,
 } from "../../domain/profile";
-import type { ChatEvent, ChatHandle, ChatPromptOptions } from "../../application/agent";
+import type {
+  ChatEvent,
+  ChatHandle,
+  ChatPromptOptions,
+  RunOnceOptions,
+} from "../../application/agent";
 import { fileSystemCauseDetails } from "../fs/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources, type PiResources } from "./resources";
@@ -93,6 +98,7 @@ export interface PiAgentApi {
     prompt: string,
     continueSession: boolean,
     context: ChatContext,
+    options?: RunOnceOptions,
   ) => Effect.Effect<number, ZiggyAgentError>;
   readonly openTui: (
     target: ProfileTarget,
@@ -570,13 +576,14 @@ export const askOnce = (
   continueSession: boolean,
   context: ChatContext,
   repositoryRoot: string,
+  options?: RunOnceOptions,
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
-    const sessionManager = createLocalSessionManager(
-      target.path,
-      continueSession ? "main" : "fresh",
-    );
+    const sessionManager =
+      options?.sessionPath === undefined
+        ? createLocalSessionManager(target.path, continueSession ? "main" : "fresh")
+        : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
     const runtime = yield* createProfileRuntime(
       target.path,
       repositoryRoot,
@@ -612,7 +619,7 @@ export const askOnce = (
 
     const exitCode = yield* piPromise(target.path, "call provider", () =>
       runPrintMode(runtime, {
-        mode: "text",
+        mode: options?.mode ?? "text",
         initialMessage: prepared.text,
       }).finally(() => {
         console.error = originalConsoleError;
@@ -1545,8 +1552,8 @@ export const makePiAgent = (
 ): PiAgentApi => ({
   runSpecialist: (target, agentId, task, context) =>
     runSpecialist(target, agentId, task, context, repositoryRoot),
-  askOnce: (target, prompt, continueSession, context) =>
-    askOnce(target, prompt, continueSession, context, repositoryRoot),
+  askOnce: (target, prompt, continueSession, context, options) =>
+    askOnce(target, prompt, continueSession, context, repositoryRoot, options),
   openTui: (target, context, automationHandler) =>
     openTui(target, context, repositoryRoot, automationHandler, extensionCatalog),
   openChat: (target, context, sessionDirectory, sessionMode, modelOverride) =>

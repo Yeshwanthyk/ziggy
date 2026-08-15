@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import {
   renderProfileAgent,
+  renderProfileAgentJson,
   renderProfileAgents,
+  renderProfileAgentsJson,
   renderProfileAgentValidation,
 } from "ziggy/faces/agents-cli";
 
@@ -28,4 +30,9 @@ test("renders every validation result", () => {
       { id: "broken", path: "agents/broken.md", valid: false, message: "bad metadata" },
     ]),
   ).toBe("agents/alpha.md\tvalid\nagents/broken.md\tinvalid\tbad metadata");
+});
+
+test("renders JSON metadata without an instruction body", () => {
+  expect(renderProfileAgentsJson([agent])).toBe(JSON.stringify([agent]));
+  expect(renderProfileAgentJson(agent)).toBe(JSON.stringify(agent));
 });

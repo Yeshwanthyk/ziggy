@@ -1,4 +1,21 @@
+import { Schema } from "effect";
 import type { ProfileAgentProjection, ProfileAgentValidation } from "../application/profile-agents";
+
+export const ProfileAgentProjectionJson = Schema.Struct({
+  id: Schema.String,
+  description: Schema.String,
+  provider: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  thinking: Schema.optional(Schema.String),
+  tools: Schema.Array(Schema.String),
+  path: Schema.String,
+});
+export type ProfileAgentProjectionJson = typeof ProfileAgentProjectionJson.Type;
+
+export const ProfileAgentsJson = Schema.Array(ProfileAgentProjectionJson);
+export type ProfileAgentsJson = typeof ProfileAgentsJson.Type;
+const encodeProfileAgents = Schema.encodeSync(ProfileAgentsJson);
+const encodeProfileAgent = Schema.encodeSync(ProfileAgentProjectionJson);
 
 const model = (agent: ProfileAgentProjection): string =>
   agent.provider === undefined || agent.model === undefined
@@ -21,6 +38,13 @@ export const renderProfileAgents = (agents: ReadonlyArray<ProfileAgentProjection
     : agents
         .map((agent) => `${agent.id}\t${agent.description}\t${model(agent)}\t${agent.path}`)
         .join("\n");
+
+export const renderProfileAgentsJson = (
+  agents: ReadonlyArray<ProfileAgentProjectionJson>,
+): string => JSON.stringify(encodeProfileAgents(agents));
+
+export const renderProfileAgentJson = (agent: ProfileAgentProjectionJson): string =>
+  JSON.stringify(encodeProfileAgent(agent));
 
 export const renderProfileAgentValidation = (
   validations: ReadonlyArray<ProfileAgentValidation>,

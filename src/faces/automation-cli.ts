@@ -1,12 +1,45 @@
+import { Schema } from "effect";
 import type {
   AutomationDefinitionProjection,
   AutomationDefinitionTransitionProjection,
 } from "../application/automation-definitions";
-import type {
-  AutomationRunOutcome,
-  AutomationRunProjection,
-  AutomationStatusProjection,
-} from "../domain/automation";
+import { AutomationRunProjection, AutomationScheduleRecord } from "../domain/automation";
+import type { AutomationRunOutcome, AutomationStatusProjection } from "../domain/automation";
+
+export const AutomationDefinitionProjectionJson = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+  valid: Schema.Boolean,
+  lifecycle: Schema.Literals(["active", "paused", "conflict"]),
+  schedule: Schema.optional(Schema.String),
+  timezone: Schema.optional(Schema.String),
+  gateState: Schema.optional(Schema.Literals(["scheduled", "manual-only"])),
+  message: Schema.optional(Schema.String),
+});
+export type AutomationDefinitionProjectionJson = typeof AutomationDefinitionProjectionJson.Type;
+
+export const AutomationDefinitionsJson = Schema.Array(AutomationDefinitionProjectionJson);
+export type AutomationDefinitionsJson = typeof AutomationDefinitionsJson.Type;
+
+export const AutomationStatusProjectionJson = Schema.Struct({
+  profilePath: Schema.String,
+  observedAtMs: Schema.Finite,
+  heartbeatAtMs: Schema.NullOr(Schema.Finite),
+  lastTickAtMs: Schema.NullOr(Schema.Finite),
+  lastTickStatus: Schema.NullOr(Schema.Literals(["ok", "error"])),
+  lastTickError: Schema.NullOr(Schema.String),
+  schedules: Schema.Array(AutomationScheduleRecord),
+  activeRunCount: Schema.Finite,
+  latestRun: Schema.NullOr(AutomationRunProjection),
+  latestErrorRun: Schema.NullOr(AutomationRunProjection),
+});
+export type AutomationStatusProjectionJson = typeof AutomationStatusProjectionJson.Type;
+
+export const AutomationRunsJson = Schema.Array(AutomationRunProjection);
+export type AutomationRunsJson = typeof AutomationRunsJson.Type;
+const encodeAutomationDefinitions = Schema.encodeSync(AutomationDefinitionsJson);
+const encodeAutomationStatus = Schema.encodeSync(AutomationStatusProjectionJson);
+const encodeAutomationRuns = Schema.encodeSync(AutomationRunsJson);
 
 export const renderAutomationDefinitions = (
   definitions: ReadonlyArray<AutomationDefinitionProjection>,
@@ -20,6 +53,10 @@ export const renderAutomationDefinitions = (
             : `${definition.id}\t${definition.lifecycle}\tinvalid\t-\t-\t-\t${definition.path}`,
         )
         .join("\n");
+
+export const renderAutomationDefinitionsJson = (
+  definitions: ReadonlyArray<AutomationDefinitionProjectionJson>,
+): string => JSON.stringify(encodeAutomationDefinitions(definitions));
 
 export const renderAutomationValidation = (
   definitions: ReadonlyArray<AutomationDefinitionProjection>,
@@ -132,6 +169,9 @@ export const renderAutomationStatus = (status: AutomationStatusProjection): stri
   ].join("\n");
 };
 
+export const renderAutomationStatusJson = (status: AutomationStatusProjectionJson): string =>
+  JSON.stringify(encodeAutomationStatus(status));
+
 export const renderAutomationRuns = (
   runs: ReadonlyArray<AutomationRunProjection>,
   observedAtMs: number,
@@ -153,3 +193,6 @@ export const renderAutomationRuns = (
   }
   return lines.join("\n");
 };
+
+export const renderAutomationRunsJson = (runs: ReadonlyArray<AutomationRunsJson[number]>): string =>
+  JSON.stringify(encodeAutomationRuns(runs));

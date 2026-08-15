@@ -1,9 +1,20 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { Effect, Result } from "effect";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { Effect, Result, Schema } from "effect";
 import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
 
 const temporaryPaths: Array<string> = [];
@@ -16,6 +27,7 @@ const usage = (input: number, output: number, cost: number) => ({
   totalTokens: input + output + 3,
   cost: { input: cost / 2, output: cost / 2, cacheRead: 0, cacheWrite: 0, total: cost },
 });
+const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 interface TestSessionMessage {
   readonly role: string;
@@ -253,6 +265,123 @@ describe("Pi session metadata adapter", () => {
       expect(result.stdout.toString()).not.toMatch(/CLI-PROMPT-SECRET|CLI-REPLY-SECRET/);
     }
     expect(await snapshot(root)).toEqual(before);
+  });
+
+  test("run --session opens the exact older transcript in a shared directory", async () => {
+    const root = await profile();
+    await writeFile(join(root, "SOUL.md"), "# Profile\n", "utf8");
+    await writeFile(
+      join(root, "settings.json"),
+      JSON.stringify({ defaultProvider: "fixture", defaultModel: "fixture-model" }),
+      "utf8",
+    );
+
+    const requests: Array<string> = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        requests.push(await request.text());
+        return new Response(
+          [
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"selected answer"},"finish_reason":null}]}',
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    await writeFile(
+      join(root, "models.json"),
+      JSON.stringify({
+        providers: {
+          fixture: {
+            baseUrl: `http://127.0.0.1:${server.port}/v1`,
+            api: "openai-completions",
+            apiKey: "fixture-key",
+            models: [{ id: "fixture-model" }],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      const sessionDirectory = join(root, "sessions", "shared");
+      const older = SessionManager.create(root, sessionDirectory);
+      older.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: "OLDER-HISTORY" }],
+        timestamp: Date.now(),
+      });
+      older.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "older answer" }],
+        api: "openai-completions",
+        provider: "fixture",
+        model: "fixture-model",
+        usage: usage(1, 1, 0),
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      const olderId = older.getSessionId();
+      const olderFile = older.getSessionFile();
+      if (olderFile === undefined) throw new Error("expected older session file");
+
+      const newer = SessionManager.create(root, sessionDirectory);
+      newer.appendMessage({
+        role: "user",
+        content: [{ type: "text", text: "NEWER-HISTORY" }],
+        timestamp: Date.now(),
+      });
+      newer.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "newer answer" }],
+        api: "openai-completions",
+        provider: "fixture",
+        model: "fixture-model",
+        usage: usage(1, 1, 0),
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      const newerFile = newer.getSessionFile();
+      if (newerFile === undefined) throw new Error("expected newer session file");
+      await utimes(newerFile, new Date(2_000), new Date(2_000));
+      await utimes(olderFile, new Date(1_000), new Date(1_000));
+
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "src/main.ts",
+          "run",
+          "--json",
+          "--session",
+          olderId,
+          root,
+          "selected prompt",
+        ],
+        { stdout: "pipe", stderr: "pipe", cwd: process.cwd() },
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const eventLines = stdout.trim().split("\n");
+      expect(eventLines.length).toBeGreaterThan(0);
+      for (const line of eventLines) expect(() => decodeJsonLine(line)).not.toThrow();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toContain("OLDER-HISTORY");
+      expect(requests[0]).not.toContain("NEWER-HISTORY");
+      expect(await readFile(olderFile, "utf8")).toContain("selected prompt");
+      expect(await readFile(newerFile, "utf8")).not.toContain("selected prompt");
+    } finally {
+      server.stop(true);
+    }
   });
 
   test("fails typed on malformed sessions without rewriting them", async () => {

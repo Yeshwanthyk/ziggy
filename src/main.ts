@@ -46,20 +46,32 @@ import {
   renderProfileAgent,
   renderProfileAgents,
   renderProfileAgentValidation,
+  renderProfileAgentJson,
+  renderProfileAgentsJson,
 } from "./faces/agents-cli";
 import {
   renderAutomationCreated,
   renderAutomationDefinitions,
+  renderAutomationDefinitionsJson,
   renderAutomationOutcome,
   renderAutomationRuns,
+  renderAutomationRunsJson,
   renderAutomationStatus,
+  renderAutomationStatusJson,
   renderAutomationTransition,
   renderAutomationValidation,
 } from "./faces/automation-cli";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
+import { renderExtensionJson, renderExtensionsJson } from "./faces/extensions-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
-import { renderSession, renderSessionList } from "./faces/sessions-cli";
+import { renderProfilesJson } from "./faces/profiles-cli";
+import {
+  renderSession,
+  renderSessionJson,
+  renderSessionList,
+  renderSessionListJson,
+} from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
@@ -221,6 +233,10 @@ const program = Effect.gen(function* () {
         resolveProfilesDirectory(resolutionOptions),
         resolveProfilesRegistry(resolutionOptions),
       );
+      if (command.json) {
+        console.log(renderProfilesJson(listings));
+        return;
+      }
       if (listings.length === 0) {
         console.log("no profiles yet — try: ziggy init <name>");
         return;
@@ -230,6 +246,10 @@ const program = Effect.gen(function* () {
     }
     case "ExtensionsList": {
       const extensions = yield* extensionCatalog.list(repositoryRoot);
+      if (command.json) {
+        console.log(renderExtensionsJson(extensions));
+        return;
+      }
       for (const extension of extensions) {
         console.log(
           `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.source}\t${extension.description}`,
@@ -239,6 +259,10 @@ const program = Effect.gen(function* () {
     }
     case "ExtensionsShow": {
       const extension = yield* extensionCatalog.show(repositoryRoot, command.id);
+      if (command.json) {
+        console.log(renderExtensionJson(extension));
+        return;
+      }
       console.log(`id\t${extension.id}`);
       console.log(`kind\t${extension.kind}`);
       console.log(`status\t${extension.required ? "required" : "optional"}`);
@@ -337,7 +361,7 @@ const program = Effect.gen(function* () {
       const listed = yield* profileAgents.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderProfileAgents(listed));
+      console.log(command.json ? renderProfileAgentsJson(listed) : renderProfileAgents(listed));
       return;
     }
     case "AgentsShow": {
@@ -345,7 +369,7 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
       );
-      console.log(renderProfileAgent(shown));
+      console.log(command.json ? renderProfileAgentJson(shown) : renderProfileAgent(shown));
       return;
     }
     case "AgentsValidate": {
@@ -367,11 +391,23 @@ const program = Effect.gen(function* () {
       return;
     }
     case "Run": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const sessionPath =
+        command.sessionId === undefined
+          ? undefined
+          : path.resolve(
+              target.path,
+              "sessions",
+              (yield* sessions.resolve(target, command.sessionId)).path,
+            );
       const exitCode = yield* agent.runOnce(
-        resolveProfileTarget(command.target, resolutionOptions),
+        target,
         command.prompt,
         command.continueSession,
         { kind: "local" },
+        sessionPath === undefined
+          ? { mode: command.json ? "json" : "text" }
+          : { mode: command.json ? "json" : "text", sessionPath },
       );
       process.exitCode = exitCode;
       return;
@@ -388,7 +424,11 @@ const program = Effect.gen(function* () {
       const listed = yield* automationDefinitions.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderAutomationDefinitions(listed));
+      console.log(
+        command.json
+          ? renderAutomationDefinitionsJson(listed)
+          : renderAutomationDefinitions(listed),
+      );
       return;
     }
     case "AutomationsPause":
@@ -423,7 +463,9 @@ const program = Effect.gen(function* () {
       const status = yield* automationScheduler.status(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderAutomationStatus(status));
+      console.log(
+        command.json ? renderAutomationStatusJson(status) : renderAutomationStatus(status),
+      );
       return;
     }
     case "AutomationsRuns": {
@@ -435,7 +477,11 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         automationId,
       );
-      console.log(renderAutomationRuns(runs, yield* Clock.currentTimeMillis));
+      console.log(
+        command.json
+          ? renderAutomationRunsJson(runs)
+          : renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
+      );
       return;
     }
     case "Wake": {
@@ -451,7 +497,7 @@ const program = Effect.gen(function* () {
     }
     case "SessionsList": {
       const listed = yield* sessions.list(resolveProfileTarget(command.target, resolutionOptions));
-      console.log(renderSessionList(listed));
+      console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed));
       return;
     }
     case "SessionsShow": {
@@ -459,7 +505,7 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.reference,
       );
-      console.log(renderSession(shown));
+      console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
       return;
     }
     case "ServeInstall": {

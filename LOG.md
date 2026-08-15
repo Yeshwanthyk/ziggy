@@ -387,3 +387,5 @@ results.
 **Curl-installable GitHub release.** `scripts/install.sh` downloads checksum-pinned `ziggy-darwin-arm64` from GitHub Releases into `~/.local/bin/ziggy` and refuses to overwrite a symlink. Tag workflow `.github/workflows/release.yml` publishes that asset, its SHA-256, and the installer. `ziggy update` already used the same URL shape. 0.1.0 is macOS Apple Silicon only.
 
 **MIT licensing.** Added the standard MIT license under Yeshwanthyk and declared it in `package.json`.
+
+**Machine-readable CLI.** Added schema-owned JSON output for Profile, extension, agent, automation, and transcript-free session metadata. `ziggy run --json` now selects Pi's pinned NDJSON print mode, while `ziggy run --session <id>` resolves only an exact session id and opens that exact JSONL file even when a newer sibling exists. `--` preserves option-like prompt text and `--continue` cannot combine with exact resume. Added the reviewed Open Ziggy implementation packet with corrected session, UI ownership, transport, and ACP contracts.

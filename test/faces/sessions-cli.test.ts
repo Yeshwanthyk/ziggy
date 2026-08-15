@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionMetadata } from "ziggy/domain/session";
-import { renderSession, renderSessionList } from "ziggy/faces/sessions-cli";
+import {
+  renderSession,
+  renderSessionJson,
+  renderSessionList,
+  renderSessionListJson,
+} from "ziggy/faces/sessions-cli";
 
 const metadata: SessionMetadata = {
   path: "agents/child.jsonl",
@@ -42,5 +47,11 @@ describe("session CLI rendering", () => {
     expect(rendered).toContain("usage\t10 input · 5 output");
     expect(rendered).toContain("state\tcompleted");
     expect(rendered).not.toMatch(/prompt|reply|thinking content|tool output/i);
+  });
+
+  test("renders metadata-only JSON for lists and shows", () => {
+    expect(renderSessionListJson([metadata])).toBe(JSON.stringify([metadata]));
+    expect(renderSessionJson(metadata)).toBe(JSON.stringify(metadata));
+    expect(renderSessionJson(metadata)).not.toMatch(/prompt|reply|thinking content|tool output/i);
   });
 });
