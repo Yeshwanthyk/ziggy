@@ -13,6 +13,7 @@ export type HelpTopic =
   | "agents"
   | "doctor"
   | "run"
+  | "acp"
   | "automations"
   | "wake"
   | "sessions"
@@ -79,6 +80,7 @@ export type CliCommand =
       readonly sessionId?: string;
       readonly json: boolean;
     }
+  | { readonly _tag: "Acp"; readonly target: string; readonly shared: boolean }
   | {
       readonly _tag: "AutomationsCreate";
       readonly target: string;

@@ -74,6 +74,7 @@ import {
   renderMemoryShowJson,
 } from "./faces/memory-cli";
 import { renderProfilesJson } from "./faces/profiles-cli";
+import { runAcp } from "./faces/acp";
 import {
   renderSession,
   renderSessionJson,
@@ -420,6 +421,12 @@ const program = Effect.gen(function* () {
       process.exitCode = exitCode;
       return;
     }
+    case "Acp":
+      return yield* runAcp(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.shared,
+        agent,
+      );
     case "AutomationsCreate": {
       const created = yield* automationDefinitions.create(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -721,6 +728,7 @@ const program = Effect.gen(function* () {
     ExtensionCatalogUnavailable: (failure) => fail(failure.message),
     ExtensionCatalogInstallFailed: (failure) => fail(failure.message),
     ZiggyUpdateUnavailable: (failure) => fail(failure.message),
+    AcpFaceError: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.mergeAll(

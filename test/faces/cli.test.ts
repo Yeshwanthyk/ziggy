@@ -39,6 +39,16 @@ describe("CLI decoding", () => {
       continueSession: true,
       json: false,
     });
+    await expect(decode(["acp", "buddy"])).resolves.toEqual({
+      _tag: "Acp",
+      target: "buddy",
+      shared: false,
+    });
+    await expect(decode(["acp", "--shared", "buddy"])).resolves.toEqual({
+      _tag: "Acp",
+      target: "buddy",
+      shared: true,
+    });
     await expect(decode(["extensions", "add", "buddy", "weather"])).resolves.toEqual({
       _tag: "ExtensionsAdd",
       target: "buddy",
@@ -215,6 +225,16 @@ describe("CLI decoding", () => {
     }
   });
 
+  test("rejects malformed ACP arguments", async () => {
+    for (const args of [
+      ["acp"],
+      ["acp", "buddy", "extra"],
+      ["acp", "buddy", "--shared", "--shared"],
+    ]) {
+      await expect(decode(args)).rejects.toMatchObject({ _tag: "CliInputInvalid" });
+    }
+  });
+
   test("decodes guided, minimal, and explicit non-interactive init", async () => {
     await expect(decode(["init", "buddy", "--minimal", "--non-interactive"])).resolves.toEqual({
       _tag: "Init",
@@ -322,11 +342,13 @@ describe("CLI decoding", () => {
       "ziggy automations create|list|pause|resume|validate|status|runs",
     );
     expect(renderHelp()).toContain("ziggy sessions list|show");
+    expect(renderHelp()).toContain("ziggy acp <name|path> [--shared]");
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
     expect(renderHelp("serve")).toContain("ziggy serve install <name|path> [--force] [--no-start]");
     expect(renderHelp("serve")).toContain("ziggy serve logs <name|path> [--follow]");
+    expect(renderHelp("acp")).toBe("usage: ziggy acp <name|path> [--shared]");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );
