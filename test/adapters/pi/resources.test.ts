@@ -199,6 +199,9 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
     skills: ["./skills"],
   });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
+  await Effect.runPromise(
+    makeExtensionCatalogLive(noDownload).materialize(profilePath, "/does-not-exist"),
+  );
 
   const resources = await resolveResources(profilePath);
   const services = await createAgentSessionServices({
