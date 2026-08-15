@@ -1,12 +1,33 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's required Promise adapter boundary. */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires rejected tool Promises to mark failed executions. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
+import { readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import scriptPath from "./scripts/reminders.applescript" with { type: "file" };
 
 const OSASCRIPT = "/usr/bin/osascript";
 const SCRIPT_PATH = scriptPath;
+const HOST_SCRIPT_NAME = "ziggy-apple-reminders.applescript";
+
+/** True when Bun compiled the AppleScript into the virtual filesystem. */
+export const compiledAppleRemindersScriptPath = (path: string): boolean =>
+  path.includes("$bunfs") || path.includes("~BUN") || path.includes("%7EBUN");
+
+/**
+ * osascript cannot read `$bunfs`. Copy the embed to a real file when the compiled
+ * binary is running; source checkouts already have a host path.
+ */
+export const hostVisibleAppleRemindersScriptPath = async (
+  embeddedPath: string = SCRIPT_PATH,
+): Promise<string> => {
+  if (!compiledAppleRemindersScriptPath(embeddedPath)) return embeddedPath;
+  const destination = join(tmpdir(), HOST_SCRIPT_NAME);
+  await writeFile(destination, await readFile(embeddedPath));
+  return destination;
+};
 const TIMEOUT_MS = 45_000;
 const OUTPUT_LIMIT = 32 * 1024;
 
@@ -241,7 +262,8 @@ export const runAppleReminders = async (
   if (signal !== undefined) {
     execOptions.signal = signal;
   }
-  const result = await exec(OSASCRIPT, [SCRIPT_PATH, ...argv], execOptions);
+  const script = await hostVisibleAppleRemindersScriptPath();
+  const result = await exec(OSASCRIPT, [script, ...argv], execOptions);
 
   if (result.code !== 0) {
     const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;

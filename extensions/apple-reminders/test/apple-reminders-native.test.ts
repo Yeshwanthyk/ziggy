@@ -2,7 +2,16 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
-import { appleRemindersArguments, appleRemindersScriptPath, runAppleReminders } from "../index.ts";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  appleRemindersArguments,
+  appleRemindersScriptPath,
+  compiledAppleRemindersScriptPath,
+  hostVisibleAppleRemindersScriptPath,
+  runAppleReminders,
+} from "../index.ts";
 
 describe("Apple Reminders native boundary", () => {
   test("passes model data as distinct argv values after a fixed script", async () => {
@@ -144,5 +153,22 @@ describe("Apple Reminders native boundary", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("MOVE_UNSUPPORTED");
     expect(result.stderr).toContain("no change was made");
+  });
+
+  test("copies a compiled bunfs AppleScript onto a host path osascript can read", async () => {
+    const bunfsDir = await mkdtemp(join(tmpdir(), "$bunfs-"));
+    const embedded = join(bunfsDir, "reminders.applescript");
+    await writeFile(embedded, await readFile(appleRemindersScriptPath));
+    expect(compiledAppleRemindersScriptPath(embedded)).toBe(true);
+
+    const visible = await hostVisibleAppleRemindersScriptPath(embedded);
+    expect(visible).not.toBe(embedded);
+    expect(compiledAppleRemindersScriptPath(visible)).toBe(false);
+
+    const compile = spawnSync("/usr/bin/osacompile", ["-o", "/dev/null", visible], {
+      encoding: "utf8",
+    });
+    expect(compile.status).toBe(0);
+    expect(compile.stderr).toBe("");
   });
 });

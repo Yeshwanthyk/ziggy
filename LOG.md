@@ -311,3 +311,5 @@ results.
 **Profile AGENTS.md and no agent pi_docs.** Ziggy-owned `skills/AGENTS.md` is inlined as the first system-prompt block, then Profile `SOUL.md`. Profile and specialist runtimes no longer register `pi_docs`; the factory remains for explicit tests and doctor still checks the compile pin. Reminders `$bunfs`/osascript handoff is unchanged for a later block.
 
 **Hunk notes on AGENTS.md / profile-prompt.** `ziggy-operations` now points at serve, gateway, or automations. Prompt file reads use Effect `FileSystem.readFileString` with `BunFileSystem.layer` at this adapter; `Effect.tryPromise` around `node:fs/promises` is gone.
+
+**Compiled Apple Reminders host path.** The bundled tools now copy a `$bunfs` AppleScript onto a real temp file before `/usr/bin/osascript`. Source checkouts keep the checkout path. Live Squarey still needs the Profile override removed, a binary reinstall, and a resident restart.
