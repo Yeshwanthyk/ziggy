@@ -1,62 +1,168 @@
 ---
-name: obsidian
-description: "Work with Obsidian vaults (plain Markdown notes) and automate via obsidian-cli."
+name: notion
+description: "Notion API for creating and managing pages, databases, and blocks."
 ---
 
-# Obsidian
+# notion
 
-Obsidian vault = a normal folder on disk.
+Use the Notion API to create/read/update pages, data sources (databases), and blocks.
 
-Vault structure (typical)
+## Setup
 
-- Notes: `*.md` (plain text Markdown; edit with any editor)
-- Config: `.obsidian/` (workspace + plugin settings; usually don’t touch from scripts)
-- Canvases: `*.canvas` (JSON)
-- Attachments: whatever folder you chose in Obsidian settings (images/PDFs/etc.)
+1. Create an integration at https://notion.so/my-integrations
+2. Copy the API key (starts with `ntn_` or `secret_`)
+3. Store it:
 
-## Find the active vault(s)
+```bash
+mkdir -p ~/.config/notion
+echo "ntn_your_key_here" > ~/.config/notion/api_key
+```
 
-Obsidian desktop tracks vaults here (source of truth):
+4. Share target pages/databases with your integration (click "..." → "Connect to" → your integration name)
 
-- `~/Library/Application Support/obsidian/obsidian.json`
+## API Basics
 
-`obsidian-cli` resolves vaults from that file; vault name is typically the **folder name** (path suffix).
+All requests need:
 
-Fast “what vault is active / where are the notes?”
+```bash
+NOTION_KEY=$(cat ~/.config/notion/api_key)
+curl -X GET "https://api.notion.com/v1/..." \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json"
+```
 
-- If you’ve already set a default: `obsidian-cli print-default --path-only`
-- Otherwise, read `~/Library/Application Support/obsidian/obsidian.json` and use the vault entry with `"open": true`.
+> **Note:** The `Notion-Version` header is required. This skill uses `2025-09-03` (latest). In this version, databases are called "data sources" in the API.
 
-Notes
+## Common Operations
 
-- Multiple vaults common (iCloud vs `~/Documents`, work/personal, etc.). Don’t guess; read config.
-- Avoid writing hardcoded vault paths into scripts; prefer reading the config or using `print-default`.
+**Search for pages and data sources:**
 
-## obsidian-cli quick start
+```bash
+curl -X POST "https://api.notion.com/v1/search" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "page title"}'
+```
 
-Pick a default vault (once):
+**Get page:**
 
-- `obsidian-cli set-default "<vault-folder-name>"`
-- `obsidian-cli print-default` / `obsidian-cli print-default --path-only`
+```bash
+curl "https://api.notion.com/v1/pages/{page_id}" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03"
+```
 
-Search
+**Get page content (blocks):**
 
-- `obsidian-cli search "query"` (note names)
-- `obsidian-cli search-content "query"` (inside notes; shows snippets + lines)
+```bash
+curl "https://api.notion.com/v1/blocks/{page_id}/children" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03"
+```
 
-Create
+**Create page in a data source:**
 
-- `obsidian-cli create "Folder/New note" --content "..." --open`
-- Requires Obsidian URI handler (`obsidian://…`) working (Obsidian installed).
-- Avoid creating notes under “hidden” dot-folders (e.g. `.something/...`) via URI; Obsidian may refuse.
+```bash
+curl -X POST "https://api.notion.com/v1/pages" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parent": {"database_id": "xxx"},
+    "properties": {
+      "Name": {"title": [{"text": {"content": "New Item"}}]},
+      "Status": {"select": {"name": "Todo"}}
+    }
+  }'
+```
 
-Move/rename (safe refactor)
+**Query a data source (database):**
 
-- `obsidian-cli move "old/path/note" "new/path/note"`
-- Updates `[[wikilinks]]` and common Markdown links across the vault (this is the main win vs `mv`).
+```bash
+curl -X POST "https://api.notion.com/v1/data_sources/{data_source_id}/query" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filter": {"property": "Status", "select": {"equals": "Active"}},
+    "sorts": [{"property": "Date", "direction": "descending"}]
+  }'
+```
 
-Delete
+**Create a data source (database):**
 
-- `obsidian-cli delete "path/note"`
+```bash
+curl -X POST "https://api.notion.com/v1/data_sources" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parent": {"page_id": "xxx"},
+    "title": [{"text": {"content": "My Database"}}],
+    "properties": {
+      "Name": {"title": {}},
+      "Status": {"select": {"options": [{"name": "Todo"}, {"name": "Done"}]}},
+      "Date": {"date": {}}
+    }
+  }'
+```
 
-Prefer direct edits when appropriate: open the `.md` file and change it; Obsidian will pick it up.
+**Update page properties:**
+
+```bash
+curl -X PATCH "https://api.notion.com/v1/pages/{page_id}" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{"properties": {"Status": {"select": {"name": "Done"}}}}'
+```
+
+**Add blocks to page:**
+
+```bash
+curl -X PATCH "https://api.notion.com/v1/blocks/{page_id}/children" \
+  -H "Authorization: Bearer $NOTION_KEY" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "children": [
+      {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": "Hello"}}]}}
+    ]
+  }'
+```
+
+## Property Types
+
+Common property formats for database items:
+
+- **Title:** `{"title": [{"text": {"content": "..."}}]}`
+- **Rich text:** `{"rich_text": [{"text": {"content": "..."}}]}`
+- **Select:** `{"select": {"name": "Option"}}`
+- **Multi-select:** `{"multi_select": [{"name": "A"}, {"name": "B"}]}`
+- **Date:** `{"date": {"start": "2024-01-15", "end": "2024-01-16"}}`
+- **Checkbox:** `{"checkbox": true}`
+- **Number:** `{"number": 42}`
+- **URL:** `{"url": "https://..."}`
+- **Email:** `{"email": "a@b.com"}`
+- **Relation:** `{"relation": [{"id": "page_id"}]}`
+
+## Key Differences in 2025-09-03
+
+- **Databases → Data Sources:** Use `/data_sources/` endpoints for queries and retrieval
+- **Two IDs:** Each database now has both a `database_id` and a `data_source_id`
+  - Use `database_id` when creating pages (`parent: {"database_id": "..."}`)
+  - Use `data_source_id` when querying (`POST /v1/data_sources/{id}/query`)
+- **Search results:** Databases return as `"object": "data_source"` with their `data_source_id`
+- **Parent in responses:** Pages show `parent.data_source_id` alongside `parent.database_id`
+- **Finding the data_source_id:** Search for the database, or call `GET /v1/data_sources/{data_source_id}`
+
+## Notes
+
+- Page/database IDs are UUIDs (with or without dashes)
+- The API cannot set database view filters — that's UI-only
+- Rate limit: ~3 requests/second average, with `429 rate_limited` responses using `Retry-After`
+- Append block children: up to 100 children per request, up to two levels of nesting in a single append request
+- Payload size limits: up to 1000 block elements and 500KB overall
+- Use `is_inline: true` when creating data sources to embed them in pages

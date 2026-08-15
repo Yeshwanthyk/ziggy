@@ -282,7 +282,6 @@ const publishEmbeddedTree = (
   entry: CatalogEntry,
   sourcePath: string,
   files: ReadonlyArray<string>,
-  extraFiles: ReadonlyArray<{ readonly relativePath: string; readonly contents: string }> = [],
 ): Effect.Effect<string, ExtensionCatalogInstallFailed> => {
   const extensionRoot = path.join(profilePath, "extensions");
   const destinationPath = path.join(extensionRoot, entry.id);
@@ -323,42 +322,6 @@ const publishEmbeddedTree = (
             ),
           );
           yield* stageEmbeddedFiles(entry, stagedPackage, sourcePath, files);
-          yield* Effect.forEach(
-            extraFiles,
-            (file) =>
-              Effect.gen(function* () {
-                const target = path.join(stagedPackage, ...file.relativePath.split("/"));
-                yield* Effect.tryPromise({
-                  try: () => mkdir(path.dirname(target), { recursive: true }),
-                  catch: (cause) => cause,
-                }).pipe(
-                  Effect.mapError((cause) =>
-                    installFailure(
-                      entry,
-                      path.dirname(target),
-                      "filesystem",
-                      "could not create extension staging directory",
-                      cause,
-                    ),
-                  ),
-                );
-                yield* Effect.tryPromise({
-                  try: () => writeFile(target, file.contents),
-                  catch: (cause) => cause,
-                }).pipe(
-                  Effect.mapError((cause) =>
-                    installFailure(
-                      entry,
-                      target,
-                      "filesystem",
-                      "could not stage bundled extension file",
-                      cause,
-                    ),
-                  ),
-                );
-              }),
-            { discard: true },
-          );
           yield* inspectTree(entry, stagedPackage);
           yield* readExtensionPackage(stagedShelf, entry.id).pipe(
             Effect.mapError((cause) =>
@@ -516,36 +479,6 @@ export const makeExtensionInstaller = (
       );
     }
     return publishEmbeddedTree(profilePath, entry, metadata.sourcePath, metadata.packageFiles);
-  },
-  installRequiredSkill: (
-    profilePath: string,
-    skill: {
-      readonly id: string;
-      readonly description: string;
-      readonly files: ReadonlyArray<string>;
-    },
-  ) => {
-    const entry: BundledExtensionCatalogEntry = {
-      id: skill.id,
-      version: "0.1.0",
-      source: "bundled",
-      path: `./extensions/${skill.id}`,
-    };
-    const packageJson = `${JSON.stringify(
-      {
-        name: `@ziggy/${skill.id}`,
-        private: true,
-        type: "module",
-        description: skill.description,
-        keywords: ["pi-package"],
-        pi: { skills: ["./skills"] },
-      },
-      null,
-      2,
-    )}\n`;
-    return publishEmbeddedTree(profilePath, entry, ".", skill.files, [
-      { relativePath: "package.json", contents: packageJson },
-    ]);
   },
   installGitHub: (profilePath: string, entry: GitHubExtensionCatalogEntry) =>
     Effect.gen(function* () {

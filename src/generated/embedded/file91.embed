@@ -1,110 +1,46 @@
 ---
-name: weather
-description: "Get current weather, rain, temperature, and forecasts for locations or travel planning."
+name: wacli
+description: "Send third-party WhatsApp messages or sync/search WhatsApp history via wacli, not normal active chats."
 ---
 
-# Weather Skill
+# wacli
 
-Get current weather conditions and forecasts.
+Use `wacli` only when the user explicitly asks you to message someone else on WhatsApp or when they ask to sync/search WhatsApp history.
+Do NOT use `wacli` for the active user conversation; the current chat transport owns that conversation.
+If the user is chatting with you on WhatsApp, you should not reach for this tool unless they ask you to contact a third party.
 
-## When to Use
+Safety
 
-✅ **USE this skill when:**
+- Require explicit recipient + message text.
+- Confirm recipient + message before sending.
+- If anything is ambiguous, ask a clarifying question.
 
-- "What's the weather?"
-- "Will it rain today/tomorrow?"
-- "Temperature in [city]"
-- "Weather forecast for the week"
-- Travel planning weather checks
+Auth + sync
 
-## When NOT to Use
+- `wacli auth` (QR login + initial sync)
+- `wacli sync --follow` (continuous sync)
+- `wacli doctor`
 
-❌ **DON'T use this skill when:**
+Find chats + messages
 
-- Historical weather data → use weather archives/APIs
-- Climate analysis or trends → use specialized data sources
-- Hyper-local microclimate data → use local sensors
-- Severe weather alerts → check official NWS sources
-- Aviation/marine weather → use specialized services (METAR, etc.)
+- `wacli chats list --limit 20 --query "name or number"`
+- `wacli messages search "query" --limit 20 --chat <jid>`
+- `wacli messages search "invoice" --after 2025-01-01 --before 2025-12-31`
 
-## Location
+History backfill
 
-Always include a city, region, or airport code in weather queries.
+- `wacli history backfill --chat <jid> --requests 2 --count 50`
 
-## Commands
+Send
 
-### Current Weather
+- Text: `wacli send text --to "+14155551212" --message "Hello! Are you free at 3pm?"`
+- Group: `wacli send text --to "1234567890-123456789@g.us" --message "Running 5 min late."`
+- File: `wacli send file --to "+14155551212" --file /path/agenda.pdf --caption "Agenda"`
 
-```bash
-# One-line summary
-curl "wttr.in/London?format=3"
+Notes
 
-# Detailed current conditions
-curl "wttr.in/London?0"
-
-# Specific city
-curl "wttr.in/New+York?format=3"
-```
-
-### Forecasts
-
-```bash
-# 3-day forecast
-curl "wttr.in/London"
-
-# Week forecast
-curl "wttr.in/London?format=v2"
-
-# Specific day (0=today, 1=tomorrow, 2=day after)
-curl "wttr.in/London?1"
-```
-
-### Format Options
-
-```bash
-# One-liner
-curl "wttr.in/London?format=%l:+%c+%t+%w"
-
-# JSON output
-curl "wttr.in/London?format=j1"
-
-# PNG image
-curl "wttr.in/London.png"
-```
-
-### Format Codes
-
-- `%c` — Weather condition emoji
-- `%t` — Temperature
-- `%f` — "Feels like"
-- `%w` — Wind
-- `%h` — Humidity
-- `%p` — Precipitation
-- `%l` — Location
-
-## Quick Responses
-
-**"What's the weather?"**
-
-```bash
-curl -s "wttr.in/London?format=%l:+%c+%t+(feels+like+%f),+%w+wind,+%h+humidity"
-```
-
-**"Will it rain?"**
-
-```bash
-curl -s "wttr.in/London?format=%l:+%c+%p"
-```
-
-**"Weekend forecast"**
-
-```bash
-curl "wttr.in/London?format=v2"
-```
-
-## Notes
-
-- No API key needed (uses wttr.in)
-- Rate limited; don't spam requests
-- Works for most global cities
-- Supports airport codes: `curl wttr.in/ORD`
+- Store dir: `~/.wacli` (override with `--store`).
+- Use `--json` for machine-readable output when parsing.
+- Backfill requires your phone online; results are best-effort.
+- WhatsApp CLI is not needed for routine user chats; it’s for messaging other people.
+- JIDs: direct chats look like `<number>@s.whatsapp.net`; groups look like `<id>@g.us` (use `wacli chats list` to find).

@@ -328,7 +328,7 @@ const mutateExtension = (
     if (extension.required) {
       return yield* new ProfileExtensionInvalid({
         path: extension.packagePath,
-        message: "required extension 'pi-packages' cannot be added or removed",
+        message: `required extension '${id}' cannot be added or removed`,
         cause: undefined,
       });
     }

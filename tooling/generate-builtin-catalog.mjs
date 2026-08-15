@@ -3,6 +3,7 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- catalog generator is a Bun CLI, not an Effect service */
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
@@ -20,6 +21,7 @@ const resourcesPath = join(repositoryRoot, "src/adapters/pi/generated/builtin-re
 const catalogJsonPath = join(repositoryRoot, "catalog.json");
 
 const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const REQUIRED_PACKAGE_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
 const skipNames = new Set(["node_modules", ".git", "test", "tests", "tsconfig.json"]);
 
 const fail = (message) => {
@@ -198,7 +200,7 @@ for (const id of approvedIds) {
     version: manifest.version ?? "0.1.0",
     description,
     kind: hasSkills && hasCode ? "skill+code" : hasSkills ? "skill" : "code",
-    required: id === "pi-packages",
+    required: REQUIRED_PACKAGE_IDS.has(id),
     sourcePath,
     packageFiles,
     extensionLogicalPaths: extensionPaths.map((path) => posix(relative(repositoryRoot, path))),
@@ -207,44 +209,8 @@ for (const id of approvedIds) {
   });
 }
 
-const authoringPath = join(repositoryRoot, "skills/extension-authoring/SKILL.md");
-const authoringMeta = parseFrontmatter(readFileSync(authoringPath, "utf8"));
-if (authoringMeta === undefined) fail("invalid extension-authoring skill");
-const operationsPath = join(repositoryRoot, "skills/ziggy-operations/SKILL.md");
-const operationsMeta = parseFrontmatter(readFileSync(operationsPath, "utf8"));
-if (operationsMeta === undefined) fail("invalid ziggy-operations skill");
-
-const extraSkills = [
-  {
-    id: "extension-authoring",
-    ...authoringMeta,
-    logicalPath: "skills/extension-authoring/SKILL.md",
-    baseDirLogicalPath: "skills/extension-authoring",
-    files: walkFiles(dirname(authoringPath))
-      .map((path) => posix(relative(repositoryRoot, path)))
-      .sort((left, right) => left.localeCompare(right)),
-    required: true,
-  },
-  {
-    id: "ziggy-operations",
-    ...operationsMeta,
-    logicalPath: "skills/ziggy-operations/SKILL.md",
-    baseDirLogicalPath: "skills/ziggy-operations",
-    files: walkFiles(dirname(operationsPath))
-      .map((path) => posix(relative(repositoryRoot, path)))
-      .sort((left, right) => left.localeCompare(right)),
-    required: true,
-  },
-];
-
-const skillsRoot = join(repositoryRoot, "skills");
-const leftoverSkillDirs = readdirSync(skillsRoot, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
-  .filter((name) => !extraSkills.some((skill) => skill.id === name))
-  .sort((left, right) => left.localeCompare(right));
-if (leftoverSkillDirs.length > 0) {
-  fail(`repository skills/ contains leftover dirs: ${leftoverSkillDirs.join(", ")}`);
+if (existsSync(join(repositoryRoot, "skills"))) {
+  fail("repository-root skills/ is gone; required skills live under extensions/");
 }
 
 const fingerprintSource = JSON.stringify({
@@ -268,13 +234,6 @@ const fingerprintSource = JSON.stringify({
       id: automation.id,
       logicalPath: automation.logicalPath,
     })),
-  })),
-  extraSkills: extraSkills.map((skill) => ({
-    id: skill.id,
-    name: skill.name,
-    description: skill.description,
-    logicalPath: skill.logicalPath,
-    files: skill.files,
   })),
 });
 const fingerprint = createHash("sha256").update(fingerprintSource).digest("hex");
@@ -302,9 +261,6 @@ for (const pkg of packages) {
     factoryImports.push(`import ${alias} from "../../../../${logicalPath}";`);
   }
   for (const file of pkg.packageFiles) registerEmbed(file);
-}
-for (const skill of extraSkills) {
-  for (const file of skill.files) registerEmbed(file);
 }
 
 const quote = (value) => JSON.stringify(value);
@@ -346,21 +302,6 @@ ${pkg.automations
   )
   .join(",\n")}
     ],
-  }`,
-  )
-  .join(",\n")}
-] as const;
-
-export const BUILTIN_CORE_SKILLS = [
-${extraSkills
-  .map(
-    (skill) => `  {
-    id: ${quote(skill.id)},
-    name: ${quote(skill.name)},
-    description: ${quote(skill.description)},
-    logicalPath: ${quote(skill.logicalPath)},
-    disableModelInvocation: ${skill.disableModelInvocation ? "true" : "false"},
-    files: [${skill.files.map(quote).join(", ")}],
   }`,
   )
   .join(",\n")}

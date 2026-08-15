@@ -128,6 +128,12 @@ describe("self-improvement logging and package writer", () => {
       writeCuratorExtension(profile, { id: "../escape", body: body("../escape") }),
     ).rejects.toThrow("kebab-case");
     await expect(
+      writeCuratorExtension(profile, {
+        id: "extension-authoring",
+        body: body("extension-authoring"),
+      }),
+    ).rejects.toThrow("non-reserved");
+    await expect(
       writeCuratorExtension(profile, { id: "safe-skill", body: "not frontmatter" }),
     ).rejects.toThrow("frontmatter");
     await mkdir(join(profile, "extensions"), { recursive: true });

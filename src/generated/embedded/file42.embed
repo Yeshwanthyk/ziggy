@@ -1,145 +1,136 @@
-# Website to Video
+# GSAP for HyperFrames
 
-Capture a website, produce a professional video from it. Use when the user provides a URL and wants a video — social ad, product tour, 30-second promo, etc.
+GSAP is the animation engine for all HyperFrames compositions. Load from CDN inside the composition:
 
-The workflow has 7 steps. Each produces an artifact that gates the next. **Do not skip steps** — each artifact prevents a downstream failure mode.
-
-## Step 1: Capture & Understand
-
-```bash
-npx hyperframes capture https://example.com -o example-video
+```html
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 ```
 
-Produces `example-video/capture/` with:
-- `capture/screenshots/` — above-the-fold + section screenshots (up to `--max-screenshots`)
-- `capture/assets/` — logos, hero images, background video (if any)
-- `capture/extracted/tokens.json` — colors, fonts, and spacing tokens
-- `capture/extracted/visible-text.txt` — extracted headings, paragraphs, CTAs
-- `capture/extracted/fonts.json` — font families and stacks detected in computed styles
-- `capture/asset-descriptions.md` — auto-generated asset catalog
+## Core Tween Methods
 
-All subsequent steps read from the `capture/` subfolder — `capture/extracted/tokens.json`, `capture/assets/hero.png`, etc. Never strip the `capture/` prefix when referencing these files.
+- **`gsap.to(targets, vars)`** — animate from current state to `vars`. Most common.
+- **`gsap.from(targets, vars)`** — animate from `vars` to current state (entrances).
+- **`gsap.fromTo(targets, fromVars, toVars)`** — explicit start and end.
+- **`gsap.set(targets, vars)`** — apply immediately (duration 0). Don't use on clip elements that enter later — use `tl.set(selector, vars, time)` inside the timeline instead.
 
-**Gate:** Print a site summary — name, top 3 colors, primary + display fonts, hero asset path, one-sentence vibe. Keep it in your context — don't re-capture.
+Always use **camelCase** property names (`backgroundColor`, `rotationX`, not `background-color`).
 
-## Step 2: Write DESIGN.md
+## Common vars
 
-Small brand reference at the project root. 6 sections, ~90 lines. This is the cheat sheet — not the creative plan.
+- **`duration`** — seconds (default 0.5).
+- **`delay`** — seconds before start.
+- **`ease`** — `"power1.out"` (default), `"power3.inOut"`, `"back.out(1.7)"`, `"elastic.out(1, 0.3)"`, `"none"`, `"expo.out"`, `"circ.inOut"`.
+- **`stagger`** — number `0.1` or object: `{ amount: 0.3, from: "center" }`, `{ each: 0.1, from: "random" }`.
+- **`overwrite`** — `false` (default), `true`, or `"auto"`.
+- **`repeat`** — number (never `-1` in HyperFrames). **`yoyo`** — alternates direction with repeat.
+- **`onComplete`**, **`onStart`**, **`onUpdate`** — callbacks.
+- **`immediateRender`** — default `true` for `from()`/`fromTo()`. Set `false` on later tweens targeting the same property+element to avoid overwrite surprises.
 
-```markdown
-# DESIGN
+## Transforms
 
-## Brand
-- Name: Example Co.
-- One-line mission: "…"
+Prefer GSAP's transform aliases over raw CSS `transform`:
 
-## Colors
-- Background: #0B0F14
-- Primary: #00E0A4 (accent, CTA)
-- Secondary: #7A8B9B (body text)
-- Text: #FFFFFF
+| GSAP property               | Equivalent                 |
+| --------------------------- | -------------------------- |
+| `x`, `y`, `z`               | translateX/Y/Z (px)        |
+| `xPercent`, `yPercent`      | translateX/Y (%)           |
+| `scale`, `scaleX`, `scaleY` | scale                      |
+| `rotation`                  | rotate (deg)               |
+| `rotationX`, `rotationY`    | 3D rotate                  |
+| `skewX`, `skewY`            | skew                       |
+| `transformOrigin`           | transform-origin           |
 
-## Typography
-- Display: "Inter Tight", 700, tight letter-spacing
-- Body: "Inter", 400
+- **`autoAlpha`** — prefer over `opacity`. At 0, also sets `visibility: hidden`.
+- **CSS variables** — `"--hue": 180`.
+- **Directional rotation** — `"360_cw"`, `"-170_short"`, `"90_ccw"`.
+- **`clearProps`** — `"all"` or comma-separated; removes inline styles on complete.
+- **Relative values** — `"+=20"`, `"-=10"`, `"*=2"`.
 
-## Motion
-- Mood: precise, technical, confident
-- Eases: `power3.out` for entrances, `expo.in` for exits
+## Function-based Values
 
-## Assets
-- Logo: `capture/assets/logo.svg`
-- Hero image: `capture/assets/hero.png`
-
-## What NOT to Do
-- No purple, no pastels, no serif body
-- No playful/bubbly eases (`elastic`, `bounce`)
-- No drop shadows on text
+```js
+gsap.to(".item", {
+  x: (i, target, targets) => i * 50,
+  stagger: 0.1,
+});
 ```
 
-**Gate:** `DESIGN.md` exists in the project directory.
+## Easing
 
-## Step 3: Write SCRIPT.md
+Built-in eases: `power1` through `power4`, `back`, `bounce`, `circ`, `elastic`, `expo`, `sine`. Each has `.in`, `.out`, `.inOut`.
 
-Narration script. Story backbone. **Scene durations come from the narration, not from guessing.**
+Rule of thumb:
+- Entrances: `power3.out`, `expo.out`, `back.out(1.4)`
+- Exits: `power2.in`, `expo.in`
+- Scrubbed sections: `none` (linear)
+- Vary eases across entrance tweens within a scene — at least 3 different eases.
 
-```markdown
-# SCRIPT
+## Defaults
 
-## Scene 1 — Hook (0:00–0:04)
-"What if your dashboards wrote themselves?"
-
-## Scene 2 — Problem (0:04–0:11)
-"Teams spend hours stitching together queries, charts, and callouts — every Monday."
-
-## Scene 3 — Solution (0:11–0:22)
-"Example Co. watches your data streams and proposes the dashboard you'd have built — in seconds."
-
-## Scene 4 — CTA (0:22–0:28)
-"Try it free at example.com."
+```js
+gsap.defaults({ duration: 0.6, ease: "power2.out" });
 ```
 
-Run `npx hyperframes tts SCRIPT.md --voice af_nova --output narration.wav` to generate TTS audio. Note the exact duration — that's the video's duration.
+## Timelines (HyperFrames primary pattern)
 
-**Gate:** `SCRIPT.md` + `narration.wav` exist and durations match the plan (±0.3s).
+```js
+window.__timelines = window.__timelines || {};
 
-## Step 4: Storyboard
+const tl = gsap.timeline({ paused: true, defaults: { duration: 0.6, ease: "power2.out" } });
 
-Text-only scene plan: for each scene, describe the hero frame — what's on screen at the scene's most-visible moment.
+tl.from(".title",    { y: 50, opacity: 0 }, 0.3);
+tl.from(".subtitle", { y: 30, opacity: 0 }, 0.5);
+tl.from(".cta",      { scale: 0.8, opacity: 0, ease: "back.out(1.7)" }, 0.8);
 
-```markdown
-# STORYBOARD
-
-## Scene 1 (0:00–0:04) — Hook
-Hero frame: giant "WHAT IF YOUR DASHBOARDS WROTE THEMSELVES?" in display font, centered, on near-black. Logo top-left at 40% opacity.
-Entrance: each word staggers in, 0.08s apart.
-Transition out: flash-through-white into Scene 2.
+window.__timelines["root"] = tl;
 ```
 
-One paragraph per scene. Do NOT skip this step — it's where you catch narrative gaps before writing HTML.
+### Position parameter
 
-**Gate:** `STORYBOARD.md` exists. Each scene has: hero frame, entrance, transition.
+Third argument to `.from()` / `.to()` / `.add()`:
 
-## Step 5: Composition
+- Absolute seconds: `0.5`, `2.1`.
+- Relative to end: `">+0.2"` (0.2s after previous), `"<"` (same time as previous), `"<+0.3"` (0.3s after previous's start).
+- Named labels: `tl.addLabel("act2", 5); tl.from(".x", { y: 30 }, "act2");`
 
-Write `index.html` scene-by-scene:
-- Each scene is a `<div class="scene scene-N">` positioned absolutely, full-bleed.
-- Static HTML+CSS for the hero frame first (no GSAP).
-- Layer the narration `<audio>` at `data-start="0"` on a high track index.
-- Add a transitions component (`flash-through-white`, `liquid-wipe`, etc.) between each scene.
-- THEN add GSAP entrances (`gsap.from()`), no exits — transitions own the exit.
-- Register `window.__timelines["root"] = tl`.
+### Nesting
 
-Install transitions as needed:
+HyperFrames auto-nests sub-composition timelines. **Do not** manually `tl.add(subTl)` — the framework wires sub-timelines into the parent at the sub-composition's `data-start`.
 
-```bash
-npx hyperframes add flash-through-white
+### Playback
+
+The player controls playback. Don't call `tl.play()`, `tl.pause()`, or `tl.reverse()` at construction time. `{ paused: true }` is required.
+
+## Stagger
+
+```js
+// even distribution
+tl.from(".card", { opacity: 0, y: 40, stagger: 0.1 });
+
+// control total amount
+tl.from(".card", { opacity: 0, stagger: { amount: 0.6, from: "center" } });
+
+// deterministic "random" stagger (HyperFrames compositions must be deterministic)
+tl.from(".dot", { opacity: 0, stagger: { each: 0.05, from: "random" } });
 ```
 
-## Step 6: Render
+`stagger.from`: `"start"` | `"end"` | `"center"` | `"edges"` | `"random"` | index | `[x, y]` for grid.
 
-```bash
-npx hyperframes lint --strict          # must pass
-npx hyperframes validate               # WCAG contrast audit
-npx hyperframes render --quality draft --output draft.mp4
-```
+## Performance
 
-Watch the draft. Note issues in a `REVIEW.md` bullet list (scene, timestamp, issue). Fix, re-render.
+- Animate transforms (`x`, `y`, `scale`, `rotation`, `opacity`) — cheap, GPU-accelerated.
+- Avoid animating `width`, `height`, `top`, `left`, `margin` — causes layout thrash.
+- Avoid box-shadow or filter animations on large elements — expensive.
+- `will-change` is rarely needed; GSAP handles promotion.
 
-When happy:
+## gsap.matchMedia (rarely needed in HyperFrames)
 
-```bash
-npx hyperframes render --quality high --output final.mp4
-```
+Compositions have fixed dimensions (`data-width`/`data-height`), so responsive breakpoints don't apply. You may still use `matchMedia` for `prefers-reduced-motion` when authoring UI previews, but it's not used in rendered video output.
 
-## Step 7: Deliver
+## Don't Do
 
-- Report file path + duration + file size to the user.
-- If the user wants a vertical cut, re-render with a 9:16 composition (`data-width="1080" data-height="1920"`) — typically requires a separate `index-vertical.html` with tighter typography and re-stacked scene layout.
-
-## Common Failure Modes
-
-- **Skipped DESIGN.md** → colors drift scene-to-scene; output feels like "AI slides."
-- **Skipped STORYBOARD.md** → scenes overlap or hero frames collide with transitions.
-- **Exit animations** before transitions → empty frames when the transition fires.
-- **Narration longer than `data-duration`** → audio clips mid-sentence. Update the composition's `data-duration` to match the TTS output length + 0.5s buffer.
+- `repeat: -1` anywhere — breaks the capture engine.
+- `Math.random()`, `Date.now()`, performance.now()` inside tween values — non-deterministic.
+- `async` / `setTimeout` / `Promise` around timeline construction — the capture engine reads `window.__timelines` synchronously.
+- Animate `visibility` or `display` directly — use `autoAlpha`.
+- `gsap.set()` on clip elements that enter later in the timeline — they don't exist in the DOM at page-load. Use `tl.set(sel, vars, time)` inside the timeline.

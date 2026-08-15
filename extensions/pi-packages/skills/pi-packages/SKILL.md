@@ -35,7 +35,7 @@ The CLI and TUI use the same lifecycle. Adding copies the package into
 `<profile>/extensions/<id>/`, validates it, provisions owned automations, then atomically records
 the selection in `<profile>/extensions.json`. Removing first pauses extension-owned automation,
 then removes the selection without deleting the copied folder. Reopen the Profile or restart its
-resident Ziggy process after a real selection change. Required `pi-packages` cannot be added or
+resident Ziggy process after a real selection change. Required packages cannot be added or
 removed.
 
 To create or change a Profile-owned package, read the `extension-authoring` skill and edit

@@ -2,8 +2,7 @@ import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { APPROVED_BUNDLED_EXTENSION_IDS, BUILTIN_CORE_SKILLS } from "../../catalog";
-import { bundledFilePath } from "../../generated/builtin-files";
+import { APPROVED_BUNDLED_EXTENSION_IDS, REQUIRED_BUNDLED_EXTENSION_IDS } from "../../catalog";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
 import {
@@ -47,22 +46,6 @@ const existingDirectory = (directoryPath: string) =>
     ),
   );
 
-const requiredBundledSkill = (
-  logicalPath: string,
-): Effect.Effect<string, ProfileExtensionInvalid> => {
-  const filePath = bundledFilePath(logicalPath);
-  if (filePath === undefined) {
-    return Effect.fail(
-      new ProfileExtensionInvalid({
-        path: logicalPath,
-        message: `required skill does not exist: ${logicalPath}`,
-        cause: undefined,
-      }),
-    );
-  }
-  return Effect.succeed(filePath);
-};
-
 const missingSelected = (profilePath: string, id: string) =>
   new ProfileExtensionInvalid({
     path: join(profilePath, "extensions", id),
@@ -100,15 +83,10 @@ export const discoverPiResources = (
         }),
       ),
     );
-    const requiredOnDisk = yield* readRequiredPackage(profilePath, "pi-packages");
-    const required =
-      requiredOnDisk === undefined ? yield* bundledExtensionPackage("pi-packages") : requiredOnDisk;
-    const coreSkills = yield* Effect.forEach(BUILTIN_CORE_SKILLS, (skill) =>
-      readRequiredPackage(profilePath, skill.id).pipe(
-        Effect.flatMap((installed) =>
-          installed === undefined
-            ? requiredBundledSkill(skill.logicalPath).pipe(Effect.map((path) => [path]))
-            : Effect.succeed([...installed.skillPaths]),
+    const required = yield* Effect.forEach([...REQUIRED_BUNDLED_EXTENSION_IDS], (id) =>
+      readRequiredPackage(profilePath, id).pipe(
+        Effect.flatMap((onDisk) =>
+          onDisk === undefined ? bundledExtensionPackage(id) : Effect.succeed(onDisk),
         ),
       ),
     );
@@ -118,8 +96,7 @@ export const discoverPiResources = (
       ),
       skillPaths: [
         ...selected.flatMap((item) => item.skillPaths),
-        ...required.skillPaths,
-        ...coreSkills.flat(),
+        ...required.flatMap((item) => item.skillPaths),
       ],
       extensionFactories: [],
     };

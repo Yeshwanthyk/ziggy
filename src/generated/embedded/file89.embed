@@ -1,46 +1,158 @@
 ---
-name: wacli
-description: "Send third-party WhatsApp messages or sync/search WhatsApp history via wacli, not normal active chats."
+name: tmux
+description: "Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output."
 ---
 
-# wacli
+# tmux Session Control
 
-Use `wacli` only when the user explicitly asks you to message someone else on WhatsApp or when they ask to sync/search WhatsApp history.
-Do NOT use `wacli` for the active user conversation; the current chat transport owns that conversation.
-If the user is chatting with you on WhatsApp, you should not reach for this tool unless they ask you to contact a third party.
+Control tmux sessions by sending keystrokes and reading output. Essential for managing Claude Code sessions.
 
-Safety
+## When to Use
 
-- Require explicit recipient + message text.
-- Confirm recipient + message before sending.
-- If anything is ambiguous, ask a clarifying question.
+✅ **USE this skill when:**
 
-Auth + sync
+- Monitoring Claude/Codex sessions in tmux
+- Sending input to interactive terminal applications
+- Scraping output from long-running processes in tmux
+- Navigating tmux panes/windows programmatically
+- Checking on background work in existing sessions
 
-- `wacli auth` (QR login + initial sync)
-- `wacli sync --follow` (continuous sync)
-- `wacli doctor`
+## When NOT to Use
 
-Find chats + messages
+❌ **DON'T use this skill when:**
 
-- `wacli chats list --limit 20 --query "name or number"`
-- `wacli messages search "query" --limit 20 --chat <jid>`
-- `wacli messages search "invoice" --after 2025-01-01 --before 2025-12-31`
+- Running one-off shell commands → use `exec` tool directly
+- Starting new background processes → use `exec` with `background:true`
+- Non-interactive scripts → use `exec` tool
+- The process isn't in tmux
+- You need to create a new tmux session → use `exec` with `tmux new-session`
 
-History backfill
+## Example Sessions
 
-- `wacli history backfill --chat <jid> --requests 2 --count 50`
+| Session                 | Purpose                     |
+| ----------------------- | --------------------------- |
+| `shared`                | Primary interactive session |
+| `worker-2` - `worker-8` | Parallel worker sessions    |
 
-Send
+## Common Commands
 
-- Text: `wacli send text --to "+14155551212" --message "Hello! Are you free at 3pm?"`
-- Group: `wacli send text --to "1234567890-123456789@g.us" --message "Running 5 min late."`
-- File: `wacli send file --to "+14155551212" --file /path/agenda.pdf --caption "Agenda"`
+### List Sessions
 
-Notes
+```bash
+tmux list-sessions
+tmux ls
+```
 
-- Store dir: `~/.wacli` (override with `--store`).
-- Use `--json` for machine-readable output when parsing.
-- Backfill requires your phone online; results are best-effort.
-- WhatsApp CLI is not needed for routine user chats; it’s for messaging other people.
-- JIDs: direct chats look like `<number>@s.whatsapp.net`; groups look like `<id>@g.us` (use `wacli chats list` to find).
+### Capture Output
+
+```bash
+# Last 20 lines of pane
+tmux capture-pane -t shared -p | tail -20
+
+# Entire scrollback
+tmux capture-pane -t shared -p -S -
+
+# Specific pane in window
+tmux capture-pane -t shared:0.0 -p
+```
+
+### Send Keys
+
+```bash
+# Send text (doesn't press Enter)
+tmux send-keys -t shared "hello"
+
+# Send text + Enter
+tmux send-keys -t shared "y" Enter
+
+# Send special keys
+tmux send-keys -t shared Enter
+tmux send-keys -t shared Escape
+tmux send-keys -t shared C-c          # Ctrl+C
+tmux send-keys -t shared C-d          # Ctrl+D (EOF)
+tmux send-keys -t shared C-z          # Ctrl+Z (suspend)
+```
+
+### Window/Pane Navigation
+
+```bash
+# Select window
+tmux select-window -t shared:0
+
+# Select pane
+tmux select-pane -t shared:0.1
+
+# List windows
+tmux list-windows -t shared
+```
+
+### Session Management
+
+```bash
+# Create new session
+tmux new-session -d -s newsession
+
+# Kill session
+tmux kill-session -t sessionname
+
+# Rename session
+tmux rename-session -t old new
+```
+
+## Sending Input Safely
+
+For interactive TUIs (Claude Code, Codex, etc.), split text and Enter into separate sends to avoid paste/multiline edge cases:
+
+```bash
+tmux send-keys -t shared -l -- "Please apply the patch in src/foo.ts"
+sleep 0.1
+tmux send-keys -t shared Enter
+```
+
+## Claude Code Session Patterns
+
+### Check if Session Needs Input
+
+```bash
+# Look for prompts
+tmux capture-pane -t worker-3 -p | tail -10 | grep -E "❯|Yes.*No|proceed|permission"
+```
+
+### Approve Claude Code Prompt
+
+```bash
+# Send 'y' and Enter
+tmux send-keys -t worker-3 'y' Enter
+
+# Or select numbered option
+tmux send-keys -t worker-3 '2' Enter
+```
+
+### Check All Sessions Status
+
+```bash
+for s in shared worker-2 worker-3 worker-4 worker-5 worker-6 worker-7 worker-8; do
+  echo "=== $s ==="
+  tmux capture-pane -t $s -p 2>/dev/null | tail -5
+done
+```
+
+### Send Task to Session
+
+```bash
+tmux send-keys -t worker-4 "Fix the bug in auth.js" Enter
+```
+
+## Notes
+
+- Use `capture-pane -p` to print to stdout (essential for scripting)
+- `-S -` captures entire scrollback history
+- Target format: `session:window.pane` (e.g., `shared:0.0`)
+- Sessions persist across SSH disconnects
+
+## Bundled helper scripts
+
+This skill ships two helpers. Resolve both paths relative to the directory containing this `SKILL.md`, then run them with Bash:
+
+- `scripts/find-sessions.sh` — list candidate tmux sessions/panes
+- `scripts/wait-for-text.sh` — poll a pane until text appears (or timeout)

@@ -1,135 +1,139 @@
-#!/usr/bin/env bash
-# HyperFrames setup.
-#
-# Verifies Node >= 22 and FFmpeg, installs the `hyperframes` CLI globally,
-# pre-caches `chrome-headless-shell`, and runs `hyperframes doctor`.
-#
-# Pins `hyperframes@>=0.4.2` so the Chromium 147 compatibility fix from
-# https://github.com/heygen-com/hyperframes/issues/294 (commit 4c72ba4)
-# is always present — the engine auto-detects `HeadlessExperimental.beginFrame`
-# support and falls back to screenshot capture otherwise.
-#
-# Idempotent: safe to re-run.
+# Troubleshooting
 
-set -euo pipefail
+## `HeadlessExperimental.beginFrame' wasn't found` (first thing to check)
 
-MIN_NODE_MAJOR=22
-MIN_HYPERFRAMES_VERSION="0.4.2"
+**Symptom:** `npx hyperframes render` fails with:
 
-red()    { printf '\033[31m%s\033[0m\n' "$*"; }
-green()  { printf '\033[32m%s\033[0m\n' "$*"; }
-yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
-bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
+```
+✗ Render failed
+Protocol error (HeadlessExperimental.beginFrame):
+'HeadlessExperimental.beginFrame' wasn't found
+```
 
-bold "==> HyperFrames setup"
+**Cause:** Chromium 147+ removed the `HeadlessExperimental.beginFrame` CDP command. This affects
+environments that ship modern Chromium as the system browser. See
+[hyperframes#294](https://github.com/heygen-com/hyperframes/issues/294).
 
-# --- 1. Node.js --------------------------------------------------------------
+**Fix (permanent — preferred):** upgrade.
 
-if ! command -v node >/dev/null 2>&1; then
-  red "✗ Node.js is not installed."
-  echo "   Install Node.js >= ${MIN_NODE_MAJOR} (nvm, Homebrew, or your package manager) and re-run."
-  exit 1
-fi
+```bash
+npx hyperframes upgrade -y
+# or
+npm install -g hyperframes@latest
+```
 
-node_version="$(node --version | sed 's/^v//')"
-node_major="$(echo "$node_version" | cut -d. -f1)"
-if [ "$node_major" -lt "$MIN_NODE_MAJOR" ]; then
-  red "✗ Node.js ${node_version} is too old. HyperFrames requires Node.js >= ${MIN_NODE_MAJOR}."
-  echo "   Upgrade with 'nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}' or your package manager."
-  exit 1
-fi
-green "✓ Node.js ${node_version}"
+`hyperframes >= 0.4.2` auto-detects whether the resolved browser supports `beginFrame` (checks for `chrome-headless-shell` in the binary path) and falls back to screenshot capture mode when it doesn't. Commit [`4c72ba4`](https://github.com/heygen-com/hyperframes/commit/4c72ba4a36ec2bd6733f7b9cb2a9e63f9fb234b9) (March 2026) shipped this auto-detect.
 
-# --- 2. FFmpeg ---------------------------------------------------------------
+**Fix (escape hatch — if you can't upgrade):**
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  red "✗ FFmpeg is not installed."
-  case "$(uname -s)" in
-    Linux*)   echo "   sudo apt-get install -y ffmpeg   # Debian/Ubuntu"
-              echo "   sudo dnf install -y ffmpeg       # Fedora/RHEL";;
-    Darwin*)  echo "   brew install ffmpeg";;
-    MINGW*|MSYS*|CYGWIN*) echo "   winget install Gyan.FFmpeg";;
-    *)        echo "   See https://ffmpeg.org/download.html";;
-  esac
-  exit 1
-fi
-green "✓ FFmpeg $(ffmpeg -version 2>&1 | head -1 | awk '{print $3}')"
+```bash
+export PRODUCER_FORCE_SCREENSHOT=true
+npx hyperframes render
+```
 
-# --- 3. npm ------------------------------------------------------------------
+This forces screenshot mode regardless of the binary. Screenshot mode is slightly slower but visually identical.
 
-if ! command -v npm >/dev/null 2>&1; then
-  red "✗ npm is not installed (should ship with Node.js)."
-  exit 1
-fi
+**Fix (prevent — recommended):** install `chrome-headless-shell` so the engine can use the fast BeginFrame path:
 
-# --- 4. Install / upgrade hyperframes CLI -----------------------------------
+```bash
+npx puppeteer browsers install chrome-headless-shell
+# or let the CLI do it
+npx hyperframes browser --install
+```
 
-bold "==> Installing hyperframes CLI (>= ${MIN_HYPERFRAMES_VERSION})"
+`scripts/setup.sh` runs this automatically.
 
-current_hyperframes=""
-if command -v hyperframes >/dev/null 2>&1; then
-  current_hyperframes="$(hyperframes --version 2>/dev/null | tail -1 | sed 's/^v//')"
-fi
+## `npx hyperframes render` hangs for 120s then times out
 
-if [ -n "$current_hyperframes" ]; then
-  yellow "   Found hyperframes ${current_hyperframes}"
-fi
+**Cause:** the resolved browser is system Chrome (e.g., `/usr/bin/google-chrome`) and doesn't support the BeginFrame path, but auto-detect also missed it (older `hyperframes` version).
 
-# Always install/upgrade to >= MIN version.
-# Using 'latest' so we pick up any newer auto-detect/capture fixes.
-if ! npm install -g "hyperframes@latest" >/dev/null 2>&1; then
-  red "✗ npm install -g hyperframes@latest failed."
-  echo "   Try: sudo npm install -g hyperframes@latest"
-  echo "   Or use a user-scoped npm prefix: npm config set prefix ~/.npm-global && export PATH=\"\$HOME/.npm-global/bin:\$PATH\""
-  exit 1
-fi
+**Fix:**
+1. Check which binary is being used: `npx hyperframes browser --path`
+2. If it's system Chrome, either:
+   - Install `chrome-headless-shell`: `npx hyperframes browser --install`, OR
+   - Set the escape hatch: `export PRODUCER_FORCE_SCREENSHOT=true`, OR
+   - Upgrade: `npx hyperframes upgrade -y`
 
-installed_version="$(hyperframes --version 2>/dev/null | tail -1 | sed 's/^v//')"
-green "✓ hyperframes ${installed_version} installed globally"
+## `ffmpeg: command not found`
 
-# Sanity-check minimum version.
-version_ge() {
-  # version_ge A B  →  true if A >= B
-  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]
-}
-if ! version_ge "$installed_version" "$MIN_HYPERFRAMES_VERSION"; then
-  red "✗ hyperframes ${installed_version} is below required minimum ${MIN_HYPERFRAMES_VERSION}."
-  echo "   Try 'npm install -g hyperframes@latest' or 'sudo npm install -g hyperframes@latest'."
-  exit 1
-fi
+Install FFmpeg via your system package manager:
 
-# --- 5. Pre-cache chrome-headless-shell --------------------------------------
-#
-# Chromium 147+ removed HeadlessExperimental.beginFrame. System Chrome (e.g.
-# /usr/bin/google-chrome) can't render with the fast path, so the engine
-# auto-detects and falls back to screenshot mode — but BeginFrame mode is
-# faster and produces higher-quality output. Install chrome-headless-shell
-# up front so the engine picks it over system Chrome.
+| OS / distro     | Command                             |
+| --------------- | ----------------------------------- |
+| Ubuntu / Debian | `sudo apt-get install -y ffmpeg`    |
+| Fedora / RHEL   | `sudo dnf install -y ffmpeg`        |
+| Arch            | `sudo pacman -S ffmpeg`             |
+| macOS           | `brew install ffmpeg`               |
+| Windows         | `winget install Gyan.FFmpeg`        |
 
-bold "==> Pre-caching chrome-headless-shell (for best render quality)"
+Verify: `ffmpeg -version`.
 
-if ! npx --yes puppeteer browsers install chrome-headless-shell >/dev/null 2>&1; then
-  yellow "⚠ Could not pre-install chrome-headless-shell."
-  yellow "  Rendering will still work via screenshot-mode fallback (slower)."
-  yellow "  If you hit HeadlessExperimental.beginFrame errors:"
-  yellow "     export PRODUCER_FORCE_SCREENSHOT=true"
-  yellow "  See references/troubleshooting.md."
-else
-  green "✓ chrome-headless-shell installed"
-fi
+## `Node version X is not supported`
 
-# --- 6. Doctor ---------------------------------------------------------------
+HyperFrames requires Node.js >= 22. Check with `node --version`.
 
-bold "==> Running hyperframes doctor"
+- **nvm:** `nvm install 22 && nvm use 22`
+- **Homebrew (macOS):** `brew install node@22 && brew link --overwrite node@22`
+- **apt:** follow [nodesource](https://github.com/nodesource/distributions) for Node 22 LTS.
 
-if hyperframes doctor; then
-  green "✓ HyperFrames is ready"
-  echo
-  echo "   Scaffold a project:   npx hyperframes init my-video"
-  echo "   Preview:              npx hyperframes preview"
-  echo "   Render:               npx hyperframes render"
-else
-  yellow "⚠ hyperframes doctor reported issues."
-  yellow "  See references/troubleshooting.md or re-run 'hyperframes doctor'."
-  exit 1
-fi
+## `ENOSPC: no space left on device` or OOM kills during render
+
+Renders are memory- and disk-hungry. Minimums:
+
+- **RAM:** 4 GB free (8 GB recommended for 60fps / `--quality high`)
+- **Disk:** 2 GB free scratch space — frames are written to `/tmp` during capture
+
+Mitigations:
+- Lower quality: `--quality draft`.
+- Lower fps: `--fps 24`.
+- Lower worker count: `--workers 1`.
+- Set `TMPDIR` to a volume with more space: `export TMPDIR=/mnt/scratch`.
+
+## Lint passes but the render is blank / black frames
+
+Check the browser console in `preview` — usually:
+- A timeline was registered with the wrong key (`__timelines["typo"]` instead of `__timelines["root"]`).
+- The root composition was wrapped in `<template>` (only sub-compositions use `<template>`).
+- A script tag failed to load — check Network tab in preview.
+
+Run `npx hyperframes lint --verbose` to see info-level findings.
+
+## Contrast warnings from `hyperframes validate`
+
+```
+⚠ WCAG AA contrast warnings (3):
+  · .subtitle "secondary text" — 2.67:1 (need 4.5:1, t=5.3s)
+```
+
+- **Dark backgrounds:** brighten the failing color until it clears 4.5:1 (normal text) or 3:1 (large text — 24px+ or 19px+ bold).
+- **Light backgrounds:** darken it.
+- Stay within the palette family — don't invent a new color, adjust the existing one.
+- Skip the check temporarily with `--no-contrast` if iterating rapidly, but clear it before delivery.
+
+## `Font family 'X' not supported by compiler`
+
+The compiler embeds a curated set of web-safe + open-source fonts. If a font isn't supported, either:
+- Swap to a supported alternative from the warning.
+- Register a custom font via `@font-face` pointing to a `.woff2` in the project directory (the compiler embeds referenced `@font-face` files).
+
+## Video plays back muted or with no audio
+
+Check:
+- The `<video>` element has `muted playsinline` (required — browser autoplay policy).
+- Audio is a **separate** `<audio>` element, not the video element.
+- Audio `data-volume` is set (defaults to 1).
+- The audio file is at the expected path — compositions load relative to their own directory.
+
+## Docker render fails on Linux with rootless Docker
+
+Add `--privileged` or pass `--cap-add=SYS_ADMIN`:
+
+```bash
+npx hyperframes render --docker --docker-args "--cap-add=SYS_ADMIN"
+```
+
+The headless browser needs namespace permissions for sandboxing.
+
+## Bug reports
+
+Include `npx hyperframes info` output + the full error log. File at [github.com/heygen-com/hyperframes](https://github.com/heygen-com/hyperframes/issues).

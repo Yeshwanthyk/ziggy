@@ -1,7 +1,11 @@
 import { lstat, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
-import { BUILTIN_CORE_SKILLS, BUILTIN_EXTENSION_CATALOG, bundledPackageMetadata } from "../catalog";
+import {
+  BUILTIN_EXTENSION_CATALOG,
+  REQUIRED_BUNDLED_EXTENSION_IDS,
+  bundledPackageMetadata,
+} from "../catalog";
 import {
   ExtensionCatalog,
   ExtensionCatalogInstallFailed,
@@ -339,13 +343,8 @@ const makeExtensionCatalogService = (
 
   const materialize = (profilePath: string, repositoryRoot: string) =>
     Effect.gen(function* () {
-      yield* ensureInstalled(profilePath, repositoryRoot, "pi-packages");
-      yield* Effect.forEach(BUILTIN_CORE_SKILLS, (skill) =>
-        installer.installRequiredSkill(profilePath, {
-          id: skill.id,
-          description: skill.description,
-          files: [...skill.files],
-        }),
+      yield* Effect.forEach([...REQUIRED_BUNDLED_EXTENSION_IDS], (id) =>
+        ensureInstalled(profilePath, repositoryRoot, id),
       );
       const selected = yield* readExtensionSelection(profilePath);
       yield* Effect.forEach(selected, (id) => ensureInstalled(profilePath, repositoryRoot, id));

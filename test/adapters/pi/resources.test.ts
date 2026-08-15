@@ -1,5 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { afterEach, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,6 +16,7 @@ import { discoverPiResources } from "ziggy/adapters/pi/resources";
 import { makeExtensionCatalogLive } from "ziggy/application/extension-catalog";
 import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { bundledFilePath } from "ziggy/generated/builtin-files";
+import { REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
 
 const temporaryPaths: Array<string> = [];
 
@@ -49,9 +51,9 @@ const writePackage = async (
 const requiredSkill = (logicalPath: string): string => bundledFilePath(logicalPath) ?? logicalPath;
 
 const requiredSkillPaths = [
+  requiredSkill("extensions/extension-authoring/skills/extension-authoring/SKILL.md"),
   requiredSkill("extensions/pi-packages/skills/pi-packages/SKILL.md"),
-  requiredSkill("skills/extension-authoring/SKILL.md"),
-  requiredSkill("skills/ziggy-operations/SKILL.md"),
+  requiredSkill("extensions/ziggy-operations/skills/ziggy-operations/SKILL.md"),
 ];
 
 const noDownload: ExtensionArchiveClientApi = {
@@ -252,6 +254,8 @@ test("selection decoding fails closed for malformed, duplicate, reserved, and un
     '{"wrong":[]}',
     '{"extensions":["weather","weather"]}',
     '{"extensions":["pi-packages"]}',
+    '{"extensions":["extension-authoring"]}',
+    '{"extensions":["ziggy-operations"]}',
     '{"extensions":["unknown"]}',
   ]) {
     await writeFile(join(profilePath, "extensions.json"), content);
@@ -326,11 +330,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   const profilePath = await mkdtemp(join(repositoryRoot, ".ziggy-pi-catalog-"));
   temporaryPaths.push(profilePath);
   const extensionsRoot = join(repositoryRoot, "extensions");
-  const rootSkillNames = (await readdir(join(repositoryRoot, "skills"), { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
-  expect(rootSkillNames).toEqual(["extension-authoring", "ziggy-operations"]);
+  expect(existsSync(join(repositoryRoot, "skills"))).toBe(false);
   const expectedPackages = [
     "acp-router",
     "agent-browser",
@@ -340,6 +340,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "coding-agent",
     "diffs",
     "executor",
+    "extension-authoring",
     "gh-issues",
     "github",
     "gog",
@@ -365,6 +366,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "weather",
     "web-search",
     "xurl",
+    "ziggy-operations",
   ];
   const expectedTools = [
     "agent_browser",
@@ -414,7 +416,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
   await writeFile(
     join(profilePath, "extensions.json"),
-    `${JSON.stringify({ extensions: packageNames.filter((name) => name !== "pi-packages") }, null, 2)}\n`,
+    `${JSON.stringify({ extensions: packageNames.filter((name) => !REQUIRED_BUNDLED_EXTENSION_IDS.has(name)) }, null, 2)}\n`,
   );
   await Effect.runPromise(
     makeExtensionCatalogLive(noDownload).materialize(profilePath, repositoryRoot),

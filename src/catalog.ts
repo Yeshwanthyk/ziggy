@@ -1,15 +1,11 @@
 import { Schema } from "effect";
 import catalogJson from "../catalog.json" with { type: "json" };
 import { ExtensionCatalog } from "./domain/extension-catalog";
-import {
-  BUILTIN_CORE_SKILLS,
-  BUILTIN_PACKAGE_METADATA,
-} from "./generated/builtin-catalog-metadata";
+import { BUILTIN_PACKAGE_METADATA } from "./generated/builtin-catalog-metadata";
 
 export {
   APPROVED_BUNDLED_EXTENSION_IDS,
   BUILTIN_CATALOG_FINGERPRINT,
-  BUILTIN_CORE_SKILLS,
   BUILTIN_PACKAGE_METADATA,
 } from "./generated/builtin-catalog-metadata";
 
@@ -21,6 +17,13 @@ export type BuiltinPackageMetadata = (typeof BUILTIN_PACKAGE_METADATA)[number];
 
 export const bundledPackageMetadata = (id: string): BuiltinPackageMetadata | undefined =>
   BUILTIN_PACKAGE_METADATA.find((entry) => entry.id === id);
+
+export const REQUIRED_BUNDLED_EXTENSION_IDS: ReadonlySet<string> = new Set(
+  BUILTIN_PACKAGE_METADATA.filter((entry) => entry.required).map((entry) => entry.id),
+);
+
+export const isRequiredBundledExtension = (id: string): boolean =>
+  REQUIRED_BUNDLED_EXTENSION_IDS.has(id);
 
 export interface BundledSkill {
   readonly id: string;
@@ -41,15 +44,6 @@ const bundledSkillEntries = (): ReadonlyArray<BundledSkill> => {
         required: pkg.required,
       });
     }
-  }
-  for (const skill of BUILTIN_CORE_SKILLS) {
-    if (byId.has(skill.id)) continue;
-    byId.set(skill.id, {
-      id: skill.id,
-      logicalPath: skill.logicalPath,
-      files: skill.files,
-      required: true,
-    });
   }
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 };

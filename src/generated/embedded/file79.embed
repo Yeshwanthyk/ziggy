@@ -1,36 +1,16 @@
-{
-  "name": "@ziggy/self-improvement",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Bounded Profile learning observations and Curator-managed skill packages.",
-  "keywords": [
-    "pi-package"
-  ],
-  "type": "module",
-  "scripts": {
-    "test": "bun test ./test",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint index.ts src test",
-    "fmt": "oxfmt index.ts src test skills"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "typebox": "1.3.7"
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
-  },
-  "ziggy": {
-    "automations": [
-      {
-        "id": "self-improvement-curator",
-        "path": "./automations/curator.md"
-      }
-    ]
-  }
-}
+---
+version: 1
+owner: extension:self-improvement
+cron: 0 3 * * *
+timezone: UTC
+gate: test -f .runtime/self-improvement/curator-ready
+broadcast: none
+---
+
+Review the distinct completed foreground Profile sessions recorded by self-improvement. Follow the
+Curator skill: use source session evidence, call native memory_write only for concise durable
+entries prefixed [learned], and create or patch only Curator-managed Profile-local skill-only
+packages after recurrence across distinct sessions. After creating a package, use `ziggy extensions
+add . <id>` so it is admitted after restart. Log an applied or no-op decision with
+self_improvement_log, and clear readiness only after the review succeeds. Do not modify repository,
+catalogue, human-owned, external, or pinned packages.

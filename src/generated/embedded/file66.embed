@@ -1,54 +1,29 @@
----
-name: onepassword
-description: "Set up and use 1Password CLI for sign-in, desktop integration, and reading or injecting secrets."
----
+# op CLI examples (from op help)
 
-# 1Password CLI
+## Sign in
 
-Follow the official CLI get-started steps. Don't guess install commands.
+- `op signin`
+- `op signin --account <shorthand|signin-address|account-id|user-id>`
 
-## References
+## Read
 
-- [references/get-started.md](references/get-started.md) (install + app integration + sign-in flow)
-- [references/cli-examples.md](references/cli-examples.md) (real `op` examples)
+- `op read op://app-prod/db/password`
+- `op read "op://app-prod/db/one-time password?attribute=otp"`
+- `op read "op://app-prod/ssh key/private key?ssh-format=openssh"`
+- `op read --out-file ./key.pem op://app-prod/server/ssh/key.pem`
 
-Resolve these references relative to this loaded `SKILL.md`; do not search home directories for
-another copy of the skill.
+## Run
 
-## Workflow
+- `export DB_PASSWORD="op://app-prod/db/password"`
+- `op run --no-masking -- printenv DB_PASSWORD`
+- `op run --env-file="./.env" -- printenv DB_PASSWORD`
 
-1. Check OS + shell.
-2. Verify CLI present: `op --version`.
-3. Confirm desktop app integration is enabled (per get-started) and the app is unlocked.
-4. REQUIRED: create a fresh tmux session for all `op` commands (no direct `op` calls outside tmux).
-5. Sign in / authorize inside tmux: `op signin` (expect app prompt).
-6. Verify access inside tmux: `op whoami` (must succeed before any secret read).
-7. If multiple accounts: use `--account` or `OP_ACCOUNT`.
+## Inject
 
-## REQUIRED tmux session (T-Max)
+- `echo "db_password: {{ op://app-prod/db/password }}" | op inject`
+- `op inject -i config.yml.tpl -o config.yml`
 
-The shell tool uses a fresh TTY per command. To avoid re-prompts and failures, always run `op` inside a dedicated tmux session with a fresh socket/session name.
+## Whoami / accounts
 
-Example (do not reuse old session names):
-
-```bash
-SOCKET_DIR="${TMPDIR:-/tmp}/onepassword-tmux-sockets"
-mkdir -p "$SOCKET_DIR"
-SOCKET="$SOCKET_DIR/op.sock"
-SESSION="op-auth-$(date +%Y%m%d-%H%M%S)"
-
-tmux -S "$SOCKET" new -d -s "$SESSION" -n shell
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- "op signin --account my.1password.com" Enter
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- "op whoami" Enter
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- "op vault list" Enter
-tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -200
-tmux -S "$SOCKET" kill-session -t "$SESSION"
-```
-
-## Guardrails
-
-- Never paste secrets into logs, chat, or code.
-- Prefer `op run` / `op inject` over writing secrets to disk.
-- If sign-in without app integration is needed, use `op account add`.
-- If a command returns "account is not signed in", re-run `op signin` inside tmux and authorize in the app.
-- Do not run `op` outside tmux; stop and ask if tmux is unavailable.
+- `op whoami`
+- `op account list`

@@ -1,158 +1,112 @@
----
-name: tmux
-description: "Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output."
----
+#!/usr/bin/env bash
+set -euo pipefail
 
-# tmux Session Control
+usage() {
+  cat <<'USAGE'
+Usage: find-sessions.sh [-L socket-name|-S socket-path|-A] [-q pattern]
 
-Control tmux sessions by sending keystrokes and reading output. Essential for managing Claude Code sessions.
+List tmux sessions on a socket (default tmux socket if none provided).
 
-## When to Use
+Options:
+  -L, --socket       tmux socket name (passed to tmux -L)
+  -S, --socket-path  tmux socket path (passed to tmux -S)
+  -A, --all          scan all sockets under ZIGGY_TMUX_SOCKET_DIR
+  -q, --query        case-insensitive substring to filter session names
+  -h, --help         show this help
+USAGE
+}
 
-✅ **USE this skill when:**
+socket_name=""
+socket_path=""
+query=""
+scan_all=false
+socket_dir="${ZIGGY_TMUX_SOCKET_DIR:-${TMPDIR:-/tmp}/ziggy-tmux-sockets}"
 
-- Monitoring Claude/Codex sessions in tmux
-- Sending input to interactive terminal applications
-- Scraping output from long-running processes in tmux
-- Navigating tmux panes/windows programmatically
-- Checking on background work in existing sessions
-
-## When NOT to Use
-
-❌ **DON'T use this skill when:**
-
-- Running one-off shell commands → use `exec` tool directly
-- Starting new background processes → use `exec` with `background:true`
-- Non-interactive scripts → use `exec` tool
-- The process isn't in tmux
-- You need to create a new tmux session → use `exec` with `tmux new-session`
-
-## Example Sessions
-
-| Session                 | Purpose                     |
-| ----------------------- | --------------------------- |
-| `shared`                | Primary interactive session |
-| `worker-2` - `worker-8` | Parallel worker sessions    |
-
-## Common Commands
-
-### List Sessions
-
-```bash
-tmux list-sessions
-tmux ls
-```
-
-### Capture Output
-
-```bash
-# Last 20 lines of pane
-tmux capture-pane -t shared -p | tail -20
-
-# Entire scrollback
-tmux capture-pane -t shared -p -S -
-
-# Specific pane in window
-tmux capture-pane -t shared:0.0 -p
-```
-
-### Send Keys
-
-```bash
-# Send text (doesn't press Enter)
-tmux send-keys -t shared "hello"
-
-# Send text + Enter
-tmux send-keys -t shared "y" Enter
-
-# Send special keys
-tmux send-keys -t shared Enter
-tmux send-keys -t shared Escape
-tmux send-keys -t shared C-c          # Ctrl+C
-tmux send-keys -t shared C-d          # Ctrl+D (EOF)
-tmux send-keys -t shared C-z          # Ctrl+Z (suspend)
-```
-
-### Window/Pane Navigation
-
-```bash
-# Select window
-tmux select-window -t shared:0
-
-# Select pane
-tmux select-pane -t shared:0.1
-
-# List windows
-tmux list-windows -t shared
-```
-
-### Session Management
-
-```bash
-# Create new session
-tmux new-session -d -s newsession
-
-# Kill session
-tmux kill-session -t sessionname
-
-# Rename session
-tmux rename-session -t old new
-```
-
-## Sending Input Safely
-
-For interactive TUIs (Claude Code, Codex, etc.), split text and Enter into separate sends to avoid paste/multiline edge cases:
-
-```bash
-tmux send-keys -t shared -l -- "Please apply the patch in src/foo.ts"
-sleep 0.1
-tmux send-keys -t shared Enter
-```
-
-## Claude Code Session Patterns
-
-### Check if Session Needs Input
-
-```bash
-# Look for prompts
-tmux capture-pane -t worker-3 -p | tail -10 | grep -E "❯|Yes.*No|proceed|permission"
-```
-
-### Approve Claude Code Prompt
-
-```bash
-# Send 'y' and Enter
-tmux send-keys -t worker-3 'y' Enter
-
-# Or select numbered option
-tmux send-keys -t worker-3 '2' Enter
-```
-
-### Check All Sessions Status
-
-```bash
-for s in shared worker-2 worker-3 worker-4 worker-5 worker-6 worker-7 worker-8; do
-  echo "=== $s ==="
-  tmux capture-pane -t $s -p 2>/dev/null | tail -5
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -L|--socket)      socket_name="${2-}"; shift 2 ;;
+    -S|--socket-path) socket_path="${2-}"; shift 2 ;;
+    -A|--all)         scan_all=true; shift ;;
+    -q|--query)       query="${2-}"; shift 2 ;;
+    -h|--help)        usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
 done
-```
 
-### Send Task to Session
+if [[ "$scan_all" == true && ( -n "$socket_name" || -n "$socket_path" ) ]]; then
+  echo "Cannot combine --all with -L or -S" >&2
+  exit 1
+fi
 
-```bash
-tmux send-keys -t worker-4 "Fix the bug in auth.js" Enter
-```
+if [[ -n "$socket_name" && -n "$socket_path" ]]; then
+  echo "Use either -L or -S, not both" >&2
+  exit 1
+fi
 
-## Notes
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "tmux not found in PATH" >&2
+  exit 1
+fi
 
-- Use `capture-pane -p` to print to stdout (essential for scripting)
-- `-S -` captures entire scrollback history
-- Target format: `session:window.pane` (e.g., `shared:0.0`)
-- Sessions persist across SSH disconnects
+list_sessions() {
+  local label="$1"; shift
+  local tmux_cmd=(tmux "$@")
 
-## Bundled helper scripts
+  if ! sessions="$("${tmux_cmd[@]}" list-sessions -F '#{session_name}\t#{session_attached}\t#{session_created_string}' 2>/dev/null)"; then
+    echo "No tmux server found on $label" >&2
+    return 1
+  fi
 
-This skill ships two helpers. Resolve both paths relative to the directory containing this `SKILL.md`, then run them with Bash:
+  if [[ -n "$query" ]]; then
+    sessions="$(printf '%s\n' "$sessions" | grep -i -- "$query" || true)"
+  fi
 
-- `scripts/find-sessions.sh` — list candidate tmux sessions/panes
-- `scripts/wait-for-text.sh` — poll a pane until text appears (or timeout)
+  if [[ -z "$sessions" ]]; then
+    echo "No sessions found on $label"
+    return 0
+  fi
+
+  echo "Sessions on $label:"
+  printf '%s\n' "$sessions" | while IFS=$'\t' read -r name attached created; do
+    attached_label=$([[ "$attached" == "1" ]] && echo "attached" || echo "detached")
+    printf '  - %s (%s, started %s)\n' "$name" "$attached_label" "$created"
+  done
+}
+
+if [[ "$scan_all" == true ]]; then
+  if [[ ! -d "$socket_dir" ]]; then
+    echo "Socket directory not found: $socket_dir" >&2
+    exit 1
+  fi
+
+  shopt -s nullglob
+  sockets=("$socket_dir"/*)
+  shopt -u nullglob
+
+  if [[ "${#sockets[@]}" -eq 0 ]]; then
+    echo "No sockets found under $socket_dir" >&2
+    exit 1
+  fi
+
+  exit_code=0
+  for sock in "${sockets[@]}"; do
+    if [[ ! -S "$sock" ]]; then
+      continue
+    fi
+    list_sessions "socket path '$sock'" -S "$sock" || exit_code=$?
+  done
+  exit "$exit_code"
+fi
+
+tmux_cmd=(tmux)
+socket_label="default socket"
+
+if [[ -n "$socket_name" ]]; then
+  tmux_cmd+=(-L "$socket_name")
+  socket_label="socket name '$socket_name'"
+elif [[ -n "$socket_path" ]]; then
+  tmux_cmd+=(-S "$socket_path")
+  socket_label="socket path '$socket_path'"
+fi
+
+list_sessions "$socket_label" "${tmux_cmd[@]:1}"

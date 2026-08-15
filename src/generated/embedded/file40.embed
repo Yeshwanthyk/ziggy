@@ -1,136 +1,129 @@
-# GSAP for HyperFrames
+# Composition Authoring
 
-GSAP is the animation engine for all HyperFrames compositions. Load from CDN inside the composition:
+HTML structure, data attributes, timeline contract, and non-negotiable rules.
+
+## Root Structure
+
+Standalone `index.html` — the top-level composition. **Does NOT use `<template>`**. Put the `data-composition-id` div directly in `<body>`.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<!doctype html>
+<html>
+  <body>
+    <div
+      id="stage"
+      data-composition-id="root"
+      data-start="0"
+      data-duration="10"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- clips go here -->
+      <video id="clip-1" data-start="0" data-duration="5" data-track-index="0" src="intro.mp4" muted playsinline></video>
+      <img id="logo" data-start="2" data-duration="3" data-track-index="1" src="logo.png" />
+      <audio id="music" data-start="0" data-duration="10" data-track-index="2" data-volume="0.5" src="music.wav"></audio>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      tl.from("#logo", { opacity: 0, y: 40, duration: 0.6 }, 2);
+      window.__timelines["root"] = tl;
+    </script>
+  </body>
+</html>
 ```
 
-## Core Tween Methods
+Sub-compositions loaded via `data-composition-src` **DO** use `<template>`:
 
-- **`gsap.to(targets, vars)`** — animate from current state to `vars`. Most common.
-- **`gsap.from(targets, vars)`** — animate from `vars` to current state (entrances).
-- **`gsap.fromTo(targets, fromVars, toVars)`** — explicit start and end.
-- **`gsap.set(targets, vars)`** — apply immediately (duration 0). Don't use on clip elements that enter later — use `tl.set(selector, vars, time)` inside the timeline instead.
-
-Always use **camelCase** property names (`backgroundColor`, `rotationX`, not `background-color`).
-
-## Common vars
-
-- **`duration`** — seconds (default 0.5).
-- **`delay`** — seconds before start.
-- **`ease`** — `"power1.out"` (default), `"power3.inOut"`, `"back.out(1.7)"`, `"elastic.out(1, 0.3)"`, `"none"`, `"expo.out"`, `"circ.inOut"`.
-- **`stagger`** — number `0.1` or object: `{ amount: 0.3, from: "center" }`, `{ each: 0.1, from: "random" }`.
-- **`overwrite`** — `false` (default), `true`, or `"auto"`.
-- **`repeat`** — number (never `-1` in HyperFrames). **`yoyo`** — alternates direction with repeat.
-- **`onComplete`**, **`onStart`**, **`onUpdate`** — callbacks.
-- **`immediateRender`** — default `true` for `from()`/`fromTo()`. Set `false` on later tweens targeting the same property+element to avoid overwrite surprises.
-
-## Transforms
-
-Prefer GSAP's transform aliases over raw CSS `transform`:
-
-| GSAP property               | Equivalent                 |
-| --------------------------- | -------------------------- |
-| `x`, `y`, `z`               | translateX/Y/Z (px)        |
-| `xPercent`, `yPercent`      | translateX/Y (%)           |
-| `scale`, `scaleX`, `scaleY` | scale                      |
-| `rotation`                  | rotate (deg)               |
-| `rotationX`, `rotationY`    | 3D rotate                  |
-| `skewX`, `skewY`            | skew                       |
-| `transformOrigin`           | transform-origin           |
-
-- **`autoAlpha`** — prefer over `opacity`. At 0, also sets `visibility: hidden`.
-- **CSS variables** — `"--hue": 180`.
-- **Directional rotation** — `"360_cw"`, `"-170_short"`, `"90_ccw"`.
-- **`clearProps`** — `"all"` or comma-separated; removes inline styles on complete.
-- **Relative values** — `"+=20"`, `"-=10"`, `"*=2"`.
-
-## Function-based Values
-
-```js
-gsap.to(".item", {
-  x: (i, target, targets) => i * 50,
-  stagger: 0.1,
-});
+```html
+<template id="my-comp-template">
+  <div data-composition-id="my-comp" data-width="1920" data-height="1080">
+    <!-- content + scoped <style> + <script> with window.__timelines["my-comp"] -->
+  </div>
+</template>
 ```
 
-## Easing
+Load from the root: `<div id="el-1" data-composition-id="my-comp" data-composition-src="compositions/my-comp.html" data-start="0" data-duration="10" data-track-index="1"></div>`
 
-Built-in eases: `power1` through `power4`, `back`, `bounce`, `circ`, `elastic`, `expo`, `sine`. Each has `.in`, `.out`, `.inOut`.
+## Data Attributes
 
-Rule of thumb:
-- Entrances: `power3.out`, `expo.out`, `back.out(1.4)`
-- Exits: `power2.in`, `expo.in`
-- Scrubbed sections: `none` (linear)
-- Vary eases across entrance tweens within a scene — at least 3 different eases.
+### All clips
 
-## Defaults
+| Attribute          | Required                          | Values                                                 |
+| ------------------ | --------------------------------- | ------------------------------------------------------ |
+| `id`               | Yes                               | Unique identifier                                      |
+| `data-start`       | Yes                               | Seconds, or clip ID reference (`"el-1"`, `"intro + 2"`) |
+| `data-duration`    | Required for img/div/compositions | Seconds. Video/audio defaults to media duration.       |
+| `data-track-index` | Yes                               | Integer. Same-track clips cannot overlap.              |
+| `data-media-start` | No                                | Trim offset into source (seconds)                      |
+| `data-volume`      | No                                | 0–1 (default 1)                                        |
 
-```js
-gsap.defaults({ duration: 0.6, ease: "power2.out" });
-```
+`data-track-index` controls timeline layout only — **not** visual layering. Use CSS `z-index` for layering.
 
-## Timelines (HyperFrames primary pattern)
+### Composition clips
 
-```js
-window.__timelines = window.__timelines || {};
+| Attribute                    | Required | Values                                       |
+| ---------------------------- | -------- | -------------------------------------------- |
+| `data-composition-id`        | Yes      | Unique composition ID                        |
+| `data-start`                 | Yes      | Start time (root composition: `"0"`)         |
+| `data-duration`              | Yes      | Takes precedence over GSAP timeline duration |
+| `data-width` / `data-height` | Yes      | Pixel dimensions (1920x1080 or 1080x1920)    |
+| `data-composition-src`       | No       | Path to external HTML file                   |
 
-const tl = gsap.timeline({ paused: true, defaults: { duration: 0.6, ease: "power2.out" } });
+## Timeline Contract
 
-tl.from(".title",    { y: 50, opacity: 0 }, 0.3);
-tl.from(".subtitle", { y: 30, opacity: 0 }, 0.5);
-tl.from(".cta",      { scale: 0.8, opacity: 0, ease: "back.out(1.7)" }, 0.8);
+- Every timeline starts `{ paused: true }` — the player controls playback.
+- Register every timeline: `window.__timelines["<composition-id>"] = tl`.
+- Duration comes from `data-duration`, not from the GSAP timeline length.
+- Framework auto-nests sub-timelines — do NOT manually add them.
+- Never create empty tweens just to set duration.
 
-window.__timelines["root"] = tl;
-```
+## Non-Negotiable Rules
 
-### Position parameter
+1. **Deterministic.** No `Math.random()`, `Date.now()`, or time-based logic. Use a seeded PRNG (e.g. mulberry32) if you need pseudo-randomness.
+2. **GSAP only on visual properties.** `opacity`, `x`, `y`, `scale`, `rotation`, `color`, `backgroundColor`, `borderRadius`, transforms. Never animate `visibility`, `display`, or call `video.play()`/`audio.play()`.
+3. **No property conflicts across timelines.** Never animate the same property on the same element from multiple timelines simultaneously.
+4. **No `repeat: -1`.** Infinite-repeat tweens break the capture engine. Compute `repeat: Math.ceil(duration / cycleDuration) - 1`.
+5. **Synchronous timeline construction.** Never build timelines inside `async`/`await`, `setTimeout`, or Promises. The capture engine reads `window.__timelines` synchronously after page load. Fonts are embedded by the compiler — no need to wait for load.
+6. **Root composition has no `<template>` wrapper.** Only sub-compositions use `<template>`.
+7. **Video is always `muted playsinline`.** Audio is always a separate `<audio>` element — even if it's the same source file.
+8. **Content containers use padding, not absolute positioning.** `.scene-content { width: 100%; height: 100%; padding: Npx; display: flex; flex-direction: column; gap: Npx; box-sizing: border-box }`. Absolute-positioned content containers overflow. Reserve `position: absolute` for decoratives only.
 
-Third argument to `.from()` / `.to()` / `.add()`:
+## Scene Transitions
 
-- Absolute seconds: `0.5`, `2.1`.
-- Relative to end: `">+0.2"` (0.2s after previous), `"<"` (same time as previous), `"<+0.3"` (0.3s after previous's start).
-- Named labels: `tl.addLabel("act2", 5); tl.from(".x", { y: 30 }, "act2");`
+Multi-scene compositions MUST follow all of these:
 
-### Nesting
+1. **Always use a transition between scenes.** No jump cuts.
+2. **Always use entrance animations** on every scene element. Every element animates IN via `gsap.from(...)`. No element may appear fully-formed.
+3. **Never use exit animations** (except on the final scene). This means NO `gsap.to()` that animates `opacity` to 0, `y` offscreen, etc. The transition IS the exit. Outgoing scene content must be fully visible at the moment the transition starts.
+4. **Final scene only:** may fade elements out. This is the only scene where `gsap.to(..., { opacity: 0 })` is allowed.
 
-HyperFrames auto-nests sub-composition timelines. **Do not** manually `tl.add(subTl)` — the framework wires sub-timelines into the parent at the sub-composition's `data-start`.
+## Typography and Assets
 
-### Playback
+- **Fonts:** write the `font-family` you want in CSS — the compiler embeds supported fonts automatically. Unsupported fonts produce a compiler warning.
+- Add `crossorigin="anonymous"` to external media.
+- For dynamic text sizing, use `window.__hyperframes.fitTextFontSize(text, { maxWidth, fontFamily, fontWeight })`.
+- All project files live at the project root alongside `index.html`. Sub-compositions reference assets with `../`.
+- For rendered video: 60px+ headlines, 20px+ body, 16px+ data labels. `font-variant-numeric: tabular-nums` on number columns. Avoid full-screen linear gradients on dark backgrounds (H.264 banding — use radial or solid + localized glow).
 
-The player controls playback. Don't call `tl.play()`, `tl.pause()`, or `tl.reverse()` at construction time. `{ paused: true }` is required.
+## Animation Guardrails
 
-## Stagger
+- Offset the first animation 0.1–0.3s (not `t=0`).
+- Vary eases across entrance tweens — at least 3 different eases per scene.
+- Don't repeat an entrance pattern within a scene.
 
-```js
-// even distribution
-tl.from(".card", { opacity: 0, y: 40, stagger: 0.1 });
+## Never Do
 
-// control total amount
-tl.from(".card", { opacity: 0, stagger: { amount: 0.6, from: "center" } });
-
-// deterministic "random" stagger (HyperFrames compositions must be deterministic)
-tl.from(".dot", { opacity: 0, stagger: { each: 0.05, from: "random" } });
-```
-
-`stagger.from`: `"start"` | `"end"` | `"center"` | `"edges"` | `"random"` | index | `[x, y]` for grid.
-
-## Performance
-
-- Animate transforms (`x`, `y`, `scale`, `rotation`, `opacity`) — cheap, GPU-accelerated.
-- Avoid animating `width`, `height`, `top`, `left`, `margin` — causes layout thrash.
-- Avoid box-shadow or filter animations on large elements — expensive.
-- `will-change` is rarely needed; GSAP handles promotion.
-
-## gsap.matchMedia (rarely needed in HyperFrames)
-
-Compositions have fixed dimensions (`data-width`/`data-height`), so responsive breakpoints don't apply. You may still use `matchMedia` for `prefers-reduced-motion` when authoring UI previews, but it's not used in rendered video output.
-
-## Don't Do
-
-- `repeat: -1` anywhere — breaks the capture engine.
-- `Math.random()`, `Date.now()`, performance.now()` inside tween values — non-deterministic.
-- `async` / `setTimeout` / `Promise` around timeline construction — the capture engine reads `window.__timelines` synchronously.
-- Animate `visibility` or `display` directly — use `autoAlpha`.
-- `gsap.set()` on clip elements that enter later in the timeline — they don't exist in the DOM at page-load. Use `tl.set(sel, vars, time)` inside the timeline.
+1. Forget `window.__timelines` registration.
+2. Use video for audio — always muted video + separate `<audio>`.
+3. Nest video inside a timed div — use a non-timed wrapper.
+4. Use `data-layer` (use `data-track-index`) or `data-end` (use `data-duration`).
+5. Animate video element dimensions — animate a wrapper div instead.
+6. Call `play`/`pause`/`seek` on media — framework owns playback.
+7. Create a top-level container without `data-composition-id`.
+8. Use `repeat: -1` on any timeline or tween.
+9. Build timelines asynchronously.
+10. Use `gsap.set()` on elements from later scenes — they don't exist in the DOM at page load. Use `tl.set(selector, vars, timePosition)` inside the timeline at or after the clip's `data-start`.
+11. Use `<br>` in content text — causes unwanted extra breaks when the text wraps naturally. Use `max-width` instead. Exception: short display titles (e.g., "THE\nIMMORTAL\nGAME") where each word is deliberately on its own line.

@@ -1,116 +1,76 @@
-# Connect a Profile to Slack
+# Connect a Profile to Discord
 
-This guide connects one Ziggy Profile to Slack through Slack Socket Mode. It uses no public webhook,
-request URL, inbound port, or Slack-specific daemon. The existing `ziggy serve <profile>` resident
-owns the Slack loop alongside the automation scheduler and any other configured channels.
+This guide connects one Ziggy Profile to Discord through the Discord Gateway WebSocket and HTTP
+API. It uses no public webhook, interactions endpoint, inbound port, or Discord-specific daemon.
+Native application commands arrive through the same Gateway connection. The existing
+`ziggy serve <profile>` resident owns the Discord loop alongside the automation scheduler and any
+other configured channels.
 
-The procedure below was verified through Slack app creation, strict Profile configuration, doctor,
-managed macOS LaunchAgent restart, healthy resident status, and a clean Slack startup. A successful
-DM and channel reply remain the final operator proof. Keep tokens and user IDs out of documentation,
-commits, screenshots, logs, and chat transcripts.
+Keep the bot token and owner user ID out of documentation, commits, screenshots, logs, and chat
+transcripts. Treat the bot token like a password.
 
 ## What the gateway provides
 
-A Slack-connected Profile uses the same SOUL, provider/model configuration, selected extension
-packages, and Pi runtime as its other faces. Slack owns only channel transport and channel-specific
-session routing.
+A Discord-connected Profile uses the same SOUL, provider/model configuration, selected extension
+packages, and Pi runtime as its other faces. Discord owns only message transport and
+channel-specific session routing.
 
-- Only messages authored by the configured `ownerUserId` are processed.
-- Direct messages use owner memory and sessions under `sessions/slack/user-<member-id>/`.
-- Channel conversations use channel-scoped group memory. Every accepted top-level channel request
-  creates or joins its own Slack thread and uses
-  `sessions/slack/group-sl<channel-id>-thread-<root-ts>/`. Later accepted replies in that thread use
-  the same Pi session. Separate roots do not share a transcript or queue, and owner-DM memory is
-  never exposed to the channel.
-- Before every accepted request inside an existing channel thread, Ziggy reads a fresh bounded
-  snapshot of that thread's root and prior replies. The snapshot is supplied to Pi as untrusted
-  context for that turn only; it is not copied into the persistent Pi transcript or Profile memory.
-  Slack threads are flat, so this covers the parent plus all replies before the triggering message.
-  Ziggy reads at most 200 messages and renders at most 30,000 Unicode code points. Supported images
-  attached to earlier thread replies are also available: pasting images and then mentioning Squarey
-  in the next reply supplies those recent images to Pi.
-- Personal direct-message memory is intentionally not admitted into channel conversations.
-- Other Slack users are ignored.
-- Channel activation is mention-only by default. A `channels` entry can opt one channel into
-  `"always"`; root messages and thread replies both inherit the setting for their Slack channel ID.
-  Direct messages are always active, and every accepted request in a mention-only channel must
-  contain the app's real Slack mention.
-- Accepted messages immediately show Slack's native `is thinking...` loading status on the source
-  thread. The status is best-effort, never blocks the model turn, and is explicitly cleared after
-  success, failure, or cancellation.
-- Ziggy reacts to the source message with 👀 at admission, removes it at settlement, and adds ✅ on
-  success or ❌ on failure. Reactions are best-effort; a missing permission disables them for the
-  current resident process without blocking the turn or its other feedback.
-- Accepted messages also post `Working on that…` immediately, then replace that same message with
-  the final answer. A top-level channel request puts this placeholder in its new Slack thread; an
-  existing thread request keeps it in that thread; and a direct message keeps its current placement.
-  This is the client-visible fallback when Slack does not render the native status. A failed turn
-  replaces it with an explicit failure notice instead of leaving stale working text.
-- During a slow Pi turn, Ziggy progressively edits that same placeholder with bounded assistant text
-  snapshots. It requires both 1.5 seconds and at least 48 Unicode code points of meaningful growth
-  between edits, coalesces faster deltas, and serializes them with native status updates. While Pi is
-  using a tool, the native thread status changes to a bounded `Using <tool>…` label and returns to
-  thinking or heartbeat text after the tool ends. These intermediate writes are best-effort; the
-  ordinary final placeholder edit and overflow chunks remain authoritative. `stop` prevents queued
-  progress, waits behind any already in-flight native status write, and then clears every unique
-  cancelled request or shared channel-thread status target last. Scoped progress workers finish
-  interrupting before final delivery begins.
-- A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
-  `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
-  during a long Pi turn.
-- Owner-authored messages may include up to four PNG, JPEG, WebP, or GIF files, each no larger than
-  5 MiB. File-only messages are valid. Ziggy validates Slack's private-file metadata before using
-  the bot credential, downloads only `https://files.slack.com` content, verifies the response type
-  and a bounded byte stream, and supplies successful images through Pi's native image prompt input.
-  Current-message images take priority, followed by the most recent distinct images from prior
-  thread replies, with the same four-image total bound.
-  Unsupported, oversized, inaccessible, or excess attachments become concise metadata notices in
-  the prompt instead of failing the whole turn. Private URLs and credentials are never placed in
-  prompts or diagnostics. The configured provider and model must also support image input.
-- Send the exact owner-authored message `stop` to cancel every earlier queued or running request in
-  that direct message, channel, or Slack thread. `/stop` is also accepted when Slack delivers it as
-  message text, but the Slack composer may reserve slash-prefixed text unless that command is
-  registered for the app. In mention-only channels, send `@Squarey stop`; the ordinary mention
-  normalization must leave exactly `stop`. The command is journaled before
-  ACK like other accepted input, but cancellation runs outside the chat queue. It marks cancelled
-  placeholders `Stopped.`, changes their source reaction to 🛑, and posts a short count such as
-  `Stopped 2 requests.` A different channel or thread is unaffected, and the next ordinary message
-  starts on a fresh generation. Stop feedback is best-effort and cannot delay Pi interruption or
-  the owner-fenced `cancelled` journal transition.
-- Replies preserve an incoming Slack thread when one is present and are split at Slack's 4,000
-  Unicode-code-point limit, preferring line and word boundaries. Standard Markdown is sent through
-  Slack's `markdown_text` boundary, so constructs such as `**bold**` render without Slack mrkdwn
-  delimiters. Executable `<!channel>`, `<!here>`, and `<!everyone>` output tokens are escaped before
-  delivery.
-- Accepted inbound Socket Mode messages are committed to
-  `<profile>/.runtime/slack-ingress.sqlite` before Ziggy acknowledges the originating live socket.
-  The inbox is independent from the automation scheduler database. Its strict, versioned schema
-  deduplicates the logical Slack message key (`channel` plus source timestamp) and the optional
-  Slack event ID. A duplicate envelope is acknowledged but never prompts the model twice in the
-  same resident lifecycle.
-- On resident startup, rows left `received` or `running` by a prior resident owner are replayed with
-  bounded concurrency. Completed, failed, cancelled, and delivery-unknown rows are terminal and
-  never replayed. Only the resident UUID that claims a row may mark it terminal. Prompt text and
-  private-file metadata are cleared at that transition, and old routing/deduplication rows are
-  retained only within a fixed count bound. An ACK is bound to the WebSocket that supplied its
-  envelope and is not attempted after that socket becomes stale or reconnects.
-- This is durable at-least-once ingress, not an exactly-once claim for model execution or outbound
-  Slack delivery. A process loss after the model starts but before its terminal commit can replay
-  the prompt. Ambiguous outbound message posts are still not retried, because doing so could create
-  duplicate Slack replies.
-  Valid work enters Ziggy's bounded in-memory queue only after its durable commit.
-  Slack-generated link markup is normalized back to its visible label before prompting, including
-  telephone-looking numeric text; HTML entities are decoded, while user and channel mentions remain
-  explicit Slack tokens. Mention-only admission still requires the real bot mention in the original
-  event text.
-  Message edits use at most four idempotent retries. New message posts retry only explicit Slack rate
-  limits, never ambiguous network or server failures that could otherwise duplicate a reply.
+- Only text or attachment messages authored by the configured `ownerUserId` are processed.
+- Messages authored by the bot or any other Discord user are ignored.
+- Direct messages use owner memory and sessions under `sessions/discord/user-<user-id>/`.
+- A top-level server message creates a native Discord thread. That root and every follow-up in its
+  thread share one Pi session under
+  `sessions/discord/group-dc<parent-channel-id>-thread-<thread-id>/`.
+- Two top-level messages create two threads and two isolated sessions, while their group memory
+  remains scoped to the parent Discord channel. Direct messages retain one owner session.
+- Once a DM route or native thread has been resolved, Ziggy commits the owner message to the
+  Profile-local `.runtime/discord-ingress.sqlite` journal before scheduling Pi. A resident restart
+  recovers unfinished work, and duplicate Gateway deliveries cannot prompt Pi twice while the
+  retained message row exists.
+- A mention is not required. Every owner-authored text message in a channel visible to the bot is
+  admitted, so grant the bot access only to channels intended for Ziggy.
+- Accepted work immediately shows `Working on that…`; concurrent work in the same DM or thread
+  shows `Queued behind an earlier request…`, then changes to working when it starts. Bounded
+  assistant progress replaces the placeholder before the final answer.
+- Active work uses Discord's native typing indicator in the DM or thread. Ziggy renews it while Pi
+  is running and the scoped worker stops renewing it when the turn settles or is cancelled.
+- Ziggy adds 👀 to the owner message at admission, removes it at settlement, then adds ✅ for
+  success, 🛑 for cancellation, or ❌ for failure. Reaction and typing failures are best-effort and
+  cannot block the model turn or final reply.
+- An exact owner-authored `stop` in a DM or thread cancels only that conversation's running and
+  queued turns. Generation fencing prevents late progress or completion from overwriting the
+  stopped state.
+- Replies are split at Discord's 2,000 Unicode-code-point message limit. Outbound messages disable
+  mention parsing so model text cannot notify users or roles.
+- Image input accepts file-only or captioned messages with up to four PNG, JPEG, WebP, or GIF
+  attachments of at most 5 MiB each. Ziggy downloads only Discord attachment paths from
+  `cdn.discordapp.com` or `media.discordapp.net`, checks the declared and returned MIME type,
+  `Content-Length`, and streamed byte count, and never sends the bot token to the CDN.
+- Unsupported, oversized, excess, malformed, or failed image downloads become bounded notices in
+  the prompt instead of failing an otherwise valid text turn. Successful images use Pi's typed
+  image input.
+- Owner-only `/status` and `/stop` commands respond privately in DMs and native threads. `/status`
+  reports that conversation's active and queued counts. `/stop` uses the same scoped cancellation
+  path and generation fence as the exact text command `stop`. In a top-level server channel, the
+  commands direct the owner to use a Ziggy work thread so session identity remains unambiguous.
+- After the Gateway READY event, Ziggy idempotently creates or repairs its two global commands and
+  removes the obsolete `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
+  definitions from this application at both global and connected-guild scope. Other command names
+  remain untouched.
 - Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Slack slash command.
+  not a Discord slash command.
+
+The ingress journal promises durable at-least-once processing after conversation resolution, not
+exactly-once model execution or Discord delivery. Top-level server messages must first create their
+native thread, so a crash or ambiguous Discord response during thread creation occurs before the
+journal boundary. A later crash can also happen after Discord accepted a reply but before Ziggy
+settled its row; replay may therefore repeat model work or delivery. Terminal rows erase prompt text
+immediately and retain only bounded routing/deduplication facts, with at most 1,000 terminal rows.
+Attachment metadata is erased with the prompt at terminal settlement.
 
 ## Prerequisites
 
-Before creating the Slack app:
+Before creating the Discord app:
 
 1. Initialize and configure the Profile.
 2. Confirm that its model and authentication work.
@@ -125,157 +85,95 @@ ziggy serve status <profile>
 ```
 
 A resident with no `telegram.json`, `discord.json`, or `slack.json` is valid but scheduler-only.
-When Slack is configured, `serve status` also reports its connection state, observation freshness,
-active and queued turn counts, completed, cancelled, and failed counts, and a bounded failure
-category. An intentional `stop` increments cancellation without fabricating a turn failure. `doctor`
-reports a missing, stale, reconnecting, or failed Slack runtime independently from configuration
-validity. The resident atomically refreshes this projection at
-`<profile>/.runtime/slack-health.json`; inability to write it is logged but never blocks a turn.
+`doctor` validates a present `discord.json` against Ziggy's strict local schema and reports the last
+content-free Discord runtime projection. It does not contact Discord or prove that the token,
+Gateway intents, installation, channel permissions, or live reply path work. `serve status` reports
+Discord as `not configured`, `not observed`, `starting`, `connected`, `reconnecting`, `failed`,
+`stopped`, or `stale`, with content-free turn counts and the last bounded failure class. The final
+proof is still an actual Discord thread reply plus the corresponding bounded log line.
 
-The projection is deliberately content-free. It contains no prompt or response text, channel or
-user IDs, Slack timestamps, tokens, session paths, or external error messages. It is operational
-evidence, not a transcript.
+## 1. Create a Discord application
 
-## 1. Create a blank Slack app
+Open the [Discord Developer Portal](https://discord.com/developers/applications), then:
 
-Open [Slack API apps](https://api.slack.com/apps), then:
+1. Choose **New Application**.
+2. Name the application for the Profile, for example `Squarey`.
+3. Accept Discord's terms and create the application.
 
-1. Choose **Create New App**.
-2. Choose **Blank app**. Do not use the AI agent template; Ziggy does not need its additional Slack
-   features or permissions.
-3. Name the app for the Profile, for example `Squarey`.
-4. Select the target workspace and create the app.
+Use a test server or a dedicated private channel for the first live proof.
 
-## 2. Enable Socket Mode and create the app token
+## 2. Configure the bot and retain its token
 
-Open **Socket Mode** in the Slack app sidebar:
+Open **Bot** in the application sidebar:
 
-1. Enable Socket Mode.
-2. Create an app-level token named `ziggy-socket`.
-3. Add the app-level scope `connections:write`.
-4. Generate and securely retain the resulting `xapp-...` token.
+1. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
+2. Leave **Presence Intent** and **Server Members Intent** disabled; Ziggy does not request them.
+3. Generate or reset the bot token and store it securely for the Profile configuration step.
 
-This is the **app token**. It opens the Socket Mode connection and is different from the bot token
-created later. Socket Mode means no public request URL is required.
+Do not put the token in a shell command, source file, issue, or operations guide. Discord only shows
+a newly generated token once. If it is exposed, reset it before continuing.
 
-## 3. Add bot token scopes
+Ziggy identifies with the `Guilds`, `Guild Messages`, `Direct Messages`, and privileged
+`Message Content` Gateway intents. Without Message Content, ordinary server messages arrive without
+the text Ziggy needs and are ignored.
 
-Open **OAuth & Permissions**. Under **Bot Token Scopes**, not User Token Scopes, add:
+## 3. Install the bot in a server
 
-- `chat:write`
-- `reactions:write`
-- `files:read`
-- `im:history`
-- `channels:history`
-- `groups:history`
-- `mpim:history`
+Open **Installation** in the application sidebar and configure a server installation:
 
-`chat:write` also authorizes `assistant.threads.setStatus`; `reactions:write` authorizes the 👀, ✅,
-and ❌ source-message lifecycle. `files:read` allows the bot to receive usable private-file metadata
-and download owner-attached images. Install or reinstall the app after adding this scope. Without
-it, the text turn still proceeds with an attachment-unavailable notice. Attachments arrive on the
-ordinary message events configured below, so no separate file event subscription is required.
-Since Slack's March 2026 scope update, channel-based apps can use that loading state without
-`assistant:write` or the AI assistant split view.
+1. Enable the **Guild Install** context.
+2. Add the `bot` and `applications.commands` OAuth2 scopes. The latter exposes Ziggy's native
+   `/status` and `/stop` controls.
+3. Grant **View Channels**, **Send Messages**, **Create Public Threads**, **Send Messages in
+   Threads**, **Read Message History**, and **Add Reactions** for the first text-channel proof.
+4. Copy the install link, open it, choose the test server, and authorize the bot.
 
-`mpim:history` is only needed for multi-person direct messages, but keeping it with the corresponding
-event below makes the complete DM-and-channel setup explicit. Channel-thread hydration uses the
-history scope corresponding to the conversation type: `channels:history` for public channels,
-`groups:history` for private channels, and `mpim:history` for multi-person direct messages.
+After installation, keep the bot's server or channel role restricted to the dedicated Ziggy
+channel. Channel permission overrides can further limit where it can read owner messages and post
+replies.
 
-## 4. Subscribe to message events
+## 4. Copy the owner user ID
 
-Open **Event Subscriptions**:
+The owner ID is the only Discord account Ziggy accepts:
 
-1. Enable events.
-2. Under **Subscribe to bot events**, add:
-   - `message.im`
-   - `message.channels`
-   - `message.groups`
-   - `message.mpim`
-3. Save changes when Slack prompts.
+1. In Discord, open **User Settings** → **Advanced**.
+2. Enable **Developer Mode**.
+3. Right-click your own user in Discord and choose **Copy User ID**.
 
-These subscriptions cover direct messages, public channels, private channels, and multi-person DMs.
-Ziggy still filters every event by the configured owner member ID.
+Use the numeric ID, not a username, display name, application ID, server ID, or channel ID.
 
-## 5. Enable direct messages
+## 5. Create the Profile configuration
 
-Open **App Home**:
-
-1. Enable the **Messages Tab**.
-2. If Slack shows the option, enable sending messages from the Messages Tab.
-3. Save the changes.
-
-Slack changes labels occasionally; the required outcome is that a workspace member can open the app
-and send it a direct message.
-
-## 6. Install the app and retain the bot token
-
-Open **Install App** and install or reinstall the app into the workspace. Approve the requested
-permissions, then securely retain the **Bot User OAuth Token** beginning with `xoxb-`.
-
-This is the **bot token**. Ziggy uses it for `auth.test` and `chat.postMessage`. Reinstall the app
-after changing bot scopes or event subscriptions when Slack requests it.
-
-## 7. Copy the owner member ID
-
-The owner ID identifies the only Slack user Ziggy will accept.
-
-1. Open your own Slack profile, not a channel menu.
-2. Open the profile's **More** (`...`) menu.
-3. Choose **Copy member ID**.
-4. Confirm the value begins with `U`.
-
-A channel ID begins with `C` and is not valid for `ownerUserId`.
-
-## 8. Create the Profile configuration
-
-Create `<profile>/slack.json` with these fields:
+Create `<profile>/discord.json` with exactly these fields:
 
 ```json
 {
-  "botToken": "xoxb-...",
-  "appToken": "xapp-...",
-  "ownerUserId": "U...",
-  "channels": {
-    "C0A06UL1CKW": "always",
-    "C0BP3QUQ3CL": "mention"
-  }
+  "botToken": "replace-with-the-discord-bot-token",
+  "ownerUserId": "replace-with-the-numeric-owner-user-id"
 }
 ```
 
-`channels` is optional. Any omitted channel defaults to `"mention"`; use an explicit `"always"`
-entry only for a channel where every owner-authored message should activate Ziggy. An explicit
-`"mention"` entry is allowed when documenting policy matters. The former Profile-wide
-`channelMode` field is no longer accepted. Channel keys must be Slack channel IDs beginning with
-`C` or `G`; the decoder rejects invalid IDs, unknown modes, missing required fields, empty values,
-and additional fields. Store the file privately:
+Both values are JSON strings. `ownerUserId` must contain only ASCII digits. The decoder rejects
+unknown fields, missing fields, empty values, and a numeric rather than string owner ID.
+
+Edit the file without placing the token in shell history, then restrict it to the current user:
 
 ```sh
-umask 077
-${EDITOR:-nano} <profile>/slack.json
-chmod 600 <profile>/slack.json
+${EDITOR:-nano} <profile>/discord.json
+chmod 600 <profile>/discord.json
 ```
 
-Do not commit this file. The managed launchd or systemd service definition contains the Profile path
-but does not contain channel tokens.
+## 6. Validate and restart the resident
 
-## 9. Validate and restart the resident
-
-Validate before restart:
+Run the read-only Profile checks before restart:
 
 ```sh
 ziggy doctor <profile>
 ```
 
-A valid result includes a gateway check such as:
-
-```text
-OK  gateways  1 present gateway config file valid
-```
-
-Then restart the existing resident so it rereads channel configuration and the selected extension
-set:
+The `gateways` row should report the new total number of valid gateway configuration files, and
+`discord-runtime` should initially report that Discord is configured but not yet observed. Then
+restart the managed resident so it reloads `discord.json`:
 
 ```sh
 ziggy serve restart <profile>
@@ -283,200 +181,204 @@ ziggy serve status <profile>
 ziggy serve logs <profile>
 ```
 
-A healthy restart reports a ready supervisor, a running process, and an active scheduler. Slack logs
-then distinguish authenticated socket-supervisor startup, a connected socket, admitted chat keys,
-mention-required ignores, reconnect degradation, and terminal failures without printing message
-content or tokens. Use `--follow` while testing:
+For a Profile without a managed service, install and start it instead:
+
+```sh
+ziggy serve install <profile>
+```
+
+Do not run `ziggy discord <profile>`. That old resident alias is intentionally unsupported; one
+`ziggy serve` process owns the scheduler and every configured channel loop.
+
+## 7. Prove the live message path
+
+Follow the managed logs in one terminal:
 
 ```sh
 ziggy serve logs <profile> --follow
 ```
 
-## 10. Test direct messages and channels
+In the dedicated Discord channel, send a short owner-authored identity question without mentioning
+the bot. A successful turn has four independent observations:
 
-### Direct message
+1. Discord creates a native thread from the top-level message.
+2. The source message receives 👀, the thread shows Discord's typing indicator plus
+   `Working on that…` or bounded progress, and the placeholder becomes the model reply.
+3. The source reaction settles from 👀 to ✅. A stopped request uses 🛑 and a failed request uses ❌.
+4. `ziggy serve status <profile>` reports `discord: connected` and updated turn counts.
+5. The service log records a bounded line shaped like
+   `[discord] group-dc<channel-id>-thread-<thread-id> in:<count> out:<count> chars`.
 
-Open the Slack app's Messages tab and send a simple identity question:
+The log proves Ziggy completed the accepted turn and called Discord delivery. The visible Discord
+reply proves the client-facing path. Neither proof includes the prompt or answer text.
 
-```text
-Hi. Who are you?
-```
+Send a follow-up inside that thread to prove session continuity. Then send a second top-level
+message to prove it creates a different thread and Pi session while retaining parent-channel group
+memory. Test direct messages separately because Discord account privacy and application
+installation settings can affect whether Discord delivers them to the bot.
 
-Then test owner memory with a harmless fact and confirm it remains available in a later direct
-message.
-
-Attach one supported image with or without accompanying text and confirm the reply addresses the
-image. Also verify that an unsupported or oversized attachment yields an unavailable notice without
-preventing Ziggy from answering the text portion.
-
-### Channel
-
-Invite the app into each channel where it should receive events:
-
-```text
-/invite @Squarey
-```
-
-By default, send `@Squarey` followed by the request; Ziggy strips its Slack mention before prompting
-Pi. Every request in a thread must mention Squarey too: one earlier mention does not latch activation
-for later replies. A channel configured as `"always"` treats any ordinary owner-authored message as
-a request, both at the root and in its threads. Messages from other users are ignored in both modes,
-and the channel receives isolated group memory rather than the owner's direct-message memory. A
-top-level request receives its working and final messages in a thread under that request. Later
-accepted replies in that thread continue the same Pi session. Separate top-level requests use
-separate sessions and can run independently. A bare `@Squarey` inside an existing thread means
-"review this thread and help"; a bare top-level mention asks the owner what help they want.
-
-To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
-mention-only channel. The command affects only that exact chat key: separate channel threads keep
-running. Text such as `stop now` is an ordinary model request, and `stop` from another member is
-ignored. `/stop` has the same gateway meaning if Slack delivers it as message text.
-
-### Selected extensions
-
-Use natural language to exercise one selected package, for example a weather lookup or an Apple
-Reminders request. The resident must be restarted after changing `<profile>/extensions.json`; a TUI
-`/reload` does not recreate the resident or reread its startup admission set.
+Open Discord's **Apps** picker inside the work thread and run `/status`; it should return a private
+`Ziggy is ready in this thread` response with active and queued counts. Run `/stop` with no active
+work to prove command delivery; it should privately report that nothing was running. The exact text
+`stop` remains a reliable composer fallback and exercises the same cancellation mechanism.
 
 ## Troubleshooting
 
-### The resident is healthy but Slack does not answer
+### The resident is healthy but Discord does not answer
 
-Check, in order:
+Check these in order:
 
-1. `slack.json` exists under the resolved Profile path used by `serve`.
-2. `ownerUserId` is your member ID beginning with `U`, not a channel ID.
-3. The app token begins with `xapp-`; the bot token begins with `xoxb-`.
-4. Socket Mode is enabled and the app token has `connections:write`.
-5. The required message events are subscribed.
-6. The app was reinstalled after permission changes, including `reactions:write` for progress
-   reactions and `files:read` for image input.
-7. The bot is invited to the target channel.
-8. The sender is exactly the configured owner.
-9. The resident was restarted after creating or changing `slack.json`.
-10. `ziggy serve logs <profile>` contains no authentication, socket, or provider failure.
+1. `<profile>/discord.json` exists under the resolved Profile path used by `serve`.
+2. `ziggy doctor <profile>` reports the gateway configurations as valid.
+3. The resident was restarted after creating or changing `discord.json`.
+4. **Message Content Intent** is enabled on the application's **Bot** page.
+5. The bot is installed in the intended server.
+6. The bot can view the source channel, read message history, create public threads, and send
+   messages in threads.
+7. The sending account's numeric user ID exactly matches `ownerUserId`.
+8. The source message contains non-empty text.
+9. `ziggy serve logs <profile>` has no `[gateway] Discord stopped:` or `[discord] ... failed:` line.
 
-For an owner-authored channel message without a mention in the default mention-only mode, the log says
-`reason:mention-required`. An accepted message logs its chat key and activation mode. A healthy live
-transport logs `socket connected`; repeated `socket connection degraded` lines mean the resident is
-running but Socket Mode is reconnecting.
+The resident isolates a terminal Discord failure from the scheduler and other channel loops. A
+running process therefore does not, by itself, prove Discord is connected.
 
-Run the read-only projections before editing files:
+### The bot answers mentions or direct messages but ignores ordinary server text
 
-```sh
-ziggy doctor <profile>
-ziggy serve status <profile>
-ziggy serve logs <profile>
-ziggy sessions list <profile>
-```
+Confirm **Message Content Intent** is enabled. Discord can omit ordinary server-message content when
+that privileged intent is unavailable, while still exposing messages that mention the bot or are
+sent directly to it.
 
-### Direct messages work but channels do not
+### The bot reads the request but cannot reply
 
-Verify `message.channels` and `message.groups`, the corresponding history scopes, and membership of
-the bot in the channel. Public and private channels use different Slack event/scope pairs.
+Confirm the bot has **View Channels**, **Send Messages**, **Create Public Threads**, **Send Messages
+in Threads**, and **Read Message History** in that specific channel, including any channel
+permission overrides. If thread creation fails, Ziggy posts one actionable permission message in the
+source channel and does not run Pi against an ambiguous shared-channel session. Inspect the managed
+logs for the bounded Discord delivery failure.
 
-### The bot sees the channel but ignores a message
+### Replies work but reactions or typing do not
 
-This is expected when the sender is not `ownerUserId`, the text is blank, or the event was authored
-by the bot itself. Unless that exact channel is configured as `"always"`, the message must also
-contain the app's real Slack mention; plain text such as `Squarey` is not an activation. Ziggy
-currently has no multi-user allowlist and intentionally ignores those messages.
+Confirm **Add Reactions**, **Read Message History**, **Send Messages**, and, for threads, **Send
+Messages in Threads** in the source and thread channels. Discord channel overrides can make one
+channel fail while another works. Ziggy disables repeated best-effort feedback attempts only for
+the affected channel after a non-retriable denial; ordinary replies remain authoritative.
 
-### The reply works but no loading status appears
+### Native `/status` and `/stop` commands are missing or duplicated
 
-Search `ziggy serve logs <profile>` for `status update failed`. Status delivery is intentionally
-best-effort, so a Slack API failure does not block the model or final reply. Confirm the app was
-reinstalled with `chat:write`, then restart the resident. Client-visible status remains a live Slack
-proof: a successful API response alone does not prove that a particular Slack client displayed it.
-The ordinary `Working on that…` message is the guaranteed visible fallback and should still be
-replaced by the final answer.
+Confirm the app was installed with `applications.commands`, restart the resident, and reopen
+Discord's Apps picker. Ziggy registers one global `status` and one global `stop` definition without
+deleting unrelated application commands. Do not also register guild copies: global and guild
+definitions with the same name appear as duplicate picker entries. A command response saying to use
+a work thread is expected when invoked in a top-level server channel.
 
-### A `Working on that…` message never changes
+### Discord stops while opening its ingress database
 
-Search `ziggy serve logs <profile>` for `final working-message update failed`, `postMessage`, or
-`updateMessage`. A slow response may also log `progress message update failed`; progressive edits
-are deliberately rate-bounded and their failure does not change final delivery settlement. The
-placeholder, progressive edits, and final edit all use `chat:write`; no reaction, streaming, or
-Agent-view scope is required. A model failure should replace the placeholder with a failure notice.
+The strict journal fails closed on an unknown or modified schema. Inspect `ziggy serve logs
+<profile>` for `[gateway] Discord stopped: Discord ingress database ...`; the scheduler and other
+configured channels remain isolated and continue running. Do not delete or edit
+`.runtime/discord-ingress.sqlite` as a first repair step because it may contain accepted unfinished
+work. Preserve a copy and diagnose the schema or filesystem failure. On an ordinary resident
+restart, orderly shutdown returns each unfinished owned row to `received` without erasing its
+prompt, while startup recovers any foreign-owner `running` row left by an abrupt stop. Both paths
+replay work in original admission order.
 
-### Text replies work but attached images are unavailable
+Discord delivery retries are operation-aware and bounded. Reads and updates may be retried up to
+four total attempts. New thread and message POSTs are retried only after an explicit rate-limit
+response; a network, server, or invalid-response failure may mean Discord accepted the write, so
+Ziggy does not repeat it. When that ambiguity occurs after durable admission, the ingress row
+settles as `unknown` rather than replaying a message that may already have been delivered.
 
-Check that `files:read` is under **Bot Token Scopes**, reinstall the app after adding it, and restart
-the Ziggy resident. Confirm the file is PNG, JPEG, WebP, or GIF, no larger than 5 MiB, and shared in
-a direct message or channel the bot can access. The configured provider/model must support image
-input. Unsupported or inaccessible files intentionally become bounded notices while the text turn
-continues; Ziggy never forwards a private Slack URL to the model.
+### The wrong messages reach Ziggy
 
-### A selected command-line extension works in the TUI but not under `serve`
-
-A managed service does not inherit the interactive terminal's shell initialization. On macOS,
-launchd commonly has a narrower `PATH`. System tools such as `/usr/bin/osascript` remain available,
-but Homebrew commands such as `gh` or `qmd` may require future explicit managed-service PATH support
-or package-owned absolute executable resolution. Inspect logs rather than assuming the package was
-not selected.
-
-### Slack asks for a request URL
-
-Confirm Socket Mode is enabled. Ziggy receives Events API envelopes over the app-level Socket Mode
-connection and does not expose an HTTP callback.
+Ziggy intentionally admits every non-empty owner-authored text message in every visible server
+channel; it has no mention-only configuration. Remove the bot's access from unrelated channels or
+use channel permission overrides to expose only the dedicated Ziggy channel.
 
 ## Verification record
 
-On 2026-08-08, the manual path above produced these secret-free observations for a live Profile:
+Setup verification began on 2026-08-09 against Ziggy `ca27d16` on macOS with the `squarey` Profile:
 
-- `slack.json` had mode `0600`, the three required keys plus its explicit channel mode, and correctly
-  prefixed token and member-ID values.
-- `ziggy doctor` reported the Profile, model, auth, agents, automations, memory, resources, one
-  gateway configuration, sessions, and runtime healthy.
-- `ziggy serve restart` reached `readiness: ready` under launchd.
-- `ziggy serve status` reported the supervisor and process running and the scheduler active.
-- Initial resident stdout and stderr were empty, with no Slack authentication or Socket Mode error.
-- A direct message rendered the immediate working message and its edited final Markdown reply.
-- An owner-authored channel message completed without an app mention under compatibility `always`
-  mode, and a real Slack thread used a distinct thread-root Pi session.
-- Two concurrent direct messages visibly moved from working/queued feedback to independent edited
-  final replies.
-- After installing `reactions:write`, a completed direct message changed its source reaction from 👀
-  to ✅. A controlled resident restart during a second active turn changed 👀 to ❌, edited the
-  placeholder to `I couldn't complete that request.`, and returned with a healthy replacement
-  resident. Conversation history was sufficient for this proof; `reactions:read` was not added.
-- After installing `files:read`, a PNG-only `file_share` direct message showed 👀 and the working
-  placeholder, passed the image to the configured Pi model, and edited the placeholder with an
-  accurate description of the page and its folded upper-right corner. The source reaction changed
-  to ✅, health returned to zero active/queued turns, and the completed ingress row contained neither
-  prompt text nor private-file metadata.
+- `ziggy doctor squarey` passed before Discord configuration and reported one valid existing gateway
+  configuration.
+- `ziggy serve status squarey` reported an installed, running launchd supervisor, a live resident
+  owner, and an active scheduler.
+- `/Users/yesh/.ziggy/profiles/squarey/discord.json` was not present before setup.
+- The existing Discord application was named `Squarey` during setup and reported one server
+  installation. The bot username remained independently named `Kiri`; neither name participates in
+  Ziggy's Profile or message-routing identity.
+- The application's Bot page had **Message Content Intent** enabled and the unused **Presence
+  Intent** and **Server Members Intent** disabled.
+- The application's current default Guild Install scope showed `applications.commands`, without a
+  displayed default `bot` scope. This does not establish the permissions of the existing one-server
+  installation; the supplied target channel must be proven live before changing installation
+  settings.
+- The operator stored a strict `discord.json` containing the bot token and numeric owner user ID
+  with file mode `600`; the secret values were not printed or copied into repository files.
+- `ziggy doctor squarey` passed with both gateway configurations valid. After a managed resident
+  restart, `ziggy serve status squarey` reported Discord `connected` with zero failures and Kiri
+  appeared online in the installed Discord client.
+- A Computer Use E2E in the target server channel sent one top-level request, observed Ziggy create
+  a native thread, and received the exact final reply `THREAD-ONE-OK`. A follow-up in that thread
+  moved from `Working on that…` to `SAME-THREAD-OK` and reused its session.
+- A second top-level request created a different native thread, returned `THREAD-TWO-OK`, and
+  materialized a different session directory under the same parent-channel scope. The two observed
+  thread IDs were `1536003434036199534` and `1536003704086339644`.
+- A live same-thread cancellation exercise showed working and queued placeholders, changed both to
+  `Stopped.`, acknowledged `Stopped 2 requests.`, and suppressed late completion. That exercise
+  exposed a stale queued health count after cancelling before semaphore admission; the projection
+  now records whether a cancelled turn had started and focused regression coverage requires the
+  settled state to be active `0`, queued `0`, cancelled `2`. After restarting into the correction,
+  a second Computer Use run visibly settled both placeholders and the acknowledgement, while live
+  `serve status` reported active `0`, queued `0`, completed `0`, cancelled `2`, failed `0`.
+- A later Discord-native feedback E2E visibly showed 👀 on the source message, the client-native
+  `Kiri is typing…` indicator, and an edited `Stopped.` placeholder. The first terminal reaction
+  swap exposed Discord's per-route reaction rate limit: removing 👀 and immediately adding the
+  terminal emoji returned `429`. Ziggy now performs at most three bounded best-effort attempts using
+  Discord's `retry_after`. The corrected Computer Use rerun visibly showed 🛑 on the cancelled
+  request, ✅ on its `stop` command, and ✅ plus the exact reply `DISCORD-NATIVE-OK` on a subsequent
+  successful request. Live status settled at active `0`, queued `0`, completed `1`, cancelled `1`,
+  failed `0`.
+- A strict `.runtime/discord-ingress.sqlite` journal was subsequently added and focused tests proved
+  source-message deduplication before Pi, resident-owner fencing, foreign-owner restart recovery,
+  ordered replay before new socket intake, terminal prompt erasure, and bounded terminal retention.
+  A managed-resident restart then visibly returned `DISCORD-DURABLE-OK`; the latest row was
+  `completed`, owner-released, started and finished, with zero retained prompt bytes.
+- Attachment support upgraded that journal from schema v1 to v2 while preserving its existing
+  terminal row. A native macOS Discord upload sent a file-only synthetic PNG. Kiri replied, `The
+image shows a yellow background with a blue rounded rectangle on the left and a red circle on the
+right.` The source message visibly settled with ✅, `serve status` reported Discord connected with
+  active `0`, queued `0`, completed `1`, cancelled `0`, failed `0`, and the newest journal row was
+  `completed` with zero retained text bytes and empty attachment metadata.
+- The original slash-control proof registered the narrow global `status` and `stop` definitions but
+  left the old guild-scoped `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
+  definitions visible. Current startup reconciliation treats those exact names as obsolete commands
+  owned by this application and deletes them from every guild reported by Gateway READY; genuinely
+  unrelated command names remain untouched.
+- Computer Use in `/Applications/Discord.app` selected `/status` from the native Apps picker and
+  received the private response `Ziggy is ready in this thread. Active: 0 · queued: 0.` It then
+  selected `/stop` through the same picker and received the private response
+  `Nothing was running in this conversation.`
 
-On 2026-08-09, the thread-first channel path was verified in `#knowledge-base`:
-
-- A root `@Squarey` request received its acknowledgement reaction in the channel while the working
-  and final `ROOT-OK` reply appeared only in the request thread.
-- A second mention in that thread recalled the root request's `ORCHID` token, proving that the root
-  and its accepted thread replies reused one Pi session. `@Squarey stop` also replied `Nothing was
-  running.` in the same thread.
-- A new root mention with a 600x400 PNG accurately identified its yellow background, tall blue
-  rounded rectangle, and red circle. The answer appeared only in the image message's thread.
-
-This record proves the configured workspace's startup, direct-message, thread-first channel,
-thread-session continuity, queue, success-reaction, cancellation-reaction, and PNG image-input
-paths. It does not prove a different Slack workspace, client version, app manifest, provider/model,
-attachment format, or channel membership.
+This record proves the configured Squarey resident's Gateway authentication, target-channel thread
+permission, thread/session routing, same-thread continuity, isolated roots, visible cancellation,
+restart-safe durable admission, and bounded image input through the installed macOS Discord app. It
+also proves native application-command registration and private thread-scoped responses. It does
+not disclose or independently attest the token value.
 
 ## Token rotation and removal
 
-To rotate either token:
+To rotate a Discord bot token:
 
-1. Generate or reinstall the corresponding Slack credential.
-2. Replace only that value in `<profile>/slack.json`.
+1. Reset the token on the application's **Bot** page.
+2. Replace only `botToken` in `<profile>/discord.json` without exposing either token.
 3. Preserve file mode `600`.
 4. Run `ziggy doctor <profile>`.
-5. Run `ziggy serve restart <profile>`.
-6. Revoke the old token in Slack after the new connection is healthy.
+5. Restart the resident and repeat the live message proof.
 
-To disconnect Slack without deleting sessions or memory:
+To disconnect Discord without deleting sessions or memory:
 
-1. Move `slack.json` outside the Profile or delete it deliberately.
-2. Restart `serve`.
-3. Revoke the Slack app credentials if the integration is no longer needed.
+1. Move `discord.json` outside the Profile or delete it deliberately.
+2. Restart the resident.
+3. Remove the bot from the server and reset its token if the integration is no longer needed.
 
-Removing the channel configuration does not remove Profile memory, selected extensions, Pi
-sessions, automation history, or the resident service.
+Removing the configuration does not delete `sessions/discord/` or channel-scoped memory.

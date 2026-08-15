@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { lstat, open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
-import { APPROVED_BUNDLED_EXTENSION_IDS, bundledPackageMetadata } from "../../catalog";
+import {
+  APPROVED_BUNDLED_EXTENSION_IDS,
+  bundledPackageMetadata,
+  isRequiredBundledExtension,
+} from "../../catalog";
 import { bundledFilePath } from "../../generated/builtin-files";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "./cause";
@@ -250,7 +254,7 @@ export const readExtensionPackage = (
       skills,
       automations,
       kind: hasSkills && hasCode ? "skill+code" : hasSkills ? "skill" : "code",
-      required: id === "pi-packages",
+      required: isRequiredBundledExtension(id),
     };
   });
 
@@ -387,12 +391,13 @@ export const readExtensionSelection = (
               invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause),
             ),
             Effect.flatMap(({ extensions }) => {
+              const reserved = extensions.find(isRequiredBundledExtension);
               const problem =
                 new Set(extensions).size !== extensions.length
                   ? "extension selection contains duplicate IDs"
-                  : extensions.includes("pi-packages")
-                    ? "extension selection cannot include reserved ID 'pi-packages'"
-                    : undefined;
+                  : reserved === undefined
+                    ? undefined
+                    : `extension selection cannot include reserved ID '${reserved}'`;
               return problem === undefined
                 ? Effect.succeed([...extensions].sort())
                 : Effect.fail(invalid(selectionPath, problem));
@@ -417,8 +422,11 @@ export const removeExtensionSelection = (
     const [decoded] = yield* decodeExtensionIds([id]).pipe(
       Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
     );
-    if (decoded === "pi-packages") {
-      return yield* invalid(selectionPath, "required extension 'pi-packages' cannot be removed");
+    if (decoded === undefined) {
+      return yield* invalid(selectionPath, "invalid extension selection");
+    }
+    if (isRequiredBundledExtension(decoded)) {
+      return yield* invalid(selectionPath, `required extension '${decoded}' cannot be removed`);
     }
     const current = yield* readExtensionSelection(profilePath);
     const selected = current.filter((item) => item !== decoded);
@@ -437,12 +445,13 @@ export const setExtensionSelection = (
     const decoded = yield* decodeExtensionIds(ids).pipe(
       Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
     );
+    const reserved = decoded.find(isRequiredBundledExtension);
     const problem =
       new Set(decoded).size !== decoded.length
         ? "extension selection contains duplicate IDs"
-        : decoded.includes("pi-packages")
-          ? "extension selection cannot include reserved ID 'pi-packages'"
-          : undefined;
+        : reserved === undefined
+          ? undefined
+          : `extension selection cannot include reserved ID '${reserved}'`;
     if (problem !== undefined) {
       return yield* invalid(selectionPath, problem);
     }

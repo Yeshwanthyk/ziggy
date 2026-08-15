@@ -1,10 +1,10 @@
 {
-  "name": "@ziggy/qmd",
+  "name": "@ziggy/pi-packages",
   "private": true,
+  "type": "module",
   "keywords": [
     "pi-package"
   ],
-  "type": "module",
   "pi": {
     "skills": [
       "./skills"

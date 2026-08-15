@@ -16,6 +16,7 @@ const MAX_SKILL_BYTES = 64 * 1024;
 const MAX_SESSION_IDS = 32;
 const READY_THRESHOLD = 3;
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const RESERVED_EXTENSION_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
 const DESCRIPTION_MAX = 1_024;
 
 export type ReviewDecision = "applied" | "no-op" | "staged" | "error";
@@ -435,7 +436,7 @@ export const writeCuratorExtension = async (
   readonly sha256: string;
 }> => {
   const id = textField(input.id, "extension ID", 64);
-  if (!ID_PATTERN.test(id) || id === "pi-packages")
+  if (!ID_PATTERN.test(id) || RESERVED_EXTENSION_IDS.has(id))
     throw new Error("extension ID must be kebab-case and non-reserved");
   if (input.expectedOldSha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.expectedOldSha256))
     throw new Error("expectedOldSha256 must be a lowercase SHA-256 digest");
