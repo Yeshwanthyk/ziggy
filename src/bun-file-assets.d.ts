@@ -1,3 +1,8 @@
+declare module "*.embed" {
+  const path: string;
+  export default path;
+}
+
 declare module "*.md" {
   const path: string;
   export default path;

@@ -1,0 +1,17 @@
+{
+  "name": "@ziggy/here-now",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "bash tests/default-paths.test.sh"
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}
