@@ -1,12 +1,25 @@
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import * as path from "node:path";
 import { Effect } from "effect";
+import { bundledPackageMetadata } from "../../catalog";
 import {
   ExtensionCatalogInstallFailed,
   type BundledExtensionCatalogEntry,
   type GitHubExtensionCatalogEntry,
 } from "../../domain/extension-catalog";
+import { bundledFilePath } from "../../generated/builtin-files";
 import type { ExtensionArchiveClientApi } from "../github/extension-catalog";
 import { fileSystemCauseDetails } from "./cause";
 import { readExtensionPackage } from "./profile-extensions";
@@ -169,6 +182,230 @@ const cleanup = (temporaryRoot: string) =>
     catch: (cause) => cause,
   }).pipe(Effect.catch(() => Effect.void));
 
+const stageEmbeddedFiles = (
+  entry: CatalogEntry,
+  stagedPackage: string,
+  sourcePath: string,
+  files: ReadonlyArray<string>,
+): Effect.Effect<void, ExtensionCatalogInstallFailed> =>
+  Effect.forEach(
+    files,
+    (file) =>
+      Effect.gen(function* () {
+        const embedded = bundledFilePath(file);
+        if (embedded === undefined) {
+          return yield* Effect.fail(
+            installFailure(
+              entry,
+              file,
+              "validation",
+              `bundled extension file is missing: ${file}`,
+              undefined,
+            ),
+          );
+        }
+        const relative = path.posix.relative(sourcePath, file);
+        if (relative === "" || relative.startsWith("..")) {
+          return yield* Effect.fail(
+            installFailure(
+              entry,
+              file,
+              "validation",
+              `bundled extension file escapes package: ${file}`,
+              undefined,
+            ),
+          );
+        }
+        const target = path.join(stagedPackage, ...relative.split("/"));
+        yield* Effect.tryPromise({
+          try: () => mkdir(path.dirname(target), { recursive: true }),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              entry,
+              path.dirname(target),
+              "filesystem",
+              "could not create extension staging directory",
+              cause,
+            ),
+          ),
+        );
+        const bytes = yield* Effect.tryPromise({
+          try: () => readFile(embedded),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              entry,
+              target,
+              "filesystem",
+              "could not read bundled extension file",
+              cause,
+            ),
+          ),
+        );
+        const status = yield* Effect.tryPromise({
+          try: () => stat(embedded),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              entry,
+              target,
+              "filesystem",
+              "could not stat bundled extension file",
+              cause,
+            ),
+          ),
+        );
+        yield* Effect.tryPromise({
+          try: () => writeFile(target, bytes, { mode: status.mode }),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              entry,
+              target,
+              "filesystem",
+              "could not stage bundled extension file",
+              cause,
+            ),
+          ),
+        );
+      }),
+    { discard: true },
+  );
+
+const publishEmbeddedTree = (
+  profilePath: string,
+  entry: CatalogEntry,
+  sourcePath: string,
+  files: ReadonlyArray<string>,
+  extraFiles: ReadonlyArray<{ readonly relativePath: string; readonly contents: string }> = [],
+): Effect.Effect<string, ExtensionCatalogInstallFailed> => {
+  const extensionRoot = path.join(profilePath, "extensions");
+  const destinationPath = path.join(extensionRoot, entry.id);
+  return Effect.gen(function* () {
+    if (!(yield* destinationAvailable(entry, destinationPath))) return destinationPath;
+    const temporaryRoot = yield* Effect.tryPromise({
+      try: () => mkdtemp(path.join(profilePath, ".ziggy-extension-")),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.mapError((cause) =>
+        installFailure(
+          entry,
+          profilePath,
+          "filesystem",
+          "could not create extension staging directory",
+          cause,
+        ),
+      ),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.succeed(temporaryRoot),
+      (stagingRoot) =>
+        Effect.gen(function* () {
+          const stagedShelf = path.join(stagingRoot, "shelf");
+          const stagedPackage = path.join(stagedShelf, "extensions", entry.id);
+          yield* Effect.tryPromise({
+            try: () => mkdir(stagedPackage, { recursive: true }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.mapError((cause) =>
+              installFailure(
+                entry,
+                stagedPackage,
+                "filesystem",
+                "could not create extension staging directory",
+                cause,
+              ),
+            ),
+          );
+          yield* stageEmbeddedFiles(entry, stagedPackage, sourcePath, files);
+          yield* Effect.forEach(
+            extraFiles,
+            (file) =>
+              Effect.gen(function* () {
+                const target = path.join(stagedPackage, ...file.relativePath.split("/"));
+                yield* Effect.tryPromise({
+                  try: () => mkdir(path.dirname(target), { recursive: true }),
+                  catch: (cause) => cause,
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    installFailure(
+                      entry,
+                      path.dirname(target),
+                      "filesystem",
+                      "could not create extension staging directory",
+                      cause,
+                    ),
+                  ),
+                );
+                yield* Effect.tryPromise({
+                  try: () => writeFile(target, file.contents),
+                  catch: (cause) => cause,
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    installFailure(
+                      entry,
+                      target,
+                      "filesystem",
+                      "could not stage bundled extension file",
+                      cause,
+                    ),
+                  ),
+                );
+              }),
+            { discard: true },
+          );
+          yield* inspectTree(entry, stagedPackage);
+          yield* readExtensionPackage(stagedShelf, entry.id).pipe(
+            Effect.mapError((cause) =>
+              installFailure(
+                entry,
+                stagedPackage,
+                "validation",
+                "extension failed package validation",
+                cause,
+              ),
+            ),
+          );
+          yield* Effect.tryPromise({
+            try: () => mkdir(extensionRoot, { recursive: true }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.mapError((cause) =>
+              installFailure(
+                entry,
+                extensionRoot,
+                "filesystem",
+                "could not create Profile extension shelf",
+                cause,
+              ),
+            ),
+          );
+          yield* Effect.tryPromise({
+            try: () => rename(stagedPackage, destinationPath),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.mapError((cause) =>
+              installFailure(
+                entry,
+                destinationPath,
+                "filesystem",
+                "could not publish Profile extension",
+                cause,
+              ),
+            ),
+          );
+          return destinationPath;
+        }),
+      cleanup,
+    );
+  });
+};
+
 const publishSource = (
   profilePath: string,
   entry: CatalogEntry,
@@ -265,11 +502,51 @@ export const makeExtensionInstaller = (
   client: ExtensionArchiveClientApi,
   extractor: ExtensionArchiveExtractor = systemTarExtractor,
 ) => ({
-  installBundled: (
+  installBundled: (profilePath: string, entry: BundledExtensionCatalogEntry) => {
+    const metadata = bundledPackageMetadata(entry.id);
+    if (metadata === undefined) {
+      return Effect.fail(
+        installFailure(
+          entry,
+          entry.path,
+          "validation",
+          `approved extension '${entry.id}' is missing from the bundled catalog`,
+          undefined,
+        ),
+      );
+    }
+    return publishEmbeddedTree(profilePath, entry, metadata.sourcePath, metadata.packageFiles);
+  },
+  installRequiredSkill: (
     profilePath: string,
-    repositoryRoot: string,
-    entry: BundledExtensionCatalogEntry,
-  ) => publishSource(profilePath, entry, path.resolve(repositoryRoot, entry.path)),
+    skill: {
+      readonly id: string;
+      readonly description: string;
+      readonly files: ReadonlyArray<string>;
+    },
+  ) => {
+    const entry: BundledExtensionCatalogEntry = {
+      id: skill.id,
+      version: "0.1.0",
+      source: "bundled",
+      path: `./extensions/${skill.id}`,
+    };
+    const packageJson = `${JSON.stringify(
+      {
+        name: `@ziggy/${skill.id}`,
+        private: true,
+        type: "module",
+        description: skill.description,
+        keywords: ["pi-package"],
+        pi: { skills: ["./skills"] },
+      },
+      null,
+      2,
+    )}\n`;
+    return publishEmbeddedTree(profilePath, entry, ".", skill.files, [
+      { relativePath: "package.json", contents: packageJson },
+    ]);
+  },
   installGitHub: (profilePath: string, entry: GitHubExtensionCatalogEntry) =>
     Effect.gen(function* () {
       const temporaryRoot = yield* Effect.tryPromise({

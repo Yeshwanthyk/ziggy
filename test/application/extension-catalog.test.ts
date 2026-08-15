@@ -60,15 +60,19 @@ describe("approved extension catalogue", () => {
     expect(failure._tag).toBe("ExtensionCatalogInvalid");
   });
 
-  test("selecting a bundled package provisions owned automations without copying the package", async () => {
+  test("selecting a bundled package copies it into the Profile and provisions owned automations", async () => {
     await withCatalog(async (profilePath, catalog) => {
       const installed = await Effect.runPromise(
         catalog.ensureInstalled(profilePath, "/does-not-exist", "self-improvement"),
       );
-      expect(installed).toBe("extensions/self-improvement");
-      await expect(
-        readFile(join(profilePath, "extensions", "self-improvement", "package.json"), "utf8"),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      const packagePath = join(profilePath, "extensions", "self-improvement");
+      expect(installed).toBe(packagePath);
+      expect(await readFile(join(packagePath, "package.json"), "utf8")).toContain(
+        "@ziggy/self-improvement",
+      );
+      expect(await readFile(join(packagePath, "skills", "curator", "SKILL.md"), "utf8")).toContain(
+        "self_improvement_status",
+      );
       expect(
         await readFile(join(profilePath, "automations", "self-improvement-curator.md"), "utf8"),
       ).toContain("owner: extension:self-improvement");
@@ -88,6 +92,49 @@ describe("approved extension catalogue", () => {
           "utf8",
         ),
       ).toContain("owner: extension:self-improvement");
+    });
+  });
+
+  test("materialize copies required packages and every selected ID onto the Profile", async () => {
+    await withCatalog(async (profilePath, catalog) => {
+      await writeFile(join(profilePath, "extensions.json"), '{"extensions":["apple-reminders"]}\n');
+      await Effect.runPromise(catalog.materialize(profilePath, "/does-not-exist"));
+
+      expect(
+        await readFile(join(profilePath, "extensions", "pi-packages", "package.json"), "utf8"),
+      ).toContain("@ziggy/pi-packages");
+      expect(
+        await readFile(
+          join(
+            profilePath,
+            "extensions",
+            "extension-authoring",
+            "skills",
+            "extension-authoring",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+      ).toContain("Create or change a Profile-owned Pi extension");
+      expect(
+        await readFile(
+          join(
+            profilePath,
+            "extensions",
+            "ziggy-operations",
+            "skills",
+            "ziggy-operations",
+            "SKILL.md",
+          ),
+          "utf8",
+        ),
+      ).toContain("Operate Ziggy Profiles");
+      expect(
+        await readFile(
+          join(profilePath, "extensions", "apple-reminders", "scripts", "reminders.applescript"),
+          "utf8",
+        ),
+      ).toContain("list-incomplete");
     });
   });
 

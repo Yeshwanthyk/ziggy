@@ -7,7 +7,6 @@ const helpTopics = new Set<string>([
   "update",
   "init",
   "profiles",
-  "skills",
   "extensions",
   "auth",
   "models",
@@ -142,19 +141,8 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "skills") {
-    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "SkillsList", target: rest[1] };
-    }
-    if (
-      rest[0] === "add" &&
-      (rest.length === 3 || (rest.length === 4 && rest[3] === "--force")) &&
-      required(rest[1]) &&
-      required(rest[2])
-    ) {
-      return { _tag: "SkillsAdd", target: rest[1], source: rest[2], force: rest.length === 4 };
-    }
     return invalid(
-      "usage:\n  ziggy skills list <name|path>\n  ziggy skills add <name|path> <id|path> [--force]",
+      "skills are part of extensions; use:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
     );
   }
 
@@ -413,8 +401,6 @@ const generalHelp = `Usage:
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
   ziggy agents create|list|show|validate|run ...
   ziggy doctor <name|path>
-  ziggy skills list <name|path>
-  ziggy skills add <name|path> <id|path> [--force]
   ziggy extensions list|show|add|remove ...
   ziggy automations create|list|pause|resume|validate|status|runs ...
   ziggy wake <name|path> <automation-id>
@@ -436,8 +422,6 @@ const topicHelp = {
   update: "usage: ziggy update",
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
   profiles: "usage: ziggy profiles",
-  skills:
-    "usage:\n  ziggy skills list <name|path>\n  ziggy skills add <name|path> <id|path> [--force]",
   extensions:
     "usage:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",

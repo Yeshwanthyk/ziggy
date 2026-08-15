@@ -2,9 +2,11 @@
 /* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
 /* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
 import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import executable from "./bin/agent-browser-wrapper.mjs" with { type: "file" };
+
+const executable = join(import.meta.dirname, "bin", "agent-browser-wrapper.mjs");
 
 const TIMEOUT_MS = 120_000;
 const TERMINATION_GRACE_MS = 1_000;

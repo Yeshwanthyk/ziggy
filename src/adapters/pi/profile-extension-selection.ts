@@ -49,6 +49,10 @@ export interface ProfileExtensionCatalogOperations {
     repositoryRoot: string,
     id: string,
   ) => Effect.Effect<void, unknown>;
+  readonly materialize?: (
+    profilePath: string,
+    repositoryRoot: string,
+  ) => Effect.Effect<void, unknown>;
 }
 
 export const createProfileExtensionSelectionRunner = (

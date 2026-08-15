@@ -1,13 +1,13 @@
 /* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi's exec and tool contracts are Promise adapter boundaries. */
 /* eslint-disable ziggy-effect/no-try-catch-or-throw -- Throwing from a Pi tool marks the tool result as failed. */
 /* eslint-disable ziggy-effect/no-error-constructor -- Pi tool failures cross this boundary as rejected Error values. */
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 24 * 1024;
-const executable = fileURLToPath(new URL("./bin/web-search.ts", import.meta.url));
+const executable = join(import.meta.dirname, "bin", "web-search.ts");
 const Parameters = Type.Object(
   { args: Type.Array(Type.String(), { description: "Query words and optional --n <count>." }) },
   { additionalProperties: false },

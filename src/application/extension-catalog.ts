@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer, Predicate } from "effect";
-import { BUILTIN_EXTENSION_CATALOG, bundledPackageMetadata } from "../catalog";
+import { BUILTIN_CORE_SKILLS, BUILTIN_EXTENSION_CATALOG, bundledPackageMetadata } from "../catalog";
 import {
   ExtensionCatalog,
   ExtensionCatalogInstallFailed,
@@ -18,8 +18,8 @@ import {
   type ExtensionArchiveExtractor,
 } from "../adapters/fs/extension-installer";
 import {
-  bundledExtensionPackage,
   readExtensionPackage,
+  readExtensionSelection,
   readSelectedExtensionPackage,
   type ExtensionPackage,
 } from "../adapters/fs/profile-extensions";
@@ -72,6 +72,16 @@ export interface ExtensionCatalogApi {
     repositoryRoot: string,
     id: string,
   ) => Effect.Effect<void, ExtensionCatalogInstallFailed | ProfileExtensionError>;
+  readonly materialize: (
+    profilePath: string,
+    repositoryRoot: string,
+  ) => Effect.Effect<
+    void,
+    | ExtensionCatalogInstallFailed
+    | ExtensionCatalogInvalid
+    | ExtensionCatalogUnavailable
+    | ProfileExtensionError
+  >;
 }
 
 export class ExtensionCatalogService extends Context.Service<
@@ -308,35 +318,37 @@ const makeExtensionCatalogService = (
       }
       if (entry.source === "github") {
         yield* installer.installGitHub(profilePath, entry);
-        const installed = yield* readExtensionPackage(profilePath, id).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ExtensionCatalogInstallFailed({
-                id,
-                path: profilePackagePath,
-                reason: "validation",
-                message: "installed Profile extension failed validation",
-                cause,
-              }),
-          ),
-        );
-        yield* provisionAutomations(profilePath, installed);
-        return profilePackagePath;
+      } else {
+        yield* installer.installBundled(profilePath, entry);
       }
-      const installed = yield* bundledExtensionPackage(id).pipe(
+      const copied = yield* readExtensionPackage(profilePath, id).pipe(
         Effect.mapError(
           (cause) =>
             new ExtensionCatalogInstallFailed({
               id,
-              path: entry.path,
+              path: profilePackagePath,
               reason: "validation",
-              message: "bundled extension failed validation",
+              message: "installed Profile extension failed validation",
               cause,
             }),
         ),
       );
-      yield* provisionAutomations(profilePath, installed);
-      return installed.packagePath;
+      yield* provisionAutomations(profilePath, copied);
+      return profilePackagePath;
+    });
+
+  const materialize = (profilePath: string, repositoryRoot: string) =>
+    Effect.gen(function* () {
+      yield* ensureInstalled(profilePath, repositoryRoot, "pi-packages");
+      yield* Effect.forEach(BUILTIN_CORE_SKILLS, (skill) =>
+        installer.installRequiredSkill(profilePath, {
+          id: skill.id,
+          description: skill.description,
+          files: [...skill.files],
+        }),
+      );
+      const selected = yield* readExtensionSelection(profilePath);
+      yield* Effect.forEach(selected, (id) => ensureInstalled(profilePath, repositoryRoot, id));
     });
 
   const deactivate = (profilePath: string, repositoryRoot: string, id: string) =>
@@ -368,7 +380,7 @@ const makeExtensionCatalogService = (
       yield* pauseOwnedAutomations(profilePath, packageInfo);
     });
 
-  return { list, show, ensureInstalled, deactivate };
+  return { list, show, ensureInstalled, deactivate, materialize };
 };
 
 export const makeExtensionCatalogLive = (

@@ -162,8 +162,21 @@ try {
     "extensions add",
     runExecutable(["extensions", "add", profilePath, "self-improvement"]),
   );
-  if (existsSync(path.join(profilePath, "extensions", "self-improvement"))) {
-    throw new Error("extensions add copied self-improvement into the Profile");
+  const installedPackage = path.join(profilePath, "extensions", "self-improvement");
+  if (!existsSync(path.join(installedPackage, "package.json"))) {
+    throw new Error("extensions add did not copy self-improvement into the Profile");
+  }
+  const expectedCurator = readFileSync(
+    path.join(repositoryRoot, "extensions/self-improvement/skills/curator/SKILL.md"),
+  );
+  const installedCurator = readFileSync(
+    path.join(installedPackage, "skills", "curator", "SKILL.md"),
+  );
+  if (!installedCurator.equals(expectedCurator)) {
+    throw new Error("copied binary did not materialize curator SKILL.md bytes");
+  }
+  if (!text(installedCurator).includes("self_improvement_status")) {
+    throw new Error("copied curator SKILL.md omitted expected curator workflow content");
   }
   const curatorAutomation = readFileSync(
     path.join(profilePath, "automations", "self-improvement-curator.md"),
@@ -173,36 +186,16 @@ try {
     throw new Error("curator automation was not provisioned from the bundled package");
   }
 
-  const skills = runExecutable(["skills", "list", profilePath]);
-  requireSuccess("skills list", skills);
-  for (const skill of ["curator", "pi-packages", "extension-authoring", "ziggy-operations"]) {
-    if (!new RegExp(`(?:^|\\n)${skill}(?:\\n|$)`, "u").test(skills.stdout)) {
-      throw new Error(`skills list omitted ${skill}\n${skills.stdout}`);
-    }
-  }
-
-  requireSuccess("skills add curator", runExecutable(["skills", "add", profilePath, "curator"]));
-  const expectedCurator = readFileSync(
-    path.join(repositoryRoot, "extensions/self-improvement/skills/curator/SKILL.md"),
-  );
-  const installedCurator = readFileSync(path.join(profilePath, "skills", "curator", "SKILL.md"));
-  if (!installedCurator.equals(expectedCurator)) {
-    throw new Error("copied binary did not materialize curator SKILL.md bytes");
-  }
-  if (!text(installedCurator).includes("self_improvement_status")) {
-    throw new Error("copied curator SKILL.md omitted expected curator workflow content");
-  }
-
   const doctor = runExecutable(["doctor", profilePath]);
   if (
     doctor.exitCode !== 1 ||
     !doctor.stdout.includes("OK\tresources\t") ||
-    !doctor.stdout.includes("1 bundled factories, 0 Profile extension entrypoints") ||
+    !doctor.stdout.includes("0 bundled factories, 1 Profile extension entrypoints") ||
     !doctor.stdout.includes(
       `OK\tpi_docs\t@earendil-works/pi-coding-agent@${report.piVersion} fingerprint=${report.piDocsFingerprint} count=${report.piDocsCount}`,
     )
   ) {
-    throw new Error(`doctor did not report bundled resources and pinned Pi docs\n${doctor.stdout}`);
+    throw new Error(`doctor did not report Profile resources and pinned Pi docs\n${doctor.stdout}`);
   }
 
   const models = runExecutable(["models", "status", profilePath]);

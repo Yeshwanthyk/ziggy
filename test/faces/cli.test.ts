@@ -38,11 +38,14 @@ describe("CLI decoding", () => {
       prompt: "hello there",
       continueSession: true,
     });
-    await expect(decode(["skills", "add", "buddy", "daily", "--force"])).resolves.toEqual({
-      _tag: "SkillsAdd",
+    await expect(decode(["extensions", "add", "buddy", "weather"])).resolves.toEqual({
+      _tag: "ExtensionsAdd",
       target: "buddy",
-      source: "daily",
-      force: true,
+      id: "weather",
+    });
+    await expect(decode(["skills", "add", "buddy", "daily", "--force"])).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+      message: expect.stringContaining("skills are part of extensions"),
     });
     await expect(decode(["automations", "runs", "buddy", "morning"])).resolves.toEqual({
       _tag: "AutomationsRuns",

@@ -1,9 +1,11 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's required Promise adapter boundary. */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
+import { join } from "node:path";
 import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import LINEAR_SCRIPT from "./scripts/linear_api.py" with { type: "file" };
+
+const LINEAR_SCRIPT = join(import.meta.dirname, "scripts", "linear_api.py");
 
 const OUTPUT_LIMIT = 32 * 1024;
 

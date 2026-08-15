@@ -42,6 +42,7 @@ import {
 import {
   prepareProfileAgentPrompt,
   ProfileAgentMentionInvalid,
+  ProfileExtensionInvalid,
   type ProfileAgent,
   type ProfileTarget,
 } from "../../domain/profile";
@@ -638,6 +639,18 @@ const createProfileRuntime = (
       return yield* paths.error;
     }
     const agents = admittedAgents ?? (yield* discoverProfileAgents(profilePath));
+    if (extensionCatalog?.materialize !== undefined) {
+      yield* extensionCatalog.materialize(profilePath, repositoryRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProfileExtensionInvalid({
+              path: profilePath,
+              message: "could not install selected Profile extensions onto disk",
+              cause,
+            }),
+        ),
+      );
+    }
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
     const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
 
