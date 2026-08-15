@@ -6,7 +6,6 @@ export type HelpTopic =
   | "update"
   | "init"
   | "profiles"
-  | "skills"
   | "extensions"
   | "auth"
   | "models"
@@ -34,13 +33,6 @@ export type CliCommand =
       readonly thinking?: string;
     }
   | { readonly _tag: "Profiles" }
-  | { readonly _tag: "SkillsList"; readonly target: string }
-  | {
-      readonly _tag: "SkillsAdd";
-      readonly target: string;
-      readonly source: string;
-      readonly force: boolean;
-    }
   | { readonly _tag: "ExtensionsList" }
   | { readonly _tag: "ExtensionsShow"; readonly id: string }
   | { readonly _tag: "ExtensionsAdd"; readonly target: string; readonly id: string }

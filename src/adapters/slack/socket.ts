@@ -18,6 +18,7 @@ export interface SlackInboundMessage {
   readonly text: string;
   readonly ts: string;
   readonly threadTs: string | undefined;
+  readonly teamId?: string;
   readonly files?: ReadonlyArray<SlackInboundFile>;
   readonly omittedFileCount?: number;
 }
@@ -102,6 +103,7 @@ const SocketEnvelopeSchema = Schema.Struct({
 });
 const EventsPayloadSchema = Schema.Struct({
   event_id: Schema.optional(Schema.String),
+  team_id: Schema.optional(Schema.String),
   event: Schema.optional(Schema.Unknown),
 });
 const BoundedFileText = Schema.String.check(Schema.isMaxLength(4_096));
@@ -469,6 +471,7 @@ export const openSlackSocket = (
           return;
         }
         const payload = decodedMessage.value;
+        const teamId = decodedPayload.value.team_id;
         const rawFiles = payload.files ?? [];
         const decodedFiles: Array<typeof SlackMessageFileSchema.Type> = [];
         for (const rawFile of rawFiles.slice(0, MAX_FILES_TO_DECODE)) {
@@ -493,6 +496,7 @@ export const openSlackSocket = (
           text: payload.text ?? "",
           ts: payload.ts,
           threadTs: payload.thread_ts,
+          ...(teamId !== undefined && teamId.length > 0 ? { teamId } : undefined),
           ...(files.length > 0 ? { files } : undefined),
           ...(rawFiles.length > files.length
             ? { omittedFileCount: rawFiles.length - files.length }

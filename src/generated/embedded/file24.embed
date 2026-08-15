@@ -67,7 +67,8 @@ gateway chats, and automations when the package is selected.
 
 Agent Skills remain progressive: frontmatter metadata is loaded at startup and the body is read
 only when needed. Put scripts, references, templates, and assets inside the owning skill folder,
-and reference them relative to `SKILL.md`. This also keeps `ziggy skills add` copies complete.
+and reference them relative to `SKILL.md`. `ziggy extensions add` copies the whole package, so those
+relative files stay next to the skill.
 
 ## Proof
 

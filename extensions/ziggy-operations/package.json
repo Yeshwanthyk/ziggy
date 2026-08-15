@@ -1,0 +1,14 @@
+{
+  "name": "@ziggy/ziggy-operations",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "version": "0.1.0"
+}

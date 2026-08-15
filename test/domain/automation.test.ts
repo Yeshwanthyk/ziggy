@@ -248,6 +248,68 @@ describe("automation definition", () => {
     ).not.toBe("success");
   });
 
+  test("parses optional provider, model, and thinking and inherits when omitted", async () => {
+    const inherited = await parse(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"]);
+    expect(inherited.provider).toBeUndefined();
+    expect(inherited.model).toBeUndefined();
+    expect(inherited.thinking).toBeUndefined();
+
+    const overridden = await parse([
+      "cron: 0 9 * * *",
+      "timezone: UTC",
+      "broadcast: none",
+      "provider: anthropic",
+      "model: claude-sonnet",
+      "thinking: high",
+    ]);
+    expect({
+      provider: overridden.provider,
+      model: overridden.model,
+      thinking: overridden.thinking,
+    }).toEqual({
+      provider: "anthropic",
+      model: "claude-sonnet",
+      thinking: "high",
+    });
+
+    const thinkingOnly = await parse([
+      "cron: 0 9 * * *",
+      "timezone: UTC",
+      "broadcast: none",
+      "thinking: off",
+    ]);
+    expect(thinkingOnly.provider).toBeUndefined();
+    expect(thinkingOnly.model).toBeUndefined();
+    expect(thinkingOnly.thinking).toBe("off");
+  });
+
+  test("rejects unpaired provider/model and unknown thinking", async () => {
+    expect(
+      await invalidMessage([
+        "cron: 0 9 * * *",
+        "timezone: UTC",
+        "broadcast: none",
+        "provider: anthropic",
+      ]),
+    ).toBe("invalid automation daily-note: provider and model must be provided together");
+    expect(
+      await invalidMessage([
+        "cron: 0 9 * * *",
+        "timezone: UTC",
+        "broadcast: none",
+        "model: claude-sonnet",
+      ]),
+    ).toBe("invalid automation daily-note: provider and model must be provided together");
+    expect(
+      await invalidMessage([
+        "cron: 0 9 * * *",
+        "timezone: UTC",
+        "broadcast: none",
+        "thinking: loud",
+      ]),
+    ).not.toBe("success");
+  });
+
   test("returns the direct telegram-chat replacement error", async () => {
     expect(
       await invalidMessage([

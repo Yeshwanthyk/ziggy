@@ -42,8 +42,6 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
       : Effect.void;
   },
   listProfiles: () => Effect.die("unused"),
-  listSkills: () => Effect.die("unused"),
-  addSkill: () => Effect.die("unused"),
   addExtension: () => Effect.die("unused"),
   removeExtension: () => Effect.die("unused"),
 });

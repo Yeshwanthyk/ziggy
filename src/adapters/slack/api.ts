@@ -42,6 +42,10 @@ const UpdateMessageSuccess = Schema.Struct({
 const SetStatusSuccess = Schema.Struct({
   ok: Schema.Literal(true),
 });
+const StreamMessageSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  ts: Schema.String,
+});
 const ReactionSuccess = Schema.Struct({
   ok: Schema.Literal(true),
 });
@@ -94,6 +98,9 @@ const decodeUpdateMessageResponse = Schema.decodeUnknownEffect(
 const decodeSetStatusResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([SetStatusSuccess, SlackFailure])),
 );
+const decodeStreamMessageResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([StreamMessageSuccess, SlackFailure])),
+);
 const decodeReactionResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ReactionSuccess, SlackFailure])),
 );
@@ -124,12 +131,61 @@ export interface SlackThreadHistory {
   readonly truncated: boolean;
 }
 
+export type SlackTaskStatus = "pending" | "in_progress" | "complete" | "error";
+
+export interface SlackTaskUpdateChunk {
+  readonly type: "task_update";
+  readonly id: string;
+  readonly title: string;
+  readonly status: SlackTaskStatus;
+  readonly details?: string;
+}
+
+export interface SlackPlanUpdateChunk {
+  readonly type: "plan_update";
+  readonly title: string;
+}
+
+export type SlackStreamChunk = SlackTaskUpdateChunk | SlackPlanUpdateChunk;
+
+export interface SlackStartStreamOptions {
+  readonly chunks?: ReadonlyArray<SlackStreamChunk>;
+  readonly recipientUserId?: string;
+  readonly recipientTeamId?: string;
+}
+
+const SLACK_STREAM_ID_LIMIT = 32;
+const SLACK_STREAM_TITLE_LIMIT = 80;
+const SLACK_STREAM_DETAILS_LIMIT = 120;
+
+const boundedStreamText = (value: string, maximum: number): string =>
+  [...value].slice(0, maximum).join("");
+
+const encodeStreamChunk = (chunk: SlackStreamChunk) =>
+  chunk.type === "plan_update"
+    ? {
+        type: "plan_update" as const,
+        title: boundedStreamText(chunk.title, SLACK_STREAM_TITLE_LIMIT),
+      }
+    : {
+        type: "task_update" as const,
+        id: boundedStreamText(chunk.id, SLACK_STREAM_ID_LIMIT),
+        title: boundedStreamText(chunk.title, SLACK_STREAM_TITLE_LIMIT),
+        status: chunk.status,
+        ...(chunk.details !== undefined
+          ? { details: boundedStreamText(chunk.details, SLACK_STREAM_DETAILS_LIMIT) }
+          : undefined),
+      };
+
 export type SlackApiOperation =
   | "authTest"
   | "getThreadReplies"
   | "postMessage"
   | "updateMessage"
   | "setStatus"
+  | "startStream"
+  | "appendStream"
+  | "stopStream"
   | "addReaction"
   | "removeReaction"
   | "downloadFile"
@@ -151,6 +207,9 @@ export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("Sla
     "postMessage",
     "updateMessage",
     "setStatus",
+    "startStream",
+    "appendStream",
+    "stopStream",
     "addReaction",
     "removeReaction",
     "downloadFile",
@@ -301,10 +360,28 @@ const request = (
 };
 
 type SlackPostMessageBody = { channel: string; markdown_text: string; thread_ts?: string };
+type SlackEncodedStreamChunk = ReturnType<typeof encodeStreamChunk>;
+type SlackStartStreamBody = {
+  channel: string;
+  thread_ts: string;
+  task_display_mode: "plan";
+  chunks?: ReadonlyArray<SlackEncodedStreamChunk>;
+  recipient_user_id?: string;
+  recipient_team_id?: string;
+};
+type SlackAppendStreamBody = {
+  channel: string;
+  ts: string;
+  chunks: ReadonlyArray<SlackEncodedStreamChunk>;
+};
+type SlackStopStreamBody = { channel: string; ts: string };
 
 type SlackJsonRequestBody =
   | Record<string, never>
   | SlackPostMessageBody
+  | SlackStartStreamBody
+  | SlackAppendStreamBody
+  | SlackStopStreamBody
   | { channel: string; ts: string; markdown_text: string }
   | { channel_id: string; thread_ts: string; status: string }
   | { channel: string; timestamp: string; name: string };
@@ -568,6 +645,84 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
+  startStream: (
+    token: string,
+    channel: string,
+    threadTs: string,
+    options?: SlackStartStreamOptions,
+  ) =>
+    jsonRequest(client, token, "startStream", "chat.startStream", {
+      channel,
+      thread_ts: threadTs,
+      task_display_mode: "plan",
+      ...(options?.chunks !== undefined
+        ? { chunks: options.chunks.map(encodeStreamChunk) }
+        : undefined),
+      ...(options?.recipientUserId !== undefined
+        ? { recipient_user_id: options.recipientUserId }
+        : undefined),
+      ...(options?.recipientTeamId !== undefined
+        ? { recipient_team_id: options.recipientTeamId }
+        : undefined),
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "startStream", response)),
+      Effect.flatMap((response) =>
+        decodeStreamMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("startStream", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.succeed({ ts: envelope.ts })
+              : Effect.fail(slackFailure(token, "startStream", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  appendStream: (
+    token: string,
+    channel: string,
+    ts: string,
+    chunks: ReadonlyArray<SlackTaskUpdateChunk>,
+  ) =>
+    jsonRequest(client, token, "appendStream", "chat.appendStream", {
+      channel,
+      ts,
+      chunks: chunks.map(encodeStreamChunk),
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "appendStream", response)),
+      Effect.flatMap((response) =>
+        decodeStreamMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("appendStream", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "appendStream", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  stopStream: (token: string, channel: string, ts: string) =>
+    jsonRequest(client, token, "stopStream", "chat.stopStream", {
+      channel,
+      ts,
+    }).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "stopStream", response)),
+      Effect.flatMap((response) =>
+        decodeStreamMessageResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("stopStream", "decode", false, cause, token, { status: response.status }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.void
+              : Effect.fail(slackFailure(token, "stopStream", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
   addReaction: (token: string, channel: string, ts: string, name: string) =>
     jsonRequest(client, token, "addReaction", "reactions.add", {
       channel,
@@ -793,6 +948,29 @@ export const setStatus = (
   status: string,
 ): Effect.Effect<void, SlackApiError> =>
   withLiveClient((api) => api.setStatus(token, channel, threadTs, status));
+
+export const startStream = (
+  token: string,
+  channel: string,
+  threadTs: string,
+  options?: SlackStartStreamOptions,
+): Effect.Effect<{ readonly ts: string }, SlackApiError> =>
+  withLiveClient((api) => api.startStream(token, channel, threadTs, options));
+
+export const appendStream = (
+  token: string,
+  channel: string,
+  ts: string,
+  chunks: ReadonlyArray<SlackTaskUpdateChunk>,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.appendStream(token, channel, ts, chunks));
+
+export const stopStream = (
+  token: string,
+  channel: string,
+  ts: string,
+): Effect.Effect<void, SlackApiError> =>
+  withLiveClient((api) => api.stopStream(token, channel, ts));
 
 export const addReaction = (
   token: string,

@@ -2,16 +2,14 @@ import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { APPROVED_BUNDLED_EXTENSION_IDS, BUILTIN_CORE_SKILLS } from "../../catalog";
-import { bundledFilePath } from "../../generated/builtin-files";
+import { APPROVED_BUNDLED_EXTENSION_IDS, REQUIRED_BUNDLED_EXTENSION_IDS } from "../../catalog";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
 import {
   bundledExtensionPackage,
+  readExtensionPackage,
   readExtensionSelection,
-  readSelectedExtensionPackage,
 } from "../fs/profile-extensions";
-import { builtinFactories } from "./generated/builtin-resources";
 
 export interface BundledExtensionFactory {
   readonly name: string;
@@ -44,56 +42,62 @@ const existingDirectory = (directoryPath: string) =>
     Effect.map((status) => (status.isDirectory() ? directoryPath : undefined)),
     Effect.catchIf(
       (error) => error.code === "ENOENT",
-      () => Effect.void,
+      () => Effect.succeed(undefined),
     ),
   );
 
-const requiredBundledSkill = (logicalPath: string) => {
-  const filePath = bundledFilePath(logicalPath);
-  return filePath === undefined
-    ? Effect.fail(
-        new ProfileExtensionInvalid({
-          path: logicalPath,
-          message: `required skill does not exist: ${logicalPath}`,
-          cause: undefined,
-        }),
-      )
-    : Effect.succeed(filePath);
-};
+const missingSelected = (profilePath: string, id: string) =>
+  new ProfileExtensionInvalid({
+    path: join(profilePath, "extensions", id),
+    message: `selected extension '${id}' is not installed at ${join(profilePath, "extensions", id)}`,
+    cause: undefined,
+  });
+
+const readRequiredPackage = (profilePath: string, id: string) =>
+  existingDirectory(join(profilePath, "extensions", id)).pipe(
+    Effect.flatMap((directory) =>
+      directory === undefined ? Effect.succeed(undefined) : readExtensionPackage(profilePath, id),
+    ),
+  );
 
 export const discoverPiResources = (
   profilePath: string,
-  repositoryRoot: string,
+  _repositoryRoot: string,
   approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
   Effect.gen(function* () {
     const selectedIds = yield* readExtensionSelection(profilePath);
-    const required = yield* bundledExtensionPackage("pi-packages");
     const selected = yield* Effect.forEach(selectedIds, (id) =>
-      readSelectedExtensionPackage(profilePath, repositoryRoot, id, approvedRepositoryIds),
-    );
-    const profileExtensionsPath = join(profilePath, "extensions");
-    const profileOwnedPrefix = `${profileExtensionsPath}/`;
-    const isProfileOwned = (packagePath: string) =>
-      packagePath === profileExtensionsPath || packagePath.startsWith(profileOwnedPrefix);
-    const profileOwned = selected.filter((item) => isProfileOwned(item.packagePath));
-    const catalogue = selected.filter((item) => !isProfileOwned(item.packagePath));
-    const profileSkills = yield* existingDirectory(join(profilePath, "skills"));
-    const coreSkills = yield* Effect.forEach(BUILTIN_CORE_SKILLS, (skill) =>
-      requiredBundledSkill(skill.logicalPath),
-    );
-    const selectedBundledIds = new Set(catalogue.map((item) => item.id));
-    return {
-      extensionPaths: profileOwned.flatMap((item) => item.extensionPaths),
-      skillPaths: [
-        ...(profileSkills === undefined ? [] : [profileSkills]),
-        ...profileOwned.flatMap((item) => item.skillPaths),
-        ...required.skillPaths,
-        ...coreSkills,
-        ...catalogue.flatMap((item) => item.skillPaths),
-      ],
-      extensionFactories: builtinFactories.flatMap((entry) =>
-        selectedBundledIds.has(entry.id) ? [{ name: entry.id, factory: entry.factory }] : [],
+      existingDirectory(join(profilePath, "extensions", id)).pipe(
+        Effect.flatMap((directory) => {
+          if (directory !== undefined) return readExtensionPackage(profilePath, id);
+          return approvedRepositoryIds.has(id)
+            ? Effect.fail(missingSelected(profilePath, id))
+            : Effect.fail(
+                new ProfileExtensionInvalid({
+                  path: join(profilePath, "extensions.json"),
+                  message: `selected extension '${id}' is neither approved nor Profile-local`,
+                  cause: undefined,
+                }),
+              );
+        }),
       ),
+    );
+    const required = yield* Effect.forEach([...REQUIRED_BUNDLED_EXTENSION_IDS], (id) =>
+      readRequiredPackage(profilePath, id).pipe(
+        Effect.flatMap((onDisk) =>
+          onDisk === undefined ? bundledExtensionPackage(id) : Effect.succeed(onDisk),
+        ),
+      ),
+    );
+    return {
+      extensionPaths: selected.flatMap((item) =>
+        item.extensionPaths.length > 0 ? [item.packagePath] : [],
+      ),
+      skillPaths: [
+        ...selected.flatMap((item) => item.skillPaths),
+        ...required.flatMap((item) => item.skillPaths),
+      ],
+      extensionFactories: [],
     };
   });

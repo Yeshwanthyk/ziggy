@@ -16,6 +16,7 @@ import { readSlackHealth } from "../adapters/fs/slack-health";
 import { readDiscordHealth } from "../adapters/fs/discord-health";
 import { type AuthApi, Auth } from "./auth";
 import { type ModelsApi, Models } from "./models";
+import { ExtensionCatalogService, type ExtensionCatalogApi } from "./extension-catalog";
 import { parseAutomationFile } from "../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../domain/memory";
 import { type DoctorCheck, type DoctorReport, doctorReport } from "../domain/doctor";
@@ -224,18 +225,29 @@ const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 const resourcesCheck = (
   target: ProfileTarget,
   repositoryRoot: string,
+  catalog: ExtensionCatalogApi | undefined,
 ): Effect.Effect<DoctorCheck> =>
-  discoverPiResources(target.path, repositoryRoot).pipe(
-    Effect.map((resources) =>
-      ok(
-        "resources",
-        `${resources.extensionFactories.length} bundled factories, ${resources.extensionPaths.length} Profile extension entrypoints, and ${resources.skillPaths.length} skill roots selected`,
+  Effect.gen(function* () {
+    if (catalog !== undefined) {
+      const materialized = yield* catalog
+        .materialize(target.path, repositoryRoot)
+        .pipe(Effect.result);
+      if (materialized._tag === "Failure") {
+        return error("resources", "Selected extensions or installed skills are invalid");
+      }
+    }
+    return yield* discoverPiResources(target.path, repositoryRoot).pipe(
+      Effect.map((resources) =>
+        ok(
+          "resources",
+          `${resources.extensionFactories.length} bundled factories, ${resources.extensionPaths.length} Profile extension entrypoints, and ${resources.skillPaths.length} skill roots selected`,
+        ),
       ),
-    ),
-    Effect.catch(() =>
-      Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
-    ),
-  );
+      Effect.catch(() =>
+        Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
+      ),
+    );
+  });
 
 const piDocsCheck = (): DoctorCheck => {
   const documents = loadPinnedPiDocs();
@@ -365,7 +377,11 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
       : error("runtime", "Resident runtime path must be a regular directory");
   });
 
-export const makeDoctor = (auth: AuthApi, models: ModelsApi): DoctorApi => ({
+export const makeDoctor = (
+  auth: AuthApi,
+  models: ModelsApi,
+  catalog?: ExtensionCatalogApi,
+): DoctorApi => ({
   check: (target, repositoryRoot) =>
     Effect.gen(function* () {
       const checks = [
@@ -375,7 +391,7 @@ export const makeDoctor = (auth: AuthApi, models: ModelsApi): DoctorApi => ({
         yield* agentsCheck(target, models),
         yield* automationsCheck(target),
         yield* memoryCheck(target),
-        yield* resourcesCheck(target, repositoryRoot),
+        yield* resourcesCheck(target, repositoryRoot, catalog),
         piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),
@@ -390,6 +406,6 @@ export const makeDoctor = (auth: AuthApi, models: ModelsApi): DoctorApi => ({
 export const DoctorLive = Layer.effect(
   Doctor,
   Effect.gen(function* () {
-    return makeDoctor(yield* Auth, yield* Models);
+    return makeDoctor(yield* Auth, yield* Models, yield* ExtensionCatalogService);
   }),
 );

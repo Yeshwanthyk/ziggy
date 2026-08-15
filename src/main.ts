@@ -228,32 +228,6 @@ const program = Effect.gen(function* () {
       for (const profile of listings) console.log(`${profile.name}\t${profile.path}`);
       return;
     }
-    case "SkillsList": {
-      const listing = yield* profiles.listSkills(
-        resolveProfileTarget(command.target, resolutionOptions),
-        repositoryRoot,
-      );
-      console.log("installed:");
-      if (listing.installed.length === 0) console.log("(none)");
-      else for (const skill of listing.installed) console.log(skill.id);
-      console.log("available:");
-      if (listing.available.length === 0) console.log("(none)");
-      else for (const skill of listing.available) console.log(skill.id);
-      return;
-    }
-    case "SkillsAdd": {
-      const installed = yield* profiles.addSkill(
-        resolveProfileTarget(command.target, resolutionOptions),
-        repositoryRoot,
-        command.source,
-        resolutionOptions.cwd,
-        command.force,
-      );
-      console.log(
-        `${installed.replaced ? "replaced" : "installed"} ${installed.id} at ${installed.destinationPath}`,
-      );
-      return;
-    }
     case "ExtensionsList": {
       const extensions = yield* extensionCatalog.list(repositoryRoot);
       for (const extension of extensions) {
@@ -646,9 +620,6 @@ const program = Effect.gen(function* () {
     SpecialistThinkingUnsupported: (failure) => fail(failure.message),
     SpecialistToolUnsupported: (failure) => fail(failure.message),
     SpecialistRunFailed: (failure) => fail(failure.message),
-    ProfileSkillInvalid: (failure) => fail(failure.message),
-    ProfileSkillNotFound: (failure) => fail(failure.message),
-    ProfileSkillExists: (failure) => fail(failure.message),
     ProfileNotInitialized: (failure) => fail(failure.message),
     ProviderConfigError: (failure) => fail(failure.message),
     ProviderCallError: (failure) => fail(failure.message),
@@ -686,14 +657,18 @@ const program = Effect.gen(function* () {
       AutomationDefinitionsLive,
       AuthLive,
       ModelsLive,
-      DoctorLive.pipe(Layer.provide(Layer.merge(AuthLive, ModelsLive))),
+      DoctorLive.pipe(
+        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+      ),
       SetupLive.pipe(
         Layer.provide(
           Layer.mergeAll(
             ProfilesLive,
             AuthLive,
             ModelsLive,
-            DoctorLive.pipe(Layer.provide(Layer.merge(AuthLive, ModelsLive))),
+            DoctorLive.pipe(
+              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+            ),
           ),
         ),
       ),

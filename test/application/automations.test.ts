@@ -82,9 +82,14 @@ const harness = (
         })),
       ),
     openTui: () => Effect.succeed(0),
-    openChat: (target, context, sessionPath, mode) =>
+    openChat: (target, context, sessionPath, mode, model) =>
       Effect.sync(() => {
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
+        if (model !== undefined) {
+          events.push(
+            `model:${model.provider ?? "-"}/${model.model ?? "-"}/${model.thinking ?? "-"}`,
+          );
+        }
         return {
           prompt: (prompt) =>
             Effect.sync(() => events.push(`prompt:${prompt}`)).pipe(
@@ -290,6 +295,49 @@ describe("automation run", () => {
   test("a tagged automation calls the explicit specialist operation once with the tag stripped", async () => {
     const events: Array<string> = [];
     const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+    expect(events).toEqual([
+      `specialist:research-helper:Write the daily note.:${join(
+        target.path,
+        "sessions",
+        "automations",
+        "daily-note",
+        "manual:00000000-0000-4000-8000-000000000001",
+      )}`,
+      "reply:local reply",
+    ]);
+  });
+
+  test("an untagged automation passes optional model frontmatter to the profile session", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", [
+      "provider: anthropic",
+      "model: claude-sonnet",
+      "thinking: high",
+    ]);
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: { kind: "resolved", targets: [] },
+    });
+    expect(events).toEqual([
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      "model:anthropic/claude-sonnet/high",
+      "prompt:Write the daily note.",
+      "dispose",
+      "reply:local reply",
+    ]);
+  });
+
+  test("a tagged automation keeps specialist routing even when model frontmatter is present", async () => {
+    const events: Array<string> = [];
+    const target = await profile(
+      "none",
+      ["provider: anthropic", "model: claude-sonnet", "thinking: high"],
+      "@research-helper\nWrite the daily note.",
+    );
     expect(await run(harness(events), target)).toEqual({
       kind: "executed",
       delivery: { kind: "resolved", targets: [] },

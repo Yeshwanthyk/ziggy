@@ -57,7 +57,7 @@ export class ProfileAgentMentionInvalid extends Schema.TaggedErrorClass<ProfileA
 ) {}
 
 export const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
-const ProfileAgentThinking = Schema.Literals([
+export const ProfileAgentThinking = Schema.Literals([
   "off",
   "minimal",
   "low",
@@ -66,6 +66,7 @@ const ProfileAgentThinking = Schema.Literals([
   "xhigh",
   "max",
 ]);
+export type ProfileAgentThinking = typeof ProfileAgentThinking.Type;
 
 export const ProfileAgent = Schema.Struct({
   id: ProfileAgentId,
@@ -135,30 +136,6 @@ export const prepareProfileAgentPrompt = (
     text: `${text}\n\n[Ziggy dispatch guidance: call agent_run for the named agent "${agent.id}" with the user's task, then use the result to answer. This is model-guided; @ syntax does not bypass the core model.]`,
   };
 };
-
-export class ProfileSkillInvalid extends Schema.TaggedErrorClass<ProfileSkillInvalid>()(
-  "ProfileSkillInvalid",
-  {
-    path: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-export class ProfileSkillNotFound extends Schema.TaggedErrorClass<ProfileSkillNotFound>()(
-  "ProfileSkillNotFound",
-  {
-    source: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-export class ProfileSkillExists extends Schema.TaggedErrorClass<ProfileSkillExists>()(
-  "ProfileSkillExists",
-  {
-    path: Schema.String,
-    message: Schema.String,
-  },
-) {}
 
 const hasPathSyntax = (value: string): boolean =>
   value.includes("/") ||

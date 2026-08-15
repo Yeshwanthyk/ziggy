@@ -50,6 +50,12 @@
       "path": "./extensions/executor"
     },
     {
+      "id": "extension-authoring",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/extension-authoring"
+    },
+    {
       "id": "gh-issues",
       "version": "0.1.0",
       "source": "bundled",
@@ -198,6 +204,12 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/xurl"
+    },
+    {
+      "id": "ziggy-operations",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/ziggy-operations"
     }
   ]
 }

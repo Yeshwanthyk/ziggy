@@ -36,6 +36,17 @@ definition before Ziggy writes it, refuses to replace bytes changed since the ed
 uses a same-directory atomic replacement. It does not create a second definition store or runtime
 owner.
 
+## Model override
+
+Optional `provider`, `model`, and `thinking` frontmatter select that automation's session model.
+`provider` and `model` must appear together. Omitted fields inherit the Profile default from
+`settings.json`. Registry, auth, and thinking support are checked when the run opens its session —
+the same gates as a Profile agent — and fail the run rather than silently falling back.
+
+A leading `@agent-id` still delegates the whole task to that Profile agent. The agent's own
+`agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
+automation's own (untagged) session.
+
 ## Pause and resume
 
 ```sh

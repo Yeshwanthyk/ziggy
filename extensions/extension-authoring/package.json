@@ -1,0 +1,14 @@
+{
+  "name": "@ziggy/extension-authoring",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "version": "0.1.0"
+}

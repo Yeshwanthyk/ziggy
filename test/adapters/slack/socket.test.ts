@@ -181,6 +181,46 @@ describe("Slack socket Effect boundary", () => {
     expect(received).toMatchObject({ channel: "C1", userId: "U1", ts: "1" });
   });
 
+  test("captures workspace team identity from the events payload", async () => {
+    const fixture = dependencies();
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          const connection = fixture.connections[0];
+          connection?.emitMessage(
+            JSON.stringify({
+              type: "events_api",
+              envelope_id: "envelope-team",
+              payload: {
+                team_id: "T1",
+                event_id: "event-team",
+                event: {
+                  type: "message",
+                  channel: "C1",
+                  channel_type: "channel",
+                  user: "U1",
+                  text: "hello",
+                  ts: "1",
+                },
+              },
+            }),
+          );
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received).toMatchObject({
+      channel: "C1",
+      channelType: "channel",
+      userId: "U1",
+      teamId: "T1",
+      ts: "1",
+    });
+  });
+
   test("admits a file-only event and bounds an oversized raw file list without redelivery", async () => {
     const fixture = dependencies();
     const received = await Effect.runPromise(

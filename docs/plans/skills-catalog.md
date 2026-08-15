@@ -9,22 +9,21 @@ an approved bundled package with the same ID.
 
 - A package has `package.json` with a `pi` manifest.
 - It may expose `skills`, an executable `index.ts`, or both.
-- Skill support files live under the owning skill directory so relative references and
-  `ziggy skills add` whole-tree copies agree.
-- Pi loads Profile skills first, required `pi-packages` next, required `extension-authoring` and
-  `ziggy-operations` next, then selected approved packages. Repository-root `skills/` holds only
-  those two core skills; it is not a discovery directory.
+- Skill support files live under the owning skill directory so relative references stay valid after
+  `ziggy extensions add` copies the whole package onto the Profile.
+- Runtime loads only `<profile>/extensions/<id>/` folders. Required `pi-packages`,
+  `extension-authoring`, and `ziggy-operations` are copied there too. There is no repository-root
+  `skills/` directory.
 - Pi loads skill metadata at startup and full bodies on demand.
-- Executable package factories load at runtime startup.
+- Executable package entrypoints load from the copied Profile folders, not from compiled factories.
 - Pi's normal tools, `memory_write`, and package tools are active in TUI, print, gateway, and
   automation runtimes. Ziggy does not maintain a second tool allowlist.
-- The current catalog is 33 packages, 33 package skills plus 2 required core skills (35 bundled),
-  10 executable packages, and 25 registered tools. The self-improvement package owns bounded
+- The current catalog is 35 packages (3 required), 35 bundled skills, 10 executable packages, and
+  25 registered tools. The self-improvement package owns bounded
   learning observations, native memory review, and Profile-local managed-skill writes; it replaces
   the retired standalone self-improving-agent, smart-memory, skill-curator, and skill-creator
   packages.
-- `ziggy skills list <profile>` shows installed and available skills.
-- `ziggy skills add <profile> <id|path> [--force]` copies one complete skill directory.
+- There is no `ziggy skills add` or `ziggy skills list`. Extensions can be skill-only.
 
 ## Boundary we are keeping
 
@@ -38,9 +37,9 @@ Packages are independent capability boundaries. Their own skills may name their 
 Ziggy core tools, but must not require tools or state owned by another optional package. Agents
 compose available capabilities at runtime.
 
-Ziggy passes extension entrypoints and skill roots separately to Pi so Profile skills retain first
-collision precedence. Package manifests declare the same roots and are proven independently by
-loading the complete catalog as package directories through Pi.
+Ziggy passes extension entrypoints and skill roots separately to Pi. Package manifests declare the
+same roots and are proven independently by copying the complete catalog onto a Profile and loading
+those folders through Pi.
 
 Extension code has full host permissions. Keep each package narrow, explicit, and reviewable.
 Generated package code belongs under `<profile>/extensions/<id>/`; its runtime state belongs under
