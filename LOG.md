@@ -313,3 +313,5 @@ results.
 **Hunk notes on AGENTS.md / profile-prompt.** `ziggy-operations` now points at serve, gateway, or automations. Prompt file reads use Effect `FileSystem.readFileString` with `BunFileSystem.layer` at this adapter; `Effect.tryPromise` around `node:fs/promises` is gone.
 
 **Compiled Apple Reminders host path.** The bundled tools now copy a `$bunfs` AppleScript onto a real temp file before `/usr/bin/osascript`. Source checkouts keep the checkout path. Live Squarey still needs the Profile override removed, a binary reinstall, and a resident restart.
+
+**Squarey Slack Reminders / extension-authoring.** Today's Slack thread was Apple Reminders, not Daily authoring. Squarey's core prompt is `SOUL.md` plus skill *metadata*, not Pi's default docs prompt; `extension-authoring` was listed but unread until the user asked. The model read `pi_docs` `docs/extensions.md` and wrote `.pi/`, then asked for `/reload`. Notes: `docs/research/daily-slack-extension-authoring.md`. The skill description now names `extensions/<id>/` as the write path.

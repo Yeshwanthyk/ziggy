@@ -1,6 +1,6 @@
 ---
 name: extension-authoring
-description: Create or change a Profile-owned Pi extension package for Ziggy.
+description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; /reload does not admit a new package.
 ---
 
 # Ziggy extension authoring
