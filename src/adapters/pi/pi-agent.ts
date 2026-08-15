@@ -699,7 +699,9 @@ const applyConfiguredSessionModel = (
     );
   }
 
+  const overridePresent = overrideProvider !== undefined || override?.thinking !== undefined;
   if (
+    overridePresent &&
     model !== undefined &&
     thinking !== undefined &&
     !getSupportedThinkingLevels(model).some((level) => level === thinking)
