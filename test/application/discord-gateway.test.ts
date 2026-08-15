@@ -11,7 +11,7 @@ import type {
   DiscordIngressPayload,
   DiscordIngressTerminalState,
 } from "ziggy/domain/discord-ingress";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
   discordMessageChunks,
   discordIngressTerminalState,
@@ -110,8 +110,12 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
+            Effect.succeed(
+              makeChatHandle({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -193,10 +197,15 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
             Effect.sync(() => {
               openChatCalls += 1;
-              return { prompt: () => Effect.succeed("unused"), dispose: Effect.void };
+              return makeChatHandle({
+                prompt: () => Effect.succeed("unused"),
+                dispose: Effect.void,
+              });
             }),
         };
         const gateway = makeDiscordGateway(agent, transport);
@@ -324,16 +333,20 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text, options) =>
-                Effect.sync(() => {
-                  promptText = text;
-                  promptImages = options?.images ?? [];
-                  return "image received";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text, options) =>
+                  Effect.sync(() => {
+                    promptText = text;
+                    promptImages = options?.images ?? [];
+                    return "image received";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
         const gateway = makeDiscordGateway(agent, transport, {
           now: () => 100,
@@ -466,9 +479,13 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
             openChatCalls += 1;
-            return Effect.succeed({ prompt: () => Effect.succeed("reply"), dispose: Effect.void });
+            return Effect.succeed(
+              makeChatHandle({ prompt: () => Effect.succeed("reply"), dispose: Effect.void }),
+            );
           },
         };
 
@@ -538,10 +555,12 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (target, context, sessionDirectory) =>
             Effect.sync(() => {
               events.push(`openChat:${target.name}:${JSON.stringify(context)}:${sessionDirectory}`);
-              return {
+              return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     events.push(`prompt:${text}`);
@@ -550,7 +569,7 @@ describe("Discord gateway boundary", () => {
                 dispose: Effect.sync(() => {
                   events.push("dispose");
                 }),
-              };
+              });
             }),
         };
         const gateway = makeDiscordGateway(agent, transport, {
@@ -577,6 +596,94 @@ describe("Discord gateway boundary", () => {
       "close",
       "dispose",
     ]);
+  });
+
+  test("posts specialist voices then still delivers the parent reply", async () => {
+    const posts: Array<string> = [];
+    const updates: Array<string> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const replied = yield* Deferred.make<void>();
+        let nextCall = 0;
+        const socket: DiscordSocket = {
+          next: Effect.suspend(() => {
+            nextCall += 1;
+            return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
+          }),
+          nextConnectionState: Effect.never,
+          close: Effect.void,
+        };
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () => Effect.succeed(socket),
+          getChannel: () => unexpectedDiscordApiCall("getChannel"),
+          startThreadFromMessage: () => unexpectedDiscordApiCall("startThreadFromMessage"),
+          createMessage: (_token, _channelId, text) =>
+            Effect.sync(() => {
+              posts.push(text);
+              return { id: `msg-${posts.length}` };
+            }),
+          updateMessage: (_token, _channelId, _messageId, text) =>
+            Effect.sync(() => {
+              updates.push(text);
+            }),
+        };
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () =>
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) => {
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "alpha",
+                    text: "first look",
+                  });
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "beta",
+                    text: "second look",
+                  });
+                  return Effect.succeed("parent wrap");
+                },
+                dispose: Effect.void,
+              }),
+            ),
+        };
+        const gateway = makeDiscordGateway(agent, transport, {
+          now: () => 100,
+          waitForHeartbeat: Effect.never,
+          write: (_profilePath, snapshot) =>
+            snapshot.completedTurnCount === 1 ? Deferred.succeed(replied, undefined) : Effect.void,
+        });
+
+        yield* Effect.raceFirst(
+          gateway.runLoop(
+            { path: "/tmp/ziggy-discord-voice-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          ),
+          Deferred.await(replied),
+        );
+      }),
+    );
+
+    expect(posts).toContain(formatSpecialistVoice("alpha", "first look"));
+    expect(posts).toContain(formatSpecialistVoice("beta", "second look"));
+    expect(posts.some((text) => text.includes("**alpha:**"))).toBe(true);
+    expect(posts.some((text) => text.includes("**beta:**"))).toBe(true);
+    expect(updates).toContain("parent wrap");
+    expect(updates.some((text) => text.includes("**alpha:**") || text.includes("**beta:**"))).toBe(
+      false,
+    );
   });
 
   test("uses source-message reactions and the native thread typing target", async () => {
@@ -641,11 +748,15 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () => Deferred.await(typingSeen).pipe(Effect.as("done")),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () => Deferred.await(typingSeen).pipe(Effect.as("done")),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -723,17 +834,19 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, _context, sessionDirectory) =>
             Effect.sync(() => {
               opened.push(sessionDirectory);
-              return {
+              return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     prompted.push(`${sessionDirectory}:${text}`);
                     return `reply:${text}`;
                   }),
                 dispose: Effect.void,
-              };
+              });
             }),
         };
 
@@ -767,6 +880,7 @@ describe("Discord gateway boundary", () => {
 
   test("cancels active and queued work, settles health, and fences late completion", async () => {
     const visible: Array<string> = [];
+    let aborted = 0;
     let finalHealth:
       | {
           readonly activeTurnCount: number;
@@ -834,12 +948,19 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () =>
-                Deferred.succeed(promptStarted, undefined).pipe(Effect.andThen(Effect.never)),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () =>
+                  Deferred.succeed(promptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+                abort: Effect.sync(() => {
+                  aborted += 1;
+                }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         const gateway = makeDiscordGateway(agent, transport, {
@@ -876,6 +997,7 @@ describe("Discord gateway boundary", () => {
     expect(visible).toContain("reaction:add:🛑");
     expect(visible).toContain("reaction:add:✅");
     expect(visible.some((text) => text.includes("late reply"))).toBe(false);
+    expect(aborted).toBe(1);
     expect(finalHealth).toMatchObject({
       activeTurnCount: 0,
       queuedTurnCount: 0,
@@ -940,19 +1062,23 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text: string) =>
-                Effect.gen(function* () {
-                  prompts.push(text);
-                  if (text === "first") {
-                    yield* Deferred.succeed(firstStarted, undefined);
-                    yield* Deferred.await(releaseFirst);
-                  }
-                  return `reply:${text}`;
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text: string) =>
+                  Effect.gen(function* () {
+                    prompts.push(text);
+                    if (text === "first") {
+                      yield* Deferred.succeed(firstStarted, undefined);
+                      yield* Deferred.await(releaseFirst);
+                    }
+                    return `reply:${text}`;
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1025,15 +1151,19 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text) =>
-                Effect.sync(() => {
-                  prompted.push(text);
-                  return "reply";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text) =>
+                  Effect.sync(() => {
+                    prompted.push(text);
+                    return "reply";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1107,9 +1237,13 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
             promptCalls += 1;
-            return Effect.succeed({ prompt: () => Effect.succeed("reply"), dispose: Effect.void });
+            return Effect.succeed(
+              makeChatHandle({ prompt: () => Effect.succeed("reply"), dispose: Effect.void }),
+            );
           },
         };
 
@@ -1176,12 +1310,16 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () =>
-                Deferred.succeed(promptStarted, undefined).pipe(Effect.andThen(Effect.never)),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () =>
+                  Deferred.succeed(promptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         const resident = yield* makeDiscordGateway(agent, transport, undefined, ingress)
@@ -1259,15 +1397,19 @@ describe("Discord gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text) =>
-                Effect.sync(() => {
-                  lifecycle.push(`prompt:${text}`);
-                  return "recovered";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text) =>
+                  Effect.sync(() => {
+                    lifecycle.push(`prompt:${text}`);
+                    return "recovered";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(

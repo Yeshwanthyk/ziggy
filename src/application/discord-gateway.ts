@@ -66,7 +66,7 @@ import {
 } from "../domain/discord-health";
 import { codePointLength } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 const DISCORD_MESSAGE_LIMIT = 2_000;
@@ -681,6 +681,15 @@ export const makeDiscordGateway = (
             yield* Effect.forEach(turns, (turn) => Deferred.succeed(turn.cancellation, undefined), {
               discard: true,
             });
+            if (chatState.handle !== undefined) {
+              yield* chatState.handle.abort.pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() => {
+                    console.error(`[discord] ${chatKey} abort failed: ${failure.message}`);
+                  }),
+                ),
+              );
+            }
             return turns.length;
           });
 
@@ -867,9 +876,42 @@ export const makeDiscordGateway = (
                       message,
                       transport.downloadAttachment,
                     );
-                    return yield* handle.prompt(prompt.text, {
+                    const voiceSignals = yield* Queue.unbounded<
+                      | { readonly kind: "voice"; readonly agentId: string; readonly text: string }
+                      | { readonly kind: "done" }
+                    >();
+                    const voicesDrained = yield* Deferred.make<void>();
+                    yield* Effect.gen(function* () {
+                      while (true) {
+                        const signal = yield* Queue.take(voiceSignals);
+                        if (signal.kind === "done") break;
+                        if (!isFresh()) continue;
+                        yield* retryDiscordDelivery("post", () =>
+                          transport.createMessage(
+                            config.botToken,
+                            message.channelId,
+                            formatSpecialistVoice(signal.agentId, signal.text),
+                          ),
+                        ).pipe(
+                          Effect.catch((failure) =>
+                            Effect.sync(() => {
+                              console.error(
+                                `[discord] ${message.chatKey} specialist voice failed: ${failure.message}`,
+                              );
+                            }),
+                          ),
+                        );
+                      }
+                      yield* Deferred.succeed(voicesDrained, undefined);
+                    }).pipe(Effect.forkScoped);
+                    const reply = yield* handle.prompt(prompt.text, {
                       onProgress: (event) => {
-                        if (isFresh() && event.kind === "assistant-text") {
+                        if (!isFresh()) return;
+                        if (event.kind === "voice") {
+                          Queue.offerUnsafe(voiceSignals, event);
+                          return;
+                        }
+                        if (event.kind === "assistant-text") {
                           Queue.offerUnsafe(progress, event.snapshot);
                         }
                       },
@@ -877,6 +919,9 @@ export const makeDiscordGateway = (
                         prompt.images.length > 0 ? ([["images", prompt.images]] as const) : [],
                       ),
                     });
+                    yield* Queue.offer(voiceSignals, { kind: "done" });
+                    yield* Deferred.await(voicesDrained);
+                    return reply;
                   }),
                 );
                 if (!isFresh()) return yield* Effect.interrupt;

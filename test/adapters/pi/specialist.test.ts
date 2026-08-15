@@ -236,6 +236,48 @@ describe("agent_run TUI tool", () => {
     });
   });
 
+  test("emits one voice on success", async () => {
+    const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+    const runner: SpecialistRunner = {
+      run: () => Effect.succeed(result),
+    };
+
+    await invoke(
+      createAgentRunTool(runner, (agentId, text) => voices.push({ agentId, text })),
+      {
+        agent: "research-helper",
+        prompt: "Find the answer",
+      },
+    );
+
+    expect(voices).toEqual([{ agentId: "research-helper", text: "delegated answer" }]);
+  });
+
+  test("emits no voice on runner error", async () => {
+    const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+    const runner: SpecialistRunner = {
+      run: () =>
+        Effect.fail(
+          new SpecialistModelUnsupported({
+            profilePath: "/profile",
+            providerId: "anthropic",
+            modelId: "missing",
+            message: "model is not configured",
+          }),
+        ),
+    };
+
+    await invoke(
+      createAgentRunTool(runner, (agentId, text) => voices.push({ agentId, text })),
+      {
+        agent: "research-helper",
+        prompt: "Find the answer",
+      },
+    );
+
+    expect(voices).toEqual([]);
+  });
+
   test("renders compact and expanded result details", () => {
     expect(renderAgentRunCall({ agent: "research-helper", prompt: "Find the answer" })).toBe(
       "agent_run → research-helper: Find the answer",
@@ -547,6 +589,27 @@ describe("agent_discuss TUI tool", () => {
     });
     const content = response.content[0];
     expect(content?.type === "text" ? content.text : "").toContain("Synthesize the final answer");
+  });
+
+  test("emits a voice after each participant in sorted order", async () => {
+    const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+    const runner: SpecialistRunner = {
+      run: (request) =>
+        Effect.succeed(discussionChildResult(request.agent, `${request.agent} says yes`, 2)),
+    };
+
+    await createAgentDiscussTool(runner, (agentId, text) => voices.push({ agentId, text })).execute(
+      "call",
+      {
+        topic: "Should we choose tea?",
+        agents: ["zeta", "alpha"],
+      },
+    );
+
+    expect(voices).toEqual([
+      { agentId: "alpha", text: "alpha says yes" },
+      { agentId: "zeta", text: "zeta says yes" },
+    ]);
   });
 
   test("runs two bounded rounds and wires the same bounded prior transcript to every second turn", async () => {

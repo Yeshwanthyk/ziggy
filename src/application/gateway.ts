@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Context, Duration, Effect, Layer, Semaphore } from "effect";
+import { Context, Deferred, Duration, Effect, Layer, Queue, Semaphore } from "effect";
 import { loadTelegramConfigFile } from "../adapters/fs/gateway-config";
 import {
   getUpdates,
@@ -7,7 +7,7 @@ import {
   type TelegramApiError,
   type TelegramUpdate,
 } from "../adapters/telegram/api";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
@@ -56,6 +56,11 @@ interface ChatState {
 }
 
 export const loadGatewayConfig = loadTelegramConfigFile;
+
+export const isTelegramStopCommand = (text: string): boolean => {
+  const normalized = text.trim().toLocaleLowerCase();
+  return normalized === "stop" || normalized === "/stop";
+};
 
 export const normalizeTelegramUpdate = (
   update: TelegramUpdate,
@@ -179,8 +184,47 @@ export const makeTelegramGateway = (
                   join(target.path, "sessions", "telegram", message.chatKey),
                 );
               }
+              const handle = chatState.handle;
 
-              const reply = yield* chatState.handle.prompt(message.text);
+              const reply = yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const voiceSignals = yield* Queue.unbounded<
+                    | { readonly kind: "voice"; readonly agentId: string; readonly text: string }
+                    | { readonly kind: "done" }
+                  >();
+                  const voicesDrained = yield* Deferred.make<void>();
+                  yield* Effect.gen(function* () {
+                    while (true) {
+                      const signal = yield* Queue.take(voiceSignals);
+                      if (signal.kind === "done") break;
+                      yield* retryTelegram(() =>
+                        transport.sendMessage(
+                          config.botToken,
+                          message.chatId,
+                          formatSpecialistVoice(signal.agentId, signal.text),
+                        ),
+                      ).pipe(
+                        Effect.catch((failure) =>
+                          Effect.sync(() => {
+                            console.error(
+                              `[gateway] ${message.chatKey} specialist voice failed: ${failure.message}`,
+                            );
+                          }),
+                        ),
+                      );
+                    }
+                    yield* Deferred.succeed(voicesDrained, undefined);
+                  }).pipe(Effect.forkScoped);
+                  const reply = yield* handle.prompt(message.text, {
+                    onProgress: (event) => {
+                      if (event.kind === "voice") Queue.offerUnsafe(voiceSignals, event);
+                    },
+                  });
+                  yield* Queue.offer(voiceSignals, { kind: "done" });
+                  yield* Deferred.await(voicesDrained);
+                  return reply;
+                }),
+              );
               for (const chunk of telegramMessageChunks(reply)) {
                 yield* retryTelegram(() =>
                   transport.sendMessage(config.botToken, message.chatId, chunk),
@@ -198,6 +242,33 @@ export const makeTelegramGateway = (
             ),
           );
         };
+
+        const processStop = (message: InboundMessage) =>
+          Effect.gen(function* () {
+            const handle = chats.get(message.chatKey)?.handle;
+            const running = handle !== undefined && !handle.isIdle;
+            if (handle !== undefined && running) {
+              yield* handle.abort.pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() => {
+                    console.error(`[gateway] ${message.chatKey} abort failed: ${failure.message}`);
+                  }),
+                ),
+              );
+            }
+            const acknowledgement = running ? "Stopped." : "Nothing was running.";
+            yield* retryTelegram(() =>
+              transport.sendMessage(config.botToken, message.chatId, acknowledgement),
+            ).pipe(
+              Effect.catch((failure) =>
+                Effect.sync(() => {
+                  console.error(
+                    `[gateway] ${message.chatKey} stop acknowledgement failed: ${failure.message}`,
+                  );
+                }),
+              ),
+            );
+          });
 
         const startupUpdates = yield* retryTelegram(() =>
           transport.getUpdates(
@@ -218,10 +289,17 @@ export const makeTelegramGateway = (
             const message = normalizeTelegramUpdate(update, config.ownerUserId);
             return message === undefined ? [] : [message];
           });
-          yield* Effect.forEach(messages, processMessage, {
-            concurrency: "unbounded",
-            discard: true,
-          });
+          yield* Effect.forEach(
+            messages,
+            (message) =>
+              isTelegramStopCommand(message.text)
+                ? processStop(message)
+                : processMessage(message).pipe(Effect.forkScoped, Effect.asVoid),
+            {
+              concurrency: "unbounded",
+              discard: true,
+            },
+          );
         }
       }),
     ),

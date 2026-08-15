@@ -24,7 +24,7 @@ import {
 } from "ziggy/domain/agent";
 import { AutomationDatabaseError, type AutomationTargetOutcome } from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 
@@ -82,6 +82,8 @@ const harness = (
         })),
       ),
     openTui: () => Effect.succeed(0),
+    openSpecialistChat: () =>
+      Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
     openChat: (target, context, sessionPath, mode, model) =>
       Effect.sync(() => {
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
@@ -90,7 +92,7 @@ const harness = (
             `model:${model.provider ?? "-"}/${model.model ?? "-"}/${model.thinking ?? "-"}`,
           );
         }
-        return {
+        return makeChatHandle({
           prompt: (prompt) =>
             Effect.sync(() => events.push(`prompt:${prompt}`)).pipe(
               Effect.andThen(
@@ -103,7 +105,7 @@ const harness = (
           dispose: Effect.sync(() => {
             events.push("dispose");
           }),
-        };
+        });
       }),
   };
   const capabilities: AutomationCapabilities = {

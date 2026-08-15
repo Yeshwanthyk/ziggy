@@ -9,18 +9,27 @@ import {
   type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Effect, Fiber, Predicate } from "effect";
-import { ProviderCallError, ProviderConfigError } from "ziggy/domain/agent";
+import { Effect, Exit, Fiber, Predicate } from "effect";
+import {
+  ChatNotStreaming,
+  ProviderCallError,
+  ProviderConfigError,
+  SpecialistAgentNotFound,
+} from "ziggy/domain/agent";
 import { memoryFilePaths, type ChatContext } from "ziggy/domain/memory";
-import type { ChatProgressEvent } from "ziggy/application/agent";
+import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
 import {
   appendEphemeralPromptContext,
   askOnce,
+  createChatEventProjector,
   createLocalSessionManager,
   createProfileMemoryExtension,
   localMainSessionDirectory,
+  localSpecialistSessionDirectory,
+  makeSessionChatHandle,
   openChat,
+  openSpecialistChat,
   openTui,
   promptForAssistantText,
   progressToolDetail,
@@ -28,6 +37,30 @@ import {
   providerError,
   refreshProfileMemory,
 } from "ziggy/adapters/pi/pi-agent";
+
+const assistantMessage = (
+  text: string,
+  extras?: Pick<AssistantMessage, "errorMessage" | "stopReason">,
+): AssistantMessage => ({
+  role: "assistant",
+  content: text.length === 0 ? [] : [{ type: "text", text }],
+  api: "test",
+  provider: "test",
+  model: "test",
+  usage: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason: extras?.stopReason ?? "stop",
+  timestamp: 0,
+  ...Object.fromEntries(
+    extras?.errorMessage === undefined ? [] : ([["errorMessage", extras.errorMessage]] as const),
+  ),
+});
 
 const temporaryPaths: Array<string> = [];
 
@@ -121,6 +154,142 @@ describe("Pi provider failure classification", () => {
         detail: "osascript -e tell Reminders",
       },
     ]);
+  });
+
+  test("thinking deltas stay off onProgress and abort stops the in-flight prompt", async () => {
+    let listener: AgentSessionEventListener | undefined;
+    let aborted = 0;
+    const progress: Array<ChatProgressEvent> = [];
+    const session: Parameters<typeof promptForAssistantText>[1] = {
+      isIdle: false,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      prompt: () => new Promise(() => undefined),
+      abort: async () => {
+        aborted += 1;
+      },
+    };
+    const fiber = Effect.runFork(
+      promptForAssistantText("/profile", session, "hello", {
+        onProgress: (event) => progress.push(event),
+      }),
+    );
+    await Effect.runPromise(Effect.yieldNow);
+    const thinking = assistantMessage("");
+    listener?.({
+      type: "message_update",
+      message: thinking,
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        delta: "hmm",
+        contentIndex: 0,
+        partial: thinking,
+      },
+    });
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(progress).toEqual([]);
+    expect(aborted).toBe(1);
+  });
+
+  test("chat events stay a small Ziggy union and steer fails closed while idle", async () => {
+    const project = createChatEventProjector();
+    const thinking = assistantMessage("hi");
+    expect(
+      project({
+        type: "message_update",
+        message: thinking,
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          delta: "hmm",
+          contentIndex: 0,
+          partial: thinking,
+        },
+      }),
+    ).toEqual([{ kind: "thinking", delta: "hmm" }]);
+    expect(
+      project({
+        type: "message_end",
+        message: assistantMessage("nope", {
+          stopReason: "aborted",
+          errorMessage: "Request aborted",
+        }),
+      }),
+    ).toEqual([{ kind: "error", message: "Request aborted" }]);
+    expect(project({ type: "agent_settled" })).toEqual([{ kind: "settled" }]);
+
+    let idle = true;
+    let aborted = 0;
+    let releaseAbort: (() => void) | undefined;
+    const listeners = new Set<AgentSessionEventListener>();
+    const events: Array<ChatEvent> = [];
+    const handle = makeSessionChatHandle(
+      "/profile",
+      {
+        get isIdle() {
+          return idle;
+        },
+        prompt: () => Promise.resolve(),
+        abort: () => {
+          aborted += 1;
+          return new Promise<void>((resolve) => {
+            releaseAbort = resolve;
+          });
+        },
+        steer: () => Promise.resolve(),
+        followUp: () => Promise.resolve(),
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+      {
+        prompt: () => Effect.succeed("unused"),
+        dispose: Effect.void,
+      },
+    );
+    const unsubscribe = handle.subscribe((event) => events.push(event));
+
+    expect(await Effect.runPromiseExit(handle.steer("nudge"))).toEqual(
+      Exit.fail(
+        new ChatNotStreaming({
+          profilePath: "/profile",
+          operation: "steer",
+          message: "no live turn to steer",
+        }),
+      ),
+    );
+    expect(await Effect.runPromiseExit(handle.followUp("later"))).toEqual(
+      Exit.fail(
+        new ChatNotStreaming({
+          profilePath: "/profile",
+          operation: "followUp",
+          message: "no live turn to follow up",
+        }),
+      ),
+    );
+
+    idle = false;
+    expect(handle.isIdle).toBe(false);
+    const firstAbort = Effect.runPromise(handle.abort);
+    const secondAbort = Effect.runPromise(handle.abort);
+    await Effect.runPromise(Effect.yieldNow);
+    expect(aborted).toBe(1);
+    releaseAbort?.();
+    await Promise.all([firstAbort, secondAbort]);
+
+    for (const listener of listeners) {
+      listener({ type: "agent_settled" });
+    }
+    expect(events).toEqual([{ kind: "settled" }]);
+    unsubscribe();
+    await Effect.runPromise(handle.dispose);
   });
   test("misleading vendor wording remains a provider call failure with stable copy", () => {
     const cause = new Error("authentication failed because auth.json has no credential");
@@ -500,14 +669,16 @@ describe("Pi prompt cancellation", () => {
               deltaLength: [...event.delta].length,
               snapshotLength: [...event.snapshot].length,
             }
-          : {
-              kind: event.kind,
-              phase: event.phase,
-              failed: event.failed,
-              toolCallIdLength: [...event.toolCallId].length,
-              toolNameLength: [...event.toolName].length,
-              toolNameSafe: !event.toolName.includes("<") && !event.toolName.includes("🔥"),
-            },
+          : event.kind === "tool"
+            ? {
+                kind: event.kind,
+                phase: event.phase,
+                failed: event.failed,
+                toolCallIdLength: [...event.toolCallId].length,
+                toolNameLength: [...event.toolName].length,
+                toolNameSafe: !event.toolName.includes("<") && !event.toolName.includes("🔥"),
+              }
+            : { kind: event.kind },
       ),
     ).toEqual([
       { kind: "assistant-text", deltaLength: 512, snapshotLength: 3_800 },
@@ -628,20 +799,25 @@ describe("Profile specialist runtime integration", () => {
   test("rejects an unknown direct agent before creating a root session", async () => {
     const profilePath = await temporaryProfile();
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
-    const result = await Effect.runPromise(
-      runSpecialist(
-        { path: profilePath, name: "Profile" },
-        "missing",
-        "task",
-        { sessionDirectory: join(profilePath, "sessions", "direct") },
-        process.cwd(),
-      ).pipe(Effect.result),
+    expect(
+      await Effect.runPromiseExit(
+        runSpecialist(
+          { path: profilePath, name: "Profile" },
+          "missing",
+          "task",
+          { sessionDirectory: join(profilePath, "sessions", "direct") },
+          process.cwd(),
+        ),
+      ),
+    ).toEqual(
+      Exit.fail(
+        new SpecialistAgentNotFound({
+          profilePath,
+          agentId: "missing",
+          message: "unknown Profile agent: missing",
+        }),
+      ),
     );
-
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "SpecialistAgentNotFound", agentId: "missing" },
-    });
     expect(await readdir(profilePath)).not.toContain("sessions");
   });
 
@@ -848,5 +1024,87 @@ describe("local session routing", () => {
     expect(plainRun.getSessionDir()).toBe(join(profilePath, "sessions"));
     expect(nextPlainRun.getSessionDir()).toBe(join(profilePath, "sessions"));
     expect(nextPlainRun.getSessionFile()).not.toBe(plainRun.getSessionFile());
+  });
+});
+
+describe("specialist chat rails", () => {
+  test("rejects an unknown specialist before creating a local rail session", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    expect(
+      await Effect.runPromiseExit(
+        openSpecialistChat({ path: profilePath, name: "Profile" }, "missing", process.cwd()),
+      ),
+    ).toEqual(
+      Exit.fail(
+        new SpecialistAgentNotFound({
+          profilePath,
+          agentId: "missing",
+          message: "unknown Profile agent: missing",
+        }),
+      ),
+    );
+    expect(await readdir(profilePath)).not.toContain("sessions");
+  });
+
+  test("continues a specialist rail under sessions/local/agents/<id>/", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          [
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"rail answer"},"finish_reason":null}]}',
+            'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+    try {
+      const profilePath = await temporaryProfile();
+      await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+      await mkdir(join(profilePath, "agents"), { recursive: true });
+      await writeFile(
+        join(profilePath, "agents", "reviewer.md"),
+        "---\nversion: 1\ndescription: Reviewer\nprovider: fixture\nmodel: fixture-model\nthinking: off\n---\n\nAnswer briefly.\n",
+        "utf8",
+      );
+      await writeFile(
+        join(profilePath, "models.json"),
+        JSON.stringify({
+          providers: {
+            fixture: {
+              baseUrl: `http://127.0.0.1:${server.port}/v1`,
+              api: "openai-completions",
+              apiKey: "fixture-key",
+              models: [{ id: "fixture-model" }],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const target = { path: profilePath, name: "Profile" };
+      const handle = await Effect.runPromise(openSpecialistChat(target, "reviewer", process.cwd()));
+      try {
+        await Effect.runPromise(handle.prompt("first rail turn"));
+        await Effect.runPromise(handle.prompt("second rail turn"));
+      } finally {
+        await Effect.runPromise(handle.dispose);
+      }
+
+      const sessionDirectory = localSpecialistSessionDirectory(profilePath, "reviewer");
+      const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
+        path.endsWith(".jsonl"),
+      );
+      expect(files).toHaveLength(1);
+      const transcript = await readFile(join(sessionDirectory, files[0] ?? ""), "utf8");
+      expect(transcript).toContain("first rail turn");
+      expect(transcript).toContain("second rail turn");
+      expect(await readdir(join(profilePath, "sessions")).catch(() => [])).not.toContain("slack");
+    } finally {
+      server.stop(true);
+    }
   });
 });

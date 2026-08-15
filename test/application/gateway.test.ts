@@ -3,8 +3,9 @@
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { TelegramUpdate } from "ziggy/adapters/telegram/api";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
+  isTelegramStopCommand,
   makeTelegramGateway,
   nextTelegramOffset,
   normalizeTelegramUpdate,
@@ -33,6 +34,13 @@ describe("Telegram gateway boundary", () => {
 
   test("rejects non-owner messages before Pi", () => {
     expect(normalizeTelegramUpdate(update(1, "hello"), 8)).toBeUndefined();
+  });
+
+  test("treats only exact owner stop text as a stop command", () => {
+    expect(isTelegramStopCommand("stop")).toBe(true);
+    expect(isTelegramStopCommand("/stop")).toBe(true);
+    expect(isTelegramStopCommand(" STOP ")).toBe(true);
+    expect(isTelegramStopCommand("stop now")).toBe(false);
   });
 
   test("keeps group memory channel-scoped", () => {
@@ -104,17 +112,19 @@ describe("Telegram gateway startup", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
-              return {
+              return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     prompts.push(text);
                     return "reply";
                   }),
                 dispose: Effect.void,
-              };
+              });
             }),
         };
         const gateway = makeTelegramGateway(agent, transport);
@@ -137,5 +147,214 @@ describe("Telegram gateway startup", () => {
     ]);
     expect(prompts).toEqual(["new message"]);
     expect(replies).toEqual(["reply"]);
+  });
+});
+
+describe("Telegram gateway stop", () => {
+  test("aborts an in-flight prompt without prompting the stop text", async () => {
+    const prompts: Array<string> = [];
+    const replies: Array<string> = [];
+    let aborted = 0;
+    let poll = 0;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<void>();
+        const transport: TelegramTransport = {
+          getUpdates: () =>
+            Effect.gen(function* () {
+              poll += 1;
+              if (poll === 1) return [];
+              if (poll === 2) return [update(1, "long request")];
+              if (poll === 3) {
+                yield* Deferred.await(started);
+                return [update(2, "stop")];
+              }
+              return yield* Effect.never;
+            }),
+          sendMessage: (_token, _chatId, text) =>
+            Effect.gen(function* () {
+              replies.push(text);
+              if (text === "Stopped.") yield* Deferred.succeed(stopped, undefined);
+            }),
+        };
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () =>
+            Effect.succeed(
+              makeChatHandle({
+                isIdle: false,
+                prompt: (text) =>
+                  Effect.gen(function* () {
+                    prompts.push(text);
+                    yield* Deferred.succeed(started, undefined);
+                    return yield* Effect.never;
+                  }),
+                abort: Effect.sync(() => {
+                  aborted += 1;
+                }),
+                dispose: Effect.void,
+              }),
+            ),
+        };
+
+        yield* Effect.raceFirst(
+          makeTelegramGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-telegram-stop-test", name: "Test" },
+            { botToken: "token", ownerUserId: 7 },
+          ),
+          Deferred.await(stopped),
+        );
+      }),
+    );
+
+    expect(prompts).toEqual(["long request"]);
+    expect(aborted).toBe(1);
+    expect(replies).toEqual(["Stopped."]);
+  });
+
+  test("replies that nothing was running when owner stop arrives idle", async () => {
+    const prompts: Array<string> = [];
+    const replies: Array<string> = [];
+    let aborted = 0;
+    let openChatCalls = 0;
+    let poll = 0;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const acknowledged = yield* Deferred.make<void>();
+        const transport: TelegramTransport = {
+          getUpdates: () =>
+            Effect.gen(function* () {
+              poll += 1;
+              if (poll === 1) return [];
+              if (poll === 2) return [update(1, "/stop")];
+              return yield* Effect.never;
+            }),
+          sendMessage: (_token, _chatId, text) =>
+            Effect.gen(function* () {
+              replies.push(text);
+              yield* Deferred.succeed(acknowledged, undefined);
+            }),
+        };
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () =>
+            Effect.sync(() => {
+              openChatCalls += 1;
+              return makeChatHandle({
+                prompt: (text) =>
+                  Effect.sync(() => {
+                    prompts.push(text);
+                    return "should not prompt";
+                  }),
+                abort: Effect.sync(() => {
+                  aborted += 1;
+                }),
+                dispose: Effect.void,
+              });
+            }),
+        };
+
+        yield* Effect.raceFirst(
+          makeTelegramGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-telegram-idle-stop-test", name: "Test" },
+            { botToken: "token", ownerUserId: 7 },
+          ),
+          Deferred.await(acknowledged),
+        );
+      }),
+    );
+
+    expect(openChatCalls).toBe(0);
+    expect(prompts).toEqual([]);
+    expect(aborted).toBe(0);
+    expect(replies).toEqual(["Nothing was running."]);
+  });
+
+  test("posts specialist voices then still delivers the parent reply", async () => {
+    const replies: Array<string> = [];
+    let poll = 0;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const replied = yield* Deferred.make<void>();
+        const transport: TelegramTransport = {
+          getUpdates: () =>
+            Effect.gen(function* () {
+              poll += 1;
+              if (poll === 1) return [];
+              if (poll === 2) return [update(1, "discuss please")];
+              return yield* Effect.never;
+            }),
+          sendMessage: (_token, _chatId, text) =>
+            Effect.gen(function* () {
+              replies.push(text);
+              if (text === "parent wrap") yield* Deferred.succeed(replied, undefined);
+            }),
+        };
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () =>
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) => {
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "alpha",
+                    text: "first look",
+                  });
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "beta",
+                    text: "second look",
+                  });
+                  return Effect.succeed("parent wrap");
+                },
+                dispose: Effect.void,
+              }),
+            ),
+        };
+
+        yield* Effect.raceFirst(
+          makeTelegramGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-telegram-voice-test", name: "Test" },
+            { botToken: "token", ownerUserId: 7 },
+          ),
+          Deferred.await(replied),
+        );
+      }),
+    );
+
+    expect(replies).toContain(formatSpecialistVoice("alpha", "first look"));
+    expect(replies).toContain(formatSpecialistVoice("beta", "second look"));
+    expect(replies.some((text) => text.includes("**alpha:**"))).toBe(true);
+    expect(replies.some((text) => text.includes("**beta:**"))).toBe(true);
+    expect(replies).toContain("parent wrap");
   });
 });

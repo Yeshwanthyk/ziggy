@@ -9,6 +9,7 @@ import {
   createAgentSessionServices,
   initTheme,
   runPrintMode,
+  type AgentSessionEvent,
   type AgentSessionRuntime,
   type BeforeAgentStartEvent,
   type BeforeAgentStartEventResult,
@@ -22,6 +23,7 @@ import { Database } from "bun:sqlite";
 import { Clock, Context, Effect, Layer, Option, Result, Schema } from "effect";
 import { Type } from "typebox";
 import {
+  ChatNotStreaming,
   ProfileNotInitialized,
   ProviderCallError,
   ProviderConfigError,
@@ -49,7 +51,7 @@ import {
   type ProfileAgent,
   type ProfileTarget,
 } from "../../domain/profile";
-import type { ChatHandle, ChatPromptOptions } from "../../application/agent";
+import type { ChatEvent, ChatHandle, ChatPromptOptions } from "../../application/agent";
 import { fileSystemCauseDetails } from "../fs/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { discoverPiResources, type PiResources } from "./resources";
@@ -104,6 +106,10 @@ export interface PiAgentApi {
     sessionMode?: ChatSessionMode,
     modelOverride?: ChatModelOverride,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
+  readonly openSpecialistChat: (
+    target: ProfileTarget,
+    agentId: string,
+  ) => Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError>;
 }
 
 export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
@@ -547,6 +553,9 @@ export const createEphemeralPromptContextExtension = (
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");
 
+export const localSpecialistSessionDirectory = (profilePath: string, agentId: string): string =>
+  join(profilePath, "sessions", "local", "agents", agentId);
+
 export const createLocalSessionManager = (
   profilePath: string,
   mode: "fresh" | "main",
@@ -621,10 +630,31 @@ export const askOnce = (
     return exitCode;
   });
 
+interface SpecialistVoiceHub {
+  readonly emit: (agentId: string, text: string) => void;
+  readonly subscribe: (listener: (agentId: string, text: string) => void) => () => void;
+}
+
+const createSpecialistVoiceHub = (): SpecialistVoiceHub => {
+  const listeners = new Set<(agentId: string, text: string) => void>();
+  return {
+    emit: (agentId, text) => {
+      for (const listener of listeners) listener(agentId, text);
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+};
+
 interface ProfileRuntime extends AgentSessionRuntime {
   readonly resources: PiResources;
   readonly agents: ReadonlyArray<ProfileAgent>;
   readonly ephemeralPromptContext: EphemeralPromptContextState;
+  readonly voiceHub: SpecialistVoiceHub;
 }
 
 interface ProfileRuntimeOptions {
@@ -747,6 +777,7 @@ const createProfileRuntime = (
 
     const runtimeRef: AgentSessionRuntimeRef = {};
     const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
+    const voiceHub = createSpecialistVoiceHub();
 
     const runtime = yield* piPromise(profilePath, "create agent runtime", async () => {
       const runtime = await createAgentSessionRuntime(
@@ -811,7 +842,10 @@ const createProfileRuntime = (
             createMemoryWriteTool(profilePath, context),
             ...(specialistRunner === undefined
               ? []
-              : [createAgentRunTool(specialistRunner), createAgentDiscussTool(specialistRunner)]),
+              : [
+                  createAgentRunTool(specialistRunner, voiceHub.emit),
+                  createAgentDiscussTool(specialistRunner, voiceHub.emit),
+                ]),
           ];
           const sessionOptions: CreateAgentSessionFromServicesOptions = {
             services,
@@ -846,6 +880,7 @@ const createProfileRuntime = (
       resources,
       agents,
       ephemeralPromptContext,
+      voiceHub,
     });
     runtimeRef.current = profileRuntime;
     return profileRuntime;
@@ -901,6 +936,11 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
 type PromptSession = Pick<
   AgentSessionRuntime["session"],
   "abort" | "isIdle" | "prompt" | "subscribe"
+>;
+
+type ChatSession = Pick<
+  AgentSessionRuntime["session"],
+  "abort" | "followUp" | "isIdle" | "prompt" | "steer" | "subscribe"
 >;
 
 const MAX_PROGRESS_TEXT_CODE_POINTS = 3_800;
@@ -968,23 +1008,166 @@ const assistantTextSnapshot = (content: ReadonlyArray<{ readonly type: string }>
     MAX_PROGRESS_TEXT_CODE_POINTS,
   );
 
+const toolEventPhase = (
+  type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end",
+): "start" | "update" | "end" =>
+  type === "tool_execution_start" ? "start" : type === "tool_execution_update" ? "update" : "end";
+
+export const createChatEventProjector = (): ((
+  event: AgentSessionEvent,
+) => ReadonlyArray<ChatEvent>) => {
+  const lastToolDetail = new Map<string, string>();
+  return (event) => {
+    if (event.type === "message_update" && event.message.role === "assistant") {
+      if (event.assistantMessageEvent.type === "thinking_delta") {
+        const delta = boundedCodePoints(
+          event.assistantMessageEvent.delta,
+          MAX_PROGRESS_DELTA_CODE_POINTS,
+        );
+        return delta.length === 0 ? [] : [{ kind: "thinking", delta }];
+      }
+      if (event.assistantMessageEvent.type !== "text_delta") return [];
+      const delta = boundedCodePoints(
+        event.assistantMessageEvent.delta,
+        MAX_PROGRESS_DELTA_CODE_POINTS,
+      );
+      const snapshot = assistantTextSnapshot(event.message.content);
+      return snapshot.length > 0 || delta.length > 0
+        ? [{ kind: "assistant-text", delta, snapshot }]
+        : [];
+    }
+    if (
+      event.type === "tool_execution_start" ||
+      event.type === "tool_execution_update" ||
+      event.type === "tool_execution_end"
+    ) {
+      const fromArgs = Option.match(
+        decodeProgressToolArgs(event.type === "tool_execution_end" ? undefined : event.args, {
+          onExcessProperty: "ignore",
+        }),
+        {
+          onNone: () => undefined,
+          onSome: progressToolDetail,
+        },
+      );
+      if (fromArgs !== undefined) lastToolDetail.set(event.toolCallId, fromArgs);
+      const detail = fromArgs ?? lastToolDetail.get(event.toolCallId);
+      if (event.type === "tool_execution_end") lastToolDetail.delete(event.toolCallId);
+      return [
+        {
+          kind: "tool",
+          phase: toolEventPhase(event.type),
+          toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
+          toolName: safeProgressToolName(event.toolName),
+          failed: event.type === "tool_execution_end" && event.isError,
+          ...Object.fromEntries(detail === undefined ? [] : ([["detail", detail]] as const)),
+        },
+      ];
+    }
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      if (event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
+        return [];
+      }
+      return [
+        {
+          kind: "error",
+          message: event.message.errorMessage ?? `Request ${event.message.stopReason}`,
+        },
+      ];
+    }
+    if (event.type === "agent_settled") return [{ kind: "settled" }];
+    return [];
+  };
+};
+
+const sharePiAbort = (abort: () => Promise<void>): (() => Promise<void>) => {
+  let inFlight: Promise<void> | undefined;
+  return () => {
+    if (inFlight === undefined) {
+      inFlight = abort().finally(() => {
+        inFlight = undefined;
+      });
+    }
+    return inFlight;
+  };
+};
+
+const chatNotStreaming = (profilePath: string, operation: "steer" | "followUp"): ChatNotStreaming =>
+  new ChatNotStreaming({
+    profilePath,
+    operation,
+    message: operation === "steer" ? "no live turn to steer" : "no live turn to follow up",
+  });
+
+export const makeSessionChatHandle = (
+  profilePath: string,
+  session: ChatSession,
+  methods: Pick<ChatHandle, "prompt" | "dispose">,
+  abortSession: () => Promise<void> = sharePiAbort(() => session.abort()),
+  voiceHub?: SpecialistVoiceHub,
+): ChatHandle => {
+  const listeners = new Set<(event: ChatEvent) => void>();
+  const project = createChatEventProjector();
+  const unsubscribeSession = session.subscribe((event) => {
+    for (const chatEvent of project(event)) {
+      for (const listener of listeners) listener(chatEvent);
+    }
+  });
+  const unsubscribeVoice =
+    voiceHub === undefined
+      ? () => undefined
+      : voiceHub.subscribe((agentId, text) => {
+          const event: ChatEvent = { kind: "voice", agentId, text };
+          for (const listener of listeners) listener(event);
+        });
+
+  return {
+    get isIdle() {
+      return session.isIdle;
+    },
+    prompt: methods.prompt,
+    abort: piPromise(profilePath, "abort agent session", abortSession),
+    steer: (text) =>
+      session.isIdle
+        ? Effect.fail(chatNotStreaming(profilePath, "steer"))
+        : piPromise(profilePath, "steer agent session", () => session.steer(text)),
+    followUp: (text) =>
+      session.isIdle
+        ? Effect.fail(chatNotStreaming(profilePath, "followUp"))
+        : piPromise(profilePath, "follow up agent session", () => session.followUp(text)),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    dispose: Effect.sync(() => {
+      unsubscribeSession();
+      unsubscribeVoice();
+    }).pipe(Effect.andThen(methods.dispose)),
+  };
+};
+
 export const promptForAssistantText = (
   profilePath: string,
   session: PromptSession,
   text: string,
   options?: ChatPromptOptions,
+  voiceHub?: SpecialistVoiceHub,
 ): Effect.Effect<string, ProviderConfigError | ProviderCallError> =>
   Effect.callback((resume) => {
     let assistantText = "";
     let assistantError: string | undefined;
     let finished = false;
     let unsubscribe: () => void = () => undefined;
-    const lastToolDetail = new Map<string, string>();
+    let unsubscribeVoice: () => void = () => undefined;
+    const projector = createChatEventProjector();
 
     const finish = (result: Effect.Effect<string, ProviderConfigError | ProviderCallError>) => {
       if (finished) return;
       finished = true;
       unsubscribe();
+      unsubscribeVoice();
       resume(result);
     };
     const completeAssistant = () =>
@@ -993,46 +1176,10 @@ export const promptForAssistantText = (
         : Effect.fail(providerError(profilePath, "call provider", new Error(assistantError)));
 
     unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_update" && event.message.role === "assistant") {
-        const delta =
-          event.assistantMessageEvent.type === "text_delta"
-            ? boundedCodePoints(event.assistantMessageEvent.delta, MAX_PROGRESS_DELTA_CODE_POINTS)
-            : "";
-        const snapshot = assistantTextSnapshot(event.message.content);
-        if ((snapshot.length > 0 || delta.length > 0) && options?.onProgress !== undefined) {
-          options.onProgress({ kind: "assistant-text", delta, snapshot });
+      for (const chatEvent of projector(event)) {
+        if (chatEvent.kind === "assistant-text" || chatEvent.kind === "tool") {
+          options?.onProgress?.(chatEvent);
         }
-      }
-      if (
-        event.type === "tool_execution_start" ||
-        event.type === "tool_execution_update" ||
-        event.type === "tool_execution_end"
-      ) {
-        const fromArgs = Option.match(
-          decodeProgressToolArgs(event.type === "tool_execution_end" ? undefined : event.args, {
-            onExcessProperty: "ignore",
-          }),
-          {
-            onNone: () => undefined,
-            onSome: progressToolDetail,
-          },
-        );
-        if (fromArgs !== undefined) lastToolDetail.set(event.toolCallId, fromArgs);
-        const detail = fromArgs ?? lastToolDetail.get(event.toolCallId);
-        if (event.type === "tool_execution_end") lastToolDetail.delete(event.toolCallId);
-        options?.onProgress?.({
-          kind: "tool",
-          phase:
-            event.type === "tool_execution_start"
-              ? "start"
-              : event.type === "tool_execution_update"
-                ? "update"
-                : "end",
-          toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
-          toolName: safeProgressToolName(event.toolName),
-          failed: event.type === "tool_execution_end" && event.isError,
-          ...Object.fromEntries(detail === undefined ? [] : ([["detail", detail]] as const)),
-        });
       }
       if (event.type === "message_end" && event.message.role === "assistant") {
         assistantText = event.message.content
@@ -1046,6 +1193,12 @@ export const promptForAssistantText = (
       }
       if (event.type === "agent_settled") finish(completeAssistant());
     });
+    if (voiceHub !== undefined && options?.onProgress !== undefined) {
+      const onProgress = options.onProgress;
+      unsubscribeVoice = voiceHub.subscribe((agentId, text) => {
+        onProgress({ kind: "voice", agentId, text });
+      });
+    }
 
     const promptOptions = options?.images === undefined ? undefined : { images: options.images };
     void session.prompt(text, promptOptions).then(
@@ -1059,6 +1212,7 @@ export const promptForAssistantText = (
       if (finished) return false;
       finished = true;
       unsubscribe();
+      unsubscribeVoice();
       return true;
     }).pipe(
       Effect.flatMap((shouldAbort) =>
@@ -1112,37 +1266,150 @@ export const openChat = (
       Effect.tapError(() => disposeBestEffort),
     );
 
-    return {
-      prompt: (text, options) =>
-        Effect.suspend(() => {
-          const generation = runtime.ephemeralPromptContext.generation + 1;
-          runtime.ephemeralPromptContext.generation = generation;
-          if (options?.ephemeralContext === undefined) {
-            delete runtime.ephemeralPromptContext.value;
-          } else {
-            runtime.ephemeralPromptContext.value = options.ephemeralContext;
-          }
-          const prepared = prepareProfileAgentPrompt(text, runtime.agents);
-          const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
-            ? promptForAssistantText(target.path, runtime.session, prepared.text, options)
-            : Effect.fail(
-                new ProfileAgentMentionInvalid({
-                  profilePath: target.path,
-                  message: prepared.message,
-                }),
-              );
-          return prompted.pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (runtime.ephemeralPromptContext.generation === generation) {
-                  delete runtime.ephemeralPromptContext.value;
-                }
-              }),
-            ),
-          );
-        }),
-      dispose,
+    const abortSession = sharePiAbort(() => runtime.session.abort());
+    const promptSession: PromptSession = {
+      abort: abortSession,
+      prompt: (text, options) => runtime.session.prompt(text, options),
+      subscribe: (listener) => runtime.session.subscribe(listener),
+      get isIdle() {
+        return runtime.session.isIdle;
+      },
     };
+
+    return makeSessionChatHandle(
+      target.path,
+      runtime.session,
+      {
+        prompt: (text, options) =>
+          Effect.suspend(() => {
+            const generation = runtime.ephemeralPromptContext.generation + 1;
+            runtime.ephemeralPromptContext.generation = generation;
+            if (options?.ephemeralContext === undefined) {
+              delete runtime.ephemeralPromptContext.value;
+            } else {
+              runtime.ephemeralPromptContext.value = options.ephemeralContext;
+            }
+            const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+            const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
+              ? promptForAssistantText(
+                  target.path,
+                  promptSession,
+                  prepared.text,
+                  options,
+                  runtime.voiceHub,
+                )
+              : Effect.fail(
+                  new ProfileAgentMentionInvalid({
+                    profilePath: target.path,
+                    message: prepared.message,
+                  }),
+                );
+            return prompted.pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (runtime.ephemeralPromptContext.generation === generation) {
+                    delete runtime.ephemeralPromptContext.value;
+                  }
+                }),
+              ),
+            );
+          }),
+        dispose,
+      },
+      abortSession,
+      runtime.voiceHub,
+    );
+  });
+
+export const openSpecialistChat = (
+  target: ProfileTarget,
+  agentId: string,
+  repositoryRoot: string,
+): Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError> =>
+  Effect.gen(function* () {
+    const soulPath = yield* requireSoul(target.path);
+    const agents = yield* discoverProfileAgents(target.path);
+    if (!agents.some((agent) => agent.id === agentId)) {
+      return yield* new SpecialistAgentNotFound({
+        profilePath: target.path,
+        agentId,
+        message: `unknown Profile agent: ${agentId}`,
+      });
+    }
+
+    const selectedEnvironment = yield* Effect.acquireUseRelease(
+      createProfileRuntime(
+        target.path,
+        repositoryRoot,
+        soulPath,
+        SessionManager.inMemory(target.path),
+        { kind: "local" },
+        { admittedAgents: agents },
+      ),
+      (runtime) =>
+        selectSpecialist(
+          { profilePath: target.path, agents },
+          { agent: agentId, prompt: agentId },
+          runtime,
+        ).pipe(
+          Effect.map((selected) => ({
+            selected,
+            environment: { services: runtime.services, resources: runtime.resources },
+          })),
+        ),
+      (runtime) =>
+        piPromise(target.path, "dispose specialist selection runtime", () =>
+          runtime.dispose(),
+        ).pipe(
+          Effect.catch((failure) =>
+            Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+          ),
+        ),
+    );
+
+    const { selected, environment } = selectedEnvironment;
+    const liveRuntime = yield* specialistRuntime(
+      target.path,
+      environment,
+      selected.agent,
+      selected.model,
+      selected.thinking,
+      selected.tools,
+      SessionManager.continueRecent(
+        target.path,
+        localSpecialistSessionDirectory(target.path, agentId),
+      ),
+    );
+
+    const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
+      liveRuntime.dispose(),
+    );
+    const disposeLiveBestEffort = disposeLive.pipe(
+      Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+    );
+    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(liveRuntime)).pipe(
+      Effect.tapError(() => disposeLiveBestEffort),
+    );
+    const abortSession = sharePiAbort(() => liveRuntime.session.abort());
+    const promptSession: PromptSession = {
+      abort: abortSession,
+      prompt: (text, options) => liveRuntime.session.prompt(text, options),
+      subscribe: (listener) => liveRuntime.session.subscribe(listener),
+      get isIdle() {
+        return liveRuntime.session.isIdle;
+      },
+    };
+
+    return makeSessionChatHandle(
+      target.path,
+      liveRuntime.session,
+      {
+        prompt: (text, options) =>
+          promptForAssistantText(target.path, promptSession, text, options),
+        dispose: disposeLive,
+      },
+      abortSession,
+    );
   });
 
 export const runSpecialist = (
@@ -1284,6 +1551,7 @@ export const makePiAgent = (
     openTui(target, context, repositoryRoot, automationHandler, extensionCatalog),
   openChat: (target, context, sessionDirectory, sessionMode, modelOverride) =>
     openChat(target, context, sessionDirectory, repositoryRoot, sessionMode, modelOverride),
+  openSpecialistChat: (target, agentId) => openSpecialistChat(target, agentId, repositoryRoot),
 });
 
 export const makePiAgentLive = (

@@ -65,6 +65,15 @@ export class ProviderCallError extends Schema.TaggedErrorClass<ProviderCallError
   },
 ) {}
 
+export class ChatNotStreaming extends Schema.TaggedErrorClass<ChatNotStreaming>()(
+  "ChatNotStreaming",
+  {
+    profilePath: Schema.String,
+    operation: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 export class AuthProviderUnknown extends Schema.TaggedErrorClass<AuthProviderUnknown>()(
   "AuthProviderUnknown",
   {

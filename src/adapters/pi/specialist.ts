@@ -543,6 +543,7 @@ const runDiscussion = (
   runner: SpecialistRunner,
   input: AgentDiscussionInput,
   signal?: AbortSignal,
+  onVoice?: (agentId: string, text: string) => void,
 ): DiscussionRun => {
   // Keep this per-invocation accumulator outside the Effect so a typed failure can
   // still publish usage for children that completed before the failing child.
@@ -569,6 +570,7 @@ const runDiscussion = (
         const participant = discussionParticipant(result);
         participants.push(participant);
         combinedUsage = addUsage(combinedUsage, participant.usage);
+        onVoice?.(participant.agent, participant.answer);
       }
       rounds.push({ round, participants });
       if (round === 1 && roundCount === 2) priorOutputs = boundedPriorOutputs(participants);
@@ -797,7 +799,10 @@ export type AgentRunTool = Omit<ToolDefinition, "execute"> & {
   ): Promise<AgentToolResult<unknown>>;
 };
 
-export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
+export const createAgentRunTool = (
+  runner: SpecialistRunner,
+  onVoice?: (agentId: string, text: string) => void,
+): AgentRunTool => ({
   name: "agent_run",
   label: "agent_run",
   description:
@@ -814,7 +819,10 @@ export const createAgentRunTool = (runner: SpecialistRunner): AgentRunTool => ({
     const program = runner.run(rawInput, signal).pipe(
       Effect.match({
         onFailure: (failure) => textResult(`ERROR: ${failure.message}`, { error: failure.message }),
-        onSuccess: (result) => textResult(result.answer, { result }, result.usage),
+        onSuccess: (result) => {
+          onVoice?.(rawInput.agent, result.answer);
+          return textResult(result.answer, { result }, result.usage);
+        },
       }),
     );
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
@@ -907,11 +915,14 @@ export type AgentDiscussTool = Omit<ToolDefinition, "execute"> & {
   ): Promise<AgentToolResult<unknown>>;
 };
 
-export const createAgentDiscussTool = (runner: SpecialistRunner): AgentDiscussTool => ({
+export const createAgentDiscussTool = (
+  runner: SpecialistRunner,
+  onVoice?: (agentId: string, text: string) => void,
+): AgentDiscussTool => ({
   name: "agent_discuss",
   label: "agent_discuss",
   description:
-    "Run a bounded 1-2 round discussion among 2-4 named Profile specialists. Discussion children have no tools and only reason over the topic and bounded prior answers; synthesize the final answer yourself.",
+    "Run a bounded 1-2 round discussion among 2-4 named Profile specialists. Discussion children have no tools and only reason over the topic and bounded prior answers. Synthesize a short wrap; do not paste the full child answers again (faces already posted them).",
   promptSnippet: "agent_discuss(topic, agents, rounds) — compare multiple specialists",
   parameters: discussionParameters,
   executionMode: "sequential",
@@ -935,7 +946,7 @@ export const createAgentDiscussTool = (runner: SpecialistRunner): AgentDiscussTo
         }),
       );
     }
-    const discussion = runDiscussion(runner, rawInput, signal);
+    const discussion = runDiscussion(runner, rawInput, signal, onVoice);
     const program = discussion.effect.pipe(
       Effect.match({
         onFailure: (failure) =>

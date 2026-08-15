@@ -69,7 +69,7 @@ import {
   type SlackHealthSnapshot,
 } from "../domain/slack-health";
 import type { ProfileTarget } from "../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
 const MAX_RETRY_SECONDS = 30;
@@ -1232,6 +1232,15 @@ export const makeSlackGateway = (
                         const statusSignals = yield* Queue.sliding<SlackProgressSignal>(1);
                         const textSignals = yield* Queue.sliding<SlackProgressSignal>(1);
                         const toolSignals = yield* Queue.unbounded<SlackProgressSignal>();
+                        const voiceSignals = yield* Queue.unbounded<
+                          | {
+                              readonly kind: "voice";
+                              readonly agentId: string;
+                              readonly text: string;
+                            }
+                          | { readonly kind: "done" }
+                        >();
+                        const voicesDrained = yield* Deferred.make<void>();
                         const activeTools = new Map<string, string>();
                         const activeToolStatus = (): string | undefined => {
                           const names = [...activeTools.values()];
@@ -1248,6 +1257,26 @@ export const makeSlackGateway = (
                           textSignals,
                           toolSignals,
                         ).pipe(Effect.forkScoped);
+                        yield* Effect.gen(function* () {
+                          while (true) {
+                            const signal = yield* Queue.take(voiceSignals);
+                            if (signal.kind === "done") break;
+                            if (!isFresh()) continue;
+                            yield* retrySlackDelivery("post", () =>
+                              transport.postMessage(
+                                config.botToken,
+                                message.channel,
+                                formatSpecialistVoice(signal.agentId, signal.text),
+                                replyThreadTs,
+                              ),
+                            ).pipe(
+                              Effect.catch((failure) =>
+                                logMessageDeliveryFailure("specialist voice", failure),
+                              ),
+                            );
+                          }
+                          yield* Deferred.succeed(voicesDrained, undefined);
+                        }).pipe(Effect.forkScoped);
                         const threadHistory =
                           message.context.kind === "group" && message.threadTs !== undefined
                             ? yield* transport.getThreadReplies(
@@ -1276,6 +1305,10 @@ export const makeSlackGateway = (
                         const reply = yield* handle.prompt(prompt.text, {
                           onProgress: (event) => {
                             if (!isFresh()) return;
+                            if (event.kind === "voice") {
+                              Queue.offerUnsafe(voiceSignals, event);
+                              return;
+                            }
                             if (event.kind === "assistant-text") {
                               Queue.offerUnsafe(textSignals, {
                                 kind: "text",
@@ -1283,6 +1316,7 @@ export const makeSlackGateway = (
                               });
                               return;
                             }
+                            if (event.kind !== "tool") return;
                             if (event.phase === "end") {
                               activeTools.delete(event.toolCallId);
                             } else {
@@ -1323,6 +1357,8 @@ export const makeSlackGateway = (
                             ].flatMap((entry) => (entry === undefined ? [] : [entry])),
                           ),
                         });
+                        yield* Queue.offer(voiceSignals, { kind: "done" });
+                        yield* Deferred.await(voicesDrained);
                         yield* closeProgressStream(toolSignals);
                         return reply;
                       }),
@@ -1528,6 +1564,15 @@ export const makeSlackGateway = (
               (turn) => Deferred.succeed(turn.cancellation, undefined),
               { discard: true },
             );
+            if (chatState.handle !== undefined) {
+              yield* chatState.handle.abort.pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() => {
+                    console.error(`[slack] ${message.chatKey} abort failed: ${failure.message}`);
+                  }),
+                ),
+              );
+            }
             const cancelledStatusTargets = uniqueSlackStatusTargets(
               cancelled.map((turn) => turn.message),
             );

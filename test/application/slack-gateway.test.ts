@@ -6,7 +6,7 @@ import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
 import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
 import { SlackHealthProjectionError } from "ziggy/domain/slack-health";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
   classifySlackCommand,
   makeSlackGateway,
@@ -582,16 +582,20 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () => {
-                promptCall += 1;
-                return promptCall === 1
-                  ? Deferred.await(releaseFirst).pipe(Effect.as("first reply"))
-                  : Effect.succeed("second reply");
-              },
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () => {
+                  promptCall += 1;
+                  return promptCall === 1
+                    ? Deferred.await(releaseFirst).pipe(Effect.as("first reply"))
+                    : Effect.succeed("second reply");
+                },
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -636,6 +640,7 @@ describe("Slack gateway boundary", () => {
         const terminal = new Map<string, string>();
         const journal = new Map<string, "received" | "running" | string>();
         let promptAborts = 0;
+        let handleAborts = 0;
         let nextCall = 0;
         let now = 0;
 
@@ -747,48 +752,55 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text, options) => {
-                prompts.push(text);
-                if (text === "first") {
-                  now = 2_000;
-                  options?.onProgress?.({
-                    kind: "assistant-text",
-                    delta: "first progress ",
-                    snapshot: `first progress <!channel> ${"a".repeat(80)}`,
-                  });
-                  return Effect.yieldNow.pipe(
-                    Effect.andThen(
-                      Effect.sync(() =>
-                        options?.onProgress?.({
-                          kind: "tool",
-                          phase: "start",
-                          toolCallId: "tool-1",
-                          toolName: "read",
-                          failed: false,
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text, options) => {
+                  prompts.push(text);
+                  if (text === "first") {
+                    now = 2_000;
+                    options?.onProgress?.({
+                      kind: "assistant-text",
+                      delta: "first progress ",
+                      snapshot: `first progress <!channel> ${"a".repeat(80)}`,
+                    });
+                    return Effect.yieldNow.pipe(
+                      Effect.andThen(
+                        Effect.sync(() =>
+                          options?.onProgress?.({
+                            kind: "tool",
+                            phase: "start",
+                            toolCallId: "tool-1",
+                            toolName: "read",
+                            failed: false,
+                          }),
+                        ),
+                      ),
+                      Effect.andThen(Deferred.succeed(promptStarted, undefined)),
+                      Effect.andThen(Effect.never),
+                      Effect.onInterrupt(() =>
+                        Effect.sync(() => {
+                          promptAborts += 1;
+                          now = 4_000;
+                          options?.onProgress?.({
+                            kind: "assistant-text",
+                            delta: "late",
+                            snapshot: `late cancelled progress ${"z".repeat(80)}`,
+                          });
                         }),
                       ),
-                    ),
-                    Effect.andThen(Deferred.succeed(promptStarted, undefined)),
-                    Effect.andThen(Effect.never),
-                    Effect.onInterrupt(() =>
-                      Effect.sync(() => {
-                        promptAborts += 1;
-                        now = 4_000;
-                        options?.onProgress?.({
-                          kind: "assistant-text",
-                          delta: "late",
-                          snapshot: `late cancelled progress ${"z".repeat(80)}`,
-                        });
-                      }),
-                    ),
-                  );
-                }
-                return Effect.succeed(`${text} reply`);
-              },
-              dispose: Effect.void,
-            }),
+                    );
+                  }
+                  return Effect.succeed(`${text} reply`);
+                },
+                dispose: Effect.void,
+                abort: Effect.sync(() => {
+                  handleAborts += 1;
+                }),
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -810,6 +822,7 @@ describe("Slack gateway boundary", () => {
 
         expect(prompts).toEqual(["first", "fresh"]);
         expect(promptAborts).toBe(1);
+        expect(handleAborts).toBe(1);
         expect(Object.fromEntries(terminal)).toEqual({
           "1.0": "cancelled",
           "2.0": "cancelled",
@@ -888,6 +901,8 @@ describe("Slack gateway boundary", () => {
         const journal = new Map<string, "received" | "running" | string>();
         let nextCall = 0;
         let interrupted = 0;
+        let stoppedHandleAborts = 0;
+        let otherHandleAborts = 0;
 
         const ingressRuntime: SlackIngressRuntime = {
           initialize: () => Effect.void,
@@ -981,32 +996,43 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
-          openChat: () =>
-            Effect.succeed({
-              prompt: (text, options) => {
-                prompted.push({
-                  text,
-                  context: options?.ephemeralContext,
-                  images: options?.images,
-                });
-                started.add(text);
-                const signal =
-                  started.size === 2 ? Deferred.succeed(bothStarted, undefined) : Effect.void;
-                return signal.pipe(
-                  Effect.andThen(
-                    text === "other thread"
-                      ? Deferred.await(releaseOther).pipe(Effect.as("other reply"))
-                      : Effect.never,
-                  ),
-                  Effect.onInterrupt(() =>
-                    Effect.sync(() => {
-                      interrupted += 1;
-                    }),
-                  ),
-                );
-              },
-              dispose: Effect.void,
-            }),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: (_target, _context, sessionDirectory) =>
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text, options) => {
+                  prompted.push({
+                    text,
+                    context: options?.ephemeralContext,
+                    images: options?.images,
+                  });
+                  started.add(text);
+                  const signal =
+                    started.size === 2 ? Deferred.succeed(bothStarted, undefined) : Effect.void;
+                  return signal.pipe(
+                    Effect.andThen(
+                      text === "other thread"
+                        ? Deferred.await(releaseOther).pipe(Effect.as("other reply"))
+                        : Effect.never,
+                    ),
+                    Effect.onInterrupt(() =>
+                      Effect.sync(() => {
+                        interrupted += 1;
+                      }),
+                    ),
+                  );
+                },
+                dispose: Effect.void,
+                abort: Effect.sync(() => {
+                  if (sessionDirectory.includes("thread-100.000001")) {
+                    stoppedHandleAborts += 1;
+                  } else {
+                    otherHandleAborts += 1;
+                  }
+                }),
+              }),
+            ),
         };
         const gateway = makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
           { path: "/tmp/ziggy-slack-stop-isolation-test", name: "Test" },
@@ -1042,6 +1068,8 @@ describe("Slack gateway boundary", () => {
           { channel: "C123", threadTs: "200.000001", latestTs: "201.000001" },
         ]);
         expect(interrupted).toBe(1);
+        expect(stoppedHandleAborts).toBe(1);
+        expect(otherHandleAborts).toBe(0);
         expect(Object.fromEntries(terminal)).toEqual({
           "101.000001": "cancelled",
           "102.000001": "completed",
@@ -1137,24 +1165,28 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (text) =>
-                Effect.gen(function* () {
-                  prompted.push(text);
-                  active += 1;
-                  maxActive = Math.max(maxActive, active);
-                  if (active === 4) yield* Deferred.succeed(fourStarted, undefined);
-                  return yield* Deferred.await(release).pipe(Effect.as(`${text} reply`));
-                }).pipe(
-                  Effect.ensuring(
-                    Effect.sync(() => {
-                      active -= 1;
-                    }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (text) =>
+                  Effect.gen(function* () {
+                    prompted.push(text);
+                    active += 1;
+                    maxActive = Math.max(maxActive, active);
+                    if (active === 4) yield* Deferred.succeed(fourStarted, undefined);
+                    return yield* Deferred.await(release).pipe(Effect.as(`${text} reply`));
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        active -= 1;
+                      }),
+                    ),
                   ),
-                ),
-              dispose: Effect.void,
-            }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1315,10 +1347,12 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
-              return {
+              return makeChatHandle({
                 prompt: (text: string, options) =>
                   Effect.gen(function* () {
                     prompts.push(text);
@@ -1401,7 +1435,7 @@ describe("Slack gateway boundary", () => {
                 dispose: Effect.sync(() => {
                   chatDisposed = true;
                 }),
-              };
+              });
             }),
         };
         const ingressRuntime: SlackIngressRuntime = {
@@ -1575,30 +1609,34 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.gen(function* () {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.gen(function* () {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1708,32 +1746,36 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.gen(function* () {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "read",
-                    failed: false,
-                    detail: "SOUL.md",
-                  });
-                  yield* Effect.yieldNow;
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "read",
-                    failed: true,
-                    detail: "SOUL.md",
-                  });
-                  yield* Effect.yieldNow;
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.gen(function* () {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "read",
+                      failed: false,
+                      detail: "SOUL.md",
+                    });
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "read",
+                      failed: true,
+                      detail: "SOUL.md",
+                    });
+                    yield* Effect.yieldNow;
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1850,28 +1892,32 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.sync(() => {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.sync(() => {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -1953,30 +1999,34 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.gen(function* () {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.gen(function* () {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -2106,22 +2156,26 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.gen(function* () {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  return yield* Effect.never;
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.gen(function* () {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    return yield* Effect.never;
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -2198,28 +2252,32 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.sync(() => {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.sync(() => {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -2305,30 +2363,34 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: (_text, options) =>
-                Effect.gen(function* () {
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "start",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  options?.onProgress?.({
-                    kind: "tool",
-                    phase: "end",
-                    toolCallId: "tool-1",
-                    toolName: "bash",
-                    failed: false,
-                  });
-                  yield* Effect.yieldNow;
-                  return "hello back";
-                }),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) =>
+                  Effect.gen(function* () {
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "start",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    options?.onProgress?.({
+                      kind: "tool",
+                      phase: "end",
+                      toolCallId: "tool-1",
+                      toolName: "bash",
+                      failed: false,
+                    });
+                    yield* Effect.yieldNow;
+                    return "hello back";
+                  }),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -2391,19 +2453,23 @@ describe("Slack gateway boundary", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () =>
-                Effect.fail(
-                  new ProviderCallError({
-                    profilePath: "/tmp/ziggy-slack-gateway-test",
-                    operation: "prompt",
-                    message: "test failure",
-                    cause: "test failure",
-                  }),
-                ),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () =>
+                  Effect.fail(
+                    new ProviderCallError({
+                      profilePath: "/tmp/ziggy-slack-gateway-test",
+                      operation: "prompt",
+                      message: "test failure",
+                      cause: "test failure",
+                    }),
+                  ),
+                dispose: Effect.void,
+              }),
+            ),
         };
 
         yield* Effect.raceFirst(
@@ -2416,6 +2482,91 @@ describe("Slack gateway boundary", () => {
 
         expect(statuses).toEqual(["is thinking...", ""]);
         expect(reactions).toEqual(["add:eyes", "remove:eyes", "add:x"]);
+      }),
+    );
+  });
+
+  test("posts specialist voices in the thread then still delivers the parent reply", () => {
+    const posts: Array<string> = [];
+    const updates: Array<string> = [];
+    let nextCall = 0;
+
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const finished = yield* Deferred.make<void>();
+        const transport: SlackTransport = {
+          addReaction: () => Effect.void,
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+          openSocket: () =>
+            Effect.succeed({
+              next: Effect.suspend(() => {
+                nextCall += 1;
+                return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
+              }),
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          setStatus: () => Effect.void,
+          postMessage: (_token, _channel, text) =>
+            Effect.sync(() => {
+              posts.push(text);
+              return { ts: `${posts.length}.1` };
+            }),
+          removeReaction: () => Effect.void,
+          updateMessage: (_token, _channel, _ts, text) =>
+            Effect.gen(function* () {
+              updates.push(text);
+              if (text === "parent wrap") yield* Deferred.succeed(finished, undefined);
+            }),
+        };
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () =>
+            Effect.succeed(
+              makeChatHandle({
+                prompt: (_text, options) => {
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "alpha",
+                    text: "first look",
+                  });
+                  options?.onProgress?.({
+                    kind: "voice",
+                    agentId: "beta",
+                    text: "second look",
+                  });
+                  return Effect.succeed("parent wrap");
+                },
+                dispose: Effect.void,
+              }),
+            ),
+        };
+
+        yield* Effect.raceFirst(
+          makeSlackGateway(agent, transport).runLoop(
+            { path: "/tmp/ziggy-slack-voice-test", name: "Test" },
+            { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+          ),
+          Deferred.await(finished),
+        );
+
+        expect(posts).toContain(formatSpecialistVoice("alpha", "first look"));
+        expect(posts).toContain(formatSpecialistVoice("beta", "second look"));
+        expect(posts.some((text) => text.includes("**alpha:**"))).toBe(true);
+        expect(posts.some((text) => text.includes("**beta:**"))).toBe(true);
+        expect(updates).toContain("parent wrap");
+        expect(
+          updates.some((text) => text.includes("**alpha:**") || text.includes("**beta:**")),
+        ).toBe(false);
       }),
     );
   });

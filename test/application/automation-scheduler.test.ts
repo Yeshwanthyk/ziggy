@@ -19,7 +19,7 @@ import {
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { AutomationDatabaseError, AutomationSchedulerError } from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
   type AutomationCapabilities,
   type AutomationsApi,
@@ -255,15 +255,19 @@ describe("automation scheduler engine", () => {
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
           openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
-            Effect.succeed({
-              prompt: () =>
-                Deferred.succeed(entered, undefined).pipe(
-                  Effect.andThen(Deferred.await(release)),
-                  Effect.as("local reply"),
-                ),
-              dispose: Effect.void,
-            }),
+            Effect.succeed(
+              makeChatHandle({
+                prompt: () =>
+                  Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as("local reply"),
+                  ),
+                dispose: Effect.void,
+              }),
+            ),
         };
         const capabilities: AutomationCapabilities = {
           gate: { run: () => Effect.succeed({ kind: "passed" }) },
@@ -465,11 +469,15 @@ describe("automation scheduler engine", () => {
           session: { id: "specialist", file: "/sessions/specialist.jsonl" },
         }),
       openTui: () => Effect.succeed(0),
+      openSpecialistChat: () =>
+        Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
       openChat: () =>
-        Effect.succeed({
-          prompt: () => Effect.never,
-          dispose: Effect.void,
-        }),
+        Effect.succeed(
+          makeChatHandle({
+            prompt: () => Effect.never,
+            dispose: Effect.void,
+          }),
+        ),
     };
     const capabilities: AutomationCapabilities = {
       gate: { run: () => Effect.succeed({ kind: "passed" }) },

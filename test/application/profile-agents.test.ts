@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
-import type { ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import type { ModelsApi } from "ziggy/application/models";
 import { makeProfileAgents } from "ziggy/application/profile-agents";
 
@@ -21,7 +21,12 @@ const profile = async () => {
 const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
   runOnce: () => Effect.succeed(0),
   openTui: () => Effect.succeed(0),
-  openChat: () => Effect.succeed({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
+  openSpecialistChat: () =>
+    Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+  openChat: () =>
+    Effect.succeed(
+      makeChatHandle({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
+    ),
   runSpecialist: (_target, agentId, task, context) =>
     Effect.sync(() => {
       sessionDirectories.push(context.sessionDirectory);
