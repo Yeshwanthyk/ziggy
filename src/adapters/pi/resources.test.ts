@@ -294,6 +294,11 @@ test("the complete bundled catalog loads through compile-in factories and skill 
   temporaryPaths.push(profilePath);
   const repositoryRoot = resolve(import.meta.dir, "../../..");
   const extensionsRoot = join(repositoryRoot, "extensions");
+  const rootSkillNames = (await readdir(join(repositoryRoot, "skills"), { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  expect(rootSkillNames).toEqual(["extension-authoring", "ziggy-operations"]);
   const expectedPackages = [
     "acp-router",
     "agent-browser",
@@ -439,6 +444,6 @@ test("the complete bundled catalog loads through compile-in factories and skill 
       packageNames.map((name) => join(extensionsRoot, name)),
       [join(repositoryRoot, "skills")],
     ),
-    43,
+    35,
   );
 });

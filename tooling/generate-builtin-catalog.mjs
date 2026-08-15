@@ -215,6 +215,16 @@ const extraSkills = [
   },
 ];
 
+const skillsRoot = join(repositoryRoot, "skills");
+const leftoverSkillDirs = readdirSync(skillsRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .filter((name) => !extraSkills.some((skill) => skill.id === name))
+  .sort((left, right) => left.localeCompare(right));
+if (leftoverSkillDirs.length > 0) {
+  fail(`repository skills/ contains leftover dirs: ${leftoverSkillDirs.join(", ")}`);
+}
+
 const fingerprintSource = JSON.stringify({
   packages: packages.map((item) => ({
     id: item.id,
