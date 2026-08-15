@@ -140,12 +140,102 @@ const ensureStarterDirectory = (
       (failure) => failure.code === "ENOENT",
       () =>
         Effect.tryPromise({
-          try: () => mkdir(directoryPath),
+          try: () => mkdir(directoryPath, { mode: 0o700 }),
           catch: (cause) => fileSystemError("create directory", directoryPath, cause),
         }).pipe(Effect.as(true)),
     ),
   );
 };
+
+const memoryReadme = `# Profile memory
+
+Memory uses one entry per block, separated by a line containing §. The shared document is
+MEMORY.md; person and group documents live under memory/users/ and memory/groups/.
+
+See docs/operations/memory.md for scope rules, caps, backups, and safe hand-editing.
+`;
+
+const validMemoryDirectory =
+  (directoryPath: string) => (status: Awaited<ReturnType<typeof lstat>>) =>
+    status.isDirectory() && !status.isSymbolicLink()
+      ? Effect.void
+      : Effect.fail(
+          fileSystemError(
+            "validate directory",
+            directoryPath,
+            `${directoryPath} must be a regular non-symlink directory`,
+          ),
+        );
+
+const validMemoryFile = (filePath: string) => (status: Awaited<ReturnType<typeof lstat>>) =>
+  status.isFile() && !status.isSymbolicLink()
+    ? Effect.void
+    : Effect.fail(
+        fileSystemError(
+          "validate file",
+          filePath,
+          `${filePath} must be a regular non-symlink file`,
+        ),
+      );
+
+const ensureMemoryDirectory = (
+  targetPath: string,
+  relativePath: string,
+): Effect.Effect<void, ProfileFileSystemError> => {
+  const directoryPath = path.join(targetPath, relativePath);
+  return lstatPath(directoryPath).pipe(
+    Effect.flatMap(validMemoryDirectory(directoryPath)),
+    Effect.catchIf(
+      (failure) => failure.code === "ENOENT",
+      () =>
+        Effect.tryPromise({
+          try: () => mkdir(directoryPath, { mode: 0o700 }),
+          catch: (cause) => fileSystemError("create directory", directoryPath, cause),
+        }).pipe(
+          Effect.asVoid,
+          Effect.catchIf(
+            (failure) => failure.code === "EEXIST",
+            () =>
+              lstatPath(directoryPath).pipe(Effect.flatMap(validMemoryDirectory(directoryPath))),
+          ),
+        ),
+    ),
+  );
+};
+
+const ensureMemoryFile = (
+  targetPath: string,
+  relativePath: string,
+  content: string,
+): Effect.Effect<void, ProfileFileSystemError> => {
+  const filePath = path.join(targetPath, relativePath);
+  return lstatPath(filePath).pipe(
+    Effect.flatMap(validMemoryFile(filePath)),
+    Effect.catchIf(
+      (failure) => failure.code === "ENOENT",
+      () =>
+        Effect.tryPromise({
+          try: () => writeFile(filePath, content, { encoding: "utf8", flag: "wx", mode: 0o600 }),
+          catch: (cause) => fileSystemError("write", filePath, cause),
+        }).pipe(
+          Effect.asVoid,
+          Effect.catchIf(
+            (failure) => failure.code === "EEXIST",
+            () => lstatPath(filePath).pipe(Effect.flatMap(validMemoryFile(filePath))),
+          ),
+        ),
+    ),
+  );
+};
+
+const ensureMemoryScaffold = (targetPath: string): Effect.Effect<void, ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    yield* ensureMemoryDirectory(targetPath, "memory");
+    yield* ensureMemoryDirectory(targetPath, path.join("memory", "users"));
+    yield* ensureMemoryDirectory(targetPath, path.join("memory", "groups"));
+    yield* ensureMemoryFile(targetPath, "MEMORY.md", "");
+    yield* ensureMemoryFile(targetPath, path.join("memory", "README.md"), memoryReadme);
+  });
 
 const initProfile = (
   target: ProfileTarget,
@@ -165,7 +255,7 @@ const initProfile = (
 
     if (targetStatus === undefined) {
       yield* Effect.tryPromise({
-        try: () => mkdir(target.path, { recursive: true }),
+        try: () => mkdir(target.path, { recursive: true, mode: 0o700 }),
         catch: (cause) => fileSystemError("create directory", target.path, cause),
       });
     }
@@ -192,6 +282,7 @@ const initProfile = (
 
     const createdDirectories: Array<"agents" | "automations"> = [];
     if (options.createStarterDirectories === true) {
+      yield* ensureMemoryScaffold(target.path);
       for (const name of ["agents", "automations"] as const) {
         if (yield* ensureStarterDirectory(target.path, name)) createdDirectories.push(name);
       }

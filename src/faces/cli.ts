@@ -1,5 +1,8 @@
-import { Effect, Predicate } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli";
+import { MemoryScopeReference } from "../domain/memory";
+
+const decodeMemoryScope = Schema.decodeUnknownEffect(MemoryScopeReference);
 
 const helpTopics = new Set<string>([
   "help",
@@ -16,6 +19,7 @@ const helpTopics = new Set<string>([
   "automations",
   "wake",
   "sessions",
+  "memory",
   "serve",
   "gateway",
   "tui",
@@ -464,6 +468,38 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     );
   }
 
+  if (word === "memory") {
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "memory list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length <= 1) {
+        const target = parsed.positional[0];
+        return target === undefined
+          ? { _tag: "MemoryList", json: parsed.json }
+          : { _tag: "MemoryList", target, json: parsed.json };
+      }
+    }
+    if (rest[0] === "show") {
+      const parsed = parseJsonArguments(rest.slice(1), "memory show");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (
+        parsed.positional.length === 2 &&
+        required(parsed.positional[0]) &&
+        required(parsed.positional[1])
+      ) {
+        return {
+          _tag: "MemoryShow",
+          target: parsed.positional[0],
+          scope: parsed.positional[1],
+          json: parsed.json,
+        };
+      }
+    }
+    return invalid(
+      "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
+    );
+  }
+
   if (word === "serve") {
     if (rest[0] === "install" && required(rest[1])) {
       let force = false;
@@ -526,7 +562,14 @@ export const decodeCliCommand = (
   input: ReadonlyArray<string>,
 ): Effect.Effect<CliCommand, CliInputInvalid> => {
   const parsed = parseTypedArguments(input);
-  return parsed._tag === "CliInputInvalid" ? Effect.fail(parsed) : Effect.succeed(parsed);
+  if (parsed._tag === "CliInputInvalid") return Effect.fail(parsed);
+  if (parsed._tag !== "MemoryShow") return Effect.succeed(parsed);
+  return decodeMemoryScope(parsed.scope).pipe(
+    Effect.map((scope) => ({ ...parsed, scope })),
+    Effect.mapError(() =>
+      invalid("usage: ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]"),
+    ),
+  );
 };
 
 const generalHelp = `Usage:
@@ -545,6 +588,7 @@ const generalHelp = `Usage:
   ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ... [--json]
+  ziggy memory list|show ... [--json]
   ziggy serve <name|path>
   ziggy serve install <name|path> [--force] [--no-start]
   ziggy serve start|stop|restart <name|path>
@@ -576,6 +620,8 @@ const topicHelp = {
   wake: "usage: ziggy wake <name|path> <automation-id>",
   sessions:
     "usage:\n  ziggy sessions list <name|path> [--json]\n  ziggy sessions show <name|path> <session-id|relative-path> [--json]",
+  memory:
+    "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
   serve: serveHelp,
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",

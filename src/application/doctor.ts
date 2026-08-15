@@ -195,7 +195,12 @@ const collectMemoryFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<
       const entryPath = path.join(directoryPath, entry.name);
       if (entry.isSymbolicLink()) return yield* Effect.fail("symlinked memory entry");
       if (entry.isDirectory()) files.push(...(yield* collectMemoryFiles(entryPath)));
-      else if (entry.isFile() && entry.name.endsWith(".md")) files.push(entryPath);
+      else if (
+        entry.isFile() &&
+        entry.name.endsWith(".md") &&
+        !(path.basename(directoryPath) === "memory" && entry.name === "README.md")
+      )
+        files.push(entryPath);
     }
     return files;
   });

@@ -1,7 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup exercises the Node filesystem adapter */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- test cleanup requires finally around temporary directories */
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect, Predicate, Result } from "effect";
@@ -132,6 +132,41 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
     ).rejects.toMatchObject({ _tag: "ProfileTargetNotDirectory" });
     expect(await readFile(path.join(root, "human-soul.md"), "utf8")).toBe("do not touch\n");
     expect(await readdir(symlinkSoul)).toEqual(["SOUL.md"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("non-minimal init scaffolds private memory files and preserves them on rerun", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ziggy-memory-scaffold-test-"));
+  const profilePath = path.join(root, "profile");
+  const target = { path: profilePath, name: "Profile" };
+  try {
+    await useProfiles((profiles) =>
+      profiles.initProfile(target, { createStarterDirectories: true }),
+    );
+    const sharedMemoryPath = path.join(profilePath, "MEMORY.md");
+    const memoryReadmePath = path.join(profilePath, "memory", "README.md");
+    const paths = [sharedMemoryPath, memoryReadmePath];
+    expect(await readFile(sharedMemoryPath, "utf8")).toBe("");
+    expect(await readFile(memoryReadmePath, "utf8")).toContain("docs/operations/memory.md");
+    for (const directory of [
+      path.join(profilePath, "memory"),
+      path.join(profilePath, "memory", "users"),
+      path.join(profilePath, "memory", "groups"),
+    ]) {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    }
+    for (const file of paths) expect((await stat(file)).mode & 0o777).toBe(0o600);
+
+    await writeFile(sharedMemoryPath, "human memory\n");
+    await writeFile(memoryReadmePath, "human README\n");
+    const before = await snapshotTree(profilePath);
+    const rerun = await useProfiles((profiles) =>
+      profiles.initProfile(target, { createStarterDirectories: true }),
+    );
+    expect(rerun).toEqual({ path: profilePath, created: false, createdDirectories: [] });
+    expect(await snapshotTree(profilePath)).toEqual(before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

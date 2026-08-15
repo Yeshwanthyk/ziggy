@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { MemoryScopeReference } from "./memory";
 
 export type HelpTopic =
   | "help"
@@ -15,6 +16,7 @@ export type HelpTopic =
   | "automations"
   | "wake"
   | "sessions"
+  | "memory"
   | "serve"
   | "gateway"
   | "tui";
@@ -103,6 +105,13 @@ export type CliCommand =
       readonly _tag: "SessionsShow";
       readonly target: string;
       readonly reference: string;
+      readonly json: boolean;
+    }
+  | { readonly _tag: "MemoryList"; readonly target?: string; readonly json: boolean }
+  | {
+      readonly _tag: "MemoryShow";
+      readonly target: string;
+      readonly scope: MemoryScopeReference;
       readonly json: boolean;
     }
   | { readonly _tag: "Serve"; readonly target: string }

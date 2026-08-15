@@ -28,6 +28,7 @@ import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
 import { Models, ModelsLive } from "./application/models";
+import { Memory, MemoryLive } from "./application/memory";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
@@ -37,6 +38,7 @@ import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
+import { parseMemoryScopeReference } from "./domain/memory";
 import {
   resolveProfileTarget,
   resolveProfilesDirectory,
@@ -65,6 +67,12 @@ import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./f
 import { renderDoctor } from "./faces/doctor-cli";
 import { renderExtensionJson, renderExtensionsJson } from "./faces/extensions-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
+import {
+  renderMemoryList,
+  renderMemoryListJson,
+  renderMemoryShow,
+  renderMemoryShowJson,
+} from "./faces/memory-cli";
 import { renderProfilesJson } from "./faces/profiles-cli";
 import {
   renderSession,
@@ -75,6 +83,7 @@ import {
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
+import { MemoryFilesLive } from "./adapters/fs/memory-files";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -169,6 +178,7 @@ const program = Effect.gen(function* () {
   const sessions = yield* Sessions;
   const extensionCatalog = yield* ExtensionCatalogService;
   const selfUpdate = yield* SelfUpdate;
+  const memory = yield* Memory;
 
   switch (command._tag) {
     case "Init": {
@@ -508,6 +518,21 @@ const program = Effect.gen(function* () {
       console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
       return;
     }
+    case "MemoryList": {
+      const listed = yield* memory.list(
+        resolveProfileTarget(command.target ?? ".", resolutionOptions),
+      );
+      console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed));
+      return;
+    }
+    case "MemoryShow": {
+      const shown = yield* memory.show(
+        resolveProfileTarget(command.target, resolutionOptions),
+        parseMemoryScopeReference(command.scope),
+      );
+      console.log(command.json ? renderMemoryShowJson(shown) : renderMemoryShow(shown));
+      return;
+    }
     case "ServeInstall": {
       const result = yield* residentService.install(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -679,6 +704,8 @@ const program = Effect.gen(function* () {
     ModelSettingsWriteFailed: (failure) => fail(failure.message),
     SetupIncomplete: (failure) => fail(failure.message),
     MemoryIdInvalid: (failure) => fail(failure.message),
+    MemoryDocumentInvalid: (failure) => fail(failure.message),
+    MemoryFileSystemError: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationPaused: (failure) => fail(failure.message),
@@ -730,6 +757,7 @@ const program = Effect.gen(function* () {
       ResidentServiceProvided,
       ExtensionCatalogProvided,
       SelfUpdateProvided,
+      MemoryLive.pipe(Layer.provide(MemoryFilesLive)),
     ),
   ),
 );

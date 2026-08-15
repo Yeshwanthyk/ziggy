@@ -162,6 +162,28 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
   }
 });
 
+test("doctor excludes the format README from memory size checks", async () => {
+  const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-memory-readme-"));
+  try {
+    await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
+    await mkdir(path.join(profilePath, "memory"));
+    await writeFile(path.join(profilePath, "memory", "README.md"), "x".repeat(10_000));
+    const report = await Effect.runPromise(
+      makeDoctor(auth, models).check(
+        { path: profilePath, name: "Test" },
+        path.resolve(import.meta.dir, "../.."),
+      ),
+    );
+    expect(report.checks.find((check) => check.id === "memory")).toEqual({
+      id: "memory",
+      severity: "ok",
+      message: "0 memory files within size caps",
+    });
+  } finally {
+    await rm(profilePath, { recursive: true, force: true });
+  }
+});
+
 test("doctor uses the session projection for broken parent links", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-lineage-"));
   try {
