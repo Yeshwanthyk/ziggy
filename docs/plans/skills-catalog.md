@@ -12,14 +12,14 @@ an approved bundled package with the same ID.
 - Skill support files live under the owning skill directory so relative references stay valid after
   `ziggy extensions add` copies the whole package onto the Profile.
 - Runtime loads only `<profile>/extensions/<id>/` folders. Required `pi-packages`,
-  `extension-authoring`, and `ziggy-operations` are copied there too. Repository-root `skills/`
-  holds the two core skill sources used to generate those copies; it is not a discovery directory.
+  `extension-authoring`, and `ziggy-operations` are copied there too. There is no repository-root
+  `skills/` directory.
 - Pi loads skill metadata at startup and full bodies on demand.
 - Executable package entrypoints load from the copied Profile folders, not from compiled factories.
 - Pi's normal tools, `memory_write`, and package tools are active in TUI, print, gateway, and
   automation runtimes. Ziggy does not maintain a second tool allowlist.
-- The current catalog is 33 packages, 33 package skills plus 2 required core skills (35 bundled),
-  10 executable packages, and 25 registered tools. The self-improvement package owns bounded
+- The current catalog is 35 packages (3 required), 35 bundled skills, 10 executable packages, and
+  25 registered tools. The self-improvement package owns bounded
   learning observations, native memory review, and Profile-local managed-skill writes; it replaces
   the retired standalone self-improving-agent, smart-memory, skill-curator, and skill-creator
   packages.

@@ -344,3 +344,8 @@ results.
 
 **Installed Squarey Profile-extension binary.** Release `dist/ziggy` at `ad11698` (build sha `faf12144…`, smoke pass, ad-hoc signed install sha `4881a256…`) replaced `/Users/yesh/commands/ziggy`. Restarted the managed resident (pid 91743). Doctor: 0 bundled factories, 3 Profile extension entrypoints, 9 skill roots; Discord and Slack connected with empty queues. Squarey `extensions/` now holds the six selected packages plus required `pi-packages` / `extension-authoring` / `ziggy-operations`, including a real `apple-reminders` `SKILL.md`. Prior binary: `/Users/yesh/commands/ziggy.backup-20260815T121401Z`.
 
+**Required skills are packages.** Moved `extension-authoring` and `ziggy-operations` from repository-root `skills/` into `extensions/` as skill-only required packages, same shape as `pi-packages`. Runtime materialize/load, add/remove reservation, and the catalog generator now share one required-ID set. `BUILTIN_CORE_SKILLS` and `installRequiredSkill` are gone.
+
+**CLI+filesystem UI-hook research.** Compared Grok Bot, Grok Build, and Hermes desktop/bot mode to Ziggy's CLI, Profile files, and `ZiggyAgent`. Notes: `docs/research/ui-cli-filesystem-hooks.md`. Management UIs can ship on files+CLI; a live chat GUI cannot until a session protocol (complete ChatHandle, then app server / ACP) exists. Aligns with the 2026-08-13 pluggability study. Scout follow-up: Hermes-Bot-Mode is a desktop plugin over `hermes serve` JSON-RPC (`/api/ws`); Pi RPC is NDJSON not JSON-RPC and unused; `ziggy run` streams unframed text only; `USER.md` is unimplemented.
+
+
