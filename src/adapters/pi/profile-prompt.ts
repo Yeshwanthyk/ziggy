@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { BunFileSystem } from "@effect/platform-bun";
 import { Effect, FileSystem } from "effect";
 import { ProviderConfigError } from "../../domain/agent";
-import agentsMarkdown from "../../../skills/AGENTS.md" with { type: "file" };
+import agentsMarkdown from "./AGENTS.md" with { type: "file" };
 
 export const PROFILE_AGENTS_NAME_TOKEN = "{{profile}}";
 export const profileAgentsPath: string = `${agentsMarkdown}`;
