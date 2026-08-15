@@ -385,3 +385,5 @@ results.
 **Versioned 0.1.0 with a changelog.** `package.json` was already `0.1.0` and `ziggy version` already printed it. Added Keep a Changelog `CHANGELOG.md` as the 0.1.0 baseline, linked it from README, made doctor report `Ziggy 0.1.0`, and pointed standalone smoke at `package.json` instead of a hardcoded version string. Future releases append under `[Unreleased]` then cut a new section.
 
 **Curl-installable GitHub release.** `scripts/install.sh` downloads checksum-pinned `ziggy-darwin-arm64` from GitHub Releases into `~/.local/bin/ziggy` and refuses to overwrite a symlink. Tag workflow `.github/workflows/release.yml` publishes that asset, its SHA-256, and the installer. `ziggy update` already used the same URL shape. 0.1.0 is macOS Apple Silicon only.
+
+**MIT licensing.** Added the standard MIT license under Yeshwanthyk and declared it in `package.json`.
