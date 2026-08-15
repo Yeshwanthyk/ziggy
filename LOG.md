@@ -307,3 +307,7 @@ results.
 **Installed the verified Pi 0.84.1 binary for Squarey.** Built the dirty-tree development artifact, passed 433 tests, the full check, and checkout/network-denied one-file smoke, then ad-hoc signed and atomically installed it at `/Users/yesh/commands/ziggy`. Reapplied `opencode-go/deepseek-v4-flash` with thinking `high` through `ziggy models set` and restarted the managed resident. Doctor reports embedded Pi 0.84.1 docs, compiled factories/skills, configured auth, and connected Discord/Slack with empty queues. The prior binary is recoverable at `/Users/yesh/commands/ziggy.backup-20260813T160031Z`.
 
 **Console Go tool-schema compatibility.** Kept the `pi_docs` action union and its branch-specific validation, while adding the redundant top-level `type: "object"` assertion required by Console Go's function-schema contract. Added a focused wire-schema regression test; the Pi docs tests and full `bun run check` are green.
+
+**Profile AGENTS.md and no agent pi_docs.** Ziggy-owned `skills/AGENTS.md` is inlined as the first system-prompt block, then Profile `SOUL.md`. Profile and specialist runtimes no longer register `pi_docs`; the factory remains for explicit tests and doctor still checks the compile pin. Reminders `$bunfs`/osascript handoff is unchanged for a later block.
+
+**Hunk notes on AGENTS.md / profile-prompt.** `ziggy-operations` now points at serve, gateway, or automations. Prompt file reads use Effect `FileSystem.readFileString` with `BunFileSystem.layer` at this adapter; `Effect.tryPromise` around `node:fs/promises` is gone.

@@ -166,7 +166,7 @@ describe("pinned Pi docs search and read", () => {
     expect(hugeRead.includes(huge)).toBe(false);
   });
 
-  test("hidden pi_docs tool reads generated embeds and registers on a Profile runtime", async () => {
+  test("hidden pi_docs tool reads generated embeds", async () => {
     const extension = createPiDocsExtension();
     if (!("hidden" in extension)) {
       throw new Error("expected named inline extension");
@@ -231,8 +231,8 @@ describe("pi docs generator freshness", () => {
   });
 });
 
-describe("pi_docs Profile runtime discovery", () => {
-  test("hidden factory exposes pi_docs without a checkout skill", async () => {
+describe("pi_docs factory", () => {
+  test("hidden factory exposes pi_docs only when explicitly loaded", async () => {
     const profilePath = await mkdtemp(join(tmpdir(), "ziggy-pi-docs-"));
     temporaryPaths.push(profilePath);
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
@@ -260,5 +260,12 @@ describe("pi_docs Profile runtime discovery", () => {
     });
     expect(session.getActiveToolNames()).toContain("pi_docs");
     session.dispose();
+  });
+
+  test("Profile and specialist runtimes do not register pi_docs", () => {
+    const agent = readFileSync(join(repositoryRoot, "src/adapters/pi/pi-agent.ts"), "utf8");
+    const specialist = readFileSync(join(repositoryRoot, "src/adapters/pi/specialist.ts"), "utf8");
+    expect(agent).not.toContain("createPiDocsExtension");
+    expect(specialist).not.toContain("createPiDocsExtension");
   });
 });

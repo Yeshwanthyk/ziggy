@@ -69,7 +69,7 @@ import {
   type ProfileExtensionCatalogOperations,
 } from "./profile-extension-selection";
 import { leaseCompiledPiTuiAssets } from "./tui-themes";
-import { createPiDocsExtension } from "./pi-docs";
+import { loadProfileSystemPrompt } from "./profile-prompt";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
@@ -639,6 +639,7 @@ const createProfileRuntime = (
     }
     const agents = admittedAgents ?? (yield* discoverProfileAgents(profilePath));
     const resources = yield* discoverPiResources(profilePath, repositoryRoot);
+    const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
 
     const runtimeRef: AgentSessionRuntimeRef = {};
     const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
@@ -651,7 +652,7 @@ const createProfileRuntime = (
             agentDir,
             resourceLoaderOptions: (() => {
               const options: ProfileRuntimeResourceLoaderOptions = {
-                systemPrompt: soulPath,
+                systemPrompt,
                 noExtensions: true,
                 noSkills: true,
                 noPromptTemplates: true,
@@ -673,7 +674,6 @@ const createProfileRuntime = (
                   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
                   createProfileMemoryExtension(profilePath, paths.documents),
                   createEphemeralPromptContextExtension(() => ephemeralPromptContext.value),
-                  createPiDocsExtension(),
                   ...resources.extensionFactories,
                 ],
               };
