@@ -111,15 +111,13 @@ const ProfileAgentsProvided = ProfileAgentsLive.pipe(
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
 const ResidentProvided = ResidentGatewayLive.pipe(
   Layer.provide(
-    Layer.merge(
+    Layer.mergeAll(
       SchedulerProvided,
-      Layer.merge(
-        GatewayLive.pipe(Layer.provide(AgentLive)),
-        Layer.merge(
-          DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
-          SlackGatewayLive.pipe(Layer.provide(AgentLive)),
-        ),
-      ),
+      GatewayLive.pipe(Layer.provide(AgentLive)),
+      DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
+      SlackGatewayLive.pipe(Layer.provide(AgentLive)),
+      AgentLive,
+      SessionsLive,
     ),
   ),
 );

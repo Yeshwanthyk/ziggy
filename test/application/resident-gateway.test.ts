@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
 import { DiscordApiError } from "ziggy/adapters/discord/api";
+import { UiServerError } from "ziggy/adapters/bun/ui-server";
 import { AutomationSchedulerError } from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
 import type { AutomationSchedulerApi } from "ziggy/application/automation-scheduler";
@@ -16,6 +17,7 @@ import {
   makeResidentGateway,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
+  type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
 import type { SlackGatewayApi } from "ziggy/application/slack-gateway";
 
@@ -72,6 +74,10 @@ const runtime = (config: ResidentGatewayConfig, events: Array<string>): Resident
     ),
   logError: (message) => Effect.sync(() => events.push(message)),
 });
+const uiRuntime = (
+  events: Array<string>,
+  body: Effect.Effect<never, UiServerError> = Effect.never,
+): ResidentUiRuntime => ({ run: () => scopedLoop(events, "ui", body) });
 const scopedLoop = <E = never>(
   events: Array<string>,
   name: string,
@@ -224,6 +230,76 @@ describe("resident gateway supervision", () => {
     expect(events.at(-1)).toBe("owner:exit");
     for (const name of ["scheduler", "telegram", "discord", "slack"])
       expect(events.filter((event) => event === `${name}:exit`)).toHaveLength(1);
+  });
+
+  test("owns the UI server inside the owner lease", async () => {
+    const target = await profile();
+    const events: Array<string> = [];
+    const channelLoops = loops(() => Effect.never);
+    const host = makeResidentGateway(
+      scheduler(() => scopedLoop(events, "scheduler")),
+      channelLoops.telegram,
+      channelLoops.discord,
+      channelLoops.slack,
+      runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
+      uiRuntime(events),
+    );
+
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("ui:enter"));
+        expect(events.indexOf("owner:enter")).toBeLessThan(events.indexOf("ui:enter"));
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+
+    expect(events.indexOf("ui:exit")).toBeLessThan(events.indexOf("owner:exit"));
+  });
+
+  test("isolates a typed UI server failure while the scheduler stays live", async () => {
+    const target = await profile();
+    const events: Array<string> = [];
+    const progress = await Effect.runPromise(Deferred.make<void>());
+    const channelLoops = loops(() => Effect.never);
+    const host = makeResidentGateway(
+      scheduler(() =>
+        scopedLoop(
+          events,
+          "scheduler",
+          Deferred.await(progress).pipe(
+            Effect.andThen(Effect.sync(() => events.push("scheduler:progress"))),
+            Effect.andThen(Effect.never),
+          ),
+        ),
+      ),
+      channelLoops.telegram,
+      channelLoops.discord,
+      channelLoops.slack,
+      runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
+      uiRuntime(
+        events,
+        Effect.fail(
+          new UiServerError({
+            operation: "start",
+            message: "address unavailable",
+          }),
+        ),
+      ),
+    );
+
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("ui:exit"));
+        expect(events.filter((event) => event.includes("UI server stopped"))).toEqual([
+          "[gateway] UI server stopped: address unavailable",
+        ]);
+        yield* Deferred.succeed(progress, undefined);
+        yield* waitFor(() => events.includes("scheduler:progress"));
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
   });
 
   test("scheduler failure interrupts channel siblings before owner release", async () => {
