@@ -102,6 +102,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
     const rendered = renderDoctor(report);
 
     expect(report.checks.map((check) => check.id)).toEqual([
+      "ziggy",
       "profile",
       "model",
       "auth",
@@ -130,14 +131,17 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "ok",
       "ok",
       "ok",
+      "ok",
     ]);
     expect(rendered.exitCode).toBe(0);
+    expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.1.0");
     expect(report.checks.find((check) => check.id === "pi_docs")?.message).toMatch(
       /^@earendil-works\/pi-coding-agent@0\.84\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
     );
     expect(
       rendered.text.split("\n").map((line) => line.split("\t").slice(0, 2).join("\t")),
     ).toEqual([
+      "OK\tziggy",
       "OK\tprofile",
       "OK\tmodel",
       "OK\tauth",

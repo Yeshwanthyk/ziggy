@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { decodeStandaloneBuildReport, sandboxProfile } from "./standalone-executable.mjs";
+import packageJson from "../package.json" with { type: "json" };
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 let artifactPath = path.join(repositoryRoot, "dist", "ziggy");
@@ -137,9 +138,14 @@ try {
   console.log(`source_commit=${report.sourceCommit}`);
   console.log(`denied_checkouts=${deniedCheckouts.length}`);
 
+  const expectedVersion = packageJson.version;
   const version = runExecutable(["version"]);
   requireSuccess("version", version);
-  if (version.stdout.trim() !== "0.1.0") throw new Error("unexpected version output");
+  if (version.stdout.trim() !== expectedVersion) {
+    throw new Error(
+      `unexpected version output ${JSON.stringify(version.stdout.trim())}; expected ${expectedVersion}`,
+    );
+  }
   const help = runExecutable(["help"]);
   requireSuccess("complete help", help);
   if (!help.stdout.includes("ziggy extensions list|show|add|remove")) {

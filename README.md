@@ -2,6 +2,32 @@
 
 Ziggy is a folder that is an assistant: one Bun/TypeScript runtime around the published Pi coding-agent SDK. Pi owns models, sessions, tools, and transcripts; Ziggy owns visible Profile policy and composition.
 
+Current version is **0.1.0**. Notable changes live in [CHANGELOG.md](CHANGELOG.md).
+
+## Install
+
+macOS Apple Silicon:
+
+```sh
+curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh
+```
+
+That installs `~/.local/bin/ziggy`, verifies the SHA-256 published next to the binary, and refuses to overwrite a symlink. Then:
+
+```sh
+ziggy version
+ziggy init my-bot
+```
+
+Direct binary download:
+
+```sh
+curl -fL -o ziggy https://github.com/Yeshwanthyk/ziggy/releases/latest/download/ziggy-darwin-arm64
+chmod +x ziggy
+```
+
+`ziggy update` uses the same GitHub release assets. Linux and Intel Mac builds are not in 0.1.0.
+
 ## Core commands
 
 ```text

@@ -21,6 +21,7 @@ import { parseAutomationFile } from "../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../domain/memory";
 import { type DoctorCheck, type DoctorReport, doctorReport } from "../domain/doctor";
 import type { ProfileTarget } from "../domain/profile";
+import packageJson from "../../package.json" with { type: "json" };
 
 export interface DoctorApi {
   readonly check: (
@@ -385,6 +386,7 @@ export const makeDoctor = (
   check: (target, repositoryRoot) =>
     Effect.gen(function* () {
       const checks = [
+        ok("ziggy", `Ziggy ${packageJson.version}`),
         yield* profileCheck(target),
         yield* modelCheck(target, models),
         yield* authCheck(target, auth, models),
