@@ -26,6 +26,7 @@ export const SlackIngressPayload = Schema.Struct({
   ]),
   files: Schema.optional(SlackIngressFiles),
   omittedFileCount: Schema.optional(NonNegativeInteger),
+  teamId: Schema.optional(NonEmpty),
   statusThreadTs: NonEmpty,
   sourceTs: NonEmpty,
   text: Schema.String,

@@ -29,6 +29,7 @@ export type ChatProgressEvent =
       readonly toolCallId: string;
       readonly toolName: string;
       readonly failed: boolean;
+      readonly detail?: string;
     };
 
 export interface ChatPromptOptions {

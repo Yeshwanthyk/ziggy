@@ -808,6 +808,28 @@ const MAX_PROGRESS_TEXT_CODE_POINTS = 3_800;
 const MAX_PROGRESS_DELTA_CODE_POINTS = 512;
 const MAX_PROGRESS_TOOL_NAME_CODE_POINTS = 48;
 const MAX_PROGRESS_TOOL_ID_CODE_POINTS = 128;
+const MAX_PROGRESS_TOOL_DETAIL_CODE_POINTS = 120;
+const ProgressToolArgs = Schema.Struct({
+  command: Schema.optional(Schema.String),
+  cmd: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  filePath: Schema.optional(Schema.String),
+  file: Schema.optional(Schema.String),
+  query: Schema.optional(Schema.String),
+  list: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+});
+const decodeProgressToolArgs = Schema.decodeUnknownOption(ProgressToolArgs);
+const PROGRESS_TOOL_DETAIL_KEYS = [
+  "command",
+  "cmd",
+  "path",
+  "filePath",
+  "file",
+  "query",
+  "list",
+  "name",
+] as const;
 
 const boundedCodePoints = (value: string, maximum: number): string =>
   [...value].slice(0, maximum).join("");
@@ -821,6 +843,17 @@ export const safeProgressToolName = (value: string): string => {
     normalized.length === 0 ? "tool" : normalized,
     MAX_PROGRESS_TOOL_NAME_CODE_POINTS,
   );
+};
+
+export const progressToolDetail = (args: typeof ProgressToolArgs.Type): string | undefined => {
+  for (const key of PROGRESS_TOOL_DETAIL_KEYS) {
+    const value = args[key];
+    if (value === undefined) continue;
+    const normalized = value.replace(/\s+/gu, " ").trim();
+    if (normalized.length === 0) continue;
+    return boundedCodePoints(normalized, MAX_PROGRESS_TOOL_DETAIL_CODE_POINTS);
+  }
+  return undefined;
 };
 
 const assistantTextSnapshot = (content: ReadonlyArray<{ readonly type: string }>): string =>
@@ -847,6 +880,7 @@ export const promptForAssistantText = (
     let assistantError: string | undefined;
     let finished = false;
     let unsubscribe: () => void = () => undefined;
+    const lastToolDetail = new Map<string, string>();
 
     const finish = (result: Effect.Effect<string, ProviderConfigError | ProviderCallError>) => {
       if (finished) return;
@@ -875,6 +909,18 @@ export const promptForAssistantText = (
         event.type === "tool_execution_update" ||
         event.type === "tool_execution_end"
       ) {
+        const fromArgs = Option.match(
+          decodeProgressToolArgs(event.type === "tool_execution_end" ? undefined : event.args, {
+            onExcessProperty: "ignore",
+          }),
+          {
+            onNone: () => undefined,
+            onSome: progressToolDetail,
+          },
+        );
+        if (fromArgs !== undefined) lastToolDetail.set(event.toolCallId, fromArgs);
+        const detail = fromArgs ?? lastToolDetail.get(event.toolCallId);
+        if (event.type === "tool_execution_end") lastToolDetail.delete(event.toolCallId);
         options?.onProgress?.({
           kind: "tool",
           phase:
@@ -886,6 +932,7 @@ export const promptForAssistantText = (
           toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
           toolName: safeProgressToolName(event.toolName),
           failed: event.type === "tool_execution_end" && event.isError,
+          ...Object.fromEntries(detail === undefined ? [] : ([["detail", detail]] as const)),
         });
       }
       if (event.type === "message_end" && event.message.role === "assistant") {

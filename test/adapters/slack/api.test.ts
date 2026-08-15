@@ -70,6 +70,138 @@ describe("Slack HTTP adapter", () => {
     ]);
   });
 
+  test("starts, appends, and stops a DM plan stream with bounded task_update chunks", async () => {
+    const requests: Array<{ readonly body: string; readonly url: string }> = [];
+    const client = HttpClient.make((request) => {
+      requests.push({
+        url: request.url,
+        body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+      });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response('{"ok":true,"ts":"2.0"}', { status: 200 }),
+        ),
+      );
+    });
+    const api = makeSlackApi(client);
+    const longId = `call-${"x".repeat(300)}`;
+    const longTitle = `bash ${"y".repeat(300)}`;
+    const longDetails = `cmd ${"z".repeat(300)}`;
+
+    const started = await Effect.runPromise(
+      api.startStream("bot-secret", "D123", "1.0", {
+        chunks: [
+          { type: "plan_update", title: "Working" },
+          {
+            type: "task_update",
+            id: longId,
+            title: longTitle,
+            status: "in_progress",
+            details: longDetails,
+          },
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      api.appendStream("bot-secret", "D123", started.ts, [
+        { type: "task_update", id: "tool-1", title: "read", status: "complete" },
+      ]),
+    );
+    await Effect.runPromise(api.stopStream("bot-secret", "D123", started.ts));
+
+    expect(started).toEqual({ ts: "2.0" });
+    expect(requests).toEqual([
+      {
+        url: "https://slack.com/api/chat.startStream",
+        body: JSON.stringify({
+          channel: "D123",
+          thread_ts: "1.0",
+          task_display_mode: "plan",
+          chunks: [
+            { type: "plan_update", title: "Working" },
+            {
+              type: "task_update",
+              id: [...longId].slice(0, 32).join(""),
+              title: [...longTitle].slice(0, 80).join(""),
+              status: "in_progress",
+              details: [...longDetails].slice(0, 120).join(""),
+            },
+          ],
+        }),
+      },
+      {
+        url: "https://slack.com/api/chat.appendStream",
+        body: JSON.stringify({
+          channel: "D123",
+          ts: "2.0",
+          chunks: [{ type: "task_update", id: "tool-1", title: "read", status: "complete" }],
+        }),
+      },
+      {
+        url: "https://slack.com/api/chat.stopStream",
+        body: JSON.stringify({ channel: "D123", ts: "2.0" }),
+      },
+    ]);
+  });
+
+  test("includes recipient identity on channel stream starts", async () => {
+    const requests: Array<{ readonly body: string; readonly url: string }> = [];
+    const client = HttpClient.make((request) => {
+      requests.push({
+        url: request.url,
+        body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+      });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response('{"ok":true,"ts":"2.0"}', { status: 200 }),
+        ),
+      );
+    });
+    const api = makeSlackApi(client);
+
+    await Effect.runPromise(
+      api.startStream("bot-secret", "C123", "1.0", {
+        chunks: [{ type: "task_update", id: "tool-1", title: "bash", status: "in_progress" }],
+        recipientUserId: "U123",
+        recipientTeamId: "T1",
+      }),
+    );
+
+    expect(requests).toEqual([
+      {
+        url: "https://slack.com/api/chat.startStream",
+        body: JSON.stringify({
+          channel: "C123",
+          thread_ts: "1.0",
+          task_display_mode: "plan",
+          chunks: [{ type: "task_update", id: "tool-1", title: "bash", status: "in_progress" }],
+          recipient_user_id: "U123",
+          recipient_team_id: "T1",
+        }),
+      },
+    ]);
+  });
+
+  test("classifies a native stream API failure without leaking the token", async () => {
+    const secret = "bot-stream-secret";
+    const api = makeSlackApi(
+      clientFrom(() => new Response('{"ok":false,"error":"invalid_chunks"}', { status: 200 })),
+    );
+
+    const result = await Effect.runPromise(
+      api.startStream(secret, "D123", "1.0").pipe(Effect.result),
+    );
+    const serialized = JSON.stringify(result);
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { operation: "startStream", reason: "api", retriable: false },
+    });
+    expect(serialized).not.toContain(secret);
+  });
+
   test("retrieves all prior thread replies with cursor pagination", async () => {
     const requests: Array<{ readonly method: string; readonly url: string }> = [];
     const client = HttpClient.make((request) => {

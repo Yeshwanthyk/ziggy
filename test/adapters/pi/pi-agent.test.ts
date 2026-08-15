@@ -23,6 +23,7 @@ import {
   openChat,
   openTui,
   promptForAssistantText,
+  progressToolDetail,
   runSpecialist,
   providerError,
   refreshProfileMemory,
@@ -59,6 +60,68 @@ const invokeMemoryHandler = async (
 };
 
 describe("Pi provider failure classification", () => {
+  test("extracts a bounded command or path from tool args", () => {
+    expect(progressToolDetail({ command: "  osascript -e tell Reminders  " })).toBe(
+      "osascript -e tell Reminders",
+    );
+    expect(progressToolDetail({ path: "SOUL.md" })).toBe("SOUL.md");
+    expect(progressToolDetail({})).toBeUndefined();
+  });
+
+  test("finished tool events keep the start command detail", async () => {
+    let listener: AgentSessionEventListener | undefined;
+    const progress: Array<ChatProgressEvent> = [];
+    const session: Parameters<typeof promptForAssistantText>[1] = {
+      isIdle: false,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      prompt: () => new Promise(() => undefined),
+      abort: () => Promise.resolve(),
+    };
+    const fiber = Effect.runFork(
+      promptForAssistantText("/profile", session, "hello", {
+        onProgress: (event) => progress.push(event),
+      }),
+    );
+    await Effect.runPromise(Effect.yieldNow);
+    listener?.({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "osascript -e tell Reminders", extra: 1 },
+    });
+    listener?.({
+      type: "tool_execution_end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: { content: [], details: undefined },
+      isError: true,
+    });
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    expect(progress).toEqual([
+      {
+        kind: "tool",
+        phase: "start",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        failed: false,
+        detail: "osascript -e tell Reminders",
+      },
+      {
+        kind: "tool",
+        phase: "end",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        failed: true,
+        detail: "osascript -e tell Reminders",
+      },
+    ]);
+  });
   test("misleading vendor wording remains a provider call failure with stable copy", () => {
     const cause = new Error("authentication failed because auth.json has no credential");
 
