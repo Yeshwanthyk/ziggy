@@ -17,6 +17,7 @@ export interface LaunchdServiceRenderOptions {
   readonly launchVector: ResidentLaunchVector;
   readonly home: string;
   readonly ziggyHome: string;
+  readonly pathEnvironment?: string;
   readonly throttleSeconds?: number;
   readonly stopTimeoutSeconds?: number;
 }
@@ -42,6 +43,13 @@ export const renderLaunchdService = (
 ): ResidentServiceDefinition => {
   const throttleSeconds = boundedSeconds(options.throttleSeconds, 10);
   const stopTimeoutSeconds = boundedSeconds(options.stopTimeoutSeconds, 30);
+  const environment = {
+    HOME: options.home,
+    ZIGGY_HOME: options.ziggyHome,
+    PATH:
+      options.pathEnvironment ??
+      `${join(options.home, ".local", "bin")}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,
+  };
   const path = launchdDefinitionPath(options.home, options.identity);
   const logs = launchdLogPaths(options.ziggyHome, options.identity);
   const fingerprint = residentServiceFingerprint(
@@ -50,6 +58,7 @@ export const renderLaunchdService = (
       identity: options.identity.launchdLabel,
       profilePath: options.profilePath,
       launchVector: options.launchVector,
+      environment,
       logs,
       throttleSeconds,
       stopTimeoutSeconds,
@@ -69,6 +78,15 @@ export const renderLaunchdService = (
   <array>
 ${argumentsXml}
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>${xml(environment.HOME)}</string>
+    <key>ZIGGY_HOME</key>
+    <string>${xml(environment.ZIGGY_HOME)}</string>
+    <key>PATH</key>
+    <string>${xml(environment.PATH)}</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

@@ -12,7 +12,15 @@ macOS Apple Silicon:
 curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh
 ```
 
-That installs `~/.local/bin/ziggy`, verifies the SHA-256 published next to the binary, and refuses to overwrite a symlink. Then:
+That curl command is the canonical install path. It publishes `~/.local/bin/ziggy`, verifies the
+SHA-256 published next to the binary, and refuses to overwrite a symlink. If that user-local bin
+directory is not already on the interactive shell's `PATH`, add it before invoking `ziggy`:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then:
 
 ```sh
 ziggy version
@@ -40,6 +48,18 @@ ziggy serve <name|path>
 ```
 
 `serve` runs the resident Profile owner, including the automation scheduler and any configured channel loops. `ziggy gateway <name|path>` remains a compatibility alias.
+
+Managed `serve` definitions record Ziggy's absolute executable path and literal `HOME`, `ZIGGY_HOME`,
+and deterministic `PATH` values. The default service `PATH` is
+`<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, so user-local and Homebrew
+commands are available without relying on interactive shell startup files. If an existing
+definition is reported as drifted after this environment hardening, restage it with
+`ziggy serve install <profile> --force`.
+
+The in-process `profile_extensions` tool manages the Profile extension lifecycle (`list`, `add`,
+`remove`, and `validate`) without Bash, a Ziggy subprocess, or `PATH` lookup. That lifecycle does
+not depend on the managed-service `PATH`; the `PATH` above is for extensions that invoke ordinary
+external commands.
 
 Session list/show output is transcript-free: it includes only paths, IDs, lineage, timestamps, entry counts, model/thinking changes, usage, and safe terminal state. It never prints prompts, replies, thinking, tool arguments, or tool output.
 

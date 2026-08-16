@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership, ziggy-effect/no-try-catch-or-throw -- installer tests own a local HTTP fixture and process spawn */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -39,6 +39,37 @@ describe("scripts/install.sh", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("uses the canonical ~/.local/bin/ziggy destination by default", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ziggy-install-home-"));
+    roots.push(home);
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+        if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+        return new Response("missing", { status: 404 });
+      },
+    });
+    try {
+      const result = await runInstall({
+        HOME: home,
+        ZIGGY_BIN_DIR: "",
+        ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
+        ZIGGY_OS: "Darwin",
+        ZIGGY_ARCH: "arm64",
+      });
+      const destination = join(home, ".local", "bin", "ziggy");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(`installed ${destination}`);
+      expect(await readFile(destination, "utf8")).toBe(fixture);
+      expect((await stat(destination)).mode & 0o777).toBe(0o755);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("installs a checksum-pinned darwin-arm64 binary", async () => {
     const binDir = await mkdtemp(join(tmpdir(), "ziggy-install-bin-"));
     roots.push(binDir);
@@ -62,6 +93,7 @@ describe("scripts/install.sh", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`installed ${join(binDir, "ziggy")}`);
       expect(await readFile(join(binDir, "ziggy"), "utf8")).toBe(fixture);
+      expect((await stat(join(binDir, "ziggy"))).mode & 0o777).toBe(0o755);
     } finally {
       server.stop(true);
     }
@@ -70,6 +102,9 @@ describe("scripts/install.sh", () => {
   test("rejects a checksum mismatch", async () => {
     const binDir = await mkdtemp(join(tmpdir(), "ziggy-install-bad-"));
     roots.push(binDir);
+    const destination = join(binDir, "ziggy");
+    const existing = "existing ziggy\n";
+    await writeFile(destination, existing, { mode: 0o755 });
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -89,6 +124,7 @@ describe("scripts/install.sh", () => {
       });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("checksum mismatch");
+      expect(await readFile(destination, "utf8")).toBe(existing);
     } finally {
       server.stop(true);
     }
@@ -119,6 +155,36 @@ describe("scripts/install.sh", () => {
       });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("refusing to overwrite symlink");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("refuses to overwrite a non-regular destination", async () => {
+    const binDir = await mkdtemp(join(tmpdir(), "ziggy-install-directory-"));
+    roots.push(binDir);
+    const destination = join(binDir, "ziggy");
+    await mkdir(destination);
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname;
+        if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+        if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+        return new Response("missing", { status: 404 });
+      },
+    });
+    try {
+      const result = await runInstall({
+        ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
+        ZIGGY_BIN_DIR: binDir,
+        ZIGGY_OS: "Darwin",
+        ZIGGY_ARCH: "arm64",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(`refusing to overwrite ${destination}`);
+      expect((await stat(destination)).isDirectory()).toBe(true);
     } finally {
       server.stop(true);
     }

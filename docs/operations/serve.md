@@ -48,6 +48,13 @@ fingerprint. They do not contain provider credentials or channel tokens. Ziggy w
 atomically and refuses unmanaged, symlinked, or non-regular destinations. It also refuses a changed
 managed definition unless `install --force` is explicit.
 
+Both service managers pin absolute `HOME` and `ZIGGY_HOME` values and render the deterministic default
+`PATH` `<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`; launchd receives those
+literal values rather than shell expressions. The first `ProgramArguments` entry is Ziggy's
+absolute executable path, so service startup does not depend on finding `ziggy` on `PATH`. Changing
+these managed fields changes the fingerprint; restage an older definition with
+`ziggy serve install <profile> --force`.
+
 `uninstall` stops the job and removes only its recognized managed definition. It retains the
 Profile, `.runtime/`, automation history, Pi sessions, and logs.
 

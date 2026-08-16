@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -80,6 +81,26 @@ const requireSuccess = (label, result) => {
       `${label} failed with exit ${result.exitCode}\n${result.stdout}${result.stderr}`,
     );
   }
+};
+
+const decodeXml = (value) =>
+  value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'");
+
+const plistString = (content, key) => {
+  const match = new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`, "u").exec(content);
+  if (match?.[1] === undefined) throw new Error(`plist is missing string key ${key}`);
+  return decodeXml(match[1]);
+};
+
+const plistArray = (content, key) => {
+  const match = new RegExp(`<key>${key}</key>\\s*<array>([\\s\\S]*?)</array>`, "u").exec(content);
+  if (match?.[1] === undefined) throw new Error(`plist is missing array key ${key}`);
+  return [...match[1].matchAll(/<string>([^<]*)<\/string>/gu)].map((entry) => decodeXml(entry[1]));
 };
 
 const gitWorktrees = run(["git", "worktree", "list", "--porcelain"], repositoryRoot, process.env);
@@ -164,6 +185,54 @@ try {
   }
 
   requireSuccess("minimal init", runExecutable(["init", profilePath, "--minimal"]));
+  requireSuccess(
+    "resident install without start",
+    runExecutable(["serve", "install", profilePath, "--no-start"]),
+  );
+  const launchAgentsDirectory = path.join(homeDirectory, "Library", "LaunchAgents");
+  const definitions = readdirSync(launchAgentsDirectory).filter((entry) =>
+    entry.endsWith(".plist"),
+  );
+  if (definitions.length !== 1) {
+    throw new Error(
+      `expected one disposable LaunchAgent definition; found ${definitions.join(", ")}`,
+    );
+  }
+  const definitionContent = readFileSync(path.join(launchAgentsDirectory, definitions[0]), "utf8");
+  const programArguments = plistArray(definitionContent, "ProgramArguments");
+  const expectedExecutablePath = realpathSync(copiedExecutable);
+  const expectedProfilePath = realpathSync(profilePath);
+  if (
+    programArguments[0] !== expectedExecutablePath ||
+    programArguments.at(-1) !== expectedProfilePath ||
+    !programArguments.includes("serve")
+  ) {
+    throw new Error(
+      `resident ProgramArguments were not absolute and stable: ${programArguments.join(" ")}`,
+    );
+  }
+  if (programArguments.some((argument) => argument !== "serve" && !path.isAbsolute(argument))) {
+    throw new Error(
+      `resident ProgramArguments contain a relative path: ${programArguments.join(" ")}`,
+    );
+  }
+  const expectedServicePath = [
+    path.join(homeDirectory, ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ].join(":");
+  if (plistString(definitionContent, "HOME") !== homeDirectory) {
+    throw new Error("resident LaunchAgent did not pin HOME");
+  }
+  if (plistString(definitionContent, "ZIGGY_HOME") !== path.join(homeDirectory, ".ziggy")) {
+    throw new Error("resident LaunchAgent did not pin ZIGGY_HOME");
+  }
+  if (plistString(definitionContent, "PATH") !== expectedServicePath) {
+    throw new Error("resident LaunchAgent did not render the deterministic PATH");
+  }
+  console.log("resident_service_smoke=pass");
   requireSuccess(
     "extensions add",
     runExecutable(["extensions", "add", profilePath, "self-improvement"]),
