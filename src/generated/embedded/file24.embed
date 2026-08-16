@@ -82,6 +82,10 @@ alone leaves the package inactive: call the in-process `profile_extensions` tool
 `action: "add"` and the shelf ID, and report admission or failure from that tool's structured
 result.
 
+Guardrails: never delete or replace an existing `<profile>/extensions/<id>/`. If the destination
+already exists, stop and report the collision rather than overwriting it. Remove only the OS
+temporary paths this adoption attempt created, and clean them on both success and failure.
+
 ## Skills
 
 Agent Skills remain progressive: frontmatter metadata is loaded at startup and the body is read

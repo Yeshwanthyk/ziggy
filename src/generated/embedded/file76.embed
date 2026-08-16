@@ -37,7 +37,9 @@ scripts. Choose a lowercase kebab-case shelf ID independent of `package.json.nam
 the package source into `<profile>/extensions/<id>/` (excluding `.git/`, `node_modules/`, and
 temp artifacts), then call `profile_extensions` with `action: "add"` and the shelf ID. The copy
 alone leaves the package inactive; report admission or failure from the tool's structured
-result.
+result. Never delete or replace an existing shelf directory; if the destination exists, stop
+and report the collision. Remove only the OS temporary paths this attempt created, and clean
+them on success and failure.
 
 The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
 are replaced by the single optional `self-improvement` package.
