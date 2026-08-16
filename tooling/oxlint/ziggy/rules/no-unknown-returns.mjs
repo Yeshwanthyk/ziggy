@@ -1,3 +1,4 @@
+import { lexicalTypeParameterNames } from "../lexical-type-parameters.mjs";
 function referencedAliasName(type) {
   if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
   if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;
@@ -7,19 +8,7 @@ function referencedAliasName(type) {
     ? type.typeName.name
     : null;
 }
-function lexicalTypeParameterNames(node) {
-  const names = new Set();
-  let current = node;
-  while (current !== null && current.type !== "Program") {
-    if ("typeParameters" in current) {
-      for (const parameter of current.typeParameters?.params ?? []) {
-        names.add(parameter.name.name);
-      }
-    }
-    current = current.parent;
-  }
-  return names;
-}
+
 export default {
   meta: {
     type: "problem",
@@ -66,7 +55,13 @@ export default {
     const checkReturnType = (node) => {
       const annotation = node.returnType;
       if (annotation === null || annotation === undefined) return;
-      if (!resolvesToUnknown(annotation.typeAnnotation, lexicalTypeParameterNames(node))) return;
+      if (
+        !resolvesToUnknown(
+          annotation.typeAnnotation,
+          lexicalTypeParameterNames(node, context.sourceCode.visitorKeys),
+        )
+      )
+        return;
       context.report({ node: annotation.typeAnnotation, messageId: "unknownReturn" });
     };
     return {

@@ -1,3 +1,4 @@
+import { lexicalTypeParameterNames } from "../lexical-type-parameters.mjs";
 function parameterAnnotation(parameter) {
   if (parameter.type === "TSParameterProperty") {
     return parameterAnnotation(parameter.parameter);
@@ -15,21 +16,7 @@ function parameterName(parameter, sourceCode) {
     ? parameter.name
     : sourceCode.getText(parameter).replace(/\s*:\s*object\s*$/u, "");
 }
-function lexicalTypeParameterNames(node) {
-  const names = new Set();
-  let current = node;
-  while (current !== null && current.type !== "Program") {
-    if ("typeParameters" in current) {
-      for (const parameter of current.typeParameters?.params ?? []) {
-        names.add(parameter.name.name);
-      }
-    }
-    if (current.type === "TSMappedType") names.add(current.key.name);
-    if (current.type === "TSInferType") names.add(current.typeParameter.name.name);
-    current = current.parent;
-  }
-  return names;
-}
+
 export default {
   meta: {
     type: "problem",
@@ -69,7 +56,7 @@ export default {
       return resolvesToObject(alias, shadowedAliases, nextVisited);
     };
     const checkParameters = (node) => {
-      const shadowedAliases = lexicalTypeParameterNames(node);
+      const shadowedAliases = lexicalTypeParameterNames(node, context.sourceCode.visitorKeys);
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
         if (annotation === null || annotation === undefined) continue;

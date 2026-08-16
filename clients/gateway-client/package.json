@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "lint": "oxlint -c .oxlintrc.json src test",
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   }

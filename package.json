@@ -25,7 +25,8 @@
     "smoke:binary:dev": "bun tooling/smoke-standalone-executable.mjs --allow-development --artifact /tmp/ziggy-standalone-dev/ziggy",
     "test": "bun test ./test ./extensions ./tooling && bun run test:helpers",
     "test:helpers": "bun run --cwd extensions/here-now test",
-    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run check:catalog && bun run check:pi-docs"
+    "check:gateway-client": "bun run --cwd clients/gateway-client lint && bun run --cwd clients/gateway-client typecheck && bun run --cwd clients/gateway-client test",
+    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run check:gateway-client && bun run check:catalog && bun run check:pi-docs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

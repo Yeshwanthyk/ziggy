@@ -267,7 +267,7 @@ interface FailureFrame {
 }
 
 const SOCKET_OPEN = 1;
-const ERROR_CODES = new Set<ZiggyGatewayErrorCode>([
+const ERROR_CODES = new Set<string>([
   "unauthorized",
   "unknown_method",
   "bad_params",
@@ -278,13 +278,8 @@ const ERROR_CODES = new Set<ZiggyGatewayErrorCode>([
   "capacity_exceeded",
   "internal",
 ]);
-const EXTENSION_OPERATIONS = new Set<ZiggyExtensionOperation>([
-  "list",
-  "add",
-  "remove",
-  "validate",
-]);
-const EXTENSION_FAILURE_STAGES = new Set<ZiggyExtensionFailureStage>([
+const EXTENSION_OPERATIONS = new Set<string>(["list", "add", "remove", "validate"]);
+const EXTENSION_FAILURE_STAGES = new Set<string>([
   "catalog",
   "download",
   "checksum",
@@ -305,12 +300,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isGatewayErrorCode = (value: unknown): value is ZiggyGatewayErrorCode =>
-  typeof value === "string" && ERROR_CODES.has(value as ZiggyGatewayErrorCode);
+  typeof value === "string" && ERROR_CODES.has(value);
 
 const isSessionKey = (value: unknown): value is ZiggySessionKey =>
   typeof value === "string" &&
   /^(?:ui|telegram|discord|slack)\/[A-Za-z0-9._%~-]{1,240}$/u.test(value) &&
   new TextEncoder().encode(value).byteLength <= 256;
+type ZiggyToolPhase = "start" | "update" | "end";
+
+const isToolPhase = (value: unknown): value is ZiggyToolPhase =>
+  value === "start" || value === "update" || value === "end";
 
 const isEmptyRecord = (value: unknown): value is Record<string, never> =>
   isRecord(value) && Object.keys(value).length === 0;
@@ -333,10 +332,10 @@ const isExtensionId = (value: unknown): value is ZiggyExtensionId =>
   typeof value === "string" && value.length <= 128 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
 
 const isExtensionOperation = (value: unknown): value is ZiggyExtensionOperation =>
-  typeof value === "string" && EXTENSION_OPERATIONS.has(value as ZiggyExtensionOperation);
+  typeof value === "string" && EXTENSION_OPERATIONS.has(value);
 
 const isExtensionFailureStage = (value: unknown): value is ZiggyExtensionFailureStage =>
-  typeof value === "string" && EXTENSION_FAILURE_STAGES.has(value as ZiggyExtensionFailureStage);
+  typeof value === "string" && EXTENSION_FAILURE_STAGES.has(value);
 
 const isExtensionChoice = (value: unknown): value is ZiggyExtensionChoice =>
   isRecord(value) &&
@@ -435,15 +434,10 @@ const decodeResponse = (value: unknown): SuccessFrame | FailureFrame | undefined
   if (!isGatewayErrorCode(code)) return undefined;
   if (typeof message !== "string") return undefined;
   const details = isExtensionFailure(value.error.details) ? value.error.details : undefined;
-  return {
-    id: value.id,
-    ok: false,
-    error: {
-      code,
-      message,
-      ...(details === undefined ? {} : { details }),
-    },
-  };
+  if (details === undefined) {
+    return { id: value.id, ok: false, error: { code, message } };
+  }
+  return { id: value.id, ok: false, error: { code, message, details } };
 };
 
 const decodeEvent = (value: unknown): ZiggyGatewayEvent | undefined => {
@@ -464,7 +458,7 @@ const decodeEvent = (value: unknown): ZiggyGatewayEvent | undefined => {
   if (event === "tool") {
     const phase = payload.phase;
     if (
-      !["start", "update", "end"].includes(String(phase)) ||
+      !isToolPhase(phase) ||
       typeof payload.toolCallId !== "string" ||
       typeof payload.toolName !== "string" ||
       typeof payload.failed !== "boolean" ||
@@ -473,7 +467,7 @@ const decodeEvent = (value: unknown): ZiggyGatewayEvent | undefined => {
       return undefined;
     }
     const base = {
-      phase: phase as "start" | "update" | "end",
+      phase,
       toolCallId: payload.toolCallId,
       toolName: payload.toolName,
       failed: payload.failed,
@@ -553,6 +547,7 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       const entry: PendingRequest = {
         method,
         params,
+        // SAFETY: handleMessage validates each successful result against entry.method before resolving this typed request.
         resolve: (value) => resolve(value as ZiggyResultMap[Method]),
         reject,
         timeout,
@@ -594,15 +589,15 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       if (
         entry.method === "session.watch" &&
         isRecord(requestParams) &&
-        typeof requestParams.session === "string"
+        isSessionKey(requestParams.session)
       ) {
-        watched.add(requestParams.session as ZiggySessionKey);
+        watched.add(requestParams.session);
       } else if (
         entry.method === "session.open" &&
         isRecord(response.result) &&
-        typeof response.result.session === "string"
+        isSessionKey(response.result.session)
       ) {
-        watched.add(response.result.session as ZiggySessionKey);
+        watched.add(response.result.session);
       }
       entry.resolve(response.result);
       return;
@@ -674,9 +669,11 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
     validateExtensions: () => beginRequest("extension.validate", {}),
     on: (eventName, handler) => {
       const eventHandlers = handlers.get(eventName) ?? new Set();
-      eventHandlers.add(handler as (event: ZiggyGatewayEvent) => void);
+      // SAFETY: the eventName lookup guarantees dispatch only sends matching event variants to this handler.
+      const typedHandler = handler as (event: ZiggyGatewayEvent) => void;
+      eventHandlers.add(typedHandler);
       handlers.set(eventName, eventHandlers);
-      return () => eventHandlers.delete(handler as (event: ZiggyGatewayEvent) => void);
+      return () => eventHandlers.delete(typedHandler);
     },
     onAny: (handler) => {
       anyHandlers.add(handler);

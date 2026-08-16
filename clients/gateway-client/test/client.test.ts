@@ -3,17 +3,18 @@ import {
   connectZiggy,
   ZiggyGatewayError,
   type ZiggyGatewayEvent,
+  type ZiggySessionKey,
   type ZiggySocket,
 } from "../src/index";
 
-type Listener = (event: never) => void;
+type Listener = (event: Event) => void;
 
 class FakeSocket implements ZiggySocket {
   readyState = 0;
   readonly sent: string[] = [];
   private readonly listeners = new Map<string, Set<Listener>>();
 
-  addEventListener(name: string, listener: (event: never) => void): void {
+  addEventListener(name: string, listener: (event: Event) => void): void {
     const listeners = this.listeners.get(name) ?? new Set();
     listeners.add(listener);
     this.listeners.set(name, listeners);
@@ -39,11 +40,18 @@ class FakeSocket implements ZiggySocket {
   }
 
   private emit(name: string, event: Event): void {
-    for (const listener of this.listeners.get(name) ?? []) listener(event as never);
+    for (const listener of this.listeners.get(name) ?? []) listener(event);
   }
 }
 
+const socketAt = (sockets: readonly FakeSocket[], index: number): FakeSocket => {
+  const socket = sockets[index];
+  if (socket === undefined) throw new Error(`missing fake socket at index ${index}`);
+  return socket;
+};
+
 const frame = (socket: FakeSocket, index: number) =>
+  // SAFETY: FakeSocket only records the JSON request frames emitted by the client under test.
   JSON.parse(socket.sent[index] ?? "null") as {
     readonly id: string;
     readonly method: string;
@@ -71,7 +79,7 @@ describe("gateway client", () => {
         return socket;
       },
     });
-    const socket = sockets[0] as FakeSocket;
+    const socket = socketAt(sockets, 0);
     const ping = client.request("ping", {});
     const list = client.request("session.list", {});
     expect(socket.sent).toHaveLength(0);
@@ -276,6 +284,36 @@ describe("gateway client", () => {
     client.close();
   });
 
+  test("does not rewatch a session key rejected by the runtime guard", async () => {
+    const sockets: FakeSocket[] = [];
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      reconnectBaseDelayMs: 1,
+      reconnectMaxDelayMs: 2,
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const first = socketAt(sockets, 0);
+    first.open();
+    // SAFETY: This deliberately bypasses the public key type to exercise the runtime boundary guard.
+    const bogusSession = "bogus-session" as ZiggySessionKey;
+    const watch = client.request("session.watch", { session: bogusSession });
+    const watchFrame = frame(first, 0);
+    first.message({ id: watchFrame.id, ok: true, result: {} });
+    await watch;
+    first.close();
+
+    await waitFor(() => sockets.length === 2);
+    const second = socketAt(sockets, 1);
+    second.open();
+    expect(second.sent).toHaveLength(0);
+    client.close();
+  });
+
   test("reconnects and restores successful watches", async () => {
     const sockets: FakeSocket[] = [];
     const states: string[] = [];
@@ -291,7 +329,7 @@ describe("gateway client", () => {
       },
     });
     client.on("connection-state", (event) => states.push(event.payload.state));
-    const first = sockets[0] as FakeSocket;
+    const first = socketAt(sockets, 0);
     first.open();
     const watch = client.request("session.watch", { session: "slack/channel" });
     const watchFrame = frame(first, 0);
@@ -300,7 +338,7 @@ describe("gateway client", () => {
     first.close();
 
     await waitFor(() => sockets.length === 2);
-    const second = sockets[1] as FakeSocket;
+    const second = socketAt(sockets, 1);
     second.open();
     await waitFor(() => second.sent.length === 1);
     expect(frame(second, 0)).toMatchObject({
