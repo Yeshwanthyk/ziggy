@@ -6,8 +6,13 @@ description: Create or change a Profile-owned Pi extension package at extensions
 # Ziggy extension authoring
 
 Profile-owned extension packages live at `<profile>/extensions/<id>/` and use Pi's package contract
-directly. A Ziggy Profile agent runs with the Profile as its working directory, so create the package
-at `extensions/<id>/`. Never write generated or Profile-specific packages into Ziggy's repository
+directly. The lowercase kebab-case folder name and matching `extensions.json` entry are Ziggy's
+local shelf identity; `package.json.name` is independent upstream package metadata and may be scoped or unscoped. For
+example, `<profile>/extensions/computer-use/` is selected as `"computer-use"` while its manifest
+can retain `"name": "@injaneity/pi-computer-use"`.
+
+A Ziggy Profile agent runs with the Profile as its working directory, so create the package at
+`extensions/<id>/`. Never write generated or Profile-specific packages into Ziggy's repository
 extension catalogue.
 Keep each package self-contained and give it only the resources it needs.
 Do not require tools owned by another package. Agents may compose capabilities that are present,
@@ -16,11 +21,11 @@ but each package must remain useful when every other optional package is absent.
 ## Package shape
 
 ```text
-extensions/example/
+extensions/computer-use/
 ├── package.json
 ├── index.ts                 # only when the package registers executable Pi behavior
 └── skills/
-    └── example/
+    └── computer-use/
         ├── SKILL.md
         └── scripts/         # optional skill-relative support files
 ```
@@ -29,7 +34,7 @@ Use this manifest for a skill-only package:
 
 ```json
 {
-  "name": "@ziggy/example",
+  "name": "@injaneity/pi-computer-use",
   "private": true,
   "type": "module",
   "keywords": ["pi-package"],
@@ -58,7 +63,7 @@ tool subprocesses run in the Profile cwd supplied by Pi.
 
 Do not create a second manifest, registry, alias layer, installer, or tool allowlist. Ziggy admits
 only paths declared by `pi.extensions` and `pi.skills`. From the Profile working directory, select
-the package with `ziggy extensions add . example`; Profile-owned packages take precedence over
+the package with `ziggy extensions add . computer-use`; Profile-owned packages take precedence over
 approved catalogue packages with the same ID. Reopening that Profile or restarting its resident
 Ziggy process activates the change. All registered tools must be usable from TUI, print runs,
 gateway chats, and automations when the package is selected.

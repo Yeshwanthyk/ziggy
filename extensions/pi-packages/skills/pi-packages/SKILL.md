@@ -14,6 +14,10 @@ Each package may contain an Agent Skill, executable Pi extension code, or both. 
 all other packages are optional. A Profile-owned package takes precedence over an approved
 catalogue package with the same ID.
 
+The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf identity;
+`package.json.name` remains independent upstream package metadata. For example, shelf ID `computer-use` can retain the
+package name `@injaneity/pi-computer-use`.
+
 Inspect the approved catalogue without executing package code:
 
 ```bash

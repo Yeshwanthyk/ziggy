@@ -14,7 +14,7 @@ import { fileSystemCauseDetails } from "./cause";
 const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const Selection = Schema.Struct({ extensions: Schema.Array(ExtensionId) });
 const Manifest = Schema.Struct({
-  name: Schema.String,
+  name: Schema.String.check(Schema.isPattern(/\S/u)),
   description: Schema.optionalKey(Schema.String),
   pi: Schema.Struct({
     extensions: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -216,8 +216,11 @@ export const readExtensionPackage = (
           : invalid(manifestPath, `invalid extension manifest: ${manifestPath}`, cause),
       ),
     );
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || manifest.name !== `@ziggy/${id}`) {
-      return yield* invalid(manifestPath, `extension manifest name must be '@ziggy/${id}'`);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
+      return yield* invalid(
+        manifestPath,
+        `extension shelf ID must use lowercase kebab-case: '${id}'`,
+      );
     }
     const physicalPackagePath = yield* physicalPath(packagePath);
     const extensionPaths = yield* Effect.forEach(manifest.pi.extensions ?? [], (declared) =>
