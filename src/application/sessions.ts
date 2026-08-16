@@ -1,7 +1,8 @@
 import { Context, Effect, Layer } from "effect";
 import { listProfileSessions, showProfileSession } from "../adapters/pi/sessions";
 import type { ProfileTarget } from "../domain/profile";
-import type { SessionMetadata, SessionNotFound, SessionReadFailed } from "../domain/session";
+import { SessionNotFound } from "../domain/session";
+import type { SessionMetadata, SessionReadFailed } from "../domain/session";
 
 export type SessionsError = SessionReadFailed | SessionNotFound;
 
@@ -13,6 +14,10 @@ export interface SessionsApi {
     target: ProfileTarget,
     reference: string,
   ) => Effect.Effect<SessionMetadata, SessionsError>;
+  readonly resolve: (
+    target: ProfileTarget,
+    id: string,
+  ) => Effect.Effect<SessionMetadata, SessionsError>;
 }
 
 export class Sessions extends Context.Service<Sessions, SessionsApi>()("ziggy/Sessions") {}
@@ -20,4 +25,14 @@ export class Sessions extends Context.Service<Sessions, SessionsApi>()("ziggy/Se
 export const SessionsLive = Layer.succeed(Sessions, {
   list: (target) => listProfileSessions(target.path),
   show: (target, reference) => showProfileSession(target.path, reference),
+  resolve: (target, id) =>
+    Effect.gen(function* () {
+      const sessions = yield* listProfileSessions(target.path);
+      const session = sessions.find((candidate) => candidate.id === id);
+      if (session !== undefined) return session;
+      return yield* new SessionNotFound({
+        reference: id,
+        message: `session not found: ${id}`,
+      });
+    }),
 });

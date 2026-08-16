@@ -409,11 +409,20 @@ continues; Ziggy never forwards a private Slack URL to the model.
 
 ### A selected command-line extension works in the TUI but not under `serve`
 
-A managed service does not inherit the interactive terminal's shell initialization. On macOS,
-launchd commonly has a narrower `PATH`. System tools such as `/usr/bin/osascript` remain available,
-but Homebrew commands such as `gh` or `qmd` may require future explicit managed-service PATH support
-or package-owned absolute executable resolution. Inspect logs rather than assuming the package was
-not selected.
+A managed service does not inherit the interactive terminal's shell initialization. Ziggy therefore
+renders absolute `HOME` and `ZIGGY_HOME` values, an absolute service executable in
+`ProgramArguments`, and a deterministic default `PATH` in both launchd and systemd definitions:
+`<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`. This includes the canonical
+`~/.local/bin` install location and common Homebrew locations without relying on shell startup files.
+
+If the service was installed before these environment fields changed, `serve` reports a drifted
+definition. Restage it explicitly with `ziggy serve install <profile> --force`, then inspect
+`ziggy serve logs <profile>` rather than assuming the package was not selected.
+
+The in-process `profile_extensions` tool (`list`, `add`, `remove`, and `validate`) is separate from
+this environment: it never invokes Bash, searches `PATH`, or shells into `ziggy`. Extension
+lifecycle operations therefore do not depend on the managed-service `PATH`; this `PATH` only helps
+selected extensions invoke ordinary external commands.
 
 ### Slack asks for a request URL
 

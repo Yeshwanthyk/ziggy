@@ -2,7 +2,11 @@ import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { APPROVED_BUNDLED_EXTENSION_IDS, REQUIRED_BUNDLED_EXTENSION_IDS } from "../../catalog";
+import {
+  APPROVED_BUNDLED_EXTENSION_IDS,
+  BUILTIN_PACKAGE_METADATA,
+  REQUIRED_BUNDLED_EXTENSION_IDS,
+} from "../../catalog";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../fs/cause";
 import {
@@ -10,6 +14,7 @@ import {
   readExtensionPackage,
   readExtensionSelection,
 } from "../fs/profile-extensions";
+import { bundledFilePath } from "../../generated/builtin-files";
 
 export interface BundledExtensionFactory {
   readonly name: string;
@@ -21,6 +26,19 @@ export interface PiResources {
   readonly skillPaths: ReadonlyArray<string>;
   readonly extensionFactories: ReadonlyArray<BundledExtensionFactory>;
 }
+
+const embeddedBundledSkillPaths = new Set<string>();
+for (const packageInfo of BUILTIN_PACKAGE_METADATA) {
+  if (!packageInfo.required) continue;
+  for (const skill of packageInfo.skills) {
+    const embeddedPath = bundledFilePath(skill.logicalPath);
+    if (embeddedPath !== undefined) embeddedBundledSkillPaths.add(embeddedPath);
+  }
+}
+
+/** Embedded bundled files keep a .embed suffix, although their contents are trusted Markdown. */
+export const isEmbeddedBundledSkillPath = (skillPath: string): boolean =>
+  embeddedBundledSkillPaths.has(skillPath);
 
 const inspectPath = (targetPath: string) =>
   Effect.tryPromise({
@@ -60,14 +78,14 @@ const readRequiredPackage = (profilePath: string, id: string) =>
     ),
   );
 
-export const discoverPiResources = (
+/** Compose the exact Pi resource set for an explicit candidate selection. */
+export const composePiResources = (
   profilePath: string,
-  _repositoryRoot: string,
+  selectedIds: ReadonlyArray<string>,
   approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
   Effect.gen(function* () {
-    const selectedIds = yield* readExtensionSelection(profilePath);
-    const selected = yield* Effect.forEach(selectedIds, (id) =>
+    const selected = yield* Effect.forEach([...selectedIds].sort(), (id) =>
       existingDirectory(join(profilePath, "extensions", id)).pipe(
         Effect.flatMap((directory) => {
           if (directory !== undefined) return readExtensionPackage(profilePath, id);
@@ -101,3 +119,12 @@ export const discoverPiResources = (
       extensionFactories: [],
     };
   });
+
+export const discoverPiResources = (
+  profilePath: string,
+  _repositoryRoot: string,
+  approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
+): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  readExtensionSelection(profilePath).pipe(
+    Effect.flatMap((selected) => composePiResources(profilePath, selected, approvedRepositoryIds)),
+  );

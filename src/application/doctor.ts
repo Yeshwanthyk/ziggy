@@ -10,17 +10,17 @@ import {
   loadTelegramConfigFile,
 } from "../adapters/fs/gateway-config";
 import { describePinnedPiDocs, loadPinnedPiDocs } from "../adapters/pi/pi-docs";
-import { discoverPiResources } from "../adapters/pi/resources";
 import { listProfileSessions } from "../adapters/pi/sessions";
 import { readSlackHealth } from "../adapters/fs/slack-health";
 import { readDiscordHealth } from "../adapters/fs/discord-health";
 import { type AuthApi, Auth } from "./auth";
 import { type ModelsApi, Models } from "./models";
-import { ExtensionCatalogService, type ExtensionCatalogApi } from "./extension-catalog";
+import { ProfileExtensions } from "./profile-extensions";
 import { parseAutomationFile } from "../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../domain/memory";
 import { type DoctorCheck, type DoctorReport, doctorReport } from "../domain/doctor";
 import type { ProfileTarget } from "../domain/profile";
+import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import packageJson from "../../package.json" with { type: "json" };
 
 export interface DoctorApi {
@@ -195,7 +195,12 @@ const collectMemoryFiles = (directoryPath: string): Effect.Effect<ReadonlyArray<
       const entryPath = path.join(directoryPath, entry.name);
       if (entry.isSymbolicLink()) return yield* Effect.fail("symlinked memory entry");
       if (entry.isDirectory()) files.push(...(yield* collectMemoryFiles(entryPath)));
-      else if (entry.isFile() && entry.name.endsWith(".md")) files.push(entryPath);
+      else if (
+        entry.isFile() &&
+        entry.name.endsWith(".md") &&
+        !(path.basename(directoryPath) === "memory" && entry.name === "README.md")
+      )
+        files.push(entryPath);
     }
     return files;
   });
@@ -226,29 +231,19 @@ const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 const resourcesCheck = (
   target: ProfileTarget,
   repositoryRoot: string,
-  catalog: ExtensionCatalogApi | undefined,
+  profileExtensions: ProfileExtensionsApi,
 ): Effect.Effect<DoctorCheck> =>
-  Effect.gen(function* () {
-    if (catalog !== undefined) {
-      const materialized = yield* catalog
-        .materialize(target.path, repositoryRoot)
-        .pipe(Effect.result);
-      if (materialized._tag === "Failure") {
-        return error("resources", "Selected extensions or installed skills are invalid");
-      }
-    }
-    return yield* discoverPiResources(target.path, repositoryRoot).pipe(
-      Effect.map((resources) =>
-        ok(
-          "resources",
-          `${resources.extensionFactories.length} bundled factories, ${resources.extensionPaths.length} Profile extension entrypoints, and ${resources.skillPaths.length} skill roots selected`,
-        ),
+  profileExtensions.validate(target, repositoryRoot).pipe(
+    Effect.map(({ preflight }) =>
+      ok(
+        "resources",
+        `${preflight.extensionFactoryCount} bundled factories, ${preflight.extensionPathCount} Profile extension entrypoints, and ${preflight.skillPathCount} skill roots selected`,
       ),
-      Effect.catch(() =>
-        Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
-      ),
-    );
-  });
+    ),
+    Effect.catch(() =>
+      Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
+    ),
+  );
 
 const piDocsCheck = (): DoctorCheck => {
   const documents = loadPinnedPiDocs();
@@ -381,7 +376,7 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 export const makeDoctor = (
   auth: AuthApi,
   models: ModelsApi,
-  catalog?: ExtensionCatalogApi,
+  profileExtensions: ProfileExtensionsApi,
 ): DoctorApi => ({
   check: (target, repositoryRoot) =>
     Effect.gen(function* () {
@@ -393,7 +388,7 @@ export const makeDoctor = (
         yield* agentsCheck(target, models),
         yield* automationsCheck(target),
         yield* memoryCheck(target),
-        yield* resourcesCheck(target, repositoryRoot, catalog),
+        yield* resourcesCheck(target, repositoryRoot, profileExtensions),
         piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),
@@ -408,6 +403,6 @@ export const makeDoctor = (
 export const DoctorLive = Layer.effect(
   Doctor,
   Effect.gen(function* () {
-    return makeDoctor(yield* Auth, yield* Models, yield* ExtensionCatalogService);
+    return makeDoctor(yield* Auth, yield* Models, yield* ProfileExtensions);
   }),
 );

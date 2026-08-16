@@ -12,6 +12,51 @@ export type ChatContext =
 
 export type MemoryScope = "shared" | "person" | "group";
 
+const validMemoryId = /^[a-z0-9._-]{1,64}$/;
+
+/** The CLI spelling for a memory document. This is decoded at the CLI boundary. */
+export const MemoryScopeReference = Schema.String.check(
+  Schema.makeFilter(
+    (value) => value === "shared" || /^(?:user|group):[A-Za-z0-9._-]{1,64}$/u.test(value),
+    { expected: "shared, user:<id>, or group:<id>" },
+  ),
+);
+export type MemoryScopeReference = typeof MemoryScopeReference.Type;
+
+export type MemoryScopeSelection =
+  | { readonly scope: "shared" }
+  | { readonly scope: "person"; readonly id: string }
+  | { readonly scope: "group"; readonly id: string };
+
+export class MemoryDocumentInvalid extends Schema.TaggedErrorClass<MemoryDocumentInvalid>()(
+  "MemoryDocumentInvalid",
+  {
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+export class MemoryFileSystemError extends Schema.TaggedErrorClass<MemoryFileSystemError>()(
+  "MemoryFileSystemError",
+  {
+    operation: Schema.Literals(["list", "read"]),
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+export class MemoryBackupError extends Schema.TaggedErrorClass<MemoryBackupError>()(
+  "MemoryBackupError",
+  {
+    operation: Schema.Literals(["create", "prune", "inspect"]),
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 export interface MemoryDocument {
   readonly scope: MemoryScope;
   readonly relativePath: string;
@@ -68,8 +113,6 @@ type MemoryOperationError = MemoryOperationInvalid | MemoryEntryMatchInvalid | M
 export type MemoryDocumentsResult =
   | { readonly ok: true; readonly documents: ReadonlyArray<MemoryDocument> }
   | { readonly ok: false; readonly error: MemoryIdInvalid };
-
-const validMemoryId = /^[a-z0-9._-]{1,64}$/;
 
 export const codePointLength = (value: string): number => [...value].length;
 
@@ -238,6 +281,59 @@ const memoryDocument = (
   cap: memoryCap(scope),
   heading,
 });
+
+export const memoryDocumentFromRelativePath = (
+  profilePath: string,
+  relativePath: string,
+): MemoryDocument | undefined => {
+  if (relativePath === "MEMORY.md") {
+    return memoryDocument(profilePath, "shared", relativePath, "## Memory (shared)");
+  }
+
+  const match = /^(?:memory[\\/])(users|groups)[\\/]([^\\/]+)\.md$/u.exec(relativePath);
+  if (match === null) return undefined;
+  const [, directory, id] = match;
+  if (directory === undefined || id === undefined || !validMemoryId.test(id)) return undefined;
+  return directory === "users"
+    ? memoryDocument(profilePath, "person", relativePath, "## Memory (this person)")
+    : memoryDocument(profilePath, "group", relativePath, "## Memory (this group)");
+};
+
+export const parseMemoryScopeReference = (
+  reference: MemoryScopeReference,
+): MemoryScopeSelection => {
+  if (reference === "shared") return { scope: "shared" };
+  const separator = reference.indexOf(":");
+  const kind = reference.slice(0, separator);
+  const id = reference.slice(separator + 1).toLowerCase();
+  return kind === "user" ? { scope: "person", id } : { scope: "group", id };
+};
+
+export const memoryDocumentForScope = (
+  profilePath: string,
+  selection: MemoryScopeSelection,
+):
+  | { readonly ok: true; readonly document: MemoryDocument }
+  | { readonly ok: false; readonly error: MemoryIdInvalid } => {
+  if (selection.scope === "shared") {
+    return {
+      ok: true,
+      document: memoryDocument(profilePath, "shared", "MEMORY.md", "## Memory (shared)"),
+    };
+  }
+  const sanitized = sanitizeMemoryId(selection.scope === "person" ? "user" : "group", selection.id);
+  if (!sanitized.ok) return sanitized;
+  const directory = selection.scope === "person" ? "users" : "groups";
+  return {
+    ok: true,
+    document: memoryDocument(
+      profilePath,
+      selection.scope,
+      path.join("memory", directory, `${sanitized.id}.md`),
+      selection.scope === "person" ? "## Memory (this person)" : "## Memory (this group)",
+    ),
+  };
+};
 
 export const memoryFilePaths = (
   profilePath: string,

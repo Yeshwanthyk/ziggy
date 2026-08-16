@@ -14,10 +14,12 @@ import type {
   AutomationTuiRequest,
   AutomationTuiResponse,
 } from "ziggy/adapters/pi/automation-tui";
+import { ProfileExtensionPreflightFailed } from "ziggy/domain/profile-extension";
 import type { ProfileExtensionSelectionRunner } from "ziggy/adapters/pi/profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
+  renderProfileExtensionOperationFailure,
 } from "ziggy/adapters/pi/ziggy-tui-extension";
 
 type Extension = ReturnType<typeof createZiggyTuiExtension>;
@@ -498,6 +500,100 @@ describe("Ziggy TUI extension", () => {
     ]);
   });
 
+  test("projects structured extension failures without exposing generic exception text", async () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], {
+      list: () =>
+        Promise.reject({
+          ok: false,
+          operation: "add",
+          stage: "preflight",
+          code: "profile_extension_preflight_failed",
+          message: "package import is unavailable",
+          id: "alpha",
+          source: "shelf",
+          selectionChanged: false,
+        }),
+      setSelected: () => Promise.reject(new Error("must not be reached")),
+    });
+    const harness = createHarness();
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+    const command = harness.commands.find(({ name }) => name === "extensions");
+    if (command === undefined) throw new Error("extensions command missing");
+
+    await command.options.handler("", {
+      mode: "tui",
+      ui: {
+        ...commandUi(harness),
+        custom: async <Result>(): Promise<Result> => undefined as Result,
+      },
+    });
+
+    expect(harness.notifications).toEqual([
+      "Profile extension operation failed: operation=add; stage=preflight; code=profile_extension_preflight_failed; reason=package import is unavailable; id=alpha; source=shelf; selectionChanged=false",
+    ]);
+    expect(harness.notifications[0]).not.toContain("must not be reached");
+  });
+
+  test("bounds the shared operation, stage, code, and reason projection", () => {
+    const rendered = renderProfileExtensionOperationFailure({
+      operation: `${"o".repeat(96)}-operation-secret`,
+      stage: `${"s".repeat(64)}-stage-secret`,
+      code: `${"c".repeat(64)}-code-secret`,
+      message: `${"r".repeat(360)}-reason-secret`,
+      selectionChanged: false,
+    });
+
+    expect(rendered).toContain(`operation=${"o".repeat(96)}`);
+    expect(rendered).toContain(`stage=${"s".repeat(64)}`);
+    expect(rendered).toContain(`code=${"c".repeat(64)}`);
+    expect(rendered).toContain(`reason=${"r".repeat(360)}`);
+    expect(rendered).not.toContain("operation-secret");
+    expect(rendered).not.toContain("stage-secret");
+    expect(rendered).not.toContain("code-secret");
+    expect(rendered).not.toContain("reason-secret");
+  });
+
+  test("projects direct ProfileExtensions preflight failures with operation and stage", async () => {
+    const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], {
+      list: () =>
+        Promise.resolve({
+          available: [{ id: "alpha", description: "Alpha", kind: "skill", source: "profile" }],
+          selected: [],
+        }),
+      setSelected: () =>
+        Promise.reject(
+          new ProfileExtensionPreflightFailed({
+            profilePath: "/profiles/ziggy-dev",
+            stage: "skills",
+            message: "skill metadata is invalid",
+            diagnostics: [],
+            cause: "fixture",
+          }),
+        ),
+    });
+    const harness = createHarness();
+    extension.factory({
+      on: () => undefined,
+      registerCommand: (name, options) => harness.commands.push({ name, options }),
+    });
+    const command = harness.commands.find(({ name }) => name === "extensions");
+    if (command === undefined) throw new Error("extensions command missing");
+
+    await command.options.handler("", {
+      mode: "tui",
+      ui: {
+        ...commandUi(harness),
+        custom: async <Result>(): Promise<Result> => ["alpha"] as Result,
+      },
+    });
+
+    expect(harness.notifications).toEqual([
+      "Profile extension operation failed: operation=set-selected; stage=skills; code=preflight_failed; reason=skill metadata is invalid; selectionChanged=false",
+    ]);
+  });
   test("keeps the TUI-only agents command when a Profile has no selection runner", () => {
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev", []);
     const harness = createHarness();

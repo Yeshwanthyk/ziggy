@@ -1,26 +1,12 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup exercises the Node filesystem adapter */
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- test cleanup requires finally around temporary directories */
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { Effect, Predicate, Result } from "effect";
+import { Effect } from "effect";
 import { expect, test } from "bun:test";
 import { Profiles, ProfilesLive, type ProfilesApi } from "ziggy/application/profiles";
-
-const makeFixture = async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "ziggy-profiles-test-"));
-  const profilePath = path.join(root, "profile");
-  const repositoryRoot = path.join(root, "repository");
-  await mkdir(profilePath, { recursive: true });
-  await writeFile(path.join(profilePath, "SOUL.md"), "# Profile\n");
-
-  return {
-    root,
-    profile: { path: profilePath, name: "Profile" },
-    repositoryRoot,
-  };
-};
 
 const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
   const snapshot: string[] = [];
@@ -40,18 +26,6 @@ const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
   };
   await visit(root);
   return snapshot;
-};
-
-const writeSkill = async (skillPath: string, body: string, assets: Record<string, string> = {}) => {
-  await mkdir(skillPath, { recursive: true });
-  await writeFile(path.join(skillPath, "SKILL.md"), body);
-  await Promise.all(
-    Object.entries(assets).map(async ([relativePath, content]) => {
-      const assetPath = path.join(skillPath, relativePath);
-      await mkdir(path.dirname(assetPath), { recursive: true });
-      await writeFile(assetPath, content);
-    }),
-  );
 };
 
 const useProfiles = <Value, Error>(
@@ -137,93 +111,37 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
   }
 });
 
-test("extension selection writes canonically and preserves bytes on no-op or invalid input", async () => {
-  const fixture = await makeFixture();
+test("non-minimal init scaffolds private memory files and preserves them on rerun", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ziggy-memory-scaffold-test-"));
+  const profilePath = path.join(root, "profile");
+  const target = { path: profilePath, name: "Profile" };
   try {
-    const profilePackage = path.join(fixture.profile.path, "extensions", "gamma");
-    await writeSkill(
-      path.join(profilePackage, "skills", "gamma"),
-      "---\nname: gamma\ndescription: Profile-owned gamma.\n---\n",
+    await useProfiles((profiles) =>
+      profiles.initProfile(target, { createStarterDirectories: true }),
     );
-    await writeFile(
-      path.join(profilePackage, "package.json"),
-      JSON.stringify({
-        name: "@ziggy/gamma",
-        description: "Profile-owned gamma",
-        pi: { skills: ["./skills"] },
-      }),
-    );
+    const sharedMemoryPath = path.join(profilePath, "MEMORY.md");
+    const memoryReadmePath = path.join(profilePath, "memory", "README.md");
+    const paths = [sharedMemoryPath, memoryReadmePath];
+    expect(await readFile(sharedMemoryPath, "utf8")).toBe("");
+    expect(await readFile(memoryReadmePath, "utf8")).toContain("docs/operations/memory.md");
+    for (const directory of [
+      path.join(profilePath, "memory"),
+      path.join(profilePath, "memory", "users"),
+      path.join(profilePath, "memory", "groups"),
+    ]) {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    }
+    for (const file of paths) expect((await stat(file)).mode & 0o777).toBe(0o600);
 
-    const selectionPath = path.join(fixture.profile.path, "extensions.json");
-    expect(
-      (
-        await useProfiles((profiles) =>
-          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "weather"),
-        )
-      ).changed,
-    ).toBe(true);
-    await useProfiles((profiles) =>
-      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github"),
+    await writeFile(sharedMemoryPath, "human memory\n");
+    await writeFile(memoryReadmePath, "human README\n");
+    const before = await snapshotTree(profilePath);
+    const rerun = await useProfiles((profiles) =>
+      profiles.initProfile(target, { createStarterDirectories: true }),
     );
-    const canonical = '{\n  "extensions": [\n    "github",\n    "weather"\n  ]\n}\n';
-    expect(await readFile(selectionPath, "utf8")).toBe(canonical);
-    expect(
-      (
-        await useProfiles((profiles) =>
-          profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github"),
-        )
-      ).changed,
-    ).toBe(false);
-    expect(await readFile(selectionPath, "utf8")).toBe(canonical);
-    await useProfiles((profiles) =>
-      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "weather"),
-    );
-    await useProfiles((profiles) =>
-      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "github"),
-    );
-    expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
-    await useProfiles((profiles) =>
-      profiles.addExtension(fixture.profile, fixture.repositoryRoot, "gamma"),
-    );
-    expect(await readFile(selectionPath, "utf8")).toBe(
-      '{\n  "extensions": [\n    "gamma"\n  ]\n}\n',
-    );
-    await useProfiles((profiles) =>
-      profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "gamma"),
-    );
-
-    await writeFile(selectionPath, '{"extensions":["retired-package"]}\n');
-    expect(
-      await useProfiles((profiles) =>
-        profiles.removeExtension(fixture.profile, fixture.repositoryRoot, "retired-package"),
-      ),
-    ).toEqual({
-      id: "retired-package",
-      profilePath: fixture.profile.path,
-      changed: true,
-      selected: false,
-    });
-    expect(await readFile(selectionPath, "utf8")).toBe('{\n  "extensions": []\n}\n');
-
-    await writeFile(selectionPath, '{"extensions":["weather","weather"]}\n');
-    const invalidBytes = await readFile(selectionPath, "utf8");
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const profiles = yield* Profiles;
-        return yield* profiles.addExtension(fixture.profile, fixture.repositoryRoot, "github");
-      }).pipe(Effect.provide(ProfilesLive), Effect.result),
-    );
-    expect(
-      Result.match(result, {
-        onFailure: Predicate.isTagged("ProfileExtensionInvalid"),
-        onSuccess: () => false,
-      }),
-    ).toBe(true);
-    expect(await readFile(selectionPath, "utf8")).toBe(invalidBytes);
-    expect((await readdir(fixture.profile.path)).filter((name) => name.endsWith(".tmp"))).toEqual(
-      [],
-    );
+    expect(rerun).toEqual({ path: profilePath, created: false, createdDirectories: [] });
+    expect(await snapshotTree(profilePath)).toEqual(before);
   } finally {
-    await rm(fixture.root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

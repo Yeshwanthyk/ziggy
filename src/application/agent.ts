@@ -88,6 +88,7 @@ export interface ZiggyAgentApi {
     prompt: string,
     continueSession: boolean,
     context: ChatContext,
+    options?: RunOnceOptions,
   ) => Effect.Effect<number, ZiggyAgentError>;
   readonly openTui: (
     target: ProfileTarget,
@@ -113,6 +114,11 @@ export interface ZiggyAgentApi {
   ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
 }
 
+export interface RunOnceOptions {
+  readonly mode?: "text" | "json";
+  readonly sessionPath?: string;
+}
+
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentApi>()("ziggy/ZiggyAgent") {}
 
 export const ZiggyAgentLive = Layer.effect(
@@ -125,7 +131,8 @@ export const ZiggyAgentLive = Layer.effect(
         prompt: string,
         continueSession: boolean,
         context: ChatContext,
-      ) => piAgent.askOnce(target, prompt, continueSession, context),
+        options?: RunOnceOptions,
+      ) => piAgent.askOnce(target, prompt, continueSession, context, options),
       openTui: (
         target: ProfileTarget,
         context: ChatContext,

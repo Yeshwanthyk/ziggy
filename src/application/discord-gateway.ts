@@ -67,6 +67,7 @@ import {
 import { codePointLength } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import type { ChatRegistryApi } from "./chat-registry";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 const DISCORD_MESSAGE_LIMIT = 2_000;
@@ -151,6 +152,7 @@ export interface DiscordGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: DiscordGatewayConfig,
+    registry?: ChatRegistryApi,
   ) => Effect.Effect<never, DiscordGatewayError>;
 }
 
@@ -432,13 +434,20 @@ const retryDiscordFeedback = <A>(
     }
   });
 
-const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
+const disposeChats = (
+  chats: Map<string, ChatState>,
+  registry?: ChatRegistryApi,
+): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : state.handle.dispose.pipe(
+        : (registry === undefined
+            ? Effect.void
+            : registry.unregisterAlias(`discord/${chatKey}`, state.handle)
+          ).pipe(
+            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[discord] ${chatKey} dispose failed: ${failure.message}`);
@@ -552,7 +561,7 @@ export const makeDiscordGateway = (
   healthRuntime: DiscordHealthRuntime = silentDiscordHealthRuntime,
   ingressRuntime: DiscordIngressRuntime = volatileDiscordIngressRuntime,
 ): DiscordGatewayApi => ({
-  runLoop: (target, config) =>
+  runLoop: (target, config, registry) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -594,7 +603,7 @@ export const makeDiscordGateway = (
             Effect.catch((failure) =>
               Effect.logWarning("Discord socket close failed", { failure }),
             ),
-            Effect.andThen(disposeChats(chats)),
+            Effect.andThen(disposeChats(chats, registry)),
             Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() })),
           ),
         );
@@ -841,6 +850,18 @@ export const makeDiscordGateway = (
                     message.context,
                     join(target.path, "sessions", "discord", message.chatKey),
                   );
+                  if (registry !== undefined) {
+                    yield* registry
+                      .registerAlias(`discord/${message.chatKey}`, "discord", chatState.handle)
+                      .pipe(
+                        Effect.catch((failure) =>
+                          Effect.logWarning("Discord registry registration failed", {
+                            chatKey: message.chatKey,
+                            failure,
+                          }),
+                        ),
+                      );
+                  }
                 }
                 const handle = chatState.handle;
 

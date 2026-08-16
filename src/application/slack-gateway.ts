@@ -70,6 +70,7 @@ import {
 } from "../domain/slack-health";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import type { ChatRegistryApi } from "./chat-registry";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
 const MAX_RETRY_SECONDS = 30;
@@ -165,6 +166,7 @@ export interface SlackGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: SlackGatewayConfig,
+    registry?: ChatRegistryApi,
   ) => Effect.Effect<never, SlackGatewayError>;
 }
 
@@ -675,13 +677,20 @@ export const retrySlackDelivery = <A>(
     }
   });
 
-const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
+const disposeChats = (
+  chats: Map<string, ChatState>,
+  registry?: ChatRegistryApi,
+): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : state.handle.dispose.pipe(
+        : (registry === undefined
+            ? Effect.void
+            : registry.unregisterAlias(`slack/${chatKey}`, state.handle)
+          ).pipe(
+            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[slack] ${chatKey} dispose failed: ${failure.message}`);
@@ -798,7 +807,7 @@ export const makeSlackGateway = (
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
   ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
 ): SlackGatewayApi => ({
-  runLoop: (target, config) =>
+  runLoop: (target, config, registry) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -896,7 +905,7 @@ export const makeSlackGateway = (
                   Effect.logWarning("Slack socket close failed", { failure }),
                 ),
               ),
-              disposeChats(chats),
+              disposeChats(chats, registry),
             ],
             { concurrency: "unbounded", discard: true },
           ).pipe(Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() }))),
@@ -1217,14 +1226,27 @@ export const makeSlackGateway = (
                       }
                     }
 
-                    const handle =
-                      chatState.handle ??
-                      (yield* agent.openChat(
+                    let handle = chatState.handle;
+                    if (handle === undefined) {
+                      handle = yield* agent.openChat(
                         target,
                         message.context,
                         join(target.path, "sessions", "slack", message.chatKey),
-                      ));
-                    chatState.handle = handle;
+                      );
+                      chatState.handle = handle;
+                      if (registry !== undefined) {
+                        yield* registry
+                          .registerAlias(`slack/${message.chatKey}`, "slack", handle)
+                          .pipe(
+                            Effect.catch((failure) =>
+                              Effect.logWarning("Slack registry registration failed", {
+                                chatKey: message.chatKey,
+                                failure,
+                              }),
+                            ),
+                          );
+                      }
+                    }
 
                     const reply = yield* Effect.scoped(
                       Effect.gen(function* () {

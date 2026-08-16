@@ -41,7 +41,9 @@ export const renderSystemdService = (
 ): ResidentServiceDefinition => {
   const restartSeconds = boundedSeconds(options.restartSeconds, 10);
   const stopTimeoutSeconds = boundedSeconds(options.stopTimeoutSeconds, 30);
-  const pathEnvironment = options.pathEnvironment ?? "/usr/local/bin:/usr/bin:/bin";
+  const pathEnvironment =
+    options.pathEnvironment ??
+    `${join(options.home, ".local", "bin")}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`;
   const path = systemdDefinitionPath(options.home, options.identity);
   const environment = {
     HOME: options.home,

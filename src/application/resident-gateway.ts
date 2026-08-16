@@ -5,6 +5,11 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
+import {
+  openUiServer,
+  type UiServerConnection,
+  type UiServerError,
+} from "../adapters/bun/ui-server";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { type SlackApiError } from "../adapters/slack/api";
@@ -23,6 +28,8 @@ import type { SlackGatewayConfig } from "../domain/slack";
 import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
+import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
+import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";
 import {
   DiscordGateway,
   type DiscordGatewayApi,
@@ -30,6 +37,10 @@ import {
 } from "./discord-gateway";
 import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
 import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
+import { ProfileExtensions } from "./profile-extensions";
+import type { ProfileExtensionsApi } from "../domain/profile-extension";
+import { Sessions, type SessionsApi } from "./sessions";
+import { makeUiGateway, type UiGatewayConnection } from "./ui-gateway";
 
 export interface ResidentGatewayConfig {
   readonly telegram: TelegramGatewayConfig | undefined;
@@ -77,6 +88,13 @@ export interface ResidentGatewayRuntime {
   readonly logError: (message: string) => Effect.Effect<void>;
 }
 
+export interface ResidentUiRuntime {
+  readonly run: (
+    target: ProfileTarget,
+    registry: ChatRegistryApi,
+  ) => Effect.Effect<never, UiServerError, Scope.Scope>;
+}
+
 const liveRuntime: ResidentGatewayRuntime = {
   loadConfig: loadResidentGatewayConfig,
   acquireOwner: acquireGatewayOwner,
@@ -84,12 +102,54 @@ const liveRuntime: ResidentGatewayRuntime = {
   logError: (message) => Effect.sync(() => console.error(message)),
 };
 
+const disabledUiRuntime: ResidentUiRuntime = {
+  run: () => Effect.never,
+};
+
+const makeLiveUiRuntime = (
+  repositoryRoot: string,
+  sessions: SessionsApi,
+  agent: ZiggyAgentApi,
+  profileExtensions: ProfileExtensionsApi,
+): ResidentUiRuntime => ({
+  run: (target, registry) =>
+    Effect.gen(function* () {
+      const gateway = makeUiGateway(
+        target,
+        registry,
+        sessions,
+        agent,
+        repositoryRoot,
+        profileExtensions,
+      );
+      const connections = new Map<string, UiGatewayConnection>();
+      const connectionFor = (transport: UiServerConnection): UiGatewayConnection => {
+        const existing = connections.get(transport.id);
+        if (existing !== undefined) return existing;
+        const opened = gateway.connect(transport.send);
+        connections.set(transport.id, opened);
+        return opened;
+      };
+      yield* openUiServer(target.path, {
+        onRequest: (connection, request) => connectionFor(connection).request(request),
+        onClose: (connection) => {
+          const opened = connections.get(connection.id);
+          if (opened === undefined) return Effect.void;
+          connections.delete(connection.id);
+          return opened.close;
+        },
+      });
+      return yield* Effect.never;
+    }),
+});
+
 export const makeResidentGateway = (
   scheduler: AutomationSchedulerApi,
   telegram: GatewayApi,
   discord: DiscordGatewayApi,
   slack: SlackGatewayApi,
   runtime: ResidentGatewayRuntime = liveRuntime,
+  ui: ResidentUiRuntime = disabledUiRuntime,
 ): ResidentGatewayApi => ({
   status: (target) => runtime.inspectOwner(target),
   run: (target) =>
@@ -98,13 +158,23 @@ export const makeResidentGateway = (
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* runtime.acquireOwner(target);
-          const branches: Array<Effect.Effect<never, AutomationSchedulerError>> = [
+          const registry = yield* makeChatRegistry();
+          const branches: Array<Effect.Effect<never, AutomationSchedulerError, Scope.Scope>> = [
             scheduler.run(target, owner),
+            ui
+              .run(target, registry)
+              .pipe(
+                Effect.catchTag("UiServerError", (failure) =>
+                  runtime
+                    .logError(`[gateway] UI server stopped: ${failure.message}`)
+                    .pipe(Effect.andThen(Effect.never)),
+                ),
+              ),
           ];
           if (config.telegram !== undefined)
             branches.push(
               telegram
-                .runLoop(target, config.telegram)
+                .runLoop(target, config.telegram, registry)
                 .pipe(
                   Effect.catchTag("TelegramApiError", (failure: TelegramApiError) =>
                     runtime
@@ -115,7 +185,7 @@ export const makeResidentGateway = (
             );
           if (config.discord !== undefined)
             branches.push(
-              discord.runLoop(target, config.discord).pipe(
+              discord.runLoop(target, config.discord, registry).pipe(
                 Effect.catchTag("DiscordApiError", (failure: DiscordApiError) =>
                   runtime
                     .logError(`[gateway] Discord stopped: ${failure.message}`)
@@ -132,7 +202,7 @@ export const makeResidentGateway = (
             );
           if (config.slack !== undefined)
             branches.push(
-              slack.runLoop(target, config.slack).pipe(
+              slack.runLoop(target, config.slack, registry).pipe(
                 Effect.catchTag("SlackApiError", (failure: SlackApiError) =>
                   runtime
                     .logError(`[gateway] Slack stopped: ${failure.message}`)
@@ -153,14 +223,22 @@ export const makeResidentGateway = (
     }),
 });
 
-export const ResidentGatewayLive = Layer.effect(
-  ResidentGateway,
-  Effect.gen(function* () {
-    return makeResidentGateway(
-      yield* AutomationScheduler,
-      yield* Gateway,
-      yield* DiscordGateway,
-      yield* SlackGateway,
-    );
-  }),
-);
+export const makeResidentGatewayLive = (repositoryRoot: string) =>
+  Layer.effect(
+    ResidentGateway,
+    Effect.gen(function* () {
+      return makeResidentGateway(
+        yield* AutomationScheduler,
+        yield* Gateway,
+        yield* DiscordGateway,
+        yield* SlackGateway,
+        liveRuntime,
+        makeLiveUiRuntime(
+          repositoryRoot,
+          yield* Sessions,
+          yield* ZiggyAgent,
+          yield* ProfileExtensions,
+        ),
+      );
+    }),
+  );

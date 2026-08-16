@@ -1,23 +1,41 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem and process state */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Promise test harness timeout diagnostics stay at the test boundary */
+/* oxlint-disable ziggy-effect/no-error-constructor -- Promise test harness timeout diagnostics stay at the test boundary */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Fiber, Predicate, Result, Scope } from "effect";
+import { Deferred, Effect, Fiber, Layer, Predicate, Result, Schema, Scope } from "effect";
 import { DiscordApiError } from "ziggy/adapters/discord/api";
+import {
+  readUiServerProjection,
+  UiServerError,
+  type UiServerProjection,
+} from "ziggy/adapters/bun/ui-server";
 import { AutomationSchedulerError } from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
-import type { AutomationSchedulerApi } from "ziggy/application/automation-scheduler";
-import type { DiscordGatewayApi } from "ziggy/application/discord-gateway";
-import type { GatewayApi } from "ziggy/application/gateway";
 import {
+  AutomationScheduler,
+  type AutomationSchedulerApi,
+} from "ziggy/application/automation-scheduler";
+import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
+import { Gateway, type GatewayApi } from "ziggy/application/gateway";
+import { ProfileExtensions } from "ziggy/application/profile-extensions";
+import {
+  ResidentGateway,
   loadResidentGatewayConfig,
   makeResidentGateway,
+  makeResidentGatewayLive,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
+  type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
-import type { SlackGatewayApi } from "ziggy/application/slack-gateway";
+import { Sessions, type SessionsApi } from "ziggy/application/sessions";
+import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
+import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
+import { UiResponseFrame } from "ziggy/domain/ui-gateway";
+import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 
 const paths: Array<string> = [];
 const telegram = { botToken: "telegram-token", ownerUserId: 7 };
@@ -44,6 +62,47 @@ const exists = (path: string) => Bun.file(path).exists();
 const isGatewayConfigError = Predicate.isTagged("GatewayConfigError");
 const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect));
+const decodeUiResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
+const within = <Value>(promise: Promise<Value>, label: string): Promise<Value> =>
+  Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 1_000),
+    ),
+  ]);
+const waitForUiProjection = async (path: string): Promise<UiServerProjection> => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const result = await Effect.runPromise(readUiServerProjection(path).pipe(Effect.result));
+    if (Result.isSuccess(result)) return result.success;
+    await Bun.sleep(10);
+  }
+  throw new Error("timed out waiting for UI server projection");
+};
+const connectUi = async (port: number, token: string): Promise<WebSocket> => {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
+  await within(
+    new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("UI socket failed")), {
+        once: true,
+      });
+    }),
+    "UI socket open",
+  );
+  return socket;
+};
+const nextUiMessage = (socket: WebSocket): Promise<string> =>
+  new Promise((resolve) =>
+    socket.addEventListener("message", (event) => resolve(String(event.data)), { once: true }),
+  );
+const closeUi = async (socket: WebSocket): Promise<void> => {
+  if (socket.readyState >= WebSocket.CLOSING) return;
+  const closed = new Promise<void>((resolve) =>
+    socket.addEventListener("close", () => resolve(), { once: true }),
+  );
+  socket.close();
+  await within(closed, "UI socket close");
+};
 const scheduler = (run: AutomationSchedulerApi["run"]): AutomationSchedulerApi => ({
   run,
   status: () => Effect.never,
@@ -72,6 +131,10 @@ const runtime = (config: ResidentGatewayConfig, events: Array<string>): Resident
     ),
   logError: (message) => Effect.sync(() => events.push(message)),
 });
+const uiRuntime = (
+  events: Array<string>,
+  body: Effect.Effect<never, UiServerError> = Effect.never,
+): ResidentUiRuntime => ({ run: () => scopedLoop(events, "ui", body) });
 const scopedLoop = <E = never>(
   events: Array<string>,
   name: string,
@@ -224,6 +287,153 @@ describe("resident gateway supervision", () => {
     expect(events.at(-1)).toBe("owner:exit");
     for (const name of ["scheduler", "telegram", "discord", "slack"])
       expect(events.filter((event) => event === `${name}:exit`)).toHaveLength(1);
+  });
+
+  test("owns the UI server inside the owner lease", async () => {
+    const target = await profile();
+    const events: Array<string> = [];
+    const channelLoops = loops(() => Effect.never);
+    const host = makeResidentGateway(
+      scheduler(() => scopedLoop(events, "scheduler")),
+      channelLoops.telegram,
+      channelLoops.discord,
+      channelLoops.slack,
+      runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
+      uiRuntime(events),
+    );
+
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("ui:enter"));
+        expect(events.indexOf("owner:enter")).toBeLessThan(events.indexOf("ui:enter"));
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+
+    expect(events.indexOf("ui:exit")).toBeLessThan(events.indexOf("owner:exit"));
+  });
+
+  test("isolates a typed UI server failure while the scheduler stays live", async () => {
+    const target = await profile();
+    const events: Array<string> = [];
+    const progress = await Effect.runPromise(Deferred.make<void>());
+    const channelLoops = loops(() => Effect.never);
+    const host = makeResidentGateway(
+      scheduler(() =>
+        scopedLoop(
+          events,
+          "scheduler",
+          Deferred.await(progress).pipe(
+            Effect.andThen(Effect.sync(() => events.push("scheduler:progress"))),
+            Effect.andThen(Effect.never),
+          ),
+        ),
+      ),
+      channelLoops.telegram,
+      channelLoops.discord,
+      channelLoops.slack,
+      runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
+      uiRuntime(
+        events,
+        Effect.fail(
+          new UiServerError({
+            operation: "start",
+            message: "address unavailable",
+          }),
+        ),
+      ),
+    );
+
+    await runScoped(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkScoped(host.run(target));
+        yield* waitFor(() => events.includes("ui:exit"));
+        expect(events.filter((event) => event.includes("UI server stopped"))).toEqual([
+          "[gateway] UI server stopped: address unavailable",
+        ]);
+        yield* Deferred.succeed(progress, undefined);
+        yield* waitFor(() => events.includes("scheduler:progress"));
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+  });
+
+  test("routes an authenticated UI extension request through shared ProfileExtensions", async () => {
+    const target = await profile();
+    const calls: Array<string> = [];
+    const profileExtensions: ProfileExtensionsApi = {
+      list: () => Effect.never,
+      show: () => Effect.never,
+      listForProfile: () => Effect.never,
+      add: () => Effect.never,
+      remove: () => Effect.never,
+      setSelected: () => Effect.never,
+      validate: (validatedTarget, repositoryRoot) =>
+        Effect.sync(() => {
+          calls.push(`validate:${validatedTarget.path}:${repositoryRoot}`);
+          return {
+            selected: [],
+            preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
+          };
+        }),
+      prepareRuntime: () => Effect.never,
+      activateRuntime: () => Effect.never,
+    };
+    const sessions: SessionsApi = {
+      list: () => Effect.succeed([]),
+      show: () => Effect.never,
+      resolve: () => Effect.never,
+    };
+    const agent: ZiggyAgentApi = {
+      runOnce: () => Effect.never,
+      openTui: () => Effect.never,
+      openChat: () => Effect.never,
+      openSpecialistChat: () => Effect.never,
+      runSpecialist: () => Effect.never,
+    };
+    const channelLoops = loops(() => Effect.never);
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(
+        AutomationScheduler,
+        scheduler(() => Effect.never),
+      ),
+      Layer.succeed(Gateway, channelLoops.telegram),
+      Layer.succeed(DiscordGateway, channelLoops.discord),
+      Layer.succeed(SlackGateway, channelLoops.slack),
+      Layer.succeed(Sessions, sessions),
+      Layer.succeed(ZiggyAgent, agent),
+      Layer.succeed(ProfileExtensions, profileExtensions),
+    );
+
+    await runScoped(
+      Effect.gen(function* () {
+        const resident = yield* ResidentGateway;
+        const fiber = yield* Effect.forkScoped(resident.run(target));
+        const projection = yield* Effect.promise(() => waitForUiProjection(target.path));
+        expect(
+          (yield* Effect.promise(() => fetch(`http://127.0.0.1:${projection.port}/ws`))).status,
+        ).toBe(401);
+
+        const socket = yield* Effect.promise(() => connectUi(projection.port, projection.token));
+        const response = nextUiMessage(socket);
+        socket.send(JSON.stringify({ id: "validate", method: "extension.validate", params: {} }));
+        expect(decodeUiResponse(yield* Effect.promise(() => response))).toEqual({
+          id: "validate",
+          ok: true,
+          result: {
+            selected: [],
+            preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
+          },
+        });
+        yield* Effect.promise(() => closeUi(socket));
+        yield* Fiber.interrupt(fiber);
+      }).pipe(
+        Effect.provide(makeResidentGatewayLive("/repository").pipe(Layer.provide(dependencies))),
+      ),
+    );
+
+    expect(calls).toEqual([`validate:${target.path}:/repository`]);
   });
 
   test("scheduler failure interrupts channel siblings before owner release", async () => {

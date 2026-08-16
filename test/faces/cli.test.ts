@@ -37,6 +37,17 @@ describe("CLI decoding", () => {
       target: "buddy",
       prompt: "hello there",
       continueSession: true,
+      json: false,
+    });
+    await expect(decode(["acp", "buddy"])).resolves.toEqual({
+      _tag: "Acp",
+      target: "buddy",
+      shared: false,
+    });
+    await expect(decode(["acp", "--shared", "buddy"])).resolves.toEqual({
+      _tag: "Acp",
+      target: "buddy",
+      shared: true,
     });
     await expect(decode(["extensions", "add", "buddy", "weather"])).resolves.toEqual({
       _tag: "ExtensionsAdd",
@@ -51,6 +62,7 @@ describe("CLI decoding", () => {
       _tag: "AutomationsRuns",
       target: "buddy",
       automationId: "morning",
+      json: false,
     });
   });
 
@@ -63,6 +75,7 @@ describe("CLI decoding", () => {
     await expect(decode(["automations", "list", "buddy"])).resolves.toEqual({
       _tag: "AutomationsList",
       target: "buddy",
+      json: false,
     });
     await expect(decode(["automations", "pause", "buddy", "morning"])).resolves.toEqual({
       _tag: "AutomationsPause",
@@ -103,11 +116,13 @@ describe("CLI decoding", () => {
     await expect(decode(["sessions", "list", "buddy"])).resolves.toEqual({
       _tag: "SessionsList",
       target: "buddy",
+      json: false,
     });
     await expect(decode(["sessions", "show", "buddy", "agents/child.jsonl"])).resolves.toEqual({
       _tag: "SessionsShow",
       target: "buddy",
       reference: "agents/child.jsonl",
+      json: false,
     });
     await expect(decode(["serve", "buddy"])).resolves.toEqual({
       _tag: "Serve",
@@ -143,6 +158,81 @@ describe("CLI decoding", () => {
       _tag: "Gateway",
       target: "buddy",
     });
+  });
+
+  test("decodes JSON list/show flags and exact run sessions", async () => {
+    await expect(decode(["profiles", "--json"])).resolves.toEqual({
+      _tag: "Profiles",
+      json: true,
+    });
+    await expect(decode(["agents", "show", "buddy", "reviewer", "--json"])).resolves.toEqual({
+      _tag: "AgentsShow",
+      target: "buddy",
+      agentId: "reviewer",
+      json: true,
+    });
+    await expect(decode(["extensions", "list", "--json"])).resolves.toEqual({
+      _tag: "ExtensionsList",
+      json: true,
+    });
+    await expect(decode(["automations", "status", "buddy", "--json"])).resolves.toEqual({
+      _tag: "AutomationsStatus",
+      target: "buddy",
+      json: true,
+    });
+    await expect(decode(["sessions", "show", "buddy", "session-id", "--json"])).resolves.toEqual({
+      _tag: "SessionsShow",
+      target: "buddy",
+      reference: "session-id",
+      json: true,
+    });
+    await expect(
+      decode(["run", "--json", "--session", "session-id", "buddy", "continue"]),
+    ).resolves.toEqual({
+      _tag: "Run",
+      target: "buddy",
+      prompt: "continue",
+      continueSession: false,
+      sessionId: "session-id",
+      json: true,
+    });
+  });
+
+  test("rejects conflicting run session options and preserves option-like prompt text after --", async () => {
+    await expect(
+      decode(["run", "-c", "--session", "session-id", "buddy", "continue"]),
+    ).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+      message: "--continue cannot be combined with --session",
+    });
+    await expect(decode(["run", "buddy", "--", "--json", "--session", "literal"])).resolves.toEqual(
+      {
+        _tag: "Run",
+        target: "buddy",
+        prompt: "--json --session literal",
+        continueSession: false,
+        json: false,
+      },
+    );
+    for (const args of [
+      ["run", "buddy", "prompt", "--session"],
+      ["run", "--session", "--json", "buddy", "prompt"],
+    ]) {
+      await expect(decode(args)).rejects.toMatchObject({
+        _tag: "CliInputInvalid",
+        message: "missing value for --session",
+      });
+    }
+  });
+
+  test("rejects malformed ACP arguments", async () => {
+    for (const args of [
+      ["acp"],
+      ["acp", "buddy", "extra"],
+      ["acp", "buddy", "--shared", "--shared"],
+    ]) {
+      await expect(decode(args)).rejects.toMatchObject({ _tag: "CliInputInvalid" });
+    }
   });
 
   test("decodes guided, minimal, and explicit non-interactive init", async () => {
@@ -252,11 +342,13 @@ describe("CLI decoding", () => {
       "ziggy automations create|list|pause|resume|validate|status|runs",
     );
     expect(renderHelp()).toContain("ziggy sessions list|show");
+    expect(renderHelp()).toContain("ziggy acp <name|path> [--shared]");
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
     expect(renderHelp("serve")).toContain("ziggy serve install <name|path> [--force] [--no-start]");
     expect(renderHelp("serve")).toContain("ziggy serve logs <name|path> [--follow]");
+    expect(renderHelp("acp")).toBe("usage: ziggy acp <name|path> [--shared]");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

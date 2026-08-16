@@ -1,5 +1,8 @@
-import { Effect } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli";
+import { MemoryScopeReference } from "../domain/memory";
+
+const decodeMemoryScope = Schema.decodeUnknownEffect(MemoryScopeReference);
 
 const helpTopics = new Set<string>([
   "help",
@@ -13,9 +16,11 @@ const helpTopics = new Set<string>([
   "agents",
   "doctor",
   "run",
+  "acp",
   "automations",
   "wake",
   "sessions",
+  "memory",
   "serve",
   "gateway",
   "tui",
@@ -106,6 +111,95 @@ const parseInit = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid =>
   return command;
 };
 
+interface ParsedJsonArguments {
+  readonly positional: ReadonlyArray<string>;
+  readonly json: boolean;
+}
+
+const parseJsonArguments = (
+  args: ReadonlyArray<string>,
+  command: string,
+): ParsedJsonArguments | CliInputInvalid => {
+  const positional: Array<string> = [];
+  let json = false;
+  let endOfOptions = false;
+  for (const argument of args) {
+    if (!endOfOptions && argument === "--") {
+      endOfOptions = true;
+      continue;
+    }
+    if (!endOfOptions && argument === "--json") {
+      if (json) return invalid(`duplicate ${command} option --json`);
+      json = true;
+      continue;
+    }
+    positional.push(argument);
+  }
+  return { positional, json };
+};
+
+const isCliInputInvalid = (
+  value: ParsedJsonArguments | CliInputInvalid,
+): value is CliInputInvalid => Predicate.isTagged(value, "CliInputInvalid");
+
+const parseRun = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
+  const positional: Array<string> = [];
+  let continueSession = false;
+  let sessionId: string | undefined;
+  let json = false;
+  let endOfOptions = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === undefined) continue;
+    if (!endOfOptions && argument === "--") {
+      endOfOptions = true;
+      continue;
+    }
+    if (!endOfOptions && (argument === "-c" || argument === "--continue")) {
+      if (continueSession) return invalid(`duplicate run option ${argument}`);
+      continueSession = true;
+      continue;
+    }
+    if (!endOfOptions && argument === "--json") {
+      if (json) return invalid("duplicate run option --json");
+      json = true;
+      continue;
+    }
+    if (!endOfOptions && argument === "--session") {
+      if (sessionId !== undefined) return invalid("duplicate run option --session");
+      const value = args[index + 1];
+      if (!required(value) || value.startsWith("-")) {
+        return invalid("missing value for --session");
+      }
+      sessionId = value;
+      index += 1;
+      continue;
+    }
+    positional.push(argument);
+  }
+
+  if (continueSession && sessionId !== undefined) {
+    return invalid("--continue cannot be combined with --session");
+  }
+
+  const target = positional[0];
+  const promptParts = positional.slice(1);
+  if (!required(target) || promptParts.length === 0 || promptParts.join(" ").trim().length === 0) {
+    return invalid(
+      "usage: ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...>",
+    );
+  }
+  const command = {
+    _tag: "Run",
+    target,
+    prompt: promptParts.join(" "),
+    continueSession,
+    json,
+  } satisfies Extract<CliCommand, { _tag: "Run" }>;
+  return sessionId === undefined ? command : { ...command, sessionId };
+};
+
 const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
   const [word, ...rest] = args;
   if (word === undefined) return { _tag: "Tui", target: "." };
@@ -135,9 +229,28 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
 
   if (word === "init") return parseInit(rest);
 
+  if (word === "acp") {
+    const positional: Array<string> = [];
+    let shared = false;
+    for (const argument of rest) {
+      if (argument === "--shared") {
+        if (shared) return invalid("duplicate acp option --shared");
+        shared = true;
+      } else {
+        positional.push(argument);
+      }
+    }
+    if (positional.length !== 1 || !required(positional[0])) {
+      return invalid("usage: ziggy acp <name|path> [--shared]");
+    }
+    return { _tag: "Acp", target: positional[0], shared };
+  }
+
   if (word === "profiles") {
-    if (rest.length !== 0) return invalid("usage: ziggy profiles");
-    return { _tag: "Profiles" };
+    const parsed = parseJsonArguments(rest, "profiles");
+    if (isCliInputInvalid(parsed)) return parsed;
+    if (parsed.positional.length !== 0) return invalid("usage: ziggy profiles [--json]");
+    return { _tag: "Profiles", json: parsed.json };
   }
 
   if (word === "skills") {
@@ -147,9 +260,19 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "extensions") {
-    if (rest[0] === "list" && rest.length === 1) return { _tag: "ExtensionsList" };
-    if (rest[0] === "show" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "ExtensionsShow", id: rest[1] };
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "extensions list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 0) {
+        return { _tag: "ExtensionsList", json: parsed.json };
+      }
+    }
+    if (rest[0] === "show") {
+      const parsed = parseJsonArguments(rest.slice(1), "extensions show");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "ExtensionsShow", id: parsed.positional[0], json: parsed.json };
+      }
     }
     if (
       (rest[0] === "add" || rest[0] === "remove") &&
@@ -223,11 +346,28 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     if (rest[0] === "create" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
       return { _tag: "AgentsCreate", target: rest[1], agentId: rest[2] };
     }
-    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "AgentsList", target: rest[1] };
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "agents list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "AgentsList", target: parsed.positional[0], json: parsed.json };
+      }
     }
-    if (rest[0] === "show" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
-      return { _tag: "AgentsShow", target: rest[1], agentId: rest[2] };
+    if (rest[0] === "show") {
+      const parsed = parseJsonArguments(rest.slice(1), "agents show");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (
+        parsed.positional.length === 2 &&
+        required(parsed.positional[0]) &&
+        required(parsed.positional[1])
+      ) {
+        return {
+          _tag: "AgentsShow",
+          target: parsed.positional[0],
+          agentId: parsed.positional[1],
+          json: parsed.json,
+        };
+      }
     }
     if (rest[0] === "validate" && (rest.length === 2 || rest.length === 3) && required(rest[1])) {
       const agentId = rest[2];
@@ -252,26 +392,19 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "run") {
-    const continueSession = rest[0] === "-c" || rest[0] === "--continue";
-    const targetIndex = continueSession ? 1 : 0;
-    const target = rest[targetIndex];
-    const promptParts = rest.slice(targetIndex + 1);
-    if (
-      !required(target) ||
-      promptParts.length === 0 ||
-      promptParts.join(" ").trim().length === 0
-    ) {
-      return invalid("usage: ziggy run [-c] <name|path> <prompt...>");
-    }
-    return { _tag: "Run", target, prompt: promptParts.join(" "), continueSession };
+    return parseRun(rest);
   }
 
   if (word === "automations") {
     if (rest[0] === "create" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
       return { _tag: "AutomationsCreate", target: rest[1], automationId: rest[2] };
     }
-    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "AutomationsList", target: rest[1] };
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "automations list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "AutomationsList", target: parsed.positional[0], json: parsed.json };
+      }
     }
     if (
       (rest[0] === "pause" || rest[0] === "resume") &&
@@ -291,14 +424,26 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
         ? { _tag: "AutomationsValidate", target: rest[1] }
         : { _tag: "AutomationsValidate", target: rest[1], automationId };
     }
-    if (rest[0] === "status" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "AutomationsStatus", target: rest[1] };
+    if (rest[0] === "status") {
+      const parsed = parseJsonArguments(rest.slice(1), "automations status");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "AutomationsStatus", target: parsed.positional[0], json: parsed.json };
+      }
     }
-    if (rest[0] === "runs" && (rest.length === 2 || rest.length === 3) && required(rest[1])) {
-      const automationId = rest[2];
-      return automationId === undefined
-        ? { _tag: "AutomationsRuns", target: rest[1] }
-        : { _tag: "AutomationsRuns", target: rest[1], automationId };
+    if (rest[0] === "runs") {
+      const parsed = parseJsonArguments(rest.slice(1), "automations runs");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (
+        (parsed.positional.length === 1 || parsed.positional.length === 2) &&
+        required(parsed.positional[0])
+      ) {
+        const target = parsed.positional[0];
+        const automationId = parsed.positional[1];
+        return automationId === undefined
+          ? { _tag: "AutomationsRuns", target, json: parsed.json }
+          : { _tag: "AutomationsRuns", target, automationId, json: parsed.json };
+      }
     }
     return invalid(
       "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
@@ -313,14 +458,63 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   }
 
   if (word === "sessions") {
-    if (rest[0] === "list" && rest.length === 2 && required(rest[1])) {
-      return { _tag: "SessionsList", target: rest[1] };
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "sessions list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "SessionsList", target: parsed.positional[0], json: parsed.json };
+      }
     }
-    if (rest[0] === "show" && rest.length === 3 && required(rest[1]) && required(rest[2])) {
-      return { _tag: "SessionsShow", target: rest[1], reference: rest[2] };
+    if (rest[0] === "show") {
+      const parsed = parseJsonArguments(rest.slice(1), "sessions show");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (
+        parsed.positional.length === 2 &&
+        required(parsed.positional[0]) &&
+        required(parsed.positional[1])
+      ) {
+        return {
+          _tag: "SessionsShow",
+          target: parsed.positional[0],
+          reference: parsed.positional[1],
+          json: parsed.json,
+        };
+      }
     }
     return invalid(
       "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
+    );
+  }
+
+  if (word === "memory") {
+    if (rest[0] === "list") {
+      const parsed = parseJsonArguments(rest.slice(1), "memory list");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (parsed.positional.length <= 1) {
+        const target = parsed.positional[0];
+        return target === undefined
+          ? { _tag: "MemoryList", json: parsed.json }
+          : { _tag: "MemoryList", target, json: parsed.json };
+      }
+    }
+    if (rest[0] === "show") {
+      const parsed = parseJsonArguments(rest.slice(1), "memory show");
+      if (isCliInputInvalid(parsed)) return parsed;
+      if (
+        parsed.positional.length === 2 &&
+        required(parsed.positional[0]) &&
+        required(parsed.positional[1])
+      ) {
+        return {
+          _tag: "MemoryShow",
+          target: parsed.positional[0],
+          scope: parsed.positional[1],
+          json: parsed.json,
+        };
+      }
+    }
+    return invalid(
+      "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
     );
   }
 
@@ -386,25 +580,34 @@ export const decodeCliCommand = (
   input: ReadonlyArray<string>,
 ): Effect.Effect<CliCommand, CliInputInvalid> => {
   const parsed = parseTypedArguments(input);
-  return parsed._tag === "CliInputInvalid" ? Effect.fail(parsed) : Effect.succeed(parsed);
+  if (parsed._tag === "CliInputInvalid") return Effect.fail(parsed);
+  if (parsed._tag !== "MemoryShow") return Effect.succeed(parsed);
+  return decodeMemoryScope(parsed.scope).pipe(
+    Effect.map((scope) => ({ ...parsed, scope })),
+    Effect.mapError(() =>
+      invalid("usage: ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]"),
+    ),
+  );
 };
 
 const generalHelp = `Usage:
   ziggy [<name|path>]
   ziggy tui [<name|path>]
-  ziggy run [-c] <name|path> <prompt...>
+  ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...>
+  ziggy acp <name|path> [--shared]
   ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]
-  ziggy profiles
+  ziggy profiles [--json]
   ziggy auth <name|path> [provider] [--type api_key|oauth]
   ziggy models status <name|path>
   ziggy models list <name|path> [--provider <id>]
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
-  ziggy agents create|list|show|validate|run ...
+  ziggy agents create|list|show|validate|run ... [--json on list/show]
   ziggy doctor <name|path>
-  ziggy extensions list|show|add|remove ...
-  ziggy automations create|list|pause|resume|validate|status|runs ...
+  ziggy extensions list|show|add|remove ... [--json on list/show]
+  ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
   ziggy wake <name|path> <automation-id>
-  ziggy sessions list|show ...
+  ziggy sessions list|show ... [--json]
+  ziggy memory list|show ... [--json]
   ziggy serve <name|path>
   ziggy serve install <name|path> [--force] [--no-start]
   ziggy serve start|stop|restart <name|path>
@@ -421,21 +624,24 @@ const topicHelp = {
   version: "usage: ziggy version",
   update: "usage: ziggy update",
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
-  profiles: "usage: ziggy profiles",
+  profiles: "usage: ziggy profiles [--json]",
   extensions:
-    "usage:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
+    "usage:\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
   models:
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
   agents:
-    "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path>\n  ziggy agents show <name|path> <agent-id>\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
+    "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path> [--json]\n  ziggy agents show <name|path> <agent-id> [--json]\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
   doctor: "usage: ziggy doctor <name|path>",
-  run: "usage: ziggy run [-c] <name|path> <prompt...>",
+  run: "usage: ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...> (JSON mode emits Pi event lines)",
+  acp: "usage: ziggy acp <name|path> [--shared]",
   automations:
-    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path>\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path>\n  ziggy automations runs <name|path> [automation-id]",
+    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path> [--json]\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path> [--json]\n  ziggy automations runs <name|path> [automation-id] [--json]",
   wake: "usage: ziggy wake <name|path> <automation-id>",
   sessions:
-    "usage:\n  ziggy sessions list <name|path>\n  ziggy sessions show <name|path> <session-id|relative-path>",
+    "usage:\n  ziggy sessions list <name|path> [--json]\n  ziggy sessions show <name|path> <session-id|relative-path> [--json]",
+  memory:
+    "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
   serve: serveHelp,
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",

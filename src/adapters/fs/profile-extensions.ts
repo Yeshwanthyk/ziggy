@@ -1,5 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { lstat, open, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import {
+  lstat,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+} from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema } from "effect";
 import {
@@ -14,7 +25,7 @@ import { fileSystemCauseDetails } from "./cause";
 const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 const Selection = Schema.Struct({ extensions: Schema.Array(ExtensionId) });
 const Manifest = Schema.Struct({
-  name: Schema.String,
+  name: Schema.String.check(Schema.isPattern(/\S/u)),
   description: Schema.optionalKey(Schema.String),
   pi: Schema.Struct({
     extensions: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -30,7 +41,6 @@ const Manifest = Schema.Struct({
   ),
 });
 const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(Selection));
-const decodeExtensionIds = Schema.decodeUnknownEffect(Schema.Array(ExtensionId));
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest));
 
 export type ExtensionKind = "skill" | "code" | "skill+code";
@@ -216,8 +226,11 @@ export const readExtensionPackage = (
           : invalid(manifestPath, `invalid extension manifest: ${manifestPath}`, cause),
       ),
     );
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || manifest.name !== `@ziggy/${id}`) {
-      return yield* invalid(manifestPath, `extension manifest name must be '@ziggy/${id}'`);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
+      return yield* invalid(
+        manifestPath,
+        `extension shelf ID must use lowercase kebab-case: '${id}'`,
+      );
     }
     const physicalPackagePath = yield* physicalPath(packagePath);
     const extensionPaths = yield* Effect.forEach(manifest.pi.extensions ?? [], (declared) =>
@@ -374,103 +387,221 @@ export const readSelectedExtensionPackage = (
     }),
   );
 
+const validateDecodedSelection = (
+  selectionPath: string,
+  extensions: ReadonlyArray<string>,
+): Effect.Effect<ReadonlyArray<string>, ProfileExtensionInvalid> => {
+  const reserved = extensions.find(isRequiredBundledExtension);
+  const problem =
+    new Set(extensions).size !== extensions.length
+      ? "extension selection contains duplicate IDs"
+      : reserved === undefined
+        ? undefined
+        : `extension selection cannot include reserved ID '${reserved}'`;
+  return problem === undefined
+    ? Effect.succeed([...extensions].sort())
+    : Effect.fail(invalid(selectionPath, problem));
+};
+
+const decodeSelectionText = (
+  selectionPath: string,
+  text: string,
+): Effect.Effect<ReadonlyArray<string>, ProfileExtensionInvalid> =>
+  decodeSelection(text, { onExcessProperty: "error" }).pipe(
+    Effect.mapError((cause) =>
+      invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause),
+    ),
+    Effect.flatMap(({ extensions }) => validateDecodedSelection(selectionPath, extensions)),
+  );
+
+const inspectSelectionPath = (
+  selectionPath: string,
+): Effect.Effect<boolean, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  Effect.tryPromise({
+    try: async () => {
+      try {
+        const selectionStatus = await lstat(selectionPath);
+        if (selectionStatus.isSymbolicLink() || !selectionStatus.isFile()) {
+          throw invalid(selectionPath, "extension selection must be a physical file");
+        }
+        return true;
+      } catch (cause) {
+        if (fileSystemCauseDetails(cause).code === "ENOENT") return false;
+        throw cause;
+      }
+    },
+    catch: (cause) =>
+      cause instanceof ProfileExtensionInvalid ? cause : fsError("inspect", selectionPath, cause),
+  });
+
+const readPhysicalSelectionBytes = (
+  selectionPath: string,
+): Effect.Effect<Uint8Array | undefined, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  Effect.tryPromise({
+    try: async () => {
+      let selectionStatus;
+      try {
+        selectionStatus = await lstat(selectionPath);
+      } catch (cause) {
+        if (fileSystemCauseDetails(cause).code === "ENOENT") return undefined;
+        throw cause;
+      }
+      if (selectionStatus.isSymbolicLink() || !selectionStatus.isFile()) {
+        throw invalid(selectionPath, "extension selection must be a physical file");
+      }
+
+      const handle = await open(selectionPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const openedStatus = await handle.stat();
+        if (openedStatus.isSymbolicLink() || !openedStatus.isFile()) {
+          throw invalid(selectionPath, "extension selection must be a physical file");
+        }
+        return new Uint8Array(await handle.readFile());
+      } finally {
+        await handle.close();
+      }
+    },
+    catch: (cause) => {
+      if (cause instanceof ProfileExtensionInvalid) return cause;
+      const details = fileSystemCauseDetails(cause);
+      return details.code === "ELOOP"
+        ? invalid(selectionPath, "extension selection must be a physical file", cause)
+        : fsError("read", selectionPath, cause);
+    },
+  });
+
 export const readExtensionSelection = (
   profilePath: string,
 ): Effect.Effect<ReadonlyArray<string>, ProfileExtensionInvalid | ProfileFileSystemError> => {
   const selectionPath = path.join(profilePath, "extensions.json");
-  return readText(selectionPath).pipe(
-    Effect.catchIf(
-      (error) => error.code === "ENOENT",
-      () => Effect.void,
-    ),
-    Effect.flatMap((text) =>
-      text === undefined
+  return readPhysicalSelectionBytes(selectionPath).pipe(
+    Effect.flatMap((bytes) =>
+      bytes === undefined
         ? Effect.succeed<ReadonlyArray<string>>([])
-        : decodeSelection(text, { onExcessProperty: "error" }).pipe(
-            Effect.mapError((cause) =>
-              invalid(selectionPath, `invalid extension selection: ${selectionPath}`, cause),
-            ),
-            Effect.flatMap(({ extensions }) => {
-              const reserved = extensions.find(isRequiredBundledExtension);
-              const problem =
-                new Set(extensions).size !== extensions.length
-                  ? "extension selection contains duplicate IDs"
-                  : reserved === undefined
-                    ? undefined
-                    : `extension selection cannot include reserved ID '${reserved}'`;
-              return problem === undefined
-                ? Effect.succeed([...extensions].sort())
-                : Effect.fail(invalid(selectionPath, problem));
-            }),
+        : decodeSelectionText(selectionPath, Buffer.from(bytes).toString("utf8")),
+    ),
+  );
+};
+
+/** Decoded selection plus the exact bytes needed to restore the human-owned file. */
+export interface ExtensionSelectionSnapshot {
+  readonly exists: boolean;
+  readonly bytes: Uint8Array;
+  readonly selected: ReadonlyArray<string>;
+}
+
+export const snapshotExtensionSelection = (
+  profilePath: string,
+): Effect.Effect<ExtensionSelectionSnapshot, ProfileExtensionInvalid | ProfileFileSystemError> => {
+  const selectionPath = path.join(profilePath, "extensions.json");
+  return readPhysicalSelectionBytes(selectionPath).pipe(
+    Effect.flatMap((bytes) =>
+      bytes === undefined
+        ? Effect.succeed<ExtensionSelectionSnapshot>({
+            exists: false,
+            bytes: new Uint8Array(),
+            selected: [],
+          })
+        : decodeSelectionText(selectionPath, Buffer.from(bytes).toString("utf8")).pipe(
+            Effect.map((selected) => ({ exists: true, bytes, selected })),
           ),
     ),
   );
 };
 
-export interface ExtensionSelectionSetResult {
-  readonly changed: boolean;
-  readonly selected: ReadonlyArray<string>;
-}
+export const extensionSelectionGeneration = (snapshot: ExtensionSelectionSnapshot): string =>
+  createHash("sha256")
+    .update(snapshot.exists ? Buffer.concat([Buffer.from("present\0"), snapshot.bytes]) : "absent")
+    .digest("hex");
 
-/** Remove one admitted ID even when its former catalogue package no longer exists. */
-export const removeExtensionSelection = (
-  profilePath: string,
-  id: string,
-): Effect.Effect<ExtensionSelectionSetResult, ProfileExtensionInvalid | ProfileFileSystemError> =>
-  Effect.gen(function* () {
-    const selectionPath = path.join(profilePath, "extensions.json");
-    const [decoded] = yield* decodeExtensionIds([id]).pipe(
-      Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
+const cleanupRestoreTemporary =
+  (temporaryPath: string) => (handle: Awaited<ReturnType<typeof open>>) =>
+    Effect.tryPromise({
+      try: () => handle.close(),
+      catch: (cause) => fsError("close", temporaryPath, cause),
+    }).pipe(
+      Effect.catch((failure) =>
+        Effect.logWarning("Profile extension restore close failed", { failure }),
+      ),
+      Effect.andThen(
+        Effect.tryPromise({
+          try: () => unlink(temporaryPath),
+          catch: (cause) => fsError("remove", temporaryPath, cause),
+        }).pipe(
+          Effect.catchIf(
+            (failure) => failure.code === "ENOENT",
+            () => Effect.void,
+          ),
+          Effect.catch((failure) =>
+            Effect.logWarning("Profile extension restore cleanup failed", { failure }),
+          ),
+        ),
+      ),
     );
-    if (decoded === undefined) {
-      return yield* invalid(selectionPath, "invalid extension selection");
-    }
-    if (isRequiredBundledExtension(decoded)) {
-      return yield* invalid(selectionPath, `required extension '${decoded}' cannot be removed`);
-    }
-    const current = yield* readExtensionSelection(profilePath);
-    const selected = current.filter((item) => item !== decoded);
-    const changed = selected.length !== current.length;
-    if (changed) yield* replaceExtensionSelection(profilePath, selected);
-    return { changed, selected };
+
+const restorePresentSelection = (selectionPath: string, bytes: Uint8Array) => {
+  const temporaryPath = path.join(
+    path.dirname(selectionPath),
+    `.extensions-restore-${randomUUID()}.tmp`,
+  );
+  return Effect.gen(function* () {
+    yield* inspectSelectionPath(selectionPath);
+    yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () => open(temporaryPath, "wx", 0o600),
+        catch: (cause) => fsError("open", temporaryPath, cause),
+      }),
+      (handle) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise({
+            try: async () => {
+              await handle.writeFile(bytes);
+              await handle.sync();
+              await handle.close();
+            },
+            catch: (cause) => fsError("write", temporaryPath, cause),
+          });
+          yield* inspectSelectionPath(selectionPath);
+          yield* Effect.tryPromise({
+            try: () => rename(temporaryPath, selectionPath),
+            catch: (cause) => fsError("rename", selectionPath, cause),
+          });
+        }),
+      cleanupRestoreTemporary(temporaryPath),
+    );
   });
+};
 
-export const setExtensionSelection = (
+const restoreAbsentSelection = (
+  selectionPath: string,
+): Effect.Effect<void, ProfileExtensionInvalid | ProfileFileSystemError> =>
+  inspectSelectionPath(selectionPath).pipe(
+    Effect.flatMap((exists) =>
+      exists
+        ? Effect.tryPromise({
+            try: () => unlink(selectionPath),
+            catch: (cause) => fsError("remove", selectionPath, cause),
+          }).pipe(
+            Effect.catchIf(
+              (failure) => failure.code === "ENOENT",
+              () => Effect.void,
+            ),
+          )
+        : Effect.void,
+    ),
+  );
+
+/** Restore raw selection bytes or absence atomically; callers hold the Profile mutation lock. */
+export const restoreExtensionSelection = (
   profilePath: string,
-  repositoryRoot: string,
-  ids: ReadonlyArray<string>,
-): Effect.Effect<ExtensionSelectionSetResult, ProfileExtensionInvalid | ProfileFileSystemError> =>
-  Effect.gen(function* () {
-    const selectionPath = path.join(profilePath, "extensions.json");
-    const decoded = yield* decodeExtensionIds(ids).pipe(
-      Effect.mapError((cause) => invalid(selectionPath, "invalid extension selection", cause)),
-    );
-    const reserved = decoded.find(isRequiredBundledExtension);
-    const problem =
-      new Set(decoded).size !== decoded.length
-        ? "extension selection contains duplicate IDs"
-        : reserved === undefined
-          ? undefined
-          : `extension selection cannot include reserved ID '${reserved}'`;
-    if (problem !== undefined) {
-      return yield* invalid(selectionPath, problem);
-    }
-
-    yield* Effect.forEach(decoded, (id) =>
-      readSelectedExtensionPackage(profilePath, repositoryRoot, id),
-    );
-    const current = yield* readExtensionSelection(profilePath);
-    yield* Effect.forEach(current, (id) =>
-      readSelectedExtensionPackage(profilePath, repositoryRoot, id),
-    );
-    const selected = [...decoded].sort();
-    const changed =
-      current.length !== selected.length || current.some((id, index) => id !== selected[index]);
-    if (changed) {
-      yield* replaceExtensionSelection(profilePath, selected);
-    }
-    return { changed, selected };
-  });
+  snapshot: ExtensionSelectionSnapshot,
+): Effect.Effect<void, ProfileExtensionInvalid | ProfileFileSystemError> => {
+  const selectionPath = path.join(profilePath, "extensions.json");
+  const bytes = new Uint8Array(snapshot.bytes);
+  return snapshot.exists
+    ? restorePresentSelection(selectionPath, bytes)
+    : restoreAbsentSelection(selectionPath);
+};
 
 export const replaceExtensionSelection = (profilePath: string, ids: ReadonlyArray<string>) => {
   const selectionPath = path.join(profilePath, "extensions.json");

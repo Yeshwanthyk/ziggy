@@ -1,15 +1,8 @@
 import { appendFile, lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { Context, Effect, Layer, Predicate } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import {
-  readExtensionSelection,
-  readSelectedExtensionPackage,
-  removeExtensionSelection,
-  setExtensionSelection,
-} from "../adapters/fs/profile-extensions";
-import {
-  ProfileExtensionInvalid,
   ProfileFileSystemError,
   ProfileTargetNotDirectory,
   soulTemplate,
@@ -31,19 +24,7 @@ export interface ProfileListing {
   readonly path: string;
 }
 
-export type ProfileExtensionError = ProfileExtensionInvalid | ProfileFileSystemError;
-
-export interface ProfileExtensionMutation {
-  readonly id: string;
-  readonly profilePath: string;
-  readonly changed: boolean;
-  readonly selected: boolean;
-}
-
-export type ProfileError =
-  | ProfileFileSystemError
-  | ProfileTargetNotDirectory
-  | ProfileExtensionInvalid;
+export type ProfileError = ProfileFileSystemError | ProfileTargetNotDirectory;
 
 export interface ProfilesApi {
   readonly initProfile: (
@@ -58,16 +39,6 @@ export interface ProfilesApi {
     profilesDirectory: string,
     registryPath: string,
   ) => Effect.Effect<ReadonlyArray<ProfileListing>, ProfileFileSystemError>;
-  readonly addExtension: (
-    target: ProfileTarget,
-    repositoryRoot: string,
-    id: string,
-  ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
-  readonly removeExtension: (
-    target: ProfileTarget,
-    repositoryRoot: string,
-    id: string,
-  ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
 }
 
 export class Profiles extends Context.Service<Profiles, ProfilesApi>()("ziggy/Profiles") {}
@@ -140,12 +111,102 @@ const ensureStarterDirectory = (
       (failure) => failure.code === "ENOENT",
       () =>
         Effect.tryPromise({
-          try: () => mkdir(directoryPath),
+          try: () => mkdir(directoryPath, { mode: 0o700 }),
           catch: (cause) => fileSystemError("create directory", directoryPath, cause),
         }).pipe(Effect.as(true)),
     ),
   );
 };
+
+const memoryReadme = `# Profile memory
+
+Memory uses one entry per block, separated by a line containing §. The shared document is
+MEMORY.md; person and group documents live under memory/users/ and memory/groups/.
+
+See docs/operations/memory.md for scope rules, caps, backups, and safe hand-editing.
+`;
+
+const validMemoryDirectory =
+  (directoryPath: string) => (status: Awaited<ReturnType<typeof lstat>>) =>
+    status.isDirectory() && !status.isSymbolicLink()
+      ? Effect.void
+      : Effect.fail(
+          fileSystemError(
+            "validate directory",
+            directoryPath,
+            `${directoryPath} must be a regular non-symlink directory`,
+          ),
+        );
+
+const validMemoryFile = (filePath: string) => (status: Awaited<ReturnType<typeof lstat>>) =>
+  status.isFile() && !status.isSymbolicLink()
+    ? Effect.void
+    : Effect.fail(
+        fileSystemError(
+          "validate file",
+          filePath,
+          `${filePath} must be a regular non-symlink file`,
+        ),
+      );
+
+const ensureMemoryDirectory = (
+  targetPath: string,
+  relativePath: string,
+): Effect.Effect<void, ProfileFileSystemError> => {
+  const directoryPath = path.join(targetPath, relativePath);
+  return lstatPath(directoryPath).pipe(
+    Effect.flatMap(validMemoryDirectory(directoryPath)),
+    Effect.catchIf(
+      (failure) => failure.code === "ENOENT",
+      () =>
+        Effect.tryPromise({
+          try: () => mkdir(directoryPath, { mode: 0o700 }),
+          catch: (cause) => fileSystemError("create directory", directoryPath, cause),
+        }).pipe(
+          Effect.asVoid,
+          Effect.catchIf(
+            (failure) => failure.code === "EEXIST",
+            () =>
+              lstatPath(directoryPath).pipe(Effect.flatMap(validMemoryDirectory(directoryPath))),
+          ),
+        ),
+    ),
+  );
+};
+
+const ensureMemoryFile = (
+  targetPath: string,
+  relativePath: string,
+  content: string,
+): Effect.Effect<void, ProfileFileSystemError> => {
+  const filePath = path.join(targetPath, relativePath);
+  return lstatPath(filePath).pipe(
+    Effect.flatMap(validMemoryFile(filePath)),
+    Effect.catchIf(
+      (failure) => failure.code === "ENOENT",
+      () =>
+        Effect.tryPromise({
+          try: () => writeFile(filePath, content, { encoding: "utf8", flag: "wx", mode: 0o600 }),
+          catch: (cause) => fileSystemError("write", filePath, cause),
+        }).pipe(
+          Effect.asVoid,
+          Effect.catchIf(
+            (failure) => failure.code === "EEXIST",
+            () => lstatPath(filePath).pipe(Effect.flatMap(validMemoryFile(filePath))),
+          ),
+        ),
+    ),
+  );
+};
+
+const ensureMemoryScaffold = (targetPath: string): Effect.Effect<void, ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    yield* ensureMemoryDirectory(targetPath, "memory");
+    yield* ensureMemoryDirectory(targetPath, path.join("memory", "users"));
+    yield* ensureMemoryDirectory(targetPath, path.join("memory", "groups"));
+    yield* ensureMemoryFile(targetPath, "MEMORY.md", "");
+    yield* ensureMemoryFile(targetPath, path.join("memory", "README.md"), memoryReadme);
+  });
 
 const initProfile = (
   target: ProfileTarget,
@@ -165,7 +226,7 @@ const initProfile = (
 
     if (targetStatus === undefined) {
       yield* Effect.tryPromise({
-        try: () => mkdir(target.path, { recursive: true }),
+        try: () => mkdir(target.path, { recursive: true, mode: 0o700 }),
         catch: (cause) => fileSystemError("create directory", target.path, cause),
       });
     }
@@ -192,6 +253,7 @@ const initProfile = (
 
     const createdDirectories: Array<"agents" | "automations"> = [];
     if (options.createStarterDirectories === true) {
+      yield* ensureMemoryScaffold(target.path);
       for (const name of ["agents", "automations"] as const) {
         if (yield* ensureStarterDirectory(target.path, name)) createdDirectories.push(name);
       }
@@ -281,75 +343,8 @@ const listProfiles = (
       );
   });
 
-const verifyExtensionProfile = (target: ProfileTarget) =>
-  lstatPath(path.join(target.path, "SOUL.md")).pipe(
-    Effect.flatMap((status) =>
-      status.isFile()
-        ? Effect.void
-        : Effect.fail(
-            new ProfileExtensionInvalid({
-              path: target.path,
-              message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-              cause: undefined,
-            }),
-          ),
-    ),
-    Effect.catchIf(
-      (error) => Predicate.isTagged(error, "ProfileFileSystemError") && error.code === "ENOENT",
-      () =>
-        Effect.fail(
-          new ProfileExtensionInvalid({
-            path: target.path,
-            message: `profile is not initialized at ${target.path}; run 'ziggy init <name|path>'`,
-            cause: undefined,
-          }),
-        ),
-    ),
-  );
-
-const mutateExtension = (
-  target: ProfileTarget,
-  repositoryRoot: string,
-  id: string,
-  selected: boolean,
-): Effect.Effect<ProfileExtensionMutation, ProfileExtensionError> =>
-  Effect.gen(function* () {
-    yield* verifyExtensionProfile(target);
-    if (!selected) {
-      const result = yield* removeExtensionSelection(target.path, id);
-      return {
-        id,
-        profilePath: target.path,
-        changed: result.changed,
-        selected: false,
-      };
-    }
-    const extension = yield* readSelectedExtensionPackage(target.path, repositoryRoot, id);
-    if (extension.required) {
-      return yield* new ProfileExtensionInvalid({
-        path: extension.packagePath,
-        message: `required extension '${id}' cannot be added or removed`,
-        cause: undefined,
-      });
-    }
-    const current = yield* readExtensionSelection(target.path);
-    yield* Effect.forEach(current, (selectedId) =>
-      readSelectedExtensionPackage(target.path, repositoryRoot, selectedId),
-    );
-    const alreadySelected = current.includes(id);
-    if (alreadySelected) {
-      return { id, profilePath: target.path, changed: false, selected: true };
-    }
-    const next = [...current, id].sort();
-    const result = yield* setExtensionSelection(target.path, repositoryRoot, next);
-    return { id, profilePath: target.path, changed: result.changed, selected: true };
-  });
-
 export const ProfilesLive = Layer.succeed(Profiles, {
   initProfile,
   registerProfile,
   listProfiles,
-  addExtension: (target, repositoryRoot, id) => mutateExtension(target, repositoryRoot, id, true),
-  removeExtension: (target, repositoryRoot, id) =>
-    mutateExtension(target, repositoryRoot, id, false),
 });

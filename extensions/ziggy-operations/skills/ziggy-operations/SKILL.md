@@ -18,7 +18,11 @@ matches it. Do not search a developer checkout for plans or `src/`.
 ## Rules
 
 - Profile Markdown is authority. Do not invent a second automation or session store.
-- `extensions.json` selects bundled packages already inside Ziggy. Do not download extension code to
-  run it.
+- Bundled and Profile-owned packages are admitted only through the in-process `profile_extensions`
+  tool. For third-party adoption, follow pi-packages and extension-authoring, acquire into OS temp,
+  inspect/copy source into the Profile shelf, never run lifecycle scripts, and never invoke Ziggy CLI
+  or edit `extensions.json` directly. Never delete or replace an existing shelf directory; on
+  collision stop and report it, and clean up only the temp paths this attempt created, after
+  success and failure.
 - Channel tokens stay out of docs, commits, and chat.
 - Cite the reference path you used.

@@ -13,7 +13,11 @@ import {
 import { Effect, Predicate, Result } from "effect";
 import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { discoverPiResources } from "ziggy/adapters/pi/resources";
-import { makeExtensionCatalogLive } from "ziggy/application/extension-catalog";
+import { makeProfileExtensions } from "ziggy/application/profile-extensions";
+import type {
+  ProfileExtensionMutationLockApi,
+  ProfileExtensionPreflightApi,
+} from "ziggy/domain/profile-extension";
 import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { bundledFilePath } from "ziggy/generated/builtin-files";
 import { REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
@@ -40,11 +44,12 @@ const writePackage = async (
     readonly extensions?: ReadonlyArray<string>;
     readonly skills?: ReadonlyArray<string>;
   },
+  packageName = `@ziggy/${id}`,
 ) => {
   await mkdir(packagePath, { recursive: true });
   await writeFile(
     join(packagePath, "package.json"),
-    `${JSON.stringify({ name: `@ziggy/${id}`, description: `${id} package`, pi: resources }, null, 2)}\n`,
+    `${JSON.stringify({ name: packageName, description: `${id} package`, pi: resources }, null, 2)}\n`,
   );
 };
 
@@ -66,9 +71,20 @@ const noDownload: ExtensionArchiveClientApi = {
       }),
     ),
 };
+const noPreflight: ProfileExtensionPreflightApi = {
+  preflight: () =>
+    Effect.succeed({ extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 }),
+};
+const noLock: ProfileExtensionMutationLockApi = {
+  withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
+};
+const profileExtensions = makeProfileExtensions(noDownload, noPreflight, noLock);
 
 const resolveResources = (profilePath: string, repositoryRoot = profilePath) =>
   Effect.runPromise(discoverPiResources(profilePath, repositoryRoot));
+
+const prepareRuntime = (profilePath: string, repositoryRoot: string) =>
+  Effect.runPromise(profileExtensions.prepareRuntime(profilePath, repositoryRoot));
 
 const factoryNames = (factories: ReadonlyArray<{ readonly name: string }>) =>
   factories.map((factory) => factory.name);
@@ -201,9 +217,7 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
     skills: ["./skills"],
   });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
-  await Effect.runPromise(
-    makeExtensionCatalogLive(noDownload).materialize(profilePath, "/does-not-exist"),
-  );
+  await prepareRuntime(profilePath, "/does-not-exist");
 
   const resources = await resolveResources(profilePath);
   const services = await createAgentSessionServices({
@@ -241,6 +255,92 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
     loadedSkills.diagnostics.filter((diagnostic) => diagnostic.type === "collision"),
   ).toHaveLength(0);
   expect(extensionTools).toEqual(["alpha_tool"]);
+});
+
+test("loads an upstream package name independently from its computer-use shelf ID", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-upstream-name-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const extensionPackage = join(profilePath, "extensions", "computer-use");
+
+  await mkdir(profilePath, { recursive: true });
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+  await writePackage(
+    extensionPackage,
+    "computer-use",
+    { extensions: ["./index.ts"] },
+    "@injaneity/pi-computer-use",
+  );
+  await writeFile(
+    join(extensionPackage, "index.ts"),
+    [
+      'import { Type } from "typebox";',
+      "export default function (pi) {",
+      '  pi.registerTool({ name: "computer_use", label: "computer_use", description: "test",',
+      "    parameters: Type.Object({}),",
+      '    async execute() { return { content: [{ type: "text", text: "ok" }], details: undefined }; }',
+      "  });",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["computer-use"]}\n');
+  const repositoryRoot = resolve(import.meta.dir, "../../..");
+  await prepareRuntime(profilePath, repositoryRoot);
+
+  const resources = await resolveResources(profilePath, repositoryRoot);
+  expect(resources.extensionPaths).toEqual([extensionPackage]);
+
+  const services = await createAgentSessionServices({
+    cwd: profilePath,
+    agentDir: profilePath,
+    resourceLoaderOptions: {
+      systemPrompt: join(profilePath, "SOUL.md"),
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      additionalExtensionPaths: [...resources.extensionPaths],
+      additionalSkillPaths: [...resources.skillPaths],
+      extensionFactories: [...resources.extensionFactories],
+    },
+  });
+  const loadedExtensions = services.resourceLoader.getExtensions();
+  const loadedSkills = services.resourceLoader.getSkills();
+  const extensionTools = loadedExtensions.extensions.flatMap((extension) => [
+    ...extension.tools.keys(),
+  ]);
+
+  expect(loadedExtensions.errors).toEqual([]);
+  expect(loadedSkills.diagnostics).toEqual([]);
+  expect(extensionTools).toEqual(["computer_use"]);
+});
+
+test("rejects a blank package name", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-pi-blank-package-name-"));
+  temporaryPaths.push(root);
+  const profilePath = join(root, "profile");
+  const extensionPackage = join(profilePath, "extensions", "blank-name");
+
+  await mkdir(profilePath, { recursive: true });
+  await writePackage(extensionPackage, "blank-name", { extensions: ["./index.ts"] }, "   ");
+  await writeFile(join(extensionPackage, "index.ts"), "export default function () {}\n", "utf8");
+  await writeFile(join(profilePath, "extensions.json"), '{"extensions":["blank-name"]}\n');
+
+  const result = await Effect.runPromise(
+    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
+  );
+  expect(
+    Result.match(result, {
+      onFailure: (error) =>
+        Predicate.isTagged(error, "ProfileExtensionInvalid") &&
+        error.path === join(extensionPackage, "package.json") &&
+        error.message === `invalid extension manifest: ${join(extensionPackage, "package.json")}`,
+      onSuccess: () => false,
+    }),
+  ).toBe(true);
 });
 
 test("selection decoding fails closed for malformed, duplicate, reserved, and unknown values", async () => {
@@ -418,9 +518,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     join(profilePath, "extensions.json"),
     `${JSON.stringify({ extensions: packageNames.filter((name) => !REQUIRED_BUNDLED_EXTENSION_IDS.has(name)) }, null, 2)}\n`,
   );
-  await Effect.runPromise(
-    makeExtensionCatalogLive(noDownload).materialize(profilePath, repositoryRoot),
-  );
+  await prepareRuntime(profilePath, repositoryRoot);
 
   const loadCatalog = (
     additionalExtensionPaths: string[],

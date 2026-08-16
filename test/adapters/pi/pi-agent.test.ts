@@ -5,20 +5,31 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   SessionManager,
+  createAgentSessionServices,
+  createAgentSessionRuntime,
   type AgentSessionEventListener,
+  type AgentSessionRuntime,
   type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Effect, Exit, Fiber, Predicate } from "effect";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { Cause, Effect, Exit, Fiber, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProviderCallError,
   ProviderConfigError,
   SpecialistAgentNotFound,
 } from "ziggy/domain/agent";
+import {
+  ProfileExtensionPreflightFailed,
+  ProfileExtensionRollbackFailed,
+  type ProfileExtensionsApi,
+} from "ziggy/domain/profile-extension";
 import { memoryFilePaths, type ChatContext } from "ziggy/domain/memory";
 import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
+import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
+import { specialistRuntime } from "ziggy/adapters/pi/specialist";
+import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   appendEphemeralPromptContext,
   askOnce,
@@ -69,6 +80,43 @@ const temporaryProfile = async (): Promise<string> => {
   temporaryPaths.push(profilePath);
   return profilePath;
 };
+
+const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {
+  const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
+    Effect.fail(
+      new ProfileExtensionPreflightFailed({
+        profilePath: "/unused",
+        stage: "resources",
+        message: "unused test operation",
+        diagnostics: [],
+        cause: undefined,
+      }),
+    );
+  return {
+    list: unused,
+    show: unused,
+    listForProfile: unused,
+    add: unused,
+    remove: unused,
+    setSelected: unused,
+    validate: unused,
+    prepareRuntime: () => Effect.succeed({ selected: [], generation: "fixture-generation" }),
+    activateRuntime: () => Effect.void,
+  };
+};
+
+const fixtureModel = (): Model<Api> => ({
+  id: "fixture-model",
+  name: "Fixture model",
+  api: "openai-completions",
+  provider: "fixture",
+  baseUrl: "https://example.test",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 1_000,
+  maxTokens: 100,
+});
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
@@ -774,6 +822,254 @@ describe("Profile memory refresh", () => {
     expect(result?.systemPrompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN.");
     expect(result?.systemPrompt).toContain("Do not claim to remember Profile facts");
     expect(result?.systemPrompt).not.toContain("Durable facts should be saved");
+  });
+});
+
+describe("Profile runtime activation rollback", () => {
+  test("disposes the actual runtime once before activation failure escapes", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const activationFailure = new ProfileExtensionPreflightFailed({
+      profilePath,
+      stage: "services",
+      message: "injected activation failure",
+      diagnostics: [],
+      cause: "injected",
+    });
+    const events: Array<string> = [];
+    const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
+      Effect.fail(activationFailure);
+    const profileExtensions: ProfileExtensionsApi = {
+      list: unused,
+      show: unused,
+      listForProfile: unused,
+      add: unused,
+      remove: unused,
+      setSelected: unused,
+      validate: unused,
+      prepareRuntime: () =>
+        Effect.succeed({
+          selected: [],
+          generation: "fixture-generation",
+        }),
+      activateRuntime: () => {
+        events.push("activate");
+        return Effect.fail(activationFailure);
+      },
+    };
+    let constructedRuntime: AgentSessionRuntime | undefined;
+    let disposedRuntime: AgentSessionRuntime | undefined;
+    let disposeCalls = 0;
+    const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
+      const runtime = await createAgentSessionRuntime(createRuntime, options);
+      constructedRuntime = runtime;
+      events.push("constructed");
+      const dispose = runtime.dispose.bind(runtime);
+      runtime.dispose = async () => {
+        disposeCalls += 1;
+        disposedRuntime = runtime;
+        events.push("dispose");
+        return dispose();
+      };
+      return runtime;
+    };
+
+    const exit = await Effect.runPromiseExit(
+      openChat(
+        { path: profilePath, name: "Profile" },
+        { kind: "local" },
+        join(profilePath, "sessions"),
+        process.cwd(),
+        "fresh",
+        undefined,
+        profileExtensions,
+        runtimeFactory,
+      ),
+    );
+
+    expect(exit).toEqual(Exit.fail(activationFailure));
+    expect({
+      constructed: constructedRuntime !== undefined,
+      disposed: disposedRuntime === constructedRuntime,
+      disposeCalls,
+      events,
+    }).toEqual({
+      constructed: true,
+      disposed: true,
+      disposeCalls: 1,
+      events: ["constructed", "activate", "dispose"],
+    });
+  });
+
+  test("propagates a typed rollback failure when runtime disposal also fails", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const activationFailure = new ProfileExtensionPreflightFailed({
+      profilePath,
+      stage: "services",
+      message: "injected activation failure",
+      diagnostics: [],
+      cause: "injected",
+    });
+    const disposalFailure = new Error("injected disposal failure");
+    const events: Array<string> = [];
+    const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
+      Effect.fail(activationFailure);
+    const profileExtensions: ProfileExtensionsApi = {
+      list: unused,
+      show: unused,
+      listForProfile: unused,
+      add: unused,
+      remove: unused,
+      setSelected: unused,
+      validate: unused,
+      prepareRuntime: () =>
+        Effect.succeed({
+          selected: [],
+          generation: "fixture-generation",
+        }),
+      activateRuntime: () => {
+        events.push("activate");
+        return Effect.fail(activationFailure);
+      },
+    };
+    let disposeCalls = 0;
+    const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
+      const runtime = await createAgentSessionRuntime(createRuntime, options);
+      events.push("constructed");
+      runtime.dispose = async () => {
+        disposeCalls += 1;
+        events.push("dispose");
+        throw disposalFailure;
+      };
+      return runtime;
+    };
+
+    const exit = await Effect.runPromiseExit(
+      openChat(
+        { path: profilePath, name: "Profile" },
+        { kind: "local" },
+        join(profilePath, "sessions"),
+        process.cwd(),
+        "fresh",
+        undefined,
+        profileExtensions,
+        runtimeFactory,
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) throw new Error("expected activation rollback to fail");
+    const failureResult = Cause.findError(exit.cause);
+    expect(Result.isSuccess(failureResult)).toBe(true);
+    if (!Result.isSuccess(failureResult)) throw new Error("expected a typed rollback failure");
+    expect(failureResult.success).toBeInstanceOf(ProfileExtensionRollbackFailed);
+    if (!(failureResult.success instanceof ProfileExtensionRollbackFailed)) {
+      throw new Error("expected ProfileExtensionRollbackFailed");
+    }
+    expect({
+      operation: failureResult.success.operation,
+      message: failureResult.success.message,
+      originalFailure: failureResult.success.originalFailure,
+      rollbackFailures: failureResult.success.rollbackFailures,
+      cause: failureResult.success.cause,
+      disposeCalls,
+      events,
+    }).toEqual({
+      operation: "activate-runtime",
+      message:
+        "Profile extension activation failed and the newly created runtime could not be disposed; Profile state may have changed",
+      originalFailure: activationFailure,
+      rollbackFailures: [
+        {
+          operation: "dispose runtime",
+          path: profilePath,
+          message: "could not dispose the newly created Pi runtime",
+        },
+      ],
+      cause: activationFailure,
+      disposeCalls: 1,
+      events: ["constructed", "activate", "dispose"],
+    });
+    expect(failureResult.success.message.length).toBeLessThanOrEqual(360);
+    expect(
+      failureResult.success.rollbackFailures.every(
+        ({ operation, path, message }) =>
+          operation.length <= 96 && path.length <= 240 && message.length <= 360,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("Profile extension tool admission", () => {
+  test("registers the tool on a parent runtime but not a specialist child", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const profileExtensions = makeProfileExtensionsForRuntime();
+    let parentRuntime: AgentSessionRuntime | undefined;
+    const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
+      const runtime = await createAgentSessionRuntime(createRuntime, options);
+      parentRuntime = runtime;
+      return runtime;
+    };
+
+    const parentExit = await Effect.runPromiseExit(
+      openChat(
+        { path: profilePath, name: "Profile" },
+        { kind: "local" },
+        join(profilePath, "sessions", "parent"),
+        process.cwd(),
+        "fresh",
+        undefined,
+        profileExtensions,
+        runtimeFactory,
+      ),
+    );
+
+    if (Exit.isSuccess(parentExit)) await Effect.runPromise(parentExit.value.dispose);
+    expect(parentRuntime).toBeDefined();
+    if (parentRuntime === undefined) throw new Error("expected parent runtime");
+    expect(parentRuntime.session.getAllTools().map((tool) => tool.name)).toContain(
+      "profile_extensions",
+    );
+
+    const resources: PiResources = {
+      extensionPaths: [],
+      skillPaths: [],
+      extensionFactories: [],
+    };
+    const services = await createAgentSessionServices({
+      cwd: profilePath,
+      agentDir: profilePath,
+      resourceLoaderOptions: profileResourceLoaderOptions("Profile", resources, []),
+    });
+    const child = await Effect.runPromise(
+      specialistRuntime(
+        profilePath,
+        { services, resources },
+        {
+          id: "fixture-specialist",
+          version: 1,
+          description: "Fixture specialist",
+          provider: "fixture",
+          model: "fixture-model",
+          thinking: "off",
+          tools: ["profile_extensions"],
+          body: "Answer briefly.",
+        },
+        fixtureModel(),
+        "off",
+        ["profile_extensions"],
+        SessionManager.inMemory(profilePath),
+      ),
+    );
+    try {
+      expect(child.session.getAllTools().map((tool) => tool.name)).not.toContain(
+        "profile_extensions",
+      );
+    } finally {
+      await child.dispose();
+    }
   });
 });
 

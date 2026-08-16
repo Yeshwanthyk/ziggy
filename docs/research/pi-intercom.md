@@ -10,7 +10,7 @@ Primary sources:
 - [pi-messenger](https://github.com/nicobailon/pi-messenger) (file-based shared room; contrast only)
 - Ziggy `agent_discuss`: `src/adapters/pi/specialist.ts` (`runDiscussion`, `createAgentDiscussTool`)
 - Ziggy chat runtime: `src/adapters/pi/pi-agent.ts` (`bindChatRuntime` `mode: "print"`, `noExtensions: true` + `additionalExtensionPaths`)
-- Extension install: `src/adapters/fs/profile-extensions.ts` (manifest must be `@ziggy/{id}`), `src/adapters/pi/resources.ts`
+- Extension install: `src/adapters/fs/profile-extensions.ts` (shelf ID selects the package; `package.json.name` is independent upstream metadata), `src/adapters/pi/resources.ts`
 - Settled chat plan: `docs/plans/shared-chat-handle.md`
 
 ## Verdict
@@ -62,7 +62,7 @@ The human on Slack sees Squarey (or whoever) reply once. TUI can expand the tool
 
 Copying npm `pi-intercom` into a Profile is **not** a drop-in:
 
-- Ziggy only loads selected `<profile>/extensions/<id>/` with name `@ziggy/{id}`. Upstream name is `pi-intercom`. Not in the catalog; `extensions add` will not fetch npm.
+- Ziggy loads selected `<profile>/extensions/<id>/` by shelf ID; `package.json.name` may remain the upstream name `pi-intercom`. It is not in the catalog; `extensions add` will not fetch npm.
 - `noExtensions: true` only blocks ambient `~/.pi` discovery. Admitted packages still load on TUI **and** gateways via `additionalExtensionPaths`.
 - Overlay / Alt+M / `/intercom` are TUI-only. Gateways could get the `intercom` **tool** after a forked manifest.
 - Broker state is `~/.pi/agent/intercom` via `PI_CODING_AGENT_DIR` / home, **not** Ziggy `agentDir: profilePath`. Two Profiles share one broker. Package-local state should live under `<profile>/.runtime/<id>/`.

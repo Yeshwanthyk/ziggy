@@ -42,8 +42,6 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
       : Effect.void;
   },
   listProfiles: () => Effect.die("unused"),
-  addExtension: () => Effect.die("unused"),
-  removeExtension: () => Effect.die("unused"),
 });
 
 const auth = (events: string[], configured = true): AuthApi => ({

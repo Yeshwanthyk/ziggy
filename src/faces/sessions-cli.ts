@@ -1,4 +1,52 @@
+import { Schema } from "effect";
 import type { SessionMetadata, SessionReferenceMetadata, SessionUsage } from "../domain/session";
+
+const SessionReferenceJson = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+});
+
+const SessionUsageJson = Schema.Struct({
+  input: Schema.Finite,
+  output: Schema.Finite,
+  cacheRead: Schema.Finite,
+  cacheWrite: Schema.Finite,
+  reasoning: Schema.optional(Schema.Finite),
+  totalTokens: Schema.Finite,
+  cost: Schema.Finite,
+});
+
+export const SessionMetadataJson = Schema.Struct({
+  path: Schema.String,
+  id: Schema.String,
+  kind: Schema.Literals(["root", "child"]),
+  createdAt: Schema.String,
+  entryCount: Schema.Finite,
+  parent: Schema.optional(SessionReferenceJson),
+  parentUnknown: Schema.Boolean,
+  children: Schema.Array(SessionReferenceJson),
+  modelChanges: Schema.Array(
+    Schema.Struct({
+      at: Schema.String,
+      provider: Schema.String,
+      model: Schema.String,
+    }),
+  ),
+  thinkingChanges: Schema.Array(
+    Schema.Struct({
+      at: Schema.String,
+      level: Schema.String,
+    }),
+  ),
+  usage: SessionUsageJson,
+  terminalState: Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
+});
+export type SessionMetadataJson = typeof SessionMetadataJson.Type;
+
+export const SessionsJson = Schema.Array(SessionMetadataJson);
+export type SessionsJson = typeof SessionsJson.Type;
+const encodeSessions = Schema.encodeSync(SessionsJson);
+const encodeSession = Schema.encodeSync(SessionMetadataJson);
 
 const parentLabel = (session: SessionMetadata): string =>
   session.parent === undefined ? (session.parentUnknown ? "unknown" : "-") : session.parent.id;
@@ -26,6 +74,9 @@ export const renderSessionList = (sessions: ReadonlyArray<SessionMetadata>): str
     .join("\n");
 };
 
+export const renderSessionListJson = (sessions: ReadonlyArray<SessionMetadataJson>): string =>
+  JSON.stringify(encodeSessions(sessions));
+
 export const renderSession = (session: SessionMetadata): string => {
   const lines = [
     `path\t${session.path}`,
@@ -45,3 +96,6 @@ export const renderSession = (session: SessionMetadata): string => {
     lines.push(`thinking\t${change.at}\t${change.level}`);
   return lines.join("\n");
 };
+
+export const renderSessionJson = (session: SessionMetadataJson): string =>
+  JSON.stringify(encodeSession(session));

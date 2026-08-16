@@ -9,6 +9,8 @@ import type {
   AutomationTuiResponse,
 } from "./adapters/pi/automation-tui";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
+import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-preflight";
+import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { bootstrapPiStandaloneRuntime } from "./adapters/pi/standalone-runtime";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
@@ -20,23 +22,22 @@ import {
 } from "./application/automation-definitions";
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
-import {
-  ExtensionCatalogService,
-  ExtensionCatalogServiceLive,
-} from "./application/extension-catalog";
+import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-extensions";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
 import { Models, ModelsLive } from "./application/models";
+import { Memory, MemoryLive } from "./application/memory";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
-import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { ResidentGateway, makeResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
+import { parseMemoryScopeReference } from "./domain/memory";
 import {
   resolveProfileTarget,
   resolveProfilesDirectory,
@@ -46,23 +47,47 @@ import {
   renderProfileAgent,
   renderProfileAgents,
   renderProfileAgentValidation,
+  renderProfileAgentJson,
+  renderProfileAgentsJson,
 } from "./faces/agents-cli";
 import {
   renderAutomationCreated,
   renderAutomationDefinitions,
+  renderAutomationDefinitionsJson,
   renderAutomationOutcome,
   renderAutomationRuns,
+  renderAutomationRunsJson,
   renderAutomationStatus,
+  renderAutomationStatusJson,
   renderAutomationTransition,
   renderAutomationValidation,
 } from "./faces/automation-cli";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
+import {
+  renderExtensionJson,
+  renderExtensionsJson,
+  renderProfileExtensionFailure,
+} from "./faces/extensions-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
-import { renderSession, renderSessionList } from "./faces/sessions-cli";
+import {
+  renderMemoryList,
+  renderMemoryListJson,
+  renderMemoryShow,
+  renderMemoryShowJson,
+} from "./faces/memory-cli";
+import { renderProfilesJson } from "./faces/profiles-cli";
+import { runAcp } from "./faces/acp";
+import {
+  renderSession,
+  renderSessionJson,
+  renderSessionList,
+  renderSessionListJson,
+} from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
+import { MemoryFilesLive } from "./adapters/fs/memory-files";
 
 const resolutionOptions = {
   cwd: process.cwd(),
@@ -73,32 +98,37 @@ const resolutionOptions = {
 bootstrapPiStandaloneRuntime();
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
-const ExtensionCatalogProvided = ExtensionCatalogServiceLive.pipe(
-  Layer.provide(ExtensionArchiveClientLive),
+const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ExtensionArchiveClientLive,
+      ProfileExtensionPreflightLive,
+      ProfileExtensionMutationLockLive,
+    ),
+  ),
 );
 const PiAgentLive = Layer.effect(
   PiAgent,
   Effect.gen(function* () {
-    return makePiAgent(repositoryRoot, yield* ExtensionCatalogService);
+    return makePiAgent(repositoryRoot, yield* ProfileExtensions);
   }),
-).pipe(Layer.provide(ExtensionCatalogProvided));
+).pipe(Layer.provide(ProfileExtensionsProvided));
 const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
 const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
 const ProfileAgentsProvided = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(AgentLive, ModelsLive)),
 );
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
-const ResidentProvided = ResidentGatewayLive.pipe(
+const ResidentProvided = makeResidentGatewayLive(repositoryRoot).pipe(
   Layer.provide(
-    Layer.merge(
+    Layer.mergeAll(
       SchedulerProvided,
-      Layer.merge(
-        GatewayLive.pipe(Layer.provide(AgentLive)),
-        Layer.merge(
-          DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
-          SlackGatewayLive.pipe(Layer.provide(AgentLive)),
-        ),
-      ),
+      GatewayLive.pipe(Layer.provide(AgentLive)),
+      DiscordGatewayLive.pipe(Layer.provide(AgentLive)),
+      SlackGatewayLive.pipe(Layer.provide(AgentLive)),
+      AgentLive,
+      SessionsLive,
+      ProfileExtensionsProvided,
     ),
   ),
 );
@@ -155,8 +185,9 @@ const program = Effect.gen(function* () {
   const residentGateway = yield* ResidentGateway;
   const residentService = yield* ResidentService;
   const sessions = yield* Sessions;
-  const extensionCatalog = yield* ExtensionCatalogService;
+  const profileExtensions = yield* ProfileExtensions;
   const selfUpdate = yield* SelfUpdate;
+  const memory = yield* Memory;
 
   switch (command._tag) {
     case "Init": {
@@ -221,6 +252,10 @@ const program = Effect.gen(function* () {
         resolveProfilesDirectory(resolutionOptions),
         resolveProfilesRegistry(resolutionOptions),
       );
+      if (command.json) {
+        console.log(renderProfilesJson(listings));
+        return;
+      }
       if (listings.length === 0) {
         console.log("no profiles yet — try: ziggy init <name>");
         return;
@@ -229,7 +264,11 @@ const program = Effect.gen(function* () {
       return;
     }
     case "ExtensionsList": {
-      const extensions = yield* extensionCatalog.list(repositoryRoot);
+      const extensions = yield* profileExtensions.list(repositoryRoot);
+      if (command.json) {
+        console.log(renderExtensionsJson(extensions));
+        return;
+      }
       for (const extension of extensions) {
         console.log(
           `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.source}\t${extension.description}`,
@@ -238,7 +277,11 @@ const program = Effect.gen(function* () {
       return;
     }
     case "ExtensionsShow": {
-      const extension = yield* extensionCatalog.show(repositoryRoot, command.id);
+      const extension = yield* profileExtensions.show(repositoryRoot, command.id);
+      if (command.json) {
+        console.log(renderExtensionJson(extension));
+        return;
+      }
       console.log(`id\t${extension.id}`);
       console.log(`kind\t${extension.kind}`);
       console.log(`status\t${extension.required ? "required" : "optional"}`);
@@ -264,14 +307,9 @@ const program = Effect.gen(function* () {
     case "ExtensionsAdd":
     case "ExtensionsRemove": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
-      if (command._tag === "ExtensionsAdd") {
-        yield* extensionCatalog.ensureInstalled(target.path, repositoryRoot, command.id);
-      } else {
-        yield* extensionCatalog.deactivate(target.path, repositoryRoot, command.id);
-      }
       const result = yield* command._tag === "ExtensionsAdd"
-        ? profiles.addExtension(target, repositoryRoot, command.id)
-        : profiles.removeExtension(target, repositoryRoot, command.id);
+        ? profileExtensions.add(target, repositoryRoot, command.id)
+        : profileExtensions.remove(target, repositoryRoot, command.id);
       if (!result.changed) {
         console.log(
           `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
@@ -337,7 +375,7 @@ const program = Effect.gen(function* () {
       const listed = yield* profileAgents.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderProfileAgents(listed));
+      console.log(command.json ? renderProfileAgentsJson(listed) : renderProfileAgents(listed));
       return;
     }
     case "AgentsShow": {
@@ -345,7 +383,7 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
       );
-      console.log(renderProfileAgent(shown));
+      console.log(command.json ? renderProfileAgentJson(shown) : renderProfileAgent(shown));
       return;
     }
     case "AgentsValidate": {
@@ -367,15 +405,33 @@ const program = Effect.gen(function* () {
       return;
     }
     case "Run": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const sessionPath =
+        command.sessionId === undefined
+          ? undefined
+          : path.resolve(
+              target.path,
+              "sessions",
+              (yield* sessions.resolve(target, command.sessionId)).path,
+            );
       const exitCode = yield* agent.runOnce(
-        resolveProfileTarget(command.target, resolutionOptions),
+        target,
         command.prompt,
         command.continueSession,
         { kind: "local" },
+        sessionPath === undefined
+          ? { mode: command.json ? "json" : "text" }
+          : { mode: command.json ? "json" : "text", sessionPath },
       );
       process.exitCode = exitCode;
       return;
     }
+    case "Acp":
+      return yield* runAcp(
+        resolveProfileTarget(command.target, resolutionOptions),
+        command.shared,
+        agent,
+      );
     case "AutomationsCreate": {
       const created = yield* automationDefinitions.create(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -388,7 +444,11 @@ const program = Effect.gen(function* () {
       const listed = yield* automationDefinitions.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderAutomationDefinitions(listed));
+      console.log(
+        command.json
+          ? renderAutomationDefinitionsJson(listed)
+          : renderAutomationDefinitions(listed),
+      );
       return;
     }
     case "AutomationsPause":
@@ -423,7 +483,9 @@ const program = Effect.gen(function* () {
       const status = yield* automationScheduler.status(
         resolveProfileTarget(command.target, resolutionOptions),
       );
-      console.log(renderAutomationStatus(status));
+      console.log(
+        command.json ? renderAutomationStatusJson(status) : renderAutomationStatus(status),
+      );
       return;
     }
     case "AutomationsRuns": {
@@ -435,7 +497,11 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         automationId,
       );
-      console.log(renderAutomationRuns(runs, yield* Clock.currentTimeMillis));
+      console.log(
+        command.json
+          ? renderAutomationRunsJson(runs)
+          : renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
+      );
       return;
     }
     case "Wake": {
@@ -451,7 +517,7 @@ const program = Effect.gen(function* () {
     }
     case "SessionsList": {
       const listed = yield* sessions.list(resolveProfileTarget(command.target, resolutionOptions));
-      console.log(renderSessionList(listed));
+      console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed));
       return;
     }
     case "SessionsShow": {
@@ -459,7 +525,22 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.reference,
       );
-      console.log(renderSession(shown));
+      console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
+      return;
+    }
+    case "MemoryList": {
+      const listed = yield* memory.list(
+        resolveProfileTarget(command.target ?? ".", resolutionOptions),
+      );
+      console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed));
+      return;
+    }
+    case "MemoryShow": {
+      const shown = yield* memory.show(
+        resolveProfileTarget(command.target, resolutionOptions),
+        parseMemoryScopeReference(command.scope),
+      );
+      console.log(command.json ? renderMemoryShowJson(shown) : renderMemoryShow(shown));
       return;
     }
     case "ServeInstall": {
@@ -612,6 +693,9 @@ const program = Effect.gen(function* () {
     ProfileFileSystemError: (failure) =>
       fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
     ProfileExtensionInvalid: (failure) => fail(failure.message),
+    ProfileExtensionPreflightFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
+    ProfileExtensionLockFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
+    ProfileExtensionRollbackFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
     ProfileAgentInvalid: (failure) => fail(failure.message),
     SpecialistAgentNotFound: (failure) => fail(failure.message),
     SpecialistProviderUnsupported: (failure) => fail(failure.message),
@@ -633,6 +717,8 @@ const program = Effect.gen(function* () {
     ModelSettingsWriteFailed: (failure) => fail(failure.message),
     SetupIncomplete: (failure) => fail(failure.message),
     MemoryIdInvalid: (failure) => fail(failure.message),
+    MemoryDocumentInvalid: (failure) => fail(failure.message),
+    MemoryFileSystemError: (failure) => fail(failure.message),
     AutomationInvalid: (failure) => fail(failure.message),
     AutomationNotFound: (failure) => fail(failure.message),
     AutomationPaused: (failure) => fail(failure.message),
@@ -650,6 +736,7 @@ const program = Effect.gen(function* () {
     ExtensionCatalogUnavailable: (failure) => fail(failure.message),
     ExtensionCatalogInstallFailed: (failure) => fail(failure.message),
     ZiggyUpdateUnavailable: (failure) => fail(failure.message),
+    AcpFaceError: (failure) => fail(failure.message),
   }),
   Effect.provide(
     Layer.mergeAll(
@@ -658,7 +745,7 @@ const program = Effect.gen(function* () {
       AuthLive,
       ModelsLive,
       DoctorLive.pipe(
-        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
       ),
       SetupLive.pipe(
         Layer.provide(
@@ -667,7 +754,7 @@ const program = Effect.gen(function* () {
             AuthLive,
             ModelsLive,
             DoctorLive.pipe(
-              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
             ),
           ),
         ),
@@ -682,8 +769,9 @@ const program = Effect.gen(function* () {
       SchedulerProvided,
       ResidentProvided,
       ResidentServiceProvided,
-      ExtensionCatalogProvided,
+      ProfileExtensionsProvided,
       SelfUpdateProvided,
+      MemoryLive.pipe(Layer.provide(MemoryFilesLive)),
     ),
   ),
 );

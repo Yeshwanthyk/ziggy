@@ -12,6 +12,7 @@ import type { ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import type { TelegramGatewayConfig } from "../domain/telegram";
+import type { ChatRegistryApi } from "./chat-registry";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 const TELEGRAM_STARTUP_OFFSET = -1;
@@ -38,6 +39,7 @@ export interface GatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: TelegramGatewayConfig,
+    registry?: ChatRegistryApi,
   ) => Effect.Effect<never, GatewayError>;
 }
 
@@ -136,13 +138,20 @@ const retryTelegram = <A>(
     }
   });
 
-const disposeChats = (chats: Map<string, ChatState>): Effect.Effect<void> =>
+const disposeChats = (
+  chats: Map<string, ChatState>,
+  registry?: ChatRegistryApi,
+): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : state.handle.dispose.pipe(
+        : (registry === undefined
+            ? Effect.void
+            : registry.unregisterAlias(`telegram/${chatKey}`, state.handle)
+          ).pipe(
+            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[gateway] ${chatKey} dispose failed: ${failure.message}`);
@@ -161,11 +170,11 @@ export const makeTelegramGateway = (
   agent: ZiggyAgentApi,
   transport: TelegramTransport = liveTelegramTransport,
 ): GatewayApi => ({
-  runLoop: (target, config) =>
+  runLoop: (target, config, registry) =>
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
-        yield* Effect.addFinalizer(() => disposeChats(chats));
+        yield* Effect.addFinalizer(() => disposeChats(chats, registry));
 
         const processMessage = (message: InboundMessage) => {
           let state = chats.get(message.chatKey);
@@ -183,6 +192,18 @@ export const makeTelegramGateway = (
                   message.context,
                   join(target.path, "sessions", "telegram", message.chatKey),
                 );
+                if (registry !== undefined) {
+                  yield* registry
+                    .registerAlias(`telegram/${message.chatKey}`, "telegram", chatState.handle)
+                    .pipe(
+                      Effect.catch((failure) =>
+                        Effect.logWarning("Telegram registry registration failed", {
+                          chatKey: message.chatKey,
+                          failure,
+                        }),
+                      ),
+                    );
+                }
               }
               const handle = chatState.handle;
 

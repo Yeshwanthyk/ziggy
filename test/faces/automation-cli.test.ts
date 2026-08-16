@@ -3,9 +3,12 @@ import type { AutomationRunProjection, AutomationStatusProjection } from "ziggy/
 import {
   renderAutomationCreated,
   renderAutomationDefinitions,
+  renderAutomationDefinitionsJson,
   renderAutomationOutcome,
   renderAutomationRuns,
+  renderAutomationRunsJson,
   renderAutomationStatus,
+  renderAutomationStatusJson,
   renderAutomationTransition,
   renderAutomationValidation,
 } from "ziggy/faces/automation-cli";
@@ -35,6 +38,7 @@ describe("automation definition CLI", () => {
     expect(renderAutomationDefinitions(definitions)).toBe(
       "alpha\tactive\tvalid\t0 9 * * *\tUTC\tmanual-only\tautomations/alpha.md\nbroken\tactive\tinvalid\t-\t-\t-\tautomations/broken.md",
     );
+    expect(renderAutomationDefinitionsJson(definitions)).toBe(JSON.stringify(definitions));
     expect(renderAutomationValidation(definitions)).toBe(
       "automations/alpha.md\tactive\tvalid\tmanual-only\nautomations/broken.md\tactive\tinvalid\tbad frontmatter",
     );
@@ -214,5 +218,10 @@ describe("automation CLI projections", () => {
       ].join("\n"),
     );
     expect(renderAutomationRuns([], 0)).toBe("no automation runs");
+    expect(renderAutomationRunsJson([run])).toBe(JSON.stringify([run]));
+  });
+
+  test("renders scheduler status as one JSON object", () => {
+    expect(renderAutomationStatusJson(status(null))).toBe(JSON.stringify(status(null)));
   });
 });
