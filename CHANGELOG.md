@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-16
+
+### Added
+
+- Focused local rule parity tests for lexical scope, Reflect ownership, strict runtime `typeof`, assertions, unknown causes, unsafe dictionaries, and module mocking
+
+### Changed
+
+- Root `check` now runs the gateway-client's scoped lint, typecheck, and tests; the client's scoped oxlint configuration references the shared Ziggy plugin without duplicating a plugin or dependency
+- Restored upstream lexical mapped/conditional-infer type-parameter fidelity for the object-parameter and unknown-return rules
+
 ## [0.2.1] - 2026-08-16
 
 ### Added
@@ -55,7 +66,8 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Yeshwanthyk/ziggy/releases/tag/v0.1.0
