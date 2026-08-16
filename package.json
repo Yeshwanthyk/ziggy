@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "bun src/main.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p clients/example-web/tsconfig.json",
     "lint": "oxlint src test extensions tooling",
     "fmt": "oxfmt \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\"",
     "generate:catalog": "bun tooling/generate-builtin-catalog.mjs",

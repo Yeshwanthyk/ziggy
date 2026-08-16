@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ziggy signal desk</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: oklch(1 0 0);
+        --surface: oklch(0.97 0.006 150);
+        --rail: oklch(0.945 0.012 150);
+        --ink: oklch(0.22 0.025 155);
+        --muted: oklch(0.46 0.025 155);
+        --line: oklch(0.84 0.012 150);
+        --primary: oklch(0.52 0.14 150);
+        --primary-hover: oklch(0.46 0.14 150);
+        --accent: oklch(0.58 0.17 35);
+        --on-dark: oklch(0.98 0.005 150);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background: var(--rail);
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 1px solid var(--ink);
+        border-radius: 0.35rem;
+        min-height: 2.75rem;
+        padding: 0.6rem 0.85rem;
+        color: var(--on-dark);
+        background: var(--primary);
+        cursor: pointer;
+        transition:
+          background-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+          border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
+          transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      button:hover {
+        border-color: var(--primary-hover);
+        background: var(--primary-hover);
+      }
+
+      button:active {
+        transform: scale(0.96);
+      }
+
+      button:disabled {
+        border-color: var(--line);
+        color: var(--muted);
+        background: var(--surface);
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid color-mix(in oklch, var(--accent) 55%, transparent);
+        outline-offset: 2px;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 0.35rem;
+        padding: 0.65rem 0.75rem;
+        color: var(--ink);
+        background: var(--bg);
+      }
+
+      input::placeholder,
+      textarea::placeholder {
+        color: var(--muted);
+      }
+
+      textarea {
+        min-height: 5rem;
+        resize: vertical;
+      }
+
+      .masthead {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 2rem;
+        align-items: start;
+        padding: 2rem clamp(1.5rem, 4vw, 3.5rem);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .masthead h1 {
+        margin: 0;
+        font-size: 2.35rem;
+        font-weight: 650;
+        line-height: 1;
+        letter-spacing: -0.035em;
+        text-wrap: balance;
+      }
+
+      .masthead p {
+        max-width: 42rem;
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+        text-wrap: pretty;
+      }
+
+      .connection {
+        display: grid;
+        grid-template-columns: 8rem minmax(14rem, 1fr) auto;
+        gap: 0.65rem;
+        padding: 0.85rem clamp(1.5rem, 4vw, 3.5rem);
+        color: var(--on-dark);
+        background: var(--ink);
+      }
+
+      .connection input {
+        border-color: oklch(0.48 0.025 155);
+        color: var(--on-dark);
+        background: oklch(0.28 0.025 155);
+      }
+
+      .connection input::placeholder {
+        color: oklch(0.78 0.015 155);
+      }
+
+      .connection button {
+        border-color: var(--primary);
+      }
+
+      .signal {
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+        grid-column: 1 / -1;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.75rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .operation-status {
+        grid-column: 1 / -1;
+        min-height: 1.1em;
+        margin: 0;
+        color: oklch(0.84 0.1 35);
+        font-size: 0.82rem;
+      }
+
+      .signal::before {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        background: var(--accent);
+        content: "";
+      }
+
+      .signal[data-state="open"]::before {
+        background: oklch(0.78 0.15 150);
+        box-shadow: 0 0 0 0.25rem oklch(0.78 0.15 150 / 18%);
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(16rem, 0.75fr) minmax(22rem, 1.5fr);
+        min-height: 42rem;
+      }
+
+      .rail,
+      .workspace {
+        padding: clamp(1.25rem, 3vw, 2.5rem);
+      }
+
+      .rail {
+        border-right: 1px solid var(--line);
+      }
+
+      .workspace {
+        display: grid;
+        gap: 1.5rem;
+        align-content: start;
+        background: var(--surface);
+      }
+
+      h2,
+      h3 {
+        margin: 0 0 0.75rem;
+        font-weight: 600;
+      }
+
+      h2 {
+        font-size: 1.7rem;
+        font-weight: 650;
+        letter-spacing: -0.025em;
+        text-wrap: balance;
+      }
+
+      h3,
+      .section-label {
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 650;
+      }
+
+      .section + .section {
+        margin-top: 2rem;
+      }
+
+      .stack,
+      .session-list {
+        display: grid;
+        gap: 0.65rem;
+      }
+
+      .session-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.6rem;
+        align-items: center;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .session-row code {
+        overflow: hidden;
+        font-size: 0.78rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-row button {
+        padding: 0.38rem 0.55rem;
+        color: var(--ink);
+        background: transparent;
+      }
+
+      .session-row button:hover {
+        color: var(--on-dark);
+        background: var(--primary);
+      }
+
+      .empty,
+      .hint {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .chat-log,
+      .watch-log {
+        min-height: 13rem;
+        max-height: 26rem;
+        overflow: auto;
+        border: 1px solid var(--line);
+        padding: 1rem;
+        background: var(--bg);
+      }
+
+      .watch-log {
+        min-height: 8rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.78rem;
+        white-space: pre-wrap;
+      }
+
+      .message {
+        max-width: 48rem;
+        margin: 0 0 1rem;
+        white-space: pre-wrap;
+      }
+
+      .message::before {
+        display: block;
+        margin-bottom: 0.2rem;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .message.user::before {
+        content: "You";
+      }
+
+      .message.assistant::before {
+        content: "Ziggy";
+      }
+
+      .message.user {
+        padding: 0.75rem;
+        border-radius: 0.35rem;
+        background: var(--rail);
+      }
+
+      .prompt-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.65rem;
+        align-items: end;
+      }
+
+      @media (max-width: 760px) {
+        .masthead,
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        .connection {
+          grid-template-columns: 1fr;
+        }
+
+        .rail {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+
+        button:active {
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="masthead">
+      <h1>Ziggy signal desk</h1>
+      <p>Connect to one local Profile. Open a private UI chat or watch a live channel session.</p>
+    </header>
+
+    <form class="connection" id="connection-form">
+      <input id="port" name="port" inputmode="numeric" placeholder="Port" aria-label="Gateway port" required />
+      <input id="token" name="token" type="password" placeholder="Token from .runtime/ui-server.json" aria-label="Gateway token" required />
+      <button type="submit">Connect</button>
+      <div class="signal" id="connection-state" data-state="closed" aria-live="polite">Closed</div>
+      <p class="operation-status" id="operation-status" aria-live="polite"></p>
+    </form>
+
+    <main>
+      <aside class="rail">
+        <section class="section">
+          <h2>Sessions</h2>
+          <form class="stack" id="open-form">
+            <label class="section-label" for="session-name">New UI session</label>
+            <input id="session-name" placeholder="main" pattern="[a-z0-9][a-z0-9._-]{0,63}" required />
+            <button id="open-session" type="submit" disabled>Open session</button>
+          </form>
+        </section>
+
+        <section class="section">
+          <h3>Live now</h3>
+          <div class="session-list" id="live-sessions"><p class="empty">Connect to load sessions.</p></div>
+        </section>
+
+        <section class="section">
+          <h3>Stored transcripts</h3>
+          <div class="session-list" id="stored-sessions"><p class="empty">Connect to load sessions.</p></div>
+        </section>
+      </aside>
+
+      <div class="workspace">
+        <section>
+          <p class="section-label" id="chat-session">No UI session open</p>
+          <div class="chat-log" id="chat-log" aria-live="polite">
+            <p class="empty">Open a UI session to start a conversation.</p>
+          </div>
+          <form class="prompt-row" id="prompt-form">
+            <div class="stack">
+              <label class="section-label" for="prompt">Prompt</label>
+              <textarea id="prompt" placeholder="Ask Ziggy…" required></textarea>
+            </div>
+            <button id="send-prompt" type="submit" disabled>Send prompt</button>
+          </form>
+        </section>
+
+        <section>
+          <p class="section-label" id="watch-session">No channel session watched</p>
+          <div class="watch-log" id="watch-log">Choose Watch beside a live session.</div>
+        </section>
+      </div>
+    </main>
+
+    <script src="./dist/main.js"></script>
+  </body>
+</html>

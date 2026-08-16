@@ -1,5 +1,7 @@
 import { Schema } from "effect";
 
+// Protocol mirror: clients/gateway-client/src/index.ts. Keep both v1 surfaces aligned.
+
 const boundedString = (label: string, maximum: number, minimum = 1) =>
   Schema.String.check(
     Schema.makeFilter((value) => value.length >= minimum && value.length <= maximum, {
