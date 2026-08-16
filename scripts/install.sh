@@ -15,7 +15,7 @@ esac
 target="${os}-${arch}"
 
 if [ "$target" != "darwin-arm64" ]; then
-  printf 'Ziggy 0.1.0 ships macOS Apple Silicon only (darwin-arm64). Detected %s.\n' "$target" >&2
+  printf 'Ziggy 0.2.0 ships macOS Apple Silicon only (darwin-arm64). Detected %s.\n' "$target" >&2
   exit 1
 fi
 

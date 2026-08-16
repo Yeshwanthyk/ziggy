@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-15
+
+### Added
+
+- Machine-readable JSON for Profile, extension, specialist, automation, memory, and session inspection, plus Pi-owned NDJSON output for `ziggy run --json`
+- Exact session resume with `ziggy run --session <id>`
+- Recoverable Profile memory scaffolding, inventory commands, private pre-write backups, and bounded backup retention
+- Serve-owned, authenticated loopback WebSocket gateway for UI sessions and watch-only channel sessions
+- Dependency-free `@ziggy/gateway-client` with typed requests, event streams, reconnects, restored watches, and a minimal browser example
+- ACP v1 face at `ziggy acp <profile> [--shared]` for Zed, Buzz, and other ACP clients
+- MIT license for Ziggy-owned code
+
+### Changed
+
+- `ziggy serve` now owns live chat registration and UI session lifecycles alongside channel and automation work
+- ACP sessions use isolated `sessions/acp/*` transcripts; shared clients use group-scoped memory instead of owner memory
+
 ## [0.1.0] - 2026-08-15
 
 First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScript runtime wrapping `@earendil-works/pi-coding-agent@0.84.1`. Pi owns the agent loop, providers, sessions, and TUI; Ziggy owns Profile policy and composition.
@@ -25,5 +42,6 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Yeshwanthyk/ziggy/releases/tag/v0.1.0
