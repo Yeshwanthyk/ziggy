@@ -31,5 +31,13 @@ removed.
 To create or change a Profile-owned package, read the `extension-authoring` skill and edit
 `<profile>/extensions/<id>/`. Do not edit the Ziggy catalogue.
 
+To adopt a third-party package, clone or download its source into an OS temporary directory and
+inspect `package.json` and its declared `pi` paths there; never run install or lifecycle
+scripts. Choose a lowercase kebab-case shelf ID independent of `package.json.name`, copy only
+the package source into `<profile>/extensions/<id>/` (excluding `.git/`, `node_modules/`, and
+temp artifacts), then call `profile_extensions` with `action: "add"` and the shelf ID. The copy
+alone leaves the package inactive; report admission or failure from the tool's structured
+result.
+
 The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
 are replaced by the single optional `self-improvement` package.

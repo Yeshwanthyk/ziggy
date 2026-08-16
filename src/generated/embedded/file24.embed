@@ -71,6 +71,17 @@ catalogue packages with the same ID. Reopening that Profile or restarting its re
 process applies the change. All registered tools must be usable from TUI, print runs, gateway
 chats, and automations when the package is selected.
 
+## Third-party packages
+
+To adopt a package from upstream, clone or download its source into an OS temporary directory
+(never into the repository or Profile) and inspect `package.json` and its declared `pi` paths
+there. Never run install or lifecycle scripts. Choose a lowercase kebab-case shelf ID
+independent of `package.json.name`, then copy only the package source into
+`<profile>/extensions/<id>/`, excluding `.git/`, `node_modules/`, and temp artifacts. The copy
+alone leaves the package inactive: call the in-process `profile_extensions` tool with
+`action: "add"` and the shelf ID, and report admission or failure from that tool's structured
+result.
+
 ## Skills
 
 Agent Skills remain progressive: frontmatter metadata is loaded at startup and the body is read
