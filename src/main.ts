@@ -9,6 +9,8 @@ import type {
   AutomationTuiResponse,
 } from "./adapters/pi/automation-tui";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
+import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-preflight";
+import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { bootstrapPiStandaloneRuntime } from "./adapters/pi/standalone-runtime";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
@@ -20,10 +22,7 @@ import {
 } from "./application/automation-definitions";
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
-import {
-  ExtensionCatalogService,
-  ExtensionCatalogServiceLive,
-} from "./application/extension-catalog";
+import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-extensions";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
@@ -65,7 +64,11 @@ import {
 } from "./faces/automation-cli";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
-import { renderExtensionJson, renderExtensionsJson } from "./faces/extensions-cli";
+import {
+  renderExtensionJson,
+  renderExtensionsJson,
+  renderProfileExtensionFailure,
+} from "./faces/extensions-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import {
   renderMemoryList,
@@ -95,15 +98,21 @@ const resolutionOptions = {
 bootstrapPiStandaloneRuntime();
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
-const ExtensionCatalogProvided = ExtensionCatalogServiceLive.pipe(
-  Layer.provide(ExtensionArchiveClientLive),
+const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ExtensionArchiveClientLive,
+      ProfileExtensionPreflightLive,
+      ProfileExtensionMutationLockLive,
+    ),
+  ),
 );
 const PiAgentLive = Layer.effect(
   PiAgent,
   Effect.gen(function* () {
-    return makePiAgent(repositoryRoot, yield* ExtensionCatalogService);
+    return makePiAgent(repositoryRoot, yield* ProfileExtensions);
   }),
-).pipe(Layer.provide(ExtensionCatalogProvided));
+).pipe(Layer.provide(ProfileExtensionsProvided));
 const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
 const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
 const ProfileAgentsProvided = ProfileAgentsLive.pipe(
@@ -175,7 +184,7 @@ const program = Effect.gen(function* () {
   const residentGateway = yield* ResidentGateway;
   const residentService = yield* ResidentService;
   const sessions = yield* Sessions;
-  const extensionCatalog = yield* ExtensionCatalogService;
+  const profileExtensions = yield* ProfileExtensions;
   const selfUpdate = yield* SelfUpdate;
   const memory = yield* Memory;
 
@@ -254,7 +263,7 @@ const program = Effect.gen(function* () {
       return;
     }
     case "ExtensionsList": {
-      const extensions = yield* extensionCatalog.list(repositoryRoot);
+      const extensions = yield* profileExtensions.list(repositoryRoot);
       if (command.json) {
         console.log(renderExtensionsJson(extensions));
         return;
@@ -267,7 +276,7 @@ const program = Effect.gen(function* () {
       return;
     }
     case "ExtensionsShow": {
-      const extension = yield* extensionCatalog.show(repositoryRoot, command.id);
+      const extension = yield* profileExtensions.show(repositoryRoot, command.id);
       if (command.json) {
         console.log(renderExtensionJson(extension));
         return;
@@ -297,14 +306,9 @@ const program = Effect.gen(function* () {
     case "ExtensionsAdd":
     case "ExtensionsRemove": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
-      if (command._tag === "ExtensionsAdd") {
-        yield* extensionCatalog.ensureInstalled(target.path, repositoryRoot, command.id);
-      } else {
-        yield* extensionCatalog.deactivate(target.path, repositoryRoot, command.id);
-      }
       const result = yield* command._tag === "ExtensionsAdd"
-        ? profiles.addExtension(target, repositoryRoot, command.id)
-        : profiles.removeExtension(target, repositoryRoot, command.id);
+        ? profileExtensions.add(target, repositoryRoot, command.id)
+        : profileExtensions.remove(target, repositoryRoot, command.id);
       if (!result.changed) {
         console.log(
           `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
@@ -688,6 +692,9 @@ const program = Effect.gen(function* () {
     ProfileFileSystemError: (failure) =>
       fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
     ProfileExtensionInvalid: (failure) => fail(failure.message),
+    ProfileExtensionPreflightFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
+    ProfileExtensionLockFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
+    ProfileExtensionRollbackFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
     ProfileAgentInvalid: (failure) => fail(failure.message),
     SpecialistAgentNotFound: (failure) => fail(failure.message),
     SpecialistProviderUnsupported: (failure) => fail(failure.message),
@@ -737,7 +744,7 @@ const program = Effect.gen(function* () {
       AuthLive,
       ModelsLive,
       DoctorLive.pipe(
-        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
       ),
       SetupLive.pipe(
         Layer.provide(
@@ -746,7 +753,7 @@ const program = Effect.gen(function* () {
             AuthLive,
             ModelsLive,
             DoctorLive.pipe(
-              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ExtensionCatalogProvided)),
+              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
             ),
           ),
         ),
@@ -761,7 +768,7 @@ const program = Effect.gen(function* () {
       SchedulerProvided,
       ResidentProvided,
       ResidentServiceProvided,
-      ExtensionCatalogProvided,
+      ProfileExtensionsProvided,
       SelfUpdateProvided,
       MemoryLive.pipe(Layer.provide(MemoryFilesLive)),
     ),

@@ -40,6 +40,15 @@ const physicalDirectory = async (path: string): Promise<void> => {
   }
 };
 
+const readPhysicalFileBytesPromise = async (path: string, signal?: AbortSignal) => {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return await handle.readFile({ signal });
+  } finally {
+    await handle.close();
+  }
+};
+
 const readPhysicalFilePromise = async (path: string, signal?: AbortSignal): Promise<string> => {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -211,6 +220,56 @@ export const installAutomationDefinition = (
         message: `could not exclusively create automation ${id} at ${path}; neither active nor paused form may already exist`,
         cause,
       }),
+  });
+};
+
+/** Remove an active definition only when it is still the exact physical source that was installed. */
+export const removeAutomationDefinition = (
+  target: ProfileTarget,
+  id: AutomationId,
+  expectedSource: string,
+): Effect.Effect<void, AutomationEditConflict | AutomationFileSystemError | AutomationNotFound> => {
+  const directory = join(target.path, "automations");
+  const activePath = join(directory, `${id}.md`);
+  return Effect.tryPromise({
+    try: async () => {
+      await physicalDirectory(target.path);
+      await physicalDirectory(directory);
+      let status;
+      try {
+        status = await lstat(activePath);
+      } catch (cause) {
+        if (missing(cause)) {
+          throw new AutomationNotFound({
+            id,
+            path: activePath,
+            message: `no active automation ${id} at ${activePath}`,
+          });
+        }
+        throw cause;
+      }
+      if (status.isSymbolicLink() || !status.isFile()) {
+        throw new Error(`${activePath} must be a physical file`);
+      }
+      const actualSource = await readPhysicalFileBytesPromise(activePath);
+      if (!actualSource.equals(Buffer.from(expectedSource, "utf8"))) {
+        throw new AutomationEditConflict({
+          id,
+          path: activePath,
+          message: `automation ${id} changed after installation; refusing to remove it`,
+        });
+      }
+      await unlink(activePath);
+    },
+    catch: (cause) => {
+      if (cause instanceof AutomationEditConflict || cause instanceof AutomationNotFound)
+        return cause;
+      return new AutomationFileSystemError({
+        path: activePath,
+        message: `could not safely remove automation ${id} at ${activePath}; only the exact active definition may be removed`,
+        cause,
+      });
+    },
   });
 };
 

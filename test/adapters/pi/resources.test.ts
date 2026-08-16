@@ -13,7 +13,11 @@ import {
 import { Effect, Predicate, Result } from "effect";
 import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { discoverPiResources } from "ziggy/adapters/pi/resources";
-import { makeExtensionCatalogLive } from "ziggy/application/extension-catalog";
+import { makeProfileExtensions } from "ziggy/application/profile-extensions";
+import type {
+  ProfileExtensionMutationLockApi,
+  ProfileExtensionPreflightApi,
+} from "ziggy/domain/profile-extension";
 import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { bundledFilePath } from "ziggy/generated/builtin-files";
 import { REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
@@ -67,9 +71,20 @@ const noDownload: ExtensionArchiveClientApi = {
       }),
     ),
 };
+const noPreflight: ProfileExtensionPreflightApi = {
+  preflight: () =>
+    Effect.succeed({ extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 }),
+};
+const noLock: ProfileExtensionMutationLockApi = {
+  withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
+};
+const profileExtensions = makeProfileExtensions(noDownload, noPreflight, noLock);
 
 const resolveResources = (profilePath: string, repositoryRoot = profilePath) =>
   Effect.runPromise(discoverPiResources(profilePath, repositoryRoot));
+
+const prepareRuntime = (profilePath: string, repositoryRoot: string) =>
+  Effect.runPromise(profileExtensions.prepareRuntime(profilePath, repositoryRoot));
 
 const factoryNames = (factories: ReadonlyArray<{ readonly name: string }>) =>
   factories.map((factory) => factory.name);
@@ -202,9 +217,7 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
     skills: ["./skills"],
   });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
-  await Effect.runPromise(
-    makeExtensionCatalogLive(noDownload).materialize(profilePath, "/does-not-exist"),
-  );
+  await prepareRuntime(profilePath, "/does-not-exist");
 
   const resources = await resolveResources(profilePath);
   const services = await createAgentSessionServices({
@@ -274,9 +287,7 @@ test("loads an upstream package name independently from its computer-use shelf I
   );
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["computer-use"]}\n');
   const repositoryRoot = resolve(import.meta.dir, "../../..");
-  await Effect.runPromise(
-    makeExtensionCatalogLive(noDownload).materialize(profilePath, repositoryRoot),
-  );
+  await prepareRuntime(profilePath, repositoryRoot);
 
   const resources = await resolveResources(profilePath, repositoryRoot);
   expect(resources.extensionPaths).toEqual([extensionPackage]);
@@ -507,9 +518,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     join(profilePath, "extensions.json"),
     `${JSON.stringify({ extensions: packageNames.filter((name) => !REQUIRED_BUNDLED_EXTENSION_IDS.has(name)) }, null, 2)}\n`,
   );
-  await Effect.runPromise(
-    makeExtensionCatalogLive(noDownload).materialize(profilePath, repositoryRoot),
-  );
+  await prepareRuntime(profilePath, repositoryRoot);
 
   const loadCatalog = (
     additionalExtensionPaths: string[],

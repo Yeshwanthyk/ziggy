@@ -4,9 +4,8 @@ import {
   type ProfileAgentInvalid,
   type ProfileAgentMentionInvalid,
   ProfileAgentThinking,
-  type ProfileExtensionInvalid,
-  type ProfileFileSystemError,
 } from "./profile";
+import type { ProfileExtensionRuntimeError } from "./profile-extension";
 
 /** Read-only projection of one Pi-owned session. */
 export interface SessionReference {
@@ -219,8 +218,7 @@ export type ZiggyAgentError =
   | MemoryIdInvalid
   | ProfileAgentInvalid
   | ProfileAgentMentionInvalid
-  | ProfileExtensionInvalid
-  | ProfileFileSystemError;
+  | ProfileExtensionRuntimeError;
 
 export type ProfileSpecialistError =
   | ZiggyAgentError

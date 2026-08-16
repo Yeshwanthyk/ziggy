@@ -1,12 +1,13 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute adapter Effects */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
 import {
   discoverAutomationSources,
   installAutomationDefinition,
+  removeAutomationDefinition,
   pauseAutomationDefinition,
   resumeAutomationDefinition,
 } from "ziggy/adapters/fs/automation-files";
@@ -52,6 +53,81 @@ describe("automation filename lifecycle adapter", () => {
     );
     expect(Exit.isFailure(duplicate)).toBeTrue();
     expect(await readFile(installed.path, "utf8")).toBe(owned);
+  });
+
+  test("removes an exact active definition and leaves no paused form behind", async () => {
+    const target = await profile();
+    const installed = await Effect.runPromise(
+      installAutomationDefinition(target, await id(), source.toString("utf8")),
+    );
+
+    await Effect.runPromise(
+      removeAutomationDefinition(target, await id(), source.toString("utf8")),
+    );
+
+    await expect(readFile(installed.path)).rejects.toHaveProperty("code", "ENOENT");
+    await expect(
+      readFile(join(target.path, "automations", "daily.paused.md")),
+    ).rejects.toHaveProperty("code", "ENOENT");
+  });
+
+  test("refuses changed or unrelated active bytes without removing them", async () => {
+    const target = await profile();
+    const active = join(target.path, "automations", "daily.md");
+    const changed = Buffer.from("changed after install\n");
+    await writeFile(active, changed);
+
+    const changedResult = await Effect.runPromise(
+      removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
+    );
+    expect(changedResult).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationEditConflict", id: "daily", path: active },
+    });
+    expect(await readFile(active)).toEqual(changed);
+
+    const unrelated = Buffer.from("unrelated definition\n");
+    await writeFile(active, unrelated);
+    const unrelatedResult = await Effect.runPromise(
+      removeAutomationDefinition(target, await id(), changed.toString("utf8")).pipe(Effect.result),
+    );
+    expect(unrelatedResult).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationEditConflict", id: "daily", path: active },
+    });
+    expect(await readFile(active)).toEqual(unrelated);
+  });
+
+  test("refuses symlinked and paused definitions without removing either target", async () => {
+    const target = await profile();
+    const active = join(target.path, "automations", "daily.md");
+    const paused = join(target.path, "automations", "daily.paused.md");
+    const outside = await mkdtemp(join(tmpdir(), "ziggy-automation-remove-outside-"));
+    paths.push(outside);
+    const outsidePath = join(outside, "daily.md");
+    await writeFile(outsidePath, source);
+    await symlink(outsidePath, active);
+
+    const symlinkResult = await Effect.runPromise(
+      removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
+    );
+    expect(symlinkResult).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationFileSystemError", path: active },
+    });
+    expect((await lstat(active)).isSymbolicLink()).toBeTrue();
+    expect(await readFile(outsidePath)).toEqual(source);
+
+    await rm(active);
+    await writeFile(paused, source);
+    const pausedResult = await Effect.runPromise(
+      removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
+    );
+    expect(pausedResult).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationNotFound", id: "daily", path: active },
+    });
+    expect(await readFile(paused)).toEqual(source);
   });
 
   test("pause and resume preserve exact Markdown bytes without replacement", async () => {
