@@ -6,9 +6,9 @@ description: Inspect catalogue packages and select catalogue or Profile-owned Pi
 # Pi packages in Ziggy
 
 The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Approved packages
-are compiled into the Ziggy executable as file trees. `ziggy extensions add` copies the selected
-package onto disk at `<profile>/extensions/<id>/`, then records the ID in `extensions.json`.
-Runtime loads only those Profile folders. Profile-specific packages live under the same shelf.
+are compiled into the Ziggy executable as file trees. The in-process `profile_extensions` tool
+selects a package and records its ID in `extensions.json`; runtime loads only those Profile
+folders. Profile-specific packages live under the same shelf.
 Each package may contain an Agent Skill, executable Pi extension code, or both. `pi-packages`,
 `extension-authoring`, and `ziggy-operations` are required and also sit on disk in the Profile;
 all other packages are optional. A Profile-owned package takes precedence over an approved
@@ -18,26 +18,12 @@ The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf iden
 `package.json.name` remains independent upstream package metadata. For example, shelf ID `computer-use` can retain the
 package name `@injaneity/pi-computer-use`.
 
-Inspect the approved catalogue without executing package code:
-
-```bash
-ziggy extensions list
-ziggy extensions show <id>
-```
-
-Inside the Ziggy TUI, use `/extensions` to open the complete optional-package checklist. Space
-toggles any number of packages, Enter atomically saves the full set, and Escape cancels.
-
-Select or unselect one optional package from the CLI:
-
-```bash
-ziggy extensions add <name|path> <id>
-ziggy extensions remove <name|path> <id>
-```
-
-The CLI and TUI use the same lifecycle. Adding copies the package into
-`<profile>/extensions/<id>/`, validates it, provisions owned automations, then atomically records
-the selection in `<profile>/extensions.json`. Removing first pauses extension-owned automation,
+Use the in-process `profile_extensions` tool for `list`, `add`, `remove`, and `validate` in the
+owning Profile runtime. Never shell into `ziggy`, invoke a Ziggy CLI command, or edit
+`extensions.json` directly. After authoring a Profile package, call `profile_extensions` with
+`action: "add"` and its shelf ID. Claim success only from the tool's structured result; surface
+operation, stage, code, and message when it fails. Adding validates the package, provisions owned
+automations, and atomically records the selection. Removing pauses extension-owned automation,
 then removes the selection without deleting the copied folder. Reopen the Profile or restart its
 resident Ziggy process after a real selection change. Required packages cannot be added or
 removed.

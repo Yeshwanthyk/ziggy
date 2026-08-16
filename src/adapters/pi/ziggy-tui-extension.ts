@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { Option, Schema } from "effect";
 import type {
   AutocompleteProviderFactory,
   BeforeAgentStartEvent,
@@ -14,6 +15,17 @@ import type {
   AutomationTuiDispatch,
   AutomationTuiResponse,
 } from "./automation-tui";
+import {
+  ExtensionCatalogInstallFailed,
+  ExtensionCatalogInvalid,
+  ExtensionCatalogUnavailable,
+} from "../../domain/extension-catalog";
+import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
+import {
+  ProfileExtensionLockFailed,
+  ProfileExtensionPreflightFailed,
+  ProfileExtensionRollbackFailed,
+} from "../../domain/profile-extension";
 import { ExtensionMultiSelect } from "./extension-multi-select";
 import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 
@@ -360,8 +372,157 @@ export const createProfileAgentGuidanceExtension = (agents: ReadonlyArray<Profil
     },
   }) satisfies InlineExtension;
 
-const extensionSelectionError = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : "The extension selection could not be saved";
+const PROFILE_EXTENSION_OPERATION_MAX = 96;
+const PROFILE_EXTENSION_STAGE_MAX = 64;
+const PROFILE_EXTENSION_CODE_MAX = 64;
+const PROFILE_EXTENSION_REASON_MAX = 360;
+const PROFILE_EXTENSION_ID_MAX = 96;
+const PROFILE_EXTENSION_SOURCE_MAX = 240;
+
+const ProfileExtensionOperationFailureSchema = Schema.Struct({
+  ok: Schema.optionalKey(Schema.Literal(false)),
+  operation: Schema.String,
+  stage: Schema.String,
+  code: Schema.String,
+  message: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.String),
+  id: Schema.optionalKey(Schema.String),
+  source: Schema.optionalKey(Schema.String),
+  selectionChanged: Schema.optionalKey(Schema.Boolean),
+}).check(
+  Schema.makeFilter((failure) => failure.message !== undefined || failure.reason !== undefined, {
+    expected: "a Profile extension operation failure with a reason",
+  }),
+);
+export type ProfileExtensionOperationFailure = typeof ProfileExtensionOperationFailureSchema.Type;
+
+const decodeProfileExtensionOperationFailure = Schema.decodeUnknownOption(
+  ProfileExtensionOperationFailureSchema,
+);
+
+const boundedFailureText = (value: string, maximum: number): string =>
+  [
+    ...value
+      .replace(/\p{Cc}+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim(),
+  ]
+    .slice(0, maximum)
+    .join("") || "unavailable";
+
+export const renderProfileExtensionOperationFailure = (
+  failure: ProfileExtensionOperationFailure,
+): string =>
+  [
+    `Profile extension operation failed: operation=${boundedFailureText(failure.operation, PROFILE_EXTENSION_OPERATION_MAX)}`,
+    `stage=${boundedFailureText(failure.stage, PROFILE_EXTENSION_STAGE_MAX)}`,
+    `code=${boundedFailureText(failure.code, PROFILE_EXTENSION_CODE_MAX)}`,
+    `reason=${boundedFailureText(failure.message ?? failure.reason ?? "", PROFILE_EXTENSION_REASON_MAX)}`,
+    ...(failure.id === undefined
+      ? []
+      : [`id=${boundedFailureText(failure.id, PROFILE_EXTENSION_ID_MAX)}`]),
+    ...(failure.source === undefined
+      ? []
+      : [`source=${boundedFailureText(failure.source, PROFILE_EXTENSION_SOURCE_MAX)}`]),
+    ...(failure.selectionChanged === undefined
+      ? []
+      : [`selectionChanged=${failure.selectionChanged ? "true" : "false"}`]),
+  ].join("; ");
+
+const knownExtensionFailure = (
+  operation: string,
+  cause: unknown,
+): ProfileExtensionOperationFailure | undefined => {
+  if (cause instanceof ProfileExtensionPreflightFailed) {
+    return {
+      operation,
+      stage: cause.stage,
+      code: "preflight_failed",
+      message: cause.message,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ProfileExtensionLockFailed) {
+    return {
+      operation,
+      stage: "lock",
+      code: "lock_failed",
+      message: cause.message,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ProfileExtensionRollbackFailed) {
+    return {
+      operation,
+      stage: "rollback",
+      code: "rollback_failed",
+      message: cause.message,
+      selectionChanged: true,
+    };
+  }
+  if (cause instanceof ProfileExtensionInvalid) {
+    return {
+      operation,
+      stage: "validate",
+      code: "invalid",
+      message: cause.message,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ProfileFileSystemError) {
+    return {
+      operation,
+      stage: "filesystem",
+      code: cause.code ?? "filesystem_error",
+      message: cause.message,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ExtensionCatalogInstallFailed) {
+    return {
+      operation,
+      stage: cause.reason,
+      code: "catalog_install_failed",
+      message: cause.message,
+      id: cause.id,
+      source: cause.path,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ExtensionCatalogInvalid) {
+    return {
+      operation,
+      stage: "catalog",
+      code: "catalog_invalid",
+      message: cause.message,
+      source: cause.source,
+      selectionChanged: false,
+    };
+  }
+  if (cause instanceof ExtensionCatalogUnavailable) {
+    return {
+      operation,
+      stage: "catalog",
+      code: "catalog_unavailable",
+      message: cause.message,
+      selectionChanged: false,
+    };
+  }
+  return undefined;
+};
+
+const extensionSelectionError = (operation: string, cause: unknown): string => {
+  const structured = Option.getOrUndefined(decodeProfileExtensionOperationFailure(cause));
+  return renderProfileExtensionOperationFailure(
+    structured ??
+      knownExtensionFailure(operation, cause) ?? {
+        operation,
+        stage: "unknown",
+        code: "operation_failed",
+        message: "The Profile extension operation failed; inspect its structured result.",
+      },
+  );
+};
 
 export const createZiggyTuiExtension = (
   profilePath: string,
@@ -442,6 +603,7 @@ export const createZiggyTuiExtension = (
             if (context.mode !== "tui" || context.ui.custom === undefined) {
               return;
             }
+            let operation = "list";
             try {
               const listing = await extensionSelection.list();
               const selected = await context.ui.custom<ReadonlyArray<string> | undefined>(
@@ -458,6 +620,7 @@ export const createZiggyTuiExtension = (
                 return;
               }
 
+              operation = "set-selected";
               const result = await extensionSelection.setSelected(selected);
               if (!result.changed) {
                 context.ui.notify("Extension selection is already up to date", "info");
@@ -470,7 +633,7 @@ export const createZiggyTuiExtension = (
                 "info",
               );
             } catch (cause: unknown) {
-              context.ui.notify(extensionSelectionError(cause), "error");
+              context.ui.notify(extensionSelectionError(operation, cause), "error");
             }
           },
         });

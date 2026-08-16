@@ -7,6 +7,7 @@ import {
   InteractiveMode,
   SessionManager,
   createAgentSessionFromServices,
+  defineTool,
   createAgentSessionRuntime,
   createAgentSessionServices,
   initTheme,
@@ -89,6 +90,7 @@ import {
 import { leaseCompiledPiTuiAssets } from "./tui-themes";
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
+import { createProfileExtensionTool } from "./profile-extension-tool";
 
 export interface PiAgentApi {
   readonly runSpecialist: (
@@ -1196,6 +1198,17 @@ const createProfileRuntime = (
                   });
             const customTools: Array<ToolDefinition> = [
               createMemoryWriteTool(profilePath, context),
+              ...(runtimeOptions.profileExtensions === undefined
+                ? []
+                : [
+                    defineTool(
+                      createProfileExtensionTool(
+                        profilePath,
+                        repositoryRoot,
+                        runtimeOptions.profileExtensions,
+                      ),
+                    ),
+                  ]),
               ...(specialistRunner === undefined
                 ? []
                 : [

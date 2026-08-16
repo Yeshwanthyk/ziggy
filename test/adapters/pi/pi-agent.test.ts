@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   SessionManager,
+  createAgentSessionServices,
   createAgentSessionRuntime,
   type AgentSessionEventListener,
   type AgentSessionRuntime,
   type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { Cause, Effect, Exit, Fiber, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
@@ -26,6 +27,9 @@ import {
 import { memoryFilePaths, type ChatContext } from "ziggy/domain/memory";
 import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
+import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
+import { specialistRuntime } from "ziggy/adapters/pi/specialist";
+import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   appendEphemeralPromptContext,
   askOnce,
@@ -76,6 +80,43 @@ const temporaryProfile = async (): Promise<string> => {
   temporaryPaths.push(profilePath);
   return profilePath;
 };
+
+const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {
+  const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
+    Effect.fail(
+      new ProfileExtensionPreflightFailed({
+        profilePath: "/unused",
+        stage: "resources",
+        message: "unused test operation",
+        diagnostics: [],
+        cause: undefined,
+      }),
+    );
+  return {
+    list: unused,
+    show: unused,
+    listForProfile: unused,
+    add: unused,
+    remove: unused,
+    setSelected: unused,
+    validate: unused,
+    prepareRuntime: () => Effect.succeed({ selected: [], generation: "fixture-generation" }),
+    activateRuntime: () => Effect.void,
+  };
+};
+
+const fixtureModel = (): Model<Api> => ({
+  id: "fixture-model",
+  name: "Fixture model",
+  api: "openai-completions",
+  provider: "fixture",
+  baseUrl: "https://example.test",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 1_000,
+  maxTokens: 100,
+});
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
@@ -957,6 +998,78 @@ describe("Profile runtime activation rollback", () => {
           operation.length <= 96 && path.length <= 240 && message.length <= 360,
       ),
     ).toBe(true);
+  });
+});
+
+describe("Profile extension tool admission", () => {
+  test("registers the tool on a parent runtime but not a specialist child", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const profileExtensions = makeProfileExtensionsForRuntime();
+    let parentRuntime: AgentSessionRuntime | undefined;
+    const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
+      const runtime = await createAgentSessionRuntime(createRuntime, options);
+      parentRuntime = runtime;
+      return runtime;
+    };
+
+    const parentExit = await Effect.runPromiseExit(
+      openChat(
+        { path: profilePath, name: "Profile" },
+        { kind: "local" },
+        join(profilePath, "sessions", "parent"),
+        process.cwd(),
+        "fresh",
+        undefined,
+        profileExtensions,
+        runtimeFactory,
+      ),
+    );
+
+    if (Exit.isSuccess(parentExit)) await Effect.runPromise(parentExit.value.dispose);
+    expect(parentRuntime).toBeDefined();
+    if (parentRuntime === undefined) throw new Error("expected parent runtime");
+    expect(parentRuntime.session.getAllTools().map((tool) => tool.name)).toContain(
+      "profile_extensions",
+    );
+
+    const resources: PiResources = {
+      extensionPaths: [],
+      skillPaths: [],
+      extensionFactories: [],
+    };
+    const services = await createAgentSessionServices({
+      cwd: profilePath,
+      agentDir: profilePath,
+      resourceLoaderOptions: profileResourceLoaderOptions("Profile", resources, []),
+    });
+    const child = await Effect.runPromise(
+      specialistRuntime(
+        profilePath,
+        { services, resources },
+        {
+          id: "fixture-specialist",
+          version: 1,
+          description: "Fixture specialist",
+          provider: "fixture",
+          model: "fixture-model",
+          thinking: "off",
+          tools: ["profile_extensions"],
+          body: "Answer briefly.",
+        },
+        fixtureModel(),
+        "off",
+        ["profile_extensions"],
+        SessionManager.inMemory(profilePath),
+      ),
+    );
+    try {
+      expect(child.session.getAllTools().map((tool) => tool.name)).not.toContain(
+        "profile_extensions",
+      );
+    } finally {
+      await child.dispose();
+    }
   });
 });
 

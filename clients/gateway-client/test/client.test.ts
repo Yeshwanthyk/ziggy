@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { connectZiggy, type ZiggyGatewayEvent, type ZiggySocket } from "../src/index";
+import {
+  connectZiggy,
+  ZiggyGatewayError,
+  type ZiggyGatewayEvent,
+  type ZiggySocket,
+} from "../src/index";
 
 type Listener = (event: never) => void;
 
@@ -105,6 +110,155 @@ describe("gateway client", () => {
 
     expect(named).toEqual(["hi"]);
     expect(all.map((event) => event.event)).toEqual(["connection-state", "assistant-text"]);
+    client.close();
+  });
+
+  test("supports extension operations through typed client methods", async () => {
+    const socket = new FakeSocket();
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      socketFactory: () => socket,
+    });
+    socket.open();
+
+    const listing = client.listExtensionsForProfile();
+    const added = client.addExtension("weather");
+    const removed = client.removeExtension("weather");
+    const validation = client.validateExtensions();
+
+    expect(socket.sent.map((value) => JSON.parse(value).method)).toEqual([
+      "extension.list-for-profile",
+      "extension.add",
+      "extension.remove",
+      "extension.validate",
+    ]);
+    expect(socket.sent.map((value) => JSON.parse(value).params)).toEqual([
+      {},
+      { id: "weather" },
+      { id: "weather" },
+      {},
+    ]);
+
+    socket.message({
+      id: frame(socket, 0).id,
+      ok: true,
+      result: {
+        available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
+        selected: ["weather"],
+      },
+    });
+    socket.message({
+      id: frame(socket, 1).id,
+      ok: true,
+      result: { id: "weather", profilePath: "/profile", changed: true, selected: true },
+    });
+    socket.message({
+      id: frame(socket, 2).id,
+      ok: true,
+      result: { id: "weather", profilePath: "/profile", changed: true, selected: false },
+    });
+    socket.message({
+      id: frame(socket, 3).id,
+      ok: true,
+      result: {
+        selected: ["weather"],
+        preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
+      },
+    });
+
+    expect(await listing).toEqual({
+      available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
+      selected: ["weather"],
+    });
+    expect(await added).toEqual({
+      id: "weather",
+      profilePath: "/profile",
+      changed: true,
+      selected: true,
+    });
+    expect(await removed).toEqual({
+      id: "weather",
+      profilePath: "/profile",
+      changed: true,
+      selected: false,
+    });
+    expect(await validation).toEqual({
+      selected: ["weather"],
+      preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
+    });
+    client.close();
+  });
+
+  test("preserves bounded structured extension rejection details", async () => {
+    const socket = new FakeSocket();
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      socketFactory: () => socket,
+    });
+    socket.open();
+    const request = client.addExtension("weather");
+    const message = "x".repeat(360);
+    socket.message({
+      id: frame(socket, 0).id,
+      ok: false,
+      error: {
+        code: "internal",
+        message: "could not add Profile extensions",
+        details: {
+          operation: "add",
+          stage: "extensions",
+          code: "preflight_failed",
+          message,
+          id: "weather",
+          source: "profile",
+          selectionChanged: false,
+        },
+      },
+    });
+
+    await expect(request).rejects.toBeInstanceOf(ZiggyGatewayError);
+    await expect(request).rejects.toMatchObject({
+      code: "internal",
+      message: "could not add Profile extensions",
+      details: {
+        operation: "add",
+        stage: "extensions",
+        code: "preflight_failed",
+        message,
+        id: "weather",
+        source: "profile",
+        selectionChanged: false,
+      },
+    });
+    client.close();
+  });
+
+  test("keeps legacy gateway rejection handling when details are not structured", async () => {
+    const socket = new FakeSocket();
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      socketFactory: () => socket,
+    });
+    socket.open();
+    const request = client.request("extension.validate", {});
+    socket.message({
+      id: frame(socket, 0).id,
+      ok: false,
+      error: {
+        code: "internal",
+        message: "validation failed",
+        details: { operation: "validate", selectionChanged: false },
+      },
+    });
+
+    await expect(request).rejects.toMatchObject({
+      code: "internal",
+      message: "validation failed",
+      details: undefined,
+    });
     client.close();
   });
 

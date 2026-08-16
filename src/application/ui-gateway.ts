@@ -3,18 +3,29 @@ import { Context, Effect, Schema } from "effect";
 import {
   UiEmptyParams,
   UiEventFrame,
+  UiExtensionAddParams,
+  UiExtensionListForProfileParams,
+  UiExtensionListForProfileResult,
+  UiExtensionMutationResult,
+  UiExtensionRemoveParams,
+  UiExtensionValidationResult,
+  UiExtensionValidateParams,
   UiGatewayError,
+  UiGatewayResult as UiGatewayResultSchema,
   UiResponseFrame,
   UiSessionOpenParams,
   UiSessionParams,
   UiSessionTextParams,
+  type UiExtensionFailure as UiExtensionFailureValue,
+  type UiExtensionFailureStage,
+  type UiExtensionOperation,
   type UiRequestEnvelope,
   type UiRequestId,
-  type UiLiveSession,
+  type UiEventFrame as UiEventFrameValue,
   type UiSessionKey,
 } from "../domain/ui-gateway";
 import type { ProfileTarget } from "../domain/profile";
-import type { SessionMetadata } from "../domain/session";
+import type { ProfileExtensionError, ProfileExtensionsApi } from "../domain/profile-extension";
 import type { ChatEvent, ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { SessionsApi } from "./sessions";
@@ -23,6 +34,27 @@ const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty
 const decodeOpen = Schema.decodeUnknownEffect(UiSessionOpenParams, { onExcessProperty: "error" });
 const decodeSession = Schema.decodeUnknownEffect(UiSessionParams, { onExcessProperty: "error" });
 const decodeSessionText = Schema.decodeUnknownEffect(UiSessionTextParams, {
+  onExcessProperty: "error",
+});
+const decodeExtensionListForProfile = Schema.decodeUnknownEffect(UiExtensionListForProfileParams, {
+  onExcessProperty: "error",
+});
+const decodeExtensionAdd = Schema.decodeUnknownEffect(UiExtensionAddParams, {
+  onExcessProperty: "error",
+});
+const decodeExtensionRemove = Schema.decodeUnknownEffect(UiExtensionRemoveParams, {
+  onExcessProperty: "error",
+});
+const decodeExtensionValidate = Schema.decodeUnknownEffect(UiExtensionValidateParams, {
+  onExcessProperty: "error",
+});
+const decodeExtensionListing = Schema.decodeUnknownEffect(UiExtensionListForProfileResult, {
+  onExcessProperty: "error",
+});
+const decodeExtensionMutation = Schema.decodeUnknownEffect(UiExtensionMutationResult, {
+  onExcessProperty: "error",
+});
+const decodeExtensionValidation = Schema.decodeUnknownEffect(UiExtensionValidationResult, {
   onExcessProperty: "error",
 });
 const encodeResponse = Schema.encodeSync(Schema.fromJsonString(UiResponseFrame));
@@ -39,20 +71,196 @@ export interface UiGatewayApi {
 
 export class UiGateway extends Context.Service<UiGateway, UiGatewayApi>()("ziggy/UiGateway") {}
 
-type UiGatewayResult =
-  | { readonly pong: true }
-  | { readonly live: ReadonlyArray<UiLiveSession>; readonly stored: ReadonlyArray<SessionMetadata> }
-  | { readonly session: UiSessionKey }
-  | Record<string, never>;
+type UiGatewayResult = typeof UiGatewayResultSchema.Type;
+
+const MAX_UI_GATEWAY_MESSAGE = 360;
+const MAX_UI_EXTENSION_ID = 128;
+const MAX_UI_EXTENSION_CODE = 64;
+const MAX_UI_EXTENSION_SOURCE = 240;
+
+const boundedFailureText = (value: string, maximum: number, fallback: string): string => {
+  const normalized = value
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  let bounded = "";
+  for (const character of normalized) {
+    if (bounded.length + character.length > maximum) break;
+    bounded += character;
+  }
+  return bounded || fallback;
+};
+
+const boundedFailureCode = (value: string): string =>
+  boundedFailureText(
+    value.replace(/[^A-Za-z0-9_.-]+/gu, "_"),
+    MAX_UI_EXTENSION_CODE,
+    "extension_operation_failed",
+  );
+
+const boundedExtensionId = (value: string): string => {
+  const candidate = boundedFailureText(value, MAX_UI_EXTENSION_ID, "extension").replace(/-+$/u, "");
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(candidate) ? candidate : "extension";
+};
+
+interface MutableExtensionFailureMetadata {
+  id?: string;
+  source?: string;
+}
+
+type ExtensionFailureMetadata = {
+  readonly id?: string;
+  readonly source?: string;
+};
+
+const failureMetadata = (id: string | undefined, source?: string): ExtensionFailureMetadata => {
+  const metadata: MutableExtensionFailureMetadata = {};
+  if (id !== undefined) metadata.id = id;
+  if (source !== undefined) metadata.source = source;
+  return metadata;
+};
+
+const makeExtensionFailure = (
+  operation: UiExtensionOperation,
+  stage: UiExtensionFailureStage,
+  code: string,
+  message: string,
+  selectionChanged: boolean,
+  metadata: ExtensionFailureMetadata = {},
+): UiExtensionFailureValue => {
+  const base = {
+    operation,
+    stage,
+    code: boundedFailureCode(code),
+    message: boundedFailureText(
+      message,
+      MAX_UI_GATEWAY_MESSAGE,
+      "Profile extension operation failed",
+    ),
+    selectionChanged,
+  };
+  if (metadata.id !== undefined && metadata.source !== undefined) {
+    return {
+      ...base,
+      id: boundedExtensionId(metadata.id),
+      source: boundedFailureText(metadata.source, MAX_UI_EXTENSION_SOURCE, "unavailable"),
+    };
+  }
+  if (metadata.id !== undefined) {
+    return { ...base, id: boundedExtensionId(metadata.id) };
+  }
+  if (metadata.source !== undefined) {
+    return {
+      ...base,
+      source: boundedFailureText(metadata.source, MAX_UI_EXTENSION_SOURCE, "unavailable"),
+    };
+  }
+  return base;
+};
+
+const extensionFailureProjection = (
+  operation: UiExtensionOperation,
+  failure: ProfileExtensionError,
+  requestedId?: string,
+): UiExtensionFailureValue => {
+  switch (failure._tag) {
+    case "ProfileExtensionInvalid":
+      return makeExtensionFailure(
+        operation,
+        "validate",
+        "invalid",
+        failure.message,
+        false,
+        failureMetadata(requestedId),
+      );
+    case "ProfileFileSystemError":
+      return makeExtensionFailure(
+        operation,
+        "filesystem",
+        failure.code ?? "filesystem_error",
+        failure.message,
+        false,
+        failureMetadata(requestedId),
+      );
+    case "ExtensionCatalogInvalid":
+      return makeExtensionFailure(
+        operation,
+        "catalog",
+        "catalog_invalid",
+        failure.message,
+        false,
+        failureMetadata(requestedId, failure.source),
+      );
+    case "ExtensionCatalogUnavailable":
+      return makeExtensionFailure(
+        operation,
+        "catalog",
+        "catalog_unavailable",
+        failure.message,
+        false,
+        failureMetadata(requestedId),
+      );
+    case "ExtensionCatalogInstallFailed":
+      return makeExtensionFailure(
+        operation,
+        failure.reason,
+        "catalog_install_failed",
+        failure.message,
+        false,
+        failureMetadata(failure.id, failure.path),
+      );
+    case "ProfileExtensionPreflightFailed":
+      return makeExtensionFailure(
+        operation,
+        failure.stage,
+        "preflight_failed",
+        failure.message,
+        false,
+        failureMetadata(requestedId),
+      );
+    case "ProfileExtensionLockFailed":
+      return makeExtensionFailure(
+        operation,
+        "lock",
+        "lock_failed",
+        failure.message,
+        false,
+        failureMetadata(requestedId),
+      );
+    case "ProfileExtensionRollbackFailed":
+      return makeExtensionFailure(
+        operation,
+        "rollback",
+        "rollback_failed",
+        failure.message,
+        true,
+        failureMetadata(requestedId),
+      );
+  }
+};
 
 const protocolFailure = (
   code: UiGatewayError["code"],
   message: string,
   cause?: unknown,
-): UiGatewayError =>
-  cause === undefined
-    ? new UiGatewayError({ code, message })
-    : new UiGatewayError({ code, message, cause });
+  details?: UiExtensionFailureValue,
+): UiGatewayError => {
+  const boundedMessage = boundedFailureText(
+    message,
+    MAX_UI_GATEWAY_MESSAGE,
+    "UI gateway request failed",
+  );
+  if (cause !== undefined && details !== undefined) {
+    return new UiGatewayError({ code, message: boundedMessage, cause, details });
+  }
+  if (cause !== undefined) {
+    return new UiGatewayError({ code, message: boundedMessage, cause });
+  }
+  if (details !== undefined) {
+    return new UiGatewayError({ code, message: boundedMessage, details });
+  }
+  return new UiGatewayError({ code, message: boundedMessage });
+};
 
 const badParams = (method: string, cause: unknown): UiGatewayError =>
   protocolFailure("bad_params", `invalid params for ${method}`, cause);
@@ -60,9 +268,40 @@ const badParams = (method: string, cause: unknown): UiGatewayError =>
 const internal = (message: string, cause: unknown): UiGatewayError =>
   protocolFailure("internal", message, cause);
 
+const extensionFailure = (
+  operation: UiExtensionOperation,
+  cause: ProfileExtensionError,
+  requestedId?: string,
+): UiGatewayError =>
+  protocolFailure(
+    "internal",
+    `could not ${operation} Profile extensions`,
+    cause,
+    extensionFailureProjection(operation, cause, requestedId),
+  );
+
+const invalidExtensionResult = (
+  operation: UiExtensionOperation,
+  cause: unknown,
+  requestedId?: string,
+): UiGatewayError =>
+  protocolFailure(
+    "internal",
+    `invalid Profile extension ${operation} response`,
+    cause,
+    makeExtensionFailure(
+      operation,
+      "response",
+      "invalid_response",
+      "Profile extension response failed validation",
+      false,
+      failureMetadata(requestedId),
+    ),
+  );
+
 const responseText = (response: UiResponseFrame): string => encodeResponse(response);
 
-const eventFrame = (session: UiSessionKey, event: ChatEvent): UiEventFrame => {
+const eventFrame = (session: UiSessionKey, event: ChatEvent): UiEventFrameValue => {
   switch (event.kind) {
     case "assistant-text":
       return {
@@ -102,17 +341,24 @@ const success = (id: UiRequestId, result: UiGatewayResult): UiResponseFrame => (
   result,
 });
 
-const rejected = (id: UiRequestId, error: UiGatewayError): UiResponseFrame => ({
-  id,
-  ok: false,
-  error: { code: error.code, message: error.message },
-});
+const rejected = (id: UiRequestId, error: UiGatewayError): UiResponseFrame => {
+  const responseError = {
+    code: error.code,
+    message: boundedFailureText(error.message, MAX_UI_GATEWAY_MESSAGE, "UI gateway request failed"),
+  };
+  if (error.details !== undefined) {
+    return { id, ok: false, error: { ...responseError, details: error.details } };
+  }
+  return { id, ok: false, error: responseError };
+};
 
 export const makeUiGateway = (
   target: ProfileTarget,
   registry: ChatRegistryApi,
   sessions: SessionsApi,
   agent: ZiggyAgentApi,
+  repositoryRoot: string,
+  profileExtensions: ProfileExtensionsApi,
 ): UiGatewayApi => ({
   connect: (send) => {
     const subscriptions = new Map<UiSessionKey, () => void>();
@@ -147,7 +393,10 @@ export const makeUiGateway = (
             const stored = yield* sessions
               .list(target)
               .pipe(Effect.mapError((cause) => internal("could not list stored sessions", cause)));
-            return { live, stored };
+            return {
+              live,
+              stored: stored.map(({ id, path, createdAt }) => ({ id, path, createdAt })),
+            };
           });
         case "session.open":
           return Effect.gen(function* () {
@@ -198,6 +447,54 @@ export const makeUiGateway = (
             );
             yield* registry.abort(params.session);
             return {};
+          });
+        case "extension.list-for-profile":
+          return Effect.gen(function* () {
+            yield* decodeExtensionListForProfile(request.params).pipe(
+              Effect.mapError((cause) => badParams(request.method, cause)),
+            );
+            const result = yield* profileExtensions
+              .listForProfile(target.path, repositoryRoot)
+              .pipe(Effect.mapError((cause) => extensionFailure("list", cause)));
+            return yield* decodeExtensionListing(result).pipe(
+              Effect.mapError((cause) => invalidExtensionResult("list", cause)),
+            );
+          });
+        case "extension.add":
+          return Effect.gen(function* () {
+            const params = yield* decodeExtensionAdd(request.params).pipe(
+              Effect.mapError((cause) => badParams(request.method, cause)),
+            );
+            const result = yield* profileExtensions
+              .add(target, repositoryRoot, params.id)
+              .pipe(Effect.mapError((cause) => extensionFailure("add", cause, params.id)));
+            return yield* decodeExtensionMutation(result).pipe(
+              Effect.mapError((cause) => invalidExtensionResult("add", cause, params.id)),
+            );
+          });
+        case "extension.remove":
+          return Effect.gen(function* () {
+            const params = yield* decodeExtensionRemove(request.params).pipe(
+              Effect.mapError((cause) => badParams(request.method, cause)),
+            );
+            const result = yield* profileExtensions
+              .remove(target, repositoryRoot, params.id)
+              .pipe(Effect.mapError((cause) => extensionFailure("remove", cause, params.id)));
+            return yield* decodeExtensionMutation(result).pipe(
+              Effect.mapError((cause) => invalidExtensionResult("remove", cause, params.id)),
+            );
+          });
+        case "extension.validate":
+          return Effect.gen(function* () {
+            yield* decodeExtensionValidate(request.params).pipe(
+              Effect.mapError((cause) => badParams(request.method, cause)),
+            );
+            const result = yield* profileExtensions
+              .validate(target, repositoryRoot)
+              .pipe(Effect.mapError((cause) => extensionFailure("validate", cause)));
+            return yield* decodeExtensionValidation(result).pipe(
+              Effect.mapError((cause) => invalidExtensionResult("validate", cause)),
+            );
           });
         default:
           return Effect.fail(

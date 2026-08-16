@@ -28,6 +28,80 @@ export interface ZiggyStoredSession {
   readonly path: string;
   readonly createdAt: string;
 }
+export type ZiggyExtensionId = string;
+export type ZiggyExtensionOperation = "list" | "add" | "remove" | "validate";
+export type ZiggyExtensionFailureStage =
+  | "catalog"
+  | "download"
+  | "checksum"
+  | "archive"
+  | "validation"
+  | "validate"
+  | "filesystem"
+  | "resources"
+  | "extensions"
+  | "skills"
+  | "services"
+  | "lock"
+  | "rollback"
+  | "response";
+export type ZiggyExtensionFailureCode = string;
+
+export interface ZiggyExtensionFailure {
+  readonly operation: ZiggyExtensionOperation;
+  readonly stage: ZiggyExtensionFailureStage;
+  readonly code: ZiggyExtensionFailureCode;
+  readonly message: string;
+  readonly id?: ZiggyExtensionId;
+  readonly source?: string;
+  readonly selectionChanged: boolean;
+}
+
+export type ZiggyExtensionFailureDetails = ZiggyExtensionFailure;
+
+export type ZiggyExtensionChoiceKind = "skill" | "code" | "skill+code" | "remote";
+export type ZiggyExtensionChoiceSource = "bundled" | "remote-approved" | "profile";
+
+export interface ZiggyExtensionChoice {
+  readonly id: ZiggyExtensionId;
+  readonly description: string;
+  readonly kind: ZiggyExtensionChoiceKind;
+  readonly source: ZiggyExtensionChoiceSource;
+}
+
+export type ZiggyExtensionListForProfileParams = Record<string, never>;
+
+export interface ZiggyExtensionAddParams {
+  readonly id: ZiggyExtensionId;
+}
+
+export type ZiggyExtensionRemoveParams = ZiggyExtensionAddParams;
+export type ZiggyExtensionValidateParams = Record<string, never>;
+
+export interface ZiggyExtensionListForProfileResult {
+  readonly available: ReadonlyArray<ZiggyExtensionChoice>;
+  readonly selected: ReadonlyArray<ZiggyExtensionId>;
+}
+
+export interface ZiggyExtensionMutationResult {
+  readonly id: ZiggyExtensionId;
+  readonly profilePath: string;
+  readonly changed: boolean;
+  readonly selected: boolean;
+}
+
+export interface ZiggyExtensionValidationResult {
+  readonly selected: ReadonlyArray<ZiggyExtensionId>;
+  readonly preflight: {
+    readonly extensionPathCount: number;
+    readonly skillPathCount: number;
+    readonly extensionFactoryCount: number;
+  };
+}
+
+export type ZiggyExtensionListing = ZiggyExtensionListForProfileResult;
+export type ZiggyExtensionMutation = ZiggyExtensionMutationResult;
+export type ZiggyExtensionValidation = ZiggyExtensionValidationResult;
 
 export interface ZiggyRequestMap {
   readonly ping: Record<string, never>;
@@ -37,6 +111,10 @@ export interface ZiggyRequestMap {
   readonly "prompt.submit": { readonly session: ZiggySessionKey; readonly text: string };
   readonly "session.steer": { readonly session: ZiggySessionKey; readonly text: string };
   readonly "session.abort": { readonly session: ZiggySessionKey };
+  readonly "extension.list-for-profile": ZiggyExtensionListForProfileParams;
+  readonly "extension.add": ZiggyExtensionAddParams;
+  readonly "extension.remove": ZiggyExtensionRemoveParams;
+  readonly "extension.validate": ZiggyExtensionValidateParams;
 }
 
 export interface ZiggyResultMap {
@@ -50,6 +128,10 @@ export interface ZiggyResultMap {
   readonly "prompt.submit": Record<string, never>;
   readonly "session.steer": Record<string, never>;
   readonly "session.abort": Record<string, never>;
+  readonly "extension.list-for-profile": ZiggyExtensionListForProfileResult;
+  readonly "extension.add": ZiggyExtensionMutationResult;
+  readonly "extension.remove": ZiggyExtensionMutationResult;
+  readonly "extension.validate": ZiggyExtensionValidationResult;
 }
 
 export type ZiggyMethod = keyof ZiggyRequestMap;
@@ -105,11 +187,13 @@ export type ZiggyEventOf<Name extends ZiggyEventName> = Extract<
 
 export class ZiggyGatewayError extends Error {
   readonly code: ZiggyGatewayErrorCode;
+  readonly details?: ZiggyExtensionFailure;
 
-  constructor(code: ZiggyGatewayErrorCode, message: string) {
+  constructor(code: ZiggyGatewayErrorCode, message: string, details?: ZiggyExtensionFailure) {
     super(message);
     this.name = "ZiggyGatewayError";
     this.code = code;
+    if (details !== undefined) this.details = details;
   }
 }
 
@@ -145,6 +229,10 @@ export interface ZiggyGatewayClient {
     method: Method,
     params: ZiggyRequestMap[Method],
   ): Promise<ZiggyResultMap[Method]>;
+  listExtensionsForProfile(): Promise<ZiggyExtensionListForProfileResult>;
+  addExtension(id: ZiggyExtensionId): Promise<ZiggyExtensionMutationResult>;
+  removeExtension(id: ZiggyExtensionId): Promise<ZiggyExtensionMutationResult>;
+  validateExtensions(): Promise<ZiggyExtensionValidationResult>;
   on<Name extends ZiggyEventName>(
     eventName: Name,
     handler: (event: ZiggyEventOf<Name>) => void,
@@ -171,7 +259,11 @@ interface SuccessFrame {
 interface FailureFrame {
   readonly id: string;
   readonly ok: false;
-  readonly error: { readonly code: ZiggyGatewayErrorCode; readonly message: string };
+  readonly error: {
+    readonly code: ZiggyGatewayErrorCode;
+    readonly message: string;
+    readonly details?: ZiggyExtensionFailure;
+  };
 }
 
 const SOCKET_OPEN = 1;
@@ -185,6 +277,28 @@ const ERROR_CODES = new Set<ZiggyGatewayErrorCode>([
   "not_streaming",
   "capacity_exceeded",
   "internal",
+]);
+const EXTENSION_OPERATIONS = new Set<ZiggyExtensionOperation>([
+  "list",
+  "add",
+  "remove",
+  "validate",
+]);
+const EXTENSION_FAILURE_STAGES = new Set<ZiggyExtensionFailureStage>([
+  "catalog",
+  "download",
+  "checksum",
+  "archive",
+  "validation",
+  "validate",
+  "filesystem",
+  "resources",
+  "extensions",
+  "skills",
+  "services",
+  "lock",
+  "rollback",
+  "response",
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -212,6 +326,75 @@ const isStoredSession = (value: unknown): value is ZiggyStoredSession =>
   typeof value.id === "string" &&
   typeof value.path === "string" &&
   typeof value.createdAt === "string";
+const isBoundedString = (value: unknown, maximum: number, minimum = 1): value is string =>
+  typeof value === "string" && value.length >= minimum && value.length <= maximum;
+
+const isExtensionId = (value: unknown): value is ZiggyExtensionId =>
+  typeof value === "string" && value.length <= 128 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
+
+const isExtensionOperation = (value: unknown): value is ZiggyExtensionOperation =>
+  typeof value === "string" && EXTENSION_OPERATIONS.has(value as ZiggyExtensionOperation);
+
+const isExtensionFailureStage = (value: unknown): value is ZiggyExtensionFailureStage =>
+  typeof value === "string" && EXTENSION_FAILURE_STAGES.has(value as ZiggyExtensionFailureStage);
+
+const isExtensionChoice = (value: unknown): value is ZiggyExtensionChoice =>
+  isRecord(value) &&
+  isExtensionId(value.id) &&
+  isBoundedString(value.description, 2_048, 0) &&
+  typeof value.kind === "string" &&
+  ["skill", "code", "skill+code", "remote"].includes(value.kind) &&
+  typeof value.source === "string" &&
+  ["bundled", "remote-approved", "profile"].includes(value.source);
+
+const isExtensionListForProfileResult = (
+  value: unknown,
+): value is ZiggyExtensionListForProfileResult =>
+  isRecord(value) &&
+  Array.isArray(value.available) &&
+  value.available.length <= 128 &&
+  value.available.every(isExtensionChoice) &&
+  Array.isArray(value.selected) &&
+  value.selected.length <= 128 &&
+  value.selected.every(isExtensionId);
+
+const isExtensionMutationResult = (value: unknown): value is ZiggyExtensionMutationResult =>
+  isRecord(value) &&
+  isExtensionId(value.id) &&
+  isBoundedString(value.profilePath, 4_096) &&
+  typeof value.changed === "boolean" &&
+  typeof value.selected === "boolean";
+
+const isNonNegativeCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1_000_000;
+
+const isExtensionValidationResult = (value: unknown): value is ZiggyExtensionValidationResult =>
+  isRecord(value) &&
+  Array.isArray(value.selected) &&
+  value.selected.length <= 128 &&
+  value.selected.every(isExtensionId) &&
+  isRecord(value.preflight) &&
+  isNonNegativeCount(value.preflight.extensionPathCount) &&
+  isNonNegativeCount(value.preflight.skillPathCount) &&
+  isNonNegativeCount(value.preflight.extensionFactoryCount);
+
+const isExtensionFailure = (value: unknown): value is ZiggyExtensionFailure => {
+  if (
+    !isRecord(value) ||
+    !isExtensionOperation(value.operation) ||
+    !isExtensionFailureStage(value.stage) ||
+    !isBoundedString(value.code, 64) ||
+    !/^[A-Za-z0-9_.-]+$/u.test(value.code) ||
+    !isBoundedString(value.message, 360) ||
+    typeof value.selectionChanged !== "boolean"
+  ) {
+    return false;
+  }
+  return (
+    (value.id === undefined || isExtensionId(value.id)) &&
+    (value.source === undefined || isBoundedString(value.source, 240))
+  );
+};
 
 const isMethodResult = (method: ZiggyMethod, value: unknown): boolean => {
   switch (method) {
@@ -232,6 +415,13 @@ const isMethodResult = (method: ZiggyMethod, value: unknown): boolean => {
     case "session.steer":
     case "session.abort":
       return isEmptyRecord(value);
+    case "extension.list-for-profile":
+      return isExtensionListForProfileResult(value);
+    case "extension.add":
+    case "extension.remove":
+      return isExtensionMutationResult(value);
+    case "extension.validate":
+      return isExtensionValidationResult(value);
   }
 };
 
@@ -244,7 +434,16 @@ const decodeResponse = (value: unknown): SuccessFrame | FailureFrame | undefined
   const { code, message } = value.error;
   if (!isGatewayErrorCode(code)) return undefined;
   if (typeof message !== "string") return undefined;
-  return { id: value.id, ok: false, error: { code, message } };
+  const details = isExtensionFailure(value.error.details) ? value.error.details : undefined;
+  return {
+    id: value.id,
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details === undefined ? {} : { details }),
+    },
+  };
 };
 
 const decodeEvent = (value: unknown): ZiggyGatewayEvent | undefined => {
@@ -378,7 +577,13 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       pending.delete(response.id);
       clearTimeout(entry.timeout);
       if (!response.ok) {
-        entry.reject(new ZiggyGatewayError(response.error.code, response.error.message));
+        entry.reject(
+          new ZiggyGatewayError(
+            response.error.code,
+            response.error.message,
+            response.error.details,
+          ),
+        );
         return;
       }
       if (!isMethodResult(entry.method, response.result)) {
@@ -463,6 +668,10 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       return connectionState;
     },
     request: beginRequest,
+    listExtensionsForProfile: () => beginRequest("extension.list-for-profile", {}),
+    addExtension: (id) => beginRequest("extension.add", { id }),
+    removeExtension: (id) => beginRequest("extension.remove", { id }),
+    validateExtensions: () => beginRequest("extension.validate", {}),
     on: (eventName, handler) => {
       const eventHandlers = handlers.get(eventName) ?? new Set();
       eventHandlers.add(handler as (event: ZiggyGatewayEvent) => void);

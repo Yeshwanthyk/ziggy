@@ -1,6 +1,6 @@
 ---
 name: extension-authoring
-description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; /reload does not admit a new package.
+description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; new packages are admitted through profile_extensions.
 ---
 
 # Ziggy extension authoring
@@ -62,18 +62,21 @@ TypeBox parameters and bounded text results. Resolve package files from `import.
 tool subprocesses run in the Profile cwd supplied by Pi.
 
 Do not create a second manifest, registry, alias layer, installer, or tool allowlist. Ziggy admits
-only paths declared by `pi.extensions` and `pi.skills`. From the Profile working directory, select
-the package with `ziggy extensions add . computer-use`; Profile-owned packages take precedence over
-approved catalogue packages with the same ID. Reopening that Profile or restarting its resident
-Ziggy process activates the change. All registered tools must be usable from TUI, print runs,
-gateway chats, and automations when the package is selected.
+only paths declared by `pi.extensions` and `pi.skills`. After writing an agent-authored package,
+call the in-process `profile_extensions` tool with `action: "add"` for its shelf ID. Do not shell
+into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. Claim
+admission only from that tool's structured success result; preserve and report its operation,
+stage, code, and message fields on failure. Profile-owned packages take precedence over approved
+catalogue packages with the same ID. Reopening that Profile or restarting its resident Ziggy
+process applies the change. All registered tools must be usable from TUI, print runs, gateway
+chats, and automations when the package is selected.
 
 ## Skills
 
 Agent Skills remain progressive: frontmatter metadata is loaded at startup and the body is read
 only when needed. Put scripts, references, templates, and assets inside the owning skill folder,
-and reference them relative to `SKILL.md`. `ziggy extensions add` copies the whole package, so those
-relative files stay next to the skill.
+and reference them relative to `SKILL.md`. The package remains the unit passed to
+`profile_extensions`, so those relative files stay next to the skill.
 
 ## Proof
 

@@ -30,7 +30,7 @@ import { Models, ModelsLive } from "./application/models";
 import { Memory, MemoryLive } from "./application/memory";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
-import { ResidentGateway, ResidentGatewayLive } from "./application/resident-gateway";
+import { ResidentGateway, makeResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
@@ -119,7 +119,7 @@ const ProfileAgentsProvided = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(AgentLive, ModelsLive)),
 );
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
-const ResidentProvided = ResidentGatewayLive.pipe(
+const ResidentProvided = makeResidentGatewayLive(repositoryRoot).pipe(
   Layer.provide(
     Layer.mergeAll(
       SchedulerProvided,
@@ -128,6 +128,7 @@ const ResidentProvided = ResidentGatewayLive.pipe(
       SlackGatewayLive.pipe(Layer.provide(AgentLive)),
       AgentLive,
       SessionsLive,
+      ProfileExtensionsProvided,
     ),
   ),
 );

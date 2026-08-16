@@ -15,7 +15,9 @@ The readiness marker is a cheap admission signal, not evidence by itself.
    approved memory add, and prefix every learned entry with `[learned]`.
 4. Create a new skill only for a repeated class of work across distinct sessions. Call
    `self_improvement_extension_write` to create a real skill-only package under the Profile, then
-   call `ziggy extensions add . <id>` so the Profile admits it after restart.
+   call the in-process `profile_extensions` tool with `action: "add"` and the new shelf ID. Never
+   shell into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. The
+   Profile admits it after restart only when that tool returns structured success.
 5. Patch only a Profile package whose `package.json` visibly marks it `ziggy.curatorManaged: true`.
    Never change repository, catalogue, human-owned, external, or pinned packages.
 6. Call `self_improvement_log` with an `applied`, `no-op`, or `staged` decision and compact evidence.

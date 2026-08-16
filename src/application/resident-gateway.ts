@@ -37,6 +37,8 @@ import {
 } from "./discord-gateway";
 import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
 import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
+import { ProfileExtensions } from "./profile-extensions";
+import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import { Sessions, type SessionsApi } from "./sessions";
 import { makeUiGateway, type UiGatewayConnection } from "./ui-gateway";
 
@@ -104,10 +106,22 @@ const disabledUiRuntime: ResidentUiRuntime = {
   run: () => Effect.never,
 };
 
-const makeLiveUiRuntime = (sessions: SessionsApi, agent: ZiggyAgentApi): ResidentUiRuntime => ({
+const makeLiveUiRuntime = (
+  repositoryRoot: string,
+  sessions: SessionsApi,
+  agent: ZiggyAgentApi,
+  profileExtensions: ProfileExtensionsApi,
+): ResidentUiRuntime => ({
   run: (target, registry) =>
     Effect.gen(function* () {
-      const gateway = makeUiGateway(target, registry, sessions, agent);
+      const gateway = makeUiGateway(
+        target,
+        registry,
+        sessions,
+        agent,
+        repositoryRoot,
+        profileExtensions,
+      );
       const connections = new Map<string, UiGatewayConnection>();
       const connectionFor = (transport: UiServerConnection): UiGatewayConnection => {
         const existing = connections.get(transport.id);
@@ -209,16 +223,22 @@ export const makeResidentGateway = (
     }),
 });
 
-export const ResidentGatewayLive = Layer.effect(
-  ResidentGateway,
-  Effect.gen(function* () {
-    return makeResidentGateway(
-      yield* AutomationScheduler,
-      yield* Gateway,
-      yield* DiscordGateway,
-      yield* SlackGateway,
-      liveRuntime,
-      makeLiveUiRuntime(yield* Sessions, yield* ZiggyAgent),
-    );
-  }),
-);
+export const makeResidentGatewayLive = (repositoryRoot: string) =>
+  Layer.effect(
+    ResidentGateway,
+    Effect.gen(function* () {
+      return makeResidentGateway(
+        yield* AutomationScheduler,
+        yield* Gateway,
+        yield* DiscordGateway,
+        yield* SlackGateway,
+        liveRuntime,
+        makeLiveUiRuntime(
+          repositoryRoot,
+          yield* Sessions,
+          yield* ZiggyAgent,
+          yield* ProfileExtensions,
+        ),
+      );
+    }),
+  );
