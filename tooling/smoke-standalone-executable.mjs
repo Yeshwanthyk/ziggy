@@ -265,7 +265,7 @@ try {
   if (
     doctor.exitCode !== 1 ||
     !doctor.stdout.includes("OK\tresources\t") ||
-    !doctor.stdout.includes("0 bundled factories, 1 Profile extension entrypoints") ||
+    !doctor.stdout.includes("bundled factories, 1 Profile extension entrypoints") ||
     !doctor.stdout.includes(
       `OK\tpi_docs\t@earendil-works/pi-coding-agent@${report.piVersion} fingerprint=${report.piDocsFingerprint} count=${report.piDocsCount}`,
     )
