@@ -71,6 +71,7 @@ Run `ziggy help` for the complete command surface.
 - [Connect a Profile to Telegram](docs/operations/telegram.md)
 - [Connect a Profile to Discord](docs/operations/discord.md)
 - [Connect a Profile to Slack](docs/operations/slack.md)
+- [Drive a Profile from Buzz over ACP](docs/operations/acp-buzz.md)
 - [Operate automations](docs/operations/automations.md)
 - [Operate Profile memory](docs/operations/memory.md)
 
