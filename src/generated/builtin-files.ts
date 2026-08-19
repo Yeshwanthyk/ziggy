@@ -105,6 +105,8 @@ import file102 from "./embedded/file102.embed" with { type: "file" };
 import file103 from "./embedded/file103.embed" with { type: "file" };
 import file104 from "./embedded/file104.embed" with { type: "file" };
 import file105 from "./embedded/file105.embed" with { type: "file" };
+import file106 from "./embedded/file106.embed" with { type: "file" };
+import file107 from "./embedded/file107.embed" with { type: "file" };
 
 export const builtinFilePath = {
   "extensions/acp-router/package.json": file0,
@@ -210,9 +212,11 @@ export const builtinFilePath = {
   "extensions/ziggy-operations/package.json": file100,
   "extensions/ziggy-operations/skills/ziggy-operations/references/automations.md": file101,
   "extensions/ziggy-operations/skills/ziggy-operations/references/discord.md": file102,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/serve.md": file103,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/slack.md": file104,
-  "extensions/ziggy-operations/skills/ziggy-operations/SKILL.md": file105,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/memory.md": file103,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/serve.md": file104,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/slack.md": file105,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md": file106,
+  "extensions/ziggy-operations/skills/ziggy-operations/SKILL.md": file107,
 } as const;
 
 const bundledFiles = new Map<string, string>([
@@ -319,9 +323,11 @@ const bundledFiles = new Map<string, string>([
   ["extensions/ziggy-operations/package.json", file100],
   ["extensions/ziggy-operations/skills/ziggy-operations/references/automations.md", file101],
   ["extensions/ziggy-operations/skills/ziggy-operations/references/discord.md", file102],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/serve.md", file103],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/slack.md", file104],
-  ["extensions/ziggy-operations/skills/ziggy-operations/SKILL.md", file105],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/memory.md", file103],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/serve.md", file104],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/slack.md", file105],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md", file106],
+  ["extensions/ziggy-operations/skills/ziggy-operations/SKILL.md", file107],
 ]);
 
 export const bundledFilePath = (logicalPath: string): string | undefined =>

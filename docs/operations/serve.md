@@ -11,6 +11,7 @@ scheduler process.
 Channel setup guides:
 
 - [Connect a Profile to Discord](discord.md)
+- [Connect a Profile to Telegram](telegram.md)
 - [Connect a Profile to Slack](slack.md)
 
 ## Lifecycle commands
@@ -85,12 +86,21 @@ tick: ok|error|unknown
 next due: ...
 active runs: ...
 latest run: ...
+discord: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
+discord observed: ...
+discord turns: active ..., queued ..., completed ..., cancelled ..., failed ...
+discord last failure: ...
+slack: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
+slack observed: ...
+slack turns: active ..., queued ..., completed ..., cancelled ..., failed ...
+slack last failure: ...
 ```
 
 A loaded supervisor without a live owner is not healthy. A live owner with a stale or unknown
 scheduler is also not healthy. A recently stopped process can temporarily have a fresh persisted
 heartbeat; the process field remains authoritative for process liveness. Any unreadable or degraded
-section makes status exit 1 while preserving the other section results. Status is read-only: it does
+section makes status exit 1 while preserving the other section results. Channel projections are
+content-free and independently degraded when stale or disconnected. Status is read-only: it does
 not create `.runtime`, initialize SQLite, repair ownership, or contact a model.
 
 Use the detailed projections when needed:
@@ -98,8 +108,13 @@ Use the detailed projections when needed:
 ```sh
 ziggy automations status <profile>
 ziggy automations runs <profile> [automation-id]
-ziggy sessions list <profile>
+ziggy sessions list <profile> [--json]
 ```
+
+Telegram has no persisted health projection. For a Telegram Profile, use `ziggy doctor <profile>`
+for configuration validity, `ziggy serve logs <profile>` for long-poll and delivery failures, and
+`ziggy sessions list <profile>` for session evidence. Discord and Slack add content-free health
+projections to this status output; their detailed channel guides describe those fields.
 
 ## Crash and restart behavior
 

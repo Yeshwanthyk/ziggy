@@ -103,9 +103,13 @@ history authority.
 Inspect both authorities from the CLI or open `/automations` in the TUI:
 
 ```sh
-ziggy automations runs <profile> [id]
-ziggy sessions list <profile>
+ziggy automations runs <profile> [id] [--json]
+ziggy sessions list <profile> [--json]
 ```
+
+Use `--json` on `automations list`, `automations status`, and `automations runs` when a script
+needs the bounded projection rather than operator text. Session listings and details also accept
+`--json`; JSON session views never include transcript content.
 
 ## Process failure and no replay
 

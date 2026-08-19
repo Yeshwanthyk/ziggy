@@ -1,125 +1,59 @@
-# Supervise `ziggy serve`
+# Operate Profile memory
 
-`ziggy serve <profile>` is the only production scheduler host. It owns the Profile's automation
-scheduler and any configured Telegram, Discord, or Slack loops. Run at most one resident per
-resolved Profile path.
+Profile memory is plain Markdown owned by the Profile. It is separate from Pi session
+transcripts and is admitted by chat context:
 
-Ziggy installs one user service per Profile and delegates restart policy to launchd on macOS or
-systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
-scheduler process.
+- `MEMORY.md` is shared assistant memory and loads in local, 1:1, and group chats.
+- `memory/users/<id>.md` is person memory and loads only in that person's 1:1 chat. Local chats
+  use `memory/users/owner.md`. Person memory never loads in a group.
+- `memory/groups/<id>.md` is group memory and loads only in that group chat.
 
-Channel setup guides:
-
-- [Connect a Profile to Discord](discord.md)
-- [Connect a Profile to Slack](slack.md)
-
-## Lifecycle commands
-
-```sh
-ziggy serve install <profile> [--force] [--no-start]
-ziggy serve start <profile>
-ziggy serve stop <profile>
-ziggy serve restart <profile>
-ziggy serve status <profile>
-ziggy serve logs <profile> [--follow]
-ziggy serve uninstall <profile>
-```
-
-`install` writes and starts the service by default. Use `--no-start` to write it without loading it
-on macOS, or to write and enable it without starting it on Linux. `start` and `restart` validate the
-Profile before asking the service manager to run it. `stop`, `status`, `logs`, and `uninstall` can
-still identify the service from the original absolute path if the Profile has moved or disappeared.
-
-`gateway <profile>` remains a foreground compatibility alias. Lifecycle subcommands exist only
-under `serve`.
-
-## Managed files and safety
-
-The resolved absolute Profile path determines a bounded readable service name plus a SHA-256 path
-digest. Equal folder names at different paths therefore receive different service identities.
-
-- macOS definition: `~/Library/LaunchAgents/works.earendil.ziggy.serve.*.plist`
-- macOS logs: `$ZIGGY_HOME/logs/serve/*.stdout.log` and `*.stderr.log`
-- Linux definition: `~/.config/systemd/user/ziggy-serve-*.service`
-- Linux logs: the user journal
-
-Definitions contain absolute argument arrays, the Profile path, a managed marker, and a deterministic
-fingerprint. They do not contain provider credentials or channel tokens. Ziggy writes definitions
-atomically and refuses unmanaged, symlinked, or non-regular destinations. It also refuses a changed
-managed definition unless `install --force` is explicit.
-
-`uninstall` stops the job and removes only its recognized managed definition. It retains the
-Profile, `.runtime/`, automation history, Pi sessions, and logs.
-
-## macOS privacy
-
-A LaunchAgent does not inherit Terminal's Files & Folders permission. If a Profile is inside a
-macOS-protected folder such as `Documents`, the launched Ziggy executable must already have access
-to that folder; otherwise macOS can block directory enumeration while the owner process still looks
-alive. Prefer an unprotected Profile location such as `$ZIGGY_HOME/profiles`, or grant the exact
-installed/compiled Ziggy executable the required access before installation. Verify scheduler
-freshness after every first install rather than treating process ownership as health.
-
-## Read combined status
-
-```sh
-ziggy serve status <profile>
-```
-
-The output intentionally keeps these facts separate:
+Each document contains one entry per block. Separate entries with a line containing `§`:
 
 ```text
-managed service: installed|not-installed|drifted|unknown
-service manager: launchd|systemd|unsupported
-supervisor: running|stopped|failed|unknown
-process: running|stopped|stale
-scheduler: active|stale|unknown
-tick: ok|error|unknown
-next due: ...
-active runs: ...
-latest run: ...
+The person prefers short answers.
+§
+The project ships on Fridays.
 ```
 
-A loaded supervisor without a live owner is not healthy. A live owner with a stale or unknown
-scheduler is also not healthy. A recently stopped process can temporarily have a fresh persisted
-heartbeat; the process field remains authoritative for process liveness. Any unreadable or degraded
-section makes status exit 1 while preserving the other section results. Status is read-only: it does
-not create `.runtime`, initialize SQLite, repair ownership, or contact a model.
+The shared document is capped at 2,200 Unicode code points. Each person or group document is
+capped at 1,375 code points. A write that would exceed its cap is rejected as a whole; content is
+never silently truncated.
 
-Use the detailed projections when needed:
+The agent uses the `memory_write` tool with `add`, `replace`, and `remove` operations. `add` is
+idempotent. `replace` and `remove` require `oldText` to identify exactly one entry. A successful
+change is atomic under a per-document lock.
+
+You can inspect memory without opening a chat:
 
 ```sh
-ziggy automations status <profile>
-ziggy automations runs <profile> [automation-id]
-ziggy sessions list <profile>
+ziggy memory list [<profile>] [--json]
+ziggy memory show <profile> shared [--json]
+ziggy memory show <profile> user:<id> [--json]
+ziggy memory show <profile> group:<id> [--json]
 ```
 
-## Crash and restart behavior
+Without a target, `memory list` inspects the current directory as the Profile target. JSON output
+contains scope, path, state, entry count, code-point count, and cap, but not raw memory content for
+`list`; `show --json` includes the bounded entries of the selected document.
 
-Resident exclusion is an OS-released SQLite lease in `.runtime/serve-owner.sqlite`. The JSON
-`gateway-owner.lock` file is only a status and legacy-compatibility projection. A normal stop removes
-the matching projection and releases the lease. SIGKILL may leave stale JSON, but closing the dead
-process releases the authoritative SQLite lock, so the service manager can start a new owner without
-manual lock deletion.
+`memory list` reports only physical regular memory documents. Empty documents are reported as
+empty and are distinct from a missing document. The `memory/README.md` format note is never
+loaded as memory and is excluded from `ziggy doctor` size checks.
 
-Scheduled claims store the resident owner UUID and PID. On startup, a new resident marks active
-claims from an older resident UUID `unknown` with `process-start`. Their schedule cursor was already
-advanced in the claim transaction, so Ziggy never replays the crashed occurrence.
+Hand-editing is safe when no Ziggy process is writing the same document, you preserve the `§`
+delimiter, and you stay within the cap. Run `ziggy doctor <profile>` after edits.
 
-## Platform notes
+Before an existing document is changed, Ziggy saves its exact prior bytes under:
 
-On macOS, Ziggy uses `launchctl bootstrap`, `bootout`, `kickstart`, and `print` in the current GUI
-user domain. The generated LaunchAgent has `RunAtLoad`, `KeepAlive`, bounded restart throttling, and
-a bounded exit timeout.
+```text
+<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>.md
+```
 
-On Linux, Ziggy uses `systemctl --user`, writes a `Type=simple` unit with `Restart=always`, and keeps
-output in the user journal. Installation warns when user lingering is not enabled and prints the
-operator command, but never invokes `sudo` or enables lingering itself.
-
-When troubleshooting, capture all three views before changing files:
+The newest ten backups for each document are retained. Backup and pruning failures block the
+memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
 
 ```sh
-ziggy serve status <profile>
-ziggy serve logs <profile>
-ziggy automations runs <profile>
+cp <profile>/.runtime/memory-backups/MEMORY.md/<timestamp>.md <profile>/MEMORY.md
+ziggy doctor <profile>
 ```

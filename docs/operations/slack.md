@@ -292,6 +292,9 @@ content or tokens. Use `--follow` while testing:
 ziggy serve logs <profile> --follow
 ```
 
+Do not run `ziggy slack <profile>`. The old resident alias is unsupported; use one `ziggy serve`
+process for the scheduler and every configured channel loop.
+
 ## 10. Test direct messages and channels
 
 ### Direct message
