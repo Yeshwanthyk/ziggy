@@ -80,7 +80,12 @@ export type CliCommand =
       readonly sessionId?: string;
       readonly json: boolean;
     }
-  | { readonly _tag: "Acp"; readonly target: string; readonly shared: boolean }
+  | {
+      readonly _tag: "Acp";
+      readonly target: string;
+      readonly shared: boolean;
+      readonly agent: string | undefined;
+    }
   | {
       readonly _tag: "AutomationsCreate";
       readonly target: string;

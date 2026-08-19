@@ -122,6 +122,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
             return Effect.succeed(handle);
           }),
           stubModels,
+          undefined,
         );
         const clientToAgent = new TransformStream<Uint8Array>();
         const agentToClient = new TransformStream<Uint8Array>();
@@ -205,6 +206,7 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
           }),
           stubModels,
+          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -253,6 +255,7 @@ test("ACP session/new announces auth-configured models and session/set_model val
           false,
           stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
           stubModels,
+          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -296,6 +299,44 @@ test("ACP session/new announces auth-configured models and session/set_model val
   );
 });
 
+test("ACP routes sessions to a specialist when --agent is set", async () => {
+  const opened: Array<string> = [];
+  const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const app = yield* makeAcpAgent(
+          target,
+          false,
+          {
+            runOnce: () => Effect.never,
+            openTui: () => Effect.never,
+            openChat: () => Effect.never,
+            openSpecialistChat: (target, agentId) =>
+              Effect.sync(() => {
+                opened.push(`${target.name}:${agentId}`);
+                return handle;
+              }),
+            runSpecialist: () => Effect.never,
+          },
+          stubModels,
+          "ada",
+        );
+        return yield* Effect.promise(() =>
+          client().connectWith(app, async (agentContext) => {
+            const session = await agentContext.request(methods.agent.session.new, {
+              cwd: "/workspace",
+              mcpServers: [],
+            });
+            expect(session.sessionId).toEqual(expect.any(String));
+          }),
+        );
+      }),
+    ),
+  );
+  expect(opened).toEqual(["Profile:ada"]);
+});
+
 test("ACP cancellation aborts the active handle and resolves the prompt as cancelled", async () => {
   let aborts = 0;
   const started = await Effect.runPromise(Deferred.make<void>());
@@ -319,6 +360,7 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
           false,
           stubAgent(() => Effect.succeed(handle)),
           stubModels,
+          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -367,7 +409,9 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
       available: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
       set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),
     };
-    await Effect.runPromise(runAcp({ path: "/profile", name: "Profile" }, false, agent, models));
+    await Effect.runPromise(
+      runAcp({ path: "/profile", name: "Profile" }, false, agent, models, undefined),
+    );
   `;
   const request = `${JSON.stringify({
     jsonrpc: "2.0",

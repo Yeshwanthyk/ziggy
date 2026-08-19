@@ -432,6 +432,7 @@ const program = Effect.gen(function* () {
         command.shared,
         agent,
         models,
+        command.agent,
       );
     case "AutomationsCreate": {
       const created = yield* automationDefinitions.create(

@@ -232,18 +232,27 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   if (word === "acp") {
     const positional: Array<string> = [];
     let shared = false;
+    let agent: string | undefined;
     for (const argument of rest) {
       if (argument === "--shared") {
         if (shared) return invalid("duplicate acp option --shared");
         shared = true;
+      } else if (argument === "--agent") {
+        if (agent !== undefined) return invalid("duplicate acp option --agent");
+        agent = "";
+      } else if (agent === "") {
+        agent = argument;
       } else {
         positional.push(argument);
       }
     }
     if (positional.length !== 1 || !required(positional[0])) {
-      return invalid("usage: ziggy acp <name|path> [--shared]");
+      return invalid("usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]");
     }
-    return { _tag: "Acp", target: positional[0], shared };
+    if (agent === "" || (agent !== undefined && !required(agent))) {
+      return invalid("usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]");
+    }
+    return { _tag: "Acp", target: positional[0], shared, agent };
   }
 
   if (word === "profiles") {
@@ -594,7 +603,7 @@ const generalHelp = `Usage:
   ziggy [<name|path>]
   ziggy tui [<name|path>]
   ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...>
-  ziggy acp <name|path> [--shared]
+  ziggy acp <name|path> [--shared] [--agent <agent-id>]
   ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]
   ziggy profiles [--json]
   ziggy auth <name|path> [provider] [--type api_key|oauth]
@@ -634,7 +643,7 @@ const topicHelp = {
     "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path> [--json]\n  ziggy agents show <name|path> <agent-id> [--json]\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
   doctor: "usage: ziggy doctor <name|path>",
   run: "usage: ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...> (JSON mode emits Pi event lines)",
-  acp: "usage: ziggy acp <name|path> [--shared]",
+  acp: "usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]",
   automations:
     "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path> [--json]\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path> [--json]\n  ziggy automations runs <name|path> [automation-id] [--json]",
   wake: "usage: ziggy wake <name|path> <automation-id>",

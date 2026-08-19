@@ -43,11 +43,19 @@ describe("CLI decoding", () => {
       _tag: "Acp",
       target: "buddy",
       shared: false,
+      agent: undefined,
     });
     await expect(decode(["acp", "--shared", "buddy"])).resolves.toEqual({
       _tag: "Acp",
       target: "buddy",
       shared: true,
+      agent: undefined,
+    });
+    await expect(decode(["acp", "buddy", "--agent", "ada"])).resolves.toEqual({
+      _tag: "Acp",
+      target: "buddy",
+      shared: false,
+      agent: "ada",
     });
     await expect(decode(["extensions", "add", "buddy", "weather"])).resolves.toEqual({
       _tag: "ExtensionsAdd",
@@ -342,13 +350,13 @@ describe("CLI decoding", () => {
       "ziggy automations create|list|pause|resume|validate|status|runs",
     );
     expect(renderHelp()).toContain("ziggy sessions list|show");
-    expect(renderHelp()).toContain("ziggy acp <name|path> [--shared]");
+    expect(renderHelp()).toContain("ziggy acp <name|path> [--shared] [--agent <agent-id>]");
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
     expect(renderHelp("serve")).toContain("ziggy serve install <name|path> [--force] [--no-start]");
     expect(renderHelp("serve")).toContain("ziggy serve logs <name|path> [--follow]");
-    expect(renderHelp("acp")).toBe("usage: ziggy acp <name|path> [--shared]");
+    expect(renderHelp("acp")).toBe("usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]");
     expect(renderHelp("models")).toBe(
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );

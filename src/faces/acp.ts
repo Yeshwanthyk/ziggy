@@ -178,6 +178,7 @@ export const makeAcpAgent = (
   shared: boolean,
   agentApi: ZiggyAgentApi,
   models: ModelsApi,
+  specialAgent: string | undefined,
 ): Effect.Effect<AgentApp, never, Scope.Scope> =>
   Effect.gen(function* () {
     const dispatch = yield* makeDispatch();
@@ -232,18 +233,24 @@ export const makeAcpAgent = (
             const sessionId = randomUUID();
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
-                agentApi
-                  .openChat(
-                    target,
-                    shared ? { kind: "group", groupId: `acp-${sessionId}` } : { kind: "local" },
-                    join(target.path, "sessions", "acp", sessionId),
-                    "fresh",
-                  )
-                  .pipe(
-                    Effect.mapError(() =>
-                      RequestError.internalError(undefined, "could not open ACP session"),
+                (specialAgent === undefined
+                  ? agentApi.openChat(
+                      target,
+                      shared ? { kind: "group", groupId: `acp-${sessionId}` } : { kind: "local" },
+                      join(target.path, "sessions", "acp", sessionId),
+                      "fresh",
+                    )
+                  : agentApi.openSpecialistChat(target, specialAgent)
+                ).pipe(
+                  Effect.mapError(() =>
+                    RequestError.internalError(
+                      undefined,
+                      specialAgent === undefined
+                        ? "could not open ACP session"
+                        : `could not open ACP session for specialist ${specialAgent}`,
                     ),
                   ),
+                ),
               ).pipe(
                 Effect.flatMap((handle) =>
                   statePermit.withPermit(
@@ -427,6 +434,7 @@ export const runAcp = (
   shared: boolean,
   agentApi: ZiggyAgentApi,
   models: ModelsApi,
+  specialAgent: string | undefined,
 ): Effect.Effect<void, AcpFaceError> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -469,7 +477,7 @@ export const runAcp = (
             else Object.defineProperty(console, "info", consoleInfoDescriptor);
           }),
       );
-      const app = yield* makeAcpAgent(target, shared, agentApi, models);
+      const app = yield* makeAcpAgent(target, shared, agentApi, models, specialAgent);
       const stream = ndJsonStream(protocolOutput, Readable.toWeb(process.stdin));
       const connection = yield* Effect.acquireRelease(
         Effect.try({
