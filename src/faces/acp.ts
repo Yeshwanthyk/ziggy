@@ -178,7 +178,7 @@ export const makeAcpAgent = (
   shared: boolean,
   agentApi: ZiggyAgentApi,
   models: ModelsApi,
-  specialAgent: string | undefined,
+  specialAgent?: string,
 ): Effect.Effect<AgentApp, never, Scope.Scope> =>
   Effect.gen(function* () {
     const dispatch = yield* makeDispatch();
@@ -434,7 +434,7 @@ export const runAcp = (
   shared: boolean,
   agentApi: ZiggyAgentApi,
   models: ModelsApi,
-  specialAgent: string | undefined,
+  specialAgent?: string,
 ): Effect.Effect<void, AcpFaceError> =>
   Effect.scoped(
     Effect.gen(function* () {

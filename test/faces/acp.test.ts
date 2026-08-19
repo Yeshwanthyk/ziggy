@@ -122,7 +122,6 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
             return Effect.succeed(handle);
           }),
           stubModels,
-          undefined,
         );
         const clientToAgent = new TransformStream<Uint8Array>();
         const agentToClient = new TransformStream<Uint8Array>();
@@ -206,7 +205,6 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
           }),
           stubModels,
-          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -255,7 +253,6 @@ test("ACP session/new announces auth-configured models and session/set_model val
           false,
           stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
           stubModels,
-          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -360,7 +357,6 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
           false,
           stubAgent(() => Effect.succeed(handle)),
           stubModels,
-          undefined,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -410,7 +406,7 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
       set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),
     };
     await Effect.runPromise(
-      runAcp({ path: "/profile", name: "Profile" }, false, agent, models, undefined),
+      runAcp({ path: "/profile", name: "Profile" }, false, agent, models),
     );
   `;
   const request = `${JSON.stringify({
