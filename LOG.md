@@ -415,3 +415,7 @@ results.
 ## 2026-08-16
 
 **Ziggy 0.2.2 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.1 to 0.2.2; documented the post-0.2.1 anti-slop alignment (gateway-client scoped lint/typecheck/test root gate, restored mapped/conditional-infer lexical fidelity, focused local rule parity tests, no duplicate plugin/dependency) in the changelog; updated compare links. No source behavior changed.
+
+## 2026-08-18
+
+**ACP session model announce for Buzz.** Extended `ziggy acp`'s session/new response with Buzz's unstable SessionModelState: `availableModels` (provider/model ids) and `currentModelId`, sourced from the profile's auth-configured models (`ModelRuntime.getAvailable()` — the auth.json ∩ models-store intersection, via a new read-only `available` surface on the Pi models adapter and `ModelsApi.available`). Added a custom `session/set_model` request handler that validates `provider/model` against the profile's authed models and records the per-session selection (invalid-params on unknown models/sessions). `runAcp` now receives the Models service from main. Focused test asserts the announce shape and set_model validation; all ACP/models tests green, `bun run check` passes.

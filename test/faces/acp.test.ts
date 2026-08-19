@@ -15,6 +15,7 @@ import {
   type ChatPromptOptions,
   type ZiggyAgentApi,
 } from "ziggy/application/agent";
+import type { ModelsApi } from "ziggy/application/models";
 import { makeAcpAgent } from "ziggy/faces/acp";
 
 const target = { path: "/profile", name: "Profile" } as const;
@@ -28,6 +29,22 @@ const decodeNewSessionResponseLine = Schema.decodeUnknownSync(
   ),
 );
 
+const decodeNewSessionWithModels = Schema.decodeUnknownSync(
+  Schema.Struct({
+    sessionId: Schema.String,
+    models: Schema.Struct({
+      availableModels: Schema.Array(
+        Schema.Struct({
+          modelId: Schema.String,
+          name: Schema.String,
+          description: Schema.String,
+        }),
+      ),
+      currentModelId: Schema.optional(Schema.String),
+    }),
+  }),
+);
+
 const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
   runOnce: () => Effect.never,
   openTui: () => Effect.never,
@@ -35,6 +52,32 @@ const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
   openSpecialistChat: () => Effect.never,
   runSpecialist: () => Effect.never,
 });
+
+const stubModels: ModelsApi = {
+  status: () =>
+    Effect.succeed({
+      providerId: "openai",
+      modelId: "gpt-5",
+      thinking: "high",
+      authConfigured: true,
+    }),
+  readOnlyStatus: () =>
+    Effect.succeed({
+      providerId: "openai",
+      modelId: "gpt-5",
+      thinking: "high",
+      authConfigured: true,
+    }),
+  list: () =>
+    Effect.succeed([
+      { providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] },
+    ]),
+  available: () =>
+    Effect.succeed([
+      { providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] },
+    ]),
+  set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),
+};
 
 test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text", async () => {
   const updates: Array<SessionNotification> = [];
@@ -78,6 +121,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
             opened = { context: context.kind, directory, mode };
             return Effect.succeed(handle);
           }),
+          stubModels,
         );
         const clientToAgent = new TransformStream<Uint8Array>();
         const agentToClient = new TransformStream<Uint8Array>();
@@ -160,6 +204,7 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
             groupId = context.kind === "group" ? context.groupId : undefined;
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
           }),
+          stubModels,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -199,6 +244,58 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
   );
 });
 
+test("ACP session/new announces auth-configured models and session/set_model validates them", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const app = yield* makeAcpAgent(
+          target,
+          false,
+          stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
+          stubModels,
+        );
+        return yield* Effect.promise(() =>
+          client().connectWith(app, async (agentContext) => {
+            const session = decodeNewSessionWithModels(
+              await agentContext.request(methods.agent.session.new, {
+                cwd: "/workspace",
+                mcpServers: [],
+              }),
+            );
+            expect(session.models).toEqual({
+              availableModels: [
+                {
+                  modelId: "openai/gpt-5",
+                  name: "GPT-5",
+                  description: "openai / gpt-5",
+                },
+              ],
+              currentModelId: "openai/gpt-5",
+            });
+            const accepted = await agentContext.request("session/set_model", {
+              sessionId: session.sessionId,
+              modelId: "openai/gpt-5",
+            });
+            expect(accepted).toEqual({});
+            await expect(
+              agentContext.request("session/set_model", {
+                sessionId: session.sessionId,
+                modelId: "unknown/provider-model",
+              }),
+            ).rejects.toMatchObject({ code: -32_602 });
+            await expect(
+              agentContext.request("session/set_model", {
+                sessionId: "missing",
+                modelId: "openai/gpt-5",
+              }),
+            ).rejects.toMatchObject({ code: -32_602 });
+          }),
+        );
+      }),
+    ),
+  );
+});
+
 test("ACP cancellation aborts the active handle and resolves the prompt as cancelled", async () => {
   let aborts = 0;
   const started = await Effect.runPromise(Deferred.make<void>());
@@ -221,6 +318,7 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
           target,
           false,
           stubAgent(() => Effect.succeed(handle)),
+          stubModels,
         );
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
@@ -262,7 +360,14 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
       openSpecialistChat: () => Effect.never,
       runSpecialist: () => Effect.never,
     };
-    await Effect.runPromise(runAcp({ path: "/profile", name: "Profile" }, false, agent));
+    const models = {
+      status: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
+      readOnlyStatus: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
+      list: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
+      available: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
+      set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),
+    };
+    await Effect.runPromise(runAcp({ path: "/profile", name: "Profile" }, false, agent, models));
   `;
   const request = `${JSON.stringify({
     jsonrpc: "2.0",

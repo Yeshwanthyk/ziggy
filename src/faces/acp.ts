@@ -10,11 +10,28 @@ import {
   ndJsonStream,
   type AgentApp,
   type ContentBlock,
+  type NewSessionResponse,
 } from "@agentclientprotocol/sdk";
 import { Effect, Queue, Result, Schema, Semaphore, type Scope } from "effect";
 import packageJson from "../../package.json" with { type: "json" };
 import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../application/agent";
+import type { ModelsApi } from "../application/models";
 import type { ProfileTarget } from "../domain/profile";
+
+/** Buzz/ACP unstable session-model state (SessionModelState). */
+interface AcpSessionModelState {
+  readonly availableModels: ReadonlyArray<{
+    readonly modelId: string;
+    readonly name: string;
+    readonly description: string;
+  }>;
+  readonly currentModelId: string | undefined;
+}
+
+/** Session/new response extended with Buzz's unstable SessionModelState. */
+type AcpNewSessionResponse = NewSessionResponse & {
+  readonly models?: AcpSessionModelState;
+};
 
 interface AcpTurn {
   cancelled: boolean;
@@ -22,6 +39,7 @@ interface AcpTurn {
 
 interface AcpSession {
   readonly handle: ChatHandle;
+  modelOverride: { readonly providerId: string; readonly modelId: string } | undefined;
   active: AcpTurn | undefined;
 }
 
@@ -40,6 +58,43 @@ export class AcpFaceError extends Schema.TaggedErrorClass<AcpFaceError>()("AcpFa
 
 const invalidParams = (message: string): RequestError =>
   RequestError.invalidParams(undefined, message);
+
+const modelIdOf = (providerId: string, modelId: string): string => `${providerId}/${modelId}`;
+
+const modelStateOf = (
+  status: { readonly providerId: string | undefined; readonly modelId: string | undefined },
+  available: ReadonlyArray<{
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly name: string;
+  }>,
+): AcpSessionModelState => ({
+  availableModels: [...available]
+    .sort(
+      (left, right) =>
+        left.providerId.localeCompare(right.providerId) ||
+        left.modelId.localeCompare(right.modelId),
+    )
+    .map((model) => ({
+      modelId: modelIdOf(model.providerId, model.modelId),
+      name: model.name,
+      description: `${model.providerId} / ${model.modelId}`,
+    })),
+  currentModelId:
+    status.providerId !== undefined && status.modelId !== undefined
+      ? modelIdOf(status.providerId, status.modelId)
+      : undefined,
+});
+
+const modelError = (cause: unknown, message: string): RequestError =>
+  RequestError.internalError(undefined, `${message}: ${String(cause)}`);
+
+const decodeSetSessionModelParams = Schema.decodeUnknownSync(
+  Schema.Struct({
+    sessionId: Schema.String,
+    modelId: Schema.String,
+  }),
+);
 
 const makeDispatch = (): Effect.Effect<AcpDispatch, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -122,6 +177,7 @@ export const makeAcpAgent = (
   target: ProfileTarget,
   shared: boolean,
   agentApi: ZiggyAgentApi,
+  models: ModelsApi,
 ): Effect.Effect<AgentApp, never, Scope.Scope> =>
   Effect.gen(function* () {
     const dispatch = yield* makeDispatch();
@@ -191,14 +247,79 @@ export const makeAcpAgent = (
               ).pipe(
                 Effect.flatMap((handle) =>
                   statePermit.withPermit(
-                    Effect.sync(() => sessions.set(sessionId, { handle, active: undefined })),
+                    Effect.sync(() =>
+                      sessions.set(sessionId, {
+                        handle,
+                        modelOverride: undefined,
+                        active: undefined,
+                      }),
+                    ),
                   ),
                 ),
               ),
             );
-            return { sessionId };
+            const status = yield* models
+              .readOnlyStatus(target)
+              .pipe(
+                Effect.mapError((cause) =>
+                  modelError(cause, "could not resolve the session model"),
+                ),
+              );
+            const available = yield* models
+              .available(target)
+              .pipe(
+                Effect.mapError((cause) =>
+                  modelError(cause, "could not list available session models"),
+                ),
+              );
+            return {
+              sessionId,
+              models: modelStateOf(status, available),
+            } satisfies AcpNewSessionResponse;
           }),
         ),
+      )
+      .onRequest<{ sessionId: string; modelId: string }, Record<string, never>>(
+        "session/set_model",
+        decodeSetSessionModelParams,
+        ({ params }) =>
+          dispatch(
+            Effect.gen(function* () {
+              const slash = params.modelId.lastIndexOf("/");
+              const providerId = slash === -1 ? undefined : params.modelId.slice(0, slash);
+              const modelId = slash === -1 ? undefined : params.modelId.slice(slash + 1);
+              if (providerId === undefined || modelId === undefined) {
+                return yield* Effect.fail(
+                  invalidParams(
+                    `session/set_model modelId must be provider/model: ${params.modelId}`,
+                  ),
+                );
+              }
+              const known = yield* models
+                .available(target)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    modelError(cause, "could not validate the requested session model"),
+                  ),
+                );
+              if (
+                !known.some((model) => model.providerId === providerId && model.modelId === modelId)
+              ) {
+                return yield* Effect.fail(invalidParams(`unknown session model ${params.modelId}`));
+              }
+              yield* statePermit.withPermit(
+                Effect.gen(function* () {
+                  const session = sessions.get(params.sessionId);
+                  if (session === undefined) {
+                    return yield* Effect.fail(invalidParams("unknown ACP session"));
+                  }
+                  session.modelOverride = { providerId, modelId };
+                  return session;
+                }),
+              );
+              return {};
+            }),
+          ),
       )
       .onRequest(methods.agent.session.prompt, ({ params, client, signal }) =>
         dispatch(
@@ -305,6 +426,7 @@ export const runAcp = (
   target: ProfileTarget,
   shared: boolean,
   agentApi: ZiggyAgentApi,
+  models: ModelsApi,
 ): Effect.Effect<void, AcpFaceError> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -347,7 +469,7 @@ export const runAcp = (
             else Object.defineProperty(console, "info", consoleInfoDescriptor);
           }),
       );
-      const app = yield* makeAcpAgent(target, shared, agentApi);
+      const app = yield* makeAcpAgent(target, shared, agentApi, models);
       const stream = ndJsonStream(protocolOutput, Readable.toWeb(process.stdin));
       const connection = yield* Effect.acquireRelease(
         Effect.try({

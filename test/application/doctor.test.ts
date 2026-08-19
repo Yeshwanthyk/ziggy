@@ -90,6 +90,15 @@ const models: ModelsApi = {
         thinkingLevels: ["off", "high"],
       },
     ]),
+  available: () =>
+    Effect.succeed([
+      {
+        providerId: "anthropic",
+        modelId: "claude",
+        name: "Claude",
+        thinkingLevels: ["off", "high"],
+      },
+    ]),
   set: () => Effect.die("not used"),
 };
 

@@ -100,6 +100,15 @@ const models = (
       },
     ]);
   },
+  available: (_target) =>
+    Effect.succeed([
+      {
+        providerId: "anthropic",
+        modelId: "claude",
+        name: "Claude",
+        thinkingLevels: ["off", "high"],
+      },
+    ]),
   set: (_target, providerId, modelId, thinking) => {
     events.push(`models-set:${providerId}/${modelId}:${thinking ?? "unchanged"}`);
     current.providerId = providerId;

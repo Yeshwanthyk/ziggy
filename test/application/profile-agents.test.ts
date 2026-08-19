@@ -61,6 +61,15 @@ const models: ModelsApi = {
         thinkingLevels: ["low", "medium"],
       },
     ]),
+  available: () =>
+    Effect.succeed([
+      {
+        providerId: "openai",
+        modelId: "gpt-test",
+        name: "Test",
+        thinkingLevels: ["low", "medium"],
+      },
+    ]),
   set: () => Effect.never,
 };
 

@@ -47,6 +47,7 @@ interface PiModelsSession {
   readonly status: () => Promise<ModelStatus>;
   readonly hasProvider: (providerId: string) => boolean;
   readonly list: (providerId?: string) => ReadonlyArray<KnownModel>;
+  readonly available: () => Promise<ReadonlyArray<KnownModel>>;
   readonly select: (
     providerId: string,
     modelId: string,
@@ -113,6 +114,7 @@ const createPiModelsSessionWith = async (
       };
     },
     hasProvider: (providerId) => runtime.getProvider(providerId) !== undefined,
+    available: async () => (await runtime.getAvailable()).map(toKnownModel),
     list: (providerId) => runtime.getModels(providerId).map(toKnownModel),
     select: (providerId, modelId, thinking) => {
       const model = runtime.getModel(providerId, modelId);
@@ -244,6 +246,29 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
       );
     });
 
+  /** Models whose providers have complete auth configuration (auth.json ∩ models-store). */
+  const listAvailable = (
+    profilePath: string,
+  ): Effect.Effect<ReadonlyArray<KnownModel>, ProfileNotInitialized | ModelOperationFailed> =>
+    Effect.gen(function* () {
+      const session = yield* open(profilePath, "list available models");
+      const models = yield* Effect.tryPromise({
+        try: () => session.available(),
+        catch: (cause) =>
+          new ModelOperationFailed({
+            profilePath,
+            operation: "list available models",
+            message: `could not list auth-configured models for ${profilePath}`,
+            cause,
+          }),
+      });
+      return [...models].sort(
+        (left, right) =>
+          left.providerId.localeCompare(right.providerId) ||
+          left.modelId.localeCompare(right.modelId),
+      );
+    });
+
   const set = (
     profilePath: string,
     providerId: string,
@@ -322,7 +347,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
       return selection;
     });
 
-  return { status, list, set } as const;
+  return { status, list, listAvailable, set } as const;
 };
 
 const piModels = makePiModels();
@@ -331,4 +356,5 @@ export const getModelStatus = piModels.status;
 export const getModelStatusReadOnly = piReadOnlyModels.status;
 export const listModels = piModels.list;
 export const listModelsReadOnly = piReadOnlyModels.list;
+export const listAvailableModels = piReadOnlyModels.listAvailable;
 export const setModel = piModels.set;

@@ -54,6 +54,7 @@ const fakeSession = (events: string[] = []) => ({
     providerId === undefined
       ? knownModels
       : knownModels.filter((model) => model.providerId === providerId),
+  available: async () => knownModels,
   select: (providerId: string, modelId: string, thinking?: string) => {
     events.push(`select:${providerId}/${modelId}:${thinking ?? "unchanged"}`);
     return { providerId, modelId, thinking };

@@ -431,6 +431,7 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.shared,
         agent,
+        models,
       );
     case "AutomationsCreate": {
       const created = yield* automationDefinitions.create(

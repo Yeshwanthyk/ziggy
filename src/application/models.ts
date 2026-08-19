@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect";
 import {
   getModelStatusReadOnly,
   type KnownModel,
+  listAvailableModels,
   listModelsReadOnly,
   type ModelSelection,
   type ModelStatus,
@@ -32,6 +33,9 @@ export interface ModelsApi {
     target: ProfileTarget,
     providerId?: string,
   ) => Effect.Effect<ReadonlyArray<KnownModel>, ModelsError>;
+  readonly available: (
+    target: ProfileTarget,
+  ) => Effect.Effect<ReadonlyArray<KnownModel>, ModelsError>;
   readonly set: (
     target: ProfileTarget,
     providerId: string,
@@ -46,6 +50,7 @@ export const ModelsLive = Layer.succeed(Models, {
   status: (target) => getModelStatusReadOnly(target.path),
   readOnlyStatus: (target) => getModelStatusReadOnly(target.path),
   list: (target, providerId) => listModelsReadOnly(target.path, providerId),
+  available: (target) => listAvailableModels(target.path),
   set: (target, providerId, modelId, thinking) =>
     setModel(target.path, providerId, modelId, thinking),
 });
