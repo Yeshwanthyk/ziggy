@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.2.4] - 2026-08-19
+
+### Added
+
+- `ziggy acp <name|path> [--shared] [--agent <agent-id>]` routes ACP sessions to a Profile specialist (`agents/<agent-id>.md`) instead of the default persona, so Buzz can expose one agent row per specialist through per-agent `agent_args` on the shared custom harness
+- Operations guide `docs/operations/acp-buzz.md`: wiring a Profile and its specialists into Buzz Desktop over ACP, with model announce/set_model behavior, built-in persona reconciliation, and path/auth gotchas
+
 ## [0.2.3] - 2026-08-18
 
 ### Added

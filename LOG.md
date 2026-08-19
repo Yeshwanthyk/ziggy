@@ -423,3 +423,5 @@ results.
 **Ziggy 0.2.3 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.2 to 0.2.3; documented the ACP SessionModelState announce and `session/set_model` handler in the changelog. No source behavior changed.
 
 **ACP specialist routing for Buzz.** Added `ziggy acp <name|path> [--shared] [--agent <agent-id>]` so an ACP session can open a Profile specialist (`openSpecialistChat`) instead of the default persona. Buzz can model one agent row per specialist using the same `ziggy-squarey` harness with per-agent `agent_args: ["--agent", "ada"]` — no additional custom-harness files. CLI parsing, help, ACP face routing, and a routing test updated; `bun run check` green.
+
+**Ziggy 0.2.4 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.3 to 0.2.4; documented ACP specialist routing (`--agent`) and the Buzz operations guide in the changelog. No source behavior changed.
