@@ -419,3 +419,5 @@ results.
 ## 2026-08-18
 
 **ACP session model announce for Buzz.** Extended `ziggy acp`'s session/new response with Buzz's unstable SessionModelState: `availableModels` (provider/model ids) and `currentModelId`, sourced from the profile's auth-configured models (`ModelRuntime.getAvailable()` — the auth.json ∩ models-store intersection, via a new read-only `available` surface on the Pi models adapter and `ModelsApi.available`). Added a custom `session/set_model` request handler that validates `provider/model` against the profile's authed models and records the per-session selection (invalid-params on unknown models/sessions). `runAcp` now receives the Models service from main. Focused test asserts the announce shape and set_model validation; all ACP/models tests green, `bun run check` passes.
+
+**Ziggy 0.2.3 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.2 to 0.2.3; documented the ACP SessionModelState announce and `session/set_model` handler in the changelog. No source behavior changed.

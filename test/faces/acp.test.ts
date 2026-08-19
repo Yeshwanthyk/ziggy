@@ -168,7 +168,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
   expect(result.initialized).toEqual({
     protocolVersion: 1,
     agentCapabilities: {},
-    agentInfo: { name: "ziggy", title: "Ziggy", version: "0.2.2" },
+    agentInfo: { name: "ziggy", title: "Ziggy", version: "0.2.3" },
   });
   expect(result.prompted).toEqual({ stopReason: "end_turn" });
   expect(opened).toEqual({

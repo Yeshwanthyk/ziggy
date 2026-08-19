@@ -2,7 +2,7 @@
 
 Ziggy is a folder that is an assistant: one Bun/TypeScript runtime around the published Pi coding-agent SDK. Pi owns models, sessions, tools, and transcripts; Ziggy owns visible Profile policy and composition.
 
-Current version is **0.2.2**. Notable changes live in [CHANGELOG.md](CHANGELOG.md).
+Current version is **0.2.3**. Notable changes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -34,7 +34,7 @@ curl -fL -o ziggy https://github.com/Yeshwanthyk/ziggy/releases/latest/download/
 chmod +x ziggy
 ```
 
-`ziggy update` uses the same GitHub release assets. Linux and Intel Mac builds are not in 0.2.2.
+`ziggy update` uses the same GitHub release assets. Linux and Intel Mac builds are not in 0.2.3.
 
 ## Core commands
 
@@ -68,6 +68,7 @@ Run `ziggy help` for the complete command surface.
 ## Operations guides
 
 - [Supervise `ziggy serve`](docs/operations/serve.md)
+- [Connect a Profile to Telegram](docs/operations/telegram.md)
 - [Connect a Profile to Discord](docs/operations/discord.md)
 - [Connect a Profile to Slack](docs/operations/slack.md)
 - [Operate automations](docs/operations/automations.md)

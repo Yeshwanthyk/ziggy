@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.2.3] - 2026-08-18
+
+### Added
+
+- ACP `session/new` now announces Buzz's unstable SessionModelState: `availableModels` and `currentModelId` sourced from the Profile's auth-configured models (the auth.json ∩ models-store intersection)
+- ACP `session/set_model` request handler validates `provider/model` against the Profile's authed models and records the per-session selection
 ## [0.2.2] - 2026-08-16
 
 ### Added
