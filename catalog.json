@@ -44,6 +44,24 @@
       "path": "./extensions/coding-agent"
     },
     {
+      "id": "computer-use",
+      "version": "0.5.0",
+      "source": "bundled",
+      "path": "./extensions/computer-use"
+    },
+    {
+      "id": "computer-workflows",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/computer-workflows"
+    },
+    {
+      "id": "dev-browser",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/dev-browser"
+    },
+    {
       "id": "diffs",
       "version": "0.1.0",
       "source": "bundled",

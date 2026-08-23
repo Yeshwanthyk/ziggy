@@ -1,6 +1,8 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "ignorePatterns": [
+    "extensions/computer-use/dist/**",
+    "extensions/computer-use/scripts/**",
     "vendor/effect/**",
     "src/generated/**",
     "src/adapters/pi/generated/**"

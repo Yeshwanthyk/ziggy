@@ -3,6 +3,9 @@
   "ignorePatterns": [
     "dist/**",
     "coverage/**",
+    "extensions/computer-use/dist/**",
+    "extensions/computer-use/native/**",
+    "extensions/computer-use/scripts/**",
     "vendor/effect/**",
     "src/generated/**",
     "src/adapters/pi/generated/**"

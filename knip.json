@@ -21,5 +21,9 @@
     "clients/**/*.ts",
     "tooling/**/*.{ts,mjs}"
   ],
+  "ignore": [
+    "extensions/computer-use/dist/**",
+    "extensions/computer-use/scripts/**"
+  ],
   "include": ["files", "exports", "types"]
 }

@@ -439,6 +439,9 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "codemode",
     "codex",
     "coding-agent",
+    "computer-use",
+    "computer-workflows",
+    "dev-browser",
     "diffs",
     "executor",
     "extension-authoring",
@@ -479,6 +482,29 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "apple_reminders_move",
     "apple_reminders_reschedule",
     "codemode_execute",
+    "dev_browser",
+    "find_roots",
+    "observe_ui",
+    "search_ui",
+    "expand_ui",
+    "inspect_ui",
+    "act_ui",
+    "read_text",
+    "run_ui_segment",
+    "wait_for",
+    "launch_browser",
+    "navigate_browser",
+    "evaluate_browser",
+    "workflow_record_start",
+    "workflow_record_stop",
+    "workflow_record_cancel",
+    "workflow_draft_show",
+    "workflow_publish",
+    "workflow_publish_prepare",
+    "workflow_list",
+    "workflow_show",
+    "workflow_plan",
+    "workflow_run_finish",
     "diffs",
     "executor_call",
     "executor_resume",
@@ -496,11 +522,14 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "self_improvement_log",
     "self_improvement_status",
     "web_search",
-  ];
+  ].sort((left, right) => left.localeCompare(right));
   const executablePackages = [
     "agent-browser",
     "apple-reminders",
     "codemode",
+    "computer-use",
+    "computer-workflows",
+    "dev-browser",
     "diffs",
     "executor",
     "github",
@@ -564,7 +593,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   expect(productionResources.extensionPaths).toEqual(
     executablePackages.map((id) => join(profilePath, "extensions", id)),
   );
-  expect(productionResources.skillPaths).toHaveLength(35);
+  expect(productionResources.skillPaths).toHaveLength(37);
   expect(
     productionResources.skillPaths.every((skillPath) => skillPath.startsWith(profilePath)),
   ).toBe(true);
@@ -573,7 +602,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     [...productionResources.skillPaths],
     [...productionResources.extensionFactories],
   );
-  assertCatalog(productionServices, 35);
+  assertCatalog(productionServices, 37);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
