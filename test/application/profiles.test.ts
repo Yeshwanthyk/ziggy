@@ -106,6 +106,51 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
     ).rejects.toMatchObject({ _tag: "ProfileTargetNotDirectory" });
     expect(await readFile(path.join(root, "human-soul.md"), "utf8")).toBe("do not touch\n");
     expect(await readdir(symlinkSoul)).toEqual(["SOUL.md"]);
+
+    const physicalProfile = path.join(root, "physical-profile");
+    const linkedProfile = path.join(root, "linked-profile");
+    await mkdir(physicalProfile);
+    await symlink(physicalProfile, linkedProfile);
+    await expect(
+      useProfiles((profiles) => profiles.initProfile({ path: linkedProfile, name: "Linked" })),
+    ).rejects.toMatchObject({ _tag: "ProfileTargetNotDirectory", path: linkedProfile });
+    expect(await readdir(physicalProfile)).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("listing admits only physical Profiles with a regular SOUL.md", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ziggy-profile-list-test-"));
+  const profilesDirectory = path.join(root, "profiles");
+  const registryPath = path.join(root, "profiles.list");
+  try {
+    await mkdir(profilesDirectory);
+    const validProfile = path.join(root, "valid");
+    const directorySoul = path.join(root, "directory-soul");
+    const symlinkSoul = path.join(root, "symlink-soul");
+    const physicalProfile = path.join(root, "physical-profile");
+    const linkedProfile = path.join(root, "linked-profile");
+    await mkdir(validProfile);
+    await writeFile(path.join(validProfile, "SOUL.md"), "# Valid\n");
+    await mkdir(path.join(directorySoul, "SOUL.md"), { recursive: true });
+    await mkdir(symlinkSoul);
+    await writeFile(path.join(root, "external-soul.md"), "# External\n");
+    await symlink(path.join(root, "external-soul.md"), path.join(symlinkSoul, "SOUL.md"));
+    await mkdir(physicalProfile);
+    await writeFile(path.join(physicalProfile, "SOUL.md"), "# Physical\n");
+    await symlink(physicalProfile, linkedProfile);
+    await writeFile(
+      registryPath,
+      `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`,
+    );
+
+    const listings = await useProfiles((profiles) =>
+      profiles.listProfiles(profilesDirectory, registryPath),
+    );
+
+    expect(listings).toEqual([{ name: "valid", path: validProfile }]);
+    expect(await readFile(registryPath, "utf8")).toBe(`${validProfile}\n`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

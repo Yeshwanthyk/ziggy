@@ -427,3 +427,5 @@ results.
 **Ziggy 0.2.4 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.3 to 0.2.4; documented ACP specialist routing (`--agent`) and the Buzz operations guide in the changelog. No source behavior changed.
 
 **Knip structural cleanup gate.** Added a repository-shaped Knip configuration covering Ziggy runtime, tests, extensions, clients, and tooling without scanning the vendored Effect submodule. The focused files/exports/types audit now runs inside `bun run check`. Removed the unused lossless-claw refresh wrapper and made internally owned helper schemas, types, and lint utilities private; runtime behavior and public package entrypoints are unchanged.
+
+**Profile validity aligned.** Profile initialization now rejects a symlinked Profile root instead of following it, and Profile listing admits only a physical directory containing a regular non-symlink `SOUL.md`, matching doctor and downstream filesystem boundaries. Focused resolver tests pin bare-name, explicit path, tilde, current-directory, default-home, and `ZIGGY_HOME` behavior. Existing human-owned Profile bytes and registry pruning behavior are unchanged.

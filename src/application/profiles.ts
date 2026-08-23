@@ -1,4 +1,4 @@
-import { appendFile, lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
@@ -58,21 +58,21 @@ const fileSystemError = (
   });
 };
 
-const statPath = (targetPath: string) =>
-  Effect.tryPromise({
-    try: () => stat(targetPath),
-    catch: (cause) => fileSystemError("inspect", targetPath, cause),
-  });
-
 const lstatPath = (targetPath: string) =>
   Effect.tryPromise({
     try: () => lstat(targetPath),
     catch: (cause) => fileSystemError("inspect", targetPath, cause),
   });
 
-const pathExists = (targetPath: string) =>
-  lstatPath(targetPath).pipe(
-    Effect.as(true),
+const isInitializedProfile = (
+  profilePath: string,
+): Effect.Effect<boolean, ProfileFileSystemError> =>
+  Effect.gen(function* () {
+    const profile = yield* lstatPath(profilePath);
+    if (!profile.isDirectory() || profile.isSymbolicLink()) return false;
+    const soul = yield* lstatPath(path.join(profilePath, "SOUL.md"));
+    return soul.isFile() && !soul.isSymbolicLink();
+  }).pipe(
     Effect.catchIf(
       (error) => error.code === "ENOENT",
       () => Effect.succeed(false),
@@ -213,14 +213,17 @@ const initProfile = (
   options: InitProfileOptions = {},
 ): Effect.Effect<InitializedProfile, ProfileError> =>
   Effect.gen(function* () {
-    const targetStatus = yield* statPath(target.path).pipe(
+    const targetStatus = yield* lstatPath(target.path).pipe(
       Effect.catchIf(
         (failure) => failure.code === "ENOENT",
         () => Effect.void,
       ),
     );
 
-    if (targetStatus !== undefined && !targetStatus.isDirectory()) {
+    if (
+      targetStatus !== undefined &&
+      (!targetStatus.isDirectory() || targetStatus.isSymbolicLink())
+    ) {
       return yield* new ProfileTargetNotDirectory({ path: target.path });
     }
 
@@ -313,16 +316,18 @@ const listProfiles = (
     const profilePaths = [...new Set([...registryEntries, ...directoryPaths])];
 
     const listings = yield* Effect.forEach(profilePaths, (profilePath) =>
-      pathExists(path.join(profilePath, "SOUL.md")).pipe(
-        Effect.map((hasSoul) => ({
-          hasSoul,
-          listing: hasSoul ? { name: path.basename(profilePath), path: profilePath } : undefined,
+      isInitializedProfile(profilePath).pipe(
+        Effect.map((initialized) => ({
+          initialized,
+          listing: initialized
+            ? { name: path.basename(profilePath), path: profilePath }
+            : undefined,
         })),
       ),
     );
 
     const validRegistryEntries = registryEntries.filter((registryEntry) =>
-      listings.some(({ hasSoul, listing }) => hasSoul && listing?.path === registryEntry),
+      listings.some(({ initialized, listing }) => initialized && listing?.path === registryEntry),
     );
     if (validRegistryEntries.length !== registryEntries.length) {
       yield* Effect.tryPromise({
