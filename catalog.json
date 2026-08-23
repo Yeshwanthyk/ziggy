@@ -26,6 +26,12 @@
       "path": "./extensions/apple-reminders"
     },
     {
+      "id": "codemode",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/codemode"
+    },
+    {
       "id": "codex",
       "version": "0.1.0",
       "source": "bundled",

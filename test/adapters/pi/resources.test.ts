@@ -436,6 +436,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "agent-browser",
     "apple-notes",
     "apple-reminders",
+    "codemode",
     "codex",
     "coding-agent",
     "diffs",
@@ -477,6 +478,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "apple_reminders_list_incomplete",
     "apple_reminders_move",
     "apple_reminders_reschedule",
+    "codemode_execute",
     "diffs",
     "executor_call",
     "executor_resume",
@@ -498,6 +500,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   const executablePackages = [
     "agent-browser",
     "apple-reminders",
+    "codemode",
     "diffs",
     "executor",
     "github",

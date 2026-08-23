@@ -1,59 +1,46 @@
-# Operate Profile memory
+---
+name: wacli
+description: "Send third-party WhatsApp messages or sync/search WhatsApp history via wacli, not normal active chats."
+---
 
-Profile memory is plain Markdown owned by the Profile. It is separate from Pi session
-transcripts and is admitted by chat context:
+# wacli
 
-- `MEMORY.md` is shared assistant memory and loads in local, 1:1, and group chats.
-- `memory/users/<id>.md` is person memory and loads only in that person's 1:1 chat. Local chats
-  use `memory/users/owner.md`. Person memory never loads in a group.
-- `memory/groups/<id>.md` is group memory and loads only in that group chat.
+Use `wacli` only when the user explicitly asks you to message someone else on WhatsApp or when they ask to sync/search WhatsApp history.
+Do NOT use `wacli` for the active user conversation; the current chat transport owns that conversation.
+If the user is chatting with you on WhatsApp, you should not reach for this tool unless they ask you to contact a third party.
 
-Each document contains one entry per block. Separate entries with a line containing `§`:
+Safety
 
-```text
-The person prefers short answers.
-§
-The project ships on Fridays.
-```
+- Require explicit recipient + message text.
+- Confirm recipient + message before sending.
+- If anything is ambiguous, ask a clarifying question.
 
-The shared document is capped at 2,200 Unicode code points. Each person or group document is
-capped at 1,375 code points. A write that would exceed its cap is rejected as a whole; content is
-never silently truncated.
+Auth + sync
 
-The agent uses the `memory_write` tool with `add`, `replace`, and `remove` operations. `add` is
-idempotent. `replace` and `remove` require `oldText` to identify exactly one entry. A successful
-change is atomic under a per-document lock.
+- `wacli auth` (QR login + initial sync)
+- `wacli sync --follow` (continuous sync)
+- `wacli doctor`
 
-You can inspect memory without opening a chat:
+Find chats + messages
 
-```sh
-ziggy memory list [<profile>] [--json]
-ziggy memory show <profile> shared [--json]
-ziggy memory show <profile> user:<id> [--json]
-ziggy memory show <profile> group:<id> [--json]
-```
+- `wacli chats list --limit 20 --query "name or number"`
+- `wacli messages search "query" --limit 20 --chat <jid>`
+- `wacli messages search "invoice" --after 2025-01-01 --before 2025-12-31`
 
-Without a target, `memory list` inspects the current directory as the Profile target. JSON output
-contains scope, path, state, entry count, code-point count, and cap, but not raw memory content for
-`list`; `show --json` includes the bounded entries of the selected document.
+History backfill
 
-`memory list` reports only physical regular memory documents. Empty documents are reported as
-empty and are distinct from a missing document. The `memory/README.md` format note is never
-loaded as memory and is excluded from `ziggy doctor` size checks.
+- `wacli history backfill --chat <jid> --requests 2 --count 50`
 
-Hand-editing is safe when no Ziggy process is writing the same document, you preserve the `§`
-delimiter, and you stay within the cap. Run `ziggy doctor <profile>` after edits.
+Send
 
-Before an existing document is changed, Ziggy saves its exact prior bytes under:
+- Text: `wacli send text --to "+14155551212" --message "Hello! Are you free at 3pm?"`
+- Group: `wacli send text --to "1234567890-123456789@g.us" --message "Running 5 min late."`
+- File: `wacli send file --to "+14155551212" --file /path/agenda.pdf --caption "Agenda"`
 
-```text
-<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>.md
-```
+Notes
 
-The newest ten backups for each document are retained. Backup and pruning failures block the
-memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
-
-```sh
-cp <profile>/.runtime/memory-backups/MEMORY.md/<timestamp>.md <profile>/MEMORY.md
-ziggy doctor <profile>
-```
+- Store dir: `~/.wacli` (override with `--store`).
+- Use `--json` for machine-readable output when parsing.
+- Backfill requires your phone online; results are best-effort.
+- WhatsApp CLI is not needed for routine user chats; it’s for messaging other people.
+- JIDs: direct chats look like `<number>@s.whatsapp.net`; groups look like `<id>@g.us` (use `wacli chats list` to find).

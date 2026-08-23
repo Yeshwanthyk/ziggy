@@ -5,6 +5,8 @@
     "extensions/*/index.ts",
     "extensions/*/bin/**/*.{ts,mjs}",
     "extensions/*/test/**/*.test.ts",
+    "extensions/codemode/test/fixtures/mcp-server.ts",
+    "extensions/codemode/test/profile-smoke.ts",
     "clients/example-web/main.ts",
     "clients/gateway-client/src/index.ts",
     "clients/gateway-client/test/**/*.test.ts",

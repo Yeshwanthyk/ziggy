@@ -1,17 +1,17 @@
-# 1Password CLI get-started (summary)
+---
+name: lossless-memory
+description: Recall details from persisted Pi sessions with Lossless Claw tools.
+---
 
-- Works on macOS, Windows, and Linux.
-  - macOS/Linux shells: bash, zsh, sh, fish.
-  - Windows shell: PowerShell.
-- Requires a 1Password subscription and the desktop app to use app integration.
-- macOS requirement: Big Sur 11.0.0 or later.
-- Linux app integration requires PolKit + an auth agent.
-- Install the CLI per the official doc for your OS.
-- Enable desktop app integration in the 1Password app:
-  - Open and unlock the app, then select your account/collection.
-  - macOS: Settings > Developer > Integrate with 1Password CLI (Touch ID optional).
-  - Windows: turn on Windows Hello, then Settings > Developer > Integrate.
-  - Linux: Settings > Security > Unlock using system authentication, then Settings > Developer > Integrate.
-- After integration, run any command to sign in (example in docs: `op vault list`).
-- If multiple accounts: use `op signin` to pick one, or `--account` / `OP_ACCOUNT`.
-- For non-integration auth, use `op account add`.
+# Lossless Memory
+
+Use these tools when details from persisted Pi sessions matter.
+
+1. Call `lcm_sessions` to orient by recent session header IDs and paths.
+2. Call `lcm_grep` with distinctive terms, an optional session ID, and narrow role or time filters.
+3. Call `lcm_expand_query` to recover bounded neighboring evidence around promising matches.
+4. Call `lcm_describe` to inspect one session's active leaf, branch shape, and retained summaries.
+
+Prefer exact file names, command names, error text, and user terminology. Treat Pi session JSONL,
+compaction entries, and branches as authoritative. Cite the returned session header ID and path
+when recovered context affects an answer.

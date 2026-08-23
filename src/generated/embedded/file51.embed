@@ -1,259 +1,185 @@
-#!/usr/bin/env python3
-import argparse
-import json
-import os
-import sys
-import urllib.error
-import urllib.request
+# HyperFrames CLI
 
+Everything runs through `npx hyperframes` (or the globally-installed `hyperframes` after `npm install -g hyperframes`). Requires Node.js >= 22 and FFmpeg.
 
-ENDPOINT = "https://api.linear.app/graphql"
+## Workflow
 
+1. **Scaffold** — `npx hyperframes init my-video` (or `npx hyperframes capture <url>` if starting from a website)
+2. **Write** — author HTML composition (see `composition.md`)
+3. **Lint** — `npx hyperframes lint`
+4. **Validate** — `npx hyperframes validate` (WCAG contrast audit)
+5. **Inspect** — `npx hyperframes inspect` (visual layout audit)
+6. **Preview** — `npx hyperframes preview`
+7. **Render** — `npx hyperframes render`
 
-def fail(message, **details):
-    payload = {"ok": False, "error": message}
-    payload.update(details)
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 1
+Always lint before preview/render — catches missing `data-composition-id`, overlapping tracks, and unregistered timelines.
 
+## init — Scaffold a Project
 
-def request(query, variables=None):
-    api_key = os.environ.get("LINEAR_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("LINEAR_API_KEY is required")
-    body = json.dumps({"query": query, "variables": variables or {}}).encode()
-    req = urllib.request.Request(
-        ENDPOINT,
-        data=body,
-        headers={
-            "Authorization": api_key,
-            "Content-Type": "application/json",
-            "User-Agent": "pi-linear-extension",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as err:
-        detail = err.read().decode(errors="replace")
-        raise RuntimeError(f"Linear API HTTP {err.code}: {detail}") from err
-    if data.get("errors"):
-        raise RuntimeError(json.dumps(data["errors"], indent=2))
-    return data.get("data")
+```bash
+npx hyperframes init my-video                        # interactive wizard
+npx hyperframes init my-video --example warm-grain   # pick an example template
+npx hyperframes init my-video --video clip.mp4       # seed with a video file
+npx hyperframes init my-video --audio track.mp3      # seed with an audio file
+npx hyperframes init my-video --non-interactive      # skip prompts (CI / agent use)
+```
 
+Templates: `blank`, `warm-grain`, `play-mode`, `swiss-grid`, `vignelli`, `decision-tree`, `kinetic-type`, `product-promo`, `nyt-graph`.
 
-def connection_nodes(data, *path):
-    current = data
-    for key in path:
-        current = current[key]
-    return current.get("nodes", [])
+`init` creates the correct file structure, copies media, transcribes audio with Whisper, and installs authoring skills. Use it instead of creating files by hand.
 
+## capture — Website → Editable Components
 
-def resolve_team_id(team):
-    teams = connection_nodes(request("query { teams { nodes { id key name } } }"), "teams")
-    for item in teams:
-        if team in (item["id"], item["key"]) or team.lower() == item["name"].lower():
-            return item["id"]
-    raise RuntimeError(f"team not found: {team}")
+```bash
+npx hyperframes capture https://example.com                  # → captures/example.com/
+npx hyperframes capture https://stripe.com -o stripe-video   # custom output dir
+npx hyperframes capture https://example.com --json           # machine-readable output
+npx hyperframes capture https://example.com --skip-assets    # skip images/SVGs
+```
 
+Captures the site into `captures/<hostname>/capture/` by default, producing `capture/screenshots/`, `capture/assets/`, `capture/extracted/` (tokens.json, visible-text.txt, fonts.json), and a self-contained snapshot.
 
-def cmd_whoami(_):
-    return request("query { viewer { id name email } }")
+All downstream steps (DESIGN.md, SCRIPT.md, STORYBOARD, composition) read from the `capture/` subfolder — see `website-to-video.md`.
 
+## lint
 
-def cmd_list_teams(_):
-    return request("query { teams { nodes { id key name } } }")
+```bash
+npx hyperframes lint                # current directory
+npx hyperframes lint ./my-project   # specific project
+npx hyperframes lint --verbose      # include info-level findings
+npx hyperframes lint --json         # machine-readable output
+```
 
+Lints `index.html` and all files in `compositions/`. Reports errors (must fix), warnings (should fix), and info (only with `--verbose`).
 
-def cmd_list_projects(args):
-    return request(
-        "query($first:Int!) { projects(first:$first) { nodes { id name state url } } }",
-        {"first": args.limit},
-    )
+## validate
 
+```bash
+npx hyperframes validate                 # WCAG contrast audit at 5 timestamps
+npx hyperframes validate --no-contrast   # skip while iterating
+```
 
-def cmd_list_states(args):
-    team_id = resolve_team_id(args.team)
-    return request(
-        """
-        query($team:String!) {
-          team(id:$team) { id key name states { nodes { id name type position } } }
-        }
-        """,
-        {"team": team_id},
-    )
+Seeks to 5 timestamps, screenshots the page, samples background pixels behind every text element, and warns on contrast ratios below 4.5:1 (normal text) or 3:1 (large text — 24px+, or 19px+ bold). Run before final render.
 
+## inspect
 
-def cmd_list_issues(args):
-    if args.team:
-        return request(
-            """
-            query($first:Int!, $team:String!) {
-              issues(first:$first, filter:{ team: { key: { eq: $team } } }) {
-                nodes { id identifier title url state { name } assignee { name email } updatedAt }
-              }
-            }
-            """,
-            {"first": args.limit, "team": args.team},
-        )
-    return request(
-        """
-        query($first:Int!) {
-          issues(first:$first) {
-            nodes { id identifier title url state { name } assignee { name email } updatedAt }
-          }
-        }
-        """,
-        {"first": args.limit},
-    )
+```bash
+npx hyperframes inspect                 # visual layout audit at 5 timestamps
+npx hyperframes inspect ./my-project    # specific project
+npx hyperframes inspect --json          # agent-readable findings
+npx hyperframes inspect --samples 15    # denser timeline sweep
+npx hyperframes inspect --at 1.5,4,7.25 # explicit hero-frame timestamps
+```
 
+Use this after `lint` and `validate`, especially for compositions with speech bubbles, cards, captions, or tight typography. Reports overflow, off-frame elements, occluded text, contrast warnings, and per-timestamp layout summaries — catches issues that pure timeline lint can't see (e.g., a caption that wraps past the safe area only at a specific timestamp).
 
-def cmd_get_issue(args):
-    return request(
-        """
-        query($id:String!) {
-          issue(id:$id) {
-            id identifier title description url
-            state { id name type }
-            team { id key name }
-            assignee { id name email }
-            project { id name }
-          }
-        }
-        """,
-        {"id": args.issue},
-    )
+`npx hyperframes layout` is a compatibility alias for the same visual inspection pass.
 
+## preview
 
-def cmd_search_issues(args):
-    return request(
-        """
-        query($term:String!, $first:Int!) {
-          issueSearch(term:$term, first:$first) {
-            nodes { id identifier title url state { name } updatedAt }
-          }
-        }
-        """,
-        {"term": args.query, "first": args.limit},
-    )
+```bash
+npx hyperframes preview                # serve current directory (port 3002)
+npx hyperframes preview --port 4567    # custom port
+```
 
+Hot-reloads on file changes. Opens the Studio in your browser automatically.
 
-def cmd_create_issue(args):
-    team_id = resolve_team_id(args.team)
-    return request(
-        """
-        mutation($input:IssueCreateInput!) {
-          issueCreate(input:$input) {
-            success
-            issue { id identifier title url }
-          }
-        }
-        """,
-        {"input": {"teamId": team_id, "title": args.title, "description": args.description or ""}},
-    )
+## render
 
+```bash
+npx hyperframes render                              # standard MP4
+npx hyperframes render --output final.mp4           # named output
+npx hyperframes render --quality draft              # fast iteration
+npx hyperframes render --fps 60 --quality high      # final delivery
+npx hyperframes render --format webm                # transparent WebM
+npx hyperframes render --docker                     # byte-identical reproducible render
+```
 
-def cmd_update_status(args):
-    state_data = request(
-        """
-        query($id:String!) {
-          issue(id:$id) { team { states { nodes { id name } } } }
-        }
-        """,
-        {"id": args.issue},
-    )
-    states = connection_nodes(state_data, "issue", "team", "states")
-    state_id = next(
-        (
-            state["id"]
-            for state in states
-            if state["id"] == args.state or state["name"].lower() == args.state.lower()
-        ),
-        None,
-    )
-    if not state_id:
-        raise RuntimeError(f"state not found: {args.state}")
-    return request(
-        """
-        mutation($id:String!, $input:IssueUpdateInput!) {
-          issueUpdate(id:$id, input:$input) {
-            success
-            issue { id identifier title url state { name } }
-          }
-        }
-        """,
-        {"id": args.issue, "input": {"stateId": state_id}},
-    )
+| Flag           | Options                 | Default                        | Notes                       |
+| -------------- | ----------------------- | ------------------------------ | --------------------------- |
+| `--output`     | path                    | `renders/<name>_<timestamp>.mp4` | Output path                 |
+| `--fps`        | 24, 30, 60              | 30                             | 60fps doubles render time   |
+| `--quality`    | `draft`, `standard`, `high` | standard                   | draft for iterating         |
+| `--format`     | `mp4`, `webm`           | mp4                            | WebM supports transparency  |
+| `--workers`    | 1–8 or `auto`           | auto                           | Each spawns Chrome          |
+| `--docker`     | flag                    | off                            | Reproducible output         |
+| `--gpu`        | flag                    | off                            | GPU-accelerated encoding    |
+| `--strict`     | flag                    | off                            | Fail on lint errors         |
+| `--strict-all` | flag                    | off                            | Fail on errors AND warnings |
 
+**Quality guidance:** `draft` while iterating, `standard` for review, `high` for final delivery.
 
-def cmd_add_comment(args):
-    return request(
-        """
-        mutation($input:CommentCreateInput!) {
-          commentCreate(input:$input) {
-            success
-            comment { id url body createdAt }
-          }
-        }
-        """,
-        {"input": {"issueId": args.issue, "body": args.body}},
-    )
+## transcribe
 
+```bash
+npx hyperframes transcribe audio.mp3
+npx hyperframes transcribe video.mp4 --model medium.en --language en
+npx hyperframes transcribe subtitles.srt     # import existing
+npx hyperframes transcribe subtitles.vtt
+npx hyperframes transcribe openai-response.json
+```
 
-def cmd_raw(args):
-    payload = json.loads(args.payload)
-    return request(payload["query"], payload.get("variables"))
+Produces word-level timings suitable for caption components. First run downloads the Whisper model (cached after).
 
+## tts
 
-def parser():
-    root = argparse.ArgumentParser(prog="linear_api.py")
-    sub = root.add_subparsers(dest="command", required=True)
-    sub.add_parser("whoami").set_defaults(func=cmd_whoami)
-    sub.add_parser("list-teams").set_defaults(func=cmd_list_teams)
-    projects = sub.add_parser("list-projects")
-    projects.add_argument("--limit", type=int, default=50)
-    projects.set_defaults(func=cmd_list_projects)
-    states = sub.add_parser("list-states")
-    states.add_argument("team")
-    states.set_defaults(func=cmd_list_states)
-    issues = sub.add_parser("list-issues")
-    issues.add_argument("--team")
-    issues.add_argument("--limit", type=int, default=20)
-    issues.set_defaults(func=cmd_list_issues)
-    get_issue = sub.add_parser("get-issue")
-    get_issue.add_argument("issue")
-    get_issue.set_defaults(func=cmd_get_issue)
-    search = sub.add_parser("search-issues")
-    search.add_argument("query")
-    search.add_argument("--limit", type=int, default=20)
-    search.set_defaults(func=cmd_search_issues)
-    create = sub.add_parser("create-issue")
-    create.add_argument("--team", required=True)
-    create.add_argument("--title", required=True)
-    create.add_argument("--description")
-    create.set_defaults(func=cmd_create_issue)
-    status = sub.add_parser("update-status")
-    status.add_argument("issue")
-    status.add_argument("--state", required=True)
-    status.set_defaults(func=cmd_update_status)
-    comment = sub.add_parser("add-comment")
-    comment.add_argument("issue")
-    comment.add_argument("--body", required=True)
-    comment.set_defaults(func=cmd_add_comment)
-    raw = sub.add_parser("raw")
-    raw.add_argument("payload")
-    raw.set_defaults(func=cmd_raw)
-    return root
+```bash
+npx hyperframes tts "Text here" --voice af_nova --output narration.wav
+npx hyperframes tts script.txt --voice bf_emma
+npx hyperframes tts "La reunión empieza a las nueve" --voice ef_dora --output es.wav
+npx hyperframes tts "Hello there" --voice af_heart --lang fr-fr --output accented.wav
+npx hyperframes tts --list                    # show all voices
+```
 
+Uses Kokoro (local, no API key). Voice ID first letter encodes language: `a` American English, `b` British English, `e` Spanish, `f` French, `h` Hindi, `i` Italian, `j` Japanese, `p` Brazilian Portuguese, `z` Mandarin. The CLI auto-infers the phonemizer locale from that prefix — pass `--lang` only to override (e.g. stylized accents). Valid `--lang` codes: `en-us`, `en-gb`, `es`, `fr-fr`, `hi`, `it`, `pt-br`, `ja`, `zh`. Non-English phonemization requires `espeak-ng` installed system-wide (`apt-get install espeak-ng` / `brew install espeak-ng`).
 
-def main():
-    args = parser().parse_args()
-    try:
-        print(json.dumps(args.func(args), indent=2, sort_keys=True))
-        return 0
-    except Exception as err:
-        return fail(str(err))
+## doctor
 
+```bash
+npx hyperframes doctor
+```
 
-if __name__ == "__main__":
-    sys.exit(main())
+Verifies environment:
+- Node.js >= 22
+- FFmpeg present on PATH
+- Available RAM (renders are memory-hungry — 4 GB minimum)
+- Chrome binary resolution (`chrome-headless-shell` preferred over system Chrome)
+- Current `hyperframes` version
+
+Run this **first** when a render fails. See `troubleshooting.md` for interpreting the output.
+
+## browser
+
+```bash
+npx hyperframes browser --install      # install the bundled chrome-headless-shell
+npx hyperframes browser --path         # print the resolved browser binary path
+npx hyperframes browser --clean        # clear the bundled browser cache
+```
+
+## info
+
+```bash
+npx hyperframes info
+```
+
+Prints version, Node version, FFmpeg version, OS, and resolved browser path — useful in bug reports.
+
+## upgrade
+
+```bash
+npx hyperframes upgrade -y
+```
+
+Check for and install updates. Run this if you hit `HeadlessExperimental.beginFrame` errors — the auto-detect fix shipped in `hyperframes@0.4.2` (commit 4c72ba4, March 2026).
+
+## Other
+
+```bash
+npx hyperframes compositions    # list compositions in the project
+npx hyperframes docs            # open documentation in browser
+npx hyperframes benchmark .     # benchmark render performance
+npx hyperframes add <block>     # install a block/component from the catalog
+npx hyperframes add --list      # browse the catalog
+```
+
+Popular catalog blocks: `flash-through-white` (shader transition), `instagram-follow` (social overlay), `data-chart` (animated chart), `lower-third` (talking-head overlay). See [hyperframes.heygen.com/catalog](https://hyperframes.heygen.com/catalog).

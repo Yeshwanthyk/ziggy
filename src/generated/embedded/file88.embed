@@ -1,83 +1,45 @@
-#!/usr/bin/env bash
-set -euo pipefail
+---
+name: pi-packages
+description: Inspect catalogue packages and select catalogue or Profile-owned Pi extensions.
+---
 
-usage() {
-  cat <<'USAGE'
-Usage: wait-for-text.sh -t target -p pattern [options]
+# Pi packages in Ziggy
 
-Poll a tmux pane for text and exit when found.
+The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Approved packages
+are compiled into the Ziggy executable as file trees. The in-process `profile_extensions` tool
+selects a package and records its ID in `extensions.json`; runtime loads only those Profile
+folders. Profile-specific packages live under the same shelf.
+Each package may contain an Agent Skill, executable Pi extension code, or both. `pi-packages`,
+`extension-authoring`, and `ziggy-operations` are required and also sit on disk in the Profile;
+all other packages are optional. A Profile-owned package takes precedence over an approved
+catalogue package with the same ID.
 
-Options:
-  -t, --target    tmux target (session:window.pane), required
-  -p, --pattern   regex pattern to look for, required
-  -F, --fixed     treat pattern as a fixed string (grep -F)
-  -T, --timeout   seconds to wait (integer, default: 15)
-  -i, --interval  poll interval in seconds (default: 0.5)
-  -l, --lines     number of history lines to inspect (integer, default: 1000)
-  -h, --help      show this help
-USAGE
-}
+The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf identity;
+`package.json.name` remains independent upstream package metadata. For example, shelf ID `computer-use` can retain the
+package name `@injaneity/pi-computer-use`.
 
-target=""
-pattern=""
-grep_flag="-E"
-timeout=15
-interval=0.5
-lines=1000
+Use the in-process `profile_extensions` tool for `list`, `add`, `remove`, and `validate` in the
+owning Profile runtime. Never shell into `ziggy`, invoke a Ziggy CLI command, or edit
+`extensions.json` directly. After authoring a Profile package, call `profile_extensions` with
+`action: "add"` and its shelf ID. Claim success only from the tool's structured result; surface
+operation, stage, code, and message when it fails. Adding validates the package, provisions owned
+automations, and atomically records the selection. Removing pauses extension-owned automation,
+then removes the selection without deleting the copied folder. Reopen the Profile or restart its
+resident Ziggy process after a real selection change. Required packages cannot be added or
+removed.
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -t|--target)   target="${2-}"; shift 2 ;;
-    -p|--pattern)  pattern="${2-}"; shift 2 ;;
-    -F|--fixed)    grep_flag="-F"; shift ;;
-    -T|--timeout)  timeout="${2-}"; shift 2 ;;
-    -i|--interval) interval="${2-}"; shift 2 ;;
-    -l|--lines)    lines="${2-}"; shift 2 ;;
-    -h|--help)     usage; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
-  esac
-done
+To create or change a Profile-owned package, read the `extension-authoring` skill and edit
+`<profile>/extensions/<id>/`. Do not edit the Ziggy catalogue.
 
-if [[ -z "$target" || -z "$pattern" ]]; then
-  echo "target and pattern are required" >&2
-  usage
-  exit 1
-fi
+To adopt a third-party package, clone or download its source into an OS temporary directory and
+inspect `package.json` and its declared `pi` paths there; never run install or lifecycle
+scripts. Choose a lowercase kebab-case shelf ID independent of `package.json.name`, copy only
+the package source into `<profile>/extensions/<id>/` (excluding `.git/`, `node_modules/`, and
+temp artifacts), then call `profile_extensions` with `action: "add"` and the shelf ID. The copy
+alone leaves the package inactive; report admission or failure from the tool's structured
+result. Never delete or replace an existing shelf directory; if the destination exists, stop
+and report the collision. Remove only the OS temporary paths this attempt created, and clean
+them on success and failure.
 
-if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
-  echo "timeout must be an integer number of seconds" >&2
-  exit 1
-fi
-
-if ! [[ "$lines" =~ ^[0-9]+$ ]]; then
-  echo "lines must be an integer" >&2
-  exit 1
-fi
-
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "tmux not found in PATH" >&2
-  exit 1
-fi
-
-# End time in epoch seconds (integer, good enough for polling)
-start_epoch=$(date +%s)
-deadline=$((start_epoch + timeout))
-
-while true; do
-  # -J joins wrapped lines, -S uses negative index to read last N lines
-  pane_text="$(tmux capture-pane -p -J -t "$target" -S "-${lines}" 2>/dev/null || true)"
-
-  if printf '%s\n' "$pane_text" | grep $grep_flag -- "$pattern" >/dev/null 2>&1; then
-    exit 0
-  fi
-
-  now=$(date +%s)
-  if (( now >= deadline )); then
-    echo "Timed out after ${timeout}s waiting for pattern: $pattern" >&2
-    echo "Last ${lines} lines from $target:" >&2
-    printf '%s\n' "$pane_text" >&2
-    exit 1
-  fi
-
-  sleep "$interval"
-done
+The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
+are replaced by the single optional `self-improvement` package.

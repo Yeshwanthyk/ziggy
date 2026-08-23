@@ -2,6 +2,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import factoryAgentBrowser from "../../../../extensions/agent-browser/index.ts";
 import factoryAppleReminders from "../../../../extensions/apple-reminders/index.ts";
+import factoryCodemode from "../../../../extensions/codemode/dist/index.js";
 import factoryDiffs from "../../../../extensions/diffs/index.ts";
 import factoryExecutor from "../../../../extensions/executor/index.ts";
 import factoryGithub from "../../../../extensions/github/index.ts";
@@ -17,6 +18,7 @@ export const builtinFactories: ReadonlyArray<{
 }> = [
   { id: "agent-browser", factory: factoryAgentBrowser },
   { id: "apple-reminders", factory: factoryAppleReminders },
+  { id: "codemode", factory: factoryCodemode },
   { id: "diffs", factory: factoryDiffs },
   { id: "executor", factory: factoryExecutor },
   { id: "github", factory: factoryGithub },
