@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "test/**/*.test.ts",
+    "extensions/*/index.ts",
+    "extensions/*/bin/**/*.{ts,mjs}",
+    "extensions/*/test/**/*.test.ts",
+    "clients/example-web/main.ts",
+    "clients/gateway-client/src/index.ts",
+    "clients/gateway-client/test/**/*.test.ts",
+    "tooling/generate-*.mjs",
+    "tooling/oxlint/*-plugin.mjs",
+    "tooling/**/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "extensions/**/*.{ts,mjs}",
+    "clients/**/*.ts",
+    "tooling/**/*.{ts,mjs}"
+  ],
+  "include": ["files", "exports", "types"]
+}

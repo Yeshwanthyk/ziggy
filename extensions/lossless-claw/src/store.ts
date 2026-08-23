@@ -119,7 +119,7 @@ interface ActiveEntryRow {
   readonly timestamp: string;
 }
 
-export interface RefreshResult {
+interface RefreshResult {
   readonly discoveredFiles: number;
   readonly changedFiles: number;
   readonly deletedFiles: number;
@@ -551,11 +551,6 @@ const withFreshIndex = <Result>(profile: string, use: (database: Database) => Re
   using database = openIndex(profile);
   refreshDatabase(profile, database);
   return use(database);
-};
-
-export const refreshProfileIndex = (profile: string): RefreshResult => {
-  using database = openIndex(profile);
-  return refreshDatabase(profile, database);
 };
 
 export const listProfileSessions = (

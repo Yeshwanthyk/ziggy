@@ -425,3 +425,5 @@ results.
 **ACP specialist routing for Buzz.** Added `ziggy acp <name|path> [--shared] [--agent <agent-id>]` so an ACP session can open a Profile specialist (`openSpecialistChat`) instead of the default persona. Buzz can model one agent row per specialist using the same `ziggy-squarey` harness with per-agent `agent_args: ["--agent", "ada"]` — no additional custom-harness files. CLI parsing, help, ACP face routing, and a routing test updated; `bun run check` green.
 
 **Ziggy 0.2.4 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.3 to 0.2.4; documented ACP specialist routing (`--agent`) and the Buzz operations guide in the changelog. No source behavior changed.
+
+**Knip structural cleanup gate.** Added a repository-shaped Knip configuration covering Ziggy runtime, tests, extensions, clients, and tooling without scanning the vendored Effect submodule. The focused files/exports/types audit now runs inside `bun run check`. Removed the unused lossless-claw refresh wrapper and made internally owned helper schemas, types, and lint utilities private; runtime behavior and public package entrypoints are unchanged.

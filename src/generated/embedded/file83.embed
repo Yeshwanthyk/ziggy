@@ -19,7 +19,7 @@ const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const RESERVED_EXTENSION_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
 const DESCRIPTION_MAX = 1_024;
 
-export type ReviewDecision = "applied" | "no-op" | "staged" | "error";
+type ReviewDecision = "applied" | "no-op" | "staged" | "error";
 
 const NodeError = Type.Object(
   { code: Type.Optional(Type.String()) },
@@ -67,7 +67,7 @@ export const decodeSessionEntries = (
   entries: ReadonlyArray<SessionEntry>,
 ): ReadonlyArray<SessionEntry> => entries.filter((entry) => Check(SessionEntryValue, entry));
 
-export interface SessionMessageView {
+interface SessionMessageView {
   role?: string;
   stopReason?: string;
 }
@@ -87,7 +87,7 @@ export interface ReviewLogInput {
   at?: Date;
 }
 
-export interface CuratorState {
+interface CuratorState {
   readonly version: 1;
   readonly completedSessionIds: ReadonlyArray<string>;
   readonly lastObservedAt?: string;

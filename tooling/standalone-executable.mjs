@@ -7,7 +7,7 @@ import { Schema } from "effect";
 export const PINNED_BUN_VERSION = "1.3.13";
 export const STANDALONE_TARGET = "bun-darwin-arm64";
 
-export const StandaloneBuildReport = Schema.Struct({
+const StandaloneBuildReport = Schema.Struct({
   formatVersion: Schema.Literal(1),
   artifact: Schema.String,
   artifactBytes: Schema.Number,
@@ -88,7 +88,7 @@ export const assertStandaloneWorktreePolicy = (development, dirtyEntries) => {
   }
 };
 
-export const sandboxString = (value) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+const sandboxString = (value) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 
 export const sandboxProfile = (deniedCheckouts, network) =>
   [

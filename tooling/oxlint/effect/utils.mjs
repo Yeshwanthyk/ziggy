@@ -60,7 +60,7 @@ export function isIdentifier(node, name) {
   return node?.type === "Identifier" && (name === undefined || node.name === name);
 }
 
-export function isStringLiteral(node) {
+function isStringLiteral(node) {
   return (
     (node?.type === "Literal" && node.value === String(node.value)) ||
     node?.type === "StringLiteral"
@@ -79,32 +79,6 @@ function typeName(node) {
 
 export function typeReferenceName(node) {
   return node?.type === "TSTypeReference" ? typeName(node.typeName) : undefined;
-}
-
-function isPromiseType(node) {
-  return typeReferenceName(node) === "Promise";
-}
-
-export function containsPromiseType(node) {
-  if (!(node instanceof Object)) return false;
-  if (!("type" in node)) return false;
-  if (isPromiseType(node)) return true;
-
-  switch (node.type) {
-    case "TSTypeAnnotation":
-      return containsPromiseType(node.typeAnnotation);
-    case "TSFunctionType":
-      return containsPromiseType(node.returnType);
-    case "TSParenthesizedType":
-      return containsPromiseType(node.typeAnnotation);
-    case "TSUnionType":
-    case "TSIntersectionType":
-      return (node.types ?? []).some(containsPromiseType);
-    case "TSConditionalType":
-      return containsPromiseType(node.trueType) || containsPromiseType(node.falseType);
-    default:
-      return false;
-  }
 }
 
 export function nodeName(node) {
