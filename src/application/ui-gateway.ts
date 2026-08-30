@@ -31,6 +31,10 @@ import {
 import type { UiGroupRecord as UiGroupRecordValue } from "../domain/ui-gateway";
 import type { ChatPromptOptions } from "./agent";
 import type { ChatRegistryEvent, ChatRegistryListEntry } from "./chat-registry";
+import {
+  ProfileAgentThinking,
+  type ProfileAgentThinking as ProfileAgentThinkingValue,
+} from "../domain/profile";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
 import type { UiConversationContext } from "../domain/ui-gateway";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
@@ -134,7 +138,10 @@ interface CachedCommand {
   readonly result?: UiResponseFrame;
 }
 
-const sessionRef = (profileId: ProfileId, key: UiSessionKey): UiSessionRef => ({
+const sessionRef = (
+  profileId: ProfileId,
+  key: UiSessionKey,
+): Extract<UiSessionRef, { readonly kind: "live" }> => ({
   profileId,
   kind: "live",
   key,
@@ -151,6 +158,56 @@ const liveSessionProjection = (profileId: ProfileId, entry: ChatRegistryListEntr
   if (entry.context !== undefined) return { ...base, context: entry.context };
   if (entry.agentId !== undefined) return { ...base, agentId: entry.agentId };
   return base;
+};
+const isProfileAgentThinking = Schema.is(ProfileAgentThinking);
+interface ProfileAgentWireProjection {
+  id: string;
+  description: string;
+  provider?: string;
+  model?: string;
+  thinking?: ProfileAgentThinkingValue;
+  tools: ReadonlyArray<string>;
+}
+interface ProfileAgentValidationWireProjection {
+  id: string;
+  valid: boolean;
+  message?: string;
+}
+const profileAgentProjection = <
+  Agent extends {
+    readonly id: string;
+    readonly description: string;
+    readonly provider?: string;
+    readonly model?: string;
+    readonly thinking?: string;
+    readonly tools: ReadonlyArray<string>;
+  },
+>(
+  agent: Agent,
+) => {
+  const projection: ProfileAgentWireProjection = {
+    id: agent.id,
+    description: boundedText(agent.description, 512, "Specialist agent"),
+    tools: agent.tools.slice(0, 8).map((tool) => boundedText(tool, 128, "tool")),
+  };
+  if (agent.provider !== undefined)
+    projection.provider = boundedText(agent.provider, 128, "provider");
+  if (agent.model !== undefined) projection.model = boundedText(agent.model, 256, "model");
+  if (agent.thinking !== undefined && isProfileAgentThinking(agent.thinking))
+    projection.thinking = agent.thinking;
+  return projection;
+};
+const profileAgentValidationProjection = (validation: {
+  readonly id: string;
+  readonly valid: boolean;
+  readonly message?: string;
+}) => {
+  const projection: ProfileAgentValidationWireProjection = {
+    id: validation.id,
+    valid: validation.valid,
+  };
+  if (validation.message !== undefined) projection.message = boundedText(validation.message);
+  return projection;
 };
 const validSessionKey = (key: string): Effect.Effect<UiSessionKey, UiGatewayError> =>
   decodeSessionKey(key).pipe(Effect.mapError((cause) => badParams("session", cause)));
@@ -500,7 +557,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                   })),
                 )
               : config.profileDirectory.list().pipe(
-                  Effect.map((profiles) => ({ profiles })),
+                  Effect.map((profiles) => ({ profiles: profiles.slice(0, 32) })),
                   Effect.mapError((cause) => toGatewayError(request.method, cause)),
                 ),
           ),
@@ -549,7 +606,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           return {
             profileId: branch.profileId,
-            checks: report.checks.map((check) => ({
+            checks: report.checks.slice(0, 16).map((check) => ({
               id: boundedText(check.id, 80, "check"),
               severity: check.severity,
               message: mapHealthMessage(check.message),
@@ -569,8 +626,8 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           return {
             profileId: branch.profileId,
-            live: live.map((entry) => liveSessionProjection(branch.profileId, entry)),
-            stored: stored.map((session) => ({
+            live: live.slice(0, 16).map((entry) => liveSessionProjection(branch.profileId, entry)),
+            stored: stored.slice(0, 12).map((session) => ({
               ref: { profileId: branch.profileId, kind: "stored" as const, id: session.id },
               createdAt: session.createdAt,
               entryCount: session.entryCount,
@@ -698,7 +755,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             params.commandId,
           );
           subscriptions.set(subscriptionKey, unsubscribe);
-          return {};
+          return { acknowledged: true as const };
         });
       case "session.unwatch":
         return Effect.gen(function* () {
@@ -709,7 +766,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
             subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
           }
-          return {};
+          return { acknowledged: true as const };
         });
       case "session.close":
         return Effect.gen(function* () {
@@ -723,7 +780,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
           subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
           yield* branch.registry.closeUi(params.ref.key);
-          return {};
+          return { acknowledged: true as const };
         });
       case "prompt.submit":
       case "session.steer":
@@ -825,7 +882,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           } else if (request.method === "session.steer")
             yield* branch.registry.steer(params.ref.key, params.text);
           else yield* branch.registry.followUp(params.ref.key, params.text);
-          return {};
+          return { acknowledged: true as const };
         });
       case "session.abort":
         return Effect.gen(function* () {
@@ -837,7 +894,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           }
           const branch = yield* route(params.ref.profileId);
           yield* branch.registry.abort(params.ref.key);
-          return {};
+          return { acknowledged: true as const };
         });
       case "agent.list":
         return decodeAgentList(request.params).pipe(
@@ -849,7 +906,9 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               : config.profileAgents.list(branch.target).pipe(
                   Effect.map((agents) => ({
                     profileId: branch.profileId,
-                    agents: agents.map(({ path: _path, ...agent }) => agent),
+                    agents: agents
+                      .slice(0, 4)
+                      .map(({ path: _path, ...agent }) => profileAgentProjection(agent)),
                   })),
                   Effect.mapError((cause) => toGatewayError(request.method, cause)),
                 ),
@@ -867,7 +926,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .show(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           const { path: _path, ...withoutPath } = agent;
-          return { profileId: branch.profileId, agent: withoutPath };
+          return { profileId: branch.profileId, agent: profileAgentProjection(withoutPath) };
         });
       case "agent.create":
         return Effect.gen(function* () {
@@ -881,7 +940,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .create(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           const { path: _path, ...withoutPath } = agent;
-          return { profileId: branch.profileId, agent: withoutPath };
+          return { profileId: branch.profileId, agent: profileAgentProjection(withoutPath) };
         });
       case "agent.validate":
         return Effect.gen(function* () {
@@ -896,7 +955,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           return {
             profileId: branch.profileId,
-            validations: validations.map(({ path: _path, ...validation }) => validation),
+            validations: validations
+              .slice(0, 16)
+              .map(({ path: _path, ...validation }) =>
+                profileAgentValidationProjection(validation),
+              ),
           };
         });
       case "agent.run":

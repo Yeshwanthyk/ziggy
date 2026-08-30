@@ -4,6 +4,14 @@ import { ProfileId } from "./profile-directory";
 import { ProfileExtensionId } from "./profile-extension";
 import { SHARED_MEMORY_CAP, codePointLength, memoryEntries } from "./memory";
 
+export const UI_PROTOCOL_MAX_FRAME_BYTES = 64 * 1_024;
+const UI_PROTOCOL_RESULT_BUDGET_BYTES = 56 * 1_024;
+const resultWithinWireBudget = Schema.makeFilter(
+  <Result>(value: Result) =>
+    new TextEncoder().encode(JSON.stringify(value)).byteLength <= UI_PROTOCOL_RESULT_BUDGET_BYTES,
+  { expected: "a result within the WebSocket frame budget" },
+);
+
 /*
  * The UI gateway is intentionally a single protocol. The browser and the
  * server are released together; there is no version negotiation or legacy
@@ -480,8 +488,8 @@ export const UiProfileSummary = Schema.Struct({
 });
 export type UiProfileSummary = typeof UiProfileSummary.Type;
 export const UiProfileListResult = Schema.Struct({
-  profiles: Schema.Array(UiProfileSummary).check(Schema.isMaxLength(256)),
-});
+  profiles: Schema.Array(UiProfileSummary).check(Schema.isMaxLength(32)),
+}).check(resultWithinWireBudget);
 export type UiProfileListResult = typeof UiProfileListResult.Type;
 export const UiProfileCurrentResult = Schema.Struct({
   profileId: ProfileId,
@@ -495,16 +503,16 @@ export const UiProfileHealthCheck = Schema.Struct({
 });
 export const UiProfileHealthResult = Schema.Struct({
   profileId: ProfileId,
-  checks: Schema.Array(UiProfileHealthCheck).check(Schema.isMaxLength(64)),
+  checks: Schema.Array(UiProfileHealthCheck).check(Schema.isMaxLength(16)),
   hasErrors: Schema.Boolean,
-});
+}).check(resultWithinWireBudget);
 export type UiProfileHealthResult = typeof UiProfileHealthResult.Type;
 
 export const UiSessionListResult = Schema.Struct({
   profileId: ProfileId,
-  live: Schema.Array(UiLiveSession).check(Schema.isMaxLength(128)),
-  stored: Schema.Array(UiStoredSession).check(Schema.isMaxLength(256)),
-});
+  live: Schema.Array(UiLiveSession).check(Schema.isMaxLength(16)),
+  stored: Schema.Array(UiStoredSession).check(Schema.isMaxLength(12)),
+}).check(resultWithinWireBudget);
 export type UiSessionListResult = typeof UiSessionListResult.Type;
 export const UiSessionOpenResult = Schema.Struct({ ref: UiSessionRef });
 export type UiSessionOpenResult = typeof UiSessionOpenResult.Type;
@@ -545,8 +553,8 @@ export const UiSessionHistoryResult = Schema.Struct({
   nextCursor: Schema.optionalKey(UiSessionHistoryCursor),
 });
 export type UiSessionHistoryResult = typeof UiSessionHistoryResult.Type;
-export const UiEmptyResult = Schema.Struct({});
-export type UiEmptyResult = typeof UiEmptyResult.Type;
+export const UiAcknowledgedResult = Schema.Struct({ acknowledged: Schema.Literal(true) });
+export type UiAcknowledgedResult = typeof UiAcknowledgedResult.Type;
 
 const relativeLogicalPath = Schema.String.check(
   Schema.makeFilter(
@@ -563,17 +571,17 @@ const relativeLogicalPath = Schema.String.check(
 
 export const UiProfileAgent = Schema.Struct({
   id: ProfileAgentId.check(Schema.isMaxLength(80)),
-  description: boundedString("Profile agent description", 2_048),
+  description: boundedString("Profile agent description", 512),
   provider: Schema.optionalKey(boundedString("Profile agent provider", 128)),
   model: Schema.optionalKey(boundedString("Profile agent model", 256)),
   thinking: Schema.optionalKey(ProfileAgentThinking),
-  tools: Schema.Array(boundedString("Profile agent tool", 128)).check(Schema.isMaxLength(128)),
+  tools: Schema.Array(boundedString("Profile agent tool", 128)).check(Schema.isMaxLength(8)),
 });
 export type UiProfileAgent = typeof UiProfileAgent.Type;
 export const UiAgentListResult = Schema.Struct({
   profileId: ProfileId,
-  agents: Schema.Array(UiProfileAgent).check(Schema.isMaxLength(256)),
-});
+  agents: Schema.Array(UiProfileAgent).check(Schema.isMaxLength(4)),
+}).check(resultWithinWireBudget);
 export type UiAgentListResult = typeof UiAgentListResult.Type;
 export const UiAgentShowResult = Schema.Struct({ profileId: ProfileId, agent: UiProfileAgent });
 export type UiAgentShowResult = typeof UiAgentShowResult.Type;
@@ -586,8 +594,8 @@ export const UiAgentValidation = Schema.Struct({
 });
 export const UiAgentValidateResult = Schema.Struct({
   profileId: ProfileId,
-  validations: Schema.Array(UiAgentValidation).check(Schema.isMaxLength(256)),
-});
+  validations: Schema.Array(UiAgentValidation).check(Schema.isMaxLength(16)),
+}).check(resultWithinWireBudget);
 export type UiAgentValidateResult = typeof UiAgentValidateResult.Type;
 export const UiAgentRunResult = Schema.Struct({
   profileId: ProfileId,
@@ -613,8 +621,8 @@ export const UiMemoryDocumentSummary = Schema.Struct({
 export type UiMemoryDocumentSummary = typeof UiMemoryDocumentSummary.Type;
 export const UiMemoryListResult = Schema.Struct({
   profileId: ProfileId,
-  documents: Schema.Array(UiMemoryDocumentSummary).check(Schema.isMaxLength(1_000)),
-});
+  documents: Schema.Array(UiMemoryDocumentSummary).check(Schema.isMaxLength(16)),
+}).check(resultWithinWireBudget);
 export type UiMemoryListResult = typeof UiMemoryListResult.Type;
 export const UiMemoryShowResult = Schema.Struct({
   profileId: ProfileId,
@@ -675,8 +683,8 @@ export const UiAuthProvider = Schema.Struct({
 });
 export const UiAuthStatusResult = Schema.Struct({
   profileId: ProfileId,
-  providers: Schema.Array(UiAuthProvider).check(Schema.isMaxLength(256)),
-});
+  providers: Schema.Array(UiAuthProvider).check(Schema.isMaxLength(16)),
+}).check(resultWithinWireBudget);
 export type UiAuthStatusResult = typeof UiAuthStatusResult.Type;
 
 export const UiAutomationDefinition = Schema.Struct({
@@ -691,8 +699,8 @@ export const UiAutomationDefinition = Schema.Struct({
 export type UiAutomationDefinition = typeof UiAutomationDefinition.Type;
 export const UiAutomationListResult = Schema.Struct({
   profileId: ProfileId,
-  automations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(256)),
-});
+  automations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(8)),
+}).check(resultWithinWireBudget);
 export type UiAutomationListResult = typeof UiAutomationListResult.Type;
 export const UiAutomationShowResult = Schema.Struct({
   profileId: ProfileId,
@@ -716,8 +724,8 @@ export const UiAutomationCreateResult = Schema.Struct({
 export type UiAutomationCreateResult = typeof UiAutomationCreateResult.Type;
 export const UiAutomationValidateResult = Schema.Struct({
   profileId: ProfileId,
-  validations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(256)),
-});
+  validations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(8)),
+}).check(resultWithinWireBudget);
 export type UiAutomationValidateResult = typeof UiAutomationValidateResult.Type;
 export const UiAutomationPauseResult = Schema.Struct({
   profileId: ProfileId,
@@ -754,8 +762,8 @@ export const UiAutomationRun = Schema.Struct({
       failureCategory: Schema.NullOr(boundedString("target failure category", 64)),
       retriable: Schema.NullOr(Schema.Boolean),
     }),
-  ).check(Schema.isMaxLength(128)),
-});
+  ).check(Schema.isMaxLength(8)),
+}).check(resultWithinWireBudget);
 export type UiAutomationRun = typeof UiAutomationRun.Type;
 export const UiAutomationStatusResult = Schema.Struct({
   profileId: ProfileId,
@@ -772,16 +780,16 @@ export const UiAutomationStatusResult = Schema.Struct({
       definitionObservedAtMs: UiMillis,
       definitionError: Schema.NullOr(UiGatewayMessage),
     }),
-  ).check(Schema.isMaxLength(256)),
+  ).check(Schema.isMaxLength(4)),
   activeRunCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   latestRun: Schema.NullOr(UiAutomationRun),
   latestErrorRun: Schema.NullOr(UiAutomationRun),
-});
+}).check(resultWithinWireBudget);
 export type UiAutomationStatusResult = typeof UiAutomationStatusResult.Type;
 export const UiAutomationRunsResult = Schema.Struct({
   profileId: ProfileId,
-  runs: Schema.Array(UiAutomationRun).check(Schema.isMaxLength(256)),
-});
+  runs: Schema.Array(UiAutomationRun).check(Schema.isMaxLength(3)),
+}).check(resultWithinWireBudget);
 export type UiAutomationRunsResult = typeof UiAutomationRunsResult.Type;
 export const UiAutomationRunCommandResult = Schema.Struct({
   profileId: ProfileId,
@@ -791,7 +799,7 @@ export const UiAutomationRunCommandResult = Schema.Struct({
 });
 export type UiAutomationRunCommandResult = typeof UiAutomationRunCommandResult.Type;
 
-const UiExtensionDescription = boundedString("extension description", 2_048, 0);
+const UiExtensionDescription = boundedString("extension description", 512, 0);
 const UiExtensionChoiceKind = Schema.Literals(["skill", "code", "skill+code", "remote"]);
 const UiExtensionChoiceSource = Schema.Literals(["bundled", "remote-approved", "profile"]);
 const UiNonNegativeCount = Schema.Int.check(
@@ -807,9 +815,9 @@ export const UiExtensionChoice = Schema.Struct({
 export type UiExtensionChoice = typeof UiExtensionChoice.Type;
 export const UiExtensionListForProfileResult = Schema.Struct({
   profileId: ProfileId,
-  available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(128)),
-  selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(128)),
-});
+  available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(12)),
+  selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(32)),
+}).check(resultWithinWireBudget);
 export type UiExtensionListForProfileResult = typeof UiExtensionListForProfileResult.Type;
 /** Deliberately no filesystem path: Profile identity is carried by the request/result. */
 export const UiExtensionMutationResult = Schema.Struct({
@@ -839,18 +847,16 @@ export type UiExtensionValidation = UiExtensionValidationResult;
 export const UiPinListResult = Schema.Struct({
   profileId: ProfileId,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  pins: Schema.Array(UiPin).check(Schema.isMaxLength(256)),
-});
+  pins: Schema.Array(UiPin).check(Schema.isMaxLength(16)),
+}).check(resultWithinWireBudget);
 export type UiPinListResult = typeof UiPinListResult.Type;
 export const UiPinMutationResult = UiPinListResult;
 export type UiPinMutationResult = typeof UiPinMutationResult.Type;
 export const UiGroupListResult = Schema.Struct({
   profileId: ProfileId,
-  groups: Schema.Array(UiGroupRecord).check(Schema.isMaxLength(256)),
-});
+  groups: Schema.Array(UiGroupRecord).check(Schema.isMaxLength(16)),
+}).check(resultWithinWireBudget);
 export type UiGroupListResult = typeof UiGroupListResult.Type;
-
-export const UI_PROTOCOL_MAX_FRAME_BYTES = 64 * 1_024;
 
 export const UiGatewayResult = Schema.Union([
   UiPingResult,
@@ -862,7 +868,7 @@ export const UiGatewayResult = Schema.Union([
   UiSessionOpenResult,
   UiSessionShowResult,
   UiSessionHistoryResult,
-  UiEmptyResult,
+  UiAcknowledgedResult,
   UiAgentListResult,
   UiAgentShowResult,
   UiAgentValidateResult,

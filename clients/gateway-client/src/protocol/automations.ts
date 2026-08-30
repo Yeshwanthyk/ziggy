@@ -231,7 +231,7 @@ const isAutomationValidationResult = (value: unknown): value is ZiggyAutomationV
   hasOnlyKeys(value, ["profileId", "validations"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.validations) &&
-  value.validations.length <= 256 &&
+  value.validations.length <= 8 &&
   value.validations.every(isAutomationDefinition);
 
 const isAutomationTransitionResult = (value: unknown): value is ZiggyAutomationTransitionResult =>
@@ -301,7 +301,7 @@ const isAutomationRun = (value: unknown): value is ZiggyAutomationRun =>
   isNullableMillis(value.finishedAtMs) &&
   (value.failureCategory === null || isBoundedString(value.failureCategory, 128)) &&
   Array.isArray(value.targets) &&
-  value.targets.length <= 128 &&
+  value.targets.length <= 8 &&
   value.targets.every(isAutomationTargetOutcome);
 
 export const isAutomationRunCommandResult = (
@@ -337,7 +337,7 @@ const isAutomationStatus = (value: unknown): value is ZiggyAutomationStatusResul
     value.lastTickStatus === "error") &&
   (value.lastTickError === null || isBoundedString(value.lastTickError, 360)) &&
   Array.isArray(value.schedules) &&
-  value.schedules.length <= 256 &&
+  value.schedules.length <= 4 &&
   value.schedules.every(isAutomationSchedule) &&
   isSafeInteger(value.activeRunCount) &&
   (value.latestRun === null || isAutomationRun(value.latestRun)) &&
@@ -348,7 +348,7 @@ export const isAutomationListResult = (value: unknown): value is ZiggyAutomation
   hasOnlyKeys(value, ["profileId", "automations"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.automations) &&
-  value.automations.length <= 256 &&
+  value.automations.length <= 8 &&
   value.automations.every(isAutomationDefinition);
 
 export const isAutomationDocumentResult = isAutomationDocument;
@@ -362,7 +362,7 @@ export const isAutomationRunsResult = (value: unknown): value is ZiggyAutomation
   hasOnlyKeys(value, ["profileId", "runs"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.runs) &&
-  value.runs.length <= 256 &&
+  value.runs.length <= 3 &&
   value.runs.every(isAutomationRun);
 
 export const isAutomationCommandId = isCommandId;

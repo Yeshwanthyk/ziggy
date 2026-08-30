@@ -236,3 +236,30 @@ test("UI success responses enforce the complete WebSocket frame budget", () => {
   );
   expect(Result.isFailure(decodeResponseResult(oversized))).toBe(true);
 });
+
+test("maximum list projections remain valid inside the complete frame budget", () => {
+  const agents = Array.from({ length: 4 }, (_, index) => ({
+    id: `agent-${index}`,
+    description: "\0".repeat(512),
+    provider: "\0".repeat(128),
+    model: "\0".repeat(256),
+    thinking: "high" as const,
+    tools: Array.from({ length: 8 }, () => "\0".repeat(128)),
+  }));
+  const maximum = {
+    id: "r-list-maximum",
+    ok: true,
+    result: { profileId, agents },
+  } as const;
+  const overCount = {
+    ...maximum,
+    id: "r-list-over-count",
+    result: { profileId, agents: [...agents, agents[0]] },
+  } as const;
+
+  expect(Result.isSuccess(decodeResponseResult(maximum))).toBe(true);
+  expect(new TextEncoder().encode(JSON.stringify(maximum)).byteLength).toBeLessThanOrEqual(
+    UI_PROTOCOL_MAX_FRAME_BYTES,
+  );
+  expect(Result.isFailure(decodeResponseResult(overCount))).toBe(true);
+});

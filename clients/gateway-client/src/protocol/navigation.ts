@@ -76,7 +76,7 @@ export const isPinListResult = (value: unknown): value is ZiggyPinListResult =>
   hasOnlyKeys(value, ["profileId", "revision", "pins"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.pins) &&
-  value.pins.length <= 256 &&
+  value.pins.length <= 16 &&
   value.pins.every((pin) => isPin(pin) && pin.ref.profileId === value.profileId) &&
   isSafeInteger(value.revision);
 
@@ -85,7 +85,7 @@ export const isPinSetResult = (value: unknown): value is ZiggyPinSetResult =>
   hasOnlyKeys(value, ["profileId", "revision", "pins"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.pins) &&
-  value.pins.length <= 256 &&
+  value.pins.length <= 16 &&
   value.pins.every((pin) => isPin(pin) && pin.ref.profileId === value.profileId) &&
   isSafeInteger(value.revision);
 
@@ -94,7 +94,7 @@ export const isPinRemoveResult = (value: unknown): value is ZiggyPinRemoveResult
   hasOnlyKeys(value, ["profileId", "revision", "pins"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.pins) &&
-  value.pins.length <= 256 &&
+  value.pins.length <= 16 &&
   value.pins.every((pin) => isPin(pin) && pin.ref.profileId === value.profileId) &&
   isSafeInteger(value.revision);
 

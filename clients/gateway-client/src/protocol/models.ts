@@ -144,7 +144,7 @@ export const isAuthStatusResult = (value: unknown): value is ZiggyAuthStatusResu
   hasOnlyKeys(value, ["profileId", "providers"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.providers) &&
-  value.providers.length <= 256 &&
+  value.providers.length <= 16 &&
   value.providers.every(isProviderAuthStatus);
 
 export const isThinkingLevelValue = isThinkingLevel;

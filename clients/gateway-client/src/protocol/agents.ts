@@ -84,7 +84,7 @@ const isAgent = (value: unknown): value is ZiggyProfileAgent =>
   isRecord(value) &&
   hasOnlyKeys(value, ["id", "description", "provider", "model", "thinking", "tools"]) &&
   isAgentId(value.id) &&
-  isBoundedString(value.description, 2_048) &&
+  isBoundedString(value.description, 512) &&
   (value.provider === undefined || isBoundedString(value.provider, 128)) &&
   (value.model === undefined || isBoundedString(value.model, 256)) &&
   (value.thinking === undefined ||
@@ -96,7 +96,7 @@ const isAgent = (value: unknown): value is ZiggyProfileAgent =>
     value.thinking === "xhigh" ||
     value.thinking === "max") &&
   Array.isArray(value.tools) &&
-  value.tools.length <= 128 &&
+  value.tools.length <= 8 &&
   value.tools.every((tool) => isBoundedString(tool, 128));
 
 const isAgentValidation = (value: unknown): value is ZiggyAgentValidation =>
@@ -111,7 +111,7 @@ export const isAgentListResult = (value: unknown): value is ZiggyAgentListResult
   hasOnlyKeys(value, ["profileId", "agents"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.agents) &&
-  value.agents.length <= 256 &&
+  value.agents.length <= 4 &&
   value.agents.every(isAgent);
 
 export const isAgentShowResult = (value: unknown): value is ZiggyAgentShowResult =>
@@ -125,7 +125,7 @@ export const isAgentValidateResult = (value: unknown): value is ZiggyAgentValida
   hasOnlyKeys(value, ["profileId", "validations"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.validations) &&
-  value.validations.length <= 256 &&
+  value.validations.length <= 16 &&
   value.validations.every(isAgentValidation);
 
 export const isAgentRunResult = (value: unknown): value is ZiggyAgentRunResult =>

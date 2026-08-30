@@ -172,8 +172,8 @@ const projectModels = (profileId: ProfileId, models: ReadonlyArray<KnownModel>) 
 
 const mapAuth = (provider: ProviderAuthStatus) => {
   const result = {
-    id: provider.id,
-    name: provider.name,
+    id: boundedText(provider.id, 128, "provider"),
+    name: boundedText(provider.name, 256, "Provider"),
     configured: provider.configured !== undefined,
     supportsApiKeyLogin: provider.supportsApiKeyLogin,
     supportsOauth: provider.supportsOauth,
@@ -183,7 +183,7 @@ const mapAuth = (provider: ProviderAuthStatus) => {
 };
 
 const mapAutomationRun = (run: AutomationRunProjection) => ({
-  runId: run.runId,
+  runId: boundedText(run.runId, 256, "run"),
   automationId: run.automationId,
   trigger: run.trigger,
   state: run.state,
@@ -191,11 +191,13 @@ const mapAutomationRun = (run: AutomationRunProjection) => ({
   recordedAtMs: run.recordedAtMs,
   startedAtMs: run.startedAtMs,
   finishedAtMs: run.finishedAtMs,
-  failureCategory: run.failureCategory,
-  targets: run.targets.map((target) => ({
-    target: target.target,
+  failureCategory:
+    run.failureCategory === null ? null : boundedText(run.failureCategory, 128, "failure"),
+  targets: run.targets.slice(0, 8).map((target) => ({
+    target: boundedText(target.target, 256, "target"),
     status: target.status,
-    failureCategory: target.failureCategory,
+    failureCategory:
+      target.failureCategory === null ? null : boundedText(target.failureCategory, 64, "failure"),
     retriable: target.retriable,
   })),
 });
@@ -318,7 +320,7 @@ export const dispatchSettings = (
             : config.auth.readOnlyStatus(branch.target).pipe(
                 Effect.map((providers) => ({
                   profileId: branch.profileId,
-                  providers: providers.map(mapAuth),
+                  providers: providers.slice(0, 16).map(mapAuth),
                 })),
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               ),
@@ -350,7 +352,7 @@ export const dispatchAutomation = (
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
         return {
           profileId: branch.profileId,
-          automations: automations.map(({ path: _path, ...automation }) => automation),
+          automations: automations.slice(0, 8).map(({ path: _path, ...automation }) => automation),
         };
       });
     case "automation.show":
@@ -408,7 +410,7 @@ export const dispatchAutomation = (
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
         return {
           profileId: branch.profileId,
-          validations: validations.map(({ path: _path, ...validation }) => validation),
+          validations: validations.slice(0, 8).map(({ path: _path, ...validation }) => validation),
         };
       });
     case "automation.pause":
@@ -471,7 +473,7 @@ export const dispatchAutomation = (
             ? Effect.fail(noService(request.method))
             : config.automationScheduler.status(branch.target).pipe(
                 Effect.flatMap((status) =>
-                  Effect.forEach(status.schedules, (schedule) =>
+                  Effect.forEach(status.schedules.slice(0, 4), (schedule) =>
                     decodeUiAutomationId(schedule.automationId).pipe(
                       Effect.mapError((cause) =>
                         protocolFailure("internal", "invalid automation schedule", cause),
@@ -528,7 +530,7 @@ export const dispatchAutomation = (
         const runs = yield* config.automationScheduler
           .runs(branch.target, automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
-        return { profileId: branch.profileId, runs: runs.map(mapAutomationRun) };
+        return { profileId: branch.profileId, runs: runs.slice(0, 3).map(mapAutomationRun) };
       });
     default:
       return Effect.fail(
@@ -553,14 +555,16 @@ export const dispatchMemory = (
             : config.memory.list(branch.target).pipe(
                 Effect.map((documents) => ({
                   profileId: branch.profileId,
-                  documents: documents.map(({ document, state, entries, codePoints, cap }) => ({
-                    path: document.relativePath,
-                    scope: document.scope,
-                    state,
-                    entryCount: entries.length,
-                    codePoints,
-                    cap,
-                  })),
+                  documents: documents
+                    .slice(0, 16)
+                    .map(({ document, state, entries, codePoints, cap }) => ({
+                      path: document.relativePath,
+                      scope: document.scope,
+                      state,
+                      entryCount: entries.length,
+                      codePoints,
+                      cap,
+                    })),
                 })),
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               ),
@@ -652,7 +656,11 @@ export const dispatchExtensions = (
             Effect.flatMap((result) =>
               decodeExtensionListResult({
                 profileId: branch.profileId,
-                ...result,
+                available: result.available.slice(0, 12).map((choice) => ({
+                  ...choice,
+                  description: boundedText(choice.description, 512, "Extension"),
+                })),
+                selected: result.selected.slice(0, 32),
               }).pipe(
                 Effect.mapError((cause) =>
                   protocolFailure("internal", "invalid Profile extension response", cause),
@@ -732,6 +740,7 @@ export const dispatchExtensions = (
               decodeExtensionValidationResult({
                 profileId: branch.profileId,
                 ...result,
+                selected: result.selected.slice(0, 32),
               }).pipe(
                 Effect.mapError((cause) =>
                   protocolFailure("internal", "invalid Profile extension response", cause),
@@ -763,7 +772,7 @@ export const dispatchPins = (
             Effect.map((state) => ({
               profileId: branch.profileId,
               revision: state.revision,
-              pins: state.pins,
+              pins: state.pins.slice(0, 16),
             })),
             Effect.mapError((cause) => toGatewayError(request.method, cause)),
           ),
@@ -785,7 +794,7 @@ export const dispatchPins = (
                       Effect.map((state) => ({
                         profileId: branch.profileId,
                         revision: state.revision,
-                        pins: state.pins,
+                        pins: state.pins.slice(0, 16),
                       })),
                       Effect.mapError((cause) => toGatewayError(request.method, cause)),
                     ),
@@ -805,7 +814,7 @@ export const dispatchPins = (
                   Effect.map((state) => ({
                     profileId: branch.profileId,
                     revision: state.revision,
-                    pins: state.pins,
+                    pins: state.pins.slice(0, 16),
                   })),
                   Effect.mapError((cause) => toGatewayError(request.method, cause)),
                 ),

@@ -103,7 +103,7 @@ export const isMethodResult = <Method extends ZiggyMethod>(
     case "session.steer":
     case "session.follow-up":
     case "session.abort":
-      return isEmptyRecord(value);
+      return isRecord(value) && value.acknowledged === true && Object.keys(value).length === 1;
     case "agent.list":
       return isAgentListResult(value) && profileMatches(value.profileId, params);
     case "agent.show":

@@ -97,7 +97,7 @@ export const isMemoryListResult = (value: unknown): value is ZiggyMemoryListResu
   hasOnlyKeys(value, ["profileId", "documents"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.documents) &&
-  value.documents.length <= 1_000 &&
+  value.documents.length <= 16 &&
   value.documents.every(isMemorySummary);
 
 export const isMemoryShowResult = (value: unknown): value is ZiggyMemoryShowResult => {

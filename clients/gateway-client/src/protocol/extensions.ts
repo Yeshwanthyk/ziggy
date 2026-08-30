@@ -94,7 +94,7 @@ const isChoice = (value: unknown): value is ZiggyExtensionChoice =>
   isRecord(value) &&
   hasOnlyKeys(value, ["id", "description", "kind", "source"]) &&
   isExtensionId(value.id) &&
-  isBoundedString(value.description, 2_048, 0) &&
+  isBoundedString(value.description, 512, 0) &&
   (value.kind === "skill" ||
     value.kind === "code" ||
     value.kind === "skill+code" ||
@@ -106,10 +106,10 @@ export const isExtensionListResult = (value: unknown): value is ZiggyExtensionLi
   hasOnlyKeys(value, ["profileId", "available", "selected"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.available) &&
-  value.available.length <= 128 &&
+  value.available.length <= 12 &&
   value.available.every(isChoice) &&
   Array.isArray(value.selected) &&
-  value.selected.length <= 128 &&
+  value.selected.length <= 32 &&
   value.selected.every(isExtensionId);
 
 export const isExtensionMutationResult = (value: unknown): value is ZiggyExtensionMutationResult =>
@@ -129,7 +129,7 @@ export const isExtensionValidationResult = (
   hasOnlyKeys(value, ["profileId", "selected", "preflight"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.selected) &&
-  value.selected.length <= 128 &&
+  value.selected.length <= 32 &&
   value.selected.every(isExtensionId) &&
   isRecord(value.preflight) &&
   hasOnlyKeys(value.preflight, ["extensionPathCount", "skillPathCount", "extensionFactoryCount"]) &&

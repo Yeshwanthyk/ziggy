@@ -266,7 +266,7 @@ const methodFixtures = (): ReadonlyArray<{
         method === "prompt.submit" || method === "session.steer" || method === "session.follow-up"
           ? { ref: MAIN_A, text: "hello" }
           : { ref: MAIN_A },
-      result: {},
+      result: { acknowledged: true },
     })),
     {
       method: "agent.list",
@@ -546,7 +546,7 @@ describe("gateway client transport", () => {
     const first = socketAt(sockets, 0);
     first.open();
     const watched = client.watchSession(MAIN_A);
-    first.message({ id: frameId(first, 0), ok: true, result: {} });
+    first.message({ id: frameId(first, 0), ok: true, result: { acknowledged: true } });
     await watched;
     first.message(event(PROFILE_A, "local/main", "evt-1", 1, "hello"));
     first.close();
@@ -559,7 +559,7 @@ describe("gateway client transport", () => {
       method: "session.watch",
       params: { ref: MAIN_A, afterSeq: 1, epoch: EPOCH_A },
     });
-    second.message({ id: frameId(second, 0), ok: true, result: {} });
+    second.message({ id: frameId(second, 0), ok: true, result: { acknowledged: true } });
     client.close();
   });
 

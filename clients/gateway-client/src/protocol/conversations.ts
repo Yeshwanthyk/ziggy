@@ -177,13 +177,17 @@ export interface ZiggyConversationResultMap {
   readonly "session.show": ZiggySessionShowResult;
   readonly "session.history": ZiggySessionHistoryResult;
   readonly "session.open": { readonly ref: Extract<ZiggySessionRef, { readonly kind: "live" }> };
-  readonly "session.watch": Record<string, never>;
-  readonly "session.unwatch": Record<string, never>;
-  readonly "session.close": Record<string, never>;
-  readonly "prompt.submit": Record<string, never>;
-  readonly "session.steer": Record<string, never>;
-  readonly "session.follow-up": Record<string, never>;
-  readonly "session.abort": Record<string, never>;
+  readonly "session.watch": ZiggyAcknowledgedResult;
+  readonly "session.unwatch": ZiggyAcknowledgedResult;
+  readonly "session.close": ZiggyAcknowledgedResult;
+  readonly "prompt.submit": ZiggyAcknowledgedResult;
+  readonly "session.steer": ZiggyAcknowledgedResult;
+  readonly "session.follow-up": ZiggyAcknowledgedResult;
+  readonly "session.abort": ZiggyAcknowledgedResult;
+}
+
+export interface ZiggyAcknowledgedResult {
+  readonly acknowledged: true;
 }
 
 export interface ZiggyAssistantTextEvent {
@@ -399,12 +403,12 @@ export const isSessionListResult = (value: unknown): value is ZiggySessionListRe
   hasOnlyKeys(value, ["profileId", "live", "stored"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.live) &&
-  value.live.length <= 128 &&
+  value.live.length <= 16 &&
   value.live.every(
     (session) => isLiveSession(session) && session.ref.profileId === value.profileId,
   ) &&
   Array.isArray(value.stored) &&
-  value.stored.length <= 256 &&
+  value.stored.length <= 12 &&
   value.stored.every(
     (session) => isStoredSession(session) && session.ref.profileId === value.profileId,
   );

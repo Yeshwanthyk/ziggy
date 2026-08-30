@@ -56,7 +56,7 @@ export const isProfileListResult = (value: unknown): value is ZiggyProfileListRe
   isRecord(value) &&
   hasOnlyKeys(value, ["profiles"]) &&
   Array.isArray(value.profiles) &&
-  value.profiles.length <= 256 &&
+  value.profiles.length <= 32 &&
   value.profiles.every(isProfileSummary);
 
 export const isProfileCurrentResult = (value: unknown): value is ZiggyProfileCurrentResult =>
@@ -77,6 +77,6 @@ export const isProfileHealthResult = (value: unknown): value is ZiggyProfileHeal
   hasOnlyKeys(value, ["profileId", "checks", "hasErrors"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.checks) &&
-  value.checks.length <= 64 &&
+  value.checks.length <= 16 &&
   value.checks.every(isProfileHealthCheck) &&
   typeof value.hasErrors === "boolean";
