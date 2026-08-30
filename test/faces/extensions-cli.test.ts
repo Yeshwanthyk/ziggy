@@ -5,6 +5,8 @@ import {
   ProfileExtensionRollbackFailed,
 } from "ziggy/domain/profile-extension";
 import {
+  renderExtension,
+  renderExtensions,
   renderExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
@@ -26,6 +28,32 @@ const extension = {
 test("renders extension list and show metadata as JSON", () => {
   expect(renderExtensionsJson([extension])).toBe(JSON.stringify([extension]));
   expect(renderExtensionJson(extension)).toBe(JSON.stringify(extension));
+});
+
+test("renders extensions as a framed interactive catalogue", () => {
+  const rendered = renderExtensions([extension], {
+    pretty: true,
+    colors: false,
+    columns: 76,
+  });
+
+  expect(rendered).toContain("│  ZIGGY  extensions");
+  expect(rendered).toContain(" SK  weather");
+  expect(rendered).toContain("bundled · optional");
+  expect(rendered).toContain(" MANAGE  ziggy extensions manage <profile>");
+});
+
+test("preserves extension metadata in the pretty detail view", () => {
+  const rendered = renderExtension(extension, {
+    pretty: true,
+    colors: false,
+    columns: 76,
+  });
+
+  expect(rendered).toContain(" SKILL  weather");
+  expect(rendered).toContain(" CODE  extensions/weather/index.ts");
+  expect(rendered).toContain("path");
+  expect(rendered).toContain("extensions/weather");
 });
 
 test("projects bounded preflight diagnostics without exposing the cause", () => {

@@ -169,7 +169,7 @@ try {
   }
   const help = runExecutable(["help"]);
   requireSuccess("complete help", help);
-  if (!help.stdout.includes("ziggy extensions list|show|add|remove")) {
+  if (!help.stdout.includes("ziggy extensions manage|list|show|add|remove")) {
     throw new Error("help omitted the extension command surface");
   }
 

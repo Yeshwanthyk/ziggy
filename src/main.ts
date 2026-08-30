@@ -13,6 +13,7 @@ import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-p
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { bootstrapPiStandaloneRuntime } from "./adapters/pi/standalone-runtime";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
+import { terminalExtensionManagerInteraction } from "./adapters/terminal/extension-manager-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
 import { ZiggyAgent, ZiggyAgentLive } from "./application/agent";
 import { Auth, AuthLive } from "./application/auth";
@@ -23,6 +24,7 @@ import {
 import { AutomationScheduler, AutomationSchedulerLive } from "./application/automation-scheduler";
 import { Automations, AutomationsLive } from "./application/automations";
 import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-extensions";
+import { manageExtensions } from "./application/extension-manager";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
@@ -37,6 +39,7 @@ import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
+import { CliInputInvalid } from "./domain/cli";
 import { parseMemoryScopeReference } from "./domain/memory";
 import {
   resolveProfileTarget,
@@ -65,6 +68,10 @@ import {
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
 import { renderDoctor } from "./faces/doctor-cli";
 import {
+  renderExtension,
+  renderExtensionManagerResult,
+  renderExtensionMutation,
+  renderExtensions,
   renderExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
@@ -76,7 +83,7 @@ import {
   renderMemoryShow,
   renderMemoryShowJson,
 } from "./faces/memory-cli";
-import { renderProfilesJson } from "./faces/profiles-cli";
+import { renderProfiles, renderProfilesJson } from "./faces/profiles-cli";
 import { runAcp } from "./faces/acp";
 import {
   renderSession,
@@ -93,6 +100,15 @@ const resolutionOptions = {
   cwd: process.cwd(),
   homedir: homedir(),
   ziggyHome: process.env.ZIGGY_HOME,
+};
+
+const terminalRenderOptions = () => {
+  const pretty = process.stdout.isTTY === true && process.env.TERM !== "dumb";
+  return {
+    pretty,
+    colors: pretty && process.env.NO_COLOR === undefined,
+    columns: process.stdout.columns ?? 80,
+  } as const;
 };
 
 bootstrapPiStandaloneRuntime();
@@ -256,11 +272,38 @@ const program = Effect.gen(function* () {
         console.log(renderProfilesJson(listings));
         return;
       }
-      if (listings.length === 0) {
-        console.log("no profiles yet — try: ziggy init <name>");
-        return;
+      console.log(
+        renderProfiles(listings, {
+          ...terminalRenderOptions(),
+          homeDirectory: resolutionOptions.homedir,
+        }),
+      );
+      return;
+    }
+    case "ExtensionsManage": {
+      if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+        return yield* new CliInputInvalid({
+          message:
+            "interactive extension management requires a terminal; use 'ziggy extensions add' or 'ziggy extensions remove' in scripts",
+        });
       }
-      for (const profile of listings) console.log(`${profile.name}\t${profile.path}`);
+      const managerOptions = {
+        profilesDirectory: resolveProfilesDirectory(resolutionOptions),
+        registryPath: resolveProfilesRegistry(resolutionOptions),
+        repositoryRoot,
+      };
+      const result = yield* manageExtensions(
+        profiles,
+        profileExtensions,
+        terminalExtensionManagerInteraction,
+        command.target === undefined
+          ? managerOptions
+          : {
+              ...managerOptions,
+              target: resolveProfileTarget(command.target, resolutionOptions),
+            },
+      );
+      console.log(renderExtensionManagerResult(result, terminalRenderOptions()));
       return;
     }
     case "ExtensionsList": {
@@ -269,11 +312,7 @@ const program = Effect.gen(function* () {
         console.log(renderExtensionsJson(extensions));
         return;
       }
-      for (const extension of extensions) {
-        console.log(
-          `${extension.id}\t${extension.kind}\t${extension.required ? "required" : "optional"}\t${extension.source}\t${extension.description}`,
-        );
-      }
+      console.log(renderExtensions(extensions, terminalRenderOptions()));
       return;
     }
     case "ExtensionsShow": {
@@ -282,26 +321,25 @@ const program = Effect.gen(function* () {
         console.log(renderExtensionJson(extension));
         return;
       }
-      console.log(`id\t${extension.id}`);
-      console.log(`kind\t${extension.kind}`);
-      console.log(`status\t${extension.required ? "required" : "optional"}`);
-      console.log(`description\t${extension.description}`);
-      console.log(`source\t${extension.source}`);
-      console.log(`version\t${extension.version}`);
-      console.log(`installed\t${extension.installed ? "yes" : "no"}`);
-      if (extension.packagePath !== undefined) {
-        console.log(
-          `path\t${path.isAbsolute(extension.packagePath) ? path.relative(repositoryRoot, extension.packagePath) : extension.packagePath}`,
-        );
-      }
-      for (const skill of extension.skills ?? []) {
-        console.log(`skill\t${skill.name} — ${skill.description}`);
-      }
-      for (const extensionPath of extension.extensionPaths ?? []) {
-        console.log(
-          `executable\t${path.isAbsolute(extensionPath) ? path.relative(repositoryRoot, extensionPath) : extensionPath}`,
-        );
-      }
+      console.log(
+        renderExtension(
+          {
+            ...extension,
+            packagePath:
+              extension.packagePath === undefined
+                ? undefined
+                : path.isAbsolute(extension.packagePath)
+                  ? path.relative(repositoryRoot, extension.packagePath)
+                  : extension.packagePath,
+            extensionPaths: extension.extensionPaths?.map((extensionPath) =>
+              path.isAbsolute(extensionPath)
+                ? path.relative(repositoryRoot, extensionPath)
+                : extensionPath,
+            ),
+          },
+          terminalRenderOptions(),
+        ),
+      );
       return;
     }
     case "ExtensionsAdd":
@@ -310,16 +348,7 @@ const program = Effect.gen(function* () {
       const result = yield* command._tag === "ExtensionsAdd"
         ? profileExtensions.add(target, repositoryRoot, command.id)
         : profileExtensions.remove(target, repositoryRoot, command.id);
-      if (!result.changed) {
-        console.log(
-          `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`,
-        );
-        return;
-      }
-      console.log(
-        `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}`,
-      );
-      console.log("reopen the Profile or restart its Ziggy process to apply the change");
+      console.log(renderExtensionMutation(result, terminalRenderOptions()));
       return;
     }
     case "Update": {
@@ -690,6 +719,8 @@ const program = Effect.gen(function* () {
 }).pipe(
   Effect.catchTags({
     CliInputInvalid: (failure) => fail(failure.message),
+    TerminalInteractionFailed: (failure) =>
+      fail(`terminal interaction failed during ${failure.operation}`),
     ProfileTargetNotDirectory: (failure) =>
       fail(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>

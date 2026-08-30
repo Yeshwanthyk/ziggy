@@ -264,11 +264,16 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
 
   if (word === "skills") {
     return invalid(
-      "skills are part of extensions; use:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
+      "skills are part of extensions; use:\n  ziggy extensions\n  ziggy extensions manage <name|path>\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
     );
   }
 
   if (word === "extensions") {
+    if (rest.length === 0) return { _tag: "ExtensionsManage" };
+    if (rest[0] === "manage" && rest.length <= 2) {
+      const target = rest[1];
+      return required(target) ? { _tag: "ExtensionsManage", target } : { _tag: "ExtensionsManage" };
+    }
     if (rest[0] === "list") {
       const parsed = parseJsonArguments(rest.slice(1), "extensions list");
       if (isCliInputInvalid(parsed)) return parsed;
@@ -296,7 +301,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
       };
     }
     return invalid(
-      "usage:\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
+      "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
     );
   }
 
@@ -612,7 +617,7 @@ const generalHelp = `Usage:
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
   ziggy agents create|list|show|validate|run ... [--json on list/show]
   ziggy doctor <name|path>
-  ziggy extensions list|show|add|remove ... [--json on list/show]
+  ziggy extensions manage|list|show|add|remove ... [--json on list/show]
   ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ... [--json]
@@ -635,7 +640,7 @@ const topicHelp = {
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
   profiles: "usage: ziggy profiles [--json]",
   extensions:
-    "usage:\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
+    "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
   models:
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
