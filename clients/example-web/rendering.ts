@@ -240,6 +240,18 @@ const renderSidebar = (): void => {
   required<HTMLElement>("#automation-count").textContent = String(state.automations.length);
   profileName.textContent = state.profile.name;
   avatarInto(profileAvatar, "squarey", "small");
+  const profileSelect = required<HTMLSelectElement>("#profile-select");
+  profileSelect.replaceChildren(
+    ...state.profiles.map((profile) => {
+      const option = document.createElement("option");
+      option.value = profile.id;
+      option.textContent = profile.available ? profile.name : `${profile.name} · unavailable`;
+      option.selected = profile.id === state.profile.id;
+      option.disabled = !profile.available;
+      return option;
+    }),
+  );
+  profileSelect.disabled = state.mode === "live" && state.profiles.length < 2;
   for (const item of document.querySelectorAll<HTMLElement>(".nav-item[data-view]")) {
     const isActive = item.dataset.view === state.view;
     item.classList.toggle("is-active", isActive);
@@ -475,6 +487,26 @@ const renderComposer = (conversation: Conversation | undefined): HTMLElement => 
     button.setAttribute("aria-pressed", String(state.composerMode === mode));
     modes.append(button);
   }
+  if (conversation?.kind === "group" && state.composerMode === "prompt") {
+    const recipient = create("select", "recipient-select");
+    recipient.id = "group-recipient";
+    recipient.setAttribute("aria-label", "Group recipient");
+    const choices = [
+      { value: "everyone", label: "Everyone" },
+      { value: "host", label: state.profile.name },
+      ...conversation.participants
+        .filter((participant) => participant !== state.profile.name)
+        .map((participant) => ({ value: participant, label: participant })),
+    ];
+    for (const choice of choices) {
+      const option = document.createElement("option");
+      option.value = choice.value;
+      option.textContent = `To: ${choice.label}`;
+      option.selected = choice.value === (conversation.recipient ?? "everyone");
+      recipient.append(option);
+    }
+    modes.append(recipient);
+  }
   const help = create(
     "span",
     "mode-help",
@@ -575,13 +607,15 @@ const renderConversation = (): HTMLElement => {
   const watch = create(
     "button",
     "button-secondary",
-    conversation?.turnState === "watch-only" ? "Watching" : "Watch",
+    conversation?.turnState === "watch-only" || conversation?.watched === true
+      ? "Watching"
+      : "Watch",
   );
   watch.type = "button";
   watch.dataset.action = "watch-conversation";
   watch.disabled =
     conversation === undefined || (state.mode === "demo" && state.demoState === "offline");
-  watch.innerHTML = `<span aria-hidden="true">◉</span><span class="watch-label">${conversation?.turnState === "watch-only" ? "Watching" : "Watch"}</span>`;
+  watch.innerHTML = `<span aria-hidden="true">◉</span><span class="watch-label">${conversation?.turnState === "watch-only" || conversation?.watched === true ? "Watching" : "Watch"}</span>`;
   const pin = create("button", "button-secondary", conversation?.pinned ? "Pinned" : "Pin");
   pin.type = "button";
   pin.dataset.action = "toggle-pin";

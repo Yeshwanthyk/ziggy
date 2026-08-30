@@ -1,4 +1,4 @@
-import type { ZiggySessionKey } from "../gateway-client/src/index";
+import type { ZiggySessionKey, ZiggySessionRef } from "../gateway-client/src/index";
 
 export type ViewName = "chat" | "agents" | "automations" | "memory";
 export type DemoState =
@@ -36,6 +36,7 @@ export interface Message {
 export interface Conversation {
   readonly id: string;
   readonly key: ZiggySessionKey;
+  readonly ref?: ZiggySessionRef;
   readonly title: string;
   readonly subtitle: string;
   readonly kind: "bot" | "specialist" | "group" | "channel";
@@ -48,11 +49,13 @@ export interface Conversation {
   pinned: boolean;
   pinId?: string;
   unread: boolean;
+  watched?: boolean;
   turnState: TurnState;
   closed: boolean;
   historyPage: number;
   historyCursor?: string;
   historyHasMore: boolean;
+  recipient?: string;
   draft: string;
   lastError?: string;
 }
@@ -117,12 +120,20 @@ export interface ProfileRecord {
   auth: "connected" | "missing" | "unknown";
 }
 
+export interface ProfileOption {
+  readonly id: string;
+  readonly name: string;
+  readonly current: boolean;
+  readonly available: boolean;
+}
+
 export interface AppState {
   mode: "demo" | "live";
   view: ViewName;
   demoState: DemoState;
   connectionState: ConnectionState;
   profile: ProfileRecord;
+  profiles: ProfileOption[];
   conversations: Conversation[];
   selectedConversationId: string;
   composerMode: ComposerMode;
@@ -563,6 +574,7 @@ export const createInitialState = (): AppState => {
       provider: "OpenAI",
       auth: "connected",
     },
+    profiles: [{ id: "squarey", name: "Squarey", current: true, available: true }],
     conversations: initialConversations,
     selectedConversationId: "squarey-home",
     composerMode: "prompt",

@@ -3,6 +3,7 @@ import {
   type ZiggyGatewayClient,
   type ZiggyClientEvent,
   type ZiggySessionKey,
+  type ZiggySessionRef,
 } from "../gateway-client/src/index";
 import { create, maybe, required } from "./dom";
 import {
@@ -53,6 +54,7 @@ import {
   type Message,
   type MessageRole,
   type ProfileRecord,
+  type ProfileOption,
   type RunRecord,
   type Tone,
   type ViewName,
@@ -103,6 +105,8 @@ const profileAvatar = required<HTMLElement>("#profile-avatar");
 const profilePresence = required<HTMLElement>("#profile-presence");
 const residentCaption = required<HTMLElement>("#resident-caption");
 const connectionDialog = required<HTMLDialogElement>("#connection-dialog");
+const connectionForm = required<HTMLFormElement>("#connection-form");
+const connectGatewayButton = required<HTMLButtonElement>("#connect-gateway");
 const gatewayUrlInput = required<HTMLInputElement>("#gateway-url");
 const gatewayTokenInput = required<HTMLInputElement>("#gateway-token");
 const connectionError = required<HTMLElement>("#connection-error");
@@ -116,6 +120,7 @@ let client: ZiggyGatewayClient | undefined;
 let clientUnsubscribe: (() => void) | undefined;
 let nextConversationNumber = 1;
 let nextCommandNumber = 1;
+const commandNamespace = crypto.randomUUID().slice(0, 12);
 
 const untypedClient = (): UntypedGatewayClient | undefined =>
   client as unknown as UntypedGatewayClient | undefined;
@@ -196,9 +201,9 @@ const gatewayRequest = async (method: string, params: unknown): Promise<unknown>
   const sessionRef = (raw: unknown): Record<string, unknown> => {
     if (
       isRecord(raw) &&
-      raw.kind === "live" &&
       typeof raw.profileId === "string" &&
-      typeof raw.key === "string"
+      ((raw.kind === "live" && typeof raw.key === "string") ||
+        (raw.kind === "stored" && typeof raw.id === "string"))
     )
       return raw;
     return { profileId, kind: "live", key: stringValue(raw) };
@@ -210,6 +215,8 @@ const gatewayRequest = async (method: string, params: unknown): Promise<unknown>
       return gateway.request(method, {});
     case "session.list":
       return gateway.request(method, { profileId });
+    case "session.show":
+      return gateway.request(method, { ref: sessionRef(value.session ?? value.ref) });
     case "session.open":
       return gateway.request(method, {
         profileId,
@@ -241,6 +248,7 @@ const gatewayRequest = async (method: string, params: unknown): Promise<unknown>
       return gateway.request(method, {
         ref: sessionRef(value.session ?? value.ref),
         text: stringValue(value.text),
+        ...(isRecord(value.recipient) ? { recipient: value.recipient } : {}),
         ...(typeof value.commandId === "string" ? { commandId: value.commandId } : {}),
       });
     case "agent.list":
@@ -376,7 +384,8 @@ const gatewayRequest = async (method: string, params: unknown): Promise<unknown>
   }
 };
 
-const commandId = (prefix: string): string => `${prefix}-${nextCommandNumber++}`;
+const commandId = (prefix: string): string =>
+  `${prefix}-${commandNamespace}-${nextCommandNumber++}`;
 
 const profileFromResult = (value: unknown): ProfileRecord | undefined => {
   if (!isRecord(value)) return undefined;
@@ -400,17 +409,37 @@ const profileFromResult = (value: unknown): ProfileRecord | undefined => {
 
 const applyProfileResult = (value: unknown): void => {
   const profile = profileFromResult(value);
-  if (profile !== undefined) state.profile = profile;
+  if (profile !== undefined) {
+    state.profile = profile;
+    state.profiles = state.profiles.map((candidate) => ({
+      ...candidate,
+      current: candidate.id === profile.id,
+    }));
+  }
+};
+
+const applyProfileList = (value: unknown): void => {
+  const profiles = parseResponseArray(value, ["profiles"]);
+  const next = profiles.flatMap((item): ProfileOption[] => {
+    if (!isRecord(item)) return [];
+    const id = stringValue(item.profileId ?? item.id);
+    const name = stringValue(item.name);
+    if (id.length === 0 || name.length === 0) return [];
+    return [{ id, name, current: item.current === true, available: item.available !== false }];
+  });
+  if (next.length > 0) state.profiles = next;
 };
 
 const sessionFromValue = (value: unknown): Conversation | undefined => {
   if (!isRecord(value)) return undefined;
-  const ref = isRecord(value.ref) ? value.ref : undefined;
-  const rawKey = stringValue(value.key ?? value.session ?? value.id ?? ref?.key);
+  const source = isRecord(value.live) ? value.live : value;
+  const ref = isRecord(source.ref) ? source.ref : isRecord(value.ref) ? value.ref : undefined;
+  const rawKey = stringValue(source.key ?? source.session ?? source.id ?? ref?.key);
   if (!/^(?:local|ui|telegram|discord|slack)\//u.test(rawKey)) return undefined;
   const existing = state.conversations.find((conversation) => conversation.key === rawKey);
   if (existing !== undefined) return existing;
-  const channel = stringValue(value.channel, rawKey.split("/")[0]);
+  const channel = stringValue(source.channel, rawKey.split("/")[0]);
+  const context = isRecord(source.context) ? source.context : undefined;
   const external =
     channel === "telegram" ||
     channel === "discord" ||
@@ -419,24 +448,37 @@ const sessionFromValue = (value: unknown): Conversation | undefined => {
     rawKey.startsWith("discord/") ||
     rawKey.startsWith("slack/");
   const specialist = rawKey.startsWith("local/agents/");
-  const kind: Conversation["kind"] = external ? "channel" : specialist ? "specialist" : "bot";
+  const group = context?.kind === "group";
+  const kind: Conversation["kind"] = external
+    ? "channel"
+    : group
+      ? "group"
+      : specialist
+        ? "specialist"
+        : "bot";
   const id = rawKey.replace(/[^A-Za-z0-9_-]/gu, "-");
-  const agentId = stringValue(value.agentId, rawKey.split("/").at(-1) ?? "");
+  const agentId = stringValue(source.agentId, rawKey.split("/").at(-1) ?? "");
   const fallbackTitle = specialist
     ? agentId || "Specialist"
     : external
       ? (rawKey.split("/").at(-1) ?? "Channel")
       : state.profile.name;
+  const memberAgentIds = arrayValue(context?.memberAgentIds).filter(
+    (member): member is string => typeof member === "string",
+  );
   const subtitle =
     kind === "channel"
       ? `${channel || "Channel"} · watch only`
-      : kind === "specialist"
-        ? `Specialist · ${agentId || "local Profile"}`
-        : `${state.profile.name} · live session`;
+      : kind === "group"
+        ? `Group room · ${memberAgentIds.length + 1} members`
+        : kind === "specialist"
+          ? `Specialist · ${agentId || "local Profile"}`
+          : `${state.profile.name} · live session`;
   const session: Conversation = {
     id,
     key: rawKey as ZiggySessionKey,
-    title: stringValue(value.title ?? value.name, fallbackTitle),
+    ...(ref === undefined ? {} : { ref: ref as ZiggySessionRef }),
+    title: stringValue(source.title ?? source.name, group ? "Group room" : fallbackTitle),
     subtitle,
     kind,
     avatar:
@@ -448,11 +490,17 @@ const sessionFromValue = (value: unknown): Conversation | undefined => {
             : agentId === "scout"
               ? "scout"
               : "sage"
-          : "squarey",
+          : kind === "group"
+            ? "observatory"
+            : "squarey",
     updatedAt: "now",
     model: state.profile.model,
     participants:
-      specialist && agentId.length > 0 ? [state.profile.name, agentId] : [state.profile.name],
+      kind === "group"
+        ? [state.profile.name, ...memberAgentIds]
+        : specialist && agentId.length > 0
+          ? [state.profile.name, agentId]
+          : [state.profile.name],
     messages: [],
     pinned: false,
     unread: false,
@@ -476,12 +524,46 @@ const applySessionList = (value: unknown): void => {
     "sessions",
     "items",
   ]);
+  const next: Conversation[] = [];
   for (const item of live) {
     const session = sessionFromValue(item);
     if (session === undefined) continue;
-    if (!state.conversations.some((conversation) => conversation.id === session.id))
-      state.conversations.push(session);
+    if (!next.some((conversation) => conversation.id === session.id)) next.push(session);
   }
+  const stored = parseResponseArray(value.stored, ["stored"]);
+  for (const item of stored) {
+    if (!isRecord(item) || !isRecord(item.ref) || item.ref.kind !== "stored") continue;
+    const storedId = stringValue(item.ref.id);
+    if (storedId.length === 0) continue;
+    const id = `stored-${storedId.replace(/[^A-Za-z0-9_-]/gu, "-")}`;
+    const conversation: Conversation = {
+      id,
+      key: `ui/stored-${id}` as ZiggySessionKey,
+      ref: {
+        profileId: stringValue(item.ref.profileId, state.profile.id) as `prf_${string}`,
+        kind: "stored",
+        id: storedId,
+      },
+      title: `Past conversation ${next.length + 1}`,
+      subtitle: `${typeof item.entryCount === "number" ? item.entryCount : 0} messages · ${stringValue(item.terminalState, "complete")}`,
+      kind: "bot",
+      avatar: "squarey",
+      updatedAt: stringValue(item.createdAt, "earlier"),
+      model: state.profile.model,
+      participants: [state.profile.name],
+      messages: [],
+      pinned: false,
+      unread: false,
+      turnState: "closed",
+      closed: true,
+      historyPage: 1,
+      historyHasMore: true,
+      draft: "",
+    };
+    next.push(conversation);
+  }
+  state.conversations = next;
+  state.selectedConversationId = next[0]?.id ?? "";
 };
 
 const messagesFromHistory = (value: unknown): Message[] => {
@@ -868,6 +950,67 @@ const loadLiveProjections = async (): Promise<void> => {
   }
 };
 
+const loadSelectedProfile = async (): Promise<void> => {
+  const sessions = await gatewayRequest("session.list", {});
+  applySessionList(sessions);
+  await Promise.all(
+    state.conversations
+      .filter((conversation) => conversation.ref?.kind !== "stored")
+      .map(async (conversation) => {
+        await gatewayRequest("session.watch", { session: conversation.ref ?? conversation.key });
+        conversation.watched = true;
+      }),
+  );
+  await loadLiveProjections();
+  await loadExtensions();
+};
+
+const switchProfile = async (profileId: string): Promise<void> => {
+  if (state.mode !== "live" || profileId === state.profile.id) return;
+  const selected = state.profiles.find((profile) => profile.id === profileId && profile.available);
+  if (selected === undefined) {
+    showToast("That Profile resident is unavailable", "warning");
+    renderApp();
+    return;
+  }
+  setOperation(`Switching to ${selected.name}…`, "warning");
+  renderApp();
+  try {
+    await Promise.allSettled(
+      state.conversations.map((conversation) =>
+        gatewayRequest("session.unwatch", { session: conversation.ref ?? conversation.key }),
+      ),
+    );
+    state.profile = {
+      ...state.profile,
+      id: selected.id,
+      name: selected.name,
+      tagline: "Profile resident",
+      provider: "",
+      model: "",
+      auth: "unknown",
+    };
+    state.profiles = state.profiles.map((profile) => ({
+      ...profile,
+      current: profile.id === selected.id,
+    }));
+    state.conversations = [];
+    state.selectedConversationId = "";
+    state.agents = [];
+    state.automations = [];
+    state.memory = [];
+    state.extensions = [];
+    state.pinRevision = 0;
+    renderApp();
+    await loadSelectedProfile();
+    showToast(`Switched to ${selected.name}`, "success");
+  } catch (cause) {
+    showToast(errorMessage(cause), "danger");
+  } finally {
+    clearOperation();
+  }
+};
+
 const loadLiveState = async (): Promise<void> => {
   if (state.mode !== "live") return;
   state.connectionState = client?.state ?? "connecting";
@@ -881,12 +1024,11 @@ const loadLiveState = async (): Promise<void> => {
       : "1";
     if (capabilityVersion.length === 0)
       throw new Error("Resident did not return a protocol version");
+    const profiles = await gatewayRequest("profile.list", {});
+    applyProfileList(profiles);
     const profile = await gatewayRequest("profile.current", {});
     applyProfileResult(profile);
-    const sessions = await gatewayRequest("session.list", {});
-    applySessionList(sessions);
-    await loadLiveProjections();
-    await loadExtensions();
+    await loadSelectedProfile();
     state.connectionState = client?.state ?? "open";
     showToast(`Connected to ${state.profile.name}`, "success");
   } catch (cause) {
@@ -1069,8 +1211,12 @@ const newConversation = (): void => {
       name: name.toLocaleLowerCase().replace(/\s+/gu, "-"),
       commandId: commandId("open"),
     })
-      .then((value) => {
+      .then(async (value) => {
         const session = sessionFromValue(value);
+        if (session !== undefined) {
+          await gatewayRequest("session.watch", { session: session.ref ?? session.key });
+          session.watched = true;
+        }
         if (session !== undefined && !state.conversations.some((item) => item.id === session.id))
           state.conversations.push(session);
         if (session !== undefined) state.selectedConversationId = session.id;
@@ -1105,6 +1251,46 @@ const newConversation = (): void => {
   renderApp();
 };
 
+const newGroupConversation = (): void => {
+  if (state.mode === "demo") {
+    const group = state.conversations.find((conversation) => conversation.kind === "group");
+    if (group !== undefined) selectConversation(group.id);
+    return;
+  }
+  const memberAgentIds = state.agents.map((agent) => agent.id).slice(0, 4);
+  if (memberAgentIds.length === 0) {
+    showToast("Create at least one Profile specialist before opening a group room", "warning");
+    return;
+  }
+  const groupId = `room-${Date.now().toString(36)}`;
+  setOperation("Opening group room…", "warning");
+  void gatewayRequest("session.open", {
+    context: {
+      kind: "group",
+      groupId,
+      memberAgentIds,
+      defaultRecipient: { kind: "host" },
+    },
+    commandId: commandId("open-group"),
+  })
+    .then(async (opened) => {
+      const ref = isRecord(opened) ? opened.ref : undefined;
+      const shown = await gatewayRequest("session.show", { ref });
+      const conversation = sessionFromValue(shown);
+      if (conversation === undefined) throw new Error("Resident did not return the group room");
+      await gatewayRequest("session.watch", { session: conversation.ref ?? conversation.key });
+      conversation.watched = true;
+      if (!state.conversations.some((item) => item.id === conversation.id))
+        state.conversations.unshift(conversation);
+      state.selectedConversationId = conversation.id;
+      state.view = "chat";
+      showToast("Group room opened", "success");
+      renderApp();
+    })
+    .catch((cause: unknown) => showToast(errorMessage(cause), "danger"))
+    .finally(clearOperation);
+};
+
 const actionElement = (target: EventTarget | null): HTMLElement | undefined =>
   target instanceof Element
     ? (target.closest<HTMLElement>("[data-action]") ?? undefined)
@@ -1113,6 +1299,7 @@ const actionElement = (target: EventTarget | null): HTMLElement | undefined =>
 const handleAction = (action: string, element: HTMLElement): void => {
   const id = element.dataset.id;
   if (action === "new-conversation") newConversation();
+  else if (action === "new-group") newGroupConversation();
   else if (action === "open-connection") openConnection();
   else if (action === "toggle-pin") void togglePin();
   else if (action === "watch-conversation") void watchConversation();
@@ -1218,12 +1405,19 @@ app.addEventListener("submit", (event) => {
   } else if (form.id === "automation-editor") {
     event.preventDefault();
     void saveAutomation(form);
-  } else if (form.id === "connection-form") {
-    const submitter = event.submitter;
-    if (submitter instanceof HTMLButtonElement && submitter.value === "cancel") return;
-    event.preventDefault();
-    void connectLive();
   }
+});
+
+connectionForm.addEventListener("submit", (event) => {
+  const submitter = event.submitter;
+  if (submitter instanceof HTMLButtonElement && submitter.value === "cancel") return;
+  event.preventDefault();
+  void connectLive();
+});
+
+connectGatewayButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  void connectLive();
 });
 
 app.addEventListener("input", (event) => {
@@ -1236,7 +1430,12 @@ app.addEventListener("input", (event) => {
 
 app.addEventListener("change", (event) => {
   const target = event.target;
-  if (target instanceof HTMLSelectElement && target.id === "demo-state")
+  if (target instanceof HTMLSelectElement && target.id === "profile-select")
+    void switchProfile(target.value);
+  else if (target instanceof HTMLSelectElement && target.id === "group-recipient") {
+    const conversation = selectedConversation();
+    if (conversation !== undefined) conversation.recipient = target.value;
+  } else if (target instanceof HTMLSelectElement && target.id === "demo-state")
     switchToDemo(target.value as DemoState);
   else if (target instanceof HTMLSelectElement && target.id === "provider-select") {
     const model =

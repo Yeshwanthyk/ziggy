@@ -40,7 +40,13 @@
               <strong id="profile-name">Squarey</strong>
             </span>
           </div>
-          <span class="presence-dot presence-ready" id="profile-presence" aria-label="Profile resident ready"></span>
+          <label class="profile-picker" for="profile-select">
+            <span class="presence-dot presence-ready" id="profile-presence" aria-label="Profile resident ready"></span>
+            <span class="profile-chevron" aria-hidden="true">⌄</span>
+            <select id="profile-select" aria-label="Switch Profile">
+              <option value="squarey">Squarey</option>
+            </select>
+          </label>
         </div>
 
         <nav class="primary-nav" aria-label="Primary">
@@ -75,6 +81,10 @@
             <span aria-hidden="true">＋</span>
             <span>New conversation</span>
             <kbd>N</kbd>
+          </button>
+          <button class="new-conversation new-group" type="button" data-action="new-group">
+            <span aria-hidden="true">◉</span>
+            <span>New group room</span>
           </button>
         </div>
 
@@ -198,6 +208,6 @@
       </form>
     </dialog>
 
-    <script src="./dist/main.js"></script>
+    <script src="./dist/main.js?v=20260829g"></script>
   </body>
 </html>

@@ -70,6 +70,9 @@ let renderApp!: ActionDependencies["renderApp"];
 let streamTimer: ReturnType<typeof setInterval> | undefined;
 let streamStopTimer: ReturnType<typeof setTimeout> | undefined;
 
+const sessionReference = (conversation: Conversation): ZiggySessionKey | NonNullable<Conversation["ref"]> =>
+  conversation.ref ?? conversation.key;
+
 export const configureActions = (dependencies: ActionDependencies): void => {
   state = dependencies.state;
   viewRoot = dependencies.viewRoot;
@@ -212,11 +215,35 @@ export const submitComposer = async (): Promise<void> => {
       : state.composerMode === "steer"
         ? "session.steer"
         : "session.follow-up";
+  const requestCommandId = commandId(state.composerMode);
+  const recipient =
+    conversation.kind === "group" &&
+    state.composerMode === "prompt" &&
+    conversation.recipient !== undefined &&
+    conversation.recipient !== "everyone"
+      ? conversation.recipient === "host"
+        ? { kind: "host" as const }
+        : { kind: "agent" as const, agentId: conversation.recipient }
+      : undefined;
+  conversation.messages.push({
+    id: `user-${requestCommandId}`,
+    role: "user",
+    author:
+      state.composerMode === "prompt"
+        ? "You"
+        : state.composerMode === "steer"
+          ? "You · steer"
+          : "You · follow up",
+    text,
+    time: nowLabel(),
+  });
+  renderApp();
   try {
     await gatewayRequest(method, {
-      session: conversation.key,
+      session: sessionReference(conversation),
       text,
-      commandId: commandId(state.composerMode),
+      commandId: requestCommandId,
+      ...(recipient === undefined ? {} : { recipient }),
     });
     showToast(
       state.composerMode === "prompt"
@@ -248,7 +275,7 @@ export const abortConversation = async (): Promise<void> => {
   renderApp();
   try {
     await gatewayRequest("session.abort", {
-      session: conversation.key,
+      session: sessionReference(conversation),
       commandId: commandId("abort"),
     });
     showToast("Abort requested", "success");
@@ -293,7 +320,7 @@ export const loadHistory = async (conversation: Conversation): Promise<void> => 
   }
   try {
     const value = await gatewayRequest("session.history", {
-      session: conversation.key,
+      session: sessionReference(conversation),
       ...(conversation.historyCursor === undefined ? {} : { cursor: conversation.historyCursor }),
     });
     applyHistoryResult(conversation, value);
@@ -319,7 +346,7 @@ export const togglePin = async (): Promise<void> => {
       if (!next && conversation.pinId === undefined)
         throw new Error("Pinned session identity is stale; refresh the roster before unpinning.");
       const params: Record<string, unknown> = {
-        session: conversation.key,
+        session: sessionReference(conversation),
         commandId: commandId("pin"),
         expectedRevision: state.pinRevision,
       };
@@ -360,12 +387,16 @@ export const watchConversation = async (): Promise<void> => {
   const conversation = selectedConversation();
   if (conversation === undefined) return;
   if (conversation.turnState === "watch-only") {
-    showToast("Already watching this channel", "neutral");
+    showToast("This channel is already watch-only", "neutral");
+    return;
+  }
+  if (conversation.watched === true) {
+    showToast("Already watching this conversation", "neutral");
     return;
   }
   setOperation("Opening watch…", "warning");
   if (state.mode === "demo") {
-    conversation.turnState = "watch-only";
+    conversation.watched = true;
     state.demoState = "watch-only";
     showToast("Watch-only view opened", "success");
     clearOperation();
@@ -373,10 +404,10 @@ export const watchConversation = async (): Promise<void> => {
   }
   try {
     await gatewayRequest("session.watch", {
-      session: conversation.key,
+      session: sessionReference(conversation),
       commandId: commandId("watch"),
     });
-    conversation.turnState = "watch-only";
+    conversation.watched = true;
     showToast("Watching live session", "success");
   } catch (cause) {
     showToast(errorMessage(cause), "danger");
@@ -402,7 +433,7 @@ export const closeConversation = async (): Promise<void> => {
   }
   try {
     await gatewayRequest("session.close", {
-      session: conversation.key,
+      session: sessionReference(conversation),
       commandId: commandId("close"),
     });
     conversation.closed = true;
@@ -595,9 +626,11 @@ export const openAgentConversation = (id: string): void => {
   if (state.mode === "live") {
     setOperation(`Opening ${agent.name}…`, "warning");
     void gatewayRequest("session.open", { context: { kind: "local" }, agentId: id })
-      .then((value) => {
+      .then(async (value) => {
         const session = sessionFromValue(value);
         if (session === undefined) throw new Error("Resident did not return a specialist session");
+        await gatewayRequest("session.watch", { session: session.ref ?? session.key });
+        session.watched = true;
         if (!state.conversations.some((item) => item.id === session.id))
           state.conversations.push(session);
         state.selectedConversationId = session.id;
@@ -657,7 +690,7 @@ const automationFromForm = (form: HTMLFormElement): AutomationRecord => {
     status: "invalid",
     lastRun: existing?.lastRun ?? "Never",
     nextRun: existing?.nextRun ?? "Needs validation",
-    source: `schedule: ${value("schedule")}\ntimezone: ${value("timezone")}\nprompt: ${value("prompt")}`,
+    source: `---\nversion: 1\ncron: ${value("schedule")}\ntimezone: ${value("timezone")}\nbroadcast: none\n---\n\n${value("prompt")}\n`,
     runs: existing?.runs ?? [],
   };
 };
@@ -728,15 +761,19 @@ export const saveAutomation = async (form: HTMLFormElement): Promise<void> => {
   }
   setOperation("Saving automation…", "warning");
   try {
-    if (isNew)
+    let expectedSource = selectedAutomation()?.source ?? "";
+    if (isNew) {
       await gatewayRequest("automation.create", {
         id: candidate.id,
         commandId: commandId("automation-create"),
       });
+      const created = await gatewayRequest("automation.show", { id: candidate.id });
+      if (isRecord(created)) expectedSource = stringValue(created.source);
+    }
     await gatewayRequest("automation.save", {
       id: candidate.id,
       source: candidate.source,
-      expectedSource: selectedAutomation()?.source,
+      expectedSource,
       commandId: commandId("automation-save"),
     });
     if (isNew) {
