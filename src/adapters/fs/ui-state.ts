@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { Effect, Schema, Semaphore } from "effect";
 import { fileSystemCauseDetails } from "./cause";
 import {
+  UI_GROUP_LIMIT,
+  UI_PIN_LIMIT,
   UiGroupNotFound,
   UiGroupState,
   UiPinState,
@@ -230,9 +232,9 @@ export const makeUiPinStore = (): UiPinStore => {
         expectedRevision,
         (state) => ({
           ...state,
-          pins: [...state.pins.filter((candidate) => candidate.id !== pin.id), pin].sort(
-            (left, right) => left.order - right.order || left.id.localeCompare(right.id),
-          ),
+          pins: [...state.pins.filter((candidate) => candidate.id !== pin.id), pin]
+            .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+            .slice(0, UI_PIN_LIMIT),
         }),
       ),
     remove: (profilePath, pinId, expectedRevision, commandId) =>
@@ -325,7 +327,9 @@ export const makeUiGroupStore = (): UiGroupStore => {
           groups: [
             ...state.groups.filter((candidate) => candidate.groupId !== group.groupId),
             { ...group, revision: expectedRevision + 1 },
-          ].sort((left, right) => left.groupId.localeCompare(right.groupId)),
+          ]
+            .sort((left, right) => left.groupId.localeCompare(right.groupId))
+            .slice(0, UI_GROUP_LIMIT),
         }),
       ),
     remove: (profilePath, groupId, expectedRevision, commandId) =>

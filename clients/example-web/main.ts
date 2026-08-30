@@ -103,7 +103,6 @@ const profilePresence = required<HTMLElement>("#profile-presence");
 const residentCaption = required<HTMLElement>("#resident-caption");
 const connectionDialog = required<HTMLDialogElement>("#connection-dialog");
 const connectionForm = required<HTMLFormElement>("#connection-form");
-const connectGatewayButton = required<HTMLButtonElement>("#connect-gateway");
 const gatewayUrlInput = required<HTMLInputElement>("#gateway-url");
 const gatewayTokenInput = required<HTMLInputElement>("#gateway-token");
 const connectionError = required<HTMLElement>("#connection-error");
@@ -983,8 +982,11 @@ const loadLiveProjections = async (profileId: string, generation: number): Promi
     for (const item of pins) {
       if (!isRecord(item)) continue;
       const ref = isRecord(item.ref) ? item.ref : undefined;
-      const key = stringValue(ref?.key);
-      const conversation = state.conversations.find((candidate) => candidate.key === key);
+      const conversation = state.conversations.find((candidate) =>
+        candidate.ref?.kind === "stored"
+          ? stringValue(ref?.id) === candidate.ref.id
+          : stringValue(ref?.key) === candidate.key,
+      );
       if (conversation !== undefined) {
         conversation.pinned = true;
         const pinId = stringValue(item.id);
@@ -1521,11 +1523,6 @@ app.addEventListener("submit", (event) => {
 connectionForm.addEventListener("submit", (event) => {
   const submitter = event.submitter;
   if (submitter instanceof HTMLButtonElement && submitter.value === "cancel") return;
-  event.preventDefault();
-  void connectLive();
-});
-
-connectGatewayButton.addEventListener("click", (event) => {
   event.preventDefault();
   void connectLive();
 });

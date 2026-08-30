@@ -97,7 +97,7 @@ const CrossProfileGroupMember = Schema.Union([
 const CrossProfileGroupProbe = Schema.Struct({
   context: Schema.Struct({
     kind: Schema.Literal("group"),
-    memberAgentIds: Schema.Array(CrossProfileGroupMember),
+    memberAgentIds: Schema.Array(CrossProfileGroupMember).check(Schema.isMinLength(1)),
   }),
 });
 const decodeCrossProfileGroupProbe = Schema.decodeUnknownOption(CrossProfileGroupProbe);
@@ -370,6 +370,23 @@ const failureFrame = (id: UiRequestId, error: UiGatewayError): UiResponseFrame =
       ? { code: error.code, message: boundedText(error.message) }
       : { code: error.code, message: boundedText(error.message), details: error.details },
 });
+
+const encodeResponseForTransport = (frame: UiResponseFrame): Effect.Effect<string> =>
+  Effect.try({
+    try: () => encodeResponse(frame),
+    catch: (cause) =>
+      new UiGatewayError({
+        code: "internal",
+        message: "response could not be encoded",
+        cause,
+      }),
+  }).pipe(Effect.catch((error) => Effect.succeed(JSON.stringify(failureFrame(frame.id, error)))));
+
+const sendResponse = (send: (frame: string) => void, frame: UiResponseFrame): Effect.Effect<void> =>
+  encodeResponseForTransport(frame).pipe(
+    Effect.tap((encoded) => Effect.sync(() => send(encoded))),
+    Effect.asVoid,
+  );
 
 export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
   const serverEpoch = randomUUID();
@@ -731,8 +748,10 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             params.agentId === undefined ? { context } : { context, agentId: params.agentId };
           yield* branch.registry.getOrOpenUi(key, open, metadata);
           const ref = sessionRef(branch.profileId, key);
+          const subscriptionKey = `${branch.profileId}:${key}`;
+          subscriptions.get(subscriptionKey)?.();
           const unsubscribe = yield* subscribe(send, branch, ref, 0, undefined, params.commandId);
-          subscriptions.set(`${branch.profileId}:${key}`, unsubscribe);
+          subscriptions.set(subscriptionKey, unsubscribe);
           return { ref };
         });
       case "session.watch":
@@ -1032,10 +1051,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
         ),
       );
       return commandId === undefined
-        ? run.pipe(
-            Effect.tap((frame) => Effect.sync(() => send(encodeResponse(frame)))),
-            Effect.asVoid,
-          )
+        ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
         : runCommand(
             `${profileId}:${commandId}`,
             `${request.method}:${safeFingerprint(request.params)}`,
@@ -1046,8 +1062,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
             ),
             Effect.map((frame) => ({ ...frame, id: request.id })),
-            Effect.tap((frame) => Effect.sync(() => send(encodeResponse(frame)))),
-            Effect.asVoid,
+            Effect.flatMap((frame) => sendResponse(send, frame)),
           );
     };
 

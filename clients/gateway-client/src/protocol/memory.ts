@@ -82,7 +82,7 @@ const isMemorySummary = (value: unknown): value is ZiggyMemoryDocumentSummary =>
   return (
     scope === value.scope &&
     value.cap === expectedCap &&
-    (value.state === "empty" ? value.entryCount === 0 : value.entryCount > 0) &&
+    (value.state === "present" ? value.entryCount > 0 : value.entryCount === 0) &&
     (value.entryCount === 0 || value.codePoints > 0)
   );
 };

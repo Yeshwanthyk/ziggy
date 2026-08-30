@@ -70,6 +70,7 @@ const makeAgent = (
 interface TestConfigExtras {
   readonly groups?: UiGroupStore;
   readonly models?: ModelsApi;
+  readonly sessions?: SessionsApi;
 }
 
 const makeConfig = (
@@ -293,6 +294,109 @@ test("command retries preserve the current transport request id", async () => {
   expect(openCount).toBe(1);
 });
 
+test("reopening a session replaces its subscription instead of leaking listeners", async () => {
+  const sent: string[] = [];
+  const listeners = new Set<(event: ChatEvent) => void>();
+  const handle = makeChatHandle({
+    prompt: (text) =>
+      Effect.sync(() => {
+        for (const listener of listeners) {
+          listener({ kind: "assistant-text", delta: text, snapshot: text });
+          listener({ kind: "settled" });
+        }
+        return text;
+      }),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(makeConfig(registry, makeAgent(handle))).connect((frame) =>
+          sent.push(frame),
+        );
+        const params = { profileId, context: { kind: "local" as const }, name: "same" };
+        yield* connection.request({ id: "open-1", method: "session.open", params });
+        yield* connection.request({ id: "open-2", method: "session.open", params });
+        yield* connection.request({
+          id: "prompt",
+          method: "prompt.submit",
+          params: { ref: { profileId, kind: "live", key: "ui/same" }, text: "hello" },
+        });
+        yield* Effect.yieldNow;
+      }),
+    ),
+  );
+
+  const events = sent.flatMap((frame) => {
+    const decoded = decodeEventResult(frame);
+    return Result.isSuccess(decoded) ? [decoded.success] : [];
+  });
+  expect(events).toHaveLength(2);
+});
+
+test("returns a bounded internal frame when a successful result cannot be encoded", async () => {
+  const oversizedSessions: SessionsApi = {
+    ...makeSessions(),
+    list: () =>
+      Effect.succeed([
+        {
+          path: "local/oversized.jsonl",
+          id: "x".repeat(300),
+          kind: "root" as const,
+          createdAt: "2026-08-30T00:00:00.000Z",
+          entryCount: 0,
+          parent: undefined,
+          parentUnknown: false,
+          children: [],
+          modelChanges: [],
+          thinkingChanges: [],
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: 0,
+          },
+          terminalState: "incomplete" as const,
+        },
+      ]),
+  };
+  const sent: string[] = [];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
+            makeProfileExtensions(),
+            { sessions: oversizedSessions },
+          ),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "list",
+          method: "session.list",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(decodeResponse(sent[0] ?? "null")).toEqual({
+    id: "list",
+    ok: false,
+    error: { code: "internal", message: "response could not be encoded" },
+  });
+});
+
 test("specialist session.open uses local specialist Pi primitive, never a channel alias", async () => {
   const calls: string[] = [];
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
@@ -386,6 +490,18 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           memberAgentIds: ["researcher", "writer"],
           defaultRecipient: { kind: "host" as const },
         };
+        yield* connection.request({
+          id: "empty-group",
+          method: "session.open",
+          params: {
+            profileId,
+            context: { kind: "group", groupId: "solo", memberAgentIds: [] },
+          },
+        });
+        expect(decodeResponse(sent[0] ?? "null")).toMatchObject({
+          id: "empty-group",
+          ok: true,
+        });
         yield* connection.request({
           id: "open",
           method: "session.open",

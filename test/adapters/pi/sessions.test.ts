@@ -207,19 +207,22 @@ describe("Pi session metadata adapter", () => {
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
   });
 
-  test("rejects an oversized transcript before reading or decoding it", async () => {
+  test("skips an oversized transcript without hiding valid sessions", async () => {
     const root = await profile();
     const file = join(root, "sessions", "oversized.jsonl");
+    const valid = join(root, "sessions", "valid.jsonl");
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "x".repeat(8 * 1024 * 1024 + 1));
+    await writeJsonl(valid, [header("valid")]);
 
-    const result = await Effect.runPromise(listProfileSessions(root).pipe(Effect.result));
+    expect(
+      (await Effect.runPromise(listProfileSessions(root))).map((session) => session.id),
+    ).toEqual(["valid"]);
+    const result = await Effect.runPromise(
+      showProfileSession(root, "oversized").pipe(Effect.result),
+    );
     expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: {
-        _tag: "SessionReadFailed",
-        message: expect.stringContaining("bounded transcript"),
-      },
+      failure: { _tag: "SessionNotFound", reference: "oversized" },
     });
   });
 

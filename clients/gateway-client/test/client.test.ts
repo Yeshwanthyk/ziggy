@@ -639,6 +639,36 @@ describe("gateway state projections", () => {
     expect(group.kind).toBe("group");
     expect(group.events.map((value) => value.text)).toEqual(["main", "agent"]);
   });
+
+  test("preserves replay state when an existing session projection is refreshed", () => {
+    const reconciliation = {
+      event: "history-reconciliation" as const,
+      profileId: PROFILE_A,
+      session: MAIN_A,
+      reason: "sequence-gap" as const,
+      previousSequence: 1,
+      currentSequence: 3,
+    };
+    let state = initialGatewayState(PROFILE_A);
+    state = reduceGatewayState(state, {
+      type: "event.received",
+      event: event(PROFILE_A, "local/main", "main-1", 1, "main"),
+    });
+    state = reduceGatewayState(state, { type: "reconciliation", event: reconciliation });
+    state = reduceGatewayState(state, {
+      type: "session.opened",
+      session: {
+        profileId: PROFILE_A,
+        ref: MAIN_A,
+        kind: "live",
+        live: { ref: MAIN_A, kind: "ui", idle: true },
+      },
+    });
+
+    const conversation = selectProfileMain(state, PROFILE_A);
+    expect(conversation?.cursor).toEqual({ epoch: EPOCH_A, seq: 1 });
+    expect(conversation?.reconciliations).toEqual([reconciliation]);
+  });
 });
 
 describe("protocol decoder parity", () => {
@@ -668,6 +698,41 @@ describe("protocol decoder parity", () => {
     expect(isMethodParams("profile.health", { profileId: PROFILE_A, unexpected: true })).toBe(
       false,
     );
+  });
+
+  test("keeps automation and missing-memory result identities requestable", () => {
+    const automationParams = { profileId: PROFILE_A } satisfies ZiggyRequestMap["automation.list"];
+    expect(
+      isMethodResult("automation.list", automationParams, {
+        profileId: PROFILE_A,
+        automations: [{ id: "daily-report", valid: true, lifecycle: "active" }],
+      }),
+    ).toBe(true);
+    expect(
+      isMethodResult("automation.list", automationParams, {
+        profileId: PROFILE_A,
+        automations: [{ id: "daily--report", valid: true, lifecycle: "active" }],
+      }),
+    ).toBe(false);
+    expect(
+      isMethodResult(
+        "memory.list",
+        { profileId: PROFILE_A },
+        {
+          profileId: PROFILE_A,
+          documents: [
+            {
+              path: "MEMORY.md",
+              scope: "shared",
+              state: "missing",
+              entryCount: 0,
+              codePoints: 0,
+              cap: 2_200,
+            },
+          ],
+        },
+      ),
+    ).toBe(true);
   });
 
   test("bounds streamed event payloads and accepts the explicit all recipient", () => {

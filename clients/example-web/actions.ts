@@ -70,13 +70,12 @@ let renderApp!: ActionDependencies["renderApp"];
 let streamTimer: ReturnType<typeof setInterval> | undefined;
 let streamStopTimer: ReturnType<typeof setTimeout> | undefined;
 
-const sessionReference = (conversation: Conversation): ZiggySessionKey | NonNullable<Conversation["ref"]> =>
-  conversation.ref ?? conversation.key;
+const sessionReference = (
+  conversation: Conversation,
+): ZiggySessionKey | NonNullable<Conversation["ref"]> => conversation.ref ?? conversation.key;
 
 const isCurrentProfileOperation = (profileId: string, generation: number): boolean =>
-  state.mode === "live" &&
-  state.profile.id === profileId &&
-  state.profileGeneration === generation;
+  state.mode === "live" && state.profile.id === profileId && state.profileGeneration === generation;
 
 export const configureActions = (dependencies: ActionDependencies): void => {
   state = dependencies.state;
@@ -230,8 +229,8 @@ export const submitComposer = async (): Promise<void> => {
       ? conversation.recipient === "everyone"
         ? { kind: "all" as const }
         : conversation.recipient === "host"
-        ? { kind: "host" as const }
-        : { kind: "agent" as const, agentId: conversation.recipient }
+          ? { kind: "host" as const }
+          : { kind: "agent" as const, agentId: conversation.recipient }
       : undefined;
   conversation.messages.push({
     id: `user-${requestCommandId}`,
@@ -420,6 +419,8 @@ export const togglePin = async (): Promise<void> => {
         const pins = arrayValue(result.pins);
         const matching = pins.find((item) => {
           if (!isRecord(item) || !isRecord(item.ref)) return false;
+          if (conversation.ref?.kind === "stored")
+            return stringValue(item.ref.id) === conversation.ref.id;
           return stringValue(item.ref.key) === conversation.key;
         });
         if (isRecord(matching)) {

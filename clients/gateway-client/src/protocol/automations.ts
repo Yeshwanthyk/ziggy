@@ -167,8 +167,8 @@ export interface ZiggyAutomationResultMap {
   readonly "automation.runs": ZiggyAutomationRunsResult;
 }
 
-const isAutomationId = (value: unknown): value is string =>
-  isBoundedString(value, 80) && /^[a-z0-9-]+$/u.test(value);
+export const isAutomationId = (value: unknown): value is string =>
+  isBoundedString(value, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
 
 const isAutomationDefinition = (value: unknown): value is ZiggyAutomationDefinition =>
   isRecord(value) &&

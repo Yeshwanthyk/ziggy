@@ -32,6 +32,7 @@ import {
 import {
   isAutomationCreateResult,
   isAutomationDocumentResult,
+  isAutomationId,
   isAutomationListResult,
   isAutomationRunCommandResult,
   isAutomationRunsResult,
@@ -381,9 +382,6 @@ export const isMethodParams = <Method extends ZiggyMethod>(
 };
 
 const isAgentId = (value: unknown): value is string =>
-  isBoundedString(value, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
-
-const isAutomationId = (value: unknown): value is string =>
   isBoundedString(value, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
 
 const hasProfileIdOnly = (value: Record<string, unknown>): boolean =>

@@ -12,6 +12,7 @@ import {
 } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import type { ProfileId } from "ziggy/domain/profile-directory";
+import { UI_GROUP_LIMIT, UI_PIN_LIMIT } from "ziggy/domain/ui-state";
 import type {
   UiGroupRecord as UiGroupRecordValue,
   UiPin as UiPinValue,
@@ -118,6 +119,53 @@ test("groups persist the host Profile and reject stale revisions", async () => {
         onSuccess: () => false,
       }),
     ).toBe(true);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("pin and group writers retain schema-decodable item bounds", async () => {
+  const fixture = await profile();
+  try {
+    const profileId = stableProfileId(fixture.path);
+    const pins = makeUiPinStore();
+    let pinRevision = 0;
+    for (let index = 0; index <= UI_PIN_LIMIT; index += 1) {
+      const id = `pin-${index.toString().padStart(3, "0")}`;
+      const result = await Effect.runPromise(
+        pins.set(
+          fixture.path,
+          { ...pinFor(profileId), id, label: id, order: index },
+          pinRevision,
+          `set-${id}`,
+        ),
+      );
+      pinRevision = result.revision;
+    }
+    expect((await Effect.runPromise(pins.read(fixture.path))).pins).toHaveLength(UI_PIN_LIMIT);
+
+    const groups = makeUiGroupStore();
+    for (let index = 0; index <= UI_GROUP_LIMIT; index += 1) {
+      const groupId = `group-${index.toString().padStart(3, "0")}`;
+      await Effect.runPromise(
+        groups.upsert(
+          fixture.path,
+          {
+            groupId,
+            conversationId: `ui/${groupId}`,
+            hostProfileId: profileId,
+            memberAgentIds: [],
+            defaultRecipient: { kind: "host" },
+            revision: 0,
+          },
+          0,
+          `set-${groupId}`,
+        ),
+      );
+    }
+    expect((await Effect.runPromise(groups.read(fixture.path))).groups).toHaveLength(
+      UI_GROUP_LIMIT,
+    );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

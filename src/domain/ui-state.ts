@@ -2,6 +2,8 @@ import { Schema } from "effect";
 import { UiGatewayMessage, UiGroupRecord, UiPin } from "./ui-gateway";
 
 export const UiStateVersion = Schema.Literal(1);
+export const UI_PIN_LIMIT = 256;
+export const UI_GROUP_LIMIT = 256;
 export const UiCommandFingerprint = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(512),
@@ -10,7 +12,7 @@ export const UiCommandFingerprint = Schema.String.check(
 export const UiPinState = Schema.Struct({
   version: UiStateVersion,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  pins: Schema.Array(UiPin).check(Schema.isMaxLength(256)),
+  pins: Schema.Array(UiPin).check(Schema.isMaxLength(UI_PIN_LIMIT)),
   commands: Schema.Array(
     Schema.Struct({
       commandId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
@@ -23,7 +25,7 @@ export type UiPinState = typeof UiPinState.Type;
 
 export const UiGroupState = Schema.Struct({
   version: UiStateVersion,
-  groups: Schema.Array(UiGroupRecord).check(Schema.isMaxLength(256)),
+  groups: Schema.Array(UiGroupRecord).check(Schema.isMaxLength(UI_GROUP_LIMIT)),
   commands: Schema.Array(
     Schema.Struct({
       commandId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),

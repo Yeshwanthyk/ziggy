@@ -241,6 +241,8 @@ export const reduceGatewayState = (
                   ...opened,
                   events: current.events,
                   history: current.history,
+                  cursor: current.cursor,
+                  reconciliations: current.reconciliations,
                   seenEventIds: current.seenEventIds,
                 },
         },
