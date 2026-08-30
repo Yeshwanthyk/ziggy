@@ -1,7 +1,12 @@
 import {
   connectZiggy,
+  isMethodParams,
+  ZIGGY_METHODS,
   type ZiggyGatewayClient,
   type ZiggyClientEvent,
+  type ZiggyMethod,
+  type ZiggyRequestMap,
+  type ZiggyResultMap,
   type ZiggySessionKey,
   type ZiggySessionRef,
 } from "../gateway-client/src/index";
@@ -46,7 +51,6 @@ import {
   type AgentRecord,
   type AppState,
   type AutomationRecord,
-  type ConnectionState,
   type Conversation,
   type DemoState,
   type ExtensionRecord,
@@ -59,13 +63,6 @@ import {
   type Tone,
   type ViewName,
 } from "./model";
-
-interface UntypedGatewayClient {
-  readonly state: ConnectionState;
-  request(method: string, params: unknown): Promise<unknown>;
-  onAny(handler: (event: ZiggyClientEvent) => void): () => void;
-  close(): void;
-}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -122,8 +119,24 @@ let nextConversationNumber = 1;
 let nextCommandNumber = 1;
 const commandNamespace = crypto.randomUUID().slice(0, 12);
 
-const untypedClient = (): UntypedGatewayClient | undefined =>
-  client as unknown as UntypedGatewayClient | undefined;
+const gatewayCall = <Method extends ZiggyMethod>(
+  gateway: ZiggyGatewayClient,
+  method: Method,
+  params: ZiggyRequestMap[Method],
+): Promise<ZiggyResultMap[Method]> => gateway.request(method, params);
+
+const isZiggyMethod = (value: string): value is ZiggyMethod =>
+  ZIGGY_METHODS.some((method) => method === value);
+
+const checkedGatewayCall = (
+  gateway: ZiggyGatewayClient,
+  method: string,
+  params: unknown,
+): Promise<unknown> => {
+  if (!isZiggyMethod(method) || !isMethodParams(method, params))
+    return Promise.reject(new Error(`Invalid Ziggy gateway parameters for ${method}`));
+  return gatewayCall(gateway, method, params);
+};
 
 const selectedConversation = (): Conversation | undefined =>
   state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
@@ -194,8 +207,12 @@ const parseResponseArray = (
 };
 
 const gatewayRequest = async (method: string, params: unknown): Promise<unknown> => {
-  const gateway = untypedClient();
-  if (gateway === undefined) throw new Error("Connect a Ziggy resident before sending a request.");
+  const resident = client;
+  if (resident === undefined) throw new Error("Connect a Ziggy resident before sending a request.");
+  const gateway = {
+    request: (candidateMethod: string, candidateParams: unknown): Promise<unknown> =>
+      checkedGatewayCall(resident, candidateMethod, candidateParams),
+  };
   const value = isRecord(params) ? params : {};
   const profileId = state.profile.id.startsWith("prf_") ? state.profile.id : "prf_squarey";
   const sessionRef = (raw: unknown): Record<string, unknown> => {
@@ -234,6 +251,8 @@ const gatewayRequest = async (method: string, params: unknown): Promise<unknown>
       return gateway.request(method, {
         ref: sessionRef(value.session ?? value.ref),
         ...(typeof value.commandId === "string" ? { commandId: value.commandId } : {}),
+        ...(typeof value.afterSeq === "number" ? { afterSeq: value.afterSeq } : {}),
+        ...(typeof value.epoch === "string" ? { epoch: value.epoch } : {}),
       });
     case "session.unwatch":
     case "session.close":
@@ -615,9 +634,10 @@ const applyHistoryResult = (conversation: Conversation, value: unknown): void =>
   }
 };
 
-const closeDetails = (): void => {
+const closeDetails = (restoreFocus = false): void => {
   state.detailsOpen = false;
   renderDetailsVisibility();
+  if (restoreFocus) openDetailsButton.focus();
 };
 
 const openDetails = (): void => {
@@ -1048,9 +1068,20 @@ const handleGatewayEvent = (event: ZiggyClientEvent): void => {
     if (event.state === "open") void loadLiveState();
     return;
   }
+  if (event.profileId !== state.profile.id) return;
   if (event.event === "history-reconciliation") {
     state.demoState = "reconciliation";
     showToast(`History reconciliation: ${event.reason.replaceAll("-", " ")}`, "warning");
+    const conversation = state.conversations.find(
+      (item) => item.key === sessionKeyValue(event.session),
+    );
+    if (conversation !== undefined) {
+      conversation.messages = [];
+      conversation.historyPage = 0;
+      conversation.historyHasMore = true;
+      delete conversation.historyCursor;
+      void loadHistory(conversation);
+    }
     renderApp();
     return;
   }
@@ -1450,7 +1481,7 @@ app.addEventListener("change", (event) => {
 });
 
 openDetailsButton.addEventListener("click", openDetails);
-closeDetailsButton.addEventListener("click", closeDetails);
+closeDetailsButton.addEventListener("click", () => closeDetails(true));
 openRailButton.addEventListener("click", openRail);
 closeRailButton.addEventListener("click", closeRail);
 backdrop.addEventListener("click", closeRail);
@@ -1463,7 +1494,7 @@ document.addEventListener("keydown", (event) => {
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement;
   if (event.key === "Escape") {
-    if (state.detailsOpen) closeDetails();
+    if (state.detailsOpen) closeDetails(true);
     if (state.railOpen) closeRail();
     return;
   }

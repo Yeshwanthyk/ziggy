@@ -5,6 +5,7 @@ import {
   initialGatewayState,
   isMethodParams,
   isMethodResult,
+  isGatewayEvent,
   isRecord,
   projectGroup,
   reduceGatewayState,
@@ -666,5 +667,26 @@ describe("protocol decoder parity", () => {
     expect(isMethodParams("profile.health", { profileId: PROFILE_A, unexpected: true })).toBe(
       false,
     );
+  });
+
+  test("bounds streamed event payloads and accepts the explicit all recipient", () => {
+    expect(
+      isMethodParams("prompt.submit", {
+        ref: MAIN_A,
+        text: "compare",
+        recipient: { kind: "all" },
+      }),
+    ).toBe(true);
+    expect(
+      isGatewayEvent({
+        event: "assistant-text",
+        eventId: "event-1",
+        epoch: EPOCH_A,
+        seq: 1,
+        profileId: PROFILE_A,
+        session: MAIN_A,
+        payload: { delta: "x", snapshot: "🧠".repeat(12_001) },
+      }),
+    ).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import {
   hasOnlyKeys,
   isBoundedCodePointString,
   isBoundedString,
+  isBoundedUtf8String,
   isCommandId,
   isCursor,
   isProfileId,
@@ -34,6 +35,7 @@ export type ZiggyConversationContext =
     };
 
 export type ZiggyRecipientId =
+  | { readonly kind: "all" }
   | { readonly kind: "host" }
   | { readonly kind: "agent"; readonly agentId: string };
 
@@ -308,7 +310,7 @@ const isSessionRef = (value: unknown): value is ZiggySessionRef =>
 
 export const isRecipient = (value: unknown): value is ZiggyRecipientId =>
   isRecord(value) &&
-  ((value.kind === "host" && hasOnlyKeys(value, ["kind"])) ||
+  (((value.kind === "all" || value.kind === "host") && hasOnlyKeys(value, ["kind"])) ||
     (value.kind === "agent" &&
       hasOnlyKeys(value, ["kind", "agentId"]) &&
       isBoundedString(value.agentId, 80) &&
@@ -487,12 +489,14 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
   if (value.event === "assistant-text") {
     return (
       hasOnlyKeys(payload, ["delta", "snapshot"]) &&
-      typeof payload.delta === "string" &&
-      typeof payload.snapshot === "string"
+      isBoundedUtf8String(payload.delta, 12_000) &&
+      isBoundedUtf8String(payload.snapshot, 48_000)
     );
   }
   if (value.event === "thinking") {
-    return hasOnlyKeys(payload, ["delta"]) && typeof payload.delta === "string";
+    return (
+      hasOnlyKeys(payload, ["delta"]) && isBoundedUtf8String(payload.delta, 12_000)
+    );
   }
   if (value.event === "tool") {
     return (
@@ -515,7 +519,7 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
     return hasOnlyKeys(payload, []);
   }
   if (value.event === "error") {
-    return hasOnlyKeys(payload, ["message"]) && isBoundedString(payload.message, 4_096);
+    return hasOnlyKeys(payload, ["message"]) && isBoundedString(payload.message, 360);
   }
   return (
     value.event === "replay-gap" &&

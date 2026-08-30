@@ -28,6 +28,13 @@ const boundedCodePointString = (label: string, maximum: number, minimum = 1) =>
     ),
   );
 
+const boundedUtf8String = (label: string, maximum: number) =>
+  Schema.String.check(
+    Schema.makeFilter((value) => utf8Length(value) <= maximum, {
+      expected: `${label} of at most ${maximum} UTF-8 bytes`,
+    }),
+  );
+
 const utf8Length = (value: string): number => new TextEncoder().encode(value).byteLength;
 const noDotPathSegments = (value: string): boolean =>
   value.split("/").every((segment) => segment !== "." && segment !== "..");
@@ -98,6 +105,7 @@ export const UiProfileScopedParams = Schema.Struct({ profileId: ProfileId });
 export type UiProfileScopedParams = typeof UiProfileScopedParams.Type;
 
 export const UiRecipient = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("all") }),
   Schema.Struct({ kind: Schema.Literal("host") }),
   Schema.Struct({
     kind: Schema.Literal("agent"),
@@ -267,6 +275,7 @@ export const UiMemoryListParams = UiProfileScopedParams;
 export const UiMemoryShowParams = Schema.Struct({ profileId: ProfileId, path: UiMemoryPath });
 
 export const UiRecipientId = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("all") }),
   Schema.Struct({ kind: Schema.Literal("host") }),
   Schema.Struct({
     kind: Schema.Literal("agent"),
@@ -915,28 +924,34 @@ const UiEventBase = {
 const UiAssistantTextEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("assistant-text"),
-  payload: Schema.Struct({ delta: Schema.String, snapshot: Schema.String }),
+  payload: Schema.Struct({
+    delta: boundedUtf8String("assistant delta", 12_000),
+    snapshot: boundedUtf8String("assistant snapshot", 48_000),
+  }),
 });
 const UiThinkingEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("thinking"),
-  payload: Schema.Struct({ delta: Schema.String }),
+  payload: Schema.Struct({ delta: boundedUtf8String("thinking delta", 12_000) }),
 });
 const UiToolEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("tool"),
   payload: Schema.Struct({
     phase: Schema.Literals(["start", "update", "end"]),
-    toolCallId: Schema.String,
-    toolName: Schema.String,
+    toolCallId: boundedString("tool call id", 256),
+    toolName: boundedCodePointString("tool name", 256),
     failed: Schema.Boolean,
-    detail: Schema.optionalKey(Schema.String),
+    detail: Schema.optionalKey(boundedCodePointString("tool detail", 4_096, 0)),
   }),
 });
 const UiVoiceEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("voice"),
-  payload: Schema.Struct({ agentId: Schema.String, text: Schema.String }),
+  payload: Schema.Struct({
+    agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
+    text: boundedCodePointString("specialist voice", 4_096, 0),
+  }),
 });
 const UiSettledEvent = Schema.Struct({
   ...UiEventBase,
@@ -946,7 +961,7 @@ const UiSettledEvent = Schema.Struct({
 const UiErrorEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("error"),
-  payload: Schema.Struct({ message: Schema.String }),
+  payload: Schema.Struct({ message: UiGatewayMessage }),
 });
 const UiReplayGapEvent = Schema.Struct({
   ...UiEventBase,

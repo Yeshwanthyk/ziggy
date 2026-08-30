@@ -219,9 +219,10 @@ export const submitComposer = async (): Promise<void> => {
   const recipient =
     conversation.kind === "group" &&
     state.composerMode === "prompt" &&
-    conversation.recipient !== undefined &&
-    conversation.recipient !== "everyone"
-      ? conversation.recipient === "host"
+    conversation.recipient !== undefined
+      ? conversation.recipient === "everyone"
+        ? { kind: "all" as const }
+        : conversation.recipient === "host"
         ? { kind: "host" as const }
         : { kind: "agent" as const, agentId: conversation.recipient }
       : undefined;

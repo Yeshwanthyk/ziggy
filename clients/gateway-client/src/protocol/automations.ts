@@ -35,7 +35,7 @@ export interface ZiggyAutomationListResult {
   readonly automations: ReadonlyArray<ZiggyAutomationDefinition>;
 }
 
-export interface ZiggyAutomationDefinitionResult extends ZiggyAutomationDefinition {
+export interface ZiggyAutomationCreateResult extends ZiggyAutomationDefinition {
   readonly profileId: ZiggyProfileId;
 }
 
@@ -159,7 +159,7 @@ export interface ZiggyAutomationRequestMap {
 export interface ZiggyAutomationResultMap {
   readonly "automation.list": ZiggyAutomationListResult;
   readonly "automation.show": ZiggyAutomationDocument;
-  readonly "automation.create": ZiggyAutomationDefinitionResult;
+  readonly "automation.create": ZiggyAutomationCreateResult;
   readonly "automation.save": ZiggyAutomationDocument;
   readonly "automation.validate": ZiggyAutomationValidationResult;
   readonly "automation.pause": ZiggyAutomationTransitionResult;
@@ -203,7 +203,7 @@ const isAutomationDocument = (value: unknown): value is ZiggyAutomationDocument 
   (value.lifecycle === "active" || value.lifecycle === "paused") &&
   isBoundedCodePointString(value.source, 60_000, 0);
 
-const isAutomationDefinitionResult = (value: unknown): value is ZiggyAutomationDefinitionResult =>
+const isAutomationCreateResult = (value: unknown): value is ZiggyAutomationCreateResult =>
   isRecord(value) &&
   hasOnlyKeys(value, [
     "profileId",
@@ -354,7 +354,7 @@ export const isAutomationListResult = (value: unknown): value is ZiggyAutomation
   value.automations.every(isAutomationDefinition);
 
 export const isAutomationDocumentResult = isAutomationDocument;
-export { isAutomationDefinitionResult };
+export { isAutomationCreateResult };
 export { isAutomationValidationResult };
 export { isAutomationTransitionResult };
 export const isAutomationStatusResult = isAutomationStatus;

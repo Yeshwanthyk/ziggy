@@ -266,6 +266,9 @@ export const isBoundedCodePointString = (
 ): value is string =>
   typeof value === "string" && [...value].length >= minimum && [...value].length <= maximum;
 
+export const isBoundedUtf8String = (value: unknown, maximum: number): value is string =>
+  typeof value === "string" && new TextEncoder().encode(value).byteLength <= maximum;
+
 export const isSafeInteger = (value: unknown, minimum = 0): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
 

@@ -30,7 +30,7 @@ import {
   isAgentValidateResult,
 } from "./agents";
 import {
-  isAutomationDefinitionResult,
+  isAutomationCreateResult,
   isAutomationDocumentResult,
   isAutomationListResult,
   isAutomationRunCommandResult,
@@ -128,7 +128,7 @@ export const isMethodResult = <Method extends ZiggyMethod>(
     case "automation.show":
       return isAutomationDocumentResult(value) && profileMatches(value.profileId, params);
     case "automation.create":
-      return isAutomationDefinitionResult(value) && profileMatches(value.profileId, params);
+      return isAutomationCreateResult(value) && profileMatches(value.profileId, params);
     case "automation.save":
       return isAutomationDocumentResult(value) && profileMatches(value.profileId, params);
     case "automation.validate":

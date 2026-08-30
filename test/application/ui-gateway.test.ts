@@ -236,6 +236,40 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
   );
 });
 
+test("command retries preserve the current transport request id", async () => {
+  const sent: string[] = [];
+  let openCount = 0;
+  const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+  const agent = makeAgent(handle, {
+    openChat: () => {
+      openCount += 1;
+      return Effect.succeed(handle);
+    },
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(makeConfig(registry, agent)).connect((frame) =>
+          sent.push(frame),
+        );
+        const params = {
+          profileId,
+          context: { kind: "local" as const },
+          name: "retry",
+          commandId: "same-logical-command",
+        };
+        yield* connection.request({ id: "transport-1", method: "session.open", params });
+        yield* connection.request({ id: "transport-2", method: "session.open", params });
+      }),
+    ),
+  );
+
+  expect(sent.map((frame) => decodeResponse(frame).id)).toEqual(["transport-1", "transport-2"]);
+  expect(openCount).toBe(1);
+});
+
 test("specialist session.open uses local specialist Pi primitive, never a channel alias", async () => {
   const calls: string[] = [];
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
@@ -350,6 +384,7 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           params: {
             ref: groupRef,
             text: "decide",
+            recipient: { kind: "all" },
           },
         });
         yield* Effect.yieldNow;
@@ -367,6 +402,12 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           .map((result) => result.success)
           .filter((event) => event.event === "voice");
         expect(firstVoices.map((event) => event.payload.agentId)).toEqual(["researcher", "writer"]);
+        yield* connection.request({
+          id: "default-host",
+          method: "prompt.submit",
+          params: { ref: groupRef, text: "host only" },
+        });
+        expect(specialistCalls).toHaveLength(2);
         yield* connection.request({
           id: "addressed",
           method: "prompt.submit",
@@ -405,6 +446,24 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           id: "non-member",
           ok: false,
           error: { code: "ownership" },
+        });
+        yield* connection.request({
+          id: "duplicate-members",
+          method: "session.open",
+          params: {
+            profileId,
+            context: {
+              kind: "group",
+              groupId: "duplicates",
+              memberAgentIds: ["researcher", "researcher"],
+              defaultRecipient: { kind: "all" },
+            },
+          },
+        });
+        expect(decodeResponse(sent.at(-1) ?? "")).toMatchObject({
+          id: "duplicate-members",
+          ok: false,
+          error: { code: "bad_params" },
         });
         expect(sent.some((frame) => decodeResponse(frame).ok)).toBe(true);
       }),

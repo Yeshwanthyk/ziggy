@@ -29,10 +29,8 @@ import type {
   ZiggyAgentValidateResult,
 } from "./protocol/agents";
 import type {
-  ZiggyAutomationDefinitionResult,
   ZiggyAutomationDocument,
   ZiggyAutomationListResult,
-  ZiggyAutomationRunCommandResult,
   ZiggyAutomationRunsResult,
   ZiggyAutomationStatusResult,
   ZiggyAutomationTransitionResult,
@@ -162,7 +160,7 @@ export interface ZiggyGatewayClient {
     profileId: ZiggyProfileId,
     automationId: string,
     commandId?: string,
-  ): Promise<ZiggyAutomationDefinitionResult>;
+  ): Promise<ZiggyResultMap["automation.create"]>;
   saveAutomation(
     profileId: ZiggyProfileId,
     automationId: string,
@@ -188,7 +186,7 @@ export interface ZiggyGatewayClient {
     profileId: ZiggyProfileId,
     automationId: string,
     commandId?: string,
-  ): Promise<ZiggyAutomationRunCommandResult>;
+  ): Promise<ZiggyResultMap["automation.run"]>;
   automationStatus(profileId: ZiggyProfileId): Promise<ZiggyAutomationStatusResult>;
   listAutomationRuns(
     profileId: ZiggyProfileId,

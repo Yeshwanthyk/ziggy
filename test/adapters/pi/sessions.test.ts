@@ -207,6 +207,17 @@ describe("Pi session metadata adapter", () => {
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
   });
 
+  test("rejects an oversized transcript before reading or decoding it", async () => {
+    const root = await profile();
+    const file = join(root, "sessions", "oversized.jsonl");
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, "x".repeat(8 * 1024 * 1024 + 1));
+
+    const result = await Effect.runPromise(listProfileSessions(root).pipe(Effect.result));
+    expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
+    if (Result.isFailure(result)) expect(result.failure.message).toContain("bounded transcript");
+  });
+
   test("rejects symlinked roots, files, and nested directories", async () => {
     const outside = await profile();
     await mkdir(join(outside, "real"));

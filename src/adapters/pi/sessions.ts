@@ -13,6 +13,8 @@ import type {
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
 
+const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+
 const UsageCost = Schema.Struct({
   input: Schema.Finite,
   output: Schema.Finite,
@@ -208,11 +210,13 @@ const readRegularFile = (file: string): Effect.Effect<string, SessionReadFailed>
     (handle) =>
       io(file, "read", () => handle.stat()).pipe(
         Effect.flatMap((status) =>
-          status.isFile()
+          status.isFile() && status.size <= MAX_TRANSCRIPT_BYTES
             ? io(file, "read", (signal) => handle.readFile({ encoding: "utf8", signal }))
             : Effect.fail(
-                failure(file, "read", `session file has the wrong file type: ${file}`, {
-                  kind: "wrong-type",
+                failure(file, "read", `session file is not a regular bounded transcript: ${file}`, {
+                  kind: status.isFile() ? "too-large" : "wrong-type",
+                  size: status.size,
+                  maximum: MAX_TRANSCRIPT_BYTES,
                 }),
               ),
         ),

@@ -18,7 +18,7 @@ transcript. The browser never reads or writes the record or transcript directly.
 
 Addressed turns carry a typed member agent ID. The gateway validates that ID against the current
 record before admitting the turn. An unaddressed turn uses the record's explicit default
-recipient. Multi-agent discussion runs bounded specialist child sessions, publishes labeled voice
+recipient; the typed `all` recipient explicitly requests every bounded member. Multi-agent discussion runs bounded specialist child sessions, publishes labeled voice
 events, and asks the host to synthesize the result into the canonical conversation. Child sessions
 remain separate Pi-owned JSONL transcripts; they never write the host transcript.
 

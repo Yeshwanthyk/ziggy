@@ -161,6 +161,23 @@ const groupConversationId = (groupId: string): UiSessionKey =>
 const GROUP_DISCUSSION_MAX_AGENTS = 4;
 const GROUP_DISCUSSION_ANSWER_MAX_CODE_POINTS = 2_000;
 const GROUP_DISCUSSION_CONTEXT_MAX_CODE_POINTS = 8_000;
+const ASSISTANT_DELTA_MAX_BYTES = 12_000;
+const ASSISTANT_SNAPSHOT_MAX_BYTES = 48_000;
+const THINKING_DELTA_MAX_BYTES = 12_000;
+const TOOL_DETAIL_MAX_CODE_POINTS = 4_096;
+const wireText = (value: string, maximum: number): string => [...value].slice(0, maximum).join("");
+const wireTextBytes = (value: string, maximum: number): string => {
+  const encoder = new TextEncoder();
+  const result: string[] = [];
+  let size = 0;
+  for (const point of value) {
+    const nextSize = size + encoder.encode(point).byteLength;
+    if (nextSize > maximum) break;
+    result.push(point);
+    size = nextSize;
+  }
+  return result.join("");
+};
 
 const normalizedGroupContext = (
   context: Extract<UiConversationContext, { kind: "group" }>,
@@ -179,7 +196,7 @@ const sameGroupConfiguration = (left: UiGroupRecordValue, right: UiGroupRecordVa
   left.conversationId === right.conversationId &&
   left.hostProfileId === right.hostProfileId &&
   left.defaultRecipient.kind === right.defaultRecipient.kind &&
-  (left.defaultRecipient.kind === "host" || right.defaultRecipient.kind === "host"
+  (left.defaultRecipient.kind !== "agent" || right.defaultRecipient.kind !== "agent"
     ? left.defaultRecipient.kind === right.defaultRecipient.kind
     : left.defaultRecipient.agentId === right.defaultRecipient.agentId) &&
   left.memberAgentIds.length === right.memberAgentIds.length &&
@@ -209,12 +226,21 @@ const eventFrame = (
         withCorrelation({
           ...base,
           event: "assistant-text",
-          payload: { delta: event.event.delta, snapshot: event.event.snapshot },
+          payload: {
+            delta: wireTextBytes(event.event.delta, ASSISTANT_DELTA_MAX_BYTES),
+            snapshot: wireTextBytes(event.event.snapshot, ASSISTANT_SNAPSHOT_MAX_BYTES),
+          },
         }),
       );
     case "thinking":
       return decodeEventFrame(
-        withCorrelation({ ...base, event: "thinking", payload: { delta: event.event.delta } }),
+        withCorrelation({
+          ...base,
+          event: "thinking",
+          payload: {
+            delta: wireTextBytes(event.event.delta, THINKING_DELTA_MAX_BYTES),
+          },
+        }),
       );
     case "tool":
       if (event.event.detail === undefined) {
@@ -224,8 +250,8 @@ const eventFrame = (
             event: "tool",
             payload: {
               phase: event.event.phase,
-              toolCallId: event.event.toolCallId,
-              toolName: event.event.toolName,
+              toolCallId: boundedText(event.event.toolCallId, 256, "tool"),
+              toolName: boundedText(event.event.toolName, 256, "tool"),
               failed: event.event.failed,
             },
           }),
@@ -237,10 +263,10 @@ const eventFrame = (
           event: "tool",
           payload: {
             phase: event.event.phase,
-            toolCallId: event.event.toolCallId,
-            toolName: event.event.toolName,
+            toolCallId: boundedText(event.event.toolCallId, 256, "tool"),
+            toolName: boundedText(event.event.toolName, 256, "tool"),
             failed: event.event.failed,
-            detail: event.event.detail,
+            detail: wireText(event.event.detail, TOOL_DETAIL_MAX_CODE_POINTS),
           },
         }),
       );
@@ -249,7 +275,10 @@ const eventFrame = (
         withCorrelation({
           ...base,
           event: "voice",
-          payload: { agentId: event.event.agentId, text: event.event.text },
+          payload: {
+            agentId: event.event.agentId,
+            text: wireText(event.event.text, 4_096),
+          },
         }),
       );
     case "settled":
@@ -337,13 +366,13 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
     UiGatewayError
   > =>
     Effect.gen(function* () {
-      const normalized = normalizedGroupContext(context);
       if (
-        normalized.memberAgentIds !== undefined &&
-        new Set(normalized.memberAgentIds).size !== normalized.memberAgentIds.length
+        context.memberAgentIds !== undefined &&
+        new Set(context.memberAgentIds).size !== context.memberAgentIds.length
       ) {
         return yield* protocolFailure("bad_params", "group memberAgentIds must be unique");
       }
+      const normalized = normalizedGroupContext(context);
       if (
         normalized.defaultRecipient !== undefined &&
         normalized.defaultRecipient.kind === "agent" &&
@@ -718,9 +747,10 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                 "an addressed turn requires a group conversation",
               );
             }
+            const effectiveRecipient = params.recipient ?? group?.defaultRecipient;
             if (
-              params.recipient?.kind === "agent" &&
-              !group?.memberAgentIds?.includes(params.recipient.agentId)
+              effectiveRecipient?.kind === "agent" &&
+              !group?.memberAgentIds?.includes(effectiveRecipient.agentId)
             ) {
               return yield* protocolFailure(
                 "ownership",
@@ -730,11 +760,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             if (
               group !== undefined &&
               group.memberAgentIds !== undefined &&
-              params.recipient?.kind !== "host"
+              effectiveRecipient?.kind !== "host"
             ) {
               const requestedMembers =
-                params.recipient?.kind === "agent"
-                  ? [params.recipient.agentId]
+                effectiveRecipient?.kind === "agent"
+                  ? [effectiveRecipient.agentId]
                   : group.memberAgentIds;
               const memberAgentIds = [...new Set(requestedMembers)].slice(
                 0,
@@ -952,6 +982,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             Effect.catch((cause) =>
               Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
             ),
+            Effect.map((frame) => ({ ...frame, id: request.id })),
             Effect.tap((frame) => Effect.sync(() => send(encodeResponse(frame)))),
             Effect.asVoid,
           );
