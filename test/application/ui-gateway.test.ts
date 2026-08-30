@@ -137,6 +137,27 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
         });
 
         yield* connection.request({
+          id: "show",
+          method: "session.show",
+          params: { ref: { profileId, kind: "live", key: "ui/main" } },
+        });
+        expect(decodeResponse(sent[1] ?? "null")).toEqual({
+          id: "show",
+          ok: true,
+          result: {
+            profileId,
+            ref: { profileId, kind: "live", key: "ui/main" },
+            kind: "live",
+            live: {
+              ref: { profileId, kind: "live", key: "ui/main" },
+              kind: "ui",
+              idle: true,
+              context: { kind: "local" },
+            },
+          },
+        });
+
+        yield* connection.request({
           id: "2",
           method: "prompt.submit",
           params: { ref: { profileId, kind: "live", key: "ui/main" }, text: "hello" },
