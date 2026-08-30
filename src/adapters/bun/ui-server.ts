@@ -27,6 +27,10 @@ const Port = Schema.Int.check(
     expected: "a TCP port",
   }),
 );
+const decodeOutgoingId = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ id: UiRequestId })),
+  { onExcessProperty: "ignore" },
+);
 
 export const UiServerProjection = Schema.Struct({
   version: Schema.Literal(1),
@@ -275,6 +279,13 @@ const trySend = (state: SocketState, text: string): boolean => {
   const socket = state.socket;
   if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false;
   try {
+    if (Buffer.byteLength(text, "utf8") > UI_SERVER_MAX_FRAME_BYTES) {
+      const frame = decodeOutgoingId(text);
+      if (Option.isNone(frame)) return false;
+      return (
+        socket.send(failureFrame(frame.value.id, "internal", "response exceeded frame limit")) !== 0
+      );
+    }
     return socket.send(text) !== 0;
   } catch {
     return false;

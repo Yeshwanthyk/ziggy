@@ -161,9 +161,9 @@ const groupConversationId = (groupId: string): UiSessionKey =>
 const GROUP_DISCUSSION_MAX_AGENTS = 4;
 const GROUP_DISCUSSION_ANSWER_MAX_CODE_POINTS = 2_000;
 const GROUP_DISCUSSION_CONTEXT_MAX_CODE_POINTS = 8_000;
-const ASSISTANT_DELTA_MAX_BYTES = 12_000;
-const ASSISTANT_SNAPSHOT_MAX_BYTES = 48_000;
-const THINKING_DELTA_MAX_BYTES = 12_000;
+const ASSISTANT_DELTA_MAX_BYTES = 2_000;
+const ASSISTANT_SNAPSHOT_MAX_BYTES = 8_000;
+const THINKING_DELTA_MAX_BYTES = 8_000;
 const TOOL_DETAIL_MAX_CODE_POINTS = 4_096;
 const wireText = (value: string, maximum: number): string => [...value].slice(0, maximum).join("");
 const wireTextBytes = (value: string, maximum: number): string => {

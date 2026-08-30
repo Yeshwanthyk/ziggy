@@ -121,7 +121,7 @@ export const UiConversationContext = Schema.Union([
     kind: Schema.Literal("group"),
     groupId: boundedString("group id", 64),
     memberAgentIds: Schema.optionalKey(
-      Schema.Array(ProfileAgentId.check(Schema.isMaxLength(80))).check(Schema.isMaxLength(32)),
+      Schema.Array(ProfileAgentId.check(Schema.isMaxLength(80))).check(Schema.isMaxLength(4)),
     ),
     defaultRecipient: Schema.optionalKey(UiRecipient),
     expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -290,7 +290,7 @@ export const UiGroupRecord = Schema.Struct({
   conversationId: boundedString("conversation id", 256),
   hostProfileId: ProfileId,
   memberAgentIds: Schema.Array(ProfileAgentId.check(Schema.isMaxLength(80))).check(
-    Schema.isMaxLength(32),
+    Schema.isMaxLength(4),
   ),
   defaultRecipient: UiRecipientId,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -925,14 +925,14 @@ const UiAssistantTextEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("assistant-text"),
   payload: Schema.Struct({
-    delta: boundedUtf8String("assistant delta", 12_000),
-    snapshot: boundedUtf8String("assistant snapshot", 48_000),
+    delta: boundedUtf8String("assistant delta", 2_000),
+    snapshot: boundedUtf8String("assistant snapshot", 8_000),
   }),
 });
 const UiThinkingEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("thinking"),
-  payload: Schema.Struct({ delta: boundedUtf8String("thinking delta", 12_000) }),
+  payload: Schema.Struct({ delta: boundedUtf8String("thinking delta", 8_000) }),
 });
 const UiToolEvent = Schema.Struct({
   ...UiEventBase,

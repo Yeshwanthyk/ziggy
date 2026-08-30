@@ -34,6 +34,10 @@ provided by the local host. The browser only uses the gateway client; it never r
 Pi sessions, or local configuration itself. To start in live connection mode, use
 `index.html?mode=live`.
 
+Sent mutating requests are never retried automatically. If the connection closes after send but
+before its response, the SDK reports `ZiggyRequestOutcomeUnknownError`; callers reconcile
+authoritative state before deciding whether a new user intent should issue another command.
+
 The page is intentionally static and can also be served by any local static server:
 
 ```sh

@@ -289,12 +289,25 @@ export const abortConversation = async (): Promise<void> => {
   }
 };
 
-export const loadHistory = async (conversation: Conversation): Promise<void> => {
-  if (conversation.historyHasMore === false || state.loadingHistory) return;
+export const loadHistory = async (
+  conversation: Conversation,
+  options: { readonly reconcile?: boolean } = {},
+): Promise<void> => {
+  if (
+    conversation.historyHasMore === false ||
+    (conversation.historyLoading === true && options.reconcile !== true)
+  )
+    return;
+  const generation = (conversation.historyGeneration ?? 0) + 1;
+  conversation.historyGeneration = generation;
+  conversation.historyLoading = true;
+  conversation.reconciling = options.reconcile === true;
   state.loadingHistory = true;
+  const messagesAtStart = new Set(conversation.messages.map((message) => message.id));
   renderApp();
   if (state.mode === "demo") {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 280));
+    if (conversation.historyGeneration !== generation) return;
     const earlier: Message[] = [
       {
         id: `older-${conversation.historyPage}-1`,
@@ -314,7 +327,9 @@ export const loadHistory = async (conversation: Conversation): Promise<void> => 
     conversation.messages = [...earlier, ...conversation.messages];
     conversation.historyPage += 1;
     conversation.historyHasMore = conversation.historyPage < 3;
-    state.loadingHistory = false;
+    conversation.historyLoading = false;
+    conversation.reconciling = false;
+    state.loadingHistory = state.conversations.some((item) => item.historyLoading === true);
     renderApp();
     announce("Earlier messages loaded");
     return;
@@ -324,13 +339,27 @@ export const loadHistory = async (conversation: Conversation): Promise<void> => 
       session: sessionReference(conversation),
       ...(conversation.historyCursor === undefined ? {} : { cursor: conversation.historyCursor }),
     });
+    if (conversation.historyGeneration !== generation) return;
+    const messagesReceivedDuringLoad = conversation.messages.filter(
+      (message) => !messagesAtStart.has(message.id),
+    );
     applyHistoryResult(conversation, value);
+    if (options.reconcile === true) {
+      const historyIds = new Set(conversation.messages.map((message) => message.id));
+      conversation.messages.push(
+        ...messagesReceivedDuringLoad.filter((message) => !historyIds.has(message.id)),
+      );
+    }
     conversation.historyPage += 1;
     showToast("History reconciled", "success");
   } catch (cause) {
     showToast(errorMessage(cause), "danger");
   } finally {
-    state.loadingHistory = false;
+    if (conversation.historyGeneration === generation) {
+      conversation.historyLoading = false;
+      conversation.reconciling = false;
+    }
+    state.loadingHistory = state.conversations.some((item) => item.historyLoading === true);
     renderApp();
   }
 };
@@ -925,10 +954,11 @@ export const runAutomation = async (): Promise<void> => {
   }
 };
 
-export const loadExtensions = async (): Promise<void> => {
+export const loadExtensions = async (expectedProfileId = state.profile.id): Promise<void> => {
   if (state.mode === "demo") return;
   try {
     const value = await gatewayRequest("extension.list-for-profile", {});
+    if (state.profile.id !== expectedProfileId) return;
     if (!isRecord(value)) return;
     const available = parseResponseArray(value, ["available"]);
     const selected = new Set(

@@ -117,6 +117,7 @@ let client: ZiggyGatewayClient | undefined;
 let clientUnsubscribe: (() => void) | undefined;
 let nextConversationNumber = 1;
 let nextCommandNumber = 1;
+let profileLoadGeneration = 0;
 const commandNamespace = crypto.randomUUID().slice(0, 12);
 
 const gatewayCall = <Method extends ZiggyMethod>(
@@ -739,11 +740,14 @@ configureActions({
   renderApp,
 });
 
-const loadLiveProjections = async (): Promise<void> => {
+const isCurrentProfileLoad = (profileId: string, generation: number): boolean =>
+  state.profile.id === profileId && profileLoadGeneration === generation;
+
+const loadLiveProjections = async (profileId: string, generation: number): Promise<void> => {
   if (state.mode !== "live") return;
-  const profileId = state.profile.id;
   try {
     const result = await gatewayRequest("agent.list", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const agents = parseResponseArray(result, ["agents"]);
     const nextAgents = agents.flatMap((item): AgentRecord[] => {
       if (!isRecord(item)) return [];
@@ -768,6 +772,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("automation.list", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const automations = parseResponseArray(result, ["automations"]);
     const nextAutomations = automations.flatMap((item): AutomationRecord[] => {
       if (!isRecord(item)) return [];
@@ -805,6 +810,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("automation.status", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const schedules = parseResponseArray(result, ["schedules"]);
     for (const item of schedules) {
       if (!isRecord(item)) continue;
@@ -833,6 +839,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("automation.runs", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const runs = parseResponseArray(result, ["runs"]);
     const grouped = new Map<string, RunRecord[]>();
     for (const item of runs) {
@@ -872,6 +879,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("memory.list", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const documents = parseResponseArray(result, ["documents"]);
     const nextMemory = documents.flatMap((item): MemoryRecord[] => {
       if (!isRecord(item)) return [];
@@ -902,6 +910,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("model.status", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     if (isRecord(result)) {
       const provider = stringValue(result.providerId, state.profile.provider);
       const model = stringValue(result.modelId, state.profile.model);
@@ -914,6 +923,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("model.available", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const models = parseResponseArray(result, ["models"]);
     const providers: string[] = [];
     const modelIds: string[] = [];
@@ -931,6 +941,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("auth.status", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     const providers = parseResponseArray(result, ["providers"]);
     state.authProviders = providers.flatMap((item): string[] => {
       if (!isRecord(item) || item.configured !== true) return [];
@@ -944,6 +955,7 @@ const loadLiveProjections = async (): Promise<void> => {
   }
   try {
     const result = await gatewayRequest("pin.list", { profileId });
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     for (const conversation of state.conversations) {
       conversation.pinned = false;
       delete conversation.pinId;
@@ -971,8 +983,9 @@ const loadLiveProjections = async (): Promise<void> => {
   }
 };
 
-const loadSelectedProfile = async (): Promise<void> => {
+const loadSelectedProfile = async (profileId: string, generation: number): Promise<void> => {
   const sessions = await gatewayRequest("session.list", {});
+  if (!isCurrentProfileLoad(profileId, generation)) return;
   applySessionList(sessions);
   await Promise.all(
     state.conversations
@@ -982,8 +995,10 @@ const loadSelectedProfile = async (): Promise<void> => {
         conversation.watched = true;
       }),
   );
-  await loadLiveProjections();
-  await loadExtensions();
+  if (!isCurrentProfileLoad(profileId, generation)) return;
+  await loadLiveProjections(profileId, generation);
+  if (!isCurrentProfileLoad(profileId, generation)) return;
+  await loadExtensions(profileId);
 };
 
 const switchProfile = async (profileId: string): Promise<void> => {
@@ -994,6 +1009,7 @@ const switchProfile = async (profileId: string): Promise<void> => {
     renderApp();
     return;
   }
+  const generation = ++profileLoadGeneration;
   setOperation(`Switching to ${selected.name}…`, "warning");
   renderApp();
   try {
@@ -1023,40 +1039,59 @@ const switchProfile = async (profileId: string): Promise<void> => {
     state.extensions = [];
     state.pinRevision = 0;
     renderApp();
-    await loadSelectedProfile();
-    showToast(`Switched to ${selected.name}`, "success");
+    await loadSelectedProfile(selected.id, generation);
+    if (isCurrentProfileLoad(selected.id, generation))
+      showToast(`Switched to ${selected.name}`, "success");
   } catch (cause) {
     showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (profileLoadGeneration === generation) clearOperation();
   }
 };
 
 const loadLiveState = async (): Promise<void> => {
   if (state.mode !== "live") return;
+  const generation = ++profileLoadGeneration;
+  const selectedProfileId = state.profile.id;
   state.connectionState = client?.state ?? "connecting";
   state.demoState = "ready";
   setOperation("Reading resident capabilities…", "warning");
   renderApp();
   try {
     const capabilities = await gatewayRequest("system.capabilities", {});
+    if (profileLoadGeneration !== generation) return;
     const capabilityVersion = isRecord(capabilities)
       ? stringValue(capabilities.protocolVersion ?? capabilities.version, "1")
       : "1";
     if (capabilityVersion.length === 0)
       throw new Error("Resident did not return a protocol version");
     const profiles = await gatewayRequest("profile.list", {});
+    if (profileLoadGeneration !== generation) return;
     applyProfileList(profiles);
-    const profile = await gatewayRequest("profile.current", {});
-    applyProfileResult(profile);
-    await loadSelectedProfile();
+    const selected = state.profiles.find(
+      (profile) => profile.id === selectedProfileId && profile.available,
+    );
+    if (selected === undefined) {
+      const profile = await gatewayRequest("profile.current", {});
+      if (profileLoadGeneration !== generation) return;
+      applyProfileResult(profile);
+    } else {
+      state.profile = { ...state.profile, id: selected.id, name: selected.name };
+      state.profiles = state.profiles.map((profile) => ({
+        ...profile,
+        current: profile.id === selected.id,
+      }));
+    }
+    const profileId = state.profile.id;
+    await loadSelectedProfile(profileId, generation);
+    if (!isCurrentProfileLoad(profileId, generation)) return;
     state.connectionState = client?.state ?? "open";
     showToast(`Connected to ${state.profile.name}`, "success");
   } catch (cause) {
     state.connectionState = client?.state === "reconnecting" ? "reconnecting" : "closed";
     showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (profileLoadGeneration === generation) clearOperation();
   }
 };
 
@@ -1079,8 +1114,9 @@ const handleGatewayEvent = (event: ZiggyClientEvent): void => {
       conversation.messages = [];
       conversation.historyPage = 0;
       conversation.historyHasMore = true;
+      conversation.reconciling = true;
       delete conversation.historyCursor;
-      void loadHistory(conversation);
+      void loadHistory(conversation, { reconcile: true });
     }
     renderApp();
     return;

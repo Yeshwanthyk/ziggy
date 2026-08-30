@@ -56,6 +56,9 @@ export interface Conversation {
   historyPage: number;
   historyCursor?: string;
   historyHasMore: boolean;
+  historyLoading?: boolean;
+  historyGeneration?: number;
+  reconciling?: boolean;
   recipient?: string;
   draft: string;
   lastError?: string;

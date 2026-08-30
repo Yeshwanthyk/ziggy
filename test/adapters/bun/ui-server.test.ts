@@ -178,6 +178,43 @@ describe("Bun UI server projection and authentication", () => {
 });
 
 describe("Bun UI server socket lifecycle", () => {
+  test("maps an oversized outgoing response to a bounded typed failure", async () => {
+    const profilePath = await makeProfile();
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openUiServer(
+            profilePath,
+            handlers({
+              onRequest: (connection, request) =>
+                Effect.sync(() =>
+                  connection.send(
+                    JSON.stringify({
+                      id: request.id,
+                      ok: true,
+                      result: { source: "\n".repeat(UI_SERVER_MAX_FRAME_BYTES) },
+                    }),
+                  ),
+                ),
+            }),
+          );
+          const { token } = yield* readUiServerProjection(profilePath);
+          const socket = yield* Effect.promise(() => connect(server.port, token));
+          const response = nextMessage(socket);
+          socket.send(JSON.stringify({ id: "large", method: "ping", params: {} }));
+          expect(
+            JSON.parse(yield* Effect.promise(() => within(response, "bounded response"))),
+          ).toEqual({
+            id: "large",
+            ok: false,
+            error: { code: "internal", message: "response exceeded frame limit" },
+          });
+          yield* Effect.promise(() => closeClient(socket));
+        }),
+      ),
+    );
+  });
+
   test("rejects binary frames and invokes connection cleanup", async () => {
     const profilePath = await makeProfile();
     let requests = 0;

@@ -27,6 +27,20 @@ export const SOCKET_OPEN = 1;
 export const SOCKET_CLOSING = 2;
 export const SOCKET_CLOSED = 3;
 
+/** A sent request may have committed even though its response was not observed. Never retry it automatically. */
+export class ZiggyRequestOutcomeUnknownError extends Error {
+  readonly method: ZiggyMethod;
+  readonly commandId: string | undefined;
+
+  constructor(method: ZiggyMethod, params: unknown) {
+    super(`Ziggy gateway disconnected after sending ${method}; request outcome is unknown`);
+    this.name = "ZiggyRequestOutcomeUnknownError";
+    this.method = method;
+    this.commandId =
+      isRecord(params) && typeof params.commandId === "string" ? params.commandId : undefined;
+  }
+}
+
 export interface ZiggySocketEvent {
   readonly data?: unknown;
 }
@@ -208,11 +222,16 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
     }
     const id = `ziggy-${now().toString(36)}-${(++requestCounter).toString(36)}`;
     return new Promise<ZiggyResultMap[Method]>((resolve, reject) => {
+      let entry: PendingRequest | undefined;
       const timeout = setTimeout(() => {
         if (!pending.delete(id)) return;
-        reject(new Error(`Ziggy gateway request timed out: ${method}`));
+        reject(
+          entry?.sentGeneration === undefined
+            ? new Error(`Ziggy gateway request timed out before send: ${method}`)
+            : new ZiggyRequestOutcomeUnknownError(method, params),
+        );
       }, requestTimeoutMs);
-      const entry: PendingRequest = {
+      entry = {
         method,
         params,
         resolve: (value) => {
@@ -363,7 +382,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
       if (entry.sentGeneration !== closedGeneration) continue;
       pending.delete(id);
       clearTimeout(entry.timeout);
-      entry.reject(new Error("Ziggy gateway disconnected before responding"));
+      entry.reject(new ZiggyRequestOutcomeUnknownError(entry.method, entry.params));
     }
   };
 

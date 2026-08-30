@@ -333,7 +333,7 @@ const isConversationContext = (value: unknown): value is ZiggyConversationContex
       isBoundedString(value.groupId, 64) &&
       (value.memberAgentIds === undefined ||
         (Array.isArray(value.memberAgentIds) &&
-          value.memberAgentIds.length <= 32 &&
+          value.memberAgentIds.length <= 4 &&
           value.memberAgentIds.every(
             (agentId) =>
               isBoundedString(agentId, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(agentId),
@@ -489,13 +489,13 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
   if (value.event === "assistant-text") {
     return (
       hasOnlyKeys(payload, ["delta", "snapshot"]) &&
-      isBoundedUtf8String(payload.delta, 12_000) &&
-      isBoundedUtf8String(payload.snapshot, 48_000)
+      isBoundedUtf8String(payload.delta, 2_000) &&
+      isBoundedUtf8String(payload.snapshot, 8_000)
     );
   }
   if (value.event === "thinking") {
     return (
-      hasOnlyKeys(payload, ["delta"]) && isBoundedUtf8String(payload.delta, 12_000)
+      hasOnlyKeys(payload, ["delta"]) && isBoundedUtf8String(payload.delta, 8_000)
     );
   }
   if (value.event === "tool") {

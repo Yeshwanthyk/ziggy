@@ -20,6 +20,7 @@ import {
   type ZiggySocket,
   type ZiggySocketEvent,
   ZIGGY_METHODS,
+  ZiggyRequestOutcomeUnknownError,
 } from "../src/index";
 
 const PROFILE_A: ZiggyProfileId = "prf_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -523,8 +524,8 @@ describe("gateway client transport", () => {
       socketFactory: () => socket,
     });
     socket.open();
-    await expect(client.request("ping", {})).rejects.toThrow(
-      "Ziggy gateway request timed out: ping",
+    await expect(client.request("ping", {})).rejects.toBeInstanceOf(
+      ZiggyRequestOutcomeUnknownError,
     );
     client.close();
   });
@@ -685,7 +686,7 @@ describe("protocol decoder parity", () => {
         seq: 1,
         profileId: PROFILE_A,
         session: MAIN_A,
-        payload: { delta: "x", snapshot: "🧠".repeat(12_001) },
+        payload: { delta: "x", snapshot: "🧠".repeat(2_001) },
       }),
     ).toBe(false);
   });
