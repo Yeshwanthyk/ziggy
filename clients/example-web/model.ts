@@ -148,7 +148,7 @@ export interface AppState {
 }
 const arrayValue = (value: unknown): ReadonlyArray<unknown> => (Array.isArray(value) ? value : []);
 
-export const baseMessages = (): Message[] => [
+const baseMessages = (): Message[] => [
   {
     id: "m-1",
     role: "user",
@@ -182,7 +182,7 @@ export const baseMessages = (): Message[] => [
   },
 ];
 
-export const makeConversations = (): Conversation[] => [
+const makeConversations = (): Conversation[] => [
   {
     id: "squarey-home",
     key: "ui/home" as ZiggySessionKey,
@@ -358,7 +358,7 @@ export const makeConversations = (): Conversation[] => [
   },
 ];
 
-export const makeAgents = (): AgentRecord[] => [
+const makeAgents = (): AgentRecord[] => [
   {
     id: "squarey",
     name: "Squarey",
@@ -391,7 +391,7 @@ export const makeAgents = (): AgentRecord[] => [
   },
 ];
 
-export const makeAutomations = (): AutomationRecord[] => [
+const makeAutomations = (): AutomationRecord[] => [
   {
     id: "morning-brief",
     name: "Morning brief",
@@ -444,7 +444,7 @@ export const makeAutomations = (): AutomationRecord[] => [
   },
 ];
 
-export const makeMemory = (): MemoryRecord[] => [
+const makeMemory = (): MemoryRecord[] => [
   {
     id: "shared",
     title: "Shared memory",
@@ -479,7 +479,7 @@ export const makeMemory = (): MemoryRecord[] => [
   },
 ];
 
-export const makeExtensions = (): ExtensionRecord[] => [
+const makeExtensions = (): ExtensionRecord[] => [
   {
     id: "lossless-claw",
     description: "Bounded recall over selected session history.",

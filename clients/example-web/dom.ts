@@ -19,11 +19,3 @@ export const create = <Tag extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) element.textContent = text;
   return element;
 };
-
-export const fragment = (html: string): HTMLElement => {
-  const template = document.createElement("template");
-  template.innerHTML = html.trim();
-  const first = template.content.firstElementChild;
-  if (!(first instanceof HTMLElement)) throw new Error("Expected an HTML element");
-  return first;
-};

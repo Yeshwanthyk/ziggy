@@ -2,7 +2,11 @@ import { Context, Effect, Layer } from "effect";
 import { listProfileSessions, showProfileSession } from "../adapters/pi/sessions";
 import { readSessionHistory } from "../adapters/pi/session-history";
 import type { ProfileTarget } from "../domain/profile";
-import { SessionNotFound, type SessionHistoryCursorInvalid, type SessionHistoryPage } from "../domain/session";
+import {
+  SessionNotFound,
+  type SessionHistoryCursorInvalid,
+  type SessionHistoryPage,
+} from "../domain/session";
 import type { SessionMetadata, SessionReadFailed } from "../domain/session";
 
 export type SessionsError = SessionReadFailed | SessionNotFound;

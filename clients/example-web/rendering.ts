@@ -137,7 +137,7 @@ const statusText = (status: DemoState | ConnectionState | TurnState): string => 
 const activeStatus = (): DemoState | ConnectionState =>
   state.mode === "demo" ? state.demoState : state.connectionState;
 
-export const renderConnectionStatus = (): void => {
+const renderConnectionStatus = (): void => {
   const status = activeStatus();
   const label = statusText(status);
   connectionLabel.textContent = label;
@@ -208,7 +208,7 @@ const renderRosterList = (
   for (const conversation of conversations) target.append(renderRosterRow(conversation));
 };
 
-export const renderSidebar = (): void => {
+const renderSidebar = (): void => {
   const query = state.search.trim().toLocaleLowerCase();
   const matches = (conversation: Conversation): boolean =>
     query.length === 0 ||
@@ -1548,7 +1548,7 @@ const renderMemoryView = (): HTMLElement => {
   return root;
 };
 
-export const renderView = (): void => {
+const renderView = (): void => {
   const view =
     state.view === "chat"
       ? renderChatView()
