@@ -1,7 +1,12 @@
 import { Context, Effect, Layer } from "effect";
 import { listProfileSessions, showProfileSession } from "../adapters/pi/sessions";
+import { readSessionHistory } from "../adapters/pi/session-history";
 import type { ProfileTarget } from "../domain/profile";
-import { SessionNotFound } from "../domain/session";
+import {
+  SessionNotFound,
+  type SessionHistoryCursorInvalid,
+  type SessionHistoryPage,
+} from "../domain/session";
 import type { SessionMetadata, SessionReadFailed } from "../domain/session";
 
 export type SessionsError = SessionReadFailed | SessionNotFound;
@@ -18,6 +23,11 @@ export interface SessionsApi {
     target: ProfileTarget,
     id: string,
   ) => Effect.Effect<SessionMetadata, SessionsError>;
+  readonly history?: (
+    target: ProfileTarget,
+    reference: string,
+    before?: string,
+  ) => Effect.Effect<SessionHistoryPage, SessionsError | SessionHistoryCursorInvalid>;
 }
 
 export class Sessions extends Context.Service<Sessions, SessionsApi>()("ziggy/Sessions") {}
@@ -35,4 +45,5 @@ export const SessionsLive = Layer.succeed(Sessions, {
         message: `session not found: ${id}`,
       });
     }),
+  history: (target, reference, before) => readSessionHistory(target.path, reference, before),
 });

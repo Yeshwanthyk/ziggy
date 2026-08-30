@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import {
+  UI_PROTOCOL_MAX_FRAME_BYTES,
   UiEventFrame,
   UiExtensionAddParams,
   UiExtensionFailure,
@@ -9,18 +10,22 @@ import {
   UiExtensionValidateParams,
   UiExtensionValidationResult,
   UiRequestEnvelope,
+  UiResponseFrame,
   UiSessionKey,
   UiSessionName,
   UiSessionOpenParams,
   UiSessionTextParams,
 } from "ziggy/domain/ui-gateway";
 
+const profileId = `prf_${"a".repeat(24)}`;
+const liveRef = { profileId, kind: "live" as const, key: "ui/main" };
 const decodeRequest = Schema.decodeUnknownSync(UiRequestEnvelope);
 const decodeOpen = Schema.decodeUnknownSync(UiSessionOpenParams);
 const decodeText = Schema.decodeUnknownSync(UiSessionTextParams);
 const decodeName = Schema.decodeUnknownSync(UiSessionName);
 const decodeKey = Schema.decodeUnknownSync(UiSessionKey);
 const decodeEvent = Schema.decodeUnknownSync(UiEventFrame);
+const decodeResponseResult = Schema.decodeUnknownResult(UiResponseFrame);
 const decodeExtensionAdd = Schema.decodeUnknownSync(UiExtensionAddParams);
 const decodeExtensionFailure = Schema.decodeUnknownSync(UiExtensionFailure);
 const decodeExtensionList = Schema.decodeUnknownSync(UiExtensionListForProfileResult);
@@ -28,20 +33,28 @@ const decodeExtensionValidate = Schema.decodeUnknownSync(UiExtensionValidatePara
 const decodeExtensionValidation = Schema.decodeUnknownSync(UiExtensionValidationResult);
 const decodeExtensionMutation = Schema.decodeUnknownSync(UiExtensionMutationResult);
 
-test("UI protocol decodes the bounded request envelope and exact method params", () => {
+test("UI protocol decodes explicit Profile-scoped request params", () => {
   expect(
     decodeRequest({
       id: "r1",
       method: "session.open",
-      params: { name: "main" },
+      params: { profileId, context: { kind: "local" }, name: "main" },
     }),
-  ).toEqual({ id: "r1", method: "session.open", params: { name: "main" } });
-  expect(decodeOpen({ name: "main-1" })).toEqual({ name: "main-1" });
-  expect(decodeText({ session: "ui/main", text: "hello" })).toEqual({
-    session: "ui/main",
+  ).toEqual({
+    id: "r1",
+    method: "session.open",
+    params: { profileId, context: { kind: "local" }, name: "main" },
+  });
+  expect(decodeOpen({ profileId, context: { kind: "local" }, name: "main-1" })).toEqual({
+    profileId,
+    context: { kind: "local" },
+    name: "main-1",
+  });
+  expect(decodeText({ ref: liveRef, text: "hello" })).toEqual({
+    ref: liveRef,
     text: "hello",
   });
-  expect(() => decodeText({ session: "ui/main", text: "", extra: true })).toThrow();
+  expect(() => decodeText({ ref: liveRef, text: "", extra: true })).toThrow();
 });
 
 test("UI names and live keys reject traversal, separators, uppercase aliases, and overlong values", () => {
@@ -54,41 +67,50 @@ test("UI names and live keys reject traversal, separators, uppercase aliases, an
   expect(() => decodeKey(`ui/${"x".repeat(241)}`)).toThrow();
 });
 
-test("UI extension methods have bounded params and domain-shaped results", () => {
-  expect(decodeExtensionAdd({ id: "weather" })).toEqual({ id: "weather" });
-  expect(() => decodeExtensionAdd({ id: "A" })).toThrow();
-  expect(() => decodeExtensionAdd({ id: "a".repeat(129) })).toThrow();
-  expect(decodeExtensionValidate({})).toEqual({});
-  expect(() => decodeExtensionValidate({ extra: true })).toThrow();
+test("UI extension methods require Profile identity and never expose a path", () => {
+  expect(decodeExtensionAdd({ profileId, id: "weather" })).toEqual({ profileId, id: "weather" });
+  expect(() => decodeExtensionAdd({ profileId, id: "A" })).toThrow();
+  expect(() => decodeExtensionAdd({ profileId, id: "a".repeat(129) })).toThrow();
+  expect(decodeExtensionValidate({ profileId })).toEqual({ profileId });
+  expect(() => decodeExtensionValidate({})).toThrow();
 
   expect(
     decodeExtensionList({
+      profileId,
       available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
       selected: ["weather"],
     }),
   ).toEqual({
+    profileId,
     available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
     selected: ["weather"],
   });
   expect(
+    decodeExtensionMutation({ profileId, id: "weather", changed: true, selected: true }),
+  ).toEqual({ profileId, id: "weather", changed: true, selected: true });
+  expect(
     decodeExtensionMutation({
+      profileId,
       id: "weather",
       profilePath: "/profile",
       changed: true,
       selected: true,
     }),
-  ).toEqual({ id: "weather", profilePath: "/profile", changed: true, selected: true });
+  ).toEqual({ profileId, id: "weather", changed: true, selected: true });
   expect(
     decodeExtensionValidation({
+      profileId,
       selected: ["weather"],
       preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
     }),
   ).toEqual({
+    profileId,
     selected: ["weather"],
     preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
   });
   expect(() =>
     decodeExtensionList({
+      profileId,
       available: [
         {
           id: "weather",
@@ -158,23 +180,86 @@ test("UI extension failures keep the typed operation contract and optional metad
   ).toThrow();
 });
 
-test("UI event schemas mirror the application ChatEvent payloads", () => {
+test("UI event schemas require Profile, epoch, sequence, and stable event identity", () => {
   expect(
     decodeEvent({
+      profileId,
+      session: liveRef,
+      epoch: "epoch-1234",
+      seq: 1,
+      eventId: "event-1",
       event: "assistant-text",
-      session: "ui/main",
       payload: { delta: "hi", snapshot: "hi" },
     }),
   ).toEqual({
+    profileId,
+    session: liveRef,
+    epoch: "epoch-1234",
+    seq: 1,
+    eventId: "event-1",
     event: "assistant-text",
-    session: "ui/main",
     payload: { delta: "hi", snapshot: "hi" },
   });
   expect(() =>
     decodeEvent({
+      profileId,
+      session: liveRef,
+      epoch: "epoch-1234",
+      seq: 1,
+      eventId: "event-1",
       event: "assistant-text",
-      session: "ui/main",
       payload: { text: "wrong schema" },
     }),
   ).toThrow();
+});
+
+test("UI success responses enforce the complete WebSocket frame budget", () => {
+  const legal = {
+    id: "r-frame-legal",
+    ok: true,
+    result: {
+      profileId,
+      agentId: "sage",
+      answer: "\0".repeat(8_000),
+      sessionId: "child-session",
+    },
+  } as const;
+  const oversized = {
+    ...legal,
+    id: "r-frame-oversized",
+    result: { ...legal.result, answer: "😀".repeat(60_000) },
+  } as const;
+
+  expect(Result.isSuccess(decodeResponseResult(legal))).toBe(true);
+  expect(new TextEncoder().encode(JSON.stringify(legal)).byteLength).toBeLessThanOrEqual(
+    UI_PROTOCOL_MAX_FRAME_BYTES,
+  );
+  expect(Result.isFailure(decodeResponseResult(oversized))).toBe(true);
+});
+
+test("maximum list projections remain valid inside the complete frame budget", () => {
+  const agents = Array.from({ length: 4 }, (_, index) => ({
+    id: `agent-${index}`,
+    description: "\0".repeat(512),
+    provider: "\0".repeat(128),
+    model: "\0".repeat(256),
+    thinking: "high" as const,
+    tools: Array.from({ length: 8 }, () => "\0".repeat(128)),
+  }));
+  const maximum = {
+    id: "r-list-maximum",
+    ok: true,
+    result: { profileId, agents },
+  } as const;
+  const overCount = {
+    ...maximum,
+    id: "r-list-over-count",
+    result: { profileId, agents: [...agents, agents[0]] },
+  } as const;
+
+  expect(Result.isSuccess(decodeResponseResult(maximum))).toBe(true);
+  expect(new TextEncoder().encode(JSON.stringify(maximum)).byteLength).toBeLessThanOrEqual(
+    UI_PROTOCOL_MAX_FRAME_BYTES,
+  );
+  expect(Result.isFailure(decodeResponseResult(overCount))).toBe(true);
 });

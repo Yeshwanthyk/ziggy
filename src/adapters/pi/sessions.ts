@@ -13,6 +13,9 @@ import type {
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
 
+const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+const isTooLargeTranscriptCause = Schema.is(Schema.Struct({ kind: Schema.Literal("too-large") }));
+
 const UsageCost = Schema.Struct({
   input: Schema.Finite,
   output: Schema.Finite,
@@ -208,11 +211,13 @@ const readRegularFile = (file: string): Effect.Effect<string, SessionReadFailed>
     (handle) =>
       io(file, "read", () => handle.stat()).pipe(
         Effect.flatMap((status) =>
-          status.isFile()
+          status.isFile() && status.size <= MAX_TRANSCRIPT_BYTES
             ? io(file, "read", (signal) => handle.readFile({ encoding: "utf8", signal }))
             : Effect.fail(
-                failure(file, "read", `session file has the wrong file type: ${file}`, {
-                  kind: "wrong-type",
+                failure(file, "read", `session file is not a regular bounded transcript: ${file}`, {
+                  kind: status.isFile() ? "too-large" : "wrong-type",
+                  size: status.size,
+                  maximum: MAX_TRANSCRIPT_BYTES,
                 }),
               ),
         ),
@@ -373,10 +378,21 @@ export const listProfileSessions = (
   Effect.gen(function* () {
     const root = path.join(profilePath, "sessions");
     const files = yield* discoverFiles(root);
-    const parsed = yield* Effect.forEach(files, (file) => parseSession(root, file), {
-      concurrency: 1,
-    });
-    return yield* projectSessions(parsed);
+    const parsed = yield* Effect.forEach(
+      files,
+      (file) =>
+        parseSession(root, file).pipe(
+          Effect.catch((error) =>
+            error.operation === "read" && isTooLargeTranscriptCause(error.cause)
+              ? Effect.succeed(undefined)
+              : Effect.fail(error),
+          ),
+        ),
+      { concurrency: 1 },
+    );
+    return yield* projectSessions(
+      parsed.filter((session): session is ParsedSession => session !== undefined),
+    );
   });
 
 export const showProfileSession = (

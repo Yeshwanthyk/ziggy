@@ -5,11 +5,7 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
-import {
-  openUiServer,
-  type UiServerConnection,
-  type UiServerError,
-} from "../adapters/bun/ui-server";
+import { openUiServer, type UiServerConnection, UiServerError } from "../adapters/bun/ui-server";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { type SlackApiError } from "../adapters/slack/api";
@@ -22,12 +18,20 @@ import {
   type GatewayOwnerStatus,
 } from "../domain/gateway";
 import type { ProfileTarget } from "../domain/profile";
+import { makeProfileDirectory, stableProfileId } from "./profile-directory";
 import type { DiscordGatewayConfig } from "../domain/discord";
 import type { DiscordIngressDatabaseError } from "../domain/discord-ingress";
 import type { SlackGatewayConfig } from "../domain/slack";
 import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
+import { AutomationDefinitions, type AutomationDefinitionsApi } from "./automation-definitions";
+import { Automations, type AutomationsApi } from "./automations";
+import { Auth, type AuthApi } from "./auth";
+import { Doctor, type DoctorApi } from "./doctor";
+import { Memory, type MemoryApi } from "./memory";
+import { Models, type ModelsApi } from "./models";
+import { ProfileAgents, type ProfileAgentsApi } from "./profile-agents";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";
 import {
@@ -40,7 +44,13 @@ import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./sl
 import { ProfileExtensions } from "./profile-extensions";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import { Sessions, type SessionsApi } from "./sessions";
-import { makeUiGateway, type UiGatewayConnection } from "./ui-gateway";
+import {
+  makeSharedUiGateway,
+  makeUiGateway,
+  type UiGatewayApi,
+  type UiGatewayConnection,
+} from "./ui-gateway";
+import type { ResidentProfileBranch } from "./profile-runtime-directory";
 
 export interface ResidentGatewayConfig {
   readonly telegram: TelegramGatewayConfig | undefined;
@@ -108,25 +118,78 @@ const disabledUiRuntime: ResidentUiRuntime = {
 
 const makeLiveUiRuntime = (
   repositoryRoot: string,
-  sessions: SessionsApi,
-  agent: ZiggyAgentApi,
-  profileExtensions: ProfileExtensionsApi,
+  capabilities: {
+    readonly sessions: SessionsApi;
+    readonly agent: ZiggyAgentApi;
+    readonly profileExtensions: ProfileExtensionsApi;
+    readonly profileAgents: ProfileAgentsApi;
+    readonly models: ModelsApi;
+    readonly auth: AuthApi;
+    readonly doctor: DoctorApi;
+    readonly automationDefinitions: AutomationDefinitionsApi;
+    readonly automationScheduler: AutomationSchedulerApi;
+    readonly automations: AutomationsApi;
+    readonly memory: MemoryApi;
+  },
+  profileRegistryPath?: string,
 ): ResidentUiRuntime => ({
   run: (target, registry) =>
     Effect.gen(function* () {
-      const gateway = makeUiGateway(
+      const defaultBranch: ResidentProfileBranch = {
+        profileId: stableProfileId(target.path),
         target,
         registry,
-        sessions,
-        agent,
-        repositoryRoot,
-        profileExtensions,
-      );
+      };
+      let openedGateway: UiGatewayApi;
+      if (profileRegistryPath === undefined) {
+        openedGateway = makeUiGateway({
+          defaultProfile: defaultBranch,
+          repositoryRoot,
+          ...capabilities,
+        });
+      } else {
+        const profileDirectory = makeProfileDirectory(target, {
+          registryPath: profileRegistryPath,
+        });
+        const entries = yield* profileDirectory.entries().pipe(
+          Effect.mapError(
+            (cause) =>
+              new UiServerError({
+                operation: "start",
+                message: "could not compose registered Profile UI branches",
+                cause,
+              }),
+          ),
+        );
+        const branches = yield* Effect.forEach(
+          entries.filter((entry) => entry.available || entry.profileId === defaultBranch.profileId),
+          (entry) =>
+            entry.profileId === defaultBranch.profileId
+              ? Effect.succeed(defaultBranch)
+              : makeChatRegistry().pipe(
+                  Effect.map(
+                    (profileRegistry): ResidentProfileBranch => ({
+                      profileId: entry.profileId,
+                      target: entry.target,
+                      registry: profileRegistry,
+                    }),
+                  ),
+                ),
+          { concurrency: 1 },
+        );
+        openedGateway = makeSharedUiGateway({
+          defaultProfile: defaultBranch,
+          branches,
+          profileDirectory,
+          repositoryRoot,
+          ...capabilities,
+        });
+      }
       const connections = new Map<string, UiGatewayConnection>();
       const connectionFor = (transport: UiServerConnection): UiGatewayConnection => {
         const existing = connections.get(transport.id);
         if (existing !== undefined) return existing;
-        const opened = gateway.connect(transport.send);
+        const opened = openedGateway.connect(transport.send);
         connections.set(transport.id, opened);
         return opened;
       };
@@ -223,7 +286,7 @@ export const makeResidentGateway = (
     }),
 });
 
-export const makeResidentGatewayLive = (repositoryRoot: string) =>
+export const makeResidentGatewayLive = (repositoryRoot: string, profileRegistryPath?: string) =>
   Layer.effect(
     ResidentGateway,
     Effect.gen(function* () {
@@ -235,9 +298,20 @@ export const makeResidentGatewayLive = (repositoryRoot: string) =>
         liveRuntime,
         makeLiveUiRuntime(
           repositoryRoot,
-          yield* Sessions,
-          yield* ZiggyAgent,
-          yield* ProfileExtensions,
+          {
+            sessions: yield* Sessions,
+            agent: yield* ZiggyAgent,
+            profileExtensions: yield* ProfileExtensions,
+            profileAgents: yield* ProfileAgents,
+            models: yield* Models,
+            auth: yield* Auth,
+            doctor: yield* Doctor,
+            automationDefinitions: yield* AutomationDefinitions,
+            automationScheduler: yield* AutomationScheduler,
+            automations: yield* Automations,
+            memory: yield* Memory,
+          },
+          profileRegistryPath,
         ),
       );
     }),

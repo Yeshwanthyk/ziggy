@@ -3,408 +3,211 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ziggy signal desk</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: oklch(1 0 0);
-        --surface: oklch(0.97 0.006 150);
-        --rail: oklch(0.945 0.012 150);
-        --ink: oklch(0.22 0.025 155);
-        --muted: oklch(0.46 0.025 155);
-        --line: oklch(0.84 0.012 150);
-        --primary: oklch(0.52 0.14 150);
-        --primary-hover: oklch(0.46 0.14 150);
-        --accent: oklch(0.58 0.17 35);
-        --on-dark: oklch(0.98 0.005 150);
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        min-height: 100vh;
-        margin: 0;
-        color: var(--ink);
-        background: var(--rail);
-      }
-
-      button,
-      input,
-      textarea {
-        font: inherit;
-      }
-
-      button {
-        border: 1px solid var(--ink);
-        border-radius: 0.35rem;
-        min-height: 2.75rem;
-        padding: 0.6rem 0.85rem;
-        color: var(--on-dark);
-        background: var(--primary);
-        cursor: pointer;
-        transition:
-          background-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
-          border-color 150ms cubic-bezier(0.25, 1, 0.5, 1),
-          transform 150ms cubic-bezier(0.25, 1, 0.5, 1);
-      }
-
-      button:hover {
-        border-color: var(--primary-hover);
-        background: var(--primary-hover);
-      }
-
-      button:active {
-        transform: scale(0.96);
-      }
-
-      button:disabled {
-        border-color: var(--line);
-        color: var(--muted);
-        background: var(--surface);
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      button:focus-visible,
-      input:focus-visible,
-      textarea:focus-visible {
-        outline: 3px solid color-mix(in oklch, var(--accent) 55%, transparent);
-        outline-offset: 2px;
-      }
-
-      input,
-      textarea {
-        width: 100%;
-        border: 1px solid var(--line);
-        border-radius: 0.35rem;
-        padding: 0.65rem 0.75rem;
-        color: var(--ink);
-        background: var(--bg);
-      }
-
-      input::placeholder,
-      textarea::placeholder {
-        color: var(--muted);
-      }
-
-      textarea {
-        min-height: 5rem;
-        resize: vertical;
-      }
-
-      .masthead {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 2rem;
-        align-items: start;
-        padding: 2rem clamp(1.5rem, 4vw, 3.5rem);
-        border-bottom: 1px solid var(--line);
-      }
-
-      .masthead h1 {
-        margin: 0;
-        font-size: 2.35rem;
-        font-weight: 650;
-        line-height: 1;
-        letter-spacing: -0.035em;
-        text-wrap: balance;
-      }
-
-      .masthead p {
-        max-width: 42rem;
-        margin: 0;
-        color: var(--muted);
-        line-height: 1.55;
-        text-wrap: pretty;
-      }
-
-      .connection {
-        display: grid;
-        grid-template-columns: 8rem minmax(14rem, 1fr) auto;
-        gap: 0.65rem;
-        padding: 0.85rem clamp(1.5rem, 4vw, 3.5rem);
-        color: var(--on-dark);
-        background: var(--ink);
-      }
-
-      .connection input {
-        border-color: oklch(0.48 0.025 155);
-        color: var(--on-dark);
-        background: oklch(0.28 0.025 155);
-      }
-
-      .connection input::placeholder {
-        color: oklch(0.78 0.015 155);
-      }
-
-      .connection button {
-        border-color: var(--primary);
-      }
-
-      .signal {
-        display: flex;
-        gap: 0.6rem;
-        align-items: center;
-        grid-column: 1 / -1;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.75rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-
-      .operation-status {
-        grid-column: 1 / -1;
-        min-height: 1.1em;
-        margin: 0;
-        color: oklch(0.84 0.1 35);
-        font-size: 0.82rem;
-      }
-
-      .signal::before {
-        width: 0.55rem;
-        height: 0.55rem;
-        border-radius: 50%;
-        background: var(--accent);
-        content: "";
-      }
-
-      .signal[data-state="open"]::before {
-        background: oklch(0.78 0.15 150);
-        box-shadow: 0 0 0 0.25rem oklch(0.78 0.15 150 / 18%);
-      }
-
-      main {
-        display: grid;
-        grid-template-columns: minmax(16rem, 0.75fr) minmax(22rem, 1.5fr);
-        min-height: 42rem;
-      }
-
-      .rail,
-      .workspace {
-        padding: clamp(1.25rem, 3vw, 2.5rem);
-      }
-
-      .rail {
-        border-right: 1px solid var(--line);
-      }
-
-      .workspace {
-        display: grid;
-        gap: 1.5rem;
-        align-content: start;
-        background: var(--surface);
-      }
-
-      h2,
-      h3 {
-        margin: 0 0 0.75rem;
-        font-weight: 600;
-      }
-
-      h2 {
-        font-size: 1.7rem;
-        font-weight: 650;
-        letter-spacing: -0.025em;
-        text-wrap: balance;
-      }
-
-      h3,
-      .section-label {
-        color: var(--muted);
-        font-size: 0.82rem;
-        font-weight: 650;
-      }
-
-      .section + .section {
-        margin-top: 2rem;
-      }
-
-      .stack,
-      .session-list {
-        display: grid;
-        gap: 0.65rem;
-      }
-
-      .session-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 0.6rem;
-        align-items: center;
-        padding: 0.75rem 0;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .session-row code {
-        overflow: hidden;
-        font-size: 0.78rem;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .session-row button {
-        padding: 0.38rem 0.55rem;
-        color: var(--ink);
-        background: transparent;
-      }
-
-      .session-row button:hover {
-        color: var(--on-dark);
-        background: var(--primary);
-      }
-
-      .empty,
-      .hint {
-        color: var(--muted);
-        font-size: 0.88rem;
-      }
-
-      .chat-log,
-      .watch-log {
-        min-height: 13rem;
-        max-height: 26rem;
-        overflow: auto;
-        border: 1px solid var(--line);
-        padding: 1rem;
-        background: var(--bg);
-      }
-
-      .watch-log {
-        min-height: 8rem;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.78rem;
-        white-space: pre-wrap;
-      }
-
-      .message {
-        max-width: 48rem;
-        margin: 0 0 1rem;
-        white-space: pre-wrap;
-      }
-
-      .message::before {
-        display: block;
-        margin-bottom: 0.2rem;
-        color: var(--muted);
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 0.68rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-      }
-
-      .message.user::before {
-        content: "You";
-      }
-
-      .message.assistant::before {
-        content: "Ziggy";
-      }
-
-      .message.user {
-        padding: 0.75rem;
-        border-radius: 0.35rem;
-        background: var(--rail);
-      }
-
-      .prompt-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 0.65rem;
-        align-items: end;
-      }
-
-      @media (max-width: 760px) {
-        .masthead,
-        main {
-          grid-template-columns: 1fr;
-        }
-
-        .connection {
-          grid-template-columns: 1fr;
-        }
-
-        .rail {
-          border-right: 0;
-          border-bottom: 1px solid var(--line);
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
-          scroll-behavior: auto !important;
-          transition: none !important;
-        }
-
-        button:active {
-          transform: none;
-        }
-      }
-    </style>
+    <meta name="theme-color" content="#0d0f13" />
+    <link rel="icon" href="data:," />
+    <meta
+      name="description"
+      content="Ziggy is a local-first conversation desk for Profiles, specialists, and routines."
+    />
+    <title>Ziggy — signal desk</title>
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="masthead">
-      <h1>Ziggy signal desk</h1>
-      <p>Connect to one local Profile. Open a private UI chat or watch a live channel session.</p>
-    </header>
+    <div class="app-shell" id="app" data-view="chat" data-mode="demo">
+      <div class="mobile-backdrop" id="mobile-backdrop" hidden></div>
 
-    <form class="connection" id="connection-form">
-      <input id="port" name="port" inputmode="numeric" placeholder="Port" aria-label="Gateway port" required />
-      <input id="token" name="token" type="password" placeholder="Token from .runtime/ui-server.json" aria-label="Gateway token" required />
-      <button type="submit">Connect</button>
-      <div class="signal" id="connection-state" data-state="closed" aria-live="polite">Closed</div>
-      <p class="operation-status" id="operation-status" aria-live="polite"></p>
-    </form>
+      <aside class="sidebar" id="sidebar" aria-label="Ziggy navigation">
+        <div class="sidebar-top">
+          <a class="wordmark" href="#chat" aria-label="Ziggy home">
+            <span class="wordmark-mark" aria-hidden="true">z</span>
+            <span>Ziggy</span>
+          </a>
+          <div class="sidebar-top-actions">
+            <button class="icon-button sidebar-new" type="button" data-action="new-conversation" aria-label="New conversation" title="New conversation">
+              <span aria-hidden="true">＋</span>
+            </button>
+            <button class="icon-button sidebar-close" id="close-rail" type="button" aria-label="Close navigation" title="Close navigation">
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+        </div>
 
-    <main>
-      <aside class="rail">
-        <section class="section">
-          <h2>Sessions</h2>
-          <form class="stack" id="open-form">
-            <label class="section-label" for="session-name">New UI session</label>
-            <input id="session-name" placeholder="main" pattern="[a-z0-9][a-z0-9._-]{0,63}" required />
-            <button id="open-session" type="submit" disabled>Open session</button>
-          </form>
-        </section>
+        <div class="profile-switcher">
+          <div class="profile-identity">
+            <span class="avatar avatar-small" id="profile-avatar" data-avatar="squarey" aria-hidden="true"></span>
+            <span class="profile-copy">
+              <span class="eyebrow">Profile</span>
+              <strong id="profile-name">Squarey</strong>
+            </span>
+          </div>
+          <label class="profile-picker" for="profile-select">
+            <span class="presence-dot presence-ready" id="profile-presence" aria-label="Profile resident ready"></span>
+            <span class="profile-chevron" aria-hidden="true">⌄</span>
+            <select id="profile-select" aria-label="Switch Profile">
+              <option value="squarey">Squarey</option>
+            </select>
+          </label>
+        </div>
 
-        <section class="section">
-          <h3>Live now</h3>
-          <div class="session-list" id="live-sessions"><p class="empty">Connect to load sessions.</p></div>
-        </section>
+        <nav class="primary-nav" aria-label="Primary">
+          <button class="nav-item is-active" type="button" data-view="chat" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">◌</span>
+            <span>Conversations</span>
+            <span class="nav-count" id="conversation-count">5</span>
+          </button>
+          <button class="nav-item" type="button" data-view="agents">
+            <span class="nav-icon" aria-hidden="true">✦</span>
+            <span>Agents</span>
+          </button>
+          <button class="nav-item" type="button" data-view="automations">
+            <span class="nav-icon" aria-hidden="true">↻</span>
+            <span>Automations</span>
+            <span class="nav-count nav-count-alert" id="automation-count">3</span>
+          </button>
+          <button class="nav-item" type="button" data-view="memory">
+            <span class="nav-icon" aria-hidden="true">▱</span>
+            <span>Memory &amp; extensions</span>
+          </button>
+        </nav>
 
-        <section class="section">
-          <h3>Stored transcripts</h3>
-          <div class="session-list" id="stored-sessions"><p class="empty">Connect to load sessions.</p></div>
-        </section>
+        <div class="roster-tools">
+          <label class="search-field" for="conversation-search">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <span class="sr-only">Search conversations</span>
+            <input id="conversation-search" type="search" placeholder="Search conversations" autocomplete="off" />
+            <kbd>/</kbd>
+          </label>
+          <button class="new-conversation" type="button" data-action="new-conversation">
+            <span aria-hidden="true">＋</span>
+            <span>New conversation</span>
+            <kbd>N</kbd>
+          </button>
+          <button class="new-conversation new-group" type="button" data-action="new-group">
+            <span aria-hidden="true">◉</span>
+            <span>New group room</span>
+          </button>
+        </div>
+
+        <div class="roster" id="roster" aria-label="Conversation roster">
+          <section class="roster-section" aria-labelledby="pinned-heading">
+            <div class="roster-heading">
+              <h2 id="pinned-heading">Pinned</h2>
+              <span class="roster-rule" aria-hidden="true"></span>
+            </div>
+            <div class="roster-list" id="pinned-list"></div>
+          </section>
+          <section class="roster-section" aria-labelledby="recent-heading">
+            <div class="roster-heading">
+              <h2 id="recent-heading">Recent</h2>
+              <span class="roster-rule" aria-hidden="true"></span>
+            </div>
+            <div class="roster-list" id="recent-list"></div>
+          </section>
+          <section class="roster-section" aria-labelledby="specialists-heading">
+            <div class="roster-heading">
+              <h2 id="specialists-heading">Specialists</h2>
+              <span class="roster-rule" aria-hidden="true"></span>
+            </div>
+            <div class="roster-list" id="specialists-list"></div>
+          </section>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="resident-status" id="resident-status">
+            <span class="status-led" aria-hidden="true"></span>
+            <span>
+              <strong>Local resident</strong>
+              <small id="resident-caption">Connected to Squarey</small>
+            </span>
+          </div>
+          <button class="footer-action" type="button" data-action="open-connection">
+            <span aria-hidden="true">⇄</span>
+            <span>Connection</span>
+          </button>
+        </div>
       </aside>
 
-      <div class="workspace">
-        <section>
-          <p class="section-label" id="chat-session">No UI session open</p>
-          <div class="chat-log" id="chat-log" aria-live="polite">
-            <p class="empty">Open a UI session to start a conversation.</p>
+      <main class="main-stage" id="main-stage">
+        <header class="topbar">
+          <div class="topbar-start">
+            <button class="icon-button mobile-only" id="open-rail" type="button" aria-label="Open navigation" title="Open navigation">
+              <span aria-hidden="true">☰</span>
+            </button>
+            <span class="topbar-context sr-only" id="topbar-context">Conversations</span>
           </div>
-          <form class="prompt-row" id="prompt-form">
-            <div class="stack">
-              <label class="section-label" for="prompt">Prompt</label>
-              <textarea id="prompt" placeholder="Ask Ziggy…" required></textarea>
-            </div>
-            <button id="send-prompt" type="submit" disabled>Send prompt</button>
-          </form>
-        </section>
+          <div class="topbar-actions">
+            <button class="connection-chip" id="connection-chip" type="button" data-action="open-connection">
+              <span class="status-led" aria-hidden="true"></span>
+              <span id="connection-label">Ready</span>
+            </button>
+            <button class="icon-button" id="open-details" type="button" aria-label="Open conversation details" title="Conversation details">
+              <span aria-hidden="true">⋯</span>
+            </button>
+          </div>
+        </header>
 
-        <section>
-          <p class="section-label" id="watch-session">No channel session watched</p>
-          <div class="watch-log" id="watch-log">Choose Watch beside a live session.</div>
-        </section>
-      </div>
-    </main>
+        <div class="dev-state" hidden>
+          <label for="demo-state">Fixture state</label>
+          <select id="demo-state" aria-label="Choose a fixture state">
+            <option value="ready">Ready</option>
+            <option value="loading">Loading</option>
+            <option value="busy">Busy</option>
+            <option value="stopping">Stopping</option>
+            <option value="watch-only">Watch only</option>
+            <option value="reconnecting">Reconnecting</option>
+            <option value="offline">Offline</option>
+            <option value="empty">Empty</option>
+            <option value="validation">Validation</option>
+            <option value="request">Request pending</option>
+            <option value="ownership">Ownership</option>
+            <option value="reconciliation">Reconciliation</option>
+          </select>
+        </div>
 
-    <script src="./dist/main.js"></script>
+        <section class="view-root" id="view-root" aria-live="off"></section>
+      </main>
+
+      <aside class="details-panel" id="details-panel" aria-label="Conversation details" aria-hidden="true">
+        <div class="details-header">
+          <div>
+            <span class="eyebrow">Context</span>
+            <h2>Conversation details</h2>
+          </div>
+          <button class="icon-button" id="close-details" type="button" aria-label="Close conversation details" title="Close details">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div class="details-body" id="details-body"></div>
+      </aside>
+
+      <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+      <div class="live-region" id="live-region" aria-live="polite" aria-atomic="true"></div>
+    </div>
+
+    <dialog class="connection-dialog" id="connection-dialog" aria-labelledby="connection-dialog-title">
+      <form method="dialog" class="dialog-card" id="connection-form">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">Gateway</span>
+            <h2 id="connection-dialog-title">Connect a resident</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="submit" aria-label="Close connection dialog" title="Close dialog">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <p class="dialog-copy">Connect this tab to a local Ziggy resident. Credentials stay in this tab and are never bundled with the example.</p>
+        <label class="field-label" for="gateway-url">WebSocket endpoint</label>
+        <input id="gateway-url" name="url" inputmode="url" placeholder="ws://127.0.0.1:8787/ws" autocomplete="url" />
+        <label class="field-label" for="gateway-token">Session token</label>
+        <input id="gateway-token" name="token" type="password" placeholder="Paste a runtime token" autocomplete="off" />
+        <p class="field-error" id="connection-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button-secondary" value="cancel" type="submit">Cancel</button>
+          <button class="button-primary" id="connect-gateway" value="default" type="submit">Connect</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./dist/main.js?v=20260830a"></script>
   </body>
 </html>

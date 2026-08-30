@@ -57,3 +57,38 @@ export class SessionNotFound extends Schema.TaggedErrorClass<SessionNotFound>()(
   reference: Schema.String,
   message: Schema.String,
 }) {}
+
+export const SessionHistoryTerminalState = Schema.Literals([
+  "completed",
+  "aborted",
+  "failed",
+  "incomplete",
+]);
+export type SessionHistoryTerminalState = typeof SessionHistoryTerminalState.Type;
+
+export type SessionHistoryEntry =
+  | {
+      readonly kind: "user" | "assistant";
+      readonly timestamp: string;
+      readonly text: string;
+    }
+  | {
+      readonly kind: "tool";
+      readonly timestamp: string;
+      readonly phase: "start" | "end";
+      readonly toolName: string;
+      readonly failed: boolean;
+    };
+
+export interface SessionHistoryPage {
+  readonly entries: ReadonlyArray<SessionHistoryEntry>;
+  readonly terminalState: SessionHistoryTerminalState;
+  readonly truncated: boolean;
+  readonly hasMore: boolean;
+  readonly nextCursor?: string;
+}
+
+export class SessionHistoryCursorInvalid extends Schema.TaggedErrorClass<SessionHistoryCursorInvalid>()(
+  "SessionHistoryCursorInvalid",
+  { message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
+) {}

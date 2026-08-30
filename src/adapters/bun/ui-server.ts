@@ -6,11 +6,12 @@ import { Effect, FiberMap, Option, Queue, Schema, Scope } from "effect";
 import {
   UiRequestEnvelope,
   UiRequestId,
+  UI_PROTOCOL_MAX_FRAME_BYTES,
   type UiRequestEnvelope as UiRequestEnvelopeValue,
 } from "../../domain/ui-gateway";
 import { fileSystemCauseDetails } from "../fs/cause";
 
-export const UI_SERVER_MAX_FRAME_BYTES = 64 * 1024;
+export const UI_SERVER_MAX_FRAME_BYTES = UI_PROTOCOL_MAX_FRAME_BYTES;
 export const UI_SERVER_BACKPRESSURE_BYTES = 256 * 1024;
 export const UI_SERVER_MAX_IN_FLIGHT = 16;
 export const UI_SERVER_COMMAND_CAPACITY = 256;
@@ -26,6 +27,10 @@ const Port = Schema.Int.check(
   Schema.makeFilter((value) => value > 0 && value <= 65_535, {
     expected: "a TCP port",
   }),
+);
+const decodeOutgoingId = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ id: UiRequestId })),
+  { onExcessProperty: "ignore" },
 );
 
 export const UiServerProjection = Schema.Struct({
@@ -275,6 +280,13 @@ const trySend = (state: SocketState, text: string): boolean => {
   const socket = state.socket;
   if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false;
   try {
+    if (Buffer.byteLength(text, "utf8") > UI_SERVER_MAX_FRAME_BYTES) {
+      const frame = decodeOutgoingId(text);
+      if (Option.isNone(frame)) return false;
+      return (
+        socket.send(failureFrame(frame.value.id, "internal", "response exceeded frame limit")) !== 0
+      );
+    }
     return socket.send(text) !== 0;
   } catch {
     return false;
