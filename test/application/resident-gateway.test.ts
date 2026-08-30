@@ -34,6 +34,7 @@ import {
 import { Sessions, type SessionsApi } from "ziggy/application/sessions";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
+import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 
@@ -417,11 +418,18 @@ describe("resident gateway supervision", () => {
 
         const socket = yield* Effect.promise(() => connectUi(projection.port, projection.token));
         const response = nextUiMessage(socket);
-        socket.send(JSON.stringify({ id: "validate", method: "extension.validate", params: {} }));
+        socket.send(
+          JSON.stringify({
+            id: "validate",
+            method: "extension.validate",
+            params: { profileId: stableProfileId(target.path) },
+          }),
+        );
         expect(decodeUiResponse(yield* Effect.promise(() => response))).toEqual({
           id: "validate",
           ok: true,
           result: {
+            profileId: stableProfileId(target.path),
             selected: [],
             preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
           },

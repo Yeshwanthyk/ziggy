@@ -5,11 +5,7 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
-import {
-  openUiServer,
-  type UiServerConnection,
-  type UiServerError,
-} from "../adapters/bun/ui-server";
+import { openUiServer, type UiServerConnection, UiServerError } from "../adapters/bun/ui-server";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { type SlackApiError } from "../adapters/slack/api";
@@ -22,6 +18,7 @@ import {
   type GatewayOwnerStatus,
 } from "../domain/gateway";
 import type { ProfileTarget } from "../domain/profile";
+import { makeProfileDirectory, stableProfileId } from "./profile-directory";
 import type { DiscordGatewayConfig } from "../domain/discord";
 import type { DiscordIngressDatabaseError } from "../domain/discord-ingress";
 import type { SlackGatewayConfig } from "../domain/slack";
@@ -40,7 +37,13 @@ import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./sl
 import { ProfileExtensions } from "./profile-extensions";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import { Sessions, type SessionsApi } from "./sessions";
-import { makeUiGateway, type UiGatewayConnection } from "./ui-gateway";
+import {
+  makeSharedUiGateway,
+  makeUiGateway,
+  type UiGatewayApi,
+  type UiGatewayConnection,
+} from "./ui-gateway";
+import type { ResidentProfileBranch } from "./profile-runtime-directory";
 
 export interface ResidentGatewayConfig {
   readonly telegram: TelegramGatewayConfig | undefined;
@@ -111,22 +114,69 @@ const makeLiveUiRuntime = (
   sessions: SessionsApi,
   agent: ZiggyAgentApi,
   profileExtensions: ProfileExtensionsApi,
+  profileRegistryPath?: string,
 ): ResidentUiRuntime => ({
   run: (target, registry) =>
     Effect.gen(function* () {
-      const gateway = makeUiGateway(
+      const defaultBranch: ResidentProfileBranch = {
+        profileId: stableProfileId(target.path),
         target,
         registry,
-        sessions,
-        agent,
-        repositoryRoot,
-        profileExtensions,
-      );
+      };
+      let openedGateway: UiGatewayApi;
+      if (profileRegistryPath === undefined) {
+        openedGateway = makeUiGateway({
+          defaultProfile: defaultBranch,
+          repositoryRoot,
+          sessions,
+          agent,
+          profileExtensions,
+        });
+      } else {
+        const profileDirectory = makeProfileDirectory(target, {
+          registryPath: profileRegistryPath,
+        });
+        const entries = yield* profileDirectory.entries().pipe(
+          Effect.mapError(
+            (cause) =>
+              new UiServerError({
+                operation: "start",
+                message: "could not compose registered Profile UI branches",
+                cause,
+              }),
+          ),
+        );
+        const branches = yield* Effect.forEach(
+          entries.filter((entry) => entry.available || entry.profileId === defaultBranch.profileId),
+          (entry) =>
+            entry.profileId === defaultBranch.profileId
+              ? Effect.succeed(defaultBranch)
+              : makeChatRegistry().pipe(
+                  Effect.map(
+                    (profileRegistry): ResidentProfileBranch => ({
+                      profileId: entry.profileId,
+                      target: entry.target,
+                      registry: profileRegistry,
+                    }),
+                  ),
+                ),
+          { concurrency: 1 },
+        );
+        openedGateway = makeSharedUiGateway({
+          defaultProfile: defaultBranch,
+          branches,
+          profileDirectory,
+          repositoryRoot,
+          sessions,
+          agent,
+          profileExtensions,
+        });
+      }
       const connections = new Map<string, UiGatewayConnection>();
       const connectionFor = (transport: UiServerConnection): UiGatewayConnection => {
         const existing = connections.get(transport.id);
         if (existing !== undefined) return existing;
-        const opened = gateway.connect(transport.send);
+        const opened = openedGateway.connect(transport.send);
         connections.set(transport.id, opened);
         return opened;
       };
@@ -223,7 +273,7 @@ export const makeResidentGateway = (
     }),
 });
 
-export const makeResidentGatewayLive = (repositoryRoot: string) =>
+export const makeResidentGatewayLive = (repositoryRoot: string, profileRegistryPath?: string) =>
   Layer.effect(
     ResidentGateway,
     Effect.gen(function* () {
@@ -238,6 +288,7 @@ export const makeResidentGatewayLive = (repositoryRoot: string) =>
           yield* Sessions,
           yield* ZiggyAgent,
           yield* ProfileExtensions,
+          profileRegistryPath,
         ),
       );
     }),

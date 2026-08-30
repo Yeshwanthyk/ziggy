@@ -1,13 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { Context, Deferred, Effect, FiberMap, Semaphore, type Scope } from "effect";
-import type { ZiggyAgentError } from "../domain/agent";
-import { UiGatewayError, type UiLiveSession, type UiSessionKey } from "../domain/ui-gateway";
-import type { ChatEvent, ChatHandle } from "./agent";
+import {
+  UiGatewayError,
+  type UiConversationContext,
+  type UiSessionKey,
+} from "../domain/ui-gateway";
+import type { ChatEvent, ChatHandle, ChatPromptOptions } from "./agent";
 
 export const MAX_UI_SESSIONS = 32;
 
 export type ChatRegistryKind = "telegram" | "discord" | "slack" | "ui";
 export type ChatRegistryListener = (event: ChatEvent) => void;
+export interface ChatRegistryEvent {
+  readonly seq: number;
+  readonly eventId: string;
+  readonly event: ChatEvent;
+}
+export interface ChatRegistryReplay {
+  readonly events: ReadonlyArray<ChatRegistryEvent>;
+  readonly oldestSeq: number;
+  readonly latestSeq: number;
+}
+export const CHAT_REPLAY_LIMIT = 256;
 
 type PromptPhase =
   | { readonly _tag: "Idle" }
@@ -21,6 +35,11 @@ interface LiveEntry {
   readonly handle: ChatHandle;
   readonly listeners: Set<ChatRegistryListener>;
   readonly unsubscribeHandle: () => void;
+  readonly sequencedListeners: Set<(event: ChatRegistryEvent) => void>;
+  readonly replay: Array<ChatRegistryEvent>;
+  readonly context: UiConversationContext | undefined;
+  readonly agentId: string | undefined;
+  nextSeq: number;
   phase: PromptPhase;
 }
 
@@ -31,6 +50,23 @@ interface OpeningEntry {
   readonly result: Deferred.Deferred<ChatHandle, UiGatewayError>;
 }
 
+type MutableLiveView = {
+  key: UiSessionKey;
+  kind: ChatRegistryKind;
+  handle: ChatHandle;
+  idle: boolean;
+  context?: UiConversationContext;
+  agentId?: string;
+};
+
+type MutableListView = {
+  key: UiSessionKey;
+  kind: ChatRegistryKind;
+  idle: boolean;
+  context?: UiConversationContext;
+  agentId?: string;
+};
+
 type RegistryEntry = LiveEntry | OpeningEntry;
 
 export interface ChatRegistryLiveEntry {
@@ -38,6 +74,16 @@ export interface ChatRegistryLiveEntry {
   readonly kind: ChatRegistryKind;
   readonly handle: ChatHandle;
   readonly idle: boolean;
+  readonly context?: UiConversationContext;
+  readonly agentId?: string;
+}
+
+export interface ChatRegistryListEntry {
+  readonly key: UiSessionKey;
+  readonly kind: ChatRegistryKind;
+  readonly idle: boolean;
+  readonly context?: UiConversationContext;
+  readonly agentId?: string;
 }
 
 export interface ChatRegistryApi {
@@ -48,18 +94,34 @@ export interface ChatRegistryApi {
   ) => Effect.Effect<void, UiGatewayError>;
   readonly unregisterAlias: (key: UiSessionKey, handle: ChatHandle) => Effect.Effect<void>;
   readonly get: (key: UiSessionKey) => Effect.Effect<ChatRegistryLiveEntry, UiGatewayError>;
-  readonly list: Effect.Effect<ReadonlyArray<UiLiveSession>>;
+  readonly list: Effect.Effect<ReadonlyArray<ChatRegistryListEntry>>;
   readonly getOrOpenUi: (
     key: UiSessionKey,
-    open: Effect.Effect<ChatHandle, ZiggyAgentError>,
+    open: Effect.Effect<ChatHandle, unknown>,
+    metadata?: { readonly context?: UiConversationContext; readonly agentId?: string },
   ) => Effect.Effect<ChatHandle, UiGatewayError>;
   readonly subscribe: (
     key: UiSessionKey,
     listener: ChatRegistryListener,
   ) => Effect.Effect<() => void, UiGatewayError>;
-  readonly submit: (key: UiSessionKey, text: string) => Effect.Effect<void, UiGatewayError>;
+  readonly subscribeSequenced: (
+    key: UiSessionKey,
+    listener: (event: ChatRegistryEvent) => void,
+    afterSeq?: number,
+  ) => Effect.Effect<() => void, UiGatewayError>;
+  readonly replay: (
+    key: UiSessionKey,
+    afterSeq?: number,
+  ) => Effect.Effect<ChatRegistryReplay, UiGatewayError>;
+  readonly submit: (
+    key: UiSessionKey,
+    text: string,
+    options?: ChatPromptOptions,
+  ) => Effect.Effect<void, UiGatewayError>;
   readonly steer: (key: UiSessionKey, text: string) => Effect.Effect<void, UiGatewayError>;
   readonly abort: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
+  readonly followUp: (key: UiSessionKey, text: string) => Effect.Effect<void, UiGatewayError>;
+  readonly closeUi: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
 }
 
 export class ChatRegistry extends Context.Service<ChatRegistry, ChatRegistryApi>()(
@@ -81,7 +143,15 @@ const emit = (entry: LiveEntry, event: ChatEvent): void => {
   if (entry.phase._tag === "Prompting" && event.kind === "error") {
     entry.phase.errorSeen = true;
   }
+  const sequenced = {
+    seq: entry.nextSeq++,
+    eventId: randomUUID(),
+    event,
+  } satisfies ChatRegistryEvent;
+  entry.replay.push(sequenced);
+  if (entry.replay.length > CHAT_REPLAY_LIMIT) entry.replay.shift();
   for (const listener of Array.from(entry.listeners)) listener(event);
+  for (const listener of Array.from(entry.sequencedListeners)) listener(sequenced);
 };
 
 const makeLiveEntry = (
@@ -89,10 +159,12 @@ const makeLiveEntry = (
   kind: ChatRegistryKind,
   ownership: LiveEntry["ownership"],
   handle: ChatHandle,
+  metadata: { readonly context?: UiConversationContext; readonly agentId?: string } = {},
 ): Effect.Effect<LiveEntry, UiGatewayError> =>
   Effect.try({
     try: () => {
       const listeners = new Set<ChatRegistryListener>();
+      const sequencedListeners = new Set<(event: ChatRegistryEvent) => void>();
       let unsubscribe: () => void = () => undefined;
       const entry: LiveEntry = {
         _tag: "Live" as const,
@@ -103,6 +175,11 @@ const makeLiveEntry = (
         listeners,
         phase: { _tag: "Idle" as const },
         unsubscribeHandle: () => unsubscribe(),
+        sequencedListeners,
+        replay: [],
+        context: metadata.context,
+        agentId: metadata.agentId,
+        nextSeq: 1,
       };
       unsubscribe = handle.subscribe((event) => emit(entry, event));
       return entry;
@@ -110,12 +187,28 @@ const makeLiveEntry = (
     catch: (cause) => internalFailure(`could not subscribe to live session ${key}`, cause),
   });
 
-const liveView = (entry: LiveEntry): ChatRegistryLiveEntry => ({
-  key: entry.key,
-  kind: entry.kind,
-  handle: entry.handle,
-  idle: entry.phase._tag === "Idle" && entry.handle.isIdle,
-});
+const liveView = (entry: LiveEntry): ChatRegistryLiveEntry => {
+  const view: MutableLiveView = {
+    key: entry.key,
+    kind: entry.kind,
+    handle: entry.handle,
+    idle: entry.phase._tag === "Idle" && entry.handle.isIdle,
+  };
+  if (entry.context !== undefined) view.context = entry.context;
+  if (entry.agentId !== undefined) view.agentId = entry.agentId;
+  return view;
+};
+
+const listView = (entry: LiveEntry): ChatRegistryListEntry => {
+  const view: MutableListView = {
+    key: entry.key,
+    kind: entry.kind,
+    idle: entry.phase._tag === "Idle" && entry.handle.isIdle,
+  };
+  if (entry.context !== undefined) view.context = entry.context;
+  if (entry.agentId !== undefined) view.agentId = entry.agentId;
+  return view;
+};
 
 export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -210,15 +303,11 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
       list: statePermit.withPermit(
         Effect.sync(() =>
           [...entries.values()]
-            .flatMap((entry) =>
-              entry._tag === "Live"
-                ? [{ key: entry.key, kind: entry.kind, idle: liveView(entry).idle }]
-                : [],
-            )
+            .flatMap((entry) => (entry._tag === "Live" ? [listView(entry)] : []))
             .sort((left, right) => left.key.localeCompare(right.key)),
         ),
       ),
-      getOrOpenUi: (key, open) =>
+      getOrOpenUi: (key, open, metadata = {}) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const decision = yield* statePermit.withPermit(
@@ -261,7 +350,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                 internalFailure(`could not open UI session ${key}`, cause),
               ),
               Effect.flatMap((handle) =>
-                makeLiveEntry(key, "ui", "registry", handle).pipe(
+                makeLiveEntry(key, "ui", "registry", handle, metadata).pipe(
                   Effect.flatMap((live) =>
                     statePermit.withPermit(
                       Effect.gen(function* () {
@@ -304,7 +393,49 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             return () => entry.listeners.delete(listener);
           }),
         ),
-      submit: (key, text) =>
+      subscribeSequenced: (key, listener, afterSeq = 0) =>
+        statePermit.withPermit(
+          Effect.gen(function* () {
+            const candidate = entries.get(key);
+            if (candidate === undefined || candidate._tag !== "Live")
+              return yield* unknownSession(key);
+            const entry = candidate;
+            const oldestSeq = entry.replay[0]?.seq ?? entry.nextSeq;
+            const latestSeq = entry.nextSeq - 1;
+            if (afterSeq > latestSeq || afterSeq < oldestSeq - 1) {
+              return yield* failure(
+                "replay_gap",
+                `replay window for ${key} does not contain sequence ${afterSeq}`,
+              );
+            }
+            for (const event of entry.replay) {
+              if (event.seq > afterSeq) listener(event);
+            }
+            entry.sequencedListeners.add(listener);
+            return () => entry.sequencedListeners.delete(listener);
+          }),
+        ),
+      replay: (key, afterSeq = 0) =>
+        requireLive(key).pipe(
+          Effect.flatMap((entry) => {
+            const oldestSeq = entry.replay[0]?.seq ?? entry.nextSeq;
+            const latestSeq = entry.nextSeq - 1;
+            if (afterSeq > latestSeq || afterSeq < oldestSeq - 1) {
+              return Effect.fail(
+                failure(
+                  "replay_gap",
+                  `replay window for ${key} does not contain sequence ${afterSeq}`,
+                ),
+              );
+            }
+            return Effect.succeed({
+              events: entry.replay.filter((event) => event.seq > afterSeq),
+              oldestSeq,
+              latestSeq,
+            });
+          }),
+        ),
+      submit: (key, text, options) =>
         Effect.uninterruptible(
           Effect.gen(function* () {
             const reserved = yield* statePermit.withPermit(
@@ -325,7 +456,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                 return { entry, phase };
               }),
             );
-            const promptWork = reserved.entry.handle.prompt(text).pipe(
+            const promptWork = reserved.entry.handle.prompt(text, options).pipe(
               Effect.asVoid,
               Effect.catch((cause) =>
                 Effect.sync(() => {
@@ -379,6 +510,40 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                   ),
                   Effect.andThen(FiberMap.remove(work, `prompt:${key}`)),
                 ),
+          ),
+        ),
+      followUp: (key, text) =>
+        requireUi(key).pipe(
+          Effect.flatMap((entry) =>
+            entry.handle
+              .followUp(text)
+              .pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ChatNotStreaming"
+                    ? failure("not_streaming", `${key} is not streaming`, cause)
+                    : internalFailure(`could not send follow-up to UI session ${key}`, cause),
+                ),
+              ),
+          ),
+        ),
+      closeUi: (key) =>
+        requireUi(key).pipe(
+          Effect.flatMap((entry) =>
+            statePermit
+              .withPermit(
+                Effect.sync(() => {
+                  const current = entries.get(key);
+                  if (current?._tag === "Live" && current === entry) entries.delete(key);
+                }),
+              )
+              .pipe(
+                Effect.andThen(FiberMap.remove(work, `prompt:${key}`)),
+                Effect.andThen(Effect.sync(() => entry.unsubscribeHandle())),
+                Effect.andThen(entry.handle.dispose),
+                Effect.mapError((cause) =>
+                  internalFailure(`could not close UI session ${key}`, cause),
+                ),
+              ),
           ),
         ),
     };

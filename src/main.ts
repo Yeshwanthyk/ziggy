@@ -119,7 +119,10 @@ const ProfileAgentsProvided = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(AgentLive, ModelsLive)),
 );
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
-const ResidentProvided = makeResidentGatewayLive(repositoryRoot).pipe(
+const ResidentProvided = makeResidentGatewayLive(
+  repositoryRoot,
+  resolveProfilesRegistry(resolutionOptions),
+).pipe(
   Layer.provide(
     Layer.mergeAll(
       SchedulerProvided,
