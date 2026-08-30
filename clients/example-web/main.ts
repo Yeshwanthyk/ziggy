@@ -741,7 +741,9 @@ configureActions({
 });
 
 const isCurrentProfileLoad = (profileId: string, generation: number): boolean =>
-  state.profile.id === profileId && profileLoadGeneration === generation;
+  state.profile.id === profileId &&
+  state.profileGeneration === generation &&
+  profileLoadGeneration === generation;
 
 const loadLiveProjections = async (profileId: string, generation: number): Promise<void> => {
   if (state.mode !== "live") return;
@@ -1010,6 +1012,7 @@ const switchProfile = async (profileId: string): Promise<void> => {
     return;
   }
   const generation = ++profileLoadGeneration;
+  state.profileGeneration = generation;
   setOperation(`Switching to ${selected.name}…`, "warning");
   renderApp();
   try {
@@ -1052,6 +1055,7 @@ const switchProfile = async (profileId: string): Promise<void> => {
 const loadLiveState = async (): Promise<void> => {
   if (state.mode !== "live") return;
   const generation = ++profileLoadGeneration;
+  state.profileGeneration = generation;
   const selectedProfileId = state.profile.id;
   state.connectionState = client?.state ?? "connecting";
   state.demoState = "ready";
@@ -1241,6 +1245,7 @@ const connectLive = async (): Promise<void> => {
 };
 
 const switchToDemo = (demoState: DemoState): void => {
+  state.profileGeneration = ++profileLoadGeneration;
   clientUnsubscribe?.();
   clientUnsubscribe = undefined;
   client?.close();
@@ -1274,15 +1279,19 @@ const copyMessage = async (messageId: string): Promise<void> => {
 const newConversation = (): void => {
   const name = `New thread ${nextConversationNumber++}`;
   if (state.mode === "live") {
+    const profileId = state.profile.id;
+    const generation = state.profileGeneration;
     setOperation("Opening conversation…", "warning");
     void gatewayRequest("session.open", {
       name: name.toLocaleLowerCase().replace(/\s+/gu, "-"),
       commandId: commandId("open"),
     })
       .then(async (value) => {
+        if (!isCurrentProfileLoad(profileId, generation)) return;
         const session = sessionFromValue(value);
         if (session !== undefined) {
           await gatewayRequest("session.watch", { session: session.ref ?? session.key });
+          if (!isCurrentProfileLoad(profileId, generation)) return;
           session.watched = true;
         }
         if (session !== undefined && !state.conversations.some((item) => item.id === session.id))
@@ -1290,8 +1299,12 @@ const newConversation = (): void => {
         if (session !== undefined) state.selectedConversationId = session.id;
         showToast("Conversation opened", "success");
       })
-      .catch((cause: unknown) => showToast(errorMessage(cause), "danger"))
-      .finally(clearOperation);
+      .catch((cause: unknown) => {
+        if (isCurrentProfileLoad(profileId, generation)) showToast(errorMessage(cause), "danger");
+      })
+      .finally(() => {
+        if (isCurrentProfileLoad(profileId, generation)) clearOperation();
+      });
     return;
   }
   const conversation: Conversation = {
@@ -1331,6 +1344,8 @@ const newGroupConversation = (): void => {
     return;
   }
   const groupId = `room-${Date.now().toString(36)}`;
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Opening group room…", "warning");
   void gatewayRequest("session.open", {
     context: {
@@ -1342,11 +1357,14 @@ const newGroupConversation = (): void => {
     commandId: commandId("open-group"),
   })
     .then(async (opened) => {
+      if (!isCurrentProfileLoad(profileId, generation)) return;
       const ref = isRecord(opened) ? opened.ref : undefined;
       const shown = await gatewayRequest("session.show", { ref });
+      if (!isCurrentProfileLoad(profileId, generation)) return;
       const conversation = sessionFromValue(shown);
       if (conversation === undefined) throw new Error("Resident did not return the group room");
       await gatewayRequest("session.watch", { session: conversation.ref ?? conversation.key });
+      if (!isCurrentProfileLoad(profileId, generation)) return;
       conversation.watched = true;
       if (!state.conversations.some((item) => item.id === conversation.id))
         state.conversations.unshift(conversation);
@@ -1355,8 +1373,12 @@ const newGroupConversation = (): void => {
       showToast("Group room opened", "success");
       renderApp();
     })
-    .catch((cause: unknown) => showToast(errorMessage(cause), "danger"))
-    .finally(clearOperation);
+    .catch((cause: unknown) => {
+      if (isCurrentProfileLoad(profileId, generation)) showToast(errorMessage(cause), "danger");
+    })
+    .finally(() => {
+      if (isCurrentProfileLoad(profileId, generation)) clearOperation();
+    });
 };
 
 const actionElement = (target: EventTarget | null): HTMLElement | undefined =>

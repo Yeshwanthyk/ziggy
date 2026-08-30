@@ -380,7 +380,7 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   if (value.kind === "user" || value.kind === "assistant") {
     return (
       hasOnlyKeys(value, ["kind", "timestamp", "text"]) &&
-      isBoundedCodePointString(value.text, 2_048, 0)
+      isBoundedCodePointString(value.text, 1_024, 0)
     );
   }
   if (value.kind === "tool") {
@@ -452,7 +452,7 @@ export const isSessionHistoryResult = (value: unknown): value is ZiggySessionHis
   isSessionRef(value.ref) &&
   value.ref.profileId === value.profileId &&
   Array.isArray(value.entries) &&
-  value.entries.length <= 32 &&
+  value.entries.length <= 8 &&
   value.entries.every(isHistoryEntry) &&
   isTerminalState(value.terminalState) &&
   typeof value.truncated === "boolean" &&

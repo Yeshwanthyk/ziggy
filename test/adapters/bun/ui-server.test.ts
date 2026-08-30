@@ -178,6 +178,28 @@ describe("Bun UI server projection and authentication", () => {
 });
 
 describe("Bun UI server socket lifecycle", () => {
+  test("keeps the largest schema-valid history page below the wire frame limit", () => {
+    const frame = JSON.stringify({
+      id: "history-maximum",
+      ok: true,
+      result: {
+        profileId: "profile-a",
+        ref: { kind: "stored", profileId: "profile-a", key: "ui/history" },
+        entries: Array.from({ length: 8 }, () => ({
+          kind: "assistant",
+          timestamp: "\u0000".repeat(128),
+          text: "\u0000".repeat(1_024),
+        })),
+        terminalState: "completed",
+        truncated: true,
+        hasMore: true,
+        nextCursor: "x".repeat(512),
+      },
+    });
+
+    expect(Buffer.byteLength(frame, "utf8")).toBeLessThan(UI_SERVER_MAX_FRAME_BYTES);
+  });
+
   test("maps an oversized outgoing response to a bounded typed failure", async () => {
     const profilePath = await makeProfile();
     await Effect.runPromise(

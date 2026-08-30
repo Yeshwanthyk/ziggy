@@ -133,6 +133,7 @@ export interface ProfileOption {
 
 export interface AppState {
   mode: "demo" | "live";
+  profileGeneration: number;
   view: ViewName;
   demoState: DemoState;
   connectionState: ConnectionState;
@@ -567,6 +568,7 @@ export const createInitialState = (): AppState => {
 
   return {
     mode: "demo",
+    profileGeneration: 0,
     view: "chat",
     demoState: "ready",
     connectionState: "open",

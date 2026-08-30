@@ -524,7 +524,7 @@ export const UiSessionHistoryEntry = Schema.Union([
   Schema.Struct({
     kind: Schema.Literals(["user", "assistant"]),
     timestamp: boundedString("session history timestamp", 128),
-    text: boundedCodePointString("session history text", 2_048, 0),
+    text: boundedCodePointString("session history text", 1_024, 0),
   }),
   Schema.Struct({
     kind: Schema.Literal("tool"),
@@ -538,7 +538,7 @@ export type UiSessionHistoryEntry = typeof UiSessionHistoryEntry.Type;
 export const UiSessionHistoryResult = Schema.Struct({
   profileId: ProfileId,
   ref: UiSessionRef,
-  entries: Schema.Array(UiSessionHistoryEntry).check(Schema.isMaxLength(32)),
+  entries: Schema.Array(UiSessionHistoryEntry).check(Schema.isMaxLength(8)),
   terminalState: Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
   truncated: Schema.Boolean,
   hasMore: Schema.Boolean,

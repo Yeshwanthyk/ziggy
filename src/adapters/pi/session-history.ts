@@ -17,7 +17,8 @@ import {
 import { showProfileSession } from "./sessions";
 
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
-export const MAX_HISTORY_ENTRIES = 32;
+export const MAX_HISTORY_ENTRIES = 8;
+export const MAX_HISTORY_TEXT_CODE_POINTS = 1_024;
 
 type RawJson = string | number | boolean | null | ReadonlyArray<RawJson> | RawRecord;
 type RawRecord = { readonly [key: string]: RawJson };
@@ -116,12 +117,12 @@ const projectRecords = (records: ReadonlyArray<RawRecord>): Array<SessionHistory
     const message = recordValue(record.message);
     const role = stringValue(message?.role);
     if (type === "message" && role === "user") {
-      const text = boundedText(messageText(message), 2_048);
+      const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
       if (text.length > 0) result.push({ kind: "user", timestamp, text });
       continue;
     }
     if (type === "message" && role === "assistant") {
-      const text = boundedText(messageText(message), 2_048);
+      const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
       if (text.length > 0) result.push({ kind: "assistant", timestamp, text });
       continue;
     }

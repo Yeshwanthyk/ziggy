@@ -73,6 +73,11 @@ let streamStopTimer: ReturnType<typeof setTimeout> | undefined;
 const sessionReference = (conversation: Conversation): ZiggySessionKey | NonNullable<Conversation["ref"]> =>
   conversation.ref ?? conversation.key;
 
+const isCurrentProfileOperation = (profileId: string, generation: number): boolean =>
+  state.mode === "live" &&
+  state.profile.id === profileId &&
+  state.profileGeneration === generation;
+
 export const configureActions = (dependencies: ActionDependencies): void => {
   state = dependencies.state;
   viewRoot = dependencies.viewRoot;
@@ -491,6 +496,8 @@ export const reopenConversation = async (): Promise<void> => {
     clearOperation();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   try {
     const agentId =
       conversation.kind === "specialist" ? conversation.key.split("/").at(-1) : undefined;
@@ -516,11 +523,13 @@ export const reopenConversation = async (): Promise<void> => {
         : {}),
       ...(agentId === undefined ? {} : { agentId }),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     const reopened = sessionFromValue(opened);
     if (reopened !== undefined) {
       reopened.messages = conversation.messages;
       reopened.historyHasMore = conversation.historyHasMore;
       await gatewayRequest("session.watch", { session: reopened.ref ?? reopened.key });
+      if (!isCurrentProfileOperation(profileId, generation)) return;
       reopened.watched = true;
       if (reopened.id !== conversation.id) {
         const index = state.conversations.findIndex((item) => item.id === conversation.id);
@@ -532,9 +541,9 @@ export const reopenConversation = async (): Promise<void> => {
     conversation.turnState = "idle";
     showToast("Session reopened", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -686,12 +695,16 @@ export const openAgentConversation = (id: string): void => {
   const agent = state.agents.find((item) => item.id === id);
   if (agent === undefined) return;
   if (state.mode === "live") {
+    const profileId = state.profile.id;
+    const generation = state.profileGeneration;
     setOperation(`Opening ${agent.name}…`, "warning");
     void gatewayRequest("session.open", { context: { kind: "local" }, agentId: id })
       .then(async (value) => {
+        if (!isCurrentProfileOperation(profileId, generation)) return;
         const session = sessionFromValue(value);
         if (session === undefined) throw new Error("Resident did not return a specialist session");
         await gatewayRequest("session.watch", { session: session.ref ?? session.key });
+        if (!isCurrentProfileOperation(profileId, generation)) return;
         session.watched = true;
         if (!state.conversations.some((item) => item.id === session.id))
           state.conversations.push(session);
@@ -701,8 +714,13 @@ export const openAgentConversation = (id: string): void => {
         renderApp();
         void loadHistory(session);
       })
-      .catch((cause: unknown) => showToast(errorMessage(cause), "danger"))
-      .finally(clearOperation);
+      .catch((cause: unknown) => {
+        if (isCurrentProfileOperation(profileId, generation))
+          showToast(errorMessage(cause), "danger");
+      })
+      .finally(() => {
+        if (isCurrentProfileOperation(profileId, generation)) clearOperation();
+      });
     return;
   }
   let conversation = state.conversations.find((item) => item.key === `local/agents/${id}`);

@@ -86,14 +86,14 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
     const file = await writeTranscript(profilePath, records);
 
     const page = await Effect.runPromise(readSessionHistory(profilePath, "root.jsonl"));
-    expect(page.entries).toHaveLength(32);
+    expect(page.entries).toHaveLength(8);
     expect(page.truncated).toBe(true);
     expect(page.hasMore).toBe(true);
     expect(page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
     expect(page.entries[0]).toEqual({
       kind: "user",
-      timestamp: "2026-01-01T00:06:00.000Z",
-      text: "question 6",
+      timestamp: "2026-01-01T00:30:00.000Z",
+      text: "question 30",
     });
     expect(page.entries.at(-2)).toEqual({
       kind: "tool",
@@ -112,14 +112,14 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
     const older = await Effect.runPromise(
       readSessionHistory(profilePath, "root.jsonl", page.nextCursor),
     );
-    expect(older.entries).toHaveLength(6);
+    expect(older.entries).toHaveLength(8);
     expect(older.entries[0]).toEqual({
       kind: "user",
-      timestamp: "2026-01-01T00:00:00.000Z",
-      text: "question 0",
+      timestamp: "2026-01-01T00:22:00.000Z",
+      text: "question 22",
     });
-    expect(older.hasMore).toBe(false);
-    expect(older.nextCursor).toBeUndefined();
+    expect(older.hasMore).toBe(true);
+    expect(older.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
 
     const source = await readFile(file, "utf8");
     await writeFile(
