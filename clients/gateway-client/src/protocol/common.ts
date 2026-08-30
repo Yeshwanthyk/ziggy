@@ -42,6 +42,7 @@ export type ZiggyGatewayErrorCode =
   | "conflict"
   | "automation_not_found"
   | "cross_profile_group"
+  | "ownership"
   | "internal";
 
 export interface ZiggyErrorDetails {
@@ -299,6 +300,7 @@ export const isGatewayErrorCode = (value: unknown): value is ZiggyGatewayErrorCo
   value === "conflict" ||
   value === "automation_not_found" ||
   value === "cross_profile_group" ||
+  value === "ownership" ||
   value === "internal";
 
 export const decodeResponseFrame = (value: unknown): ZiggyResponseFrame | undefined => {

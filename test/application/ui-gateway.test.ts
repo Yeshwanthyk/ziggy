@@ -334,15 +334,21 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           method: "session.open",
           params: { profileId, context },
         });
+        const groupRef = {
+          profileId,
+          kind: "live" as const,
+          key: `ui/group-${createHash("sha256").update("planning").digest("hex").slice(0, 32)}` as const,
+        };
+        yield* connection.request({
+          id: "watch",
+          method: "session.watch",
+          params: { ref: groupRef },
+        });
         yield* connection.request({
           id: "prompt",
           method: "prompt.submit",
           params: {
-            ref: {
-              profileId,
-              kind: "live" as const,
-              key: `ui/group-${createHash("sha256").update("planning").digest("hex").slice(0, 32)}`,
-            },
+            ref: groupRef,
             text: "decide",
           },
         });
@@ -354,6 +360,51 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
         expect(promptOptions).toHaveLength(1);
         expect(promptOptions[0]).toMatchObject({
           ephemeralContext: expect.stringContaining("researcher"),
+        });
+        const firstVoices = sent
+          .map((frame) => decodeEventResult(frame))
+          .filter(Result.isSuccess)
+          .map((result) => result.success)
+          .filter((event) => event.event === "voice");
+        expect(firstVoices.map((event) => event.payload.agentId)).toEqual(["researcher", "writer"]);
+        yield* connection.request({
+          id: "addressed",
+          method: "prompt.submit",
+          params: {
+            ref: groupRef,
+            text: "research this",
+            recipient: { kind: "agent", agentId: "researcher" },
+          },
+        });
+        yield* Effect.yieldNow;
+        expect(specialistCalls.map((call) => call.agentId)).toEqual([
+          "researcher",
+          "writer",
+          "researcher",
+        ]);
+        const allVoices = sent
+          .map((frame) => decodeEventResult(frame))
+          .filter(Result.isSuccess)
+          .map((result) => result.success)
+          .filter((event) => event.event === "voice");
+        expect(allVoices.map((event) => event.payload.agentId)).toEqual([
+          "researcher",
+          "writer",
+          "researcher",
+        ]);
+        yield* connection.request({
+          id: "non-member",
+          method: "prompt.submit",
+          params: {
+            ref: groupRef,
+            text: "intrude",
+            recipient: { kind: "agent", agentId: "outsider" },
+          },
+        });
+        expect(decodeResponse(sent.at(-1) ?? "")).toMatchObject({
+          id: "non-member",
+          ok: false,
+          error: { code: "ownership" },
         });
         expect(sent.some((frame) => decodeResponse(frame).ok)).toBe(true);
       }),

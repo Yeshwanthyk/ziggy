@@ -41,6 +41,7 @@ import {
 } from "./automations";
 import {
   isConversationContextValue,
+  isRecipient,
   isSessionHistoryResult,
   isSessionListResult,
   isSessionNameValue,
@@ -256,7 +257,8 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "session.follow-up":
       return (
         hasRef(value) &&
-        hasOptionalCommandId(value, ["ref", "text", "commandId"]) &&
+        hasOptionalCommandId(value, ["ref", "text", "recipient", "commandId"]) &&
+        (value.recipient === undefined || isRecipient(value.recipient)) &&
         isBoundedCodePointString(value.text, 60_000)
       );
     case "agent.show":

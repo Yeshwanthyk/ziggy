@@ -97,6 +97,15 @@ export const UiEmptyParams = Schema.Record(Schema.String, Schema.Never);
 export const UiProfileScopedParams = Schema.Struct({ profileId: ProfileId });
 export type UiProfileScopedParams = typeof UiProfileScopedParams.Type;
 
+export const UiRecipient = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("host") }),
+  Schema.Struct({
+    kind: Schema.Literal("agent"),
+    agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
+  }),
+]);
+export type UiRecipient = typeof UiRecipient.Type;
+
 export const UiConversationContext = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("local") }),
   Schema.Struct({ kind: Schema.Literal("user"), userId: boundedString("user id", 64) }),
@@ -106,15 +115,7 @@ export const UiConversationContext = Schema.Union([
     memberAgentIds: Schema.optionalKey(
       Schema.Array(ProfileAgentId.check(Schema.isMaxLength(80))).check(Schema.isMaxLength(32)),
     ),
-    defaultRecipient: Schema.optionalKey(
-      Schema.Union([
-        Schema.Struct({ kind: Schema.Literal("host") }),
-        Schema.Struct({
-          kind: Schema.Literal("agent"),
-          agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
-        }),
-      ]),
-    ),
+    defaultRecipient: Schema.optionalKey(UiRecipient),
     expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
 ]);
@@ -146,6 +147,7 @@ export type UiSessionRefParams = typeof UiSessionRefParams.Type;
 export const UiSessionTextParams = Schema.Struct({
   ref: UiSessionRef,
   text: UiPromptText,
+  recipient: Schema.optionalKey(UiRecipient),
   commandId: Schema.optionalKey(UiCommandId),
 });
 export type UiSessionTextParams = typeof UiSessionTextParams.Type;
@@ -414,6 +416,7 @@ export const UiGatewayErrorCode = Schema.Literals([
   "conflict",
   "automation_not_found",
   "cross_profile_group",
+  "ownership",
   "internal",
 ]);
 export type UiGatewayErrorCode = typeof UiGatewayErrorCode.Type;
@@ -965,13 +968,3 @@ export const UiEventFrame = Schema.Union([
   UiReplayGapEvent,
 ]);
 export type UiEventFrame = typeof UiEventFrame.Type;
-
-/* Source-level aliases do not create a second wire protocol. */
-export const UiV2SessionKey = UiSessionKey;
-export type UiV2SessionKey = UiSessionKey;
-export const UiV2SessionRef = UiSessionRef;
-export type UiV2SessionRef = UiSessionRef;
-export const UiV2EventFrame = UiEventFrame;
-export type UiV2EventFrame = UiEventFrame;
-export const UiV2SessionListResult = UiSessionListResult;
-export type UiV2SessionListResult = UiSessionListResult;

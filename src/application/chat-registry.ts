@@ -113,6 +113,7 @@ export interface ChatRegistryApi {
     key: UiSessionKey,
     afterSeq?: number,
   ) => Effect.Effect<ChatRegistryReplay, UiGatewayError>;
+  readonly publish: (key: UiSessionKey, event: ChatEvent) => Effect.Effect<void, UiGatewayError>;
   readonly submit: (
     key: UiSessionKey,
     text: string,
@@ -434,6 +435,11 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
               latestSeq,
             });
           }),
+        ),
+      publish: (key, event) =>
+        requireLive(key).pipe(
+          Effect.tap((entry) => Effect.sync(() => emit(entry, event))),
+          Effect.asVoid,
         ),
       submit: (key, text, options) =>
         Effect.uninterruptible(

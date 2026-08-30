@@ -153,6 +153,7 @@ export interface ZiggySessionCommandParams {
 
 export interface ZiggySessionTextParams extends ZiggySessionCommandParams {
   readonly text: string;
+  readonly recipient?: ZiggyRecipientId;
 }
 
 export interface ZiggyConversationRequestMap {
@@ -305,7 +306,7 @@ const isSessionRef = (value: unknown): value is ZiggySessionRef =>
       !value.id.includes("..") &&
       !value.id.startsWith(".")));
 
-const isRecipient = (value: unknown): value is ZiggyRecipientId =>
+export const isRecipient = (value: unknown): value is ZiggyRecipientId =>
   isRecord(value) &&
   ((value.kind === "host" && hasOnlyKeys(value, ["kind"])) ||
     (value.kind === "agent" &&

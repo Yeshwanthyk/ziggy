@@ -658,6 +658,8 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             return yield* protocolFailure("watch_only", "stored sessions cannot be watched");
           }
           const branch = yield* route(params.ref.profileId);
+          const subscriptionKey = `${params.ref.profileId}:${params.ref.key}`;
+          subscriptions.get(subscriptionKey)?.();
           const unsubscribe = yield* subscribe(
             send,
             branch,
@@ -666,7 +668,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             params.epoch,
             params.commandId,
           );
-          subscriptions.set(`${params.ref.profileId}:${params.ref.key}`, unsubscribe);
+          subscriptions.set(subscriptionKey, unsubscribe);
           return {};
         });
       case "session.unwatch":
@@ -710,8 +712,31 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
             const group = live.context?.kind === "group" ? live.context : undefined;
-            if (group !== undefined && group.memberAgentIds !== undefined) {
-              const memberAgentIds = [...new Set(group.memberAgentIds)].slice(
+            if (params.recipient !== undefined && group === undefined) {
+              return yield* protocolFailure(
+                "bad_params",
+                "an addressed turn requires a group conversation",
+              );
+            }
+            if (
+              params.recipient?.kind === "agent" &&
+              !group?.memberAgentIds?.includes(params.recipient.agentId)
+            ) {
+              return yield* protocolFailure(
+                "ownership",
+                "the addressed specialist is not a member of this group",
+              );
+            }
+            if (
+              group !== undefined &&
+              group.memberAgentIds !== undefined &&
+              params.recipient?.kind !== "host"
+            ) {
+              const requestedMembers =
+                params.recipient?.kind === "agent"
+                  ? [params.recipient.agentId]
+                  : group.memberAgentIds;
+              const memberAgentIds = [...new Set(requestedMembers)].slice(
                 0,
                 GROUP_DISCUSSION_MAX_AGENTS,
               );
@@ -747,6 +772,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                     ),
                   );
                 answers.push(child);
+                yield* branch.registry.publish(params.ref.key, {
+                  kind: "voice",
+                  agentId: child.agentId,
+                  text: child.answer,
+                });
               }
               const synthesisContext = boundedText(
                 [

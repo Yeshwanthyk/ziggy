@@ -19,6 +19,13 @@ import {
   AutomationScheduler,
   type AutomationSchedulerApi,
 } from "ziggy/application/automation-scheduler";
+import { AutomationDefinitions } from "ziggy/application/automation-definitions";
+import { Automations } from "ziggy/application/automations";
+import { Auth } from "ziggy/application/auth";
+import { Doctor } from "ziggy/application/doctor";
+import { Memory } from "ziggy/application/memory";
+import { Models } from "ziggy/application/models";
+import { ProfileAgents } from "ziggy/application/profile-agents";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
 import { Gateway, type GatewayApi } from "ziggy/application/gateway";
 import { ProfileExtensions } from "ziggy/application/profile-extensions";
@@ -405,6 +412,13 @@ describe("resident gateway supervision", () => {
       Layer.succeed(Sessions, sessions),
       Layer.succeed(ZiggyAgent, agent),
       Layer.succeed(ProfileExtensions, profileExtensions),
+      Layer.mock(AutomationDefinitions, {}),
+      Layer.mock(Automations, {}),
+      Layer.mock(Auth, {}),
+      Layer.mock(Doctor, {}),
+      Layer.mock(Memory, {}),
+      Layer.mock(Models, {}),
+      Layer.mock(ProfileAgents, {}),
     );
 
     await runScoped(

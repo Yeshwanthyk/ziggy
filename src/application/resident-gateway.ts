@@ -25,6 +25,13 @@ import type { SlackGatewayConfig } from "../domain/slack";
 import type { SlackIngressDatabaseError } from "../domain/slack-ingress";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
+import { AutomationDefinitions, type AutomationDefinitionsApi } from "./automation-definitions";
+import { Automations, type AutomationsApi } from "./automations";
+import { Auth, type AuthApi } from "./auth";
+import { Doctor, type DoctorApi } from "./doctor";
+import { Memory, type MemoryApi } from "./memory";
+import { Models, type ModelsApi } from "./models";
+import { ProfileAgents, type ProfileAgentsApi } from "./profile-agents";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";
 import {
@@ -111,9 +118,19 @@ const disabledUiRuntime: ResidentUiRuntime = {
 
 const makeLiveUiRuntime = (
   repositoryRoot: string,
-  sessions: SessionsApi,
-  agent: ZiggyAgentApi,
-  profileExtensions: ProfileExtensionsApi,
+  capabilities: {
+    readonly sessions: SessionsApi;
+    readonly agent: ZiggyAgentApi;
+    readonly profileExtensions: ProfileExtensionsApi;
+    readonly profileAgents: ProfileAgentsApi;
+    readonly models: ModelsApi;
+    readonly auth: AuthApi;
+    readonly doctor: DoctorApi;
+    readonly automationDefinitions: AutomationDefinitionsApi;
+    readonly automationScheduler: AutomationSchedulerApi;
+    readonly automations: AutomationsApi;
+    readonly memory: MemoryApi;
+  },
   profileRegistryPath?: string,
 ): ResidentUiRuntime => ({
   run: (target, registry) =>
@@ -128,9 +145,7 @@ const makeLiveUiRuntime = (
         openedGateway = makeUiGateway({
           defaultProfile: defaultBranch,
           repositoryRoot,
-          sessions,
-          agent,
-          profileExtensions,
+          ...capabilities,
         });
       } else {
         const profileDirectory = makeProfileDirectory(target, {
@@ -167,9 +182,7 @@ const makeLiveUiRuntime = (
           branches,
           profileDirectory,
           repositoryRoot,
-          sessions,
-          agent,
-          profileExtensions,
+          ...capabilities,
         });
       }
       const connections = new Map<string, UiGatewayConnection>();
@@ -285,9 +298,19 @@ export const makeResidentGatewayLive = (repositoryRoot: string, profileRegistryP
         liveRuntime,
         makeLiveUiRuntime(
           repositoryRoot,
-          yield* Sessions,
-          yield* ZiggyAgent,
-          yield* ProfileExtensions,
+          {
+            sessions: yield* Sessions,
+            agent: yield* ZiggyAgent,
+            profileExtensions: yield* ProfileExtensions,
+            profileAgents: yield* ProfileAgents,
+            models: yield* Models,
+            auth: yield* Auth,
+            doctor: yield* Doctor,
+            automationDefinitions: yield* AutomationDefinitions,
+            automationScheduler: yield* AutomationScheduler,
+            automations: yield* Automations,
+            memory: yield* Memory,
+          },
           profileRegistryPath,
         ),
       );

@@ -119,6 +119,10 @@ const ProfileAgentsProvided = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(AgentLive, ModelsLive)),
 );
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
+const DoctorProvided = DoctorLive.pipe(
+  Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
+);
+const MemoryProvided = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
 const ResidentProvided = makeResidentGatewayLive(
   repositoryRoot,
   resolveProfilesRegistry(resolutionOptions),
@@ -132,6 +136,13 @@ const ResidentProvided = makeResidentGatewayLive(
       AgentLive,
       SessionsLive,
       ProfileExtensionsProvided,
+      ProfileAgentsProvided,
+      ModelsLive,
+      AuthLive,
+      DoctorProvided,
+      AutomationDefinitionsLive,
+      AutomationsProvided,
+      MemoryProvided,
     ),
   ),
 );
@@ -749,9 +760,7 @@ const program = Effect.gen(function* () {
       AutomationDefinitionsLive,
       AuthLive,
       ModelsLive,
-      DoctorLive.pipe(
-        Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
-      ),
+      DoctorProvided,
       SetupLive.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -776,7 +785,7 @@ const program = Effect.gen(function* () {
       ResidentServiceProvided,
       ProfileExtensionsProvided,
       SelfUpdateProvided,
-      MemoryLive.pipe(Layer.provide(MemoryFilesLive)),
+      MemoryProvided,
     ),
   ),
 );
