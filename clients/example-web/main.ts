@@ -1111,6 +1111,7 @@ const loadLiveState = async (): Promise<void> => {
     state.connectionState = client?.state ?? "open";
     showToast(`Connected to ${state.profile.name}`, "success");
   } catch (cause) {
+    if (profileLoadGeneration !== generation || state.profileGeneration !== generation) return;
     state.connectionState = client?.state === "reconnecting" ? "reconnecting" : "closed";
     showToast(errorMessage(cause), "danger");
   } finally {

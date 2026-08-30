@@ -464,3 +464,5 @@ results.
 **Live session projection encoding.** Ordered the overlapping session result schemas from specific to general so a `session.show` response cannot be reduced to the smaller `session.open` shape during union encoding. The focused gateway test now asserts the complete live-session response used by the browser after opening main, specialist, or group conversations.
 
 **Final UI race fencing.** Made Profile switching last-selection-wins even when a user rapidly returns to the currently displayed Profile, invalidated pending history work during every switch, and reset global history loading state before the next resident projection. Agent, automation, and memory detail reads now capture Profile generation and discard late results, errors, and operation cleanup after ownership changes.
+
+**Connection-load race closure.** A superseded resident capability/Profile load now discards its late failure instead of marking the newer Profile generation closed or surfacing an obsolete error toast.
