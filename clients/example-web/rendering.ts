@@ -73,6 +73,9 @@ let setOperation!: RenderingDependencies["setOperation"];
 let clearOperation!: RenderingDependencies["clearOperation"];
 let closeDetails!: RenderingDependencies["closeDetails"];
 
+const isCurrentProfileEffect = (profileId: string, generation: number): boolean =>
+  state.mode === "live" && state.profile.id === profileId && state.profileGeneration === generation;
+
 export const configureRendering = (dependencies: RenderingDependencies): void => {
   state = dependencies.state;
   app = dependencies.app;
@@ -983,9 +986,12 @@ const renderAgentDetail = (agent: AgentRecord | undefined): HTMLElement => {
 
 export const loadAgentDetails = async (agent: AgentRecord): Promise<void> => {
   if (state.mode === "demo") return;
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation(`Reading ${agent.name}…`, "warning");
   try {
     const value = await gatewayRequest("agent.show", { id: agent.id });
+    if (!isCurrentProfileEffect(profileId, generation) || !state.agents.includes(agent)) return;
     const source = isRecord(value) && isRecord(value.agent) ? value.agent : value;
     if (!isRecord(source)) throw new Error("Resident returned no agent projection");
     agent.description = stringValue(source.description, agent.description);
@@ -997,9 +1003,10 @@ export const loadAgentDetails = async (agent: AgentRecord): Promise<void> => {
     agent.body = agent.description;
     showToast(`${agent.name} details loaded`, "success");
   } catch (cause) {
-    showToast(`Agent details unavailable: ${errorMessage(cause)}`, "warning");
+    if (isCurrentProfileEffect(profileId, generation))
+      showToast(`Agent details unavailable: ${errorMessage(cause)}`, "warning");
   } finally {
-    clearOperation();
+    if (isCurrentProfileEffect(profileId, generation)) clearOperation();
   }
 };
 
@@ -1284,16 +1291,21 @@ const renderAutomationDetail = (automation: AutomationRecord | undefined): HTMLE
 
 export const loadAutomationSource = async (automation: AutomationRecord): Promise<void> => {
   if (state.mode === "demo") return;
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation(`Reading ${automation.name}…`, "warning");
   try {
     const value = await gatewayRequest("automation.show", { id: automation.id });
+    if (!isCurrentProfileEffect(profileId, generation) || !state.automations.includes(automation))
+      return;
     if (!isRecord(value)) throw new Error("Resident returned no automation document");
     automation.source = stringValue(value.source, automation.source);
     showToast(`${automation.name} source loaded`, "success");
   } catch (cause) {
-    showToast(`Automation source unavailable: ${errorMessage(cause)}`, "warning");
+    if (isCurrentProfileEffect(profileId, generation))
+      showToast(`Automation source unavailable: ${errorMessage(cause)}`, "warning");
   } finally {
-    clearOperation();
+    if (isCurrentProfileEffect(profileId, generation)) clearOperation();
   }
 };
 
@@ -1434,19 +1446,24 @@ const renderMemoryList = (): HTMLElement => {
 
 export const loadMemoryContent = async (memory: MemoryRecord): Promise<void> => {
   if (state.mode === "demo") return;
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   memory.contentState = "loading";
   setOperation("Reading bounded memory…", "warning");
   try {
     const value = await gatewayRequest("memory.show", { path: memory.id });
+    if (!isCurrentProfileEffect(profileId, generation) || !state.memory.includes(memory)) return;
     if (!isRecord(value)) throw new Error("Resident returned no memory document");
     memory.content = stringValue(value.content);
     memory.contentState = "loaded";
     showToast("Memory scope loaded", "success");
   } catch (cause) {
-    memory.contentState = "error";
-    showToast(`Memory scope unavailable: ${errorMessage(cause)}`, "danger");
+    if (isCurrentProfileEffect(profileId, generation)) {
+      memory.contentState = "error";
+      showToast(`Memory scope unavailable: ${errorMessage(cause)}`, "danger");
+    }
   } finally {
-    clearOperation();
+    if (isCurrentProfileEffect(profileId, generation)) clearOperation();
   }
 };
 

@@ -1015,7 +1015,7 @@ const loadSelectedProfile = async (profileId: string, generation: number): Promi
 };
 
 const switchProfile = async (profileId: string): Promise<void> => {
-  if (state.mode !== "live" || profileId === state.profile.id) return;
+  if (state.mode !== "live") return;
   const selected = state.profiles.find((profile) => profile.id === profileId && profile.available);
   if (selected === undefined) {
     showToast("That Profile resident is unavailable", "warning");
@@ -1032,6 +1032,13 @@ const switchProfile = async (profileId: string): Promise<void> => {
         gatewayRequest("session.unwatch", { session: conversation.ref ?? conversation.key }),
       ),
     );
+    if (profileLoadGeneration !== generation || state.profileGeneration !== generation) return;
+    for (const conversation of state.conversations) {
+      conversation.historyGeneration = (conversation.historyGeneration ?? 0) + 1;
+      conversation.historyLoading = false;
+      conversation.reconciling = false;
+    }
+    state.loadingHistory = false;
     state.profile = {
       ...state.profile,
       id: selected.id,
@@ -1057,7 +1064,8 @@ const switchProfile = async (profileId: string): Promise<void> => {
     if (isCurrentProfileLoad(selected.id, generation))
       showToast(`Switched to ${selected.name}`, "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (profileLoadGeneration === generation && state.profileGeneration === generation)
+      showToast(errorMessage(cause), "danger");
   } finally {
     if (profileLoadGeneration === generation) clearOperation();
   }
