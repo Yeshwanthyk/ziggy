@@ -42,8 +42,9 @@ export const panelRule = (
 
 export const panelLine = (color: TerminalColors, content: string, width: number): string => {
   const innerWidth = width - 4;
-  const padding = " ".repeat(Math.max(0, innerWidth - Bun.stringWidth(content)));
-  return `${color.dim("│")} ${content}${padding} ${color.dim("│")}`;
+  const fitted = truncateEnd(content, innerWidth);
+  const padding = " ".repeat(innerWidth - Bun.stringWidth(fitted));
+  return `${color.dim("│")} ${fitted}${padding} ${color.dim("│")}`;
 };
 
 export const ziggyBadge = (color: TerminalColors): string =>

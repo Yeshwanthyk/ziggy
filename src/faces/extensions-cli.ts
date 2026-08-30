@@ -107,6 +107,20 @@ const kindBadge = (
   return color.bgMagenta(color.black(color.bold(` ${label} `)));
 };
 
+const alignBoundedRight = (left: string, right: string, width: number): string => {
+  const rightWidth = Math.max(1, width - Bun.stringWidth(left) - 2);
+  return alignEdges(left, truncateEnd(right, rightWidth), width);
+};
+
+const alignBoundedLeft = (left: string, right: string, width: number): string => {
+  const boundedRight = truncateEnd(right, Math.max(1, width - 3));
+  const leftWidth = Math.max(1, width - Bun.stringWidth(boundedRight) - 2);
+  return alignEdges(truncateEnd(left, leftWidth), boundedRight, width);
+};
+
+const prefixedValue = (prefix: string, value: string, width: number): string =>
+  `${prefix}${truncateEnd(value, Math.max(1, width - Bun.stringWidth(prefix)))}`;
+
 const renderPlainExtensions = (extensions: ReadonlyArray<ExtensionCatalogListingJson>): string =>
   extensions
     .map(
@@ -141,17 +155,28 @@ export const renderExtensions = (
     for (const extension of extensions) {
       const badge = kindBadge(color, extension.kind);
       const status = `${extension.source} · ${extension.required ? "required" : "optional"}`;
-      const nameWidth = innerWidth - Bun.stringWidth(badge) - Bun.stringWidth(status) - 4;
-      lines.push(
-        panelLine(
-          color,
-          alignEdges(
-            `${badge} ${color.bold(truncateEnd(extension.id, nameWidth))}`,
-            color.dim(status),
-            innerWidth,
+      const badgeWidth = Bun.stringWidth(badge);
+      const combinedWidth = badgeWidth + 1 + 1 + 2 + Bun.stringWidth(status);
+      if (combinedWidth <= innerWidth) {
+        const nameWidth = innerWidth - badgeWidth - Bun.stringWidth(status) - 4;
+        lines.push(
+          panelLine(
+            color,
+            alignEdges(
+              `${badge} ${color.bold(truncateEnd(extension.id, nameWidth))}`,
+              color.dim(status),
+              innerWidth,
+            ),
+            width,
           ),
-          width,
-        ),
+        );
+      } else {
+        lines.push(
+          panelLine(color, prefixedValue(`${badge} `, color.bold(extension.id), innerWidth), width),
+          panelLine(color, alignEdges("", color.dim(status), innerWidth), width),
+        );
+      }
+      lines.push(
         panelLine(
           color,
           `     ${color.dim(truncateEnd(extension.description, innerWidth - 5))}`,
@@ -213,36 +238,51 @@ export const renderExtension = (
       color,
       alignEdges(
         `${ziggyBadge(color)} ${color.bold("extension")}`,
-        color.dim(extension.version),
+        color.dim(
+          truncateEnd(
+            extension.version,
+            innerWidth - Bun.stringWidth(ziggyBadge(color)) - " extension".length - 2,
+          ),
+        ),
         innerWidth,
       ),
       width,
     ),
     panelRule(color, "├", "─", "┤", width),
-    panelLine(color, `${kindBadge(color, extension.kind)} ${color.bold(extension.id)}`, width),
-    panelLine(color, color.dim(truncateEnd(extension.description, innerWidth)), width),
-    panelLine(color, "", width),
-    panelLine(color, alignEdges("kind", extension.kind, innerWidth), width),
-    panelLine(color, alignEdges("source", extension.source, innerWidth), width),
     panelLine(
       color,
-      alignEdges("selection", extension.required ? "required" : "optional", innerWidth),
+      prefixedValue(`${kindBadge(color, extension.kind)} `, color.bold(extension.id), innerWidth),
+      width,
+    ),
+    panelLine(color, color.dim(truncateEnd(extension.description, innerWidth)), width),
+    panelLine(color, "", width),
+    panelLine(color, alignBoundedRight("kind", extension.kind, innerWidth), width),
+    panelLine(color, alignBoundedRight("source", extension.source, innerWidth), width),
+    panelLine(
+      color,
+      alignBoundedRight("selection", extension.required ? "required" : "optional", innerWidth),
       width,
     ),
     panelLine(
       color,
-      alignEdges("installed", extension.installed ? "yes" : "no", innerWidth),
+      alignBoundedRight("installed", extension.installed ? "yes" : "no", innerWidth),
       width,
     ),
   ];
   if (extension.packagePath !== undefined) {
-    lines.push(panelLine(color, alignEdges("path", extension.packagePath, innerWidth), width));
+    lines.push(
+      panelLine(color, alignBoundedRight("path", extension.packagePath, innerWidth), width),
+    );
   }
   if ((extension.skills?.length ?? 0) > 0 || (extension.extensionPaths?.length ?? 0) > 0) {
     lines.push(panelRule(color, "├", "─", "┤", width));
     for (const skill of extension.skills ?? []) {
       lines.push(
-        panelLine(color, `${actionBadge(color, "SKILL")} ${color.bold(skill.name)}`, width),
+        panelLine(
+          color,
+          prefixedValue(`${actionBadge(color, "SKILL")} `, color.bold(skill.name), innerWidth),
+          width,
+        ),
         panelLine(color, color.dim(truncateEnd(skill.description, innerWidth)), width),
       );
     }
@@ -302,17 +342,25 @@ export const renderExtensionManagerResult = (
     lines.push(panelLine(color, "No changes made.", width));
   } else if (result.status === "unchanged") {
     lines.push(
-      panelLine(color, alignEdges(result.profile.name, "already up to date", innerWidth), width),
+      panelLine(
+        color,
+        alignBoundedLeft(result.profile.name, "already up to date", innerWidth),
+        width,
+      ),
     );
   } else {
     lines.push(
       panelLine(
         color,
-        alignEdges(result.profile.name, `${result.selected.length} selected`, innerWidth),
+        alignBoundedLeft(result.profile.name, `${result.selected.length} selected`, innerWidth),
         width,
       ),
-      ...result.added.map((id) => panelLine(color, `${color.green("+")} ${id}`, width)),
-      ...result.removed.map((id) => panelLine(color, `${color.yellow("−")} ${id}`, width)),
+      ...result.added.map((id) =>
+        panelLine(color, prefixedValue(`${color.green("+")} `, id, innerWidth), width),
+      ),
+      ...result.removed.map((id) =>
+        panelLine(color, prefixedValue(`${color.yellow("−")} `, id, innerWidth), width),
+      ),
       panelLine(color, "", width),
       panelLine(color, color.dim("Reopen the Profile to apply the change."), width),
     );
@@ -344,7 +392,7 @@ export const renderExtensionMutation = (
       width,
     ),
     panelRule(color, "├", "─", "┤", width),
-    panelLine(color, alignEdges(result.id, state, innerWidth), width),
+    panelLine(color, alignBoundedLeft(result.id, state, innerWidth), width),
     panelLine(color, color.dim(truncateEnd(result.profilePath, innerWidth)), width),
   ];
   if (result.changed) {
