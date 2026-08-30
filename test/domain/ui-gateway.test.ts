@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import {
+  UI_PROTOCOL_MAX_FRAME_BYTES,
   UiEventFrame,
   UiExtensionAddParams,
   UiExtensionFailure,
@@ -9,6 +10,7 @@ import {
   UiExtensionValidateParams,
   UiExtensionValidationResult,
   UiRequestEnvelope,
+  UiResponseFrame,
   UiSessionKey,
   UiSessionName,
   UiSessionOpenParams,
@@ -23,6 +25,7 @@ const decodeText = Schema.decodeUnknownSync(UiSessionTextParams);
 const decodeName = Schema.decodeUnknownSync(UiSessionName);
 const decodeKey = Schema.decodeUnknownSync(UiSessionKey);
 const decodeEvent = Schema.decodeUnknownSync(UiEventFrame);
+const decodeResponseResult = Schema.decodeUnknownResult(UiResponseFrame);
 const decodeExtensionAdd = Schema.decodeUnknownSync(UiExtensionAddParams);
 const decodeExtensionFailure = Schema.decodeUnknownSync(UiExtensionFailure);
 const decodeExtensionList = Schema.decodeUnknownSync(UiExtensionListForProfileResult);
@@ -208,4 +211,28 @@ test("UI event schemas require Profile, epoch, sequence, and stable event identi
       payload: { text: "wrong schema" },
     }),
   ).toThrow();
+});
+
+test("UI success responses enforce the complete WebSocket frame budget", () => {
+  const legal = {
+    id: "r-frame-legal",
+    ok: true,
+    result: {
+      profileId,
+      agentId: "sage",
+      answer: "\0".repeat(8_000),
+      sessionId: "child-session",
+    },
+  } as const;
+  const oversized = {
+    ...legal,
+    id: "r-frame-oversized",
+    result: { ...legal.result, answer: "😀".repeat(60_000) },
+  } as const;
+
+  expect(Result.isSuccess(decodeResponseResult(legal))).toBe(true);
+  expect(new TextEncoder().encode(JSON.stringify(legal)).byteLength).toBeLessThanOrEqual(
+    UI_PROTOCOL_MAX_FRAME_BYTES,
+  );
+  expect(Result.isFailure(decodeResponseResult(oversized))).toBe(true);
 });

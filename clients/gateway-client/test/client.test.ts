@@ -307,12 +307,12 @@ const methodFixtures = (): ReadonlyArray<{
     {
       method: "model.list",
       params: profileScopedParams(PROFILE_A),
-      result: { profileId: PROFILE_A, models: [model] },
+      result: { profileId: PROFILE_A, models: [model], truncated: false },
     },
     {
       method: "model.available",
       params: profileScopedParams(PROFILE_A),
-      result: { profileId: PROFILE_A, models: [model] },
+      result: { profileId: PROFILE_A, models: [model], truncated: false },
     },
     {
       method: "model.set",

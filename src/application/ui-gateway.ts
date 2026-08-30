@@ -913,7 +913,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           return {
             profileId: branch.profileId,
             agentId: params.agentId,
-            answer: result.answer,
+            answer: [...result.answer].slice(0, 8_000).join(""),
             sessionId: result.session.id,
           };
         });

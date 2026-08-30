@@ -240,8 +240,8 @@ export const UiAutomationCreateParams = Schema.Struct({
 export const UiAutomationSaveParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
-  expectedSource: boundedCodePointString("expected automation source", 60_000, 0),
-  source: boundedCodePointString("automation source", 60_000, 0),
+  expectedSource: boundedCodePointString("expected automation source", 8_000, 0),
+  source: boundedCodePointString("automation source", 8_000, 0),
   commandId: Schema.optionalKey(UiCommandId),
 });
 export const UiAutomationPauseParams = Schema.Struct({
@@ -592,7 +592,7 @@ export type UiAgentValidateResult = typeof UiAgentValidateResult.Type;
 export const UiAgentRunResult = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
-  answer: boundedCodePointString("agent answer", 60_000, 0),
+  answer: boundedCodePointString("agent answer", 8_000, 0),
   sessionId: UiStoredSessionId,
 });
 export type UiAgentRunResult = typeof UiAgentRunResult.Type;
@@ -652,7 +652,8 @@ export const UiKnownModel = Schema.Struct({
 });
 export const UiModelListResult = Schema.Struct({
   profileId: ProfileId,
-  models: Schema.Array(UiKnownModel).check(Schema.isMaxLength(2_000)),
+  models: Schema.Array(UiKnownModel).check(Schema.isMaxLength(256)),
+  truncated: Schema.Boolean,
 });
 export type UiModelListResult = typeof UiModelListResult.Type;
 export const UiModelAvailableResult = UiModelListResult;
@@ -697,7 +698,7 @@ export const UiAutomationShowResult = Schema.Struct({
   profileId: ProfileId,
   id: UiAutomationId,
   lifecycle: Schema.Literals(["active", "paused"]),
-  source: boundedCodePointString("automation definition source", 60_000, 0),
+  source: boundedCodePointString("automation definition source", 8_000, 0),
 });
 export type UiAutomationShowResult = typeof UiAutomationShowResult.Type;
 export const UiAutomationSaveResult = UiAutomationShowResult;
@@ -849,6 +850,8 @@ export const UiGroupListResult = Schema.Struct({
 });
 export type UiGroupListResult = typeof UiGroupListResult.Type;
 
+export const UI_PROTOCOL_MAX_FRAME_BYTES = 64 * 1_024;
+
 export const UiGatewayResult = Schema.Union([
   UiPingResult,
   UiSystemCapabilitiesResult,
@@ -890,7 +893,13 @@ const UiSuccessResponse = Schema.Struct({
   id: UiRequestId,
   ok: Schema.Literal(true),
   result: UiGatewayResult,
-});
+}).check(
+  Schema.makeFilter(
+    (value) =>
+      new TextEncoder().encode(JSON.stringify(value)).byteLength <= UI_PROTOCOL_MAX_FRAME_BYTES,
+    { expected: "a response within the WebSocket frame budget" },
+  ),
+);
 const UiFailureResponse = Schema.Struct({
   id: UiRequestId,
   ok: Schema.Literal(false),

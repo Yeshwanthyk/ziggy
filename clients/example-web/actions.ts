@@ -204,6 +204,8 @@ export const submitComposer = async (): Promise<void> => {
     runDemoPrompt(conversation, text);
     return;
   }
+  const profileId = state.profile.id;
+  const profileGeneration = state.profileGeneration;
   conversation.draft = "";
   conversation.turnState = state.composerMode === "prompt" ? "running" : "running";
   setOperation(
@@ -251,6 +253,7 @@ export const submitComposer = async (): Promise<void> => {
       commandId: requestCommandId,
       ...(recipient === undefined ? {} : { recipient }),
     });
+    if (!isCurrentProfileOperation(profileId, profileGeneration)) return;
     showToast(
       state.composerMode === "prompt"
         ? "Prompt accepted"
@@ -261,11 +264,13 @@ export const submitComposer = async (): Promise<void> => {
     );
     announce("Request accepted by the resident");
   } catch (cause) {
-    conversation.turnState = "idle";
-    conversation.lastError = errorMessage(cause);
-    showToast(conversation.lastError, "danger");
+    if (isCurrentProfileOperation(profileId, profileGeneration)) {
+      conversation.turnState = "idle";
+      conversation.lastError = errorMessage(cause);
+      showToast(conversation.lastError, "danger");
+    }
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, profileGeneration)) clearOperation();
   }
 };
 
@@ -276,6 +281,8 @@ export const abortConversation = async (): Promise<void> => {
     stopDemoStream(conversation);
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   conversation.turnState = "stopping";
   setOperation("Stopping turn…", "warning");
   renderApp();
@@ -284,13 +291,18 @@ export const abortConversation = async (): Promise<void> => {
       session: sessionReference(conversation),
       commandId: commandId("abort"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     showToast("Abort requested", "success");
   } catch (cause) {
-    conversation.lastError = errorMessage(cause);
-    showToast(conversation.lastError, "danger");
+    if (isCurrentProfileOperation(profileId, generation)) {
+      conversation.lastError = errorMessage(cause);
+      showToast(conversation.lastError, "danger");
+    }
   } finally {
-    conversation.turnState = "idle";
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) {
+      conversation.turnState = "idle";
+      clearOperation();
+    }
   }
 };
 
@@ -339,12 +351,18 @@ export const loadHistory = async (
     announce("Earlier messages loaded");
     return;
   }
+  const profileId = state.profile.id;
+  const profileGeneration = state.profileGeneration;
   try {
     const value = await gatewayRequest("session.history", {
       session: sessionReference(conversation),
       ...(conversation.historyCursor === undefined ? {} : { cursor: conversation.historyCursor }),
     });
-    if (conversation.historyGeneration !== generation) return;
+    if (
+      conversation.historyGeneration !== generation ||
+      !isCurrentProfileOperation(profileId, profileGeneration)
+    )
+      return;
     const messagesReceivedDuringLoad = conversation.messages.filter(
       (message) => !messagesAtStart.has(message.id),
     );
@@ -358,14 +376,17 @@ export const loadHistory = async (
     conversation.historyPage += 1;
     showToast("History reconciled", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, profileGeneration))
+      showToast(errorMessage(cause), "danger");
   } finally {
     if (conversation.historyGeneration === generation) {
       conversation.historyLoading = false;
       conversation.reconciling = false;
     }
-    state.loadingHistory = state.conversations.some((item) => item.historyLoading === true);
-    renderApp();
+    if (isCurrentProfileOperation(profileId, profileGeneration)) {
+      state.loadingHistory = state.conversations.some((item) => item.historyLoading === true);
+      renderApp();
+    }
   }
 };
 
@@ -374,9 +395,10 @@ export const togglePin = async (): Promise<void> => {
   if (conversation === undefined) return;
   const next = !conversation.pinned;
   conversation.pinned = next;
-  persistPins();
   setOperation(next ? "Pinning conversation…" : "Unpinning conversation…", "warning");
   if (state.mode === "live") {
+    const profileId = state.profile.id;
+    const generation = state.profileGeneration;
     try {
       if (!next && conversation.pinId === undefined)
         throw new Error("Pinned session identity is stale; refresh the roster before unpinning.");
@@ -391,6 +413,7 @@ export const togglePin = async (): Promise<void> => {
         params.label = conversation.title;
       }
       const result = await gatewayRequest(next ? "pin.set" : "pin.remove", params);
+      if (!isCurrentProfileOperation(profileId, generation)) return;
       if (isRecord(result)) {
         if (typeof result.revision === "number" && Number.isSafeInteger(result.revision))
           state.pinRevision = result.revision;
@@ -408,14 +431,17 @@ export const togglePin = async (): Promise<void> => {
       }
       showToast(next ? "Pinned on the resident" : "Unpinned on the resident", "success");
     } catch (cause) {
-      conversation.pinned = !next;
-      persistPins();
-      showToast(`Server pin did not reconcile: ${errorMessage(cause)}`, "danger");
+      if (isCurrentProfileOperation(profileId, generation)) {
+        conversation.pinned = !next;
+        showToast(`Server pin did not reconcile: ${errorMessage(cause)}`, "danger");
+      }
     }
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   } else {
+    persistPins();
     showToast(next ? "Pinned in this demo roster" : "Removed from pinned", "success");
+    clearOperation();
   }
-  clearOperation();
 };
 
 export const watchConversation = async (): Promise<void> => {
@@ -437,17 +463,20 @@ export const watchConversation = async (): Promise<void> => {
     clearOperation();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   try {
     await gatewayRequest("session.watch", {
       session: sessionReference(conversation),
       commandId: commandId("watch"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     conversation.watched = true;
     showToast("Watching live session", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -466,18 +495,21 @@ export const closeConversation = async (): Promise<void> => {
     clearOperation();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   try {
     await gatewayRequest("session.close", {
       session: sessionReference(conversation),
       commandId: commandId("close"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     conversation.closed = true;
     conversation.turnState = "closed";
     showToast("Session closed", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -555,6 +587,8 @@ export const updateModel = async (provider: string, model: string): Promise<void
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Saving model selection…", "warning");
   try {
     const value = await gatewayRequest("model.set", {
@@ -562,12 +596,13 @@ export const updateModel = async (provider: string, model: string): Promise<void
       model,
       commandId: commandId("model"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     applyProfileResult(value);
     showToast("Model selection saved", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -601,6 +636,8 @@ export const validateAgentDraft = async (form?: HTMLFormElement): Promise<void> 
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Validating agent…", "warning");
   try {
     await gatewayRequest("agent.validate", {
@@ -608,13 +645,14 @@ export const validateAgentDraft = async (form?: HTMLFormElement): Promise<void> 
       body: candidate.body,
       commandId: commandId("agent-validate"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     const current = state.agents.find((agent) => agent.id === candidate.id);
     if (current !== undefined) current.status = "ready";
     showToast("Agent validated", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -635,6 +673,8 @@ export const runAgent = async (id: string): Promise<void> => {
     }, 650);
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation(`Running ${agent.name}…`, "warning");
   agent.status = "running";
   renderApp();
@@ -644,12 +684,15 @@ export const runAgent = async (id: string): Promise<void> => {
       task: `Give a concise update for ${agent.name}.`,
       commandId: commandId("agent-run"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     showToast(`${agent.name} run accepted`, "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    agent.status = "ready";
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) {
+      agent.status = "ready";
+      clearOperation();
+    }
   }
 };
 
@@ -672,6 +715,8 @@ export const createAgent = async (form: HTMLFormElement): Promise<void> => {
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Creating agent…", "warning");
   try {
     await gatewayRequest("agent.create", {
@@ -681,13 +726,14 @@ export const createAgent = async (form: HTMLFormElement): Promise<void> => {
       body: candidate.body,
       commandId: commandId("agent-create"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     state.agents.push(candidate);
     state.selectedAgentId = candidate.id;
     showToast(`${candidate.name} created`, "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -802,6 +848,8 @@ export const validateAutomation = async (form?: HTMLFormElement): Promise<void> 
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Validating automation…", "warning");
   try {
     await gatewayRequest("automation.validate", {
@@ -809,6 +857,7 @@ export const validateAutomation = async (form?: HTMLFormElement): Promise<void> 
       source: candidate.source,
       commandId: commandId("automation-validate"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     const current = state.automations.find((automation) => automation.id === candidate.id);
     if (current !== undefined) {
       current.status = "active";
@@ -816,9 +865,9 @@ export const validateAutomation = async (form?: HTMLFormElement): Promise<void> 
     }
     showToast("Automation validated", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -844,6 +893,8 @@ export const saveAutomation = async (form: HTMLFormElement): Promise<void> => {
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Saving automation…", "warning");
   try {
     let expectedSource = selectedAutomation()?.source ?? "";
@@ -852,7 +903,9 @@ export const saveAutomation = async (form: HTMLFormElement): Promise<void> => {
         id: candidate.id,
         commandId: commandId("automation-create"),
       });
+      if (!isCurrentProfileOperation(profileId, generation)) return;
       const created = await gatewayRequest("automation.show", { id: candidate.id });
+      if (!isCurrentProfileOperation(profileId, generation)) return;
       if (isRecord(created)) expectedSource = stringValue(created.source);
     }
     await gatewayRequest("automation.save", {
@@ -861,6 +914,7 @@ export const saveAutomation = async (form: HTMLFormElement): Promise<void> => {
       expectedSource,
       commandId: commandId("automation-save"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     if (isNew) {
       state.automations.push(candidate);
       state.selectedAutomationId = candidate.id;
@@ -870,10 +924,12 @@ export const saveAutomation = async (form: HTMLFormElement): Promise<void> => {
     }
     showToast("Automation saved", "success");
   } catch (cause) {
-    showToast(`Save did not reconcile: ${errorMessage(cause)}`, "danger");
-    state.demoState = "reconciliation";
+    if (isCurrentProfileOperation(profileId, generation)) {
+      showToast(`Save did not reconcile: ${errorMessage(cause)}`, "danger");
+      state.demoState = "reconciliation";
+    }
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -894,19 +950,22 @@ export const pauseOrResumeAutomation = async (resume: boolean): Promise<void> =>
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation(resume ? "Resuming automation…" : "Pausing automation…", "warning");
   try {
     await gatewayRequest(resume ? "automation.resume" : "automation.pause", {
       id: automation.id,
       commandId: commandId(resume ? "automation-resume" : "automation-pause"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     automation.status = nextStatus;
     automation.nextRun = resume ? "Next scheduled occurrence" : "Paused";
     showToast(resume ? "Automation resumed" : "Automation paused", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -934,13 +993,17 @@ export const runAutomation = async (): Promise<void> => {
     }, 650);
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Starting manual run…", "warning");
   try {
     await gatewayRequest("automation.run", {
       id: automation.id,
       commandId: commandId("automation-run"),
     });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     const runsResult = await gatewayRequest("automation.runs", { id: automation.id });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     const runs = parseResponseArray(runsResult, ["runs"])
       .filter((item): item is Record<string, unknown> => isRecord(item))
       .filter((item) => stringValue(item.automationId) === automation.id)
@@ -965,18 +1028,23 @@ export const runAutomation = async (): Promise<void> => {
     automation.status = runs[0]?.state === "running" ? "running" : "active";
     showToast("Manual run accepted", "success");
   } catch (cause) {
-    automation.status = "active";
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) {
+      automation.status = "active";
+      showToast(errorMessage(cause), "danger");
+    }
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
-export const loadExtensions = async (expectedProfileId = state.profile.id): Promise<void> => {
+export const loadExtensions = async (
+  expectedProfileId = state.profile.id,
+  expectedGeneration = state.profileGeneration,
+): Promise<void> => {
   if (state.mode === "demo") return;
   try {
     const value = await gatewayRequest("extension.list-for-profile", {});
-    if (state.profile.id !== expectedProfileId) return;
+    if (!isCurrentProfileOperation(expectedProfileId, expectedGeneration)) return;
     if (!isRecord(value)) return;
     const available = parseResponseArray(value, ["available"]);
     const selected = new Set(
@@ -997,7 +1065,8 @@ export const loadExtensions = async (expectedProfileId = state.profile.id): Prom
       ];
     });
   } catch (cause) {
-    showToast(`Extensions unavailable: ${errorMessage(cause)}`, "warning");
+    if (isCurrentProfileOperation(expectedProfileId, expectedGeneration))
+      showToast(`Extensions unavailable: ${errorMessage(cause)}`, "warning");
   }
 };
 
@@ -1010,15 +1079,18 @@ export const setExtensionSelected = async (id: string, selected: boolean): Promi
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation(`${selected ? "Adding" : "Removing"} ${id}…`, "warning");
   try {
     await gatewayRequest(selected ? "extension.add" : "extension.remove", { id });
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     extension.selected = selected;
     showToast(`${id} ${selected ? "added" : "removed"}`, "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };
 
@@ -1029,13 +1101,16 @@ export const validateExtensions = async (): Promise<void> => {
     renderApp();
     return;
   }
+  const profileId = state.profile.id;
+  const generation = state.profileGeneration;
   setOperation("Validating extensions…", "warning");
   try {
     await gatewayRequest("extension.validate", {});
+    if (!isCurrentProfileOperation(profileId, generation)) return;
     showToast("Extension selection validated", "success");
   } catch (cause) {
-    showToast(errorMessage(cause), "danger");
+    if (isCurrentProfileOperation(profileId, generation)) showToast(errorMessage(cause), "danger");
   } finally {
-    clearOperation();
+    if (isCurrentProfileOperation(profileId, generation)) clearOperation();
   }
 };

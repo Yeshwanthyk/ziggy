@@ -6,11 +6,12 @@ import { Effect, FiberMap, Option, Queue, Schema, Scope } from "effect";
 import {
   UiRequestEnvelope,
   UiRequestId,
+  UI_PROTOCOL_MAX_FRAME_BYTES,
   type UiRequestEnvelope as UiRequestEnvelopeValue,
 } from "../../domain/ui-gateway";
 import { fileSystemCauseDetails } from "../fs/cause";
 
-export const UI_SERVER_MAX_FRAME_BYTES = 64 * 1024;
+export const UI_SERVER_MAX_FRAME_BYTES = UI_PROTOCOL_MAX_FRAME_BYTES;
 export const UI_SERVER_BACKPRESSURE_BYTES = 256 * 1024;
 export const UI_SERVER_MAX_IN_FLIGHT = 16;
 export const UI_SERVER_COMMAND_CAPACITY = 256;

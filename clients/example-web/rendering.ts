@@ -502,7 +502,7 @@ const renderComposer = (conversation: Conversation | undefined): HTMLElement => 
       const option = document.createElement("option");
       option.value = choice.value;
       option.textContent = `To: ${choice.label}`;
-      option.selected = choice.value === (conversation.recipient ?? "everyone");
+      option.selected = choice.value === (conversation.recipient ?? "host");
       recipient.append(option);
     }
     modes.append(recipient);

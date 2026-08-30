@@ -132,6 +132,44 @@ const mapModel = (model: KnownModel) => ({
   thinkingLevels: [...model.thinkingLevels],
 });
 
+const MODEL_RESULT_BUDGET_BYTES = 48 * 1_024;
+
+const fairModelOrder = (models: ReadonlyArray<KnownModel>): ReadonlyArray<KnownModel> => {
+  const byProvider = new Map<string, KnownModel[]>();
+  for (const model of models) {
+    const group = byProvider.get(model.providerId);
+    if (group === undefined) byProvider.set(model.providerId, [model]);
+    else group.push(model);
+  }
+  const providers = [...byProvider.keys()].sort((left, right) => left.localeCompare(right));
+  const ordered: KnownModel[] = [];
+  for (let index = 0; ; index += 1) {
+    let added = false;
+    for (const provider of providers) {
+      const model = byProvider.get(provider)?.[index];
+      if (model === undefined) continue;
+      ordered.push(model);
+      added = true;
+    }
+    if (!added) return ordered;
+  }
+};
+
+const projectModels = (profileId: ProfileId, models: ReadonlyArray<KnownModel>) => {
+  const projected: ReturnType<typeof mapModel>[] = [];
+  for (const model of fairModelOrder(models)) {
+    if (projected.length >= 256) break;
+    const mapped = mapModel(model);
+    const candidate = [...projected, mapped];
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ profileId, models: candidate, truncated: true }),
+    ).byteLength;
+    if (bytes > MODEL_RESULT_BUDGET_BYTES) break;
+    projected.push(mapped);
+  }
+  return { profileId, models: projected, truncated: projected.length < models.length };
+};
+
 const mapAuth = (provider: ProviderAuthStatus) => {
   const result = {
     id: provider.id,
@@ -238,7 +276,7 @@ export const dispatchSettings = (
         const models = yield* config.models
           .list(branch.target, params.providerId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
-        return { profileId: branch.profileId, models: models.map(mapModel) };
+        return projectModels(branch.profileId, models);
       });
     case "model.available":
       return decodeModelAvailable(request.params).pipe(
@@ -248,10 +286,7 @@ export const dispatchSettings = (
           config.models === undefined
             ? Effect.fail(noService(request.method))
             : config.models.available(branch.target).pipe(
-                Effect.map((models) => ({
-                  profileId: branch.profileId,
-                  models: models.map(mapModel),
-                })),
+                Effect.map((models) => projectModels(branch.profileId, models)),
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               ),
         ),

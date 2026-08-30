@@ -311,8 +311,8 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "automation.save":
       return (
         hasProfileString(value, "automationId", isAutomationId) &&
-        hasString(value, "source", (entry) => isBoundedCodePointString(entry, 60_000, 0)) &&
-        hasString(value, "expectedSource", (entry) => isBoundedCodePointString(entry, 60_000, 0)) &&
+        hasString(value, "source", (entry) => isBoundedCodePointString(entry, 8_000, 0)) &&
+        hasString(value, "expectedSource", (entry) => isBoundedCodePointString(entry, 8_000, 0)) &&
         hasOptionalCommandId(value, [
           "profileId",
           "automationId",
@@ -320,7 +320,7 @@ export const isMethodParams = <Method extends ZiggyMethod>(
           "expectedSource",
           "commandId",
         ]) &&
-        isBoundedCodePointString(value.expectedSource, 60_000, 0)
+        isBoundedCodePointString(value.expectedSource, 8_000, 0)
       );
     case "automation.pause":
     case "automation.resume":

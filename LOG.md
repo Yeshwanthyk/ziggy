@@ -454,3 +454,7 @@ results.
 **Profile-operation and history-frame closure.** Fenced asynchronous session-open results by Profile generation and reduced history pages to a wire-safe eight bounded entries.
 
 **Final quality-gate cleanup.** Recast the oversized-session failure assertion as one unconditional typed-result match so the repository Effect lint gate remains fail-closed.
+
+**Wire-safe model catalog.** Model list and availability responses now fairly interleave providers and expose an explicit truncation flag while staying below the WebSocket response budget, so a large authenticated Pi catalog remains usable in the reference UI.
+
+**Final Profile and frame fencing.** Every live management mutation now captures Profile identity and generation before awaiting the resident, preventing late Alpha responses from mutating Beta UI state. Group composers honor the host-owned default recipient, live pins persist only through the Profile store, complete success frames enforce the 64 KiB wire contract, and high-volume model, agent, and automation payloads remain bounded. Removed pass-through SDK aliases where the protocol map already owns the exact request or result type.

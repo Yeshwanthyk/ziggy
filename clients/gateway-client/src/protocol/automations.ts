@@ -136,8 +136,6 @@ export interface ZiggyAutomationCommandParams {
   readonly commandId?: string;
 }
 
-export type ZiggyAutomationRunParams = ZiggyAutomationCommandParams;
-
 export interface ZiggyAutomationRunsParams {
   readonly profileId: ZiggyProfileId;
   readonly automationId?: ZiggyAutomationId;
@@ -151,7 +149,7 @@ export interface ZiggyAutomationRequestMap {
   readonly "automation.validate": ZiggyAutomationShowParams;
   readonly "automation.pause": ZiggyAutomationCommandParams;
   readonly "automation.resume": ZiggyAutomationCommandParams;
-  readonly "automation.run": ZiggyAutomationRunParams;
+  readonly "automation.run": ZiggyAutomationCommandParams;
   readonly "automation.status": { readonly profileId: ZiggyProfileId };
   readonly "automation.runs": ZiggyAutomationRunsParams;
 }
@@ -201,7 +199,7 @@ const isAutomationDocument = (value: unknown): value is ZiggyAutomationDocument 
   isProfileId(value.profileId) &&
   isAutomationId(value.id) &&
   (value.lifecycle === "active" || value.lifecycle === "paused") &&
-  isBoundedCodePointString(value.source, 60_000, 0);
+  isBoundedCodePointString(value.source, 8_000, 0);
 
 const isAutomationCreateResult = (value: unknown): value is ZiggyAutomationCreateResult =>
   isRecord(value) &&

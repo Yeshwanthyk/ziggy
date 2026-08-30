@@ -133,7 +133,7 @@ export const isAgentRunResult = (value: unknown): value is ZiggyAgentRunResult =
   hasOnlyKeys(value, ["profileId", "agentId", "answer", "sessionId"]) &&
   isProfileId(value.profileId) &&
   isAgentId(value.agentId) &&
-  isBoundedCodePointString(value.answer, 60_000, 0) &&
+  isBoundedCodePointString(value.answer, 8_000, 0) &&
   isStoredSessionId(value.sessionId);
 
 const isStoredSessionId = (value: unknown): value is ZiggyStoredSessionId =>

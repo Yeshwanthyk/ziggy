@@ -6,6 +6,7 @@ import { Effect, Result, Schema } from "effect";
 import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatRegistry, type ChatRegistryApi } from "ziggy/application/chat-registry";
 import type { SessionsApi } from "ziggy/application/sessions";
+import type { ModelsApi } from "ziggy/application/models";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
@@ -68,6 +69,7 @@ const makeAgent = (
 
 interface TestConfigExtras {
   readonly groups?: UiGroupStore;
+  readonly models?: ModelsApi;
 }
 
 const makeConfig = (
@@ -594,4 +596,68 @@ test("UI gateway maps extension failures to bounded typed details without filesy
     error: { code: "internal", details: { operation: "validate", stage: "extensions" } },
   });
   expect(JSON.stringify(responses)).not.toContain("/secret");
+});
+
+test("UI gateway fairly truncates a large model catalog below the response wire budget", async () => {
+  const models = Array.from({ length: 800 }, (_, index) => ({
+    providerId: `provider-${index % 12}`,
+    modelId: `model-${index.toString().padStart(4, "0")}`,
+    name: "\u0000".repeat(256),
+    thinkingLevels: ["off", "low", "medium", "high"],
+  }));
+  const modelService: ModelsApi = {
+    status: () =>
+      Effect.succeed({
+        providerId: "provider-0",
+        modelId: "model-0000",
+        thinking: "off",
+        authConfigured: true,
+      }),
+    readOnlyStatus: () =>
+      Effect.succeed({
+        providerId: "provider-0",
+        modelId: "model-0000",
+        thinking: "off",
+        authConfigured: true,
+      }),
+    list: () => Effect.succeed(models),
+    available: () => Effect.succeed(models),
+    set: (_target, providerId, modelId, thinking) =>
+      Effect.succeed({ providerId, modelId, thinking }),
+  };
+  const sent: string[] = [];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.never })),
+            makeProfileExtensions(),
+            { models: modelService },
+          ),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "large-model-catalog",
+          method: "model.available",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(Buffer.byteLength(sent[0] ?? "", "utf8")).toBeLessThan(64 * 1_024);
+  const response = decodeResponse(sent[0] ?? "null");
+  expect(response).toMatchObject({
+    id: "large-model-catalog",
+    ok: true,
+    result: {
+      profileId,
+      truncated: true,
+    },
+  });
+  expect(JSON.stringify(response)).toContain('"providerId":"provider-0"');
+  expect(JSON.stringify(response)).toContain('"providerId":"provider-11"');
 });

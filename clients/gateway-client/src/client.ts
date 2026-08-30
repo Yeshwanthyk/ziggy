@@ -38,7 +38,6 @@ import type {
 } from "./protocol/automations";
 import type {
   ZiggyAuthStatusResult,
-  ZiggyModelAvailableResult,
   ZiggyModelListResult,
   ZiggyModelSetResult,
   ZiggyModelThinkingLevel,
@@ -145,7 +144,7 @@ export interface ZiggyGatewayClient {
   ): Promise<ZiggyAgentRunResult>;
   modelStatus(profileId: ZiggyProfileId): Promise<ZiggyModelStatusResult>;
   listModels(profileId: ZiggyProfileId, providerId?: string): Promise<ZiggyModelListResult>;
-  availableModels(profileId: ZiggyProfileId): Promise<ZiggyModelAvailableResult>;
+  availableModels(profileId: ZiggyProfileId): Promise<ZiggyResultMap["model.available"]>;
   setModel(
     profileId: ZiggyProfileId,
     providerId: string,

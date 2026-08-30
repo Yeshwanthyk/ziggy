@@ -531,7 +531,18 @@ const sessionFromValue = (value: unknown): Conversation | undefined => {
     draft: "",
   };
   if (kind === "channel") session.channel = channel || "Channel";
-  if (kind === "group") session.groupId = stringValue(context?.groupId);
+  if (kind === "group") {
+    session.groupId = stringValue(context?.groupId);
+    const defaultRecipient = isRecord(context?.defaultRecipient)
+      ? context.defaultRecipient
+      : undefined;
+    session.recipient =
+      defaultRecipient?.kind === "all"
+        ? "everyone"
+        : defaultRecipient?.kind === "agent"
+          ? stringValue(defaultRecipient.agentId, "host")
+          : "host";
+  }
   return session;
 };
 
@@ -1000,7 +1011,7 @@ const loadSelectedProfile = async (profileId: string, generation: number): Promi
   if (!isCurrentProfileLoad(profileId, generation)) return;
   await loadLiveProjections(profileId, generation);
   if (!isCurrentProfileLoad(profileId, generation)) return;
-  await loadExtensions(profileId);
+  await loadExtensions(profileId, generation);
 };
 
 const switchProfile = async (profileId: string): Promise<void> => {

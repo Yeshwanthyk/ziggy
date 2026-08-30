@@ -27,9 +27,8 @@ export interface ZiggyModelStatusResult {
 export interface ZiggyModelListResult {
   readonly profileId: ZiggyProfileId;
   readonly models: ReadonlyArray<ZiggyModelDescriptor>;
+  readonly truncated: boolean;
 }
-
-export type ZiggyModelAvailableResult = ZiggyModelListResult;
 
 export interface ZiggyModelSetParams {
   readonly profileId: ZiggyProfileId;
@@ -73,7 +72,7 @@ export interface ZiggyModelRequestMap {
 export interface ZiggyModelResultMap {
   readonly "model.status": ZiggyModelStatusResult;
   readonly "model.list": ZiggyModelListResult;
-  readonly "model.available": ZiggyModelAvailableResult;
+  readonly "model.available": ZiggyModelListResult;
   readonly "model.set": ZiggyModelSetResult;
   readonly "auth.status": ZiggyAuthStatusResult;
 }
@@ -108,11 +107,12 @@ export const isModelStatusResult = (value: unknown): value is ZiggyModelStatusRe
 
 export const isModelListResult = (value: unknown): value is ZiggyModelListResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "models"]) &&
+  hasOnlyKeys(value, ["profileId", "models", "truncated"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.models) &&
-  value.models.length <= 2_000 &&
-  value.models.every(isModel);
+  value.models.length <= 256 &&
+  value.models.every(isModel) &&
+  typeof value.truncated === "boolean";
 
 export const isModelSetResult = (value: unknown): value is ZiggyModelSetResult =>
   isRecord(value) &&
