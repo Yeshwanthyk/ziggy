@@ -214,8 +214,13 @@ describe("Pi session metadata adapter", () => {
     await writeFile(file, "x".repeat(8 * 1024 * 1024 + 1));
 
     const result = await Effect.runPromise(listProfileSessions(root).pipe(Effect.result));
-    expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
-    if (Result.isFailure(result)) expect(result.failure.message).toContain("bounded transcript");
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "SessionReadFailed",
+        message: expect.stringContaining("bounded transcript"),
+      },
+    });
   });
 
   test("rejects symlinked roots, files, and nested directories", async () => {
