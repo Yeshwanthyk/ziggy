@@ -62,6 +62,13 @@ describe("CLI decoding", () => {
       target: "buddy",
       id: "weather",
     });
+    await expect(decode(["extensions"])).resolves.toEqual({
+      _tag: "ExtensionsManage",
+    });
+    await expect(decode(["extensions", "manage", "buddy"])).resolves.toEqual({
+      _tag: "ExtensionsManage",
+      target: "buddy",
+    });
     await expect(decode(["skills", "add", "buddy", "daily", "--force"])).rejects.toMatchObject({
       _tag: "CliInputInvalid",
       message: expect.stringContaining("skills are part of extensions"),

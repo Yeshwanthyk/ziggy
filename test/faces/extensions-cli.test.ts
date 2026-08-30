@@ -5,6 +5,10 @@ import {
   ProfileExtensionRollbackFailed,
 } from "ziggy/domain/profile-extension";
 import {
+  renderExtension,
+  renderExtensionManagerResult,
+  renderExtensionMutation,
+  renderExtensions,
   renderExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
@@ -26,6 +30,100 @@ const extension = {
 test("renders extension list and show metadata as JSON", () => {
   expect(renderExtensionsJson([extension])).toBe(JSON.stringify([extension]));
   expect(renderExtensionJson(extension)).toBe(JSON.stringify(extension));
+});
+
+test("renders extensions as a framed interactive catalogue", () => {
+  const rendered = renderExtensions([extension], {
+    pretty: true,
+    colors: false,
+    columns: 76,
+  });
+
+  expect(rendered).toContain("│  ZIGGY  extensions");
+  expect(rendered).toContain(" SK  weather");
+  expect(rendered).toContain("bundled · optional");
+  expect(rendered).toContain(" MANAGE  ziggy extensions manage <profile>");
+});
+
+test("keeps the management action readable in a narrow terminal", () => {
+  const rendered = renderExtensions(
+    [
+      {
+        ...extension,
+        id: "required-remote-extension-with-a-long-name",
+        required: true,
+        source: "remote-approved",
+      },
+    ],
+    {
+      pretty: true,
+      colors: false,
+      columns: 36,
+    },
+  );
+
+  expect(rendered).toContain("remote-approved · required");
+  expect(rendered).toContain(" MANAGE  ziggy extensions manage");
+  expect(rendered).toContain("<profile>");
+  expect(rendered).toContain("choose extensions");
+  expect(rendered.split("\n").every((line) => Bun.stringWidth(line) === 36)).toBeTrue();
+});
+
+test("bounds long extension detail and result values in a narrow terminal", () => {
+  const options = {
+    pretty: true,
+    colors: false,
+    columns: 36,
+  };
+  const longValue = "extension-value-".repeat(12);
+  const detail = renderExtension(
+    {
+      ...extension,
+      id: longValue,
+      version: longValue,
+      packagePath: `/tmp/${longValue}`,
+      skills: [{ name: longValue, description: longValue }],
+      extensionPaths: [`/tmp/${longValue}/index.ts`],
+    },
+    options,
+  );
+  const managerResult = renderExtensionManagerResult(
+    {
+      status: "changed",
+      profile: { name: longValue, path: `/tmp/${longValue}` },
+      selected: [longValue],
+      added: [longValue],
+      removed: [longValue],
+    },
+    options,
+  );
+  const mutation = renderExtensionMutation(
+    {
+      id: longValue,
+      profilePath: `/tmp/${longValue}`,
+      changed: true,
+      selected: true,
+    },
+    options,
+  );
+
+  for (const rendered of [detail, managerResult, mutation]) {
+    expect(rendered).toContain("…");
+    expect(rendered.split("\n").every((line) => Bun.stringWidth(line) === 36)).toBeTrue();
+  }
+});
+
+test("preserves extension metadata in the pretty detail view", () => {
+  const rendered = renderExtension(extension, {
+    pretty: true,
+    colors: false,
+    columns: 76,
+  });
+
+  expect(rendered).toContain(" SKILL  weather");
+  expect(rendered).toContain(" CODE  extensions/weather/index.ts");
+  expect(rendered).toContain("path");
+  expect(rendered).toContain("extensions/weather");
 });
 
 test("projects bounded preflight diagnostics without exposing the cause", () => {
