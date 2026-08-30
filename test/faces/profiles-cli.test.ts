@@ -59,6 +59,18 @@ test("caps the pretty layout at a readable width", () => {
   expect(Bun.stringWidth(rule ?? "")).toBe(76);
 });
 
+test("closes the frame when every Profile name is suspicious", () => {
+  const rendered = renderProfiles(profiles.slice(0, 1), {
+    pretty: true,
+    colors: false,
+    columns: 50,
+    homeDirectory: "/Users/test",
+  });
+
+  expect(rendered).not.toContain(" OPEN ");
+  expect(rendered.split("\n").at(-1)).toBe("╰────────────────────────────────────────────────╯");
+});
+
 test("renders an instructive pretty empty state", () => {
   expect(
     renderProfiles([], {

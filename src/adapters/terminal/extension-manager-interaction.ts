@@ -59,21 +59,21 @@ const selectExtensions = (profile: ProfileTarget, listing: ProfileExtensionListi
     }),
   );
 
-const changeSummary = (changes: ExtensionManagerChanges): string =>
+const changeDetails = (changes: ExtensionManagerChanges): string =>
   [
-    changes.added.length === 0 ? undefined : `+${changes.added.length} add`,
-    changes.removed.length === 0 ? undefined : `−${changes.removed.length} remove`,
+    changes.added.length === 0 ? undefined : `Add: ${changes.added.join(", ")}`,
+    changes.removed.length === 0 ? undefined : `Remove: ${changes.removed.join(", ")}`,
   ]
     .filter((part): part is string => part !== undefined)
-    .join(" · ");
+    .join("\n");
 
 const confirmChanges = (profile: ProfileTarget, changes: ExtensionManagerChanges) =>
   prompt("confirm extension changes", (signal) =>
     confirm({
-      message: ziggyPrompt(`apply ${changeSummary(changes)} to ${profile.name}?`),
+      message: `${ziggyPrompt(`review · ${profile.name}`)}\n${changeDetails(changes)}\nApply these changes?`,
       active: "Apply",
       inactive: "Cancel",
-      initialValue: true,
+      initialValue: false,
       withGuide: false,
       signal,
     }),

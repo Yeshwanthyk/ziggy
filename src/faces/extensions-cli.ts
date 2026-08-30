@@ -161,19 +161,26 @@ export const renderExtensions = (
     }
   }
 
-  lines.push(
-    panelRule(color, "├", "─", "┤", width),
-    panelLine(
-      color,
-      alignEdges(
-        `${actionBadge(color, "MANAGE")} ${color.bold("ziggy extensions manage <profile>")}`,
-        color.dim("choose extensions"),
-        innerWidth,
+  const action = actionBadge(color, "MANAGE");
+  const command = "ziggy extensions manage <profile>";
+  const hint = "choose extensions";
+  const fullHintWidth = Bun.stringWidth(action) + 1 + command.length + 2 + hint.length;
+  lines.push(panelRule(color, "├", "─", "┤", width));
+  if (fullHintWidth <= innerWidth) {
+    lines.push(
+      panelLine(
+        color,
+        alignEdges(`${action} ${color.bold(command)}`, color.dim(hint), innerWidth),
+        width,
       ),
-      width,
-    ),
-    panelRule(color, "╰", "─", "╯", width),
-  );
+    );
+  } else {
+    lines.push(
+      panelLine(color, `${action} ${color.bold("ziggy extensions manage")}`, width),
+      panelLine(color, alignEdges(color.bold("<profile>"), color.dim(hint), innerWidth), width),
+    );
+  }
+  lines.push(panelRule(color, "╰", "─", "╯", width));
   return lines.join("\n");
 };
 

@@ -43,6 +43,19 @@ test("renders extensions as a framed interactive catalogue", () => {
   expect(rendered).toContain(" MANAGE  ziggy extensions manage <profile>");
 });
 
+test("keeps the management action readable in a narrow terminal", () => {
+  const rendered = renderExtensions([extension], {
+    pretty: true,
+    colors: false,
+    columns: 36,
+  });
+
+  expect(rendered).toContain(" MANAGE  ziggy extensions manage");
+  expect(rendered).toContain("<profile>");
+  expect(rendered).toContain("choose extensions");
+  expect(rendered.split("\n").every((line) => Bun.stringWidth(line) === 36)).toBeTrue();
+});
+
 test("preserves extension metadata in the pretty detail view", () => {
   const rendered = renderExtension(extension, {
     pretty: true,

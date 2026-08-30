@@ -130,9 +130,9 @@ export const renderProfiles = (
         ),
         width,
       ),
-      panelRule(color, "╰", "─", "╯", width),
     );
   }
+  lines.push(panelRule(color, "╰", "─", "╯", width));
 
   return lines.join("\n");
 };
