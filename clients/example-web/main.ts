@@ -511,6 +511,7 @@ const sessionFromValue = (value: unknown): Conversation | undefined => {
     draft: "",
   };
   if (kind === "channel") session.channel = channel || "Channel";
+  if (kind === "group") session.groupId = stringValue(context?.groupId);
   return session;
 };
 

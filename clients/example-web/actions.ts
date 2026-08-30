@@ -464,10 +464,40 @@ export const reopenConversation = async (): Promise<void> => {
   try {
     const agentId =
       conversation.kind === "specialist" ? conversation.key.split("/").at(-1) : undefined;
-    await gatewayRequest("session.open", {
-      context: { kind: "local" },
+    const groupContext =
+      conversation.kind === "group" && conversation.groupId !== undefined
+        ? {
+            kind: "group" as const,
+            groupId: conversation.groupId,
+            memberAgentIds: conversation.participants.filter(
+              (participant) => participant !== state.profile.name,
+            ),
+          }
+        : undefined;
+    const opened = await gatewayRequest("session.open", {
+      context: groupContext ?? { kind: "local" },
+      ...(conversation.kind === "bot" && conversation.key.startsWith("ui/")
+        ? {
+            name:
+              conversation.ref?.kind === "stored"
+                ? `reopened-${Date.now().toString(36)}`
+                : conversation.key.slice("ui/".length),
+          }
+        : {}),
       ...(agentId === undefined ? {} : { agentId }),
     });
+    const reopened = sessionFromValue(opened);
+    if (reopened !== undefined) {
+      reopened.messages = conversation.messages;
+      reopened.historyHasMore = conversation.historyHasMore;
+      await gatewayRequest("session.watch", { session: reopened.ref ?? reopened.key });
+      reopened.watched = true;
+      if (reopened.id !== conversation.id) {
+        const index = state.conversations.findIndex((item) => item.id === conversation.id);
+        if (index >= 0) state.conversations.splice(index, 1, reopened);
+        state.selectedConversationId = reopened.id;
+      }
+    }
     conversation.closed = false;
     conversation.turnState = "idle";
     showToast("Session reopened", "success");
@@ -539,6 +569,8 @@ export const validateAgentDraft = async (form?: HTMLFormElement): Promise<void> 
       body: candidate.body,
       commandId: commandId("agent-validate"),
     });
+    const current = state.agents.find((agent) => agent.id === candidate.id);
+    if (current !== undefined) current.status = "ready";
     showToast("Agent validated", "success");
   } catch (cause) {
     showToast(errorMessage(cause), "danger");
@@ -729,6 +761,11 @@ export const validateAutomation = async (form?: HTMLFormElement): Promise<void> 
       source: candidate.source,
       commandId: commandId("automation-validate"),
     });
+    const current = state.automations.find((automation) => automation.id === candidate.id);
+    if (current !== undefined) {
+      current.status = "active";
+      current.nextRun = "Next scheduled occurrence";
+    }
     showToast("Automation validated", "success");
   } catch (cause) {
     showToast(errorMessage(cause), "danger");
@@ -855,6 +892,29 @@ export const runAutomation = async (): Promise<void> => {
       id: automation.id,
       commandId: commandId("automation-run"),
     });
+    const runsResult = await gatewayRequest("automation.runs", { id: automation.id });
+    const runs = parseResponseArray(runsResult, ["runs"])
+      .filter((item): item is Record<string, unknown> => isRecord(item))
+      .filter((item) => stringValue(item.automationId) === automation.id)
+      .map((item): AutomationRecord["runs"][number] => {
+        const stateValue = stringValue(item.state, "running");
+        const runState =
+          stateValue === "completed"
+            ? ("succeeded" as const)
+            : stateValue === "failed"
+              ? ("failed" as const)
+              : ("running" as const);
+        const recordedAt = typeof item.recordedAtMs === "number" ? item.recordedAtMs : Date.now();
+        return {
+          id: stringValue(item.runId, `run-${recordedAt}`),
+          state: runState,
+          summary: `${stringValue(item.trigger, "manual")} · ${stateValue}`,
+          time: new Date(recordedAt).toLocaleString(),
+        };
+      });
+    automation.runs = runs;
+    automation.lastRun = runs[0]?.time ?? "Just now";
+    automation.status = runs[0]?.state === "running" ? "running" : "active";
     showToast("Manual run accepted", "success");
   } catch (cause) {
     automation.status = "active";

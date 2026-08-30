@@ -45,6 +45,7 @@ export interface Conversation {
   readonly model: string;
   readonly participants: ReadonlyArray<string>;
   channel?: string;
+  groupId?: string;
   messages: Message[];
   pinned: boolean;
   pinId?: string;
