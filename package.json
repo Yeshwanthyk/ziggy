@@ -24,8 +24,7 @@
     "build:binary:dev": "bun tooling/build-standalone-executable.mjs --development",
     "smoke:binary": "bun tooling/smoke-standalone-executable.mjs",
     "smoke:binary:dev": "bun tooling/smoke-standalone-executable.mjs --allow-development --artifact /tmp/ziggy-standalone-dev/ziggy",
-    "test": "bun test ./test ./extensions ./tooling && bun run test:helpers",
-    "test:helpers": "bun run --cwd extensions/here-now test",
+    "test": "bun test ./test ./extensions ./tooling",
     "check:gateway-client": "bun run --cwd clients/gateway-client lint && bun run --cwd clients/gateway-client typecheck && bun run --cwd clients/gateway-client test",
     "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run knip && bun run check:gateway-client && bun run check:catalog && bun run check:pi-docs"
   },
