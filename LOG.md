@@ -479,3 +479,5 @@ results.
 **Ziggy 0.2.5 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.4 to 0.2.5; documented the Profile-scoped UI platform, interactive CLI flows, and bundled skill shelf cleanup; repaired the changelog compare links for the 0.2.3–0.2.5 releases.
 
 **Retired helper gate removed.** Removed the root `test:helpers` command and its `extensions/here-now` invocation after the release build exposed that stale reference; the root test command now covers the retained core, extension, and tooling suites directly.
+
+**Standalone test gate aligned.** Removed the standalone builder's second stale `test:helpers` invocation; its retained `bun test ./test ./extensions ./tooling` gate already executes every current helper suite.
