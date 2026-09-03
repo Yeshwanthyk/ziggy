@@ -11,7 +11,6 @@ import factoryExecutor from "../../../../extensions/executor/index.ts";
 import factoryGithub from "../../../../extensions/github/index.ts";
 import factoryLinear from "../../../../extensions/linear/index.ts";
 import factoryLosslessClaw from "../../../../extensions/lossless-claw/index.ts";
-import factoryOpenComputerUse from "../../../../extensions/open-computer-use/index.ts";
 import factorySelfImprovement from "../../../../extensions/self-improvement/index.ts";
 import factoryWebSearch from "../../../../extensions/web-search/index.ts";
 
@@ -30,7 +29,6 @@ export const builtinFactories: ReadonlyArray<{
   { id: "github", factory: factoryGithub },
   { id: "linear", factory: factoryLinear },
   { id: "lossless-claw", factory: factoryLosslessClaw },
-  { id: "open-computer-use", factory: factoryOpenComputerUse },
   { id: "self-improvement", factory: factorySelfImprovement },
   { id: "web-search", factory: factoryWebSearch },
 ];

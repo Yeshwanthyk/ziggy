@@ -1,42 +1,36 @@
----
-name: mcporter
-description: "List, configure, authenticate, call, and inspect MCP servers/tools with mcporter over HTTP or stdio."
----
-
-# mcporter
-
-Use `mcporter` to work with MCP servers directly.
-
-Quick start
-
-- `mcporter list`
-- `mcporter list <server> --schema`
-- `mcporter call <server.tool> key=value`
-
-Call tools
-
-- Selector: `mcporter call linear.list_issues team=ENG limit:5`
-- Function syntax: `mcporter call "linear.create_issue(title: \"Bug\")"`
-- Full URL: `mcporter call https://api.example.com/mcp.fetch url:https://example.com`
-- Stdio: `mcporter call --stdio "bun run ./server.ts" scrape url=https://example.com`
-- JSON payload: `mcporter call <server.tool> --args '{"limit":5}'`
-
-Auth + config
-
-- OAuth: `mcporter auth <server | url> [--reset]`
-- Config: `mcporter config list|get|add|remove|import|login|logout`
-
-Daemon
-
-- `mcporter daemon start|status|stop|restart`
-
-Codegen
-
-- CLI: `mcporter generate-cli --server <name>` or `--command <url>`
-- Inspect: `mcporter inspect-cli <path> [--json]`
-- TS: `mcporter emit-ts <server> --mode client|types`
-
-Notes
-
-- Config default: `./config/mcporter.json` (override with `--config`).
-- Prefer `--output json` for machine-readable results.
+{
+  "name": "@ziggy/self-improvement",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bounded Profile learning observations and Curator-managed skill packages.",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint index.ts src test",
+    "fmt": "oxfmt index.ts src test skills"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "typebox": "1.3.7"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "ziggy": {
+    "automations": [
+      {
+        "id": "self-improvement-curator",
+        "path": "./automations/curator.md"
+      }
+    ]
+  }
+}

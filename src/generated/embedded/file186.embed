@@ -1,14 +1,14 @@
 {
-  "name": "@ziggy/notion",
+  "name": "@ziggy/weather",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
   "keywords": [
     "pi-package"
   ],
-  "type": "module",
   "pi": {
     "skills": [
       "./skills"
     ]
-  },
-  "version": "0.1.0"
+  }
 }

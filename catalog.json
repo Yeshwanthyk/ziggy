@@ -2,12 +2,6 @@
   "version": 1,
   "extensions": [
     {
-      "id": "acp-router",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/acp-router"
-    },
-    {
       "id": "agent-browser",
       "version": "0.1.0",
       "source": "bundled",
@@ -30,12 +24,6 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/codemode"
-    },
-    {
-      "id": "codex",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/codex"
     },
     {
       "id": "coding-agent",
@@ -104,18 +92,6 @@
       "path": "./extensions/goplaces"
     },
     {
-      "id": "here-now",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/here-now"
-    },
-    {
-      "id": "hyperframes",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/hyperframes"
-    },
-    {
       "id": "imsg",
       "version": "0.1.0",
       "source": "bundled",
@@ -164,18 +140,6 @@
       "path": "./extensions/onepassword"
     },
     {
-      "id": "open-computer-use",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/open-computer-use"
-    },
-    {
-      "id": "openai-whisper",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/openai-whisper"
-    },
-    {
       "id": "pi-packages",
       "version": "0.1.0",
       "source": "bundled",
@@ -192,24 +156,6 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/self-improvement"
-    },
-    {
-      "id": "things-mac",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/things-mac"
-    },
-    {
-      "id": "tmux",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/tmux"
-    },
-    {
-      "id": "wacli",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/wacli"
     },
     {
       "id": "weather",

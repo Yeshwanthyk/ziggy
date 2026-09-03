@@ -1,184 +1,134 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Process-group signaling falls back when group termination races with process exit. */
-/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
-/* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
-import { spawn, type ChildProcess } from "node:child_process";
-import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+# Automation operations
 
-const executable = join(import.meta.dirname, "bin", "open-computer-use-wrapper.mjs");
+Automation Markdown in the Profile is the only authority for automation policy. SQLite under
+`.runtime/` contains scheduler projections, occurrence claims, and run truth; it never replaces or
+stores an authoritative definition.
 
-const TIMEOUT_MS = 120_000;
-const TERMINATION_GRACE_MS = 1_000;
-const OUTPUT_LIMIT = 24 * 1024;
+## Definition filenames
 
-const Call = Type.Object(
-  {
-    tool: Type.String(),
-    args: Type.Optional(Type.Object({}, { additionalProperties: true })),
-  },
-  { additionalProperties: false },
-);
+An automation's lifecycle is its filename:
 
-const Parameters = Type.Object(
-  {
-    action: Type.Union(
-      [
-        Type.Literal("doctor"),
-        Type.Literal("list_apps"),
-        Type.Literal("get_app_state"),
-        Type.Literal("click"),
-        Type.Literal("secondary"),
-        Type.Literal("scroll"),
-        Type.Literal("drag"),
-        Type.Literal("type_text"),
-        Type.Literal("press_key"),
-        Type.Literal("set_value"),
-        Type.Literal("calls"),
-      ],
-      { description: "Open Computer Use action to run." },
-    ),
-    app: Type.Optional(Type.String({ description: "App name or bundle identifier." })),
-    element_index: Type.Optional(Type.Integer({ description: "Latest snapshot element index." })),
-    x: Type.Optional(Type.Number()),
-    y: Type.Optional(Type.Number()),
-    click_count: Type.Optional(Type.Integer({ minimum: 1 })),
-    mouse_button: Type.Optional(
-      Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
-    ),
-    from_x: Type.Optional(Type.Number()),
-    from_y: Type.Optional(Type.Number()),
-    to_x: Type.Optional(Type.Number()),
-    to_y: Type.Optional(Type.Number()),
-    direction: Type.Optional(
-      Type.Union([
-        Type.Literal("up"),
-        Type.Literal("down"),
-        Type.Literal("left"),
-        Type.Literal("right"),
-      ]),
-    ),
-    pages: Type.Optional(Type.Number()),
-    text: Type.Optional(Type.String()),
-    key: Type.Optional(Type.String()),
-    value: Type.Optional(Type.String()),
-    secondary_action: Type.Optional(Type.String()),
-    text_limit: Type.Optional(Type.Union([Type.Integer({ minimum: 1 }), Type.Literal("max")])),
-    max_tree_nodes: Type.Optional(Type.Integer({ minimum: 1 })),
-    max_tree_depth: Type.Optional(Type.Integer({ minimum: 1 })),
-    calls: Type.Optional(Type.Array(Call)),
-  },
-  { additionalProperties: false },
-);
+```text
+automations/<id>.md         active
+automations/<id>.paused.md  paused
+```
 
-const appendBounded = (current: string, chunk: string): string => {
-  if (Buffer.byteLength(current) >= OUTPUT_LIMIT) return current;
-  const available = OUTPUT_LIMIT - Buffer.byteLength(current);
-  return current + Buffer.from(chunk).subarray(0, available).toString();
-};
+Use lowercase kebab-case IDs. `ziggy automations list <profile>` and
+`ziggy automations validate <profile> [id]` show `active`, `paused`, or `conflict` explicitly.
+They inspect the Profile without creating or changing `.runtime`, SQLite, or definition files.
+Symlinked Profile roots, automation roots, and definition files are rejected.
 
-const display = (value: string): string =>
-  Buffer.byteLength(value) < OUTPUT_LIMIT ? value : `${value}\n[output truncated]`;
+Create an active starter with:
 
-const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
-  if (child.pid === undefined) return;
-  if (process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // Fall back to the direct child if its process group has already changed or exited.
-    }
-  }
-  child.kill(signal);
-};
+```sh
+ziggy automations create <profile> <id>
+```
 
-const execute = (
-  input: Static<typeof Parameters>,
-  cwd: string,
-  signal: AbortSignal | undefined,
-): Promise<{ stdout: string; stderr: string }> =>
-  new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [executable], {
-      cwd,
-      env: { ...process.env, ZIGGY_PROFILE_PATH: cwd },
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let cancelled = false;
-    let settled = false;
-    let terminationStarted = false;
-    let escalation: ReturnType<typeof setTimeout> | undefined;
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      if (escalation !== undefined) clearTimeout(escalation);
-      signal?.removeEventListener("abort", cancel);
-    };
-    const terminate = (): void => {
-      if (terminationStarted) return;
-      terminationStarted = true;
-      signalProcessTree(child, "SIGTERM");
-      escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
-      escalation.unref();
-    };
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, TIMEOUT_MS);
-    const cancel = () => {
-      cancelled = true;
-      terminate();
-    };
-    if (signal?.aborted) cancel();
-    else signal?.addEventListener("abort", cancel, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout = appendBounded(stdout, chunk);
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr = appendBounded(stderr, chunk);
-    });
-    child.on("error", (cause) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error(`open_computer_use failed to start: ${cause.message}`));
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      const streams = `stdout:\n${display(stdout) || "(empty)"}\nstderr:\n${display(stderr) || "(empty)"}`;
-      if (cancelled) return reject(new Error(`open_computer_use was cancelled.\n${streams}`));
-      if (timedOut)
-        return reject(new Error(`open_computer_use timed out after ${TIMEOUT_MS}ms.\n${streams}`));
-      if (code !== 0)
-        return reject(
-          new Error(`open_computer_use exited with code ${code ?? "unknown"}.\n${streams}`),
-        );
-      resolve({ stdout: display(stdout), stderr: display(stderr) });
-    });
-    child.stdin.end(JSON.stringify(input));
-  });
+Creation refuses to proceed if either the active or paused form already exists. Edit definitions
+with the TUI's built-in `/automations` manager or a normal editor, and remove them with normal
+filesystem operations. Ziggy intentionally adds no CLI edit or remove command.
 
-export default function openComputerUse(pi: Pick<ExtensionAPI, "registerTool">): void {
-  pi.registerTool({
-    name: "open_computer_use",
-    label: "open_computer_use",
-    description:
-      "Call Open Computer Use desktop automation tools. Base64 screenshots are saved as Profile-local files.",
-    parameters: Parameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
-      const result = await execute(parameters, ctx.cwd, signal);
-      const text = result.stderr
-        ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
-        : result.stdout;
-      return { content: [{ type: "text", text }], details: result };
-    },
-  });
-}
+The TUI manager reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
+CLI. Choose an automation to view its metadata, edit its complete Markdown, inspect run history, or
+pause/resume it; choose the scheduler overview to see heartbeat, tick, next-due, and latest-run
+state. `/automations <id>` opens one definition directly. A TUI edit must parse as a complete valid
+definition before Ziggy writes it, refuses to replace bytes changed since the editor opened, and
+uses a same-directory atomic replacement. It does not create a second definition store or runtime
+owner.
+
+## Model override
+
+Optional `provider`, `model`, and `thinking` frontmatter select that automation's session model.
+`provider` and `model` must appear together. Omitted fields inherit the Profile default from
+`settings.json`. Registry, auth, and thinking support are checked when the run opens its session —
+the same gates as a Profile agent — and fail the run rather than silently falling back.
+
+A leading `@agent-id` still delegates the whole task to that Profile agent. The agent's own
+`agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
+automation's own (untagged) session.
+
+## Pause and resume
+
+```sh
+ziggy automations pause <profile> <id>
+ziggy automations resume <profile> <id>
+```
+
+Pause and resume preserve the exact Markdown bytes. The transition creates a same-directory hard
+link at the destination name with exclusive `EEXIST` refusal, verifies that both names identify the
+same physical regular file, and only then unlinks the source name. It never renames over or silently
+replaces a destination.
+
+A paused definition is excluded from scheduler admission. On the next resident scheduler scan its
+projected next occurrence is cleared. Resume makes it eligible on the next scan and scheduling
+restarts at a fresh future occurrence; paused time is not catch-up work.
+
+Manual `ziggy wake <profile> <id>` reports that a paused automation is paused rather than pretending
+it is missing.
+
+Pausing does not cancel an occurrence that was already claimed or a run that is already executing.
+That run may finish normally. Pause prevents later admission. If the transition itself leaves both
+filenames visible, no run is admitted from the conflicting pair.
+
+## Conflict recovery
+
+If both forms exist, list, validate, and scheduler discovery report one invalid conflict for the ID.
+The scheduler does not run it. This can happen after a source-unlink failure: keeping both names is
+the fail-closed outcome and preserves the definition bytes for recovery.
+
+Recover manually:
+
+1. Stop concurrent automation file operations for that Profile.
+2. Compare `automations/<id>.md` and `automations/<id>.paused.md` byte-for-byte.
+3. Decide whether the intended lifecycle is active or paused.
+4. Remove exactly the unwanted filename with a normal filesystem command.
+5. Run `ziggy automations validate <profile> <id>` and then `ziggy automations list <profile>`.
+
+Never resolve a conflict by copying one form over the other without first inspecting both. Ziggy
+will not choose or overwrite one on the operator's behalf.
+
+## Scheduled admission and sessions
+
+`ziggy serve <profile>` discovers active definitions and persists a future schedule cursor. When an
+occurrence is due, one SQLite transaction advances that cursor and writes the claimed run before
+executing a gate, creating a Pi session, printing output, or delivering it. Scheduled definitions
+without a gate are recorded as `skipped-gate`; add an explicit gate such as `gate: true` only when
+the scheduled model call is intended.
+
+Every admitted model-backed run receives a fresh Pi session under
+`sessions/automations/<automation-id>/`. The run ledger answers whether an occurrence was claimed,
+completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
+history authority.
+
+Inspect both authorities from the CLI or open `/automations` in the TUI:
+
+```sh
+ziggy automations runs <profile> [id] [--json]
+ziggy sessions list <profile> [--json]
+```
+
+Use `--json` on `automations list`, `automations status`, and `automations runs` when a script
+needs the bounded projection rather than operator text. Session listings and details also accept
+`--json`; JSON session views never include transcript content.
+
+## Process failure and no replay
+
+Active scheduled rows are fenced by the resident owner UUID and PID. After a hard crash, the service
+manager starts a new `serve` process. Startup changes active rows belonging to the previous resident
+to terminal `unknown` with failure category `process-start`. It never returns them to `claimed` or
+`running`, and the already-advanced occurrence cursor means they are not replayed.
+
+A normal stop interrupts scoped workers and attempts one truthful terminal `failed/interrupted`
+write. If the process is force-killed before that write, startup records `unknown` instead of
+inferring success. There are no automatic run retries.
+
+Manual wakes have a separate process-local owner identity. Manual recovery can mark only dead manual
+owners unknown; it cannot recover, start, or finish a resident-owned scheduled claim.
+
+## Why there is no public tick
+
+`ziggy serve <profile>` is the supervised resident owner and the only production owner of the
+internal scheduler tick. There is no public `tick`, scheduler daemon, repair, replay, or retry
+command. A second tick surface would create competing admission owners and blur the existing
+Profile owner contract. Use `ziggy serve status`, `ziggy automations status`, and
+`ziggy automations runs` for read-only operational visibility.

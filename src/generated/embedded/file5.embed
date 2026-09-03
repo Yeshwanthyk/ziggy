@@ -1,67 +1,57 @@
 ---
-name: agent-browser
-description: Use profile-persistent agent-browser automation for authenticated browsing, screenshots, scraping, forms, and reusable browser sessions.
+name: apple-notes
+description: "Create, view, edit, delete, search, move, or export Apple Notes via the memo CLI on macOS."
 ---
 
-# Agent Browser
+# Apple Notes CLI
 
-Use `agent_browser` when a task needs a real browser, authenticated web state,
-screenshots, DOM snapshots, form interaction, or a session that must reuse a
-browser login.
+Use `memo notes` to manage Apple Notes directly from the terminal. Create, view, edit, delete, search, move notes between folders, and export to HTML/Markdown.
 
-The tool always uses the current Profile:
+Setup
 
-- Browser profile: `.runtime/agent-browser/browser-profile`
-- Screenshots: `.runtime/agent-browser/screenshots`
-- Session: the provided `session`, otherwise `desktop-main`
-- Output: upstream `--json` mode
+- Install (Homebrew): `brew tap antoniorodr/memo && brew install antoniorodr/memo/memo`
+- Manual (pip): `pip install .` (after cloning the repo)
+- macOS-only; if prompted, grant Automation access to Notes.app.
 
-Browser state persists between Pi modes and sessions using the same Profile.
+View Notes
 
-## Workflow
+- List all notes: `memo notes`
+- Filter by folder: `memo notes -f "Folder Name"`
+- Search notes (fuzzy): `memo notes -s "query"`
 
-For complex work, first load the installed CLI guidance:
+Create Notes
 
-```json
-{"action":"skills","name":"core"}
-```
+- Add a new note: `memo notes -a`
+  - Opens an interactive editor to compose the note.
+- Quick add with title: `memo notes -a "Note Title"`
 
-Open a page and inspect it:
+Edit Notes
 
-```json
-{"action":"status"}
-{"action":"open","url":"https://example.com","headed":true}
-{"action":"snapshot","interactive":true}
-```
+- Edit existing note: `memo notes -e`
+  - Interactive selection of note to edit.
 
-Use snapshot refs for interaction:
+Delete Notes
 
-```json
-{"action":"click","ref":"e12"}
-{"action":"fill","ref":"e18","text":"search text"}
-{"action":"press","key":"Enter"}
-```
+- Delete a note: `memo notes -d`
+  - Interactive selection of note to delete.
 
-Read or capture evidence:
+Move Notes
 
-```json
-{"action":"read"}
-{"action":"get","what":"url"}
-{"action":"get","what":"text","ref":"e4"}
-{"action":"screenshot","full":true}
-```
+- Move note to folder: `memo notes -m`
+  - Interactive selection of note and destination folder.
 
-Use `raw` for upstream commands not represented by a structured action:
+Export Notes
 
-```json
-{"action":"raw","args":["cookies"]}
-{"action":"raw","args":["wait","for","text","Dashboard"]}
-```
+- Export to HTML/Markdown: `memo notes -ex`
+  - Exports selected note; uses Mistune for markdown processing.
 
-If login, 2FA, SSO, captcha, consent, or an automation block appears, stop and
-report the exact page state. Never ask for credentials unless the user explicitly
-provides them in the current conversation.
+Limitations
 
-Browser actions can mutate external services. Do not submit, send, purchase,
-delete, publish, or change account settings unless the user explicitly requested
-that action.
+- Cannot edit notes containing images or attachments.
+- Interactive prompts may require terminal access.
+
+Notes
+
+- macOS-only.
+- Requires Apple Notes.app to be accessible.
+- For automation, grant permissions in System Settings > Privacy & Security > Automation.

@@ -1,66 +1,115 @@
-{
-  "name": "@ziggy/computer-use",
-  "version": "0.5.0",
-  "private": true,
-  "description": "Semantic desktop and browser control through the pinned pi-computer-use runtime.",
-  "keywords": [
-    "accessibility",
-    "computer-use",
-    "desktop-automation",
-    "linux",
-    "macos",
-    "pi",
-    "pi-extension",
-    "pi-package"
-  ],
-  "homepage": "https://github.com/injaneity/pi-computer-use#readme",
-  "bugs": {
-    "url": "https://github.com/injaneity/pi-computer-use/issues"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/injaneity/pi-computer-use.git"
-  },
-  "files": [
-    "dist",
-    "scripts/build-native.mjs",
-    "scripts/setup-helper.mjs",
-    "native/macos/bridge.swift",
-    "native/windows/bridge-rs/Cargo.lock",
-    "native/windows/bridge-rs/Cargo.toml",
-    "native/windows/bridge-rs/src",
-    "native/windows/bridge-rs/tests",
-    "prebuilt/macos",
-    "prebuilt/windows",
-    "assets/reference/img.jpg",
-    "README.md",
-    "LICENSE",
-    "native/linux/bridge-rs",
-    "prebuilt/linux",
-    "docs"
-  ],
-  "type": "module",
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test ./test",
-    "build:native": "node scripts/build-native.mjs",
-    "build:windows": "node scripts/build-native.mjs --platform windows",
-    "build:linux": "node scripts/build-native.mjs --platform linux"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "typebox": "1.3.7"
-  },
-  "engines": {
-    "node": ">=20.6.0"
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ],
-    "image": "./assets/reference/img.jpg"
-  }
-}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>files</key>
+	<dict/>
+	<key>files2</key>
+	<dict/>
+	<key>rules</key>
+	<dict>
+		<key>^Resources/</key>
+		<true/>
+		<key>^Resources/.*\.lproj/</key>
+		<dict>
+			<key>optional</key>
+			<true/>
+			<key>weight</key>
+			<real>1000</real>
+		</dict>
+		<key>^Resources/.*\.lproj/locversion.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>1100</real>
+		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
+		<key>^version.plist$</key>
+		<true/>
+	</dict>
+	<key>rules2</key>
+	<dict>
+		<key>.*\.dSYM($|/)</key>
+		<dict>
+			<key>weight</key>
+			<real>11</real>
+		</dict>
+		<key>^(.*/)?\.DS_Store$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>2000</real>
+		</dict>
+		<key>^(Frameworks|SharedFrameworks|PlugIns|Plug-ins|XPCServices|Helpers|MacOS|Library/(Automator|Spotlight|LoginItems))/</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^.*</key>
+		<true/>
+		<key>^Info\.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^PkgInfo$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/.*\.lproj/</key>
+		<dict>
+			<key>optional</key>
+			<true/>
+			<key>weight</key>
+			<real>1000</real>
+		</dict>
+		<key>^Resources/.*\.lproj/locversion.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>1100</real>
+		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
+		<key>^[^/]+$</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^embedded\.provisionprofile$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^version\.plist$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -1,99 +1,159 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-const DEFAULT_CONFIG = {
-    browser_use: true,
-    headless: false,
-    cursor_overlay: true,
-    managed_browser: "chrome",
-};
-let activeConfig = { ...DEFAULT_CONFIG };
-let activeLoadedConfig = { config: activeConfig, sources: [], env: {} };
-function parseBoolean(value) {
-    if (typeof value === "boolean")
-        return value;
-    if (typeof value === "number")
-        return value === 1 ? true : value === 0 ? false : undefined;
-    if (typeof value !== "string")
-        return undefined;
-    const normalized = value.trim().toLowerCase();
-    if (["1", "true", "yes", "on", "enabled"].includes(normalized))
-        return true;
-    if (["0", "false", "no", "off", "disabled"].includes(normalized))
-        return false;
-    return undefined;
+import { nodeByRef, outlineNodeLabel } from "./outline.mjs";
+function normalizedLabel(value) {
+    return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
-function normalizePartial(raw) {
-    if (!raw || typeof raw !== "object")
-        return {};
-    const source = raw.computer_use && typeof raw.computer_use === "object" ? raw.computer_use : raw;
-    const out = {};
-    const browserUse = parseBoolean(source.browser_use);
-    const headless = parseBoolean(source.headless);
-    const cursorOverlay = parseBoolean(source.cursor_overlay);
-    if (browserUse !== undefined)
-        out.browser_use = browserUse;
-    if (headless !== undefined)
-        out.headless = headless;
-    if (cursorOverlay !== undefined)
-        out.cursor_overlay = cursorOverlay;
-    const managedBrowser = source.managed_browser;
-    if (managedBrowser === "helium" || managedBrowser === "chrome")
-        out.managed_browser = managedBrowser;
-    return out;
+function nodeLabel(node) {
+    return outlineNodeLabel(node) || node.role || node.ref;
 }
-function readConfigFile(filePath) {
-    if (!existsSync(filePath))
-        return { path: filePath, exists: false };
-    try {
-        const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
-        return { path: filePath, exists: true, values: normalizePartial(parsed) };
+function regionKey(node) {
+    return `${node.role || "AXUnknown"}:${node.identifier || normalizedLabel(nodeLabel(node)) || node.ref}`;
+}
+function regionLabel(node) {
+    const label = nodeLabel(node);
+    return normalizedLabel(label) || normalizedLabel(node.role) || node.ref;
+}
+function topLevelRegions(outline) {
+    const nodes = outline.root.children.length ? outline.root.children : [outline.root];
+    return nodes.map((node) => ({ node, key: regionKey(node), label: regionLabel(node) }));
+}
+function topLevelAncestor(node, outline) {
+    let current = node;
+    while (current.parent && current.parent !== outline.root)
+        current = current.parent;
+    return current;
+}
+function uniqueRegions(regions) {
+    const seen = new Set();
+    const output = [];
+    for (const region of regions) {
+        const dedupeKey = `${region.key}:${region.status}:${region.detail ?? ""}`;
+        if (seen.has(dedupeKey))
+            continue;
+        seen.add(dedupeKey);
+        output.push(region);
     }
-    catch (error) {
-        return { path: filePath, exists: true, error: error instanceof Error ? error.message : String(error) };
+    return output;
+}
+function frontierRegions(outline, topLevels) {
+    const output = [];
+    for (const node of outline.nodes) {
+        if (node.scrollExtent && node.scrollExtent.seen < node.scrollExtent.total) {
+            const ancestor = topLevelAncestor(node, outline);
+            const top = topLevels.find((candidate) => candidate.node === ancestor);
+            output.push({
+                key: `${top?.key ?? regionKey(ancestor)}:scroll:${node.ref}`,
+                label: top?.label ?? regionLabel(ancestor),
+                status: "never-looked",
+                detail: `${node.scrollExtent.total} rows, ${node.scrollExtent.seen} seen`,
+            });
+        }
+        if (node.truncated) {
+            const ancestor = topLevelAncestor(node, outline);
+            const top = topLevels.find((candidate) => candidate.node === ancestor);
+            output.push({
+                key: `${top?.key ?? regionKey(ancestor)}:truncated:${node.ref}`,
+                label: top?.label ?? regionLabel(ancestor),
+                status: "never-looked",
+                detail: "subtree not walked",
+            });
+        }
     }
+    return output;
 }
-function readEnv() {
-    const out = {};
-    const browserUse = parseBoolean(process.env.PI_COMPUTER_USE_BROWSER_USE);
-    const headless = parseBoolean(process.env.PI_COMPUTER_USE_HEADLESS);
-    const cursorOverlay = parseBoolean(process.env.PI_COMPUTER_USE_CURSOR_OVERLAY);
-    if (browserUse !== undefined)
-        out.browser_use = browserUse;
-    if (headless !== undefined)
-        out.headless = headless;
-    if (cursorOverlay !== undefined)
-        out.cursor_overlay = cursorOverlay;
-    const managedBrowser = process.env.PI_COMPUTER_USE_MANAGED_BROWSER;
-    if (managedBrowser === "helium" || managedBrowser === "chrome")
-        out.managed_browser = managedBrowser;
-    return out;
-}
-export function loadComputerUseConfig(cwd) {
-    const sources = [
-        readConfigFile(path.join(getAgentDir(), "extensions", "pi-computer-use.json")),
-        readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
-    ];
-    const env = readEnv();
-    const config = { ...DEFAULT_CONFIG };
-    for (const source of sources) {
-        if (source.values)
-            Object.assign(config, source.values);
+export function noteFromLook(prev, outline, window) {
+    const topLevels = topLevelRegions(outline);
+    const currentKeys = new Set(topLevels.map((region) => region.key));
+    const regions = topLevels.map((region) => ({
+        key: region.key,
+        label: region.label,
+        status: "seen",
+    }));
+    if (prev) {
+        for (const old of prev.regions) {
+            if (old.status === "never-looked")
+                continue;
+            if (!currentKeys.has(old.key)) {
+                regions.push({ ...old, status: "changed", detail: "not matched in latest look" });
+            }
+        }
     }
-    Object.assign(config, env);
-    activeConfig = config;
-    activeLoadedConfig = { config, sources, env };
-    return activeLoadedConfig;
+    if (!window.windowRef || window.pairingScore === Number.NEGATIVE_INFINITY) {
+        regions.push({
+            key: "window:unpaired",
+            label: "window capture",
+            status: "never-looked",
+            detail: "AX window without capture pairing",
+        });
+    }
+    regions.push(...frontierRegions(outline, topLevels));
+    return {
+        windowRef: window.windowRef ?? "(unpaired)",
+        title: window.title,
+        pairing: window.pairing ?? "low",
+        lastLookId: outline.lookId,
+        regions: uniqueRegions(regions),
+    };
 }
-export function getComputerUseConfig() {
-    return activeConfig;
+export function noteAfterAct(prev, targetRef, outline, refreshOutcome) {
+    const note = noteFromLook(prev, outline, refreshOutcome.window);
+    if (targetRef) {
+        const target = nodeByRef(outline, targetRef);
+        if (target) {
+            const ancestor = topLevelAncestor(target, outline);
+            const key = regionKey(ancestor);
+            const region = note.regions.find((candidate) => candidate.key === key);
+            if (region) {
+                region.status = "changed";
+                region.detail = "acted here";
+            }
+            else {
+                note.regions.unshift({ key, label: regionLabel(ancestor), status: "changed", detail: "acted here" });
+            }
+        }
+    }
+    for (const delta of refreshOutcome.rootDelta ?? []) {
+        note.regions.unshift({
+            key: `root:${delta.change}:${delta.ref ?? delta.kind}:${delta.title ?? ""}`,
+            label: `${delta.kind}${delta.title ? ` ${delta.title}` : ""}`,
+            status: delta.change === "closed" ? "changed" : "never-looked",
+            detail: `root ${delta.change}`,
+        });
+    }
+    if (refreshOutcome.windowChanged) {
+        for (const region of note.regions) {
+            if (region.status === "seen")
+                region.status = "changed";
+        }
+        note.regions.push({
+            key: `window:changed:${note.lastLookId ?? "unknown"}`,
+            label: refreshOutcome.newWindowLabel ?? "new sheet/window",
+            status: "never-looked",
+            detail: "appeared after act",
+        });
+    }
+    return { ...note, regions: uniqueRegions(note.regions) };
 }
-export function getLoadedComputerUseConfig() {
-    return activeLoadedConfig;
+export function noteRegionKeyForRef(outline, ref) {
+    const node = nodeByRef(outline, ref);
+    return node ? regionKey(topLevelAncestor(node, outline)) : undefined;
 }
-export function isHeadlessMode() {
-    return activeConfig.headless;
-}
-export function isBrowserUseEnabled() {
-    return activeConfig.browser_use;
+export function renderNote(note) {
+    if (!note)
+        return "";
+    const looked = note.lastLookId ? "looked just now" : "not looked";
+    const lines = [`note ${note.windowRef} ${JSON.stringify(note.title.slice(0, 512))} (pairing ${note.pairing}, ${looked})`];
+    const visible = note.regions.slice(0, 64);
+    for (const region of visible) {
+        const detail = region.detail ? `   (${region.detail.slice(0, 256)})` : "";
+        lines.push(`  ${region.label.slice(0, 512).padEnd(14, " ")} ${region.status}${detail}`);
+    }
+    if (note.regions.length > visible.length)
+        lines.push(`  … ${note.regions.length - visible.length} more note regions; use search_ui or expand_ui`);
+    const encoded = new TextEncoder().encode(lines.join("\n"));
+    if (encoded.byteLength <= 8 * 1024)
+        return new TextDecoder().decode(encoded);
+    let end = 8 * 1024;
+    while (end > 0 && (encoded[end] & 0xc0) === 0x80)
+        end -= 1;
+    return `${new TextDecoder().decode(encoded.subarray(0, end))}\n… note byte budget reached`;
 }

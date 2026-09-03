@@ -1,64 +1,131 @@
-# Third-party licenses
+---
+name: coding-agent
+description: "Delegate substantial repository work to Codex, Claude Code, OpenCode, or Pi coding agents. Use for feature implementation, large refactors, isolated pull-request reviews, and parallel issue work when the user names or approves an external coding-agent CLI."
+---
 
-## OpenCode Code Mode
+# Coding agents
 
-MIT License
+Run the coding agent the user requested inside the intended repository. Use direct editing for
+small changes unless delegation was explicitly requested.
 
-Copyright (c) 2025 opencode
+## Choose the CLI
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+| Agent | Typical command |
+| --- | --- |
+| Codex | `codex exec "task"` |
+| Claude Code | `claude --print "task"` |
+| OpenCode | `opencode run "task"` |
+| Pi | `pi -p "task"` |
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+Check each installed CLI's `--help` before relying on optional flags. Preserve the user's agent
+choice; do not silently switch agents after a failure.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+## Prepare the task
 
-## Effect
+1. Resolve the exact working directory.
+2. Read repository instructions before starting the agent.
+3. Put acceptance criteria, ownership boundaries, and required checks in the prompt.
+4. Tell the agent which external mutations are authorized: commit, push, comment, or open a
+   pull request.
+5. Keep unrelated user changes intact.
 
-MIT License
+For scratch work, use a temporary git repository:
 
-Copyright (c) 2019-present Effectful Technologies
+```bash
+AGENT_WORK_DIR=$(mktemp -d)
+git -C "$AGENT_WORK_DIR" init
+cd "$AGENT_WORK_DIR"
+codex exec "Create a minimal example and verify it."
+```
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## Run and monitor
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+Use the host's background-process capability for long tasks. Follow the host tool's actual
+schema rather than assuming particular field names.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+- Use a PTY only when the selected command is interactive.
+- Capture output and exit status.
+- Send input only when the agent asks a concrete question.
+- Do not kill a healthy process merely because it is slow.
+- Report milestones, questions, failures, and completion to the user from the current session.
 
-## Acorn
+Do not instruct a child process to call a product-specific notification command.
 
-MIT License
+## Agent examples
 
-Copyright (C) 2012-2025 by various contributors (see Acorn AUTHORS)
+### Codex
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+```bash
+cd /path/to/repository
+codex exec --full-auto "Implement the approved change. Run focused checks and summarize the diff."
+```
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+Use `--yolo` only with explicit authorization for unsandboxed execution.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+### Claude Code
+
+```bash
+cd /path/to/repository
+claude --print "Review the current diff and report correctness issues."
+```
+
+Do not bypass permissions unless the user explicitly authorized that risk.
+
+### OpenCode
+
+```bash
+cd /path/to/repository
+opencode run "Refactor the parser without changing behavior. Run focused tests."
+```
+
+### Pi
+
+```bash
+cd /path/to/repository
+pi -p "Summarize the architecture and identify the narrowest implementation path."
+```
+
+Install Pi from its upstream package when needed:
+
+```bash
+npm install --global @earendil-works/pi-coding-agent
+```
+
+## Isolated reviews
+
+Use a temporary clone or git worktree:
+
+```bash
+REVIEW_DIR=$(mktemp -d)
+git clone https://github.com/owner/repository.git "$REVIEW_DIR"
+cd "$REVIEW_DIR"
+gh pr checkout 130
+codex review --base origin/main
+```
+
+Do not post review findings unless the user requested it.
+
+## Parallel issue fixes
+
+Create one worktree and branch per issue:
+
+```bash
+git worktree add -b fix/issue-78 /tmp/issue-78 main
+git worktree add -b fix/issue-99 /tmp/issue-99 main
+
+(cd /tmp/issue-78 && codex exec "Fix issue #78 and run focused checks.") &
+(cd /tmp/issue-99 && codex exec "Fix issue #99 and run focused checks.") &
+wait
+```
+
+Review each result independently. Avoid overlapping file ownership between workers. Push,
+commit, or create pull requests only within the user's authorization.
+
+## Completion
+
+Return:
+
+- the agent and working directory used;
+- the outcome and changed files;
+- checks run and their results;
+- any remaining question or failure.

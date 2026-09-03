@@ -1,99 +1,171 @@
----
-name: acp-router
-description: "Route requests to Pi, Claude Code, Cursor, Copilot, Codex, OpenCode, Gemini CLI, Qwen, Kiro, Kimi, iFlow, Factory Droid, or Kilocode through Agent Client Protocol sessions using the acpx CLI. Use when a user explicitly asks to run or continue work in an ACP-compatible coding harness."
----
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Process-group signaling falls back when group termination races with process exit. */
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
+/* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
+import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type, type Static } from "typebox";
 
-# ACP harness router
+const executable = join(import.meta.dirname, "bin", "agent-browser-wrapper.mjs");
 
-Use `acpx` to start, resume, prompt, cancel, and close Agent Client Protocol (ACP) harness
-sessions. Prefer ACP over scraping an interactive terminal when the requested harness supports
-ACP.
+const TIMEOUT_MS = 120_000;
+const TERMINATION_GRACE_MS = 1_000;
+const OUTPUT_LIMIT = 24 * 1024;
 
-## Choose an agent
+const Parameters = Type.Object(
+  {
+    action: Type.Union([
+      Type.Literal("status"),
+      Type.Literal("open"),
+      Type.Literal("read"),
+      Type.Literal("snapshot"),
+      Type.Literal("screenshot"),
+      Type.Literal("get"),
+      Type.Literal("click"),
+      Type.Literal("dblclick"),
+      Type.Literal("focus"),
+      Type.Literal("hover"),
+      Type.Literal("fill"),
+      Type.Literal("type"),
+      Type.Literal("press"),
+      Type.Literal("scroll"),
+      Type.Literal("eval"),
+      Type.Literal("back"),
+      Type.Literal("tab"),
+      Type.Literal("close"),
+      Type.Literal("skills"),
+      Type.Literal("raw"),
+    ]),
+    url: Type.Optional(Type.String()),
+    selector: Type.Optional(Type.String()),
+    ref: Type.Optional(Type.String()),
+    text: Type.Optional(Type.String()),
+    key: Type.Optional(Type.String()),
+    what: Type.Optional(Type.String()),
+    attr: Type.Optional(Type.String()),
+    direction: Type.Optional(Type.String()),
+    tab: Type.Optional(Type.String()),
+    amount: Type.Optional(Type.Integer()),
+    path: Type.Optional(Type.String()),
+    name: Type.Optional(Type.String()),
+    code: Type.Optional(Type.String()),
+    session: Type.Optional(Type.String()),
+    headed: Type.Optional(Type.Boolean()),
+    interactive: Type.Optional(Type.Boolean()),
+    full: Type.Optional(Type.Boolean()),
+    args: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: false },
+);
 
-Map the user's requested harness to the corresponding `acpx` agent:
+const appendBounded = (current: string, chunk: string): string => {
+  if (Buffer.byteLength(current) >= OUTPUT_LIMIT) return current;
+  const available = OUTPUT_LIMIT - Buffer.byteLength(current);
+  return current + Buffer.from(chunk).subarray(0, available).toString();
+};
 
-| User request | Agent |
-| --- | --- |
-| Pi | `pi` |
-| Claude Code | `claude` |
-| Codex | `codex` |
-| GitHub Copilot | `copilot` |
-| Cursor | `cursor` |
-| Factory Droid | `droid` |
-| OpenCode | `opencode` |
-| Gemini CLI | `gemini` |
-| iFlow | `iflow` |
-| Kilocode | `kilocode` |
-| Kimi CLI | `kimi` |
-| Kiro CLI | `kiro` |
-| Qwen Code | `qwen` |
+const display = (value: string): string =>
+  Buffer.byteLength(value) < OUTPUT_LIMIT ? value : `${value}\n[output truncated]`;
 
-If the configured agent name differs, inspect `~/.acpx/config.json` and use the configured
-name. Do not silently substitute a different coding harness.
+const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
+  if (child.pid === undefined) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child if its process group has already changed or exited.
+    }
+  }
+  child.kill(signal);
+};
 
-## Preflight
+const execute = (
+  input: Static<typeof Parameters>,
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [executable], {
+      cwd,
+      env: { ...process.env, ZIGGY_PROFILE_PATH: cwd },
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let cancelled = false;
+    let settled = false;
+    let terminationStarted = false;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      if (escalation !== undefined) clearTimeout(escalation);
+      signal?.removeEventListener("abort", cancel);
+    };
+    const terminate = (): void => {
+      if (terminationStarted) return;
+      terminationStarted = true;
+      signalProcessTree(child, "SIGTERM");
+      escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
+      escalation.unref();
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      terminate();
+    }, TIMEOUT_MS);
+    const cancel = () => {
+      cancelled = true;
+      terminate();
+    };
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout = appendBounded(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr = appendBounded(stderr, chunk);
+    });
+    child.on("error", (cause) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`agent_browser failed to start: ${cause.message}`));
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const streams = `stdout:\n${display(stdout) || "(empty)"}\nstderr:\n${display(stderr) || "(empty)"}`;
+      if (cancelled) return reject(new Error(`agent_browser was cancelled.\n${streams}`));
+      if (timedOut)
+        return reject(new Error(`agent_browser timed out after ${TIMEOUT_MS}ms.\n${streams}`));
+      if (code !== 0)
+        return reject(
+          new Error(`agent_browser exited with code ${code ?? "unknown"}.\n${streams}`),
+        );
+      resolve({ stdout: display(stdout), stderr: display(stderr) });
+    });
+    child.stdin.end(JSON.stringify(input));
+  });
 
-1. Verify `acpx` is installed with `acpx --version`.
-2. Keep the working directory explicit with `--cwd` when repository context matters.
-3. Use a stable session name for follow-up requests.
-4. Check `acpx --help` and `acpx <agent> --help` if the installed version's syntax differs.
-
-Install `acpx` according to its upstream package documentation when it is missing. Do not
-modify local agent configuration or install adapter binaries without explaining the exact
-missing dependency.
-
-## Persistent sessions
-
-Derive a short, stable session name from the harness and task, such as
-`codex-auth-refactor`. Reuse it for follow-up prompts.
-
-```bash
-acpx codex sessions show codex-auth-refactor \
-  || acpx codex sessions new --name codex-auth-refactor
-
-acpx codex -s codex-auth-refactor \
-  --cwd /path/to/workspace \
-  --format quiet \
-  "Inspect the authentication flow and propose the smallest safe refactor."
-```
-
-Relay the final assistant output to the user. Include raw protocol or adapter logs only when
-they explain a failure or the user asks for them.
-
-## One-shot work
-
-Use `exec` when the user does not need to continue the same harness conversation:
-
-```bash
-acpx codex exec \
-  --cwd /path/to/workspace \
-  --format quiet \
-  "Review the current diff for correctness."
-```
-
-## Lifecycle commands
-
-```bash
-# Inspect a session
-acpx codex sessions show codex-auth-refactor
-
-# Cancel the in-flight turn
-acpx codex cancel -s codex-auth-refactor
-
-# Close the session
-acpx codex sessions close codex-auth-refactor
-```
-
-## Failure handling
-
-- `acpx: command not found`: report that the upstream CLI is missing and provide its install
-  command when known.
-- Adapter executable missing: identify the selected agent and the missing executable; do not
-  replace it with another agent.
-- `NO_SESSION`: create the named session, then retry once.
-- Busy session: wait by default; use asynchronous/no-wait behavior only when requested.
-- Unsupported configured agent: show the available configured agents and ask the user to pick
-  one.
-
-Never expose secrets from ACP configuration or relay unrelated local logs.
+export default function agentBrowser(pi: Pick<ExtensionAPI, "registerTool">): void {
+  pi.registerTool({
+    name: "agent_browser",
+    label: "agent_browser",
+    description:
+      "Run profile-persistent browser automation with agent-browser. Accepts structured common actions or raw agent-browser arguments.",
+    parameters: Parameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
+      const result = await execute(parameters, ctx.cwd, signal);
+      const text = result.stderr
+        ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
+        : result.stdout;
+      return { content: [{ type: "text", text }], details: result };
+    },
+  });
+}

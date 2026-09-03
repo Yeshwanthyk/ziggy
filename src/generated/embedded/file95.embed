@@ -1,1074 +1,909 @@
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use linux_bridge::atspi::{outline_json, root_json, AtspiClient, NodeSnapshot, Rect, RootSnapshot};
-use linux_bridge::protocol::PROTOCOL_VERSION;
-use linux_bridge::state::{fresh_state_id, HelperState};
-use linux_bridge::wayland::{PortalCapabilities, PortalClient, PortalError};
-use linux_bridge::x11::{self, PhysicalPolicy, SessionKind};
-use linux_bridge::{ErrorCode, ProtocolError, Request, Response};
+//! X11/EWMH enrichment, capture, focus, and guarded XTEST physical input.
+use crate::atspi::{Rect, RootSnapshot};
+use crate::{ErrorCode, ProtocolError};
+use base64::Engine as _;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::mpsc;
+use x11rb::connection::Connection;
+use x11rb::protocol::xproto::{
+    Atom, AtomEnum, ButtonIndex, ClientMessageData, ClientMessageEvent, ConnectionExt as _,
+    Drawable, EventMask, ImageFormat, ImageOrder, Keycode, MapState, Window, BUTTON_PRESS_EVENT,
+    BUTTON_RELEASE_EVENT, CLIENT_MESSAGE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+    MOTION_NOTIFY_EVENT,
+};
+use x11rb::protocol::{composite, xtest};
+use x11rb::rust_connection::RustConnection;
 
-const REQUEST_WORKERS: usize = 8;
-const DEFAULT_MAX_NODES: usize = 512;
+const MAX_CAPTURE_PIXELS: u64 = 64 * 1024 * 1024;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
-async fn main() {
-    let state = Arc::new(Mutex::new(HelperState::default()));
-    let (output, mut responses) = mpsc::unbounded_channel::<Response>();
-    let writer = tokio::spawn(async move {
-        let mut stdout = tokio::io::stdout();
-        while let Some(response) = responses.recv().await {
-            if let Ok(mut line) = serde_json::to_vec(&response) {
-                line.push(b'\n');
-                if stdout.write_all(&line).await.is_err() {
-                    return;
-                }
-                let _ = stdout.flush().await;
-            }
-        }
-    });
-
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(REQUEST_WORKERS));
-    let mut requests = tokio::task::JoinSet::new();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let id = extract_id(&line).unwrap_or_else(|| "unknown".to_owned());
-        let request = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => request,
-            Err(error) => {
-                let _ = output.send(Response::err(
-                    &id,
-                    ProtocolError::new(
-                        format!("Invalid request: {error}"),
-                        ErrorCode::InvalidRequest,
-                    ),
-                ));
-                continue;
-            }
-        };
-        let Ok(permit) = semaphore.clone().acquire_owned().await else {
-            break;
-        };
-        let state = Arc::clone(&state);
-        let output = output.clone();
-        requests.spawn(async move {
-            let _permit = permit;
-            let response = handle_request(&state, &request).await;
-            let _ = output.send(response);
-        });
-    }
-    while requests.join_next().await.is_some() {}
-    drop(output);
-    let _ = writer.await;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    X11,
+    Wayland,
+    Headless,
 }
-
-fn action_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-fn extract_id(line: &str) -> Option<String> {
-    serde_json::from_str::<Value>(line)
-        .ok()?
-        .get("id")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-async fn handle_request(state: &Arc<Mutex<HelperState>>, request: &Request) -> Response {
-    if request.protocol_version != PROTOCOL_VERSION {
-        return Response::err(
-            &request.id,
-            invalid(format!(
-                "Unsupported Linux helper protocol {}; expected {}. Restart Pi to use the installed helper.",
-                request.protocol_version, PROTOCOL_VERSION
-            )),
-        );
-    }
-    let result = match request.cmd.as_str() {
-        "diagnostics" => Ok(diagnostics().await),
-        "listRoots" | "listWindows" => list_roots(state, &request.args).await,
-        "look" | "screenshot" => look(state, &request.args).await,
-        "act" => {
-            let _transaction = action_lock().lock().await;
-            act(state, &request.args).await
-        }
-        "actBatch" => {
-            let _transaction = action_lock().lock().await;
-            act_batch(state, &request.args).await
-        }
-        "atspiReadText" | "uiaReadText" | "axReadText" => read_text(state, &request.args).await,
-        "atspiWaitFor" | "uiaWaitFor" | "axWaitFor" => wait_for(state, &request.args).await,
-        "focusWindow" => focus_window(state, &request.args),
-        "openBrowserLocation" => open_browser_location(&request.args),
-        other => Err(ProtocolError::new(
-            format!("Unknown command '{other}'"),
-            ErrorCode::UnsupportedCommand,
-        )),
-    };
-    match result {
-        Ok(value) => Response::ok(&request.id, value),
-        Err(error) => Response::err(&request.id, error),
-    }
-}
-
-async fn diagnostics() -> Value {
-    let accessibility = AtspiClient::available().await;
-    let session = SessionKind::detect();
-    let x11_available = x11::available();
-    let wayland_portal = if session == SessionKind::Wayland {
-        let probe = match PortalClient::connect().await {
-            Ok(client) => client.probe().await,
-            Err(error) => Err(error),
-        };
-        portal_diagnostics(Some(probe))
-    } else {
-        portal_diagnostics(None)
-    };
-    json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "architectureVersion": 1,
-        "invariants": [
-            "state-scoped-observations",
-            "bounded-observation-history",
-            "multi-root-forest",
-            "progressive-disclosure",
-            "atomic-physical-input",
-            "concurrent-requests",
-            "transactional-batching"
-        ],
-        "pid": std::process::id(),
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "backend": if x11_available { "at-spi2+x11" } else { "at-spi2" },
-        "sessionType": session.as_str(),
-        "x11": x11_available,
-        "accessibility": accessibility,
-        "screenRecording": x11_available,
-        "coordinateInput": x11_available,
-        "waylandPortal": wayland_portal,
-        "capabilities": {
-            "roots": accessibility,
-            "outline": accessibility,
-            "readText": accessibility,
-            "waitFor": accessibility,
-            "semanticPress": accessibility,
-            "semanticSetText": accessibility,
-            "screenshots": x11_available,
-            "coordinates": x11_available,
-            "forceFocus": x11_available
-        }
-    })
-}
-
-fn portal_diagnostics(probe: Option<Result<PortalCapabilities, PortalError>>) -> Value {
-    match probe {
-        Some(Ok(capabilities)) => json!({
-            "probed": true,
-            "available": true,
-            "interactiveUseEnabled": false,
-            "readOnlyProbe": true,
-            "remoteDesktopVersion": capabilities.remote_desktop_version,
-            "screenCastVersion": capabilities.screen_cast_version,
-            "availableDeviceTypes": capabilities.available_device_types,
-            "availableSourceTypes": capabilities.available_source_types,
-            "availableCursorModes": capabilities.available_cursor_modes,
-        }),
-        Some(Err(error)) => json!({
-            "probed": true,
-            "available": false,
-            "interactiveUseEnabled": false,
-            "readOnlyProbe": true,
-            "error": {
-                "kind": "portal_unavailable",
-                "message": error.to_string(),
-            },
-        }),
-        None => json!({
-            "probed": false,
-            "available": false,
-            "interactiveUseEnabled": false,
-            "readOnlyProbe": true,
-            "reason": "not_wayland",
-        }),
-    }
-}
-
-async fn list_roots(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let client = AtspiClient::connect().await?;
-    let mut roots = client
-        .list_roots(args.get("pid").and_then(Value::as_u64))
-        .await?;
-    if let Ok(windows) = x11::list_windows() {
-        x11::enrich_roots(&mut roots, &windows);
-    }
-    let stored = lock(state)?.replace_roots(roots);
-    let windows = stored
-        .iter()
-        .enumerate()
-        .map(|(index, (reference, root))| root_json(reference, root, index))
-        .collect::<Vec<_>>();
-    Ok(json!({
-        "stateId": fresh_state_id(),
-        "windows": windows,
-        "roots": windows
-    }))
-}
-
-async fn resolve_root(
-    state: &Arc<Mutex<HelperState>>,
-    args: &Value,
-) -> Result<(String, RootSnapshot), ProtocolError> {
-    let requested = args
-        .get("rootRef")
-        .or_else(|| args.get("windowRef"))
-        .and_then(Value::as_str);
-    if let Some(reference) = requested {
-        if let Some(root) = lock(state)?.root(reference) {
-            return Ok((reference.to_owned(), root));
+impl SessionKind {
+    pub fn detect() -> Self {
+        let kind = std::env::var("XDG_SESSION_TYPE")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if kind == "wayland" || (kind.is_empty() && std::env::var_os("WAYLAND_DISPLAY").is_some()) {
+            Self::Wayland
+        } else if kind == "x11" || std::env::var_os("DISPLAY").is_some() {
+            Self::X11
+        } else {
+            Self::Headless
         }
     }
-    if lock(state)?.roots().is_empty() {
-        list_roots(state, &json!({})).await?;
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::X11 => "x11",
+            Self::Wayland => "wayland",
+            Self::Headless => "headless",
+        }
     }
-    let roots = lock(state)?.roots();
-    let requested_pid = args.get("pid").and_then(Value::as_u64);
-    roots
-        .into_iter()
-        .find(|(_, root)| {
-            requested.is_none() && requested_pid.map(|pid| root.pid == pid).unwrap_or(true)
-        })
-        .ok_or_else(|| ProtocolError::new("Root not found", ErrorCode::TargetNotFound))
 }
 
-fn initial_image_size(root: &RootSnapshot, base_size: Option<(u16, u16)>) -> (u16, u16) {
-    base_size.unwrap_or_else(|| {
-        root.frame
-            .as_ref()
-            .map(|frame| {
-                (
-                    frame.width.max(1).min(i32::from(u16::MAX)) as u16,
-                    frame.height.max(1).min(i32::from(u16::MAX)) as u16,
-                )
-            })
-            .unwrap_or((1, 1))
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhysicalPolicy {
+    AxOnly,
+    Background,
+    Default,
+    Foreground,
 }
-
-async fn look(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let started = Instant::now();
-    let (root_ref, root) = resolve_root(state, args).await?;
-    let read_text = args
-        .get("readText")
-        .and_then(Value::as_str)
-        .unwrap_or("auto");
-    if !matches!(read_text, "auto" | "always" | "never") {
-        return Err(invalid("readText must be auto, always, or never"));
+impl PhysicalPolicy {
+    pub fn parse(value: Option<&str>) -> Result<Self, ProtocolError> {
+        match value.unwrap_or("default") {
+            "ax_only" => Ok(Self::AxOnly),
+            "background" => Ok(Self::Background),
+            "default" => Ok(Self::Default),
+            "foreground" => Ok(Self::Foreground),
+            value => Err(invalid(format!("Unknown delivery policy '{value}'"))),
+        }
     }
-    let max_nodes = args
-        .get("maxNodes")
-        .and_then(Value::as_u64)
-        .unwrap_or(DEFAULT_MAX_NODES as u64)
-        .clamp(1, 4096) as usize;
-    let max_depth = args
-        .get("maxDepth")
-        .and_then(Value::as_u64)
-        .unwrap_or(20)
-        .clamp(1, 64) as usize;
-    let max_dimension = args
-        .get("maxDimension")
-        .and_then(Value::as_u64)
-        .map(|value| value.clamp(1, 16_384) as u32);
-    let client = AtspiClient::connect().await?;
-    let scope_ref = args.get("scopeRef").and_then(Value::as_str);
-    let base_look_id = args.get("baseLookId").and_then(Value::as_str);
-    let (nodes, base) = if let Some(scope_ref) = scope_ref {
-        let (base, scope) = lock(state)?.scope(scope_ref, base_look_id)?;
-        if base.root.accessible != root.accessible {
-            return Err(ProtocolError::new(
-                "Scope ref is outside the target root",
-                ErrorCode::StaleRef,
+    pub fn require_physical(self, session: SessionKind) -> Result<(), ProtocolError> {
+        if session == SessionKind::Headless {
+            return Err(err(
+                "Physical input is unavailable in a headless Linux session",
+                ErrorCode::CoordinateBlocked,
             ));
         }
-        (
-            client
-                .snapshot_from(&scope.accessible, max_nodes, max_depth)
-                .await?,
-            Some(base),
-        )
-    } else {
-        (client.snapshot(&root, max_nodes, max_depth).await?, None)
-    };
-    let (look_id, nodes) = lock(state)?.insert_look(root.clone(), nodes, base.as_ref());
-    let mut outline = outline_json(&root, &nodes, max_nodes);
-    let elapsed = started.elapsed().as_millis() as u64;
-    let frame = root
-        .frame
-        .as_ref()
-        .map(|r| json!({"x":r.x,"y":r.y,"w":r.width,"h":r.height}))
-        .unwrap_or_else(|| json!({"x":0,"y":0,"w":0,"h":0}));
-    let mut image_size = initial_image_size(
-        &root,
-        base.as_ref()
-            .map(|record| (record.image_width, record.image_height)),
-    );
-    let image = if args
-        .get("includeImage")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
-    {
-        match root.x11_window {
-            Some(window) => {
-                let shot = x11::capture_window(window, max_dimension)?;
-                image_size = (shot.width, shot.height);
-                Some(json!({
-                    "jpegBase64": shot.png_base64, "mimeType":"image/png", "width":shot.width, "height":shot.height,
-                    "metadata":{"source":shot.source,"warnings":shot.warnings}
-                }))
-            }
-            None => None,
-        }
-    } else {
-        None
-    };
-    lock(state)?.set_look_image_size(&look_id, image_size.0, image_size.1)?;
-    let (scale_x, scale_y) = root
-        .frame
-        .as_ref()
-        .map(|frame| {
-            (
-                f64::from(image_size.0) / f64::from(frame.width.max(1)),
-                f64::from(image_size.1) / f64::from(frame.height.max(1)),
-            )
-        })
-        .unwrap_or((1.0, 1.0));
-    scale_outline_rects(&mut outline, scale_x, scale_y);
-    let mut response = json!({
-        "lookId": look_id,
-        "capturedAt": now_seconds(),
-        "window": {
-            "windowId": root.x11_window,
-            "rootRef": root_ref,
-            "kind": "window",
-            "framePoints": frame,
-            "scaleFactor": scale_x,
-            "isModal": root.role.to_lowercase().contains("dialog"),
-            "role": root.role,
-            "subrole": "",
-            "metadata": {"backend":"at-spi2","imageScaleX":scale_x,"imageScaleY":scale_y}
-        },
-        "outline": outline,
-        "timings": {"captureMs":0,"describeMs":elapsed,"readTextMs":0,"totalMs":elapsed},
-        "readText": {"requested":read_text,"executed":false}
-    });
-    if let Some(image) = image {
-        response["image"] = image;
-    }
-    Ok(response)
-}
-
-fn focus_window(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let reference = args
-        .get("rootRef")
-        .or_else(|| args.get("windowRef"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid("focusWindow requires rootRef"))?;
-    let root = lock(state)?
-        .root(reference)
-        .ok_or_else(|| ProtocolError::new("Root not found", ErrorCode::TargetNotFound))?;
-    let window = root
-        .x11_window
-        .ok_or_else(|| capability("Root is not correlated with an X11 window"))?;
-    let policy = if args.get("policy").is_some() {
-        PhysicalPolicy::parse(args.get("policy").and_then(Value::as_str))?
-    } else {
-        PhysicalPolicy::Foreground
-    };
-    x11::focus_window(window, policy)
-}
-
-fn open_browser_location(args: &Value) -> Result<Value, ProtocolError> {
-    let url = required_str(args, "url", "openBrowserLocation requires a non-empty url")?;
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()
-        .map_err(|error| {
-            ProtocolError::new(
-                format!("Failed to launch xdg-open: {error}"),
+        if session != SessionKind::X11 {
+            return Err(err(
+                "XTEST is unavailable in native Wayland sessions; use AT-SPI",
                 ErrorCode::CapabilityDeferred,
-            )
-        })?;
-    Ok(json!({"opened": true, "delivery": "xdg-open"}))
+            ));
+        }
+        match self {
+            Self::AxOnly => Err(err(
+                "ax_only policy forbids XTEST and window focus",
+                ErrorCode::CoordinateBlocked,
+            )),
+            Self::Background => Err(err(
+                "Background policy forbids global XTEST input",
+                ErrorCode::ForegroundRequired,
+            )),
+            Self::Default | Self::Foreground => Ok(()),
+        }
+    }
 }
 
-async fn act(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let look_id = required_str(args, "lookId", "act requires lookId")?;
-    let action = required_str(args, "action", "act requires action")?;
-    let target = args
-        .get("target")
-        .ok_or_else(|| invalid("act requires target"))?;
-    let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
-    let policy = PhysicalPolicy::parse(args.get("policy").and_then(Value::as_str))?;
-    let record = lock(state)?.look(look_id)?;
-    let client = AtspiClient::connect().await?;
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowInfo {
+    pub id: u32,
+    pub pid: u64,
+    pub title: String,
+    pub frame: Rect,
+    pub focused: bool,
+    pub minimized: bool,
+    pub z_order: usize,
+}
+pub struct Capture {
+    pub png_base64: String,
+    pub width: u16,
+    pub height: u16,
+    pub source: &'static str,
+    pub warnings: Vec<String>,
+}
+pub fn available() -> bool {
+    SessionKind::detect() == SessionKind::X11 && connect().is_ok()
+}
 
-    if let Some(reference) = target.get("ref").and_then(Value::as_str) {
-        let node = lock(state)?.element(look_id, reference)?;
-        match action {
-            "press" | "click" => {
-                if let Ok(worked) = client.press(&node).await {
-                    return Ok(
-                        json!({"outcome":if worked{"worked"}else{"didnt"},"performed":semantic_performed()}),
-                    );
-                }
-            }
-            "setText" | "typeText" => {
-                let text = params.get("text").and_then(Value::as_str).unwrap_or("");
-                if let Ok(worked) = client.set_text(&node, text).await {
-                    return Ok(
-                        json!({"outcome":if worked{"worked"}else{"didnt"},"performed":semantic_performed(),"evidence":{"value":text}}),
-                    );
-                }
-            }
-            _ => {}
-        }
-        // Semantic delivery was attempted first. Only an explicitly physical-capable
-        // policy may fall back to the element centre.
-        let bounds = node.bounds.ok_or_else(|| {
-            ProtocolError::new(
-                "Element has no coordinate fallback",
-                ErrorCode::CoordinateUnavailableForRoot,
-            )
-        })?;
-        let frame = record.root.frame.clone().ok_or_else(|| {
-            ProtocolError::new(
-                "Root has no coordinate geometry",
-                ErrorCode::CoordinateUnavailableForRoot,
-            )
-        })?;
-        let owning_window = record.root.x11_window.ok_or_else(|| {
-            capability("Observed root is not correlated with an owning X11 window")
-        })?;
-        return physical_act(
-            action,
-            &params,
-            policy,
-            owning_window,
-            (bounds.x + bounds.width / 2, bounds.y + bounds.height / 2),
-            ActionGeometry {
-                frame,
-                image_width: record.image_width,
-                image_height: record.image_height,
+pub fn list_windows() -> Result<Vec<WindowInfo>, ProtocolError> {
+    let (conn, screen) = connect()?;
+    let root = conn.setup().roots[screen].root;
+    let a = Atoms::new(&conn)?;
+    let active = property32(&conn, root, a.active, AtomEnum::WINDOW.into())
+        .first()
+        .copied();
+    let mut windows = property32(&conn, root, a.stacking, AtomEnum::WINDOW.into());
+    if windows.is_empty() {
+        windows = property32(&conn, root, a.clients, AtomEnum::WINDOW.into());
+    }
+    let mut out = Vec::new();
+    for (z_order, id) in windows.into_iter().rev().enumerate() {
+        let Ok(g) = conn
+            .get_geometry(id)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .ok_or(())
+        else {
+            continue;
+        };
+        let translated = conn
+            .translate_coordinates(id, root, 0, 0)
+            .ok()
+            .and_then(|c| c.reply().ok());
+        let states = property32(&conn, id, a.state, AtomEnum::ATOM.into());
+        out.push(WindowInfo {
+            id,
+            pid: property32(&conn, id, a.pid, AtomEnum::CARDINAL.into())
+                .first()
+                .copied()
+                .unwrap_or(0) as u64,
+            title: title(&conn, id, &a),
+            frame: Rect {
+                x: translated
+                    .as_ref()
+                    .map(|r| i32::from(r.dst_x))
+                    .unwrap_or(i32::from(g.x)),
+                y: translated
+                    .as_ref()
+                    .map(|r| i32::from(r.dst_y))
+                    .unwrap_or(i32::from(g.y)),
+                width: i32::from(g.width),
+                height: i32::from(g.height),
             },
-        );
+            focused: active == Some(id),
+            minimized: states.contains(&a.hidden),
+            z_order,
+        });
     }
-    let x = target
-        .get("x")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| invalid("coordinate target requires x"))?;
-    let y = target
-        .get("y")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| invalid("coordinate target requires y"))?;
-    let owning_window = record
-        .root
-        .x11_window
-        .ok_or_else(|| capability("Observed root is not correlated with an owning X11 window"))?;
-    let frame = record.root.frame.ok_or_else(|| {
-        ProtocolError::new(
-            "Root has no coordinate geometry",
-            ErrorCode::CoordinateUnavailableForRoot,
+    Ok(out)
+}
+
+pub fn enrich_roots(roots: &mut [RootSnapshot], windows: &[WindowInfo]) {
+    let mut used = Vec::new();
+    for root in roots {
+        let best = windows
+            .iter()
+            .filter(|w| w.pid != 0 && w.pid == root.pid && !used.contains(&w.id))
+            .min_by_key(|w| {
+                let title = if !root.name.is_empty()
+                    && (w.title.contains(&root.name) || root.name.contains(&w.title))
+                {
+                    0
+                } else {
+                    1_000_000
+                };
+                title + distance(root.frame.as_ref(), &w.frame)
+            });
+        if let Some(w) = best {
+            used.push(w.id);
+            root.x11_window = Some(w.id);
+            root.frame = Some(w.frame.clone());
+            root.is_focused = w.focused;
+            root.is_minimized = w.minimized;
+            root.z_order = Some(w.z_order);
+            if root.name.is_empty() {
+                root.name.clone_from(&w.title);
+            }
+        }
+    }
+}
+fn distance(a: Option<&Rect>, b: &Rect) -> i64 {
+    a.map(|a| {
+        i64::from(
+            (a.x - b.x).abs()
+                + (a.y - b.y).abs()
+                + (a.width - b.width).abs()
+                + (a.height - b.height).abs(),
         )
-    })?;
-    let (screen_x, screen_y) =
-        image_point_to_screen(&frame, record.image_width, record.image_height, x, y)?;
-    physical_act(
-        action,
-        &params,
-        policy,
-        owning_window,
-        (screen_x, screen_y),
-        ActionGeometry {
-            frame,
-            image_width: record.image_width,
-            image_height: record.image_height,
-        },
+    })
+    .unwrap_or(0)
+}
+
+pub fn focus_window(window: Window, policy: PhysicalPolicy) -> Result<Value, ProtocolError> {
+    policy.require_physical(SessionKind::detect())?;
+    let (conn, screen) = connect()?;
+    let root = conn.setup().roots[screen].root;
+    let atom = intern(&conn, "_NET_ACTIVE_WINDOW")?;
+    let event = ClientMessageEvent {
+        response_type: CLIENT_MESSAGE_EVENT,
+        format: 32,
+        sequence: 0,
+        window,
+        type_: atom,
+        data: ClientMessageData::from([2, 0, 0, 0, 0]),
+    };
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
     )
+    .map_err(xerr)?
+    .check()
+    .map_err(xerr)?;
+    conn.flush().map_err(xerr)?;
+    Ok(json!({"focused":true,"delivery":"ewmh","windowId":window}))
 }
 
-#[derive(Debug, Clone)]
-struct ActionGeometry {
-    frame: Rect,
-    image_width: u16,
-    image_height: u16,
-}
-
-fn image_point_to_screen(
-    frame: &Rect,
-    image_width: u16,
-    image_height: u16,
-    x: f64,
-    y: f64,
-) -> Result<(i32, i32), ProtocolError> {
-    if !x.is_finite()
-        || !y.is_finite()
-        || x < 0.0
-        || y < 0.0
-        || x >= f64::from(image_width)
-        || y >= f64::from(image_height)
-    {
-        return Err(invalid("Coordinates are outside the owning look image"));
-    }
-    Ok((
-        frame.x + (x * f64::from(frame.width) / f64::from(image_width.max(1))).round() as i32,
-        frame.y + (y * f64::from(frame.height) / f64::from(image_height.max(1))).round() as i32,
-    ))
-}
-
-fn scale_outline_rects(value: &mut Value, scale_x: f64, scale_y: f64) {
-    match value {
-        Value::Object(object) => {
-            if let Some(Value::Object(rect)) = object.get_mut("rect") {
-                for (key, scale) in [
-                    ("x", scale_x),
-                    ("w", scale_x),
-                    ("y", scale_y),
-                    ("h", scale_y),
-                ] {
-                    if let Some(number) = rect.get(key).and_then(Value::as_f64) {
-                        rect.insert(key.to_owned(), json!(number * scale));
-                    }
-                }
-            }
-            for child in object.values_mut() {
-                scale_outline_rects(child, scale_x, scale_y);
-            }
-        }
-        Value::Array(items) => {
-            for child in items {
-                scale_outline_rects(child, scale_x, scale_y);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn physical_act(
-    action: &str,
-    params: &Value,
-    policy: PhysicalPolicy,
-    owning_window: u32,
-    point: (i32, i32),
-    geometry: ActionGeometry,
-) -> Result<Value, ProtocolError> {
-    let (x, y) = point;
-    let input = x11::Input::connect(policy, owning_window)?;
-    let button = params
-        .get("button")
-        .and_then(Value::as_str)
-        .unwrap_or("left");
-    match action {
-        "press" | "click" => input.click(
-            x,
-            y,
-            button,
-            params
-                .get("clickCount")
-                .and_then(Value::as_u64)
-                .unwrap_or(1),
-        )?,
-        "moveMouse" => input.move_pointer(x, y)?,
-        "scroll" => input.scroll(
-            x,
-            y,
-            params.get("scrollX").and_then(Value::as_f64).unwrap_or(0.0),
-            params.get("scrollY").and_then(Value::as_f64).unwrap_or(0.0),
-        )?,
-        "drag" => {
-            let path = params
-                .get("path")
-                .and_then(Value::as_array)
-                .ok_or_else(|| invalid("drag requires path"))?;
-            let points = path
-                .iter()
-                .map(|p| {
-                    image_point_to_screen(
-                        &geometry.frame,
-                        geometry.image_width,
-                        geometry.image_height,
-                        p.get("x")
-                            .and_then(Value::as_f64)
-                            .ok_or_else(|| invalid("drag point requires x"))?,
-                        p.get("y")
-                            .and_then(Value::as_f64)
-                            .ok_or_else(|| invalid("drag point requires y"))?,
-                    )
-                })
-                .collect::<Result<Vec<_>, ProtocolError>>()?;
-            input.drag(&points, button)?;
-        }
-        "typeText" => input.type_text(params.get("text").and_then(Value::as_str).unwrap_or(""))?,
-        "setText" => {
-            input.click(x, y, button, 1)?;
-            input.keypress(&["control", "a"])?;
-            input.type_text(params.get("text").and_then(Value::as_str).unwrap_or(""))?;
-        }
-        "keypress" => {
-            let keys = params
-                .get("keys")
-                .and_then(Value::as_array)
-                .ok_or_else(|| invalid("keypress requires keys"))?
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>();
-            input.keypress(&keys)?;
-        }
-        other => {
-            return Err(ProtocolError::new(
-                format!("Unsupported Linux action '{other}'"),
-                ErrorCode::UnsupportedCommand,
-            ))
-        }
-    }
-    Ok(
-        json!({"outcome":"unknown","performed":{"grounding":"coordinates","delivery":"hid","mechanism":"xtest","deltaSource":"snapshot","windowId":owning_window},"evidence":{"mechanism":"xtest","windowId":owning_window}}),
-    )
-}
-
-async fn act_batch(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let actions = args
-        .get("actions")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid("actBatch requires actions"))?;
-    if actions.is_empty() || actions.len() > 20 {
-        return Err(invalid("actBatch requires 1...20 actions"));
-    }
-    let first_look = required_str(&actions[0], "lookId", "actBatch actions require lookId")?;
-    if actions
-        .iter()
-        .any(|action| action.get("lookId").and_then(Value::as_str) != Some(first_look))
-    {
-        return Err(invalid("actBatch actions must belong to one look"));
-    }
-    let mut steps = Vec::new();
-    let mut stopped_at = None;
-    for (index, action) in actions.iter().enumerate() {
-        match act(state, action).await {
-            Ok(step) => {
-                let stopped = step.get("outcome").and_then(Value::as_str) == Some("didnt");
-                steps.push(step);
-                if stopped {
-                    stopped_at = Some(index);
-                    break;
-                }
-            }
-            Err(error) => {
-                steps.push(json!({"outcome":"didnt","error":{"code":error.code.to_string(),"message":error.message}}));
-                stopped_at = Some(index);
-                break;
-            }
-        }
-    }
-    let outcome = batch_outcome(&steps, stopped_at.is_some());
-    let mut response = json!({
-        "outcome": outcome,
-        "performed":{"transaction":true,"actionCount":steps.len(),"deltaSource":"snapshot"},
-        "steps":steps
-    });
-    if let Some(index) = stopped_at {
-        response["stoppedAt"] = json!(index);
-    }
-    Ok(response)
-}
-
-fn batch_outcome(steps: &[Value], stopped: bool) -> &'static str {
-    if stopped {
-        "didnt"
-    } else if steps
-        .iter()
-        .any(|step| step.get("outcome").and_then(Value::as_str) == Some("unknown"))
-    {
-        "unknown"
-    } else {
-        "worked"
-    }
-}
-
-async fn read_text(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let look_id = required_str(args, "lookId", "atspiReadText requires lookId")?;
-    let element_ref = required_str(args, "elementRef", "atspiReadText requires elementRef")?;
-    let node = lock(state)?.element(look_id, element_ref)?;
-    if node.is_secure {
-        return Err(ProtocolError::new(
-            "Refers to a secure text field; refusing to read its value",
-            ErrorCode::SecureTextUnreadable,
+pub fn capture_window(
+    window: Window,
+    max_dimension: Option<u32>,
+) -> Result<Capture, ProtocolError> {
+    let (conn, _) = connect()?;
+    let g = conn
+        .get_geometry(window)
+        .map_err(xerr)?
+        .reply()
+        .map_err(xerr)?;
+    let pixels = u64::from(g.width) * u64::from(g.height);
+    if pixels == 0 || pixels > MAX_CAPTURE_PIXELS {
+        return Err(err(
+            format!(
+                "Refusing X11 capture of {}x{} window (64MP limit)",
+                g.width, g.height
+            ),
+            ErrorCode::CaptureFailed,
         ));
     }
-    let text = AtspiClient::connect()
-        .await?
-        .read_text(&node.accessible)
-        .await?;
-    let characters = text.chars().collect::<Vec<_>>();
-    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(4096) as usize;
-    let end = offset.saturating_add(limit).min(characters.len());
-    let slice = if offset >= characters.len() {
-        String::new()
-    } else {
-        characters[offset..end].iter().collect()
+    let pixmap = conn.generate_id().map_err(xerr)?;
+    let mut warnings = Vec::new();
+    let (drawable, source) = match composite::name_window_pixmap(&conn, window, pixmap)
+        .ok()
+        .and_then(|c| c.check().ok())
+        .ok_or(())
+    {
+        Ok(()) => (pixmap as Drawable, "xcomposite"),
+        Err(_) => {
+            warnings.push(
+                "XComposite unavailable; GetImage fallback may contain stale or obscured pixels"
+                    .into(),
+            );
+            (window as Drawable, "get_image")
+        }
     };
-    Ok(
-        json!({"text":slice,"offset":offset,"limit":limit,"totalChars":characters.len(),"hasMore":end<characters.len()}),
+    let image = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            drawable,
+            0,
+            0,
+            g.width,
+            g.height,
+            u32::MAX,
+        )
+        .map_err(xerr)?
+        .reply()
+        .map_err(|e| {
+            err(
+                format!("X11 GetImage failed: {e}"),
+                ErrorCode::CaptureFailed,
+            )
+        })?;
+    if source == "xcomposite" {
+        let _ = conn.free_pixmap(pixmap);
+    }
+    let rgba = decode(
+        &image.data,
+        g.width,
+        g.height,
+        image.depth,
+        conn.setup().image_byte_order,
+    )?;
+    let (output_width, output_height) = scaled_dimensions(g.width, g.height, max_dimension);
+    let rgba = resize_rgba(&rgba, g.width, g.height, output_width, output_height);
+    let mut encoded = Vec::new();
+    {
+        let mut encoder =
+            png::Encoder::new(&mut encoded, output_width.into(), output_height.into());
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(capture_err)?;
+        writer.write_image_data(&rgba).map_err(capture_err)?;
+    }
+    Ok(Capture {
+        png_base64: base64::engine::general_purpose::STANDARD.encode(encoded),
+        width: output_width,
+        height: output_height,
+        source,
+        warnings,
+    })
+}
+fn scaled_dimensions(width: u16, height: u16, max_dimension: Option<u32>) -> (u16, u16) {
+    let largest = u32::from(width.max(height));
+    let Some(limit) = max_dimension.filter(|limit| *limit > 0 && *limit < largest) else {
+        return (width, height);
+    };
+    let scale = f64::from(limit) / f64::from(largest);
+    (
+        (f64::from(width) * scale).round().max(1.0) as u16,
+        (f64::from(height) * scale).round().max(1.0) as u16,
     )
 }
 
-async fn wait_for(state: &Arc<Mutex<HelperState>>, args: &Value) -> Result<Value, ProtocolError> {
-    let text = args
-        .get("text")
-        .and_then(Value::as_str)
-        .map(|s| s.to_lowercase());
-    let role = args
-        .get("role")
-        .and_then(Value::as_str)
-        .map(|s| s.to_lowercase());
-    let value = args
-        .get("value")
-        .and_then(Value::as_str)
-        .map(|s| s.to_lowercase());
-    if text.is_none() && role.is_none() && value.is_none() {
-        return Err(invalid("atspiWaitFor requires text, role, or value"));
+fn resize_rgba(
+    source: &[u8],
+    source_width: u16,
+    source_height: u16,
+    width: u16,
+    height: u16,
+) -> Vec<u8> {
+    if (source_width, source_height) == (width, height) {
+        return source.to_vec();
     }
-    let (_, root) = resolve_root(state, args).await?;
-    let scope_exact = args
-        .get("scopeExact")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let scope = match (
-        args.get("lookId").and_then(Value::as_str),
-        args.get("scopeRef").and_then(Value::as_str),
-    ) {
-        (Some(look_id), Some(scope_ref)) => {
-            let record = lock(state)?.look(look_id)?;
-            if record.root.accessible != root.accessible {
-                return Err(ProtocolError::new(
-                    "Scope ref is outside the target root",
-                    ErrorCode::StaleRef,
-                ));
-            }
-            Some(lock(state)?.element(look_id, scope_ref)?)
+    let mut output = vec![0; usize::from(width) * usize::from(height) * 4];
+    for y in 0..height {
+        let source_y = (u32::from(y) * u32::from(source_height) / u32::from(height)) as usize;
+        for x in 0..width {
+            let source_x = (u32::from(x) * u32::from(source_width) / u32::from(width)) as usize;
+            let from = (source_y * usize::from(source_width) + source_x) * 4;
+            let to = (usize::from(y) * usize::from(width) + usize::from(x)) * 4;
+            output[to..to + 4].copy_from_slice(&source[from..from + 4]);
         }
-        (None, Some(_)) => return Err(invalid("scopeRef requires lookId")),
-        _ => None,
-    };
-    let gone = args.get("gone").and_then(Value::as_bool).unwrap_or(false);
-    let timeout = args
-        .get("timeoutMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(10_000)
-        .clamp(100, 60_000);
-    let deadline = Instant::now() + Duration::from_millis(timeout);
-    let client = AtspiClient::connect().await?;
-    let mut node_count = 0;
-    while Instant::now() < deadline {
-        let nodes = match &scope {
-            Some(scope) => {
-                client
-                    .snapshot_from(&scope.accessible, DEFAULT_MAX_NODES, 20)
-                    .await?
-            }
-            None => client.snapshot(&root, DEFAULT_MAX_NODES, 20).await?,
+    }
+    output
+}
+
+fn decode(
+    data: &[u8],
+    w: u16,
+    h: u16,
+    depth: u8,
+    order: ImageOrder,
+) -> Result<Vec<u8>, ProtocolError> {
+    let expected = usize::from(w) * usize::from(h) * 4;
+    if !matches!(depth, 24 | 32) || data.len() < expected {
+        return Err(err(
+            format!(
+                "Unsupported X11 image layout: depth {depth}, {} bytes",
+                data.len()
+            ),
+            ErrorCode::CaptureFailed,
+        ));
+    }
+    let mut out = Vec::with_capacity(expected);
+    for p in data[..expected].chunks_exact(4) {
+        let (r, g, b) = if order == ImageOrder::LSB_FIRST {
+            (p[2], p[1], p[0])
+        } else {
+            (p[1], p[2], p[3])
         };
-        node_count = nodes.len();
-        let found = nodes
-            .iter()
-            .any(|node| matches_scoped_node(node, scope_exact, &text, &role, &value));
-        if found != gone {
-            return Ok(
-                json!({"found":true,"gone":if gone {Some(true)} else {None::<bool>},"nodeCount":node_count}),
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        out.extend_from_slice(&[r, g, b, 255]);
     }
-    Ok(json!({"found":false,"timedOut":true,"nodeCount":node_count}))
+    Ok(out)
 }
 
-fn semantic_performed() -> Value {
-    json!({"grounding":"description","delivery":"ax","deltaSource":"snapshot"})
+pub struct Input {
+    conn: RustConnection,
+    root: Window,
+    target: Window,
+}
+impl Input {
+    pub fn connect(policy: PhysicalPolicy, target: Window) -> Result<Self, ProtocolError> {
+        policy.require_physical(SessionKind::detect())?;
+        let (conn, screen) = connect()?;
+        let root = conn.setup().roots[screen].root;
+        validate_target(&conn, root, target)?;
+        prepare_focus(&conn, root, target, policy)?;
+        xtest::get_version(&conn, 2, 2)
+            .map_err(xerr)?
+            .reply()
+            .map_err(|e| {
+                err(
+                    format!("XTEST unavailable: {e}"),
+                    ErrorCode::CapabilityDeferred,
+                )
+            })?;
+        Ok(Self { conn, root, target })
+    }
+    pub fn move_pointer(&self, x: i32, y: i32) -> Result<(), ProtocolError> {
+        self.preflight_point(x, y)?;
+        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)
+    }
+    pub fn click(&self, x: i32, y: i32, button: &str, count: u64) -> Result<(), ProtocolError> {
+        let b = button_detail(button)?;
+        self.preflight_point(x, y)?;
+        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
+        for _ in 0..count.clamp(1, 3) {
+            self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
+            self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)?;
+        }
+        Ok(())
+    }
+    pub fn scroll(&self, x: i32, y: i32, dx: f64, dy: f64) -> Result<(), ProtocolError> {
+        self.preflight_point(x, y)?;
+        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
+        for _ in 0..dy.abs().ceil().clamp(0., 100.) as usize {
+            self.button(if dy < 0. { 4 } else { 5 })?;
+        }
+        for _ in 0..dx.abs().ceil().clamp(0., 100.) as usize {
+            self.button(if dx < 0. { 6 } else { 7 })?;
+        }
+        Ok(())
+    }
+    pub fn drag(&self, path: &[(i32, i32)], button: &str) -> Result<(), ProtocolError> {
+        if path.len() < 2 {
+            return Err(invalid("drag requires at least two points"));
+        }
+        let b = button_detail(button)?;
+        for &(x, y) in path {
+            self.preflight_point(x, y)?;
+        }
+        self.fake(MOTION_NOTIFY_EVENT, 0, path[0].0, path[0].1)?;
+        self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
+        for &(x, y) in &path[1..] {
+            self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
+        }
+        self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)
+    }
+    pub fn type_text(&self, text: &str) -> Result<(), ProtocolError> {
+        for ch in text.chars() {
+            let (sym, shift) = char_keysym(ch)
+                .ok_or_else(|| invalid(format!("Unsupported XTEST character {ch:?}")))?;
+            if shift {
+                self.key(0xffe1, KEY_PRESS_EVENT)?;
+            }
+            self.key(sym, KEY_PRESS_EVENT)?;
+            self.key(sym, KEY_RELEASE_EVENT)?;
+            if shift {
+                self.key(0xffe1, KEY_RELEASE_EVENT)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn keypress(&self, names: &[&str]) -> Result<(), ProtocolError> {
+        if names.is_empty() {
+            return Err(invalid("keypress requires keys"));
+        }
+        let syms = names
+            .iter()
+            .map(|n| named_keysym(n).ok_or_else(|| invalid(format!("Unsupported key '{n}'"))))
+            .collect::<Result<Vec<_>, _>>()?;
+        for &s in &syms {
+            self.key(s, KEY_PRESS_EVENT)?;
+        }
+        for &s in syms.iter().rev() {
+            self.key(s, KEY_RELEASE_EVENT)?;
+        }
+        Ok(())
+    }
+    fn preflight_point(&self, x: i32, y: i32) -> Result<(), ProtocolError> {
+        validate_target(&self.conn, self.root, self.target)?;
+        if active_window(&self.conn, self.root)? != Some(self.target) {
+            return Err(err(
+                "Refusing XTEST delivery because the owning window is no longer active",
+                ErrorCode::ForegroundRequired,
+            ));
+        }
+        let hit = self
+            .conn
+            .translate_coordinates(self.root, self.root, clamp_i16(x), clamp_i16(y))
+            .map_err(xerr)?
+            .reply()
+            .map_err(xerr)?
+            .child;
+        if hit == 0 || !windows_related(&self.conn, hit, self.target)? {
+            return Err(err(
+                "Refusing XTEST pointer delivery because the target point is outside or occluded",
+                ErrorCode::CoordinateBlocked,
+            ));
+        }
+        Ok(())
+    }
+    fn key(&self, sym: u32, event: u8) -> Result<(), ProtocolError> {
+        let code = self
+            .keycode(sym)?
+            .ok_or_else(|| invalid(format!("No keycode for keysym 0x{sym:x}")))?;
+        self.fake(event, code, 0, 0)
+    }
+    fn keycode(&self, sym: u32) -> Result<Option<Keycode>, ProtocolError> {
+        let setup = self.conn.setup();
+        let min = setup.min_keycode;
+        let count = setup.max_keycode - min + 1;
+        let m = self
+            .conn
+            .get_keyboard_mapping(min, count)
+            .map_err(xerr)?
+            .reply()
+            .map_err(xerr)?;
+        Ok(m.keysyms
+            .chunks(usize::from(m.keysyms_per_keycode))
+            .position(|s| s.contains(&sym))
+            .map(|i| min + i as u8))
+    }
+    fn button(&self, b: u8) -> Result<(), ProtocolError> {
+        self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
+        self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)
+    }
+    fn fake(&self, event: u8, detail: u8, x: i32, y: i32) -> Result<(), ProtocolError> {
+        validate_target(&self.conn, self.root, self.target)?;
+        if active_window(&self.conn, self.root)? != Some(self.target) {
+            return Err(err(
+                "Refusing XTEST delivery because the owning window is no longer active",
+                ErrorCode::ForegroundRequired,
+            ));
+        }
+        xtest::fake_input(
+            &self.conn,
+            event,
+            detail,
+            0,
+            self.root,
+            clamp_i16(x),
+            clamp_i16(y),
+            0,
+        )
+        .map_err(xerr)?
+        .check()
+        .map_err(xerr)?;
+        self.conn.flush().map_err(xerr)
+    }
 }
 
-fn matches_scoped_node(
-    node: &NodeSnapshot,
-    scope_exact: bool,
-    text: &Option<String>,
-    role: &Option<String>,
-    value: &Option<String>,
-) -> bool {
-    (!scope_exact || node.depth == 0) && matches_node(node, text, role, value)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusPlan {
+    Confirm,
+    ActivateAndConfirm,
 }
 
-fn matches_node(
-    node: &NodeSnapshot,
-    text: &Option<String>,
-    role: &Option<String>,
-    value: &Option<String>,
-) -> bool {
-    text.as_ref()
-        .map(|needle| node.searchable_text().contains(needle))
-        .unwrap_or(true)
-        && role
-            .as_ref()
-            .map(|expected| node.role.to_lowercase() == *expected)
-            .unwrap_or(true)
-        && value
-            .as_ref()
-            .map(|expected| node.value.trim().to_lowercase() == *expected)
-            .unwrap_or(true)
+fn focus_plan(policy: PhysicalPolicy, active: bool) -> Result<FocusPlan, ProtocolError> {
+    match policy {
+        PhysicalPolicy::Foreground => Ok(FocusPlan::ActivateAndConfirm),
+        PhysicalPolicy::Default if active => Ok(FocusPlan::Confirm),
+        PhysicalPolicy::Default => Err(err(
+            "Default policy requires the owning X11 window to already be active",
+            ErrorCode::ForegroundRequired,
+        )),
+        PhysicalPolicy::AxOnly | PhysicalPolicy::Background => {
+            policy.require_physical(SessionKind::X11)?;
+            unreachable!()
+        }
+    }
+}
+fn prepare_focus(
+    c: &RustConnection,
+    root: Window,
+    target: Window,
+    policy: PhysicalPolicy,
+) -> Result<(), ProtocolError> {
+    let plan = focus_plan(policy, active_window(c, root)? == Some(target))?;
+    if plan == FocusPlan::ActivateAndConfirm {
+        request_active_window(c, root, target)?;
+    }
+    for _ in 0..20 {
+        if active_window(c, root)? == Some(target) {
+            return Ok(());
+        }
+        if plan == FocusPlan::Confirm {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Err(err(
+        "Window manager did not activate the owning X11 window; refusing XTEST delivery",
+        ErrorCode::ForegroundRequired,
+    ))
+}
+fn validate_target(c: &RustConnection, root: Window, target: Window) -> Result<(), ProtocolError> {
+    if target == 0 || target == root {
+        return Err(err(
+            "XTEST requires a specific owning X11 window",
+            ErrorCode::CoordinateBlocked,
+        ));
+    }
+    let attributes = c
+        .get_window_attributes(target)
+        .map_err(xerr)?
+        .reply()
+        .map_err(|_| {
+            err(
+                "Owning X11 window no longer exists",
+                ErrorCode::TargetNotFound,
+            )
+        })?;
+    let geometry = c.get_geometry(target).map_err(xerr)?.reply().map_err(|_| {
+        err(
+            "Owning X11 window has no usable geometry",
+            ErrorCode::CoordinateBlocked,
+        )
+    })?;
+    let atoms = Atoms::new(c)?;
+    if attributes.map_state != MapState::VIEWABLE
+        || geometry.width == 0
+        || geometry.height == 0
+        || property32(c, target, atoms.state, AtomEnum::ATOM.into()).contains(&atoms.hidden)
+    {
+        return Err(err(
+            "Owning X11 window is not mapped and visible",
+            ErrorCode::CoordinateBlocked,
+        ));
+    }
+    Ok(())
+}
+fn active_window(c: &RustConnection, root: Window) -> Result<Option<Window>, ProtocolError> {
+    let atom = intern(c, "_NET_ACTIVE_WINDOW")?;
+    Ok(property32(c, root, atom, AtomEnum::WINDOW.into())
+        .first()
+        .copied())
+}
+fn request_active_window(
+    c: &RustConnection,
+    root: Window,
+    target: Window,
+) -> Result<(), ProtocolError> {
+    let atom = intern(c, "_NET_ACTIVE_WINDOW")?;
+    let event = ClientMessageEvent {
+        response_type: CLIENT_MESSAGE_EVENT,
+        format: 32,
+        sequence: 0,
+        window: target,
+        type_: atom,
+        data: ClientMessageData::from([2, 0, 0, 0, 0]),
+    };
+    c.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
+    )
+    .map_err(xerr)?
+    .check()
+    .map_err(xerr)?;
+    c.flush().map_err(xerr)
+}
+fn windows_related(c: &RustConnection, hit: Window, target: Window) -> Result<bool, ProtocolError> {
+    fn ancestors(c: &RustConnection, mut w: Window) -> Result<Vec<Window>, ProtocolError> {
+        let mut out = vec![w];
+        for _ in 0..64 {
+            let tree = c.query_tree(w).map_err(xerr)?.reply().map_err(xerr)?;
+            if tree.parent == 0 || tree.parent == w {
+                break;
+            }
+            w = tree.parent;
+            out.push(w);
+        }
+        Ok(out)
+    }
+    Ok(ancestors(c, hit)?.contains(&target) || ancestors(c, target)?.contains(&hit))
+}
+fn clamp_i16(value: i32) -> i16 {
+    value.clamp(i16::MIN.into(), i16::MAX.into()) as i16
 }
 
-fn required_str<'a>(value: &'a Value, key: &str, message: &str) -> Result<&'a str, ProtocolError> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .ok_or_else(|| invalid(message))
+fn button_detail(b: &str) -> Result<u8, ProtocolError> {
+    match b {
+        "left" => Ok(ButtonIndex::M1.into()),
+        "middle" => Ok(ButtonIndex::M2.into()),
+        "right" => Ok(ButtonIndex::M3.into()),
+        _ => Err(invalid(format!("Unsupported mouse button '{b}'"))),
+    }
+}
+fn char_keysym(c: char) -> Option<(u32, bool)> {
+    if c == '\n' {
+        return Some((0xff0d, false));
+    }
+    if c == '\t' {
+        return Some((0xff09, false));
+    }
+    if c == ' ' || c.is_ascii_lowercase() || c.is_ascii_digit() {
+        return Some((c as u32, false));
+    }
+    if c.is_ascii_uppercase() {
+        return Some((c.to_ascii_lowercase() as u32, true));
+    }
+    let shifted = "~!@#$%^&*()_+{}|:\"<>?";
+    let base = "`1234567890-=[]\\;',./";
+    shifted
+        .chars()
+        .position(|v| v == c)
+        .and_then(|i| base.chars().nth(i))
+        .map(|v| (v as u32, true))
+}
+fn named_keysym(n: &str) -> Option<u32> {
+    match n.to_ascii_lowercase().as_str() {
+        "enter" | "return" => Some(0xff0d),
+        "tab" => Some(0xff09),
+        "escape" | "esc" => Some(0xff1b),
+        "backspace" => Some(0xff08),
+        "delete" => Some(0xffff),
+        "space" => Some(0x20),
+        "left" => Some(0xff51),
+        "up" => Some(0xff52),
+        "right" => Some(0xff53),
+        "down" => Some(0xff54),
+        "home" => Some(0xff50),
+        "end" => Some(0xff57),
+        "pageup" => Some(0xff55),
+        "pagedown" => Some(0xff56),
+        "ctrl" | "control" => Some(0xffe3),
+        "shift" => Some(0xffe1),
+        "alt" | "option" => Some(0xffe9),
+        "meta" | "super" | "cmd" | "command" => Some(0xffeb),
+        v if v.len() == 1 => v.chars().next().map(|c| c as u32),
+        v if v.starts_with('f') => v[1..]
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=35).contains(n))
+            .map(|n| 0xffbd + n),
+        _ => None,
+    }
 }
 
-fn lock(
-    state: &Arc<Mutex<HelperState>>,
-) -> Result<std::sync::MutexGuard<'_, HelperState>, ProtocolError> {
-    state
-        .lock()
-        .map_err(|_| ProtocolError::new("helper state lock poisoned", ErrorCode::InternalError))
+struct Atoms {
+    clients: Atom,
+    stacking: Atom,
+    active: Atom,
+    pid: Atom,
+    name: Atom,
+    state: Atom,
+    hidden: Atom,
+    utf8: Atom,
 }
-
-fn now_seconds() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+impl Atoms {
+    fn new(c: &RustConnection) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            clients: intern(c, "_NET_CLIENT_LIST")?,
+            stacking: intern(c, "_NET_CLIENT_LIST_STACKING")?,
+            active: intern(c, "_NET_ACTIVE_WINDOW")?,
+            pid: intern(c, "_NET_WM_PID")?,
+            name: intern(c, "_NET_WM_NAME")?,
+            state: intern(c, "_NET_WM_STATE")?,
+            hidden: intern(c, "_NET_WM_STATE_HIDDEN")?,
+            utf8: intern(c, "UTF8_STRING")?,
+        })
+    }
+}
+fn connect() -> Result<(RustConnection, usize), ProtocolError> {
+    x11rb::connect(None).map_err(|e| {
+        err(
+            format!("X11 unavailable: {e}"),
+            ErrorCode::CapabilityDeferred,
+        )
+    })
+}
+fn intern(c: &RustConnection, n: &str) -> Result<Atom, ProtocolError> {
+    c.intern_atom(false, n.as_bytes())
+        .map_err(xerr)?
+        .reply()
+        .map(|r| r.atom)
+        .map_err(xerr)
+}
+fn property32(c: &RustConnection, w: Window, p: Atom, t: Atom) -> Vec<u32> {
+    c.get_property(false, w, p, t, 0, u32::MAX)
+        .ok()
+        .and_then(|v| v.reply().ok())
+        .and_then(|v| v.value32().map(Iterator::collect))
         .unwrap_or_default()
-        .as_secs_f64()
 }
-
-fn invalid(message: impl Into<String>) -> ProtocolError {
-    ProtocolError::new(message, ErrorCode::InvalidRequest)
+fn title(c: &RustConnection, w: Window, a: &Atoms) -> String {
+    let utf = c
+        .get_property(false, w, a.name, a.utf8, 0, 4096)
+        .ok()
+        .and_then(|v| v.reply().ok())
+        .and_then(|v| String::from_utf8(v.value).ok())
+        .unwrap_or_default();
+    if !utf.is_empty() {
+        return utf;
+    }
+    c.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 4096)
+        .ok()
+        .and_then(|v| v.reply().ok())
+        .map(|v| String::from_utf8_lossy(&v.value).into_owned())
+        .unwrap_or_default()
 }
-
-fn capability(message: impl Into<String>) -> ProtocolError {
-    ProtocolError::new(message, ErrorCode::CapabilityDeferred)
+fn err(m: impl Into<String>, code: ErrorCode) -> ProtocolError {
+    ProtocolError::new(m, code)
+}
+fn invalid(m: impl Into<String>) -> ProtocolError {
+    err(m, ErrorCode::InvalidRequest)
+}
+fn xerr(e: impl std::fmt::Display) -> ProtocolError {
+    err(format!("X11 request failed: {e}"), ErrorCode::InternalError)
+}
+fn capture_err(e: impl std::fmt::Display) -> ProtocolError {
+    err(
+        format!("PNG encoding failed: {e}"),
+        ErrorCode::CaptureFailed,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use linux_bridge::atspi::AccessibleRef;
-    use std::collections::HashSet;
-
-    fn node() -> NodeSnapshot {
-        NodeSnapshot {
-            reference: "linux:look_1:@e1".into(),
-            accessible: AccessibleRef {
-                destination: ":1.1".into(),
-                path: "/node".into(),
-            },
-            parent: None,
-            name: "Save document".into(),
-            role: "push button".into(),
-            description: "Writes changes".into(),
-            value: String::new(),
-            interfaces: HashSet::new(),
-            bounds: None,
-            is_secure: false,
-            depth: 0,
-        }
-    }
-
     #[test]
-    fn scoped_matching_includes_descendants_unless_exact() {
-        let mut descendant = node();
-        descendant.depth = 1;
-        assert!(matches_scoped_node(
-            &descendant,
-            false,
-            &Some("save".into()),
-            &None,
-            &None
-        ));
-        assert!(!matches_scoped_node(
-            &descendant,
-            true,
-            &Some("save".into()),
-            &None,
-            &None
-        ));
-    }
-
-    #[test]
-    fn semantic_delivery_uses_shared_ax_label() {
-        assert_eq!(semantic_performed()["delivery"], "ax");
-        assert_eq!(semantic_performed()["grounding"], "description");
-    }
-
-    #[test]
-    fn matching_is_case_insensitive_and_conjunctive() {
-        let node = node();
-        assert!(matches_node(
-            &node,
-            &Some("SAVE".to_lowercase()),
-            &Some("push button".into()),
-            &None
-        ));
-        assert!(!matches_node(
-            &node,
-            &Some("save".into()),
-            &Some("checkbox".into()),
-            &None
-        ));
-    }
-
-    #[test]
-    fn request_id_is_recovered_from_invalid_envelope() {
+    fn policy_guards() {
         assert_eq!(
-            extract_id(r#"{"id":"abc","oops":1}"#).as_deref(),
-            Some("abc")
+            PhysicalPolicy::AxOnly
+                .require_physical(SessionKind::X11)
+                .unwrap_err()
+                .code,
+            ErrorCode::CoordinateBlocked
+        );
+        assert_eq!(
+            PhysicalPolicy::Background
+                .require_physical(SessionKind::X11)
+                .unwrap_err()
+                .code,
+            ErrorCode::ForegroundRequired
+        );
+        assert!(PhysicalPolicy::Foreground
+            .require_physical(SessionKind::X11)
+            .is_ok());
+        assert!(PhysicalPolicy::Default
+            .require_physical(SessionKind::Headless)
+            .is_err());
+    }
+    #[test]
+    fn focus_policy_is_deterministic() {
+        assert_eq!(
+            focus_plan(PhysicalPolicy::Foreground, false).unwrap(),
+            FocusPlan::ActivateAndConfirm
+        );
+        assert_eq!(
+            focus_plan(PhysicalPolicy::Foreground, true).unwrap(),
+            FocusPlan::ActivateAndConfirm
+        );
+        assert_eq!(
+            focus_plan(PhysicalPolicy::Default, true).unwrap(),
+            FocusPlan::Confirm
+        );
+        assert_eq!(
+            focus_plan(PhysicalPolicy::Default, false).unwrap_err().code,
+            ErrorCode::ForegroundRequired
+        );
+        assert_eq!(
+            focus_plan(PhysicalPolicy::Background, true)
+                .unwrap_err()
+                .code,
+            ErrorCode::ForegroundRequired
         );
     }
-
     #[test]
-    fn successful_portal_diagnostics_are_capabilities_only() {
-        let value = portal_diagnostics(Some(Ok(PortalCapabilities {
-            remote_desktop_version: 2,
-            screen_cast_version: 6,
-            available_device_types: 3,
-            available_source_types: 3,
-            available_cursor_modes: 5,
-        })));
-        assert_eq!(value["available"], true);
-        assert_eq!(value["interactiveUseEnabled"], false);
-        assert_eq!(value["readOnlyProbe"], true);
-        assert_eq!(value["remoteDesktopVersion"], 2);
-        assert_eq!(value["screenCastVersion"], 6);
-        assert_eq!(value["availableDeviceTypes"], 3);
-        assert_eq!(value["availableSourceTypes"], 3);
-        assert_eq!(value["availableCursorModes"], 5);
+    fn coordinate_clamping_is_deterministic() {
+        assert_eq!(clamp_i16(i32::MIN), i16::MIN);
+        assert_eq!(clamp_i16(i32::MAX), i16::MAX);
+        assert_eq!(clamp_i16(42), 42);
     }
-
     #[test]
-    fn failed_portal_probe_is_reported_without_enabling_portal_use() {
-        let value = portal_diagnostics(Some(Err(PortalError::Unavailable(
-            "no portal service".into(),
-        ))));
-        assert_eq!(value["available"], false);
-        assert_eq!(value["interactiveUseEnabled"], false);
-        assert_eq!(value["error"]["kind"], "portal_unavailable");
-        assert!(value["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("no portal service"));
-    }
-
-    #[test]
-    fn non_wayland_diagnostics_skip_the_portal_probe() {
-        let value = portal_diagnostics(None);
-        assert_eq!(value["probed"], false);
-        assert_eq!(value["reason"], "not_wayland");
-        assert_eq!(value["interactiveUseEnabled"], false);
-    }
-
-    #[test]
-    fn scoped_no_image_keeps_downscaled_coordinate_mapping() {
-        let mut root = RootSnapshot {
-            accessible: AccessibleRef {
-                destination: ":1.1".into(),
-                path: "/window".into(),
-            },
-            pid: 1,
-            name: "Window".into(),
-            app_name: "App".into(),
-            role: "frame".into(),
-            frame: Some(Rect {
-                x: 100,
-                y: 200,
-                width: 2000,
-                height: 1000,
-            }),
-            x11_window: None,
-            is_focused: false,
-            is_minimized: false,
-            z_order: None,
+    fn geometry_is_deterministic() {
+        let a = Rect {
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
         };
-        let base_size = initial_image_size(&root, Some((1000, 500)));
-        let base_point = image_point_to_screen(
-            root.frame.as_ref().unwrap(),
-            base_size.0,
-            base_size.1,
-            250.0,
-            125.0,
-        )
-        .unwrap();
-        root.name = "Scoped expansion".into();
-        let scoped_size = initial_image_size(&root, Some(base_size));
-        let scoped_point = image_point_to_screen(
-            root.frame.as_ref().unwrap(),
-            scoped_size.0,
-            scoped_size.1,
-            250.0,
-            125.0,
-        )
-        .unwrap();
-        assert_eq!(scoped_size, (1000, 500));
-        assert_eq!(scoped_point, base_point);
+        assert_eq!(distance(Some(&a), &a), 0);
+        assert_eq!(distance(Some(&a), &Rect { x: 6, ..a.clone() }), 5);
     }
-
     #[test]
-    fn downscaled_image_coordinates_map_back_to_window_points() {
-        let frame = Rect {
-            x: 100,
-            y: 200,
-            width: 2000,
-            height: 1000,
-        };
-        assert_eq!(
-            image_point_to_screen(&frame, 1000, 500, 250.0, 125.0).unwrap(),
-            (600, 450)
-        );
-        assert!(image_point_to_screen(&frame, 1000, 500, 1000.0, 0.0).is_err());
+    fn key_protocol() {
+        assert_eq!(named_keysym("Control"), Some(0xffe3));
+        assert_eq!(named_keysym("F12"), Some(0xffc9));
+        assert_eq!(char_keysym('A'), Some(('a' as u32, true)));
+        assert_eq!(char_keysym('!'), Some(('1' as u32, true)));
+        assert_eq!(char_keysym('é'), None);
     }
-
     #[test]
-    fn outline_rects_follow_image_scaling() {
-        let mut outline = json!({"rect":{"x":100,"y":50,"w":400,"h":200},"text":[{"rect":{"x":20,"y":10,"w":40,"h":20}}]});
-        scale_outline_rects(&mut outline, 0.5, 0.25);
-        assert_eq!(
-            outline["rect"],
-            json!({"x":50.0,"y":12.5,"w":200.0,"h":50.0})
-        );
-        assert_eq!(
-            outline["text"][0]["rect"],
-            json!({"x":10.0,"y":2.5,"w":20.0,"h":5.0})
-        );
+    fn bounded_capture_dimensions_preserve_aspect_ratio() {
+        assert_eq!(scaled_dimensions(1920, 1080, Some(1000)), (1000, 563));
+        assert_eq!(scaled_dimensions(800, 600, Some(1000)), (800, 600));
+        assert_eq!(scaled_dimensions(1, 4000, Some(100)), (1, 100));
+        assert_eq!(scaled_dimensions(4000, 1, Some(100)), (100, 1));
     }
-
     #[test]
-    fn batch_outcome_preserves_unknown_physical_results() {
+    fn rgba_resize_is_bounded_and_deterministic() {
+        let source = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        assert_eq!(resize_rgba(&source, 2, 2, 1, 1), vec![1, 2, 3, 4]);
+        assert_eq!(resize_rgba(&source, 2, 2, 2, 2), source);
+    }
+    #[test]
+    fn decode_limits() {
         assert_eq!(
-            batch_outcome(&[json!({"outcome":"worked"})], false),
-            "worked"
+            decode(&[1, 2, 3, 0], 1, 1, 24, ImageOrder::LSB_FIRST).unwrap(),
+            vec![3, 2, 1, 255]
         );
-        assert_eq!(
-            batch_outcome(
-                &[json!({"outcome":"worked"}), json!({"outcome":"unknown"})],
-                false
-            ),
-            "unknown"
-        );
-        assert_eq!(
-            batch_outcome(&[json!({"outcome":"unknown"})], true),
-            "didnt"
-        );
+        assert!(decode(&[0; 2], 1, 1, 16, ImageOrder::LSB_FIRST).is_err());
     }
 }

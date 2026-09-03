@@ -1,14 +1,14 @@
 {
-  "name": "@ziggy/gog",
-  "version": "0.1.0",
+  "name": "@ziggy/imsg",
   "private": true,
-  "type": "module",
   "keywords": [
     "pi-package"
   ],
+  "type": "module",
   "pi": {
     "skills": [
       "./skills"
     ]
-  }
+  },
+  "version": "0.1.0"
 }

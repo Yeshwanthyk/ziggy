@@ -1,34 +1,32 @@
 ---
-name: github
-description: Interact with GitHub through the authenticated `github` Pi tool.
+name: goplaces
+description: "Query Google Places for text search, place details, resolve, reviews, or scriptable JSON via goplaces."
 ---
 
-# GitHub
+# goplaces
 
-Pass the `gh` subcommand and flags as the `args` array. Use `--repo owner/repo`
-outside a Git repository, or use a GitHub URL directly.
+Modern Google Places API (New) CLI. Human output by default, `--json` for scripts.
 
-Prefer structured output with `--json` and `--jq`.
+Install
 
-Before any mutation, state the exact repository/resource target and intended
-effect. Mutations remain normal `github` tool calls.
+- Homebrew: `brew install steipete/tap/goplaces`
 
-Examples:
+Config
 
-```json
-{"args":["pr","checks","55","--repo","owner/repo"]}
-```
+- `GOOGLE_PLACES_API_KEY` required.
+- Optional: `GOOGLE_PLACES_BASE_URL` for testing/proxying.
 
-```json
-{"args":["run","view","12345","--repo","owner/repo","--log-failed"]}
-```
+Common commands
 
-```json
-{"args":["issue","list","--repo","owner/repo","--json","number,title"]}
-```
+- Search: `goplaces search "coffee" --open-now --min-rating 4 --limit 5`
+- Bias: `goplaces search "pizza" --lat 40.8 --lng -73.9 --radius-m 3000`
+- Pagination: `goplaces search "pizza" --page-token "NEXT_PAGE_TOKEN"`
+- Resolve: `goplaces resolve "Soho, London" --limit 5`
+- Details: `goplaces details <place_id> --reviews`
+- JSON: `goplaces search "sushi" --json`
 
-Use `api` when a typed `gh` subcommand does not expose the needed operation:
+Notes
 
-```json
-{"args":["api","repos/owner/repo/pulls/55","--jq",".title, .state, .user.login"]}
-```
+- `--no-color` or `NO_COLOR` disables ANSI color.
+- Price levels: 0..4 (free → very expensive).
+- Type filter sends only the first `--type` value (API accepts one).

@@ -1,150 +1,45 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is the package's required Promise adapter boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- The Pi boundary converts index failures to stable tool results. */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import {
-  describeProfileSession,
-  expandProfileQuery,
-  listProfileSessions,
-  searchProfileSessions,
-  type ExpandedMatch,
-  type SearchResult,
-  type SessionDescription,
-  type SessionSummary,
-} from "./src/store.ts";
+---
+name: pi-packages
+description: Inspect catalogue packages and select catalogue or Profile-owned Pi extensions.
+---
 
-const LimitParameter = Type.Optional(
-  Type.Number({
-    description: "Maximum number of results.",
-    minimum: 1,
-    maximum: 100,
-    multipleOf: 1,
-  }),
-);
+# Pi packages in Ziggy
 
-const SessionFilterParameter = Type.Optional(
-  Type.String({
-    description: "Restrict results to one Pi session header ID.",
-    minLength: 1,
-  }),
-);
+The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Approved packages
+are compiled into the Ziggy executable as file trees. The in-process `profile_extensions` tool
+selects a package and records its ID in `extensions.json`; runtime loads only those Profile
+folders. Profile-specific packages live under the same shelf.
+Each package may contain an Agent Skill, executable Pi extension code, or both. `pi-packages`,
+`extension-authoring`, and `ziggy-operations` are required and also sit on disk in the Profile;
+all other packages are optional. A Profile-owned package takes precedence over an approved
+catalogue package with the same ID.
 
-type ToolPayload =
-  | ReadonlyArray<SessionSummary>
-  | ReadonlyArray<SearchResult>
-  | ReadonlyArray<ExpandedMatch>
-  | SessionDescription
-  | { readonly error: string };
+The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf identity;
+`package.json.name` remains independent upstream package metadata. For example, shelf ID `computer-use` can retain the
+package name `@injaneity/pi-computer-use`.
 
-const jsonResult = (payload: ToolPayload) => ({
-  content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-  details: payload,
-});
+Use the in-process `profile_extensions` tool for `list`, `add`, `remove`, and `validate` in the
+owning Profile runtime. Never shell into `ziggy`, invoke a Ziggy CLI command, or edit
+`extensions.json` directly. After authoring a Profile package, call `profile_extensions` with
+`action: "add"` and its shelf ID. Claim success only from the tool's structured result; surface
+operation, stage, code, and message when it fails. Adding validates the package, provisions owned
+automations, and atomically records the selection. Removing pauses extension-owned automation,
+then removes the selection without deleting the copied folder. Reopen the Profile or restart its
+resident Ziggy process after a real selection change. Required packages cannot be added or
+removed.
 
-const toolFailure = () =>
-  jsonResult({
-    error: "Lossless Claw could not read the persisted session index.",
-  });
+To create or change a Profile-owned package, read the `extension-authoring` skill and edit
+`<profile>/extensions/<id>/`. Do not edit the Ziggy catalogue.
 
-const runTool = (operation: () => ToolPayload) => {
-  try {
-    return jsonResult(operation());
-  } catch {
-    return toolFailure();
-  }
-};
+To adopt a third-party package, clone or download its source into an OS temporary directory and
+inspect `package.json` and its declared `pi` paths there; never run install or lifecycle
+scripts. Choose a lowercase kebab-case shelf ID independent of `package.json.name`, copy only
+the package source into `<profile>/extensions/<id>/` (excluding `.git/`, `node_modules/`, and
+temp artifacts), then call `profile_extensions` with `action: "add"` and the shelf ID. The copy
+alone leaves the package inactive; report admission or failure from the tool's structured
+result. Never delete or replace an existing shelf directory; if the destination exists, stop
+and report the collision. Remove only the OS temporary paths this attempt created, and clean
+them on success and failure.
 
-export default function losslessClaw(pi: ExtensionAPI): void {
-  pi.registerTool({
-    name: "lcm_sessions",
-    label: "lcm_sessions",
-    description: "List persisted Pi sessions indexed for recall, newest first.",
-    parameters: Type.Object({
-      limit: LimitParameter,
-      since: Type.Optional(
-        Type.String({
-          description: "Only include sessions active at or after this ISO timestamp.",
-        }),
-      ),
-    }),
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
-      return runTool(() => listProfileSessions(ctx.cwd, parameters));
-    },
-  });
-
-  pi.registerTool({
-    name: "lcm_grep",
-    label: "lcm_grep",
-    description:
-      "Search parsed message, tool-call, tool-result, compaction, and branch-summary text with BM25.",
-    parameters: Type.Object({
-      query: Type.String({ description: "Distinctive terms to search for.", minLength: 1 }),
-      limit: LimitParameter,
-      role: Type.Optional(Type.String({ description: "Restrict results to one message role." })),
-      session: SessionFilterParameter,
-      since: Type.Optional(
-        Type.String({ description: "Only include entries at or after this ISO timestamp." }),
-      ),
-      until: Type.Optional(
-        Type.String({ description: "Only include entries at or before this ISO timestamp." }),
-      ),
-      activeOnly: Type.Optional(
-        Type.Boolean({
-          description: "Only search entries on each session's current active branch.",
-        }),
-      ),
-    }),
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
-      return runTool(() => searchProfileSessions(ctx.cwd, parameters));
-    },
-  });
-
-  pi.registerTool({
-    name: "lcm_expand_query",
-    label: "lcm_expand_query",
-    description: "Search persisted Pi sessions and return bounded neighboring evidence.",
-    parameters: Type.Object({
-      query: Type.String({ description: "Distinctive terms to search for.", minLength: 1 }),
-      limit: LimitParameter,
-      session: SessionFilterParameter,
-      context: Type.Optional(
-        Type.Number({
-          description: "Neighboring indexed entries to include on each side.",
-          minimum: 1,
-          maximum: 10,
-          multipleOf: 1,
-        }),
-      ),
-      activeOnly: Type.Optional(
-        Type.Boolean({
-          description: "Only search entries on each session's current active branch.",
-        }),
-      ),
-    }),
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
-      return runTool(() => expandProfileQuery(ctx.cwd, parameters));
-    },
-  });
-
-  pi.registerTool({
-    name: "lcm_describe",
-    label: "lcm_describe",
-    description: "Describe one persisted Pi session by header ID or indexed path.",
-    parameters: Type.Object({
-      session: Type.String({
-        description: "Pi session header ID or path beneath the Profile.",
-        minLength: 1,
-      }),
-    }),
-    executionMode: "sequential",
-    async execute(_toolCallId, { session }, _signal, _onUpdate, ctx) {
-      return runTool(() => {
-        const description = describeProfileSession(ctx.cwd, session);
-        return description ?? { error: `No indexed Pi session matches ${session}.` };
-      });
-    },
-  });
-}
+The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
+are replaced by the single optional `self-improvement` package.

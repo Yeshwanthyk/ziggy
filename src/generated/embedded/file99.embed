@@ -1,909 +1,518 @@
-//! X11/EWMH enrichment, capture, focus, and guarded XTEST physical input.
-use crate::atspi::{Rect, RootSnapshot};
-use crate::{ErrorCode, ProtocolError};
-use base64::Engine as _;
-use serde_json::{json, Value};
-use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ButtonIndex, ClientMessageData, ClientMessageEvent, ConnectionExt as _,
-    Drawable, EventMask, ImageFormat, ImageOrder, Keycode, MapState, Window, BUTTON_PRESS_EVENT,
-    BUTTON_RELEASE_EVENT, CLIENT_MESSAGE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
-    MOTION_NOTIFY_EVENT,
+//! GDI screenshot capture for Windows.
+//!
+//! Captures window content via GDI (PrintWindow) on Windows.
+//! On non-Windows platforms all entry points return a deterministic
+//! `unsupported_platform` error.
+//!
+//! Selected-window capture only. Desktop capture is not implemented. DXGI and
+//! Windows Graphics Capture are not used.
+
+use serde_json::Value;
+
+use crate::error::{ErrorCode, ProtocolError};
+use crate::refs::{RefStore, WindowRef};
+
+#[cfg(windows)]
+use crate::state::StateId;
+#[cfg(windows)]
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+#[cfg(windows)]
+use image::codecs::png::PngEncoder;
+#[cfg(windows)]
+use image::{imageops::FilterType, ExtendedColorType, ImageEncoder, RgbaImage};
+#[cfg(windows)]
+use serde_json::json;
+
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
+
+/// Capture a screenshot of the target window, optionally extracting UIA
+/// accessibility elements from the same window.
+///
+/// # Arguments
+///
+/// * `store` - RefStore containing the window handle for `target_ref`.
+///   Also receives inserted element refs when `include_elements` is true.
+/// * `target_ref` - Reference to the window to capture.
+/// * `include_elements` - When true, also extracts UIA elements and includes
+///   them in the response as an `axTargets` array.
+///
+/// # Returns
+///
+/// On success, a JSON value with shape:
+/// ```json
+/// {
+///   "target": "@w1",
+///   "capture": { ... },
+///   "warnings": [],
+///   "axTargets": []
+/// }
+/// ```
+/// The `axTargets` field is only present when `include_elements` is true
+/// and at least one element was found.
+///
+/// On non-Windows this always returns `UnsupportedPlatform`.
+pub fn screenshot(
+    store: &mut RefStore,
+    target_ref: &WindowRef,
+    include_elements: bool,
+    max_dimension: Option<u32>,
+) -> Result<Value, ProtocolError> {
+    #[cfg(not(windows))]
+    {
+        let _ = store;
+        let _ = target_ref;
+        let _ = include_elements;
+        let _ = max_dimension;
+        Err(ProtocolError::new(
+            "Screenshot capture is only supported on Windows",
+            ErrorCode::UnsupportedPlatform,
+        ))
+    }
+
+    #[cfg(windows)]
+    {
+        screenshot_impl(store, target_ref, include_elements, max_dimension)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows-specific implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+use windows::Win32::Foundation::{HWND, RECT};
+#[cfg(windows)]
+use windows::Win32::Graphics::Gdi::{
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    SRCCOPY,
 };
-use x11rb::protocol::{composite, xtest};
-use x11rb::rust_connection::RustConnection;
+#[cfg(windows)]
+use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic};
 
-const MAX_CAPTURE_PIXELS: u64 = 64 * 1024 * 1024;
+#[cfg(windows)]
+fn screenshot_impl(
+    store: &mut RefStore,
+    target_ref: &WindowRef,
+    include_elements: bool,
+    max_dimension: Option<u32>,
+) -> Result<Value, ProtocolError> {
+    // 1. Look up the window handle.
+    let native = store.get_window(target_ref).ok_or_else(|| {
+        ProtocolError::new(
+            format!("Window ref '{}' not found", target_ref),
+            ErrorCode::TargetNotFound,
+        )
+    })?;
+    let hwnd = HWND(native.raw() as *mut _);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionKind {
-    X11,
-    Wayland,
-    Headless,
-}
-impl SessionKind {
-    pub fn detect() -> Self {
-        let kind = std::env::var("XDG_SESSION_TYPE")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if kind == "wayland" || (kind.is_empty() && std::env::var_os("WAYLAND_DISPLAY").is_some()) {
-            Self::Wayland
-        } else if kind == "x11" || std::env::var_os("DISPLAY").is_some() {
-            Self::X11
-        } else {
-            Self::Headless
-        }
-    }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::X11 => "x11",
-            Self::Wayland => "wayland",
-            Self::Headless => "headless",
-        }
-    }
-}
+    let mut warnings: Vec<String> = Vec::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PhysicalPolicy {
-    AxOnly,
-    Background,
-    Default,
-    Foreground,
-}
-impl PhysicalPolicy {
-    pub fn parse(value: Option<&str>) -> Result<Self, ProtocolError> {
-        match value.unwrap_or("default") {
-            "ax_only" => Ok(Self::AxOnly),
-            "background" => Ok(Self::Background),
-            "default" => Ok(Self::Default),
-            "foreground" => Ok(Self::Foreground),
-            value => Err(invalid(format!("Unknown delivery policy '{value}'"))),
-        }
+    // 2. Check for minimized state.
+    let is_minimized = unsafe { IsIconic(hwnd).as_bool() };
+    if is_minimized {
+        warnings.push("window_minimized".to_owned());
     }
-    pub fn require_physical(self, session: SessionKind) -> Result<(), ProtocolError> {
-        if session == SessionKind::Headless {
-            return Err(err(
-                "Physical input is unavailable in a headless Linux session",
-                ErrorCode::CoordinateBlocked,
+
+    // 3. Get the window rect so we know capture dimensions.
+    let (x, y, width, height) = unsafe {
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return Err(ProtocolError::new(
+                "Failed to get window bounds",
+                ErrorCode::CaptureFailed,
             ));
         }
-        if session != SessionKind::X11 {
-            return Err(err(
-                "XTEST is unavailable in native Wayland sessions; use AT-SPI",
-                ErrorCode::CapabilityDeferred,
-            ));
-        }
-        match self {
-            Self::AxOnly => Err(err(
-                "ax_only policy forbids XTEST and window focus",
-                ErrorCode::CoordinateBlocked,
-            )),
-            Self::Background => Err(err(
-                "Background policy forbids global XTEST input",
-                ErrorCode::ForegroundRequired,
-            )),
-            Self::Default | Self::Foreground => Ok(()),
-        }
-    }
-}
+        let w = (rect.right - rect.left).max(0);
+        let h = (rect.bottom - rect.top).max(0);
+        (rect.left, rect.top, w, h)
+    };
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct WindowInfo {
-    pub id: u32,
-    pub pid: u64,
-    pub title: String,
-    pub frame: Rect,
-    pub focused: bool,
-    pub minimized: bool,
-    pub z_order: usize,
-}
-pub struct Capture {
-    pub png_base64: String,
-    pub width: u16,
-    pub height: u16,
-    pub source: &'static str,
-    pub warnings: Vec<String>,
-}
-pub fn available() -> bool {
-    SessionKind::detect() == SessionKind::X11 && connect().is_ok()
-}
-
-pub fn list_windows() -> Result<Vec<WindowInfo>, ProtocolError> {
-    let (conn, screen) = connect()?;
-    let root = conn.setup().roots[screen].root;
-    let a = Atoms::new(&conn)?;
-    let active = property32(&conn, root, a.active, AtomEnum::WINDOW.into())
-        .first()
-        .copied();
-    let mut windows = property32(&conn, root, a.stacking, AtomEnum::WINDOW.into());
-    if windows.is_empty() {
-        windows = property32(&conn, root, a.clients, AtomEnum::WINDOW.into());
-    }
-    let mut out = Vec::new();
-    for (z_order, id) in windows.into_iter().rev().enumerate() {
-        let Ok(g) = conn
-            .get_geometry(id)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .ok_or(())
-        else {
-            continue;
-        };
-        let translated = conn
-            .translate_coordinates(id, root, 0, 0)
-            .ok()
-            .and_then(|c| c.reply().ok());
-        let states = property32(&conn, id, a.state, AtomEnum::ATOM.into());
-        out.push(WindowInfo {
-            id,
-            pid: property32(&conn, id, a.pid, AtomEnum::CARDINAL.into())
-                .first()
-                .copied()
-                .unwrap_or(0) as u64,
-            title: title(&conn, id, &a),
-            frame: Rect {
-                x: translated
-                    .as_ref()
-                    .map(|r| i32::from(r.dst_x))
-                    .unwrap_or(i32::from(g.x)),
-                y: translated
-                    .as_ref()
-                    .map(|r| i32::from(r.dst_y))
-                    .unwrap_or(i32::from(g.y)),
-                width: i32::from(g.width),
-                height: i32::from(g.height),
+    if width == 0 || height == 0 {
+        warnings.push("zero_sized_window".to_owned());
+        // Return capture metadata with zero dimensions and no image data.
+        let state_id = StateId::fresh("s");
+        return Ok(json!({
+            "target": target_ref.to_string(),
+            "capture": {
+                "stateId": state_id,
+                "x": x,
+                "y": y,
+                "width": 0,
+                "height": 0,
+                "imageFormat": "png",
+                "imageBase64": null,
             },
-            focused: active == Some(id),
-            minimized: states.contains(&a.hidden),
-            z_order,
-        });
+            "warnings": warnings,
+        }));
     }
-    Ok(out)
-}
 
-pub fn enrich_roots(roots: &mut [RootSnapshot], windows: &[WindowInfo]) {
-    let mut used = Vec::new();
-    for root in roots {
-        let best = windows
-            .iter()
-            .filter(|w| w.pid != 0 && w.pid == root.pid && !used.contains(&w.id))
-            .min_by_key(|w| {
-                let title = if !root.name.is_empty()
-                    && (w.title.contains(&root.name) || root.name.contains(&w.title))
-                {
-                    0
-                } else {
-                    1_000_000
-                };
-                title + distance(root.frame.as_ref(), &w.frame)
-            });
-        if let Some(w) = best {
-            used.push(w.id);
-            root.x11_window = Some(w.id);
-            root.frame = Some(w.frame.clone());
-            root.is_focused = w.focused;
-            root.is_minimized = w.minimized;
-            root.z_order = Some(w.z_order);
-            if root.name.is_empty() {
-                root.name.clone_from(&w.title);
+    // 4. GDI capture (unsafe FFI block).
+    // SAFETY: All GDI objects are created and destroyed within this
+    // function.  Object lifetimes follow the Acquire → Use → Release
+    // pattern with proper cleanup on every error path.
+    let (png_base64, output_width, output_height) =
+        unsafe { gdi_capture_to_base64(hwnd, x, y, width, height, max_dimension) }?;
+
+    let state_id = StateId::fresh("s");
+
+    // Build the base response.
+    let mut result = json!({
+        "target": target_ref.to_string(),
+        "capture": {
+            "stateId": state_id,
+            "x": x,
+            "y": y,
+            "width": output_width,
+            "height": output_height,
+            "imageFormat": "png",
+            "imageBase64": png_base64,
+        },
+        "warnings": warnings,
+    });
+
+    // 5. Optionally extract UIA accessibility elements.
+    if include_elements {
+        let elements = crate::uia::extract_elements(store, hwnd.0 as isize);
+        if !elements.is_empty() {
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("axTargets".to_owned(), Value::Array(elements));
             }
         }
     }
-}
-fn distance(a: Option<&Rect>, b: &Rect) -> i64 {
-    a.map(|a| {
-        i64::from(
-            (a.x - b.x).abs()
-                + (a.y - b.y).abs()
-                + (a.width - b.width).abs()
-                + (a.height - b.height).abs(),
-        )
-    })
-    .unwrap_or(0)
+
+    Ok(result)
 }
 
-pub fn focus_window(window: Window, policy: PhysicalPolicy) -> Result<Value, ProtocolError> {
-    policy.require_physical(SessionKind::detect())?;
-    let (conn, screen) = connect()?;
-    let root = conn.setup().roots[screen].root;
-    let atom = intern(&conn, "_NET_ACTIVE_WINDOW")?;
-    let event = ClientMessageEvent {
-        response_type: CLIENT_MESSAGE_EVENT,
-        format: 32,
-        sequence: 0,
-        window,
-        type_: atom,
-        data: ClientMessageData::from([2, 0, 0, 0, 0]),
-    };
-    conn.send_event(
-        false,
-        root,
-        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-        event,
-    )
-    .map_err(xerr)?
-    .check()
-    .map_err(xerr)?;
-    conn.flush().map_err(xerr)?;
-    Ok(json!({"focused":true,"delivery":"ewmh","windowId":window}))
-}
-
-pub fn capture_window(
-    window: Window,
+/// Perform GDI capture of the given window and return a base64-encoded PNG.
+///
+/// # Safety
+///
+/// Caller must provide a valid HWND and positive dimensions.
+#[cfg(windows)]
+unsafe fn gdi_capture_to_base64(
+    hwnd: HWND,
+    window_x: i32,
+    window_y: i32,
+    width: i32,
+    height: i32,
     max_dimension: Option<u32>,
-) -> Result<Capture, ProtocolError> {
-    let (conn, _) = connect()?;
-    let g = conn
-        .get_geometry(window)
-        .map_err(xerr)?
-        .reply()
-        .map_err(xerr)?;
-    let pixels = u64::from(g.width) * u64::from(g.height);
-    if pixels == 0 || pixels > MAX_CAPTURE_PIXELS {
-        return Err(err(
-            format!(
-                "Refusing X11 capture of {}x{} window (64MP limit)",
-                g.width, g.height
-            ),
+) -> Result<(String, u32, u32), ProtocolError> {
+    // Acquire the window DC.
+    let hdc_window = GetDC(hwnd);
+    if hdc_window.is_invalid() {
+        return Err(ProtocolError::new("GetDC failed", ErrorCode::CaptureFailed));
+    }
+
+    // Create a compatible memory DC.
+    let hdc_mem = CreateCompatibleDC(hdc_window);
+    if hdc_mem.is_invalid() {
+        ReleaseDC(hwnd, hdc_window);
+        return Err(ProtocolError::new(
+            "CreateCompatibleDC failed",
             ErrorCode::CaptureFailed,
         ));
     }
-    let pixmap = conn.generate_id().map_err(xerr)?;
-    let mut warnings = Vec::new();
-    let (drawable, source) = match composite::name_window_pixmap(&conn, window, pixmap)
-        .ok()
-        .and_then(|c| c.check().ok())
-        .ok_or(())
-    {
-        Ok(()) => (pixmap as Drawable, "xcomposite"),
-        Err(_) => {
-            warnings.push(
-                "XComposite unavailable; GetImage fallback may contain stale or obscured pixels"
-                    .into(),
-            );
-            (window as Drawable, "get_image")
-        }
+
+    // Create a compatible bitmap.
+    let hbitmap = CreateCompatibleBitmap(hdc_window, width, height);
+    if hbitmap.is_invalid() {
+        let _ = DeleteDC(hdc_mem);
+        ReleaseDC(hwnd, hdc_window);
+        return Err(ProtocolError::new(
+            "CreateCompatibleBitmap failed",
+            ErrorCode::CaptureFailed,
+        ));
+    }
+
+    // Select bitmap into memory DC (save old to restore later).
+    let old_bitmap = SelectObject(hdc_mem, hbitmap);
+
+    // Render the window content using PrintWindow (client area).
+    let pw_ok = PrintWindow(hwnd, hdc_mem, PRINT_WINDOW_FLAGS(0));
+    if !pw_ok.as_bool() {
+        // PrintWindow can fail for various reasons.  We note it but
+        // continue — the DC might still have partial content.
+    }
+
+    // Prepare BITMAPINFO for GetDIBits (request 32-bit BGRA top-down).
+    let header = BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: width,
+        biHeight: -height, // negative = top-down
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: BI_RGB.0,
+        biSizeImage: 0,
+        biXPelsPerMeter: 0,
+        biYPelsPerMeter: 0,
+        biClrUsed: 0,
+        biClrImportant: 0,
     };
-    let image = conn
-        .get_image(
-            ImageFormat::Z_PIXMAP,
-            drawable,
-            0,
-            0,
-            g.width,
-            g.height,
-            u32::MAX,
-        )
-        .map_err(xerr)?
-        .reply()
-        .map_err(|e| {
-            err(
-                format!("X11 GetImage failed: {e}"),
+    let mut bmi = BITMAPINFO {
+        bmiHeader: header,
+        ..Default::default()
+    };
+
+    // Allocate the pixel buffer.
+    let buf_size = (width as usize) * (height as usize) * 4;
+    let mut bits: Vec<u8> = vec![0u8; buf_size];
+
+    let mut dib_ok = GetDIBits(
+        hdc_mem,
+        hbitmap,
+        0,
+        height as u32,
+        Some(bits.as_mut_ptr() as *mut std::ffi::c_void),
+        &mut bmi,
+        DIB_RGB_COLORS,
+    );
+
+    // PrintWindow frequently returns a successful but black bitmap for GPU
+    // surfaces (Chromium/Electron). Fall back to the compositor-visible screen
+    // pixels only when the semantic capture failed or is effectively blank.
+    let print_window_blank = bits
+        .chunks_exact(4)
+        .step_by(97)
+        .all(|pixel| pixel[0] < 8 && pixel[1] < 8 && pixel[2] < 8);
+    if !pw_ok.as_bool() || dib_ok == 0 || print_window_blank {
+        let screen_dc = GetDC(HWND(std::ptr::null_mut()));
+        if !screen_dc.is_invalid()
+            && BitBlt(
+                hdc_mem, 0, 0, width, height, screen_dc, window_x, window_y, SRCCOPY,
+            )
+            .is_ok()
+        {
+            dib_ok = GetDIBits(
+                hdc_mem,
+                hbitmap,
+                0,
+                height as u32,
+                Some(bits.as_mut_ptr() as *mut std::ffi::c_void),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
+        }
+        if !screen_dc.is_invalid() {
+            ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        }
+    }
+
+    // Restore old bitmap and destroy GDI objects.
+    SelectObject(hdc_mem, old_bitmap);
+    let _ = DeleteObject(HGDIOBJ(hbitmap.0));
+    let _ = DeleteDC(hdc_mem);
+    ReleaseDC(hwnd, hdc_window);
+
+    if dib_ok == 0 {
+        return Err(ProtocolError::new(
+            "GetDIBits failed to retrieve bitmap data",
+            ErrorCode::CaptureFailed,
+        ));
+    }
+
+    // Convert BGRA → RGBA (GDI returns B,G,R,A; PNG expects R,G,B,A).
+    for chunk in bits.chunks_exact_mut(4) {
+        chunk.swap(0, 2);
+    }
+
+    let source_width = width as u32;
+    let source_height = height as u32;
+    let (output_width, output_height) = match max_dimension.filter(|limit| *limit > 0) {
+        Some(limit) if source_width.max(source_height) > limit => {
+            let scale = limit as f64 / source_width.max(source_height) as f64;
+            (
+                (source_width as f64 * scale).round().max(1.0) as u32,
+                (source_height as f64 * scale).round().max(1.0) as u32,
+            )
+        }
+        _ => (source_width, source_height),
+    };
+    let pixels = if (output_width, output_height) == (source_width, source_height) {
+        bits
+    } else {
+        let source = RgbaImage::from_raw(source_width, source_height, bits).ok_or_else(|| {
+            ProtocolError::new(
+                "Captured bitmap had an invalid byte length",
                 ErrorCode::CaptureFailed,
             )
         })?;
-    if source == "xcomposite" {
-        let _ = conn.free_pixmap(pixmap);
-    }
-    let rgba = decode(
-        &image.data,
-        g.width,
-        g.height,
-        image.depth,
-        conn.setup().image_byte_order,
-    )?;
-    let (output_width, output_height) = scaled_dimensions(g.width, g.height, max_dimension);
-    let rgba = resize_rgba(&rgba, g.width, g.height, output_width, output_height);
-    let mut encoded = Vec::new();
-    {
-        let mut encoder =
-            png::Encoder::new(&mut encoded, output_width.into(), output_height.into());
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(capture_err)?;
-        writer.write_image_data(&rgba).map_err(capture_err)?;
-    }
-    Ok(Capture {
-        png_base64: base64::engine::general_purpose::STANDARD.encode(encoded),
-        width: output_width,
-        height: output_height,
-        source,
-        warnings,
-    })
-}
-fn scaled_dimensions(width: u16, height: u16, max_dimension: Option<u32>) -> (u16, u16) {
-    let largest = u32::from(width.max(height));
-    let Some(limit) = max_dimension.filter(|limit| *limit > 0 && *limit < largest) else {
-        return (width, height);
+        image::imageops::resize(&source, output_width, output_height, FilterType::Triangle)
+            .into_raw()
     };
-    let scale = f64::from(limit) / f64::from(largest);
-    (
-        (f64::from(width) * scale).round().max(1.0) as u16,
-        (f64::from(height) * scale).round().max(1.0) as u16,
-    )
-}
 
-fn resize_rgba(
-    source: &[u8],
-    source_width: u16,
-    source_height: u16,
-    width: u16,
-    height: u16,
-) -> Vec<u8> {
-    if (source_width, source_height) == (width, height) {
-        return source.to_vec();
-    }
-    let mut output = vec![0; usize::from(width) * usize::from(height) * 4];
-    for y in 0..height {
-        let source_y = (u32::from(y) * u32::from(source_height) / u32::from(height)) as usize;
-        for x in 0..width {
-            let source_x = (u32::from(x) * u32::from(source_width) / u32::from(width)) as usize;
-            let from = (source_y * usize::from(source_width) + source_x) * 4;
-            let to = (usize::from(y) * usize::from(width) + usize::from(x)) * 4;
-            output[to..to + 4].copy_from_slice(&source[from..from + 4]);
-        }
-    }
-    output
-}
-
-fn decode(
-    data: &[u8],
-    w: u16,
-    h: u16,
-    depth: u8,
-    order: ImageOrder,
-) -> Result<Vec<u8>, ProtocolError> {
-    let expected = usize::from(w) * usize::from(h) * 4;
-    if !matches!(depth, 24 | 32) || data.len() < expected {
-        return Err(err(
-            format!(
-                "Unsupported X11 image layout: depth {depth}, {} bytes",
-                data.len()
-            ),
-            ErrorCode::CaptureFailed,
-        ));
-    }
-    let mut out = Vec::with_capacity(expected);
-    for p in data[..expected].chunks_exact(4) {
-        let (r, g, b) = if order == ImageOrder::LSB_FIRST {
-            (p[2], p[1], p[0])
-        } else {
-            (p[1], p[2], p[3])
-        };
-        out.extend_from_slice(&[r, g, b, 255]);
-    }
-    Ok(out)
-}
-
-pub struct Input {
-    conn: RustConnection,
-    root: Window,
-    target: Window,
-}
-impl Input {
-    pub fn connect(policy: PhysicalPolicy, target: Window) -> Result<Self, ProtocolError> {
-        policy.require_physical(SessionKind::detect())?;
-        let (conn, screen) = connect()?;
-        let root = conn.setup().roots[screen].root;
-        validate_target(&conn, root, target)?;
-        prepare_focus(&conn, root, target, policy)?;
-        xtest::get_version(&conn, 2, 2)
-            .map_err(xerr)?
-            .reply()
+    // Encode to PNG in memory.
+    let mut png_data: Vec<u8> = Vec::new();
+    {
+        let encoder = PngEncoder::new(&mut png_data);
+        encoder
+            .write_image(
+                &pixels,
+                output_width,
+                output_height,
+                ExtendedColorType::Rgba8,
+            )
             .map_err(|e| {
-                err(
-                    format!("XTEST unavailable: {e}"),
-                    ErrorCode::CapabilityDeferred,
+                ProtocolError::new(
+                    format!("PNG encoding failed: {e}"),
+                    ErrorCode::CaptureFailed,
                 )
             })?;
-        Ok(Self { conn, root, target })
     }
-    pub fn move_pointer(&self, x: i32, y: i32) -> Result<(), ProtocolError> {
-        self.preflight_point(x, y)?;
-        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)
-    }
-    pub fn click(&self, x: i32, y: i32, button: &str, count: u64) -> Result<(), ProtocolError> {
-        let b = button_detail(button)?;
-        self.preflight_point(x, y)?;
-        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
-        for _ in 0..count.clamp(1, 3) {
-            self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
-            self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)?;
-        }
-        Ok(())
-    }
-    pub fn scroll(&self, x: i32, y: i32, dx: f64, dy: f64) -> Result<(), ProtocolError> {
-        self.preflight_point(x, y)?;
-        self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
-        for _ in 0..dy.abs().ceil().clamp(0., 100.) as usize {
-            self.button(if dy < 0. { 4 } else { 5 })?;
-        }
-        for _ in 0..dx.abs().ceil().clamp(0., 100.) as usize {
-            self.button(if dx < 0. { 6 } else { 7 })?;
-        }
-        Ok(())
-    }
-    pub fn drag(&self, path: &[(i32, i32)], button: &str) -> Result<(), ProtocolError> {
-        if path.len() < 2 {
-            return Err(invalid("drag requires at least two points"));
-        }
-        let b = button_detail(button)?;
-        for &(x, y) in path {
-            self.preflight_point(x, y)?;
-        }
-        self.fake(MOTION_NOTIFY_EVENT, 0, path[0].0, path[0].1)?;
-        self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
-        for &(x, y) in &path[1..] {
-            self.fake(MOTION_NOTIFY_EVENT, 0, x, y)?;
-        }
-        self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)
-    }
-    pub fn type_text(&self, text: &str) -> Result<(), ProtocolError> {
-        for ch in text.chars() {
-            let (sym, shift) = char_keysym(ch)
-                .ok_or_else(|| invalid(format!("Unsupported XTEST character {ch:?}")))?;
-            if shift {
-                self.key(0xffe1, KEY_PRESS_EVENT)?;
-            }
-            self.key(sym, KEY_PRESS_EVENT)?;
-            self.key(sym, KEY_RELEASE_EVENT)?;
-            if shift {
-                self.key(0xffe1, KEY_RELEASE_EVENT)?;
-            }
-        }
-        Ok(())
-    }
-    pub fn keypress(&self, names: &[&str]) -> Result<(), ProtocolError> {
-        if names.is_empty() {
-            return Err(invalid("keypress requires keys"));
-        }
-        let syms = names
-            .iter()
-            .map(|n| named_keysym(n).ok_or_else(|| invalid(format!("Unsupported key '{n}'"))))
-            .collect::<Result<Vec<_>, _>>()?;
-        for &s in &syms {
-            self.key(s, KEY_PRESS_EVENT)?;
-        }
-        for &s in syms.iter().rev() {
-            self.key(s, KEY_RELEASE_EVENT)?;
-        }
-        Ok(())
-    }
-    fn preflight_point(&self, x: i32, y: i32) -> Result<(), ProtocolError> {
-        validate_target(&self.conn, self.root, self.target)?;
-        if active_window(&self.conn, self.root)? != Some(self.target) {
-            return Err(err(
-                "Refusing XTEST delivery because the owning window is no longer active",
-                ErrorCode::ForegroundRequired,
-            ));
-        }
-        let hit = self
-            .conn
-            .translate_coordinates(self.root, self.root, clamp_i16(x), clamp_i16(y))
-            .map_err(xerr)?
-            .reply()
-            .map_err(xerr)?
-            .child;
-        if hit == 0 || !windows_related(&self.conn, hit, self.target)? {
-            return Err(err(
-                "Refusing XTEST pointer delivery because the target point is outside or occluded",
-                ErrorCode::CoordinateBlocked,
-            ));
-        }
-        Ok(())
-    }
-    fn key(&self, sym: u32, event: u8) -> Result<(), ProtocolError> {
-        let code = self
-            .keycode(sym)?
-            .ok_or_else(|| invalid(format!("No keycode for keysym 0x{sym:x}")))?;
-        self.fake(event, code, 0, 0)
-    }
-    fn keycode(&self, sym: u32) -> Result<Option<Keycode>, ProtocolError> {
-        let setup = self.conn.setup();
-        let min = setup.min_keycode;
-        let count = setup.max_keycode - min + 1;
-        let m = self
-            .conn
-            .get_keyboard_mapping(min, count)
-            .map_err(xerr)?
-            .reply()
-            .map_err(xerr)?;
-        Ok(m.keysyms
-            .chunks(usize::from(m.keysyms_per_keycode))
-            .position(|s| s.contains(&sym))
-            .map(|i| min + i as u8))
-    }
-    fn button(&self, b: u8) -> Result<(), ProtocolError> {
-        self.fake(BUTTON_PRESS_EVENT, b, 0, 0)?;
-        self.fake(BUTTON_RELEASE_EVENT, b, 0, 0)
-    }
-    fn fake(&self, event: u8, detail: u8, x: i32, y: i32) -> Result<(), ProtocolError> {
-        validate_target(&self.conn, self.root, self.target)?;
-        if active_window(&self.conn, self.root)? != Some(self.target) {
-            return Err(err(
-                "Refusing XTEST delivery because the owning window is no longer active",
-                ErrorCode::ForegroundRequired,
-            ));
-        }
-        xtest::fake_input(
-            &self.conn,
-            event,
-            detail,
-            0,
-            self.root,
-            clamp_i16(x),
-            clamp_i16(y),
-            0,
-        )
-        .map_err(xerr)?
-        .check()
-        .map_err(xerr)?;
-        self.conn.flush().map_err(xerr)
-    }
+
+    // Base64-encode the PNG bytes.
+    Ok((BASE64.encode(&png_data), output_width, output_height))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FocusPlan {
-    Confirm,
-    ActivateAndConfirm,
-}
-
-fn focus_plan(policy: PhysicalPolicy, active: bool) -> Result<FocusPlan, ProtocolError> {
-    match policy {
-        PhysicalPolicy::Foreground => Ok(FocusPlan::ActivateAndConfirm),
-        PhysicalPolicy::Default if active => Ok(FocusPlan::Confirm),
-        PhysicalPolicy::Default => Err(err(
-            "Default policy requires the owning X11 window to already be active",
-            ErrorCode::ForegroundRequired,
-        )),
-        PhysicalPolicy::AxOnly | PhysicalPolicy::Background => {
-            policy.require_physical(SessionKind::X11)?;
-            unreachable!()
-        }
-    }
-}
-fn prepare_focus(
-    c: &RustConnection,
-    root: Window,
-    target: Window,
-    policy: PhysicalPolicy,
-) -> Result<(), ProtocolError> {
-    let plan = focus_plan(policy, active_window(c, root)? == Some(target))?;
-    if plan == FocusPlan::ActivateAndConfirm {
-        request_active_window(c, root, target)?;
-    }
-    for _ in 0..20 {
-        if active_window(c, root)? == Some(target) {
-            return Ok(());
-        }
-        if plan == FocusPlan::Confirm {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    Err(err(
-        "Window manager did not activate the owning X11 window; refusing XTEST delivery",
-        ErrorCode::ForegroundRequired,
-    ))
-}
-fn validate_target(c: &RustConnection, root: Window, target: Window) -> Result<(), ProtocolError> {
-    if target == 0 || target == root {
-        return Err(err(
-            "XTEST requires a specific owning X11 window",
-            ErrorCode::CoordinateBlocked,
-        ));
-    }
-    let attributes = c
-        .get_window_attributes(target)
-        .map_err(xerr)?
-        .reply()
-        .map_err(|_| {
-            err(
-                "Owning X11 window no longer exists",
-                ErrorCode::TargetNotFound,
-            )
-        })?;
-    let geometry = c.get_geometry(target).map_err(xerr)?.reply().map_err(|_| {
-        err(
-            "Owning X11 window has no usable geometry",
-            ErrorCode::CoordinateBlocked,
-        )
-    })?;
-    let atoms = Atoms::new(c)?;
-    if attributes.map_state != MapState::VIEWABLE
-        || geometry.width == 0
-        || geometry.height == 0
-        || property32(c, target, atoms.state, AtomEnum::ATOM.into()).contains(&atoms.hidden)
-    {
-        return Err(err(
-            "Owning X11 window is not mapped and visible",
-            ErrorCode::CoordinateBlocked,
-        ));
-    }
-    Ok(())
-}
-fn active_window(c: &RustConnection, root: Window) -> Result<Option<Window>, ProtocolError> {
-    let atom = intern(c, "_NET_ACTIVE_WINDOW")?;
-    Ok(property32(c, root, atom, AtomEnum::WINDOW.into())
-        .first()
-        .copied())
-}
-fn request_active_window(
-    c: &RustConnection,
-    root: Window,
-    target: Window,
-) -> Result<(), ProtocolError> {
-    let atom = intern(c, "_NET_ACTIVE_WINDOW")?;
-    let event = ClientMessageEvent {
-        response_type: CLIENT_MESSAGE_EVENT,
-        format: 32,
-        sequence: 0,
-        window: target,
-        type_: atom,
-        data: ClientMessageData::from([2, 0, 0, 0, 0]),
-    };
-    c.send_event(
-        false,
-        root,
-        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-        event,
-    )
-    .map_err(xerr)?
-    .check()
-    .map_err(xerr)?;
-    c.flush().map_err(xerr)
-}
-fn windows_related(c: &RustConnection, hit: Window, target: Window) -> Result<bool, ProtocolError> {
-    fn ancestors(c: &RustConnection, mut w: Window) -> Result<Vec<Window>, ProtocolError> {
-        let mut out = vec![w];
-        for _ in 0..64 {
-            let tree = c.query_tree(w).map_err(xerr)?.reply().map_err(xerr)?;
-            if tree.parent == 0 || tree.parent == w {
-                break;
-            }
-            w = tree.parent;
-            out.push(w);
-        }
-        Ok(out)
-    }
-    Ok(ancestors(c, hit)?.contains(&target) || ancestors(c, target)?.contains(&hit))
-}
-fn clamp_i16(value: i32) -> i16 {
-    value.clamp(i16::MIN.into(), i16::MAX.into()) as i16
-}
-
-fn button_detail(b: &str) -> Result<u8, ProtocolError> {
-    match b {
-        "left" => Ok(ButtonIndex::M1.into()),
-        "middle" => Ok(ButtonIndex::M2.into()),
-        "right" => Ok(ButtonIndex::M3.into()),
-        _ => Err(invalid(format!("Unsupported mouse button '{b}'"))),
-    }
-}
-fn char_keysym(c: char) -> Option<(u32, bool)> {
-    if c == '\n' {
-        return Some((0xff0d, false));
-    }
-    if c == '\t' {
-        return Some((0xff09, false));
-    }
-    if c == ' ' || c.is_ascii_lowercase() || c.is_ascii_digit() {
-        return Some((c as u32, false));
-    }
-    if c.is_ascii_uppercase() {
-        return Some((c.to_ascii_lowercase() as u32, true));
-    }
-    let shifted = "~!@#$%^&*()_+{}|:\"<>?";
-    let base = "`1234567890-=[]\\;',./";
-    shifted
-        .chars()
-        .position(|v| v == c)
-        .and_then(|i| base.chars().nth(i))
-        .map(|v| (v as u32, true))
-}
-fn named_keysym(n: &str) -> Option<u32> {
-    match n.to_ascii_lowercase().as_str() {
-        "enter" | "return" => Some(0xff0d),
-        "tab" => Some(0xff09),
-        "escape" | "esc" => Some(0xff1b),
-        "backspace" => Some(0xff08),
-        "delete" => Some(0xffff),
-        "space" => Some(0x20),
-        "left" => Some(0xff51),
-        "up" => Some(0xff52),
-        "right" => Some(0xff53),
-        "down" => Some(0xff54),
-        "home" => Some(0xff50),
-        "end" => Some(0xff57),
-        "pageup" => Some(0xff55),
-        "pagedown" => Some(0xff56),
-        "ctrl" | "control" => Some(0xffe3),
-        "shift" => Some(0xffe1),
-        "alt" | "option" => Some(0xffe9),
-        "meta" | "super" | "cmd" | "command" => Some(0xffeb),
-        v if v.len() == 1 => v.chars().next().map(|c| c as u32),
-        v if v.starts_with('f') => v[1..]
-            .parse::<u32>()
-            .ok()
-            .filter(|n| (1..=35).contains(n))
-            .map(|n| 0xffbd + n),
-        _ => None,
-    }
-}
-
-struct Atoms {
-    clients: Atom,
-    stacking: Atom,
-    active: Atom,
-    pid: Atom,
-    name: Atom,
-    state: Atom,
-    hidden: Atom,
-    utf8: Atom,
-}
-impl Atoms {
-    fn new(c: &RustConnection) -> Result<Self, ProtocolError> {
-        Ok(Self {
-            clients: intern(c, "_NET_CLIENT_LIST")?,
-            stacking: intern(c, "_NET_CLIENT_LIST_STACKING")?,
-            active: intern(c, "_NET_ACTIVE_WINDOW")?,
-            pid: intern(c, "_NET_WM_PID")?,
-            name: intern(c, "_NET_WM_NAME")?,
-            state: intern(c, "_NET_WM_STATE")?,
-            hidden: intern(c, "_NET_WM_STATE_HIDDEN")?,
-            utf8: intern(c, "UTF8_STRING")?,
-        })
-    }
-}
-fn connect() -> Result<(RustConnection, usize), ProtocolError> {
-    x11rb::connect(None).map_err(|e| {
-        err(
-            format!("X11 unavailable: {e}"),
-            ErrorCode::CapabilityDeferred,
-        )
-    })
-}
-fn intern(c: &RustConnection, n: &str) -> Result<Atom, ProtocolError> {
-    c.intern_atom(false, n.as_bytes())
-        .map_err(xerr)?
-        .reply()
-        .map(|r| r.atom)
-        .map_err(xerr)
-}
-fn property32(c: &RustConnection, w: Window, p: Atom, t: Atom) -> Vec<u32> {
-    c.get_property(false, w, p, t, 0, u32::MAX)
-        .ok()
-        .and_then(|v| v.reply().ok())
-        .and_then(|v| v.value32().map(Iterator::collect))
-        .unwrap_or_default()
-}
-fn title(c: &RustConnection, w: Window, a: &Atoms) -> String {
-    let utf = c
-        .get_property(false, w, a.name, a.utf8, 0, 4096)
-        .ok()
-        .and_then(|v| v.reply().ok())
-        .and_then(|v| String::from_utf8(v.value).ok())
-        .unwrap_or_default();
-    if !utf.is_empty() {
-        return utf;
-    }
-    c.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 4096)
-        .ok()
-        .and_then(|v| v.reply().ok())
-        .map(|v| String::from_utf8_lossy(&v.value).into_owned())
-        .unwrap_or_default()
-}
-fn err(m: impl Into<String>, code: ErrorCode) -> ProtocolError {
-    ProtocolError::new(m, code)
-}
-fn invalid(m: impl Into<String>) -> ProtocolError {
-    err(m, ErrorCode::InvalidRequest)
-}
-fn xerr(e: impl std::fmt::Display) -> ProtocolError {
-    err(format!("X11 request failed: {e}"), ErrorCode::InternalError)
-}
-fn capture_err(e: impl std::fmt::Display) -> ProtocolError {
-    err(
-        format!("PNG encoding failed: {e}"),
-        ErrorCode::CaptureFailed,
-    )
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::*;
+    use crate::error::ErrorCode;
+    #[cfg(windows)]
+    use crate::refs::NativeHandle;
+    use crate::state::StateId;
+
+    // -- Platform support check (non-Windows) -------------------------------
+
     #[test]
-    fn policy_guards() {
-        assert_eq!(
-            PhysicalPolicy::AxOnly
-                .require_physical(SessionKind::X11)
-                .unwrap_err()
-                .code,
-            ErrorCode::CoordinateBlocked
-        );
-        assert_eq!(
-            PhysicalPolicy::Background
-                .require_physical(SessionKind::X11)
-                .unwrap_err()
-                .code,
-            ErrorCode::ForegroundRequired
-        );
-        assert!(PhysicalPolicy::Foreground
-            .require_physical(SessionKind::X11)
-            .is_ok());
-        assert!(PhysicalPolicy::Default
-            .require_physical(SessionKind::Headless)
-            .is_err());
+    #[cfg(not(windows))]
+    fn test_screenshot_unsupported_platform() {
+        let mut store = RefStore::new();
+        let wref = WindowRef { id: 1 };
+        let result = screenshot(&mut store, &wref, false, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnsupportedPlatform);
     }
+
+    // -- Response shape tests (cross-platform) -----------------------------
+
     #[test]
-    fn focus_policy_is_deterministic() {
-        assert_eq!(
-            focus_plan(PhysicalPolicy::Foreground, false).unwrap(),
-            FocusPlan::ActivateAndConfirm
-        );
-        assert_eq!(
-            focus_plan(PhysicalPolicy::Foreground, true).unwrap(),
-            FocusPlan::ActivateAndConfirm
-        );
-        assert_eq!(
-            focus_plan(PhysicalPolicy::Default, true).unwrap(),
-            FocusPlan::Confirm
-        );
-        assert_eq!(
-            focus_plan(PhysicalPolicy::Default, false).unwrap_err().code,
-            ErrorCode::ForegroundRequired
-        );
-        assert_eq!(
-            focus_plan(PhysicalPolicy::Background, true)
-                .unwrap_err()
-                .code,
-            ErrorCode::ForegroundRequired
-        );
+    fn test_screenshot_response_shape_json() {
+        // Verify that a successful screenshot response serialises to the
+        // expected JSON shape.  This test does not require a real window.
+        let state_id = StateId::fresh("s");
+        let response = serde_json::json!({
+            "target": "@w1",
+            "capture": {
+                "stateId": state_id,
+                "width": 800,
+                "height": 600,
+                "imageFormat": "png",
+                "imageBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            },
+            "warnings": [],
+        });
+
+        // Validate structural fields
+        assert_eq!(response["target"].as_str(), Some("@w1"));
+        assert!(response["capture"].is_object());
+        assert!(response["warnings"].is_array());
+        assert!(response["warnings"].as_array().unwrap().is_empty());
+
+        let capture = &response["capture"];
+        assert!(capture["stateId"].as_str().unwrap().starts_with("s-"));
+        assert_eq!(capture["width"].as_u64(), Some(800));
+        assert_eq!(capture["height"].as_u64(), Some(600));
+        assert_eq!(capture["imageFormat"].as_str(), Some("png"));
+        assert!(capture["imageBase64"].as_str().unwrap().len() > 10);
     }
+
     #[test]
-    fn coordinate_clamping_is_deterministic() {
-        assert_eq!(clamp_i16(i32::MIN), i16::MIN);
-        assert_eq!(clamp_i16(i32::MAX), i16::MAX);
-        assert_eq!(clamp_i16(42), 42);
-    }
-    #[test]
-    fn geometry_is_deterministic() {
-        let a = Rect {
-            x: 1,
-            y: 2,
-            width: 3,
-            height: 4,
-        };
-        assert_eq!(distance(Some(&a), &a), 0);
-        assert_eq!(distance(Some(&a), &Rect { x: 6, ..a.clone() }), 5);
-    }
-    #[test]
-    fn key_protocol() {
-        assert_eq!(named_keysym("Control"), Some(0xffe3));
-        assert_eq!(named_keysym("F12"), Some(0xffc9));
-        assert_eq!(char_keysym('A'), Some(('a' as u32, true)));
-        assert_eq!(char_keysym('!'), Some(('1' as u32, true)));
-        assert_eq!(char_keysym('é'), None);
-    }
-    #[test]
-    fn bounded_capture_dimensions_preserve_aspect_ratio() {
-        assert_eq!(scaled_dimensions(1920, 1080, Some(1000)), (1000, 563));
-        assert_eq!(scaled_dimensions(800, 600, Some(1000)), (800, 600));
-        assert_eq!(scaled_dimensions(1, 4000, Some(100)), (1, 100));
-        assert_eq!(scaled_dimensions(4000, 1, Some(100)), (100, 1));
-    }
-    #[test]
-    fn rgba_resize_is_bounded_and_deterministic() {
-        let source = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        assert_eq!(resize_rgba(&source, 2, 2, 1, 1), vec![1, 2, 3, 4]);
-        assert_eq!(resize_rgba(&source, 2, 2, 2, 2), source);
-    }
-    #[test]
-    fn decode_limits() {
+    fn test_screenshot_response_with_warnings() {
+        // Verify response with warnings and null image for zero-sized capture.
+        let state_id = StateId::fresh("s");
+        let response = serde_json::json!({
+            "target": "@w1",
+            "capture": {
+                "stateId": state_id,
+                "width": 0,
+                "height": 0,
+                "imageFormat": "png",
+                "imageBase64": null,
+            },
+            "warnings": ["zero_sized_window"],
+        });
+
+        assert_eq!(response["target"].as_str(), Some("@w1"));
         assert_eq!(
-            decode(&[1, 2, 3, 0], 1, 1, 24, ImageOrder::LSB_FIRST).unwrap(),
-            vec![3, 2, 1, 255]
+            response["warnings"].as_array().unwrap(),
+            &[serde_json::json!("zero_sized_window")]
         );
-        assert!(decode(&[0; 2], 1, 1, 16, ImageOrder::LSB_FIRST).is_err());
+        assert!(response["capture"]["imageBase64"].is_null());
+        assert_eq!(response["capture"]["width"].as_u64(), Some(0));
+        assert_eq!(response["capture"]["height"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn test_screenshot_target_not_found_error() {
+        // Verify that a non-existent window ref produces the expected error.
+        // On non-Windows the platform check returns UnsupportedPlatform first;
+        // on Windows an empty store would return TargetNotFound.
+        let mut store = RefStore::new();
+        let wref = WindowRef { id: 999 };
+        let result = screenshot(&mut store, &wref, false, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        #[cfg(not(windows))]
+        assert_eq!(err.code, ErrorCode::UnsupportedPlatform);
+        #[cfg(windows)]
+        assert_eq!(err.code, ErrorCode::TargetNotFound);
+    }
+
+    // -- Windows-only integration tests ------------------------------------
+
+    #[test]
+    #[cfg(windows)]
+    fn test_screenshot_capture_fresh_state_id() {
+        // On Windows, verify that each screenshot gets a unique stateId.
+        let mut store = RefStore::new();
+        // Only works if there's at least one visible HWND.
+        // We use a synthetic handle — the test checks the stateId property
+        // not the actual capture quality.
+        let wref = store.insert_window(NativeHandle::new(0)); // HWND 0 is invalid
+
+        match screenshot(&mut store, &wref, false, None) {
+            Ok(val) => {
+                let sid = val["capture"]["stateId"]
+                    .as_str()
+                    .expect("stateId should be a string");
+                assert!(sid.starts_with("s-"), "stateId should start with s-");
+            }
+            Err(e) => {
+                // In CI / headless environments this will fail with
+                // CaptureFailed because HWND 0 is not a valid window.
+                // That's acceptable — the error path is exercised.
+                assert_eq!(
+                    e.code,
+                    ErrorCode::CaptureFailed,
+                    "Expected CaptureFailed for invalid HWND: {e:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_screenshot_fresh_state_ids_differ() {
+        let mut store = RefStore::new();
+        let wref = store.insert_window(NativeHandle::new(0));
+
+        // Same as above; just check that two calls produce different IDs
+        // when they succeed or the same error when they fail.
+        let result_a = screenshot(&mut store, &wref, false);
+        let result_b = screenshot(&mut store, &wref, false);
+
+        let err_a = result_a.as_ref().err().map(|e| e.code);
+        let err_b = result_b.as_ref().err().map(|e| e.code);
+        assert_eq!(err_a, err_b, "both calls should produce the same outcome");
     }
 }

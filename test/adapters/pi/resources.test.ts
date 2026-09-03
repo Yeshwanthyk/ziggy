@@ -432,12 +432,10 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   const extensionsRoot = join(repositoryRoot, "extensions");
   expect(existsSync(join(repositoryRoot, "skills"))).toBe(false);
   const expectedPackages = [
-    "acp-router",
     "agent-browser",
     "apple-notes",
     "apple-reminders",
     "codemode",
-    "codex",
     "coding-agent",
     "computer-use",
     "computer-workflows",
@@ -449,8 +447,6 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "github",
     "gog",
     "goplaces",
-    "here-now",
-    "hyperframes",
     "imsg",
     "linear",
     "lossless-claw",
@@ -459,14 +455,9 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "notion",
     "obsidian",
     "onepassword",
-    "open-computer-use",
-    "openai-whisper",
     "pi-packages",
     "qmd",
     "self-improvement",
-    "things-mac",
-    "tmux",
-    "wacli",
     "weather",
     "web-search",
     "xurl",
@@ -517,7 +508,6 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "lcm_grep",
     "lcm_sessions",
     "linear",
-    "open_computer_use",
     "self_improvement_extension_write",
     "self_improvement_log",
     "self_improvement_status",
@@ -535,7 +525,6 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "github",
     "linear",
     "lossless-claw",
-    "open-computer-use",
     "self-improvement",
     "web-search",
   ];
@@ -593,7 +582,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   expect(productionResources.extensionPaths).toEqual(
     executablePackages.map((id) => join(profilePath, "extensions", id)),
   );
-  expect(productionResources.skillPaths).toHaveLength(37);
+  expect(productionResources.skillPaths).toHaveLength(28);
   expect(
     productionResources.skillPaths.every((skillPath) => skillPath.startsWith(profilePath)),
   ).toBe(true);
@@ -602,7 +591,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     [...productionResources.skillPaths],
     [...productionResources.extensionFactories],
   );
-  assertCatalog(productionServices, 37);
+  assertCatalog(productionServices, 28);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),

@@ -1,42 +1,27 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership, ziggy-effect/no-effect-execution-boundary -- Pi tool and lifecycle hooks are this optional package's approved Effect execution edges. */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
-import { Type } from "typebox";
-import { createCodeModeSession, executeCodeMode } from "./src/runtime.ts";
-
-const Parameters = Type.Object(
-  {
-    code: Type.String({
-      description: "JavaScript body for the confined MCP orchestration interpreter.",
-      minLength: 1,
-      maxLength: 128 * 1024,
-    }),
+{
+  "name": "@ziggy/codemode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Confined JavaScript orchestration over Profile-declared MCP stdio tools.",
+  "keywords": ["pi-package"],
+  "scripts": {
+    "build": "bun build index.ts --target=bun --format=esm --minify --banner='/* oxlint-disable -- generated self-contained runtime bundle */' --outfile=dist/index.js --external @earendil-works/pi-coding-agent --external typebox",
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint index.ts src test",
+    "fmt": "oxfmt index.ts src test"
   },
-  { additionalProperties: false },
-);
-
-export default function codeMode(pi: Pick<ExtensionAPI, "on" | "registerTool">): void {
-  const session = createCodeModeSession();
-
-  pi.on("session_shutdown", async () => {
-    await Effect.runPromise(session.close());
-  });
-
-  pi.registerTool({
-    name: "codemode_execute",
-    label: "codemode_execute",
-    description:
-      "Run bounded JavaScript orchestration over only MCP stdio tools declared in Profile codemode.json. Supports await, data, variables, conditionals, loops, safe helpers, console capture, and tools.$codemode.search; it is an AST interpreter, not eval or a general JavaScript runtime.",
-    parameters: Parameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, { code }, signal, _onUpdate, ctx) {
-      const details = await Effect.runPromise(executeCodeMode(session, ctx.cwd, code), { signal });
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(details) }],
-        details,
-      };
-    },
-  });
+  "pi": {
+    "extensions": ["./dist/index.js"]
+  },
+  "dependencies": {
+    "acorn": "8.15.0",
+    "effect": "4.0.0-beta.99"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "typebox": "1.3.7"
+  }
 }
-
-export { createCodeModeSession, executeCodeMode } from "./src/runtime.ts";

@@ -1,113 +1,147 @@
-import { randomUUID } from "node:crypto";
-export class StaleResourceStateError extends Error {
-    resourceKey;
-    expectedEpoch;
-    actualEpoch;
-    constructor(resourceKey, expectedEpoch, actualEpoch) {
-        super(`State is stale for ${resourceKey}: expected epoch ${expectedEpoch}, current epoch ${actualEpoch}.`);
-        this.resourceKey = resourceKey;
-        this.expectedEpoch = expectedEpoch;
-        this.actualEpoch = actualEpoch;
-        this.name = "StaleResourceStateError";
+import { serializeOutlineNode } from "./outline.mjs";
+function numericRef(ref) {
+    const match = /^@e(\d+)$/.exec(ref);
+    return match ? Number(match[1]) : 0;
+}
+function rebuildIndexes(outline) {
+    outline.nodes = [];
+    outline.refToWireRef = new Map();
+    outline.wireRefToRef = new Map();
+    const queue = [outline.root];
+    while (queue.length > 0) {
+        const node = queue.shift();
+        outline.nodes.push(node);
+        if (node.wireRef) {
+            outline.refToWireRef.set(node.ref, node.wireRef);
+            outline.wireRefToRef.set(node.wireRef, node.ref);
+        }
+        queue.push(...node.children);
     }
 }
-/** Bounded insertion-ordered store for immutable agent-facing observations. */
-export class StateStore {
-    limit;
-    records = new Map();
-    constructor(limit = 128) {
-        this.limit = limit;
-    }
-    create(resourceKey, epoch, value) {
-        const record = { stateId: randomUUID(), resourceKey, epoch, value };
-        this.set(record);
-        return record;
-    }
-    set(record) {
-        this.records.delete(record.stateId);
-        this.records.set(record.stateId, record);
-        while (this.records.size > this.limit) {
-            const oldest = this.records.keys().next().value;
-            if (!oldest)
-                break;
-            this.records.delete(oldest);
-        }
-    }
-    get(stateId) {
-        return this.records.get(stateId);
-    }
-    clear() {
-        this.records.clear();
-    }
-    get size() {
-        return this.records.size;
-    }
+function structuralToken(node) {
+    return [node.role, node.subrole, node.identifier, node.title, node.description].map((value) => value.trim().toLowerCase()).join("|");
 }
-/**
- * Orders live operations per physical resource while allowing unrelated
- * resources to overlap. Cached state queries bypass this scheduler entirely.
- */
-export class ResourceScheduler {
-    resources = new Map();
-    closed = false;
-    epoch(resourceKey) {
-        return this.resource(resourceKey).epoch;
+function structuralKey(node) {
+    const parts = [];
+    let current = node;
+    while (current) {
+        const token = structuralToken(current);
+        const siblings = current.parent?.children ?? [current];
+        const peers = siblings.filter((candidate) => structuralToken(candidate) === token);
+        parts.unshift(`${token}#${Math.max(0, peers.indexOf(current))}`);
+        current = current.parent;
     }
-    restoreEpoch(resourceKey, epoch) {
-        const record = this.resource(resourceKey);
-        record.epoch = Math.max(record.epoch, Math.max(0, Math.trunc(epoch)));
+    return parts.join(">");
+}
+/** Preserve public refs only when native or structural identity is unambiguous. */
+export function stabilizeRefs(base, next) {
+    if (!base)
+        return next;
+    const reserved = new Set();
+    const assigned = new Set();
+    const byWireRef = new Map(base.nodes.filter((node) => node.wireRef).map((node) => [node.wireRef, node.ref]));
+    const structuralGroups = new Map();
+    for (const node of base.nodes) {
+        const key = structuralKey(node);
+        structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), node]);
     }
-    async read(resourceKey, work) {
-        return await this.enqueue(resourceKey, async (record) => ({ value: await work(record.epoch), epoch: record.epoch }));
-    }
-    async readAt(resourceKey, expectedEpoch, work) {
-        return await this.enqueue(resourceKey, async (record) => {
-            if (record.epoch !== expectedEpoch)
-                throw new StaleResourceStateError(resourceKey, expectedEpoch, record.epoch);
-            return { value: await work(record.epoch), epoch: record.epoch };
-        });
-    }
-    async write(resourceKey, baseEpoch, work) {
-        return await this.enqueue(resourceKey, async (record) => {
-            if (record.epoch !== baseEpoch)
-                throw new StaleResourceStateError(resourceKey, baseEpoch, record.epoch);
-            const nextEpoch = record.epoch + 1;
-            // Invalidate the base state before dispatch. If native execution becomes
-            // uncertain or throws after a partial effect, later writes still fail safe.
-            record.epoch = nextEpoch;
-            return { value: await work(nextEpoch), epoch: nextEpoch };
-        });
-    }
-    async drain() {
-        await Promise.all([...this.resources.values()].map((record) => record.tail.catch(() => undefined)));
-    }
-    async close() {
-        this.closed = true;
-        await this.drain();
-        this.resources.clear();
-    }
-    resource(resourceKey) {
-        let record = this.resources.get(resourceKey);
-        if (!record) {
-            record = { epoch: 0, tail: Promise.resolve() };
-            this.resources.set(resourceKey, record);
-        }
-        return record;
-    }
-    async enqueue(resourceKey, work) {
-        if (this.closed)
-            throw new Error("Computer-use session is shutting down.");
-        const record = this.resource(resourceKey);
-        const previous = record.tail;
-        let release;
-        const next = new Promise((resolve) => { release = resolve; });
-        record.tail = previous.catch(() => undefined).then(() => next);
-        await previous.catch(() => undefined);
-        try {
-            return await work(record);
-        }
-        finally {
-            release();
+    let nextIndex = Math.max(0, ...base.nodes.map((node) => numericRef(node.ref))) + 1;
+    for (const node of next.nodes) {
+        const wireStable = node.wireRef ? byWireRef.get(node.wireRef) : undefined;
+        const structuralMatches = structuralGroups.get(structuralKey(node)) ?? [];
+        const stable = wireStable ?? (structuralMatches.length === 1 ? structuralMatches[0].ref : undefined);
+        if (stable && !reserved.has(stable)) {
+            node.ref = stable;
+            reserved.add(stable);
+            assigned.add(node);
         }
     }
+    for (const node of next.nodes) {
+        if (assigned.has(node))
+            continue;
+        while (reserved.has(`@e${nextIndex}`))
+            nextIndex += 1;
+        node.ref = `@e${nextIndex++}`;
+        reserved.add(node.ref);
+    }
+    rebuildIndexes(next);
+    return next;
+}
+function comparable(node) {
+    const { children: _children, ...fields } = serializeOutlineNode(node);
+    return {
+        ...fields,
+        rect: fields.rect ? { x: Math.round(fields.rect.x), y: Math.round(fields.rect.y), w: Math.round(fields.rect.w), h: Math.round(fields.rect.h) } : undefined,
+        text: fields.text.map((item) => ({ string: item.string, confidence: Math.round(item.confidence * 100) / 100 })),
+    };
+}
+function changedFields(base, next) {
+    const before = comparable(base);
+    const after = comparable(next);
+    const fields = {};
+    for (const key of Object.keys(after)) {
+        if (key === "ref" || key === "wireRef")
+            continue;
+        if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+            fields[key] = after[key];
+    }
+    return fields;
+}
+function refPath(node) {
+    const refs = [];
+    let current = node;
+    while (current) {
+        refs.unshift(current.ref);
+        current = current.parent;
+    }
+    return refs;
+}
+export function changesBetween(base, next) {
+    if (base.root.role !== next.root.role || base.root.subrole !== next.root.subrole) {
+        return { changes: [], changedNodeCount: next.nodes.length, fullNodeCount: next.nodes.length, useFullView: true, reason: "root_replaced" };
+    }
+    const before = new Map(base.nodes.map((node) => [node.ref, node]));
+    const after = new Map(next.nodes.map((node) => [node.ref, node]));
+    const changes = [];
+    for (const node of next.nodes) {
+        const previous = before.get(node.ref);
+        if (!previous)
+            changes.push({ type: "added", ref: node.ref, parent: node.parent?.ref, node: { ...serializeOutlineNode(node), children: [] } });
+        else {
+            const fields = changedFields(previous, node);
+            if (Object.keys(fields).length > 0)
+                changes.push({ type: "updated", ref: node.ref, path: refPath(node), fields });
+        }
+    }
+    for (const node of base.nodes)
+        if (!after.has(node.ref))
+            changes.push({ type: "removed", ref: node.ref, parent: node.parent?.ref });
+    const identityConfidence = next.nodes.length === 0 ? 1 : next.nodes.filter((node) => before.has(node.ref)).length / next.nodes.length;
+    const changeRatio = changes.length / Math.max(1, Math.max(base.nodes.length, next.nodes.length));
+    const identityLow = next.nodes.length > 8 && identityConfidence < 0.4;
+    const overBudget = changes.length > 100 || (changes.length > 20 && changeRatio > 0.65);
+    return {
+        changes,
+        changedNodeCount: changes.length,
+        fullNodeCount: next.nodes.length,
+        useFullView: identityLow || overBudget,
+        reason: identityLow ? "identity_confidence_low" : overBudget ? "change_budget_exceeded" : undefined,
+    };
+}
+function label(node) {
+    return node.title || node.description || node.value || node.identifier || node.text.map((item) => item.string).join(" ").trim() || node.role || "node";
+}
+export function renderChanges(changes) {
+    return changes.map((change) => {
+        if (change.type === "added")
+            return `+ ${change.ref}${change.parent ? ` under ${change.parent}` : ""} ${JSON.stringify(label(change.node))}`;
+        if (change.type === "removed")
+            return `- ${change.ref}${change.parent ? ` from ${change.parent}` : ""}`;
+        const fields = Object.entries(change.fields).filter(([key]) => !["rect", "text", "actions"].includes(key)).slice(0, 6).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(", ");
+        const supplemental = [
+            change.fields.text ? `text=${JSON.stringify(change.fields.text.map((item) => item.string))}` : undefined,
+            change.fields.actions ? `actions=${JSON.stringify(change.fields.actions)}` : undefined,
+        ].filter(Boolean).join(", ");
+        return `~ ${change.ref} (${change.path.join(" > ")}) ${[fields, supplemental].filter(Boolean).join(", ") || "changed"}`;
+    }).join("\n");
 }

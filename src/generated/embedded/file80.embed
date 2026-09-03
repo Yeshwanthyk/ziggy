@@ -1,147 +1,65 @@
-import { serializeOutlineNode, type Outline, type OutlineChange, type OutlineDiff, type OutlineNode, type SerializedOutlineNode } from "./outline.mts";
+# Linux support
 
-function numericRef(ref: string): number {
-	const match = /^@e(\d+)$/.exec(ref);
-	return match ? Number(match[1]) : 0;
-}
+Linux uses the same root/state/ref navigation architecture as macOS and Windows. Its per-user Rust helper uses AT-SPI2 semantics first. In an X11 session it can enrich those semantics with EWMH window state, X11 capture, and guarded XTEST physical input.
 
-function rebuildIndexes(outline: Outline): void {
-	outline.nodes = [];
-	outline.refToWireRef = new Map();
-	outline.wireRefToRef = new Map();
-	const queue = [outline.root];
-	while (queue.length > 0) {
-		const node = queue.shift()!;
-		outline.nodes.push(node);
-		if (node.wireRef) {
-			outline.refToWireRef.set(node.ref, node.wireRef);
-			outline.wireRefToRef.set(node.wireRef, node.ref);
-		}
-		queue.push(...node.children);
-	}
-}
+## Setup
 
-function structuralToken(node: OutlineNode): string {
-	return [node.role, node.subrole, node.identifier, node.title, node.description].map((value) => value.trim().toLowerCase()).join("|");
-}
+Run Pi as the same user and inside the same graphical session as the target applications. The session needs a working D-Bus and AT-SPI2 accessibility bus, and applications must export useful accessibility interfaces. A normal install places the helper at:
 
-function structuralKey(node: OutlineNode): string {
-	const parts: string[] = [];
-	let current: OutlineNode | undefined = node;
-	while (current) {
-		const token = structuralToken(current);
-		const siblings = current.parent?.children ?? [current];
-		const peers = siblings.filter((candidate) => structuralToken(candidate) === token);
-		parts.unshift(`${token}#${Math.max(0, peers.indexOf(current))}`);
-		current = current.parent;
-	}
-	return parts.join(">");
-}
+```text
+~/.pi/agent/helpers/pi-computer-use/linux-bridge
+```
 
-/** Preserve public refs only when native or structural identity is unambiguous. */
-export function stabilizeRefs(base: Outline | undefined, next: Outline): Outline {
-	if (!base) return next;
-	const reserved = new Set<string>();
-	const assigned = new Set<OutlineNode>();
-	const byWireRef = new Map(base.nodes.filter((node) => node.wireRef).map((node) => [node.wireRef!, node.ref]));
-	const structuralGroups = new Map<string, OutlineNode[]>();
-	for (const node of base.nodes) {
-		const key = structuralKey(node);
-		structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), node]);
-	}
-	let nextIndex = Math.max(0, ...base.nodes.map((node) => numericRef(node.ref))) + 1;
-	for (const node of next.nodes) {
-		const wireStable = node.wireRef ? byWireRef.get(node.wireRef) : undefined;
-		const structuralMatches = structuralGroups.get(structuralKey(node)) ?? [];
-		const stable = wireStable ?? (structuralMatches.length === 1 ? structuralMatches[0].ref : undefined);
-		if (stable && !reserved.has(stable)) {
-			node.ref = stable;
-			reserved.add(stable);
-			assigned.add(node);
-		}
-	}
-	for (const node of next.nodes) {
-		if (assigned.has(node)) continue;
-		while (reserved.has(`@e${nextIndex}`)) nextIndex += 1;
-		node.ref = `@e${nextIndex++}`;
-		reserved.add(node.ref);
-	}
-	rebuildIndexes(next);
-	return next;
-}
+The upstream [AT-SPI development guide](https://gnome.pages.gitlab.gnome.org/at-spi2-core/devel-docs/index.html) describes the accessibility stack. Containers, system services, `sudo`, and unrelated SSH sessions do not automatically inherit the graphical user's bus.
 
-function comparable(node: OutlineNode): Omit<SerializedOutlineNode, "children"> {
-	const { children: _children, ...fields } = serializeOutlineNode(node);
-	return {
-		...fields,
-		rect: fields.rect ? { x: Math.round(fields.rect.x), y: Math.round(fields.rect.y), w: Math.round(fields.rect.w), h: Math.round(fields.rect.h) } : undefined,
-		text: fields.text.map((item) => ({ string: item.string, confidence: Math.round(item.confidence * 100) / 100 })),
-	};
-}
+## Capability matrix
 
-function changedFields(base: OutlineNode, next: OutlineNode): Partial<Omit<SerializedOutlineNode, "children">> {
-	const before = comparable(base);
-	const after = comparable(next);
-	const fields: Partial<Omit<SerializedOutlineNode, "children">> = {};
-	for (const key of Object.keys(after) as Array<keyof typeof after>) {
-		if (key === "ref" || key === "wireRef") continue;
-		if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) (fields as Record<string, unknown>)[key] = after[key];
-	}
-	return fields;
-}
+| Capability | X11 | Wayland | Delivery |
+| --- | --- | --- | --- |
+| Discover accessible roots | Yes; EWMH enriches geometry, stacking, focus, and minimized state | Yes, when exported | AT-SPI2, plus EWMH on X11 |
+| Press/click an actionable ref | Capability-gated | Capability-gated | AT-SPI `Action` |
+| Replace editable text | Capability-gated | Capability-gated | AT-SPI `EditableText` |
+| Read/wait on accessible text | Capability-gated | Capability-gated | AT-SPI `Text`/snapshots |
+| Screenshot/visual observation | Yes | No | XComposite PNG; `GetImage` fallback may be stale or obscured |
+| Coordinate pointer, keyboard, scroll, and drag | Non-headless only | No | XTEST after semantic delivery is unavailable/insufficient |
+| Force focus | Non-headless only | No | EWMH `_NET_ACTIVE_WINDOW` |
+| Managed Chromium pages | Yes | Yes | Loopback CDP |
+| Open a URL | Yes | Yes | `xdg-open` |
 
-function refPath(node: OutlineNode): string[] {
-	const refs: string[] = [];
-	let current: OutlineNode | undefined = node;
-	while (current) {
-		refs.unshift(current.ref);
-		current = current.parent;
-	}
-	return refs;
-}
+“Capability-gated” means the target must export the corresponding AT-SPI interface. X11 physical fallback reports an `unknown` outcome unless later observation or a postcondition verifies the result. Capture prefers XComposite so covered windows can still be read; the `GetImage` fallback explicitly warns that pixels may be stale or obscured.
 
-export function changesBetween(base: Outline, next: Outline): OutlineDiff {
-	if (base.root.role !== next.root.role || base.root.subrole !== next.root.subrole) {
-		return { changes: [], changedNodeCount: next.nodes.length, fullNodeCount: next.nodes.length, useFullView: true, reason: "root_replaced" };
-	}
-	const before = new Map(base.nodes.map((node) => [node.ref, node]));
-	const after = new Map(next.nodes.map((node) => [node.ref, node]));
-	const changes: OutlineChange[] = [];
-	for (const node of next.nodes) {
-		const previous = before.get(node.ref);
-		if (!previous) changes.push({ type: "added", ref: node.ref, parent: node.parent?.ref, node: { ...serializeOutlineNode(node), children: [] } });
-		else {
-			const fields = changedFields(previous, node);
-			if (Object.keys(fields).length > 0) changes.push({ type: "updated", ref: node.ref, path: refPath(node), fields });
-		}
-	}
-	for (const node of base.nodes) if (!after.has(node.ref)) changes.push({ type: "removed", ref: node.ref, parent: node.parent?.ref });
-	const identityConfidence = next.nodes.length === 0 ? 1 : next.nodes.filter((node) => before.has(node.ref)).length / next.nodes.length;
-	const changeRatio = changes.length / Math.max(1, Math.max(base.nodes.length, next.nodes.length));
-	const identityLow = next.nodes.length > 8 && identityConfidence < 0.4;
-	const overBudget = changes.length > 100 || (changes.length > 20 && changeRatio > 0.65);
-	return {
-		changes,
-		changedNodeCount: changes.length,
-		fullNodeCount: next.nodes.length,
-		useFullView: identityLow || overBudget,
-		reason: identityLow ? "identity_confidence_low" : overBudget ? "change_budget_exceeded" : undefined,
-	};
-}
+## Background and headless guarantees
 
-function label(node: SerializedOutlineNode): string {
-	return node.title || node.description || node.value || node.identifier || node.text.map((item) => item.string).join(" ").trim() || node.role || "node";
-}
+Linux always attempts AT-SPI semantics first. Semantic delivery does not request compositor focus or inject global input; background delivery is not invisible execution, because an application may still update its visible window.
 
-export function renderChanges(changes: OutlineChange[]): string {
-	return changes.map((change) => {
-		if (change.type === "added") return `+ ${change.ref}${change.parent ? ` under ${change.parent}` : ""} ${JSON.stringify(label(change.node))}`;
-		if (change.type === "removed") return `- ${change.ref}${change.parent ? ` from ${change.parent}` : ""}`;
-		const fields = Object.entries(change.fields).filter(([key]) => !["rect", "text", "actions"].includes(key)).slice(0, 6).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(", ");
-		const supplemental = [
-			change.fields.text ? `text=${JSON.stringify(change.fields.text.map((item) => item.string))}` : undefined,
-			change.fields.actions ? `actions=${JSON.stringify(change.fields.actions)}` : undefined,
-		].filter(Boolean).join(", ");
-		return `~ ${change.ref} (${change.path.join(" > ")}) ${[fields, supplemental].filter(Boolean).join(", ") || "changed"}`;
-	}).join("\n");
-}
+With `headless: true` or the `ax_only`/`background` delivery policy, the helper never invokes XTEST or EWMH focus. Unsupported semantic input fails closed. With non-headless `default` or `foreground` policy on X11, actions may fall back to global XTEST input and focus may use EWMH. Those operations can move the real pointer, type into the focused application, and interfere with the user's session. Native Wayland has no such physical fallback.
+
+Managed CDP actions also avoid desktop focus, but `launch_browser` starts a normal visible browser; this project's `headless` option is an input-delivery policy, not Chromium's `--headless` switch.
+
+## Wayland portal boundary
+
+The standardized [ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) can expose user-selected streams through PipeWire. The [RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html) can negotiate input devices and may return restore tokens when the desktop grants persistence. Starting a session normally invokes compositor-owned selection/consent, and backend support varies.
+
+On Wayland, diagnostics performs only a read-only property probe and reports the RemoteDesktop and ScreenCast interface versions plus advertised device, source, and cursor-mode bitmasks. It does not create a portal request or session and cannot display a chooser.
+
+There is no portal session, PipeWire frame, input dispatch, or restore-token implementation. Installing a portal backend therefore does not enable Wayland capture or input.
+
+## Security boundaries
+
+- The helper is a local stdin/stdout child process and opens no helper network listener.
+- It can inspect applications exposed on the current user's AT-SPI bus; run only trusted agents and extensions in that session.
+- Password-role values are omitted and explicit reads are rejected, though application mislabeling remains possible.
+- On X11, capture can read window pixels and non-headless physical fallback can control the global pointer/keyboard and request focus. These are broad desktop capabilities; strict headless/background policy blocks XTEST and focus, but does not make AT-SPI or requested X11 observation private.
+- On Wayland, portal diagnostics are read-only; capture and input are not implemented.
+- CDP is separate and gives local processes that can reach its loopback port powerful page access. `launch_browser` uses a fresh non-default temporary profile, matching modern Chrome's [remote-debugging security policy](https://developer.chrome.com/blog/remote-debugging-port), rather than the user's normal profile.
+
+## Browser discovery
+
+`launch_browser` searches common Chrome/Chromium or Helium locations and `PATH`. For an AppImage or custom install, set an authoritative executable override:
+
+```bash
+PI_COMPUTER_USE_CHROME_EXECUTABLE=/absolute/path/to/chrome
+PI_COMPUTER_USE_HELIUM_EXECUTABLE=/absolute/path/to/helium.AppImage
+```
+
+Manual CDP launches must use a non-default `--user-data-dir` together with `--remote-debugging-port`; set `PI_COMPUTER_USE_CDP_PORT` to that loopback port.

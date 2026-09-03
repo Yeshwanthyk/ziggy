@@ -1,147 +1,123 @@
-import { serializeOutlineNode } from "./outline.mjs";
-function numericRef(ref) {
-    const match = /^@e(\d+)$/.exec(ref);
-    return match ? Number(match[1]) : 0;
-}
-function rebuildIndexes(outline) {
-    outline.nodes = [];
-    outline.refToWireRef = new Map();
-    outline.wireRefToRef = new Map();
-    const queue = [outline.root];
-    while (queue.length > 0) {
-        const node = queue.shift();
-        outline.nodes.push(node);
-        if (node.wireRef) {
-            outline.refToWireRef.set(node.ref, node.wireRef);
-            outline.wireRefToRef.set(node.wireRef, node.ref);
-        }
-        queue.push(...node.children);
-    }
-}
-function structuralToken(node) {
-    return [node.role, node.subrole, node.identifier, node.title, node.description].map((value) => value.trim().toLowerCase()).join("|");
-}
-function structuralKey(node) {
-    const parts = [];
-    let current = node;
-    while (current) {
-        const token = structuralToken(current);
-        const siblings = current.parent?.children ?? [current];
-        const peers = siblings.filter((candidate) => structuralToken(candidate) === token);
-        parts.unshift(`${token}#${Math.max(0, peers.indexOf(current))}`);
-        current = current.parent;
-    }
-    return parts.join(">");
-}
-/** Preserve public refs only when native or structural identity is unambiguous. */
-export function stabilizeRefs(base, next) {
-    if (!base)
-        return next;
-    const reserved = new Set();
-    const assigned = new Set();
-    const byWireRef = new Map(base.nodes.filter((node) => node.wireRef).map((node) => [node.wireRef, node.ref]));
-    const structuralGroups = new Map();
-    for (const node of base.nodes) {
-        const key = structuralKey(node);
-        structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), node]);
-    }
-    let nextIndex = Math.max(0, ...base.nodes.map((node) => numericRef(node.ref))) + 1;
-    for (const node of next.nodes) {
-        const wireStable = node.wireRef ? byWireRef.get(node.wireRef) : undefined;
-        const structuralMatches = structuralGroups.get(structuralKey(node)) ?? [];
-        const stable = wireStable ?? (structuralMatches.length === 1 ? structuralMatches[0].ref : undefined);
-        if (stable && !reserved.has(stable)) {
-            node.ref = stable;
-            reserved.add(stable);
-            assigned.add(node);
-        }
-    }
-    for (const node of next.nodes) {
-        if (assigned.has(node))
-            continue;
-        while (reserved.has(`@e${nextIndex}`))
-            nextIndex += 1;
-        node.ref = `@e${nextIndex++}`;
-        reserved.add(node.ref);
-    }
-    rebuildIndexes(next);
-    return next;
-}
-function comparable(node) {
-    const { children: _children, ...fields } = serializeOutlineNode(node);
-    return {
-        ...fields,
-        rect: fields.rect ? { x: Math.round(fields.rect.x), y: Math.round(fields.rect.y), w: Math.round(fields.rect.w), h: Math.round(fields.rect.h) } : undefined,
-        text: fields.text.map((item) => ({ string: item.string, confidence: Math.round(item.confidence * 100) / 100 })),
-    };
-}
-function changedFields(base, next) {
-    const before = comparable(base);
-    const after = comparable(next);
-    const fields = {};
-    for (const key of Object.keys(after)) {
-        if (key === "ref" || key === "wireRef")
-            continue;
-        if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
-            fields[key] = after[key];
-    }
-    return fields;
-}
-function refPath(node) {
-    const refs = [];
-    let current = node;
-    while (current) {
-        refs.unshift(current.ref);
-        current = current.parent;
-    }
-    return refs;
-}
-export function changesBetween(base, next) {
-    if (base.root.role !== next.root.role || base.root.subrole !== next.root.subrole) {
-        return { changes: [], changedNodeCount: next.nodes.length, fullNodeCount: next.nodes.length, useFullView: true, reason: "root_replaced" };
-    }
-    const before = new Map(base.nodes.map((node) => [node.ref, node]));
-    const after = new Map(next.nodes.map((node) => [node.ref, node]));
-    const changes = [];
-    for (const node of next.nodes) {
-        const previous = before.get(node.ref);
-        if (!previous)
-            changes.push({ type: "added", ref: node.ref, parent: node.parent?.ref, node: { ...serializeOutlineNode(node), children: [] } });
-        else {
-            const fields = changedFields(previous, node);
-            if (Object.keys(fields).length > 0)
-                changes.push({ type: "updated", ref: node.ref, path: refPath(node), fields });
-        }
-    }
-    for (const node of base.nodes)
-        if (!after.has(node.ref))
-            changes.push({ type: "removed", ref: node.ref, parent: node.parent?.ref });
-    const identityConfidence = next.nodes.length === 0 ? 1 : next.nodes.filter((node) => before.has(node.ref)).length / next.nodes.length;
-    const changeRatio = changes.length / Math.max(1, Math.max(base.nodes.length, next.nodes.length));
-    const identityLow = next.nodes.length > 8 && identityConfidence < 0.4;
-    const overBudget = changes.length > 100 || (changes.length > 20 && changeRatio > 0.65);
-    return {
-        changes,
-        changedNodeCount: changes.length,
-        fullNodeCount: next.nodes.length,
-        useFullView: identityLow || overBudget,
-        reason: identityLow ? "identity_confidence_low" : overBudget ? "change_budget_exceeded" : undefined,
-    };
-}
-function label(node) {
-    return node.title || node.description || node.value || node.identifier || node.text.map((item) => item.string).join(" ").trim() || node.role || "node";
-}
-export function renderChanges(changes) {
-    return changes.map((change) => {
-        if (change.type === "added")
-            return `+ ${change.ref}${change.parent ? ` under ${change.parent}` : ""} ${JSON.stringify(label(change.node))}`;
-        if (change.type === "removed")
-            return `- ${change.ref}${change.parent ? ` from ${change.parent}` : ""}`;
-        const fields = Object.entries(change.fields).filter(([key]) => !["rect", "text", "actions"].includes(key)).slice(0, 6).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(", ");
-        const supplemental = [
-            change.fields.text ? `text=${JSON.stringify(change.fields.text.map((item) => item.string))}` : undefined,
-            change.fields.actions ? `actions=${JSON.stringify(change.fields.actions)}` : undefined,
-        ].filter(Boolean).join(", ");
-        return `~ ${change.ref} (${change.path.join(" > ")}) ${[fields, supplemental].filter(Boolean).join(", ") || "changed"}`;
-    }).join("\n");
-}
+# Development
+
+## Repository layout
+
+```text
+extensions/computer-use.ts       Public Pi tool registration
+src/bridge.ts                    TypeScript runtime and tool implementation
+src/actions.ts                   Action preparation and result reconciliation
+src/runtime.ts                   Immutable state store and resource scheduler
+src/state.ts                     Saved UI state ownership and restoration
+src/view.ts                      Stable refs and resulting-state change views
+src/outline.ts                   Outline parsing, folding, search, and ref mapping
+src/note.ts                      Disposable running-note generation
+native/macos/bridge.swift        macOS helper for AX, capture, permissions, and input
+native/windows/                 Windows backend/helper code when developing on Windows
+native/linux/bridge-rs/         Linux AT-SPI2 helper (Rust)
+scripts/build-native.mjs         macOS helper build script
+scripts/setup-helper.mjs         macOS helper install script
+scripts/check-invariants.mjs     Architecture invariant checks
+scripts/check-runtime-concurrency.mjs Scheduler/state concurrency checks
+scripts/pi-cubench-agent.mjs     Cubench gateway adapter using registered Pi tools
+```
+
+The public tool surface lives in `extensions/computer-use.ts`. Keep it small. Internal complexity belongs in `src/bridge.ts`, `src/outline.ts`, `src/note.ts`, and the native helper.
+
+## Checks
+
+Run all static checks:
+
+```bash
+npm test
+```
+
+This runs TypeScript, tool-schema compatibility checks, architecture invariants, and native helper checks available on the current platform.
+
+On macOS, rebuild the native helper after Swift changes:
+
+```bash
+npm run build:native
+```
+
+## Architecture rules
+
+The runtime is state-scoped and outline-first:
+
+- `observe_ui` returns a folded UI outline and running note.
+- `search_ui`, `expand_ui`, and `inspect_ui` provide progressive disclosure.
+- `act_ui` is the only public desktop action entrypoint.
+- UI observations are immutable records; request-local hydration replaces global current state.
+- Cached queries bypass scheduling; live work is ordered per physical resource.
+- Browser pages and desktop surfaces share the `@r` root forest and `@e` outline contract.
+- The helper owns grounding, preflight, execution, and verification.
+- Removed direct tools such as `screenshot`, `click`, `set_text`, and `computer_actions` should not reappear as public extension tools.
+
+Run invariants after architecture changes:
+
+```bash
+npm run test:invariants
+```
+
+Set `PI_CU_LIVE=1` only when you want live helper checks in addition to static checks.
+
+## Cubench
+
+`scripts/pi-cubench-agent.mjs` drives a headed Cubench Chromium window through the same registered Pi tools used by the extension. Cubench must launch its web driver headed (the current development tree accepts `CUBENCH_HEADLESS=0`):
+
+```bash
+CUBENCH_HEADLESS=0 node ../cubench/bin/cubench.mjs suite run \
+  --suite ../cubench/suites/core.json \
+  --agent "node --experimental-transform-types $PWD/scripts/pi-cubench-agent.mjs" \
+  --driver web \
+  --trials 3 \
+  --label picu
+```
+
+The adapter uses Cubench only for the instruction and final oracle; UI observation and action go through `pi-computer-use`. Gateway action/observation counters therefore do not trigger Cubench interference hooks, so stale/reorder cases need a native-driver integration before their interference timing can be treated as benchmark evidence.
+
+## Native platform helpers
+
+On macOS, the helper installed for permissions is normally:
+
+```text
+~/Applications/pi-computer-use.app
+```
+
+Existing writable system-wide installs remain at `/Applications/pi-computer-use.app`. The macOS helper targets macOS 14+ and uses ScreenCaptureKit. Local development can use ad-hoc signing. Release builds must use the release workflow so the helper app is signed with the stable release certificate.
+
+On Windows, development uses the Windows platform backend/helper and the active desktop session rather than the macOS app bundle or TCC permission model.
+
+On Linux, install Rust/Cargo and run `npm run build:linux`, `npm run test:linux`, and `npm run test:linux-scripts`. Live checks must run inside the target user's graphical D-Bus session. The helper installs to `~/.pi/agent/helpers/pi-computer-use/linux-bridge`.
+
+## Release signing
+
+This section applies to macOS releases. macOS TCC keys Accessibility and Screen Recording grants to an app's code-signing identity. Ad-hoc and locally self-signed development builds may require permission review whenever their native code changes. Only Developer ID-signed release bundles should be treated as having a stable update identity.
+
+Release setup:
+
+1. Run `./scripts/make-signing-cert.sh` once, or use a Developer ID Application certificate.
+2. Add repository secrets:
+   - `APPLICATION_CERT_BASE64`
+   - `CERT_PASSWORD`
+   - `SIGN_IDENTITY`
+3. For Developer ID notarization, set repository variable `NOTARIZE=true` and add:
+   - `TEAM_ID`
+   - `APPLE_ID`
+   - `APP_SPECIFIC_PASSWORD`
+4. Push a `v*` tag or run the `Release` workflow manually.
+
+For macOS, `.github/workflows/publish-npm.yml` builds the universal helper, signs it, optionally notarizes it, stages a draft GitHub Release, injects the same signed helper app into the npm package, publishes npm, and only then publishes the GitHub Release.
+
+For an isolated X11 acceptance run, install Xvfb, xfwm4, the AT-SPI2 runtime,
+xfce4-appfinder, and xfce4-terminal, then build and install the helper before
+running the explicitly gated live suite:
+
+```bash
+npm run build:linux
+node scripts/setup-helper.mjs --platform linux
+npm run test:linux-live
+```
+
+The harness creates its own D-Bus and Xvfb session. It fails rather than
+silently passing when the live flag, helper, accessibility bridge, or required
+X11 applications are unavailable.

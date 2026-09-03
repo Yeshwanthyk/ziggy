@@ -1,29 +1,26 @@
-# op CLI examples (from op help)
+---
+name: web-search
+description: Search the web for fresh facts through Exa when local information cannot answer the request.
+---
 
-## Sign in
+# Web Search
 
-- `op signin`
-- `op signin --account <shorthand|signin-address|account-id|user-id>`
+Use `web_search` with query words in `args`:
 
-## Read
+```json
+{"args":["best time to visit the science museum this weekend"]}
+{"args":["hardware store opening hours","--n","3"]}
+```
 
-- `op read op://app-prod/db/password`
-- `op read "op://app-prod/db/one-time password?attribute=otp"`
-- `op read "op://app-prod/ssh key/private key?ssh-format=openssh"`
-- `op read --out-file ./key.pem op://app-prod/server/ssh/key.pem`
+The result is:
 
-## Run
+```json
+{"query":"...","answer":"...","results":[{"title":"...","url":"...","highlight":"..."}]}
+```
 
-- `export DB_PASSWORD="op://app-prod/db/password"`
-- `op run --no-masking -- printenv DB_PASSWORD`
-- `op run --env-file="./.env" -- printenv DB_PASSWORD`
+Read the structured `results`; each `highlight` is the relevant excerpt. Cite
+one or two result URLs. `answer` is populated only when the endpoint response
+cannot be structured. No API key is required; `EXA_API_KEY` only raises service
+limits.
 
-## Inject
-
-- `echo "db_password: {{ op://app-prod/db/password }}" | op inject`
-- `op inject -i config.yml.tpl -o config.yml`
-
-## Whoami / accounts
-
-- `op whoami`
-- `op account list`
+Use this only for information that benefits from a current external search.

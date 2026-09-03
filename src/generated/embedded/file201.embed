@@ -1,45 +1,30 @@
 ---
-name: pi-packages
-description: Inspect catalogue packages and select catalogue or Profile-owned Pi extensions.
+name: ziggy-operations
+description: Operate Ziggy Profiles — automations, memory, resident serve, Telegram, Discord, and Slack setup. Read this when managing automations or memory, installing serve, or connecting a channel.
 ---
 
-# Pi packages in Ziggy
+# Ziggy operations
 
-The repository-root `catalog.json` is Ziggy's sole approved extension catalogue. Approved packages
-are compiled into the Ziggy executable as file trees. The in-process `profile_extensions` tool
-selects a package and records its ID in `extensions.json`; runtime loads only those Profile
-folders. Profile-specific packages live under the same shelf.
-Each package may contain an Agent Skill, executable Pi extension code, or both. `pi-packages`,
-`extension-authoring`, and `ziggy-operations` are required and also sit on disk in the Profile;
-all other packages are optional. A Profile-owned package takes precedence over an approved
-catalogue package with the same ID.
+Use loaded help and this skill before guessing Ziggy behavior. Read a reference file when the task
+matches it. Do not search a developer checkout for plans or `src/`.
 
-The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf identity;
-`package.json.name` remains independent upstream package metadata. For example, shelf ID `computer-use` can retain the
-package name `@injaneity/pi-computer-use`.
+## When to read what
 
-Use the in-process `profile_extensions` tool for `list`, `add`, `remove`, and `validate` in the
-owning Profile runtime. Never shell into `ziggy`, invoke a Ziggy CLI command, or edit
-`extensions.json` directly. After authoring a Profile package, call `profile_extensions` with
-`action: "add"` and its shelf ID. Claim success only from the tool's structured result; surface
-operation, stage, code, and message when it fails. Adding validates the package, provisions owned
-automations, and atomically records the selection. Removing pauses extension-owned automation,
-then removes the selection without deleting the copied folder. Reopen the Profile or restart its
-resident Ziggy process after a real selection change. Required packages cannot be added or
-removed.
+- Automations, `/automations`, pause/resume, wake, and run history → [references/automations.md](references/automations.md)
+- Profile memory, scopes, caps, backups, and inspection → [references/memory.md](references/memory.md)
+- Resident `ziggy serve` install/start/status/logs → [references/serve.md](references/serve.md)
+- Connect Telegram → [references/telegram.md](references/telegram.md)
+- Connect Discord → [references/discord.md](references/discord.md)
+- Connect Slack → [references/slack.md](references/slack.md)
 
-To create or change a Profile-owned package, read the `extension-authoring` skill and edit
-`<profile>/extensions/<id>/`. Do not edit the Ziggy catalogue.
+## Rules
 
-To adopt a third-party package, clone or download its source into an OS temporary directory and
-inspect `package.json` and its declared `pi` paths there; never run install or lifecycle
-scripts. Choose a lowercase kebab-case shelf ID independent of `package.json.name`, copy only
-the package source into `<profile>/extensions/<id>/` (excluding `.git/`, `node_modules/`, and
-temp artifacts), then call `profile_extensions` with `action: "add"` and the shelf ID. The copy
-alone leaves the package inactive; report admission or failure from the tool's structured
-result. Never delete or replace an existing shelf directory; if the destination exists, stop
-and report the collision. Remove only the OS temporary paths this attempt created, and clean
-them on success and failure.
-
-The retired `self-improving-agent`, `smart-memory`, `skill-curator`, and `skill-creator` packages
-are replaced by the single optional `self-improvement` package.
+- Profile Markdown is authority. Do not invent a second automation or session store.
+- Bundled and Profile-owned packages are admitted only through the in-process `profile_extensions`
+  tool. For third-party adoption, follow pi-packages and extension-authoring, acquire into OS temp,
+  inspect/copy source into the Profile shelf, never run lifecycle scripts, and never invoke Ziggy CLI
+  or edit `extensions.json` directly. Never delete or replace an existing shelf directory; on
+  collision stop and report it, and clean up only the temp paths this attempt created, after
+  success and failure.
+- Channel tokens stay out of docs, commits, and chat.
+- Cite the reference path you used.
