@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-09-03
+
+### Added
+
+- Profile-scoped resident UI protocol and framework-neutral gateway client with recoverable live-session watches, strict capability boundaries, and bounded wire projections
+- Responsive reference web client for main, specialist, and group conversations plus Profile management workflows
+- Interactive terminal Profile and extension management flows
+
+### Changed
+
+- Removed nine unused bundled skill packages and regenerated the standalone resource catalog around the retained package and tool surface
 
 ## [0.2.4] - 2026-08-19
 
@@ -80,7 +91,10 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...v0.2.0

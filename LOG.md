@@ -475,3 +475,5 @@ results.
 ## 2026-09-03
 
 **Bundled skill shelf cleanup.** Removed nine unused packages (`acp-router`, `codex`, `here-now`, `hyperframes`, `open-computer-use`, `openai-whisper`, `things-mac`, `tmux`, and `wacli`) from the repository shelf and approved catalog. Regenerated the embedded standalone resources and tightened the complete-catalog runtime proof to the retained package and tool surface.
+
+**Ziggy 0.2.5 release metadata.** Bumped the package, README, installer, doctor, and ACP identities from 0.2.4 to 0.2.5; documented the Profile-scoped UI platform, interactive CLI flows, and bundled skill shelf cleanup; repaired the changelog compare links for the 0.2.3–0.2.5 releases.
