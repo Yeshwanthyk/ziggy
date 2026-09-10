@@ -481,3 +481,8 @@ results.
 **Retired helper gate removed.** Removed the root `test:helpers` command and its `extensions/here-now` invocation after the release build exposed that stale reference; the root test command now covers the retained core, extension, and tooling suites directly.
 
 **Standalone test gate aligned.** Removed the standalone builder's second stale `test:helpers` invocation; its retained `bun test ./test ./extensions ./tooling` gate already executes every current helper suite.
+
+## Effect submodule storage repair
+
+- Rebuilt local `vendor/effect` Git metadata as an independent shallow repository at the unchanged pinned commit `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`, removing its dependency on the deleted `starman` checkout. Preserved source files, index, and local main reference; backed up the original metadata outside the repository.
+- Verified submodule `git fsck --full --no-dangling`, submodule status, and parent status succeed with no submodule changes.
