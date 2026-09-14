@@ -15,6 +15,7 @@ export const SlackGatewayConfig = Schema.Struct({
   botToken: NonEmptyString,
   appToken: NonEmptyString,
   ownerUserId: NonEmptyString,
+  busyMessageMode: Schema.optional(Schema.Literals(["queue", "steer"])),
   channels: Schema.optional(SlackChannelPolicies),
 });
 

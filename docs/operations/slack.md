@@ -22,7 +22,7 @@ session routing.
   `sessions/slack/group-sl<channel-id>-thread-<root-ts>/`. Later accepted replies in that thread use
   the same Pi session. Separate roots do not share a transcript or queue, and owner-DM memory is
   never exposed to the channel.
-- Before every accepted request inside an existing channel thread, Ziggy reads a fresh bounded
+- Before every new turn inside an existing channel thread, Ziggy reads a fresh bounded
   snapshot of that thread's root and prior replies. The snapshot is supplied to Pi as untrusted
   context for that turn only; it is not copied into the persistent Pi transcript or Profile memory.
   Slack threads are flat, so this covers the parent plus all replies before the triggering message.
@@ -35,7 +35,7 @@ session routing.
   `"always"`; root messages and thread replies both inherit the setting for their Slack channel ID.
   Direct messages are always active, and every accepted request in a mention-only channel must
   contain the app's real Slack mention.
-- Accepted messages immediately show Slack's native `is thinking...` loading status on the source
+- Messages starting a new turn immediately show Slack's native `is thinking...` loading status on the source
   thread. The status is best-effort, never blocks the model turn, and is explicitly cleared after
   success, failure, or cancellation.
 - Ziggy reacts to the source message with 👀 at admission, removes it at settlement, and adds ✅ on
@@ -49,15 +49,22 @@ session routing.
 - During a slow Pi turn, Ziggy progressively edits that same placeholder with bounded assistant text
   snapshots. It requires both 1.5 seconds and at least 48 Unicode code points of meaningful growth
   between edits, coalesces faster deltas, and serializes them with native status updates. While Pi is
-  using a tool, the native thread status changes to a bounded `Using <tool>…` label and returns to
+  using a tool, the native thread status describes the task (for example, `Running tests: bun test…`
+  or `Reading a file: src/main.ts…`) using the adapter's bounded detail projection, and returns to
   thinking or heartbeat text after the tool ends. These intermediate writes are best-effort; the
   ordinary final placeholder edit and overflow chunks remain authoritative. `stop` prevents queued
   progress, waits behind any already in-flight native status write, and then clears every unique
   cancelled request or shared channel-thread status target last. Scoped progress workers finish
   interrupting before final delivery begins.
-- A second turn admitted to the same chat first shows `Queued behind an earlier request…`, changes to
-  `Working on that…` when it gets the chat permit, and refreshes the native status every 30 seconds
-  during a long Pi turn.
+- Optional `busyMessageMode` in the Slack config accepts `"steer"` (the default when omitted) or
+  `"queue"`. While Pi is actively responding in the same Slack channel and thread, a text-only
+  follow-up steers that response. It shares the existing progress and final answer, does not create
+  another placeholder or fetch thread history, and its ingress row completes when Pi accepts it.
+  This records steering acceptance, not a separate delivered answer. Idle or unavailable handles,
+  steering failures, another DM thread, and messages with attachment metadata fall back to queue.
+  Explicit `"queue"` always keeps the serial-turn behavior: `Queued behind an earlier request…`,
+  then `Working on that…` when the chat permit becomes available. Active turns refresh native
+  status every 30 seconds.
 - Owner-authored messages may include up to four PNG, JPEG, WebP, or GIF files, each no larger than
   5 MiB. File-only messages are valid. Ziggy validates Slack's private-file metadata before using
   the bot credential, downloads only `https://files.slack.com` content, verifies the response type
