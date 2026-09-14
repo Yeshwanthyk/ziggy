@@ -71,6 +71,7 @@ import {
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
+import { slackTaskTitle, slackToolStatus } from "./slack-tool-progress";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
 const MAX_RETRY_SECONDS = 30;
@@ -182,6 +183,7 @@ interface ChatState {
   readonly turns: Set<ScheduledSlackTurn>;
   generation: number;
   handle?: ChatHandle;
+  activeMessage?: InboundMessage;
   pending: number;
 }
 
@@ -422,15 +424,6 @@ type SlackProgressStreamState = {
   closed: boolean;
 };
 
-const slackTaskTitle = (toolName: string): string => {
-  if (toolName === "bash") return "Running a command";
-  if (toolName === "read") return "Reading a file";
-  if (toolName === "write" || toolName === "edit") return "Editing a file";
-  if (toolName.startsWith("apple_reminders")) return "Checking reminders";
-  if (toolName === "memory_write") return "Updating memory";
-  return `Using ${toolName}`;
-};
-
 const slackTaskChunk = (
   event: Extract<SlackProgressSignal, { kind: "tool" }>,
 ): SlackTaskUpdateChunk => {
@@ -443,7 +436,7 @@ const slackTaskChunk = (
   return {
     type: "task_update",
     id: event.toolCallId,
-    title: slackTaskTitle(event.toolName),
+    title: slackTaskTitle(event.toolName, event.detail),
     status: event.phase === "end" ? "complete" : "in_progress",
     ...Object.fromEntries(details === undefined ? [] : ([["details", details]] as const)),
   };
@@ -1267,7 +1260,7 @@ export const makeSlackGateway = (
                         const activeToolStatus = (): string | undefined => {
                           const names = [...activeTools.values()];
                           const name = names[names.length - 1];
-                          return name === undefined ? undefined : `Using ${name}…`;
+                          return name;
                         };
                         yield* offerProgressHeartbeats(statusSignals, activeToolStatus).pipe(
                           Effect.forkScoped,
@@ -1324,61 +1317,70 @@ export const makeSlackGateway = (
                                 bot.userId,
                                 config.ownerUserId,
                               );
-                        const reply = yield* handle.prompt(prompt.text, {
-                          onProgress: (event) => {
-                            if (!isFresh()) return;
-                            if (event.kind === "voice") {
-                              Queue.offerUnsafe(voiceSignals, event);
-                              return;
-                            }
-                            if (event.kind === "assistant-text") {
-                              Queue.offerUnsafe(textSignals, {
-                                kind: "text",
-                                snapshot: event.snapshot,
-                              });
-                              return;
-                            }
-                            if (event.kind !== "tool") return;
-                            if (event.phase === "end") {
-                              activeTools.delete(event.toolCallId);
-                            } else {
-                              activeTools.delete(event.toolCallId);
-                              if (activeTools.size >= 16) {
-                                const oldest = activeTools.keys().next().value;
-                                if (oldest !== undefined) activeTools.delete(oldest);
+                        chatState.activeMessage = message;
+                        const reply = yield* handle
+                          .prompt(prompt.text, {
+                            onProgress: (event) => {
+                              if (!isFresh()) return;
+                              if (event.kind === "voice") {
+                                Queue.offerUnsafe(voiceSignals, event);
+                                return;
                               }
-                              activeTools.set(event.toolCallId, event.toolName);
-                            }
-                            Queue.offerUnsafe(statusSignals, {
-                              kind: "status",
-                              status: activeToolStatus() ?? "is thinking...",
-                            });
-                            if (canUseProgressStream) {
-                              Queue.offerUnsafe(toolSignals, {
-                                kind: "tool",
-                                phase: event.phase,
-                                toolCallId: event.toolCallId,
-                                toolName: event.toolName,
-                                failed: event.failed,
-                                ...Object.fromEntries(
-                                  event.detail === undefined
-                                    ? []
-                                    : ([["detail", event.detail]] as const),
-                                ),
+                              if (event.kind === "assistant-text") {
+                                Queue.offerUnsafe(textSignals, {
+                                  kind: "text",
+                                  snapshot: event.snapshot,
+                                });
+                                return;
+                              }
+                              if (event.kind !== "tool") return;
+                              if (event.phase === "end") {
+                                activeTools.delete(event.toolCallId);
+                              } else {
+                                activeTools.delete(event.toolCallId);
+                                if (activeTools.size >= 16) {
+                                  const oldest = activeTools.keys().next().value;
+                                  if (oldest !== undefined) activeTools.delete(oldest);
+                                }
+                                activeTools.set(event.toolCallId, slackToolStatus(event));
+                              }
+                              Queue.offerUnsafe(statusSignals, {
+                                kind: "status",
+                                status: activeToolStatus() ?? "is thinking...",
                               });
-                            }
-                          },
-                          ...Object.fromEntries(
-                            [
-                              prompt.images.length > 0
-                                ? (["images", prompt.images] as const)
-                                : undefined,
-                              ephemeralContext !== undefined
-                                ? (["ephemeralContext", ephemeralContext] as const)
-                                : undefined,
-                            ].flatMap((entry) => (entry === undefined ? [] : [entry])),
-                          ),
-                        });
+                              if (canUseProgressStream) {
+                                Queue.offerUnsafe(toolSignals, {
+                                  kind: "tool",
+                                  phase: event.phase,
+                                  toolCallId: event.toolCallId,
+                                  toolName: event.toolName,
+                                  failed: event.failed,
+                                  ...Object.fromEntries(
+                                    event.detail === undefined
+                                      ? []
+                                      : ([["detail", event.detail]] as const),
+                                  ),
+                                });
+                              }
+                            },
+                            ...Object.fromEntries(
+                              [
+                                prompt.images.length > 0
+                                  ? (["images", prompt.images] as const)
+                                  : undefined,
+                                ephemeralContext !== undefined
+                                  ? (["ephemeralContext", ephemeralContext] as const)
+                                  : undefined,
+                              ].flatMap((entry) => (entry === undefined ? [] : [entry])),
+                            ),
+                          })
+                          .pipe(
+                            Effect.ensuring(
+                              Effect.sync(() => {
+                                delete chatState.activeMessage;
+                              }),
+                            ),
+                          );
                         yield* Queue.offer(voiceSignals, { kind: "done" });
                         yield* Deferred.await(voicesDrained);
                         yield* closeProgressStream(toolSignals);
@@ -1521,6 +1523,35 @@ export const makeSlackGateway = (
             if (!started) return;
             const chatState = chatStateFor(message.chatKey);
             const queued = chatState.pending > 0;
+            const active = chatState.activeMessage;
+            const handle = chatState.handle;
+            if (
+              (config.busyMessageMode ?? "steer") === "steer" &&
+              queued &&
+              active !== undefined &&
+              handle !== undefined &&
+              !handle.isIdle &&
+              active.channel === message.channel &&
+              active.statusThreadTs === message.statusThreadTs &&
+              (message.files?.length ?? 0) === 0 &&
+              (message.omittedFileCount ?? 0) === 0
+            ) {
+              const steered = yield* handle.steer(message.text).pipe(Effect.result);
+              if (Result.isSuccess(steered)) {
+                yield* ingressRuntime.finish(
+                  target.path,
+                  message,
+                  ingressOwnerId,
+                  "completed",
+                  healthRuntime.now(),
+                );
+                return;
+              }
+              yield* Effect.logWarning("Slack steering failed; queueing message", {
+                chatKey: message.chatKey,
+                failure: steered.failure,
+              });
+            }
             const cancellation = yield* Deferred.make<void>();
             const turn: ScheduledSlackTurn = {
               cancellation,

@@ -714,7 +714,7 @@ describe("Slack gateway boundary", () => {
               close: Effect.void,
             }),
           setStatus: (_token, _channel, threadTs, status) =>
-            status === "Using read…"
+            status === "Reading a file…"
               ? Effect.uninterruptible(
                   Deferred.succeed(progressStatusStarted, undefined).pipe(
                     Effect.andThen(Deferred.await(releaseProgressStatus)),
@@ -845,7 +845,7 @@ describe("Slack gateway boundary", () => {
             .toSorted(),
         ).toEqual(["1.0", "2.0", "4.0"]);
         expect(statuses).not.toContainEqual({ status: "", threadTs: "3.0" });
-        const staleStatusIndex = statuses.findIndex(({ status }) => status === "Using read…");
+        const staleStatusIndex = statuses.findIndex(({ status }) => status === "Reading a file…");
         expect(staleStatusIndex).toBeGreaterThan(-1);
         expect(statuses[staleStatusIndex + 1]).toEqual({ status: "", threadTs: "1.0" });
         const freshThinkingIndex = statuses
@@ -1305,7 +1305,7 @@ describe("Slack gateway boundary", () => {
           setStatus: (_token, channel, threadTs, status) =>
             Effect.gen(function* () {
               statuses.push({ channel, threadTs, status });
-              if (status === "Using read…") sawToolStatus = true;
+              if (status === "Reading a file…") sawToolStatus = true;
               if (sawToolStatus && status === "is thinking...") {
                 yield* Deferred.succeed(toolSettled, undefined);
               }
@@ -1526,8 +1526,8 @@ describe("Slack gateway boundary", () => {
         expect(finalObservedAfterProgressInterrupt).toBe(true);
         expect(statuses).toEqual([
           { channel: "C123", threadTs: "0.9", status: "is thinking..." },
-          { channel: "C123", threadTs: "0.9", status: "Using bash…" },
-          { channel: "C123", threadTs: "0.9", status: "Using read…" },
+          { channel: "C123", threadTs: "0.9", status: "Running a command…" },
+          { channel: "C123", threadTs: "0.9", status: "Reading a file…" },
           { channel: "C123", threadTs: "0.9", status: "is thinking..." },
           { channel: "C123", threadTs: "0.9", status: "" },
         ]);
@@ -1622,6 +1622,7 @@ describe("Slack gateway boundary", () => {
                       toolCallId: "tool-1",
                       toolName: "bash",
                       failed: false,
+                      detail: "bun test",
                     });
                     yield* Effect.yieldNow;
                     options?.onProgress?.({
@@ -1630,6 +1631,7 @@ describe("Slack gateway boundary", () => {
                       toolCallId: "tool-1",
                       toolName: "bash",
                       failed: false,
+                      detail: "bun test",
                     });
                     yield* Effect.yieldNow;
                     return "hello back";
@@ -1659,7 +1661,8 @@ describe("Slack gateway boundary", () => {
                   {
                     type: "task_update",
                     id: "tool-1",
-                    title: "Running a command",
+                    title: "Running tests",
+                    details: "bun test",
                     status: "in_progress",
                   },
                 ],
@@ -1675,7 +1678,8 @@ describe("Slack gateway boundary", () => {
                 {
                   type: "task_update",
                   id: "tool-1",
-                  title: "Running a command",
+                  title: "Running tests",
+                  details: "bun test",
                   status: "complete",
                 },
               ],
@@ -1688,7 +1692,12 @@ describe("Slack gateway boundary", () => {
         ]);
         expect(updates).toContain("hello back");
         expect(updates).not.toContain("bash");
-        expect(statuses).toEqual(["is thinking...", "Using bash…", "is thinking...", ""]);
+        expect(statuses).toEqual([
+          "is thinking...",
+          "Running tests: bun test…",
+          "is thinking...",
+          "",
+        ]);
       }),
     );
   });

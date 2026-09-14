@@ -486,3 +486,11 @@ results.
 
 - Rebuilt local `vendor/effect` Git metadata as an independent shallow repository at the unchanged pinned commit `6184a7dc53cb9310e299b65ad6d6c712c2cbf202`, removing its dependency on the deleted `starman` checkout. Preserved source files, index, and local main reference; backed up the original metadata outside the repository.
 - Verified submodule `git fsck --full --no-dangling`, submodule status, and parent status succeed with no submodule changes.
+
+## Slack visibility and busy-message slices
+
+- Tool task cards now classify common test, check, build, Git inspection, and file-search commands. Native active status uses the same semantic titles plus bounded existing adapter details; unknown tools retain a generic label. No new tool arguments or output enter Slack progress. Tests cover classification, Unicode bounds, native stream chunks, and final-answer separation.
+- Added optional Slack `busyMessageMode: queue|steer`, defaulting to steer in the gateway. Text-only follow-ups in the active Slack thread use the existing handle; idle/missing handles, other threads, attachments, and typed steering failures retain serial queue behavior. The active message exists only during the prompt and is cleared on every exit. Successful steering settles ingress once as accepted into Pi, without a second prompt or placeholder. Deterministic gateway tests cover default/explicit modes, channel and DM steering, idle/race fallback, thread isolation, and attachments.
+- Inspected registered Profile locations and Squarey's agent frontmatter. No Luna/Sol/Astra specialist definitions were present, and no target Profile/model IDs were established for new definitions. Left Profile files unchanged.
+- The delegated worker could not start; implementation and review were completed locally. Normal fmt/lint/typecheck scripts hit the host's broken Node `libllhttp.9.3.dylib` dependency; the same scripts pass when run with `bun --bun run`.
+- Verification: 52 focused Slack tests pass; `bun --bun run check` passes formatting, lint, typechecks, knip, 12 gateway-client tests, and catalog/Pi-doc generation checks. `git diff --check` passes. No live Slack/provider calls were made.
