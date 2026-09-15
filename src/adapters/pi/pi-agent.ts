@@ -36,6 +36,7 @@ import {
   type ProfileAgentRunContext,
   type ProfileAgentRunResult,
   type ProfileSpecialistError,
+  type SessionReference,
   type ZiggyAgentError,
 } from "../../domain/agent";
 import {
@@ -1508,7 +1509,7 @@ const chatNotStreaming = (profilePath: string, operation: "steer" | "followUp"):
 export const makeSessionChatHandle = (
   profilePath: string,
   session: ChatSession,
-  methods: Pick<ChatHandle, "prompt" | "dispose">,
+  methods: Pick<ChatHandle, "prompt" | "dispose"> & Partial<Pick<ChatHandle, "currentSession">>,
   abortSession: () => Promise<void> = sharePiAbort(() => session.abort()),
   voiceHub?: SpecialistVoiceHub,
 ): ChatHandle => {
@@ -1526,12 +1527,15 @@ export const makeSessionChatHandle = (
           const event: ChatEvent = { kind: "voice", agentId, text };
           for (const listener of listeners) listener(event);
         });
+  const currentSession =
+    methods.currentSession === undefined ? {} : { currentSession: methods.currentSession };
 
   return {
     get isIdle() {
       return session.isIdle;
     },
     prompt: methods.prompt,
+    ...currentSession,
     abort: piPromise(profilePath, "abort agent session", abortSession),
     steer: (text) =>
       session.isIdle
@@ -1553,6 +1557,36 @@ export const makeSessionChatHandle = (
     }).pipe(Effect.andThen(methods.dispose)),
   };
 };
+
+export const currentPiSessionReference = (
+  profilePath: string,
+  manager: SessionManager,
+): Effect.Effect<SessionReference | undefined, ZiggyAgentError> =>
+  Effect.suspend(() => {
+    const reference = sessionReference(manager);
+    if (reference === undefined) return Effect.succeed(undefined);
+    return Effect.tryPromise({
+      try: () => stat(reference.file),
+      catch: (cause) => cause,
+    }).pipe(
+      Effect.flatMap((metadata) =>
+        metadata.isFile()
+          ? Effect.succeed(reference)
+          : Effect.fail(
+              providerError(
+                profilePath,
+                "inspect agent session transcript",
+                new Error("Pi session transcript is not a file"),
+              ),
+            ),
+      ),
+      Effect.catch((cause) =>
+        fileSystemCauseDetails(cause).code === "ENOENT"
+          ? Effect.succeed(undefined)
+          : Effect.fail(providerError(profilePath, "inspect agent session transcript", cause)),
+      ),
+    );
+  });
 
 export const promptForAssistantText = (
   profilePath: string,
@@ -1692,6 +1726,7 @@ export const openChat = (
       target.path,
       runtime.session,
       {
+        currentSession: currentPiSessionReference(target.path, runtime.session.sessionManager),
         prompt: (text, options) =>
           Effect.suspend(() => {
             const generation = runtime.ephemeralPromptContext.generation + 1;
@@ -1819,6 +1854,7 @@ export const openSpecialistChat = (
       target.path,
       liveRuntime.session,
       {
+        currentSession: currentPiSessionReference(target.path, liveRuntime.session.sessionManager),
         prompt: (text, options) =>
           promptForAssistantText(target.path, promptSession, text, options),
         dispose: disposeLive,

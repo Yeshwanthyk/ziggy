@@ -494,3 +494,36 @@ results.
 - Inspected registered Profile locations and Squarey's agent frontmatter. No Luna/Sol/Astra specialist definitions were present, and no target Profile/model IDs were established for new definitions. Left Profile files unchanged.
 - The delegated worker could not start; implementation and review were completed locally. Normal fmt/lint/typecheck scripts hit the host's broken Node `libllhttp.9.3.dylib` dependency; the same scripts pass when run with `bun --bun run`.
 - Verification: 52 focused Slack tests pass; `bun --bun run check` passes formatting, lint, typechecks, knip, 12 gateway-client tests, and catalog/Pi-doc generation checks. `git diff --check` passes. No live Slack/provider calls were made.
+
+## Minimal Squarey web conversation
+
+- Replaced the framework-free signal desk with a React/Vite+ client built on the fatestack frontend
+  foundation, generated shadcn/ui controls, and a local React adapter over the MIT-licensed Bloub
+  avatar engine. The light conversation-first layout follows the supplied Grok Bot reference and
+  collapses its rail into a mobile sheet.
+- The client opens the current Profile's main conversation, subscribes only to the selected live
+  session, loads authoritative history, streams assistant and tool activity, preserves ambiguous
+  sends, and reloads history on replay/epoch/sequence gaps without subscribing to channel inventory.
+- Focused hook proof covers main-only startup, local watch failures, stale connection and selection
+  completion, and unknown prompt outcomes. Client typecheck, five tests, and the static Vite+ build
+  pass. A bounded live Squarey prompt streamed and settled through the local resident. The client
+  retains streamed answers when an authoritative refresh is unavailable.
+- Mapped the client's semantic color and radius tokens into Tailwind v4 so generated shadcn dialogs,
+  buttons, inputs, focus rings, and mobile surfaces render with opaque backgrounds and intended
+  foreground contrast. The focused client check and rebuilt static preview pass.
+- Reconnects a reloaded tab automatically when its tab-scoped token and saved endpoint are both
+  present, while first-use and new-tab visits retain the connection dialog. A focused Strict Mode
+  regression proves startup creates one live client and does not close it during effect replay;
+  overlapping connection attempts remain last-attempt-wins at the dialog boundary.
+
+## Live web conversation history
+
+- Fixed live UI session history to resolve the active Pi transcript identity at request time, including
+  session switches and lazy unmaterialized sessions. Stored history remains unchanged; stale cursors
+  and transcript read failures remain errors. Added focused authority and error regression tests.
+- The development standalone build passed the full repository check and test suites. Refreshed only
+  Squarey's local resident to that checked preview binary, preserving the original LaunchAgent backup
+  and installed CLI. The browser now loads its existing main transcript successfully. A fresh bounded
+  prompt completed and its response remained in authoritative history after a browser reload.
+  Desktop and narrow-screen layout checks passed; production preview 4173 and development 4174
+  both remain available. Pins, bots, and groups are subsequent client slices, documented in DESIGN.md.

@@ -8,6 +8,7 @@ import type {
   ProfileAgentRunContext,
   ProfileAgentRunResult,
   ProfileSpecialistError,
+  SessionReference,
   ZiggyAgentError,
 } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
@@ -59,6 +60,8 @@ export interface ChatPromptOptions {
 
 export interface ChatHandle {
   readonly isIdle: boolean;
+  /** The current persisted Pi transcript identity, resolved at read time. */
+  readonly currentSession?: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
   readonly prompt: (
     text: string,
     options?: ChatPromptOptions,

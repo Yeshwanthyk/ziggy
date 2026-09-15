@@ -1,55 +1,48 @@
-# Ziggy signal desk
+# Ziggy web
 
-This is a framework-free, responsive reference client for Ziggy. It keeps the conversation in the
-foreground and exposes the Profile's agent, model, automation, memory, and extension projections
-through `@ziggy/gateway-client`.
+A small React client for talking to a local Ziggy Profile. The first slice opens the current
+Profile's main conversation, loads its authoritative history, watches that conversation, streams
+the response, and keeps an uncertain send visible for reconciliation.
 
-## Fixture mode
-
-Open `index.html` after a browser build. Fixture mode is the default, so no Profile files or
-credentials are needed. Loading, busy, stopping, watch-only, reconnecting, offline, empty,
-validation, request, ownership, and reconciliation states are directly exercisable through a
-URL query:
-
-Fixture changes are intentionally local to this tab. Pinned rows use browser storage only in
-fixture mode; a live resident is asked to persist pin and unpin commands through the gateway.
-The state hook stays out of the product chrome and is selected through the `state` URL query so
-the page remains useful as a clean reference surface:
-
-```text
-index.html?state=reconciliation
-```
-
-## Build and smoke test
-
-From the repository root:
+## Run it
 
 ```sh
-bun clients/example-web/build.mjs
-open clients/example-web/index.html
+cd clients/example-web
+bun install
+bun run dev
 ```
 
-For a live resident, choose `Connection` and paste the WebSocket endpoint and runtime token
-provided by the local host. The browser only uses the gateway client; it never reads Profile files,
-Pi sessions, or local configuration itself. To start in live connection mode, use
-`index.html?mode=live`.
-
-Sent mutating requests are never retried automatically. If the connection closes after send but
-before its response, the SDK reports `ZiggyRequestOutcomeUnknownError`; callers reconcile
-authoritative state before deciding whether a new user intent should issue another command.
-
-The page is intentionally static and can also be served by any local static server:
+Vite+ serves the development client at <http://127.0.0.1:4174/>. Build the static client with:
 
 ```sh
-python3 -m http.server 4173 --directory clients/example-web
+bun run build
 ```
 
-Then open <http://127.0.0.1:4173/>.
+The build is written to `dist/` and can be served by any static file host. Connection settings ask
+for the local WebSocket endpoint and runtime token. The endpoint is remembered in local storage;
+the token is kept only in session storage. Reloading the same browser tab reconnects automatically;
+a new tab or browser session shows the connection form again.
 
-## Interaction notes
+## Stack boundary
 
-- `/` focuses conversation search and `N` opens a fresh thread.
-- `⌘ Enter` (or `Ctrl Enter`) submits the composer.
-- Mobile widths turn the navigation rail into a sheet and the context drawer into a full-height
-  details sheet. The composer includes the safe-area inset and keeps primary targets touch-sized.
-- Blob identities are deterministic UI assets. They do not represent Profile authority.
+This client follows the frontend foundation from [fatestack](https://stack.fate.technology/): React,
+Vite+, Tailwind, and `@nkzw/stack`. Shared controls are generated from the shadcn/ui source
+registry and live in `src/components/ui`. The Fate data client and fbtee are intentionally deferred
+until they own concrete application behavior. Ziggy already has a typed, replay-aware WebSocket
+gateway, so adding Fate's HTTP/SSE backend would create a second transport and transcript path.
+
+Bot identities use a local React adapter over [Bloub](https://github.com/jeremy-prt/bloub). The
+adapted upstream engine and its MIT license live under `src/vendor/bloub`.
+
+## Current behavior
+
+- Opens and selects `local/main` for the current available Profile.
+- Watches only the selected live conversation; channel sessions are not subscribed at startup.
+- Reconciles history when the SDK reports an epoch, replay, or sequence gap.
+- Keeps the streamed answer visible if authoritative history cannot yet be read.
+- Uses Enter to send, Shift+Enter for a newline, and exposes Stop while the agent is working.
+- Adapts the conversation rail into a sheet on narrow screens and respects reduced motion.
+
+Pinned conversations, unopened bots, groups, and secondary Profile settings will follow as later
+vertical slices. Stored sessions are deliberately absent from the default rail until the client has
+an explicit past-conversations surface.

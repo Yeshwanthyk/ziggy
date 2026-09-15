@@ -7,7 +7,9 @@
     "extensions/*/test/**/*.test.ts",
     "extensions/codemode/test/fixtures/mcp-server.ts",
     "extensions/codemode/test/profile-smoke.ts",
-    "clients/example-web/main.ts",
+    "clients/example-web/src/main.tsx",
+    "clients/example-web/src/**/*.test.tsx",
+    "clients/example-web/vite.config.ts",
     "clients/gateway-client/src/index.ts",
     "clients/gateway-client/test/**/*.test.ts",
     "tooling/generate-*.mjs",
@@ -18,12 +20,13 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "extensions/**/*.{ts,mjs}",
-    "clients/**/*.ts",
+    "clients/**/*.{ts,tsx}",
     "tooling/**/*.{ts,mjs}"
   ],
   "ignore": [
     "extensions/computer-use/dist/**",
-    "extensions/computer-use/scripts/**"
+    "extensions/computer-use/scripts/**",
+    "clients/example-web/src/vendor/bloub/**"
   ],
   "include": ["files", "exports", "types"]
 }

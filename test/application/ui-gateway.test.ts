@@ -15,7 +15,7 @@ import {
   type ProfileExtensionsApi,
 } from "ziggy/domain/profile-extension";
 import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
-import { SessionNotFound } from "ziggy/domain/session";
+import { SessionNotFound, SessionReadFailed } from "ziggy/domain/session";
 import { UiEventFrame, UiResponseFrame, type UiGroupRecord } from "ziggy/domain/ui-gateway";
 import { UiGroupState, type UiGroupState as UiGroupStateValue } from "ziggy/domain/ui-state";
 
@@ -185,6 +185,192 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
         for (const listener of listeners) listener({ kind: "settled" });
         expect(sent).toHaveLength(beforeClose);
         expect((yield* registry.get("ui/main")).handle).toBe(handle);
+      }),
+    ),
+  );
+});
+
+test("live session history resolves the handle's current transcript identity at request time", async () => {
+  const sent: string[] = [];
+  const historyReferences: string[] = [];
+  let currentId = "pi-session-a";
+  const handle = makeChatHandle({
+    currentSession: Effect.sync(() => ({ id: currentId, file: `/private/${currentId}.jsonl` })),
+    prompt: () => Effect.succeed("ok"),
+  });
+  const sessions: SessionsApi = {
+    ...makeSessions(),
+    history: (_target, reference) =>
+      Effect.sync(() => {
+        historyReferences.push(reference);
+        return {
+          entries: [
+            {
+              kind: "assistant" as const,
+              timestamp: "2026-09-15T12:00:00.000Z",
+              text: reference,
+            },
+          ],
+          terminalState: "completed" as const,
+          truncated: false,
+          hasMore: false,
+        };
+      }),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "history-a",
+          method: "session.history",
+          params: { ref: { profileId, kind: "live", key: "local/main" } },
+        });
+        currentId = "pi-session-b";
+        yield* connection.request({
+          id: "history-b",
+          method: "session.history",
+          params: { ref: { profileId, kind: "live", key: "local/main" } },
+        });
+
+        expect(historyReferences).toEqual(["pi-session-a", "pi-session-b"]);
+        expect(decodeResponse(sent.at(-2) ?? "null")).toMatchObject({
+          id: "history-a",
+          ok: true,
+          result: { entries: [{ text: "pi-session-a" }] },
+        });
+        expect(decodeResponse(sent.at(-1) ?? "null")).toMatchObject({
+          id: "history-b",
+          ok: true,
+          result: { entries: [{ text: "pi-session-b" }] },
+        });
+      }),
+    ),
+  );
+});
+
+test("live session history is empty only while its Pi transcript is not materialized", async () => {
+  const sent: string[] = [];
+  let historyCalls = 0;
+  const handle = makeChatHandle({
+    currentSession: Effect.succeed(undefined),
+    prompt: () => Effect.succeed("ok"),
+  });
+  const sessions: SessionsApi = {
+    ...makeSessions(),
+    history: () =>
+      Effect.sync(() => {
+        historyCalls += 1;
+        return {
+          entries: [],
+          terminalState: "incomplete" as const,
+          truncated: false,
+          hasMore: false,
+        };
+      }),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "history",
+          method: "session.history",
+          params: { ref: { profileId, kind: "live", key: "local/main" } },
+        });
+
+        expect(historyCalls).toBe(0);
+        expect(decodeResponse(sent.at(-1) ?? "null")).toEqual({
+          id: "history",
+          ok: true,
+          result: {
+            profileId,
+            ref: { profileId, kind: "live", key: "local/main" },
+            entries: [],
+            terminalState: "incomplete",
+            truncated: false,
+            hasMore: false,
+          },
+        });
+        yield* connection.request({
+          id: "stale-history",
+          method: "session.history",
+          params: {
+            ref: { profileId, kind: "live", key: "local/main" },
+            before: "cursor-from-a-materialized-session",
+          },
+        });
+        expect(decodeResponse(sent.at(-1) ?? "null")).toEqual({
+          id: "stale-history",
+          ok: false,
+          error: { code: "stale_cursor", message: "session history cursor is stale" },
+        });
+      }),
+    ),
+  );
+});
+
+test("live session history preserves transcript read failures without exposing its path", async () => {
+  const sent: string[] = [];
+  const handle = makeChatHandle({
+    currentSession: Effect.succeed({ id: "pi-session", file: "/private/pi-session.jsonl" }),
+    prompt: () => Effect.succeed("ok"),
+  });
+  const sessions: SessionsApi = {
+    ...makeSessions(),
+    history: () =>
+      Effect.fail(
+        new SessionReadFailed({
+          path: "/private/pi-session.jsonl",
+          operation: "read",
+          message: "sensitive read failure",
+          cause: { code: "EACCES", message: "permission denied" },
+        }),
+      ),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "history",
+          method: "session.history",
+          params: { ref: { profileId, kind: "live", key: "local/main" } },
+        });
+
+        expect(decodeResponse(sent.at(-1) ?? "null")).toEqual({
+          id: "history",
+          ok: false,
+          error: { code: "internal", message: "session.history failed" },
+        });
+        expect(sent.at(-1)).not.toContain("/private/");
       }),
     ),
   );

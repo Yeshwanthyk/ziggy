@@ -688,12 +688,39 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           );
           const branch = yield* route(params.ref.profileId);
           if (config.sessions.history === undefined) return yield* noService(request.method);
+          let reference: string;
+          if (params.ref.kind === "stored") {
+            reference = params.ref.id;
+          } else {
+            const entry = yield* branch.registry
+              .get(params.ref.key)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+            if (entry.handle.currentSession === undefined) {
+              return yield* protocolFailure(
+                "unknown_session",
+                "live session history is unavailable",
+              );
+            }
+            const current = yield* entry.handle.currentSession.pipe(
+              Effect.mapError((cause) => toGatewayError(request.method, cause)),
+            );
+            if (current === undefined) {
+              if (params.before !== undefined) {
+                return yield* protocolFailure("stale_cursor", "session history cursor is stale");
+              }
+              return {
+                profileId: branch.profileId,
+                ref: params.ref,
+                entries: [],
+                terminalState: "incomplete" as const,
+                truncated: false,
+                hasMore: false,
+              };
+            }
+            reference = current.id;
+          }
           const page = yield* config.sessions
-            .history(
-              branch.target,
-              params.ref.kind === "stored" ? params.ref.id : params.ref.key,
-              params.before,
-            )
+            .history(branch.target, reference, params.before)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           return { profileId: branch.profileId, ref: params.ref, ...page };
         });

@@ -36,6 +36,7 @@ import {
   createChatEventProjector,
   createLocalSessionManager,
   createProfileMemoryExtension,
+  currentPiSessionReference,
   localMainSessionDirectory,
   localSpecialistSessionDirectory,
   makeSessionChatHandle,
@@ -120,6 +121,51 @@ const fixtureModel = (): Model<Api> => ({
 
 afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
+});
+
+test("current Pi session reference is empty until materialized and follows session switches", async () => {
+  const profilePath = await temporaryProfile();
+  const sessionDirectory = join(profilePath, "sessions", "ui", "main");
+  const manager = SessionManager.create(profilePath, sessionDirectory, { id: "initial-session" });
+  const initialFile = manager.getSessionFile();
+  if (initialFile === undefined) throw new Error("persistent session did not allocate a file");
+
+  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toBeUndefined();
+
+  await writeFile(
+    initialFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "initial-session",
+      timestamp: "2026-09-15T12:00:00.000Z",
+      cwd: profilePath,
+    })}\n`,
+    "utf8",
+  );
+  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toEqual({
+    id: "initial-session",
+    file: initialFile,
+  });
+
+  const switchedFile = join(sessionDirectory, "switched.jsonl");
+  await writeFile(
+    switchedFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "switched-session",
+      timestamp: "2026-09-15T12:01:00.000Z",
+      cwd: profilePath,
+    })}\n`,
+    "utf8",
+  );
+  manager.setSessionFile(switchedFile);
+
+  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toEqual({
+    id: "switched-session",
+    file: switchedFile,
+  });
 });
 
 const invokeMemoryHandler = async (
