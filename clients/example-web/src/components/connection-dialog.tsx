@@ -52,10 +52,11 @@ export function ConnectionDialog({
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     const endpoint = url.trim();
-    if (endpoint.length === 0 || token.length === 0) return;
+    const credential = token.trim();
+    if (endpoint.length === 0 || credential.length === 0) return;
     localStorage.setItem(endpointKey, endpoint);
-    sessionStorage.setItem(tokenKey, token);
-    await onConnect(endpoint, token);
+    sessionStorage.setItem(tokenKey, credential);
+    await onConnect(endpoint, credential);
   };
 
   return (
@@ -66,7 +67,7 @@ export function ConnectionDialog({
             <DialogTitle>Connect to Squarey</DialogTitle>
             <DialogDescription>
               Use the endpoint and runtime token from the local Ziggy host. The token stays in this
-              browser tab.
+              browser tab. After restarting Ziggy, use its new endpoint and token.
             </DialogDescription>
           </DialogHeader>
           <div className="connection-fields">
@@ -77,6 +78,7 @@ export function ConnectionDialog({
                 inputMode="url"
                 onChange={(event) => setUrl(event.target.value)}
                 placeholder="ws://127.0.0.1:8787/ws"
+                required
                 value={url}
               />
             </label>
@@ -86,15 +88,20 @@ export function ConnectionDialog({
                 autoComplete="off"
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="Paste token"
+                required
                 type="password"
                 value={token}
               />
             </label>
-            {error === undefined ? null : <p className="form-error">{error}</p>}
+            {error === undefined ? null : (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button
-              disabled={pending || url.trim().length === 0 || token.length === 0}
+              disabled={pending || url.trim().length === 0 || token.trim().length === 0}
               type="submit"
             >
               {pending ? "Connecting…" : "Connect"}

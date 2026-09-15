@@ -304,6 +304,7 @@ export const UiGroupRecord = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type UiGroupRecord = typeof UiGroupRecord.Type;
+export const UiGroupListParams = UiProfileScopedParams;
 
 export const UiPinId = boundedString("pin id", 128);
 export type UiPinId = typeof UiPinId.Type;
@@ -373,6 +374,7 @@ export const UI_METHODS = [
   "profile.list",
   "profile.current",
   "profile.health",
+  "group.list",
   "session.list",
   "session.show",
   "session.history",

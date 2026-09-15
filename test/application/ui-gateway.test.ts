@@ -613,6 +613,55 @@ test("specialist session.open uses local specialist Pi primitive, never a channe
   expect(calls).toEqual(["specialist:researcher"]);
 });
 
+test("group.list discovers persisted groups for the requested Profile", async () => {
+  const persisted: UiGroupRecord = {
+    groupId: "planning",
+    conversationId: "ui/group-planning",
+    hostProfileId: profileId,
+    memberAgentIds: ["researcher", "writer"],
+    defaultRecipient: { kind: "host" },
+    revision: 2,
+  };
+  const groups: UiGroupStore = {
+    read: () =>
+      Effect.succeed({
+        version: 1,
+        groups: [persisted],
+        commands: [],
+      }),
+    upsert: () => Effect.never,
+    remove: () => Effect.never,
+  };
+  const sent: string[] = [];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
+            makeProfileExtensions(),
+            { groups },
+          ),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "groups",
+          method: "group.list",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(decodeResponse(sent[0] ?? "null")).toEqual({
+    id: "groups",
+    ok: true,
+    result: { profileId, groups: [persisted] },
+  });
+});
+
 test("group prompts run bounded specialist turns sequentially and synthesize through one host writer", async () => {
   const specialistCalls: Array<{ readonly agentId: string; readonly directory: string }> = [];
   const promptOptions: Array<unknown> = [];

@@ -197,6 +197,14 @@ const methodFixtures = (): ReadonlyArray<{
     ref: MAIN_A,
     order: 0,
   };
+  const group = {
+    groupId: "research",
+    conversationId: "ui/group-research",
+    hostProfileId: PROFILE_A,
+    memberAgentIds: ["researcher"],
+    defaultRecipient: { kind: "host" as const },
+    revision: 1,
+  };
   return [
     { method: "ping", params: {}, result: { pong: true } },
     {
@@ -227,6 +235,11 @@ const methodFixtures = (): ReadonlyArray<{
       method: "profile.health",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, checks: [], hasErrors: false },
+    },
+    {
+      method: "group.list",
+      params: profileScopedParams(PROFILE_A),
+      result: { profileId: PROFILE_A, groups: [group] },
     },
     {
       method: "session.list",
@@ -472,6 +485,40 @@ const methodFixtures = (): ReadonlyArray<{
 };
 
 describe("gateway client transport", () => {
+  test("listGroups requests and decodes persisted group summaries", async () => {
+    const socket = new FakeSocket();
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      socketFactory: () => socket,
+    });
+    socket.open();
+    const listed = client.listGroups(PROFILE_A);
+    expect(frame(socket, 0)).toMatchObject({
+      method: "group.list",
+      params: { profileId: PROFILE_A },
+    });
+    socket.message({
+      id: frameId(socket, 0),
+      ok: true,
+      result: {
+        profileId: PROFILE_A,
+        groups: [
+          {
+            groupId: "research",
+            conversationId: "ui/group-research",
+            hostProfileId: PROFILE_A,
+            memberAgentIds: ["researcher"],
+            defaultRecipient: { kind: "host" },
+            revision: 1,
+          },
+        ],
+      },
+    });
+    expect((await listed).groups[0]?.groupId).toBe("research");
+    client.close();
+  });
+
   test("correlates out-of-order responses and authenticates the socket URL", async () => {
     const sockets: FakeSocket[] = [];
     const client = connectZiggy({

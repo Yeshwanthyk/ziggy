@@ -12,13 +12,15 @@ bun install
 bun run dev
 ```
 
-Vite+ serves the development client at <http://127.0.0.1:4174/>. Build the static client with:
+Vite+ serves the hot-reloading development client at <http://127.0.0.1:4174/>. It can reset while
+React modules are actively changing. Build the checked static client with:
 
 ```sh
 bun run build
 ```
 
-The build is written to `dist/` and can be served by any static file host. Connection settings ask
+The build is written to `dist/` and the local Ziggy web host serves it at
+<http://127.0.0.1:4173/> for stable review. Connection settings ask
 for the local WebSocket endpoint and runtime token. The endpoint is remembered in local storage;
 the token is kept only in session storage. Reloading the same browser tab reconnects automatically;
 a new tab or browser session shows the connection form again.
@@ -37,12 +39,19 @@ adapted upstream engine and its MIT license live under `src/vendor/bloub`.
 ## Current behavior
 
 - Opens and selects `local/main` for the current available Profile.
+- Lists Profile specialists and opens their direct conversations on demand.
+- Lists existing groups, creates groups with up to four specialists, and addresses the host,
+  everyone, or one member from the composer.
+- Lists active, paused, and conflicted automations with run, pause, and resume controls where valid.
+- Reads and updates Profile-owned conversation pins.
+- Restores the selected main, specialist, or group conversation when the same tab reloads.
 - Watches only the selected live conversation; channel sessions are not subscribed at startup.
 - Reconciles history when the SDK reports an epoch, replay, or sequence gap.
 - Keeps the streamed answer visible if authoritative history cannot yet be read.
 - Uses Enter to send, Shift+Enter for a newline, and exposes Stop while the agent is working.
 - Adapts the conversation rail into a sheet on narrow screens and respects reduced motion.
+- Keeps populated rail data visible during refresh and labels first-load restoration explicitly.
 
-Pinned conversations, unopened bots, groups, and secondary Profile settings will follow as later
-vertical slices. Stored sessions are deliberately absent from the default rail until the client has
-an explicit past-conversations surface.
+Stored sessions, memory, extensions, and secondary Profile settings remain outside this compact
+conversation surface. Stored sessions are deliberately absent from the default rail until the client
+has an explicit past-conversations surface.

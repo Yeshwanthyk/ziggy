@@ -1,14 +1,21 @@
 import {
   connectZiggy,
+  isSessionReference,
   ZiggyRequestOutcomeUnknownError,
+  type ZiggyAutomationDefinition,
   type ZiggyClientEvent,
+  type ZiggyConversationContext,
   type ZiggyGatewayClient,
   type ZiggyGatewayEvent,
+  type ZiggyPin,
+  type ZiggyProfileAgent,
   type ZiggyProfileSummary,
+  type ZiggyRecipientId,
   type ZiggySessionHistoryEntry,
+  type ZiggySessionListResult,
   type ZiggySessionRef,
 } from "../../gateway-client/src/index";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ConversationSummary {
   readonly ref: ZiggySessionRef;
@@ -25,6 +32,47 @@ export interface ToolActivity {
   readonly phase: "start" | "update" | "end";
 }
 
+export interface PinnedConversationSummary extends ConversationSummary {
+  readonly pinId: string;
+}
+
+export interface AgentSummary {
+  readonly id: string;
+  readonly description: string;
+}
+
+export interface GroupConversationSummary {
+  readonly ref?: Extract<ZiggySessionRef, { readonly kind: "live" }>;
+  readonly groupId: string;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly memberAgentIds: ReadonlyArray<string>;
+  readonly defaultRecipient?: ZiggyRecipientId;
+  readonly revision: number;
+  readonly active: boolean;
+}
+
+export interface OpenGroupInput {
+  readonly groupId: string;
+  readonly memberAgentIds: ReadonlyArray<string>;
+  readonly defaultRecipient?: ZiggyRecipientId;
+  readonly expectedRevision?: number;
+  readonly title?: string;
+}
+
+export interface AutomationSummary {
+  readonly id: string;
+  readonly lifecycle: ZiggyAutomationDefinition["lifecycle"];
+  readonly schedule?: string;
+  readonly message?: string;
+}
+
+export interface AutomationSections {
+  readonly active: ReadonlyArray<AutomationSummary>;
+  readonly paused: ReadonlyArray<AutomationSummary>;
+  readonly attention: ReadonlyArray<AutomationSummary>;
+}
+
 export interface ConnectInput {
   readonly url: string;
   readonly token: string;
@@ -37,10 +85,21 @@ export type GatewayClient = Pick<
   | "close"
   | "currentProfile"
   | "getSessionHistory"
+  | "listAgents"
+  | "listAutomations"
+  | "listGroups"
+  | "listPins"
   | "listProfiles"
   | "listSessions"
   | "onAny"
   | "openMain"
+  | "openSpecialist"
+  | "pauseAutomation"
+  | "removePin"
+  | "request"
+  | "resumeAutomation"
+  | "runAutomation"
+  | "setPin"
   | "state"
   | "submitPrompt"
   | "unwatchSession"
@@ -50,6 +109,76 @@ export type GatewayClient = Pick<
 export type GatewayConnector = (input: ConnectInput) => GatewayClient;
 
 const defaultConnector: GatewayConnector = (input) => connectZiggy(input);
+
+const RECONNECT_GRACE_PERIOD_MS = 10_000;
+const SELECTION_STORAGE_PREFIX = "ziggy:selected:v1:";
+
+type StoredSelectionTarget =
+  | { readonly kind: "main" }
+  | { readonly kind: "specialist"; readonly agentId: string }
+  | { readonly kind: "group"; readonly groupId: string }
+  | { readonly kind: "ref"; readonly ref: ZiggySessionRef };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const decodeStoredSelection = (value: unknown): StoredSelectionTarget | undefined => {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.target)) return undefined;
+  const target = value.target;
+  if (target.kind === "main" && Object.keys(target).length === 1) return { kind: "main" };
+  if (
+    target.kind === "specialist" &&
+    typeof target.agentId === "string" &&
+    target.agentId.length > 0 &&
+    Object.keys(target).length === 2
+  )
+    return { kind: "specialist", agentId: target.agentId };
+  if (
+    target.kind === "group" &&
+    typeof target.groupId === "string" &&
+    target.groupId.length > 0 &&
+    Object.keys(target).length === 2
+  )
+    return { kind: "group", groupId: target.groupId };
+  if (target.kind === "ref" && isSessionReference(target.ref) && Object.keys(target).length === 2)
+    return { kind: "ref", ref: target.ref };
+  return undefined;
+};
+
+const readStoredSelection = (
+  profileId: ZiggyProfileSummary["profileId"],
+): StoredSelectionTarget | undefined => {
+  try {
+    const encoded = globalThis.sessionStorage?.getItem(`${SELECTION_STORAGE_PREFIX}${profileId}`);
+    return encoded === null || encoded === undefined
+      ? undefined
+      : decodeStoredSelection(JSON.parse(encoded));
+  } catch {
+    return undefined;
+  }
+};
+
+const writeStoredSelection = (
+  profileId: ZiggyProfileSummary["profileId"],
+  target: StoredSelectionTarget,
+): void => {
+  try {
+    globalThis.sessionStorage?.setItem(
+      `${SELECTION_STORAGE_PREFIX}${profileId}`,
+      JSON.stringify({ version: 1, target }),
+    );
+  } catch {
+    // Selection persistence is optional when tab storage is unavailable.
+  }
+};
+
+const clearStoredSelection = (profileId: ZiggyProfileSummary["profileId"]): void => {
+  try {
+    globalThis.sessionStorage?.removeItem(`${SELECTION_STORAGE_PREFIX}${profileId}`);
+  } catch {
+    // Selection persistence is optional when tab storage is unavailable.
+  }
+};
 
 const refKey = (ref: ZiggySessionRef): string =>
   ref.kind === "live" ? `${ref.profileId}:live:${ref.key}` : `${ref.profileId}:stored:${ref.id}`;
@@ -66,6 +195,22 @@ const titleFromKey = (key: string, profileName: string): string => {
     .replace(/^./u, (value) => value.toLocaleUpperCase());
 };
 
+const displayName = (value: string): string =>
+  value
+    .replaceAll("-", " ")
+    .replaceAll("_", " ")
+    .replace(/^./u, (character) => character.toLocaleUpperCase());
+
+const upsertConversation = (
+  conversations: ReadonlyArray<ConversationSummary>,
+  conversation: ConversationSummary,
+): ReadonlyArray<ConversationSummary> =>
+  conversations.some((candidate) => sameRef(candidate.ref, conversation.ref))
+    ? conversations.map((candidate) =>
+        sameRef(candidate.ref, conversation.ref) ? conversation : candidate,
+      )
+    : [...conversations, conversation];
+
 export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) => {
   const [connection, setConnection] = useState<"closed" | "connecting" | "open" | "reconnecting">(
     "closed",
@@ -73,6 +218,13 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [profiles, setProfiles] = useState<ReadonlyArray<ZiggyProfileSummary>>([]);
   const [profile, setProfile] = useState<ZiggyProfileSummary>();
   const [conversations, setConversations] = useState<ReadonlyArray<ConversationSummary>>([]);
+  const [pins, setPins] = useState<ReadonlyArray<ZiggyPin>>([]);
+  const [pinRevision, setPinRevision] = useState(0);
+  const [agents, setAgents] = useState<ReadonlyArray<AgentSummary>>([]);
+  const [groups, setGroups] = useState<ReadonlyArray<GroupConversationSummary>>([]);
+  const [automations, setAutomations] = useState<ReadonlyArray<AutomationSummary>>([]);
+  const [sidebarLoading, setSidebarLoading] = useState(false);
+  const [sidebarBusy, setSidebarBusy] = useState(false);
   const [selectedRef, setSelectedRef] = useState<ZiggySessionRef>();
   const [selectedTitle, setSelectedTitle] = useState("Squarey");
   const [history, setHistory] = useState<ReadonlyArray<ZiggySessionHistoryEntry>>([]);
@@ -90,6 +242,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const clientRef = useRef<GatewayClient | undefined>(undefined);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const selectedRefRef = useRef<ZiggySessionRef | undefined>(undefined);
+  const profileRef = useRef<ZiggyProfileSummary | undefined>(undefined);
+  const pinRevisionRef = useRef(0);
+  const sidebarGenerationRef = useRef(0);
+  const sidebarMutationRef = useRef(false);
   const historyGenerationRef = useRef(0);
   const selectionGenerationRef = useRef(0);
   const connectionGenerationRef = useRef(0);
@@ -102,6 +258,36 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   useEffect(() => {
     selectedRefRef.current = selectedRef;
   }, [selectedRef]);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
+    pinRevisionRef.current = pinRevision;
+  }, [pinRevision]);
+
+  useEffect(() => {
+    if (connection !== "reconnecting") return;
+    const client = clientRef.current;
+    if (client === undefined) return;
+    const timer = globalThis.setTimeout(() => {
+      if (clientRef.current !== client || client.state === "open") return;
+      client.close();
+      setConnection("closed");
+      setLocalError("Connection lost. Reconnect with current endpoint and runtime token.");
+    }, RECONNECT_GRACE_PERIOD_MS);
+    return () => globalThis.clearTimeout(timer);
+  }, [connection]);
+
+  const requireOpenSidebarClient = useCallback((client: GatewayClient): void => {
+    if (client.state === "open") return;
+    const error = new Error(
+      "Ziggy is reconnecting. Wait for the connection before making changes.",
+    );
+    setLocalError(error.message);
+    throw error;
+  }, []);
 
   const loadHistory = useCallback(async (ref: ZiggySessionRef, before?: string): Promise<void> => {
     const client = clientRef.current;
@@ -199,9 +385,17 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   );
 
   const selectConversation = useCallback(
-    async (conversation: ConversationSummary): Promise<void> => {
+    async (conversation: ConversationSummary, remember = true): Promise<void> => {
       const client = clientRef.current;
       if (client === undefined) return;
+      if (remember) {
+        writeStoredSelection(
+          conversation.ref.profileId,
+          conversation.ref.kind === "live" && conversation.ref.key === "local/main"
+            ? { kind: "main" }
+            : { kind: "ref", ref: conversation.ref },
+        );
+      }
       const previous = selectedRefRef.current;
       const selectionGeneration = ++selectionGenerationRef.current;
       historyGenerationRef.current += 1;
@@ -239,12 +433,11 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   );
 
   const buildConversationList = useCallback(
-    async (
-      client: GatewayClient,
+    (
       selectedProfile: ZiggyProfileSummary,
       mainRef: ZiggySessionRef,
-    ): Promise<ReadonlyArray<ConversationSummary>> => {
-      const result = await client.listSessions(selectedProfile.profileId);
+      result: ZiggySessionListResult,
+    ): ReadonlyArray<ConversationSummary> => {
       const main: ConversationSummary = {
         ref: mainRef,
         title: selectedProfile.name,
@@ -264,6 +457,201 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       return [main, ...live];
     },
     [],
+  );
+
+  const refreshSidebarFor = useCallback(
+    async (
+      client: GatewayClient,
+      selectedProfile: ZiggyProfileSummary,
+      mainRef: ZiggySessionRef,
+      restoreSelection = false,
+    ): Promise<void> => {
+      const generation = ++sidebarGenerationRef.current;
+      const restoreSelectionGeneration = selectionGenerationRef.current;
+      setSidebarLoading(true);
+      const [sessionResult, pinResult, agentResult, groupResult, automationResult] =
+        await Promise.allSettled([
+          client.listSessions(selectedProfile.profileId),
+          client.listPins(selectedProfile.profileId),
+          client.listAgents(selectedProfile.profileId),
+          client.listGroups(selectedProfile.profileId),
+          client.listAutomations(selectedProfile.profileId),
+        ]);
+      if (
+        generation !== sidebarGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId
+      )
+        return;
+      const nextConversations =
+        sessionResult.status === "fulfilled"
+          ? buildConversationList(selectedProfile, mainRef, sessionResult.value)
+          : undefined;
+      if (nextConversations !== undefined) {
+        setConversations(nextConversations);
+      }
+      const liveGroups =
+        sessionResult.status === "fulfilled"
+          ? sessionResult.value.live.flatMap((session) =>
+              session.context?.kind === "group" ? [{ session, context: session.context }] : [],
+            )
+          : [];
+      const nextGroups: ReadonlyArray<GroupConversationSummary> | undefined =
+        groupResult.status === "fulfilled"
+          ? groupResult.value.groups.map((group): GroupConversationSummary => {
+              const live = liveGroups.find(({ context }) => context.groupId === group.groupId);
+              return {
+                ...(live === undefined ? {} : { ref: live.session.ref }),
+                groupId: group.groupId,
+                title: displayName(group.groupId),
+                subtitle: `${group.memberAgentIds.length} agents`,
+                memberAgentIds: group.memberAgentIds,
+                defaultRecipient: group.defaultRecipient,
+                revision: group.revision,
+                active: live !== undefined && !live.session.idle,
+              };
+            })
+          : sessionResult.status === "fulfilled"
+            ? liveGroups.map(({ session, context }): GroupConversationSummary => ({
+                ref: session.ref,
+                groupId: context.groupId,
+                title: displayName(context.groupId),
+                subtitle: `${context.memberAgentIds?.length ?? 0} agents`,
+                memberAgentIds: context.memberAgentIds ?? [],
+                defaultRecipient: context.defaultRecipient,
+                revision: context.expectedRevision ?? 0,
+                active: !session.idle,
+              }))
+            : undefined;
+      if (nextGroups !== undefined) setGroups(nextGroups);
+      if (pinResult.status === "fulfilled") {
+        pinRevisionRef.current = pinResult.value.revision;
+        setPinRevision(pinResult.value.revision);
+        setPins(pinResult.value.pins);
+      }
+      if (agentResult.status === "fulfilled") {
+        setAgents(
+          agentResult.value.agents.map((agent: ZiggyProfileAgent) => ({
+            id: agent.id,
+            description: agent.description,
+          })),
+        );
+      }
+      if (automationResult.status === "fulfilled") {
+        setAutomations(
+          automationResult.value.automations.map((automation) => ({
+            id: automation.id,
+            lifecycle: automation.lifecycle,
+            schedule: automation.schedule,
+            message: automation.message,
+          })),
+        );
+      }
+      if (
+        [sessionResult, pinResult, agentResult, groupResult, automationResult].some(
+          (result) => result.status === "rejected",
+        )
+      ) {
+        setLocalError("Some sidebar data could not be refreshed.");
+      }
+      setSidebarLoading(false);
+
+      if (
+        !restoreSelection ||
+        restoreSelectionGeneration !== selectionGenerationRef.current ||
+        client.state !== "open"
+      )
+        return;
+      const saved = readStoredSelection(selectedProfile.profileId);
+      if (saved === undefined || saved.kind === "main") return;
+      try {
+        if (saved.kind === "specialist") {
+          if (agentResult.status !== "fulfilled") return;
+          if (!agentResult.value.agents.some((agent) => agent.id === saved.agentId)) {
+            clearStoredSelection(selectedProfile.profileId);
+            return;
+          }
+          const ref = await client.openSpecialist(selectedProfile.profileId, saved.agentId);
+          if (
+            generation !== sidebarGenerationRef.current ||
+            restoreSelectionGeneration !== selectionGenerationRef.current
+          )
+            return;
+          const conversation: ConversationSummary = {
+            ref,
+            title: displayName(saved.agentId),
+            subtitle: "Specialist",
+            active: false,
+          };
+          setConversations((current) => upsertConversation(current, conversation));
+          await selectConversation(conversation, false);
+          return;
+        }
+        if (saved.kind === "group") {
+          if (nextGroups === undefined) return;
+          const group = nextGroups.find((candidate) => candidate.groupId === saved.groupId);
+          if (group === undefined) {
+            clearStoredSelection(selectedProfile.profileId);
+            return;
+          }
+          if (group.ref !== undefined) {
+            await selectConversation({ ...group, ref: group.ref }, false);
+            return;
+          }
+          const ref = await client.openMain(selectedProfile.profileId, {
+            kind: "group",
+            groupId: group.groupId,
+            memberAgentIds: group.memberAgentIds,
+            defaultRecipient: group.defaultRecipient,
+            expectedRevision: group.revision,
+          });
+          if (
+            ref.kind === "live" &&
+            generation === sidebarGenerationRef.current &&
+            restoreSelectionGeneration === selectionGenerationRef.current
+          ) {
+            const reopened: GroupConversationSummary = { ...group, ref };
+            const conversation: ConversationSummary = {
+              ref,
+              title: reopened.title,
+              subtitle: reopened.subtitle,
+              active: reopened.active,
+            };
+            setGroups((current) =>
+              current.map((candidate) =>
+                candidate.groupId === reopened.groupId ? reopened : candidate,
+              ),
+            );
+            setConversations((current) => upsertConversation(current, conversation));
+            await selectConversation(conversation, false);
+          }
+          return;
+        }
+        if (nextConversations === undefined || pinResult.status !== "fulfilled") return;
+        const conversation =
+          nextConversations.find((candidate) => sameRef(candidate.ref, saved.ref)) ??
+          pinResult.value.pins
+            .filter((pin) => sameRef(pin.ref, saved.ref))
+            .map((pin): ConversationSummary => ({
+              ref: pin.ref,
+              title:
+                pin.label ??
+                (pin.ref.kind === "live"
+                  ? titleFromKey(pin.ref.key, selectedProfile.name)
+                  : "Past conversation"),
+              subtitle: "Pinned conversation",
+              active: false,
+            }))[0];
+        if (conversation === undefined) {
+          clearStoredSelection(selectedProfile.profileId);
+          return;
+        }
+        await selectConversation(conversation, false);
+      } catch {
+        // Main remains selected when the saved target cannot be reopened.
+      }
+    },
+    [buildConversationList, selectConversation],
   );
 
   const connect = useCallback(
@@ -295,6 +683,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
             (candidate) => candidate.profileId === current.profileId && candidate.available,
           ) ?? listedProfiles.profiles.find((candidate) => candidate.available);
         if (selectedProfile === undefined) throw new Error("No available Ziggy Profile was found.");
+        profileRef.current = selectedProfile;
         setProfile(selectedProfile);
         const mainRef = await client.openMain(selectedProfile.profileId);
         if (
@@ -308,39 +697,314 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           subtitle: "Main conversation",
           active: false,
         };
-        const nextConversations = await buildConversationList(client, selectedProfile, mainRef);
+        setConversations([conversation]);
+        await selectConversation(conversation, false);
         if (
           connectionGeneration !== connectionGenerationRef.current ||
           clientRef.current !== client
         )
           return;
-        setConversations(nextConversations);
-        await selectConversation(conversation);
         setConnection(client.state);
+        void refreshSidebarFor(client, selectedProfile, mainRef, true);
       } catch (cause) {
         if (
           connectionGeneration !== connectionGenerationRef.current ||
           clientRef.current !== client
         )
           return;
-        setConnection(client.state === "open" ? "open" : "closed");
-        setLocalError(cause instanceof Error ? cause.message : "Could not connect to Ziggy.");
+        if (client.state === "open") {
+          setConnection("open");
+          setLocalError(cause instanceof Error ? cause.message : "Could not connect to Ziggy.");
+        } else {
+          client.close();
+          setConnection("closed");
+          setLocalError("Could not connect. Check the endpoint and current runtime token.");
+        }
         throw cause;
       }
     },
-    [buildConversationList, connector, handleEvent, selectConversation],
+    [connector, handleEvent, refreshSidebarFor, selectConversation],
+  );
+
+  const refreshSidebar = useCallback(async (): Promise<void> => {
+    const client = clientRef.current;
+    const selectedProfile = profileRef.current;
+    if (client === undefined || selectedProfile === undefined) return;
+    const mainRef: ZiggySessionRef = {
+      profileId: selectedProfile.profileId,
+      kind: "live",
+      key: "local/main",
+    };
+    await refreshSidebarFor(client, selectedProfile, mainRef);
+  }, [refreshSidebarFor]);
+
+  const openSpecialist = useCallback(
+    async (agentId: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || sidebarMutationRef.current)
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      try {
+        const ref = await client.openSpecialist(selectedProfile.profileId, agentId);
+        if (clientRef.current !== client || profileRef.current?.profileId !== ref.profileId) return;
+        const conversation: ConversationSummary = {
+          ref,
+          title: displayName(agentId),
+          subtitle: "Specialist",
+          active: false,
+        };
+        setConversations((current) => upsertConversation(current, conversation));
+        await selectConversation(conversation);
+        writeStoredSelection(selectedProfile.profileId, { kind: "specialist", agentId });
+      } catch (cause) {
+        setLocalError(
+          cause instanceof ZiggyRequestOutcomeUnknownError
+            ? "The connection closed while opening the specialist. Refresh before trying again."
+            : cause instanceof Error
+              ? cause.message
+              : "The specialist conversation could not be opened.",
+        );
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [requireOpenSidebarClient, selectConversation],
+  );
+
+  const openGroup = useCallback(
+    async (group: OpenGroupInput | GroupConversationSummary): Promise<void> => {
+      if ("ref" in group && group.ref !== undefined) {
+        await selectConversation({ ...group, ref: group.ref });
+        writeStoredSelection(group.ref.profileId, { kind: "group", groupId: group.groupId });
+        return;
+      }
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || sidebarMutationRef.current)
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      const context: Extract<ZiggyConversationContext, { readonly kind: "group" }> = {
+        kind: "group",
+        groupId: group.groupId,
+        memberAgentIds: group.memberAgentIds,
+        ...(group.defaultRecipient === undefined
+          ? {}
+          : { defaultRecipient: group.defaultRecipient }),
+        ...(("revision" in group ? group.revision : group.expectedRevision) === undefined
+          ? {}
+          : { expectedRevision: "revision" in group ? group.revision : group.expectedRevision }),
+      };
+      try {
+        const ref = await client.openMain(selectedProfile.profileId, context);
+        if (clientRef.current !== client || profileRef.current?.profileId !== ref.profileId) return;
+        if (ref.kind !== "live") throw new Error("The gateway returned a non-live group session.");
+        const conversation: ConversationSummary = {
+          ref,
+          title: group.title ?? displayName(group.groupId),
+          subtitle: `${group.memberAgentIds.length} agents`,
+          active: false,
+        };
+        const summary: GroupConversationSummary = {
+          ...conversation,
+          ref,
+          groupId: group.groupId,
+          memberAgentIds: group.memberAgentIds,
+          ...(group.defaultRecipient === undefined
+            ? {}
+            : { defaultRecipient: group.defaultRecipient }),
+          revision: "revision" in group ? group.revision : (group.expectedRevision ?? 0),
+        };
+        setGroups((current) => [
+          ...current.filter((candidate) => candidate.groupId !== summary.groupId),
+          summary,
+        ]);
+        setConversations((current) => upsertConversation(current, conversation));
+        await selectConversation(conversation);
+        writeStoredSelection(selectedProfile.profileId, { kind: "group", groupId: group.groupId });
+      } catch (cause) {
+        setLocalError(
+          cause instanceof ZiggyRequestOutcomeUnknownError
+            ? "The connection closed while opening the group. Refresh before trying again."
+            : cause instanceof Error
+              ? cause.message
+              : "The group conversation could not be opened.",
+        );
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [requireOpenSidebarClient, selectConversation],
+  );
+
+  const setConversationPin = useCallback(
+    async (ref: ZiggySessionRef, label?: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || sidebarMutationRef.current)
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      const existing = pins.find((pin) => sameRef(pin.ref, ref));
+      const pin: ZiggyPin = {
+        id: existing?.id ?? `pin-${crypto.randomUUID()}`,
+        ref,
+        order: existing?.order ?? Math.max(-1, ...pins.map((candidate) => candidate.order)) + 1,
+        ...(label === undefined ? {} : { label }),
+      };
+      try {
+        const result = await client.setPin(
+          selectedProfile.profileId,
+          pin,
+          pinRevisionRef.current,
+          `web-pin-${crypto.randomUUID()}`,
+        );
+        pinRevisionRef.current = result.revision;
+        setPinRevision(result.revision);
+        setPins(result.pins);
+      } catch (cause) {
+        setLocalError(
+          cause instanceof ZiggyRequestOutcomeUnknownError
+            ? "The pin update outcome is unknown. Refresh before trying again."
+            : cause instanceof Error
+              ? cause.message
+              : "The conversation could not be pinned.",
+        );
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [pins, requireOpenSidebarClient],
+  );
+
+  const removeConversationPin = useCallback(
+    async (pinId: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || sidebarMutationRef.current)
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      try {
+        const result = await client.removePin(
+          selectedProfile.profileId,
+          pinId,
+          pinRevisionRef.current,
+          `web-unpin-${crypto.randomUUID()}`,
+        );
+        pinRevisionRef.current = result.revision;
+        setPinRevision(result.revision);
+        setPins(result.pins);
+      } catch (cause) {
+        setLocalError(
+          cause instanceof ZiggyRequestOutcomeUnknownError
+            ? "The pin removal outcome is unknown. Refresh before trying again."
+            : cause instanceof Error
+              ? cause.message
+              : "The pin could not be removed.",
+        );
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [requireOpenSidebarClient],
+  );
+
+  const updateAutomation = useCallback(
+    async (automationId: string, action: "pause" | "resume" | "run"): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || sidebarMutationRef.current)
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      try {
+        const commandId = `web-automation-${crypto.randomUUID()}`;
+        if (action === "run") {
+          await client.runAutomation(selectedProfile.profileId, automationId, commandId);
+        } else {
+          const result =
+            action === "pause"
+              ? await client.pauseAutomation(selectedProfile.profileId, automationId, commandId)
+              : await client.resumeAutomation(selectedProfile.profileId, automationId, commandId);
+          setAutomations((current) =>
+            current.map((automation) =>
+              automation.id === result.id
+                ? { ...automation, lifecycle: result.lifecycle }
+                : automation,
+            ),
+          );
+        }
+      } catch (cause) {
+        setLocalError(
+          cause instanceof ZiggyRequestOutcomeUnknownError
+            ? "The automation action outcome is unknown. Refresh before trying again."
+            : cause instanceof Error
+              ? cause.message
+              : "The automation action failed.",
+        );
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [requireOpenSidebarClient],
+  );
+
+  const pauseAutomation = useCallback(
+    (automationId: string): Promise<void> => updateAutomation(automationId, "pause"),
+    [updateAutomation],
+  );
+  const resumeAutomation = useCallback(
+    (automationId: string): Promise<void> => updateAutomation(automationId, "resume"),
+    [updateAutomation],
+  );
+  const runAutomation = useCallback(
+    (automationId: string): Promise<void> => updateAutomation(automationId, "run"),
+    [updateAutomation],
   );
 
   const submit = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, recipient?: ZiggyRecipientId): Promise<void> => {
       const client = clientRef.current;
       const ref = selectedRefRef.current;
       if (client === undefined || ref?.kind !== "live" || busy) return;
+      if (client.state !== "open") {
+        const error = new Error("Ziggy is reconnecting. Wait for the connection before sending.");
+        setLocalError(error.message);
+        throw error;
+      }
       setLocalError(undefined);
       setPendingUser(text);
       setBusy(true);
       try {
-        await client.submitPrompt(ref, text, `web-${crypto.randomUUID()}`);
+        const commandId = `web-${crypto.randomUUID()}`;
+        if (recipient === undefined) {
+          await client.submitPrompt(ref, text, commandId);
+        } else {
+          await client.request("prompt.submit", { ref, text, recipient, commandId });
+        }
       } catch (cause) {
         setBusy(false);
         setPendingUser(undefined);
@@ -369,6 +1033,36 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     if (ref !== undefined && historyCursor !== undefined) await loadHistory(ref, historyCursor);
   }, [historyCursor, loadHistory]);
 
+  const pinnedConversations = useMemo<ReadonlyArray<PinnedConversationSummary>>(
+    () =>
+      [...pins]
+        .sort((left, right) => left.order - right.order)
+        .map((pin) => {
+          const conversation = conversations.find((candidate) => sameRef(candidate.ref, pin.ref));
+          const fallbackTitle =
+            pin.ref.kind === "live"
+              ? titleFromKey(pin.ref.key, profile?.name ?? "Ziggy")
+              : "Past conversation";
+          return {
+            pinId: pin.id,
+            ref: pin.ref,
+            title: pin.label ?? conversation?.title ?? fallbackTitle,
+            subtitle: conversation?.subtitle ?? "Pinned conversation",
+            active: conversation?.active ?? false,
+          };
+        }),
+    [conversations, pins, profile?.name],
+  );
+
+  const automationSections = useMemo<AutomationSections>(
+    () => ({
+      active: automations.filter((automation) => automation.lifecycle === "active"),
+      paused: automations.filter((automation) => automation.lifecycle === "paused"),
+      attention: automations.filter((automation) => automation.lifecycle === "conflict"),
+    }),
+    [automations],
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -389,19 +1083,33 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     connect,
     connection,
     conversations,
+    agents,
+    automationSections,
+    groups,
     hasMoreHistory,
     history,
     loadEarlier,
     loadingHistory,
     localError,
     maxPromptCodePoints,
+    openGroup,
+    openSpecialist,
+    pauseAutomation,
     pendingUser,
+    pinnedConversations,
     profile,
     profiles,
     reconciling,
+    refreshSidebar,
+    removeConversationPin,
+    resumeAutomation,
+    runAutomation,
     selectedRef,
     selectedTitle,
     selectConversation,
+    setConversationPin,
+    sidebarBusy,
+    sidebarLoading,
     streamText,
     submit,
     tools,

@@ -631,6 +631,23 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             hasErrors: report.hasErrors,
           };
         });
+      case "group.list":
+        return Effect.gen(function* () {
+          const params = yield* decodeScoped(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+          const branch = yield* route(params.profileId);
+          const state = yield* groups
+            .read(branch.target.path)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+          return {
+            profileId: branch.profileId,
+            groups: state.groups
+              .filter((group) => group.hostProfileId === branch.profileId)
+              .sort((left, right) => left.groupId.localeCompare(right.groupId))
+              .slice(0, 16),
+          };
+        });
       case "session.list":
         return Effect.gen(function* () {
           const params = yield* decodeScoped(request.params).pipe(

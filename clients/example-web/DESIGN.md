@@ -30,8 +30,8 @@ becomes a sheet and the composer remains reachable.
   become the home rail or a set of startup subscriptions.
 - A bot row opens that specialist's direct conversation. Group conversations show their members
   and make the addressed recipient clear.
-- Settings, automations, memory, and extensions belong in secondary surfaces as those features
-  are rebuilt. Build a working main chat first.
+- Existing automations receive compact status and action controls in the rail. Settings, memory,
+  extensions, and automation editing belong in secondary surfaces as those features are rebuilt.
 
 ## Components and stack
 
@@ -66,5 +66,6 @@ text labels so color or shape is never the only identifier.
 Rebuild in runnable slices. First prove connecting to Squarey, opening the main conversation,
 sending a bounded message, and displaying its reply. Then add pins, bots, and groups with the
 same shared components. Keep the browser preview running and refresh after each working build.
+Use the checked static preview for user review and the hot-reloading server for active development.
 Verify desktop and narrow layouts, keyboard focus, readable contrast, and reduced motion.
 Record implemented behavior and future work in the client README.

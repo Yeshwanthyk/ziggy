@@ -16,6 +16,7 @@ import type {
   ZiggySessionRef,
 } from "./conversations";
 import type { ZiggyExtensionRequestMap, ZiggyExtensionResultMap } from "./extensions";
+import type { ZiggyGroupRequestMap, ZiggyGroupResultMap } from "./groups";
 import type { ZiggyMemoryRequestMap, ZiggyMemoryResultMap } from "./memory";
 import type { ZiggyModelRequestMap, ZiggyModelResultMap } from "./models";
 import type { ZiggyNavigationRequestMap, ZiggyNavigationResultMap } from "./navigation";
@@ -96,6 +97,7 @@ export interface ZiggyRequestMap
     ZiggyAutomationRequestMap,
     ZiggyMemoryRequestMap,
     ZiggyExtensionRequestMap,
+    ZiggyGroupRequestMap,
     ZiggyNavigationRequestMap {
   readonly ping: Record<string, never>;
 }
@@ -109,6 +111,7 @@ export interface ZiggyResultMap
     ZiggyAutomationResultMap,
     ZiggyMemoryResultMap,
     ZiggyExtensionResultMap,
+    ZiggyGroupResultMap,
     ZiggyNavigationResultMap {
   readonly ping: ZiggyPingResult;
 }
@@ -193,6 +196,7 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "profile.list",
   "profile.current",
   "profile.health",
+  "group.list",
   "session.list",
   "session.show",
   "session.history",

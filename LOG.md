@@ -437,6 +437,7 @@ results.
 **Core computer use, browser profiles, and teachable workflows.** Added the pinned, MIT-licensed `@injaneity/pi-computer-use@0.5.0` runtime as the self-contained `computer-use` package with its native helper payloads, concrete Ziggy entrypoint adapter, eleven upstream tools, and a bounded `run_ui_segment` driver tool. Semantic segments freshly resolve durable app/browser roots, support read-only assertions, require exact targets and verified postconditions, and stop on ambiguity, cancellation, stale or unknown state, driver errors, and uncertain outcomes; coordinates, JavaScript, text entry, and secret values are excluded. Added `computer-workflows` for session-scoped teaching, strict redaction and nested decoding, visible immutable Profile revisions, later-user-input publication approval, compact replay plans, logged-in browser preconditions, and derived pass/fail/incomplete checkpoint summaries. Added `dev-browser` as the separate named persistent-browser lifecycle boundary with Profile-namespaced browser identities, bounded status/list execution, idle cleanup policy, and confirmation-gated global stop that preserves profile data. Runtime drafts and run evidence stay under `.runtime`; transient refs, state IDs, typed text, URLs, code, coordinates, result bodies, cookies, and page text never enter durable workflows.
 
 **Complete UI-capabilities and Squarey web plan.** Created a clean planning worktree on `kyendamuri/ui` from `6d7f71c`, captured the product boundary in `PRODUCT.md`, and recorded the full implementation packet in `docs/plans/ui-capabilities-squarey-web.md`. The plan improves the existing serve-owned UI gateway and `@ziggy/gateway-client`, redesigns the existing `clients/example-web` into a Grok-style Squarey client, and routes UI authoring through the bundled `ziggy-operations` skill. It defines the complete Profile interaction inventory, transcript projection, event epoch/cursor/replay behavior, product-to-primitive composition, eight end-to-end implementation slices, focused and live proof, commit discipline, and a fresh-session handoff prompt. No production behavior or Squarey Profile files changed.
+
 ## 2026-08-29
 
 **Current Profile-scoped UI protocol and recovery core.** Replaced the legacy browser surface with one strict capability protocol covering Profiles, sessions, local specialist and same-Profile group conversations, agents, models/auth, automations, memory, extensions, and persistent pins. Pi JSONL remains the only transcript authority through the read-only session-history adapter. Live events now carry a startup epoch, per-session sequence, stable identity, bounded replay, and explicit replay-gap results; Profile-local machine state owns pins and single-writer group metadata with revisions and idempotent command IDs. A shared resident WebSocket gateway composes registered Profiles into isolated registries and never projects Profile paths.
@@ -526,4 +527,43 @@ results.
   and installed CLI. The browser now loads its existing main transcript successfully. A fresh bounded
   prompt completed and its response remained in authoritative history after a browser reload.
   Desktop and narrow-screen layout checks passed; production preview 4173 and development 4174
-  both remain available. Pins, bots, and groups are subsequent client slices, documented in DESIGN.md.
+  both remain available. Stored-history browsing and secondary Profile settings remain later slices.
+
+## Working conversation rail
+
+- Expanded the minimal rail with resident-backed main chat, Profile pins, direct specialist chats,
+  persisted groups, and active, paused, or conflicted automations. Specialist and group rows open
+  only on demand; startup defaults to main and never subscribes to channel inventory.
+- Added group creation for up to four Profile specialists and a group composer recipient selector
+  for everyone, the host, or one member. Existing automation controls issue explicit run, pause, and
+  resume commands, while conflicted definitions remain visible without invalid actions. Loading,
+  disconnected, empty, and mutation failure states remain explicit.
+- Disabled conversation switching, pins, specialist/group opening, and automation mutations whenever
+  the transport is reconnecting or closed. The visible transcript remains in place until the
+  established connection returns.
+- Restores the tab's selected main, specialist, or group conversation after gateway bootstrap and
+  reports initial conversation and rail restoration as loading instead of briefly showing false
+  empty states. Populated rail data stays visible during later refreshes, and its Radix scroll
+  viewport is width-constrained so group and automation controls remain inside the compact rail.
+
+## Connection recovery and saved group discovery
+
+- Fixed startup failures that left the SDK retrying after the capabilities request timed out. Failed
+  startup closes the client; an established reconnect has a bounded recovery window. Disconnected
+  mutations are disabled and fail before dispatch, preserving the visible transcript and draft.
+- Added typed read-only `group.list` to the gateway and SDK so persisted group definitions remain
+  discoverable even when no group session is live. Focused protocol and gateway tests cover this.
+- Live browser proof: an invalid token reaches an actionable closed state; Ada direct chat and an
+  addressed group prompt return replies; a group created before a resident restart is listed and
+  reopens with its prior transcript afterward; pinning appears in the sidebar. Automation state was
+  inspected without running or changing scheduled jobs.
+- Full standalone development build passed repository checks and test suites. Moved the user
+  preview to checked static port 4173 after React hot reload broke during concurrent hook edits;
+  source development remains on 4174. Runtime credentials were refreshed in the user tab.
+
+- Refresh restoration stores only a validated per-Profile conversation target in tab storage, then
+  reopens it after discovery. Missing targets fall back to main and late restoration cannot replace
+  a newer selection. The browser was refreshed on Ada and returned to Ada with its prior history
+  and the complete sidebar. Initial loading is explicit; rail controls remain inside its width.
+- Final verification: `bun run check` passes, including 13 SDK tests and 16 web hook regressions.
+  The earlier standalone build also ran all core/extension/tooling tests successfully.

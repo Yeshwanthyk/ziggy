@@ -6,6 +6,7 @@ export * from "./models";
 export * from "./automations";
 export * from "./memory";
 export * from "./extensions";
+export * from "./groups";
 export * from "./navigation";
 
 import {
@@ -56,6 +57,7 @@ import {
   isExtensionValidationResult,
 } from "./extensions";
 import { isMemoryListResult, isMemoryPath, isMemoryShowResult } from "./memory";
+import { isGroupListResult } from "./groups";
 import {
   isAuthStatusResult,
   isModelListResult,
@@ -82,6 +84,8 @@ export const isMethodResult = <Method extends ZiggyMethod>(
       return isProfileCurrentResult(value);
     case "profile.health":
       return isProfileHealthResult(value) && profileMatches(value.profileId, params);
+    case "group.list":
+      return isGroupListResult(value) && profileMatches(value.profileId, params);
     case "session.list":
       return isSessionListResult(value) && profileMatches(value.profileId, params);
     case "session.show":
@@ -208,6 +212,7 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "profile.current":
       return isEmptyRecord(value);
     case "profile.health":
+    case "group.list":
     case "session.list":
     case "agent.list":
     case "model.status":

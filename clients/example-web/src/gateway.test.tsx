@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ZiggyRequestOutcomeUnknownError,
+  type ZiggyClientEvent,
   type ZiggyProfileId,
   type ZiggyProfileSummary,
   type ZiggySessionHistoryEntry,
@@ -109,12 +110,42 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     listProfiles: vi.fn(async () => ({ profiles: [profile] })),
     currentProfile: vi.fn(async () => ({ profileId: profile.profileId, name: profile.name })),
     openMain: vi.fn(async () => mainRef),
+    openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
+    listPins: vi.fn(async () => ({ profileId: profile.profileId, pins: [], revision: 0 })),
+    listAgents: vi.fn(async () => ({ profileId: profile.profileId, agents: [] })),
+    listGroups: vi.fn(async () => ({ profileId: profile.profileId, groups: [] })),
+    listAutomations: vi.fn(async () => ({ profileId: profile.profileId, automations: [] })),
     watchSession: vi.fn(async () => undefined),
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
     submitPrompt: vi.fn(async () => undefined),
+    request: vi.fn(async () => {
+      throw new Error("Unexpected direct gateway request");
+    }),
     abortSession: vi.fn(async () => undefined),
+    setPin: vi.fn(async (_profileId, pin, revision) => ({
+      profileId: profile.profileId,
+      pins: [pin],
+      revision: revision + 1,
+    })),
+    removePin: vi.fn(async () => ({ profileId: profile.profileId, pins: [], revision: 1 })),
+    pauseAutomation: vi.fn(async (_profileId, id) => ({
+      profileId: profile.profileId,
+      id,
+      lifecycle: "paused" as const,
+    })),
+    resumeAutomation: vi.fn(async (_profileId, id) => ({
+      profileId: profile.profileId,
+      id,
+      lifecycle: "active" as const,
+    })),
+    runAutomation: vi.fn(async (_profileId, automationId) => ({
+      profileId: profile.profileId,
+      automationId,
+      accepted: true,
+      outcome: "queued",
+    })),
     onAny: vi.fn(() => () => undefined),
     close: vi.fn(),
     ...overrides,
@@ -134,9 +165,15 @@ const connectHook = async (client: GatewayClient) => {
   return hook;
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
 
 describe("useZiggyGateway", () => {
   it("keeps one startup connection alive through Strict Mode effect replay", async () => {
@@ -172,6 +209,390 @@ describe("useZiggyGateway", () => {
     expect(fixture.watchSession).not.toHaveBeenCalledWith(specialistRef);
     expect(hook.result.current.selectedRef).toEqual(mainRef);
     expect(hook.result.current.connection).toBe("open");
+  });
+
+  it("loads display-ready pins, agents, groups, and automation sections without watching them", async () => {
+    const groupRef = {
+      profileId: profile.profileId,
+      kind: "live",
+      key: "ui/group-planning",
+    } as const satisfies ZiggySessionRef;
+    const { client, fixture } = makeClient({
+      listSessions: vi.fn(async () => ({
+        profileId: profile.profileId,
+        live: [
+          { ref: mainRef, kind: "ui" as const, idle: true },
+          {
+            ref: groupRef,
+            kind: "ui" as const,
+            idle: false,
+            context: {
+              kind: "group" as const,
+              groupId: "planning-room",
+              memberAgentIds: ["ada", "librarian"],
+              defaultRecipient: { kind: "all" as const },
+            },
+          },
+        ],
+        stored: [],
+      })),
+      listPins: vi.fn(async () => ({
+        profileId: profile.profileId,
+        revision: 4,
+        pins: [{ id: "main-pin", ref: mainRef, label: "Home", order: 0 }],
+      })),
+      listAgents: vi.fn(async () => ({
+        profileId: profile.profileId,
+        agents: [{ id: "ada", description: "Plans implementation", tools: [] }],
+      })),
+      listGroups: vi.fn(async () => ({
+        profileId: profile.profileId,
+        groups: [
+          {
+            groupId: "planning-room",
+            conversationId: "conversation-planning",
+            hostProfileId: profile.profileId,
+            memberAgentIds: ["ada", "librarian"],
+            defaultRecipient: { kind: "all" as const },
+            revision: 3,
+          },
+        ],
+      })),
+      listAutomations: vi.fn(async () => ({
+        profileId: profile.profileId,
+        automations: [
+          { id: "morning", valid: true, lifecycle: "active" as const, schedule: "daily" },
+          { id: "review", valid: true, lifecycle: "paused" as const },
+          { id: "broken", valid: false, lifecycle: "conflict" as const, message: "invalid" },
+        ],
+      })),
+    });
+    const hook = await connectHook(client);
+
+    await waitFor(() => expect(hook.result.current.sidebarLoading).toBe(false));
+
+    expect(hook.result.current.pinnedConversations).toEqual([
+      {
+        pinId: "main-pin",
+        ref: mainRef,
+        title: "Home",
+        subtitle: "Main conversation",
+        active: false,
+      },
+    ]);
+    expect(hook.result.current.agents).toEqual([
+      { id: "ada", description: "Plans implementation" },
+    ]);
+    expect(hook.result.current.groups).toEqual([
+      {
+        ref: groupRef,
+        groupId: "planning-room",
+        title: "Planning room",
+        subtitle: "2 agents",
+        memberAgentIds: ["ada", "librarian"],
+        defaultRecipient: { kind: "all" },
+        revision: 3,
+        active: true,
+      },
+    ]);
+    expect(hook.result.current.automationSections).toMatchObject({
+      active: [{ id: "morning", lifecycle: "active", schedule: "daily" }],
+      paused: [{ id: "review", lifecycle: "paused" }],
+      attention: [{ id: "broken", lifecycle: "conflict", message: "invalid" }],
+    });
+    expect(fixture.watchSession).toHaveBeenCalledExactlyOnceWith(mainRef);
+  });
+
+  it("opens direct and group conversations and routes group prompts to the chosen recipient", async () => {
+    const groupRef = {
+      profileId: profile.profileId,
+      kind: "live",
+      key: "ui/group-planning",
+    } as const satisfies ZiggySessionRef;
+    const openMain = vi.fn().mockResolvedValueOnce(mainRef).mockResolvedValueOnce(groupRef);
+    const request = vi.fn(async () => {
+      throw new Error("recipient fixture");
+    });
+    const { client, fixture } = makeClient({ openMain, request });
+    const hook = await connectHook(client);
+
+    await act(async () => {
+      await hook.result.current.openSpecialist("ada");
+    });
+    expect(fixture.openSpecialist).toHaveBeenCalledWith(profile.profileId, "ada");
+    expect(hook.result.current.selectedRef).toEqual(specialistRef);
+
+    await act(async () => {
+      await hook.result.current.openGroup({
+        groupId: "planning",
+        memberAgentIds: ["ada", "librarian"],
+        defaultRecipient: { kind: "all" },
+      });
+    });
+    expect(openMain).toHaveBeenLastCalledWith(profile.profileId, {
+      kind: "group",
+      groupId: "planning",
+      memberAgentIds: ["ada", "librarian"],
+      defaultRecipient: { kind: "all" },
+    });
+    expect(hook.result.current.selectedRef).toEqual(groupRef);
+
+    await act(async () => {
+      await expect(
+        hook.result.current.submit("compare approaches", { kind: "agent", agentId: "ada" }),
+      ).rejects.toThrow("recipient fixture");
+    });
+    expect(request).toHaveBeenCalledWith("prompt.submit", {
+      ref: groupRef,
+      text: "compare approaches",
+      recipient: { kind: "agent", agentId: "ada" },
+      commandId: expect.stringMatching(/^web-/u),
+    });
+  });
+
+  it("reopens a persisted group with its authoritative revision when no live session exists", async () => {
+    const groupRef = {
+      profileId: profile.profileId,
+      kind: "live",
+      key: "ui/group-planning",
+    } as const satisfies ZiggySessionRef;
+    const openMain = vi.fn().mockResolvedValueOnce(mainRef).mockResolvedValueOnce(groupRef);
+    const { client } = makeClient({
+      openMain,
+      listGroups: vi.fn(async () => ({
+        profileId: profile.profileId,
+        groups: [
+          {
+            groupId: "planning",
+            conversationId: "conversation-planning",
+            hostProfileId: profile.profileId,
+            memberAgentIds: ["ada", "librarian"],
+            defaultRecipient: { kind: "host" as const },
+            revision: 8,
+          },
+        ],
+      })),
+    });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.groups).toHaveLength(1));
+
+    expect(hook.result.current.groups[0]?.ref).toBeUndefined();
+    await act(async () => {
+      await hook.result.current.openGroup(hook.result.current.groups[0]!);
+    });
+
+    expect(openMain).toHaveBeenLastCalledWith(profile.profileId, {
+      kind: "group",
+      groupId: "planning",
+      memberAgentIds: ["ada", "librarian"],
+      defaultRecipient: { kind: "host" },
+      expectedRevision: 8,
+    });
+    expect(hook.result.current.selectedRef).toEqual(groupRef);
+  });
+
+  it("restores the selected specialist after a tab refresh without storing transcript state", async () => {
+    const first = makeClient({
+      listAgents: vi.fn(async () => ({
+        profileId: profile.profileId,
+        agents: [{ id: "ada", description: "Plans implementation", tools: [] }],
+      })),
+    });
+    const firstHook = await connectHook(first.client);
+    await act(async () => {
+      await firstHook.result.current.openSpecialist("ada");
+    });
+    firstHook.unmount();
+
+    const second = makeClient({
+      listAgents: vi.fn(async () => ({
+        profileId: profile.profileId,
+        agents: [{ id: "ada", description: "Plans implementation", tools: [] }],
+      })),
+    });
+    const secondHook = await connectHook(second.client);
+    await waitFor(() => expect(secondHook.result.current.selectedRef).toEqual(specialistRef));
+
+    expect(second.fixture.openMain).toHaveBeenCalledExactlyOnceWith(profile.profileId);
+    expect(second.fixture.openSpecialist).toHaveBeenCalledExactlyOnceWith(profile.profileId, "ada");
+    const saved = sessionStorage.getItem(`ziggy:selected:v1:${profile.profileId}`);
+    expect(saved).toContain('"kind":"specialist"');
+    expect(saved).not.toContain("Earlier question");
+  });
+
+  it("falls back to main and clears a saved target missing from authoritative discovery", async () => {
+    sessionStorage.setItem(
+      `ziggy:selected:v1:${profile.profileId}`,
+      JSON.stringify({ version: 1, target: { kind: "group", groupId: "deleted-room" } }),
+    );
+    const { client, fixture } = makeClient();
+    const hook = await connectHook(client);
+    await waitFor(() =>
+      expect(sessionStorage.getItem(`ziggy:selected:v1:${profile.profileId}`)).toBeNull(),
+    );
+
+    expect(hook.result.current.selectedRef).toEqual(mainRef);
+    expect(fixture.openMain).toHaveBeenCalledExactlyOnceWith(profile.profileId);
+  });
+
+  it("attaches the reopened live ref to a restored persisted group", async () => {
+    const groupRef = {
+      profileId: profile.profileId,
+      kind: "live",
+      key: "ui/group-planning",
+    } as const satisfies ZiggySessionRef;
+    sessionStorage.setItem(
+      `ziggy:selected:v1:${profile.profileId}`,
+      JSON.stringify({ version: 1, target: { kind: "group", groupId: "planning" } }),
+    );
+    const openMain = vi.fn().mockResolvedValueOnce(mainRef).mockResolvedValueOnce(groupRef);
+    const { client } = makeClient({
+      openMain,
+      listGroups: vi.fn(async () => ({
+        profileId: profile.profileId,
+        groups: [
+          {
+            groupId: "planning",
+            conversationId: "conversation-planning",
+            hostProfileId: profile.profileId,
+            memberAgentIds: ["ada", "librarian"],
+            defaultRecipient: { kind: "all" as const },
+            revision: 8,
+          },
+        ],
+      })),
+    });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.selectedRef).toEqual(groupRef));
+
+    expect(hook.result.current.groups).toContainEqual(
+      expect.objectContaining({ groupId: "planning", ref: groupRef }),
+    );
+    expect(hook.result.current.conversations).toContainEqual(
+      expect.objectContaining({ ref: groupRef }),
+    );
+  });
+
+  it("uses the latest pin revision and updates automation lifecycle after acknowledged actions", async () => {
+    const { client, fixture } = makeClient({
+      listPins: vi.fn(async () => ({ profileId: profile.profileId, revision: 7, pins: [] })),
+      listAutomations: vi.fn(async () => ({
+        profileId: profile.profileId,
+        automations: [{ id: "morning", valid: true, lifecycle: "active" as const }],
+      })),
+    });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.sidebarLoading).toBe(false));
+
+    await act(async () => {
+      await hook.result.current.setConversationPin(mainRef, "Home");
+    });
+    expect(fixture.setPin).toHaveBeenCalledWith(
+      profile.profileId,
+      expect.objectContaining({ ref: mainRef, label: "Home", order: 0 }),
+      7,
+      expect.stringMatching(/^web-pin-/u),
+    );
+
+    await act(async () => {
+      await hook.result.current.pauseAutomation("morning");
+    });
+    expect(fixture.pauseAutomation).toHaveBeenCalledWith(
+      profile.profileId,
+      "morning",
+      expect.stringMatching(/^web-automation-/u),
+    );
+    expect(hook.result.current.automationSections.paused).toEqual([
+      { id: "morning", lifecycle: "paused" },
+    ]);
+  });
+
+  it("closes a failed bootstrap client so its reconnect loop cannot survive", async () => {
+    const { client, fixture } = makeClient({
+      state: "reconnecting",
+      capabilities: vi.fn(async () => {
+        throw new Error("request timed out");
+      }),
+    });
+    const connector: GatewayConnector = () => client;
+    const hook = renderHook(() => useZiggyGateway(connector));
+
+    await act(async () => {
+      await expect(
+        hook.result.current.connect({ url: "ws://stale/ws", token: "expired" }),
+      ).rejects.toThrow("request timed out");
+    });
+
+    expect(fixture.close).toHaveBeenCalledOnce();
+    expect(hook.result.current.connection).toBe("closed");
+    expect(hook.result.current.localError).toBe(
+      "Could not connect. Check the endpoint and current runtime token.",
+    );
+  });
+
+  it("keeps a recovered client alive when reconnect succeeds before the grace period", async () => {
+    vi.useFakeTimers();
+    let transportState: GatewayClient["state"] = "open";
+    let emit: ((event: ZiggyClientEvent) => void) | undefined;
+    const { client, fixture } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    });
+    Object.defineProperty(client, "state", { get: () => transportState });
+    const hook = await connectHook(client);
+
+    act(() => {
+      transportState = "reconnecting";
+      emit?.({ event: "connection-state", state: "reconnecting" });
+    });
+    act(() => vi.advanceTimersByTime(9_999));
+    expect(fixture.close).not.toHaveBeenCalled();
+
+    act(() => {
+      transportState = "open";
+      emit?.({ event: "connection-state", state: "open" });
+    });
+    act(() => vi.advanceTimersByTime(1));
+
+    expect(hook.result.current.connection).toBe("open");
+    expect(fixture.close).not.toHaveBeenCalled();
+    expect(hook.result.current.history).toEqual(initialHistory);
+  });
+
+  it("stops an unrecovered client after the grace period and blocks sidebar mutations", async () => {
+    vi.useFakeTimers();
+    let transportState: GatewayClient["state"] = "open";
+    let emit: ((event: ZiggyClientEvent) => void) | undefined;
+    const { client, fixture } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    });
+    Object.defineProperty(client, "state", { get: () => transportState });
+    const hook = await connectHook(client);
+
+    act(() => {
+      transportState = "reconnecting";
+      emit?.({ event: "connection-state", state: "reconnecting" });
+    });
+    await act(async () => {
+      await expect(hook.result.current.pauseAutomation("morning")).rejects.toThrow(
+        "Wait for the connection before making changes",
+      );
+    });
+    expect(fixture.pauseAutomation).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(10_000));
+
+    expect(fixture.close).toHaveBeenCalledOnce();
+    expect(hook.result.current.connection).toBe("closed");
+    expect(hook.result.current.localError).toBe(
+      "Connection lost. Reconnect with current endpoint and runtime token.",
+    );
+    expect(hook.result.current.history).toEqual(initialHistory);
   });
 
   it("keeps a watch failure visible after history loads without marking transport offline", async () => {

@@ -51,6 +51,7 @@ import type {
 } from "./protocol/extensions";
 import type { ZiggyMemoryListResult, ZiggyMemoryShowResult } from "./protocol/memory";
 import type { ZiggyMemoryPath } from "./protocol/memory";
+import type { ZiggyGroupListResult } from "./protocol/groups";
 import type {
   ZiggyPinListResult,
   ZiggyPinRemoveResult,
@@ -112,6 +113,7 @@ export interface ZiggyGatewayClient {
   listProfiles(): Promise<ZiggyProfileListResult>;
   currentProfile(): Promise<ZiggyProfileCurrentResult>;
   profileHealth(profileId: ZiggyProfileId): Promise<ZiggyProfileHealthResult>;
+  listGroups(profileId: ZiggyProfileId): Promise<ZiggyGroupListResult>;
   listSessions(profileId: ZiggyProfileId): Promise<ZiggySessionListResult>;
   showSession(ref: ZiggySessionRef): Promise<ZiggySessionShowResult>;
   getSessionHistory(ref: ZiggySessionRef, before?: string): Promise<ZiggySessionHistoryResult>;
@@ -241,6 +243,7 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
     listProfiles: () => connection.request("profile.list", {}),
     currentProfile: () => connection.request("profile.current", {}),
     profileHealth: (profileId) => connection.request("profile.health", { profileId }),
+    listGroups: (profileId) => connection.request("group.list", { profileId }),
     listSessions: (profileId) => connection.request("session.list", { profileId }),
     showSession: (ref) => connection.request("session.show", { ref }),
     getSessionHistory: (ref, before) =>
