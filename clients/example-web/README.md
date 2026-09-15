@@ -35,6 +35,10 @@ gateway, so adding Fate's HTTP/SSE backend would create a second transport and t
 
 Bot identities use a local React adapter over [Bloub](https://github.com/jeremy-prt/bloub). The
 adapted upstream engine and its MIT license live under `src/vendor/bloub`.
+The 96-variant catalog in `src/lib/blob-catalog.ts` assigns each normalized bot identity a stable
+shape/color automatically, including newly discovered bots. Avatars animate while idle or thinking,
+pause in hidden tabs, and respect reduced motion. Browse all variants in Settings → Blob collection.
+These identities belong to this supplied UI; no avatar fields are written into Profile agent files.
 
 ## Current behavior
 

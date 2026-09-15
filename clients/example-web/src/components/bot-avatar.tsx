@@ -1,23 +1,16 @@
 import { useEffect, useId, useMemo, useState } from "react";
 
+import { blobVariantById, blobVariantForIdentity, type BlobVariantId } from "../lib/blob-catalog";
 import { BotEngine, type BotFrame } from "../vendor/bloub/engine";
 import { DEMI_VIEWBOX, RAYON } from "../vendor/bloub/repere";
-import { COLORS, SHAPES } from "../vendor/bloub/skins";
 
 export interface BotAvatarProps {
   name: string;
+  identity?: string;
+  variantId?: BlobVariantId;
   active?: boolean;
   size?: number;
   className?: string;
-}
-
-function hashIdentity(value: string): number {
-  let hash = 0x811c9dc5;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
 }
 
 function useReducedMotion(): boolean {
@@ -38,15 +31,23 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-export function BotAvatar({ name, active = false, size = 40, className }: BotAvatarProps) {
+export function BotAvatar({
+  name,
+  identity = name,
+  variantId,
+  active = false,
+  size = 40,
+  className,
+}: BotAvatarProps) {
   const reducedMotion = useReducedMotion();
-  const animated = active && !reducedMotion;
-  const identity = useMemo(() => hashIdentity(name), [name]);
-  const shape = SHAPES[identity % SHAPES.length] ?? SHAPES[0];
-  const color = COLORS[(identity >>> 8) % COLORS.length] ?? COLORS[0];
+  const animated = !reducedMotion;
+  const variant = useMemo(
+    () => (variantId ? blobVariantById(variantId) : undefined) ?? blobVariantForIdentity(identity),
+    [identity, variantId],
+  );
   const engine = useMemo(
-    () => new BotEngine(RAYON, animated ? "thinking" : "idle", shape?.radii ?? null),
-    [animated, shape],
+    () => new BotEngine(RAYON, active ? "thinking" : "idle", variant.shape.radii),
+    [active, variant.shape],
   );
   const [frame, setFrame] = useState<BotFrame>(() => engine.sample(0));
   const reactId = useId();
@@ -57,21 +58,50 @@ export function BotAvatar({ name, active = false, size = 40, className }: BotAva
     if (!animated) return;
 
     let animationFrame = 0;
-    let startedAt: number | undefined;
+    let elapsedSeconds = 0;
+    let segmentStartedAt: number | undefined;
+    let lastRenderedAt = -Infinity;
+
     const tick = (now: number) => {
-      startedAt ??= now;
-      setFrame(engine.sample((now - startedAt) / 1000));
+      segmentStartedAt ??= now;
+      if (now - lastRenderedAt >= 1000 / 30) {
+        elapsedSeconds += (now - segmentStartedAt) / 1000;
+        segmentStartedAt = now;
+        lastRenderedAt = now;
+        setFrame(engine.sample(elapsedSeconds));
+      }
       animationFrame = requestAnimationFrame(tick);
     };
-    animationFrame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animationFrame);
+
+    const start = () => {
+      if (document.visibilityState === "hidden" || animationFrame !== 0) return;
+      segmentStartedAt = undefined;
+      animationFrame = requestAnimationFrame(tick);
+    };
+    const stop = () => {
+      if (animationFrame === 0) return;
+      cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+      segmentStartedAt = undefined;
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") stop();
+      else start();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    start();
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stop();
+    };
   }, [animated, engine]);
 
-  const ink = color?.hex ?? "#0a0a0c";
+  const ink = variant.color.hex;
 
   return (
     <svg
-      aria-label={`${name} assistant${animated ? " is thinking" : ""}`}
+      aria-label={`${name} assistant${active ? " is thinking" : ""}`}
       className={className}
       height={size}
       role="img"
@@ -140,6 +170,14 @@ export function BotAvatar({ name, active = false, size = 40, className }: BotAva
             y={-DEMI_VIEWBOX}
           />
         </g>
+        {variant.color.id === "creme" ? (
+          <g fill="#746e62">
+            <path d={frame.bodyPath} fill="none" stroke="#a39c90" strokeWidth={2} />
+            {frame.eyes.map((eye, index) => (
+              <path d={eye.d} key={index} opacity={eye.alpha} transform={eye.matrix} />
+            ))}
+          </g>
+        ) : null}
       </g>
 
       {!frame.dotsBehind ? <Dots dots={frame.dots} fill={ink} /> : null}

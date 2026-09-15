@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { BlobCollection } from "@/components/blob-collection";
 import {
   Dialog,
   DialogContent,
@@ -342,6 +343,9 @@ export function SettingsDialog({
             ) : (
               <p className="settings-muted">No providers reported.</p>
             )}
+          </section>
+          <section className="settings-section">
+            <BlobCollection />
           </section>
         </div>
       </DialogContent>

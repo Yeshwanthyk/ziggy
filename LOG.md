@@ -643,3 +643,15 @@ results.
   No live agent definition, automation definition, or model setting was changed during verification.
 - Kept the checked preview running on port 4173. Documented credential-request UI as a proposed
   follow-up: keeping secrets out of the transcript alone does not isolate them from shell access.
+
+## Animated Bloub identity collection
+
+- Fixed idle avatars being sampled only once. Idle and thinking now advance through the Bloub
+  engine at a capped frame rate, pause in hidden documents, and respect reduced motion.
+- Added 96 stable shape/color variants with normalized identity assignment for existing and newly
+  discovered bots. The same bot name now retains its avatar across header/sidebar capitalization.
+- Settings includes a lazy collection preview, showing eight shapes at a time across twelve colors.
+  Assignment remains a supplied-client concern and does not mutate Profile agent definitions.
+- Cream variants use a contrasting outline and eyes against the light UI. Full `bun run check`
+  passes with 38 web tests. Browser frame sampling confirmed all eight visible idle avatars change
+  over time, and Ada's sidebar/header colors agree; the 96-variant collection is visible in Settings.

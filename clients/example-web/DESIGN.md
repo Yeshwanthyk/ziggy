@@ -51,6 +51,12 @@ can be adapted behind a React component; preserve upstream provenance and licens
 stable identity for each bot. Animate to convey activity, respect reduced motion, and retain
 text labels so color or shape is never the only identifier.
 
+The supplied client keeps a catalog of 96 named Bloub variants (eight shapes, twelve colors).
+Normalize bot identities before assigning a variant so casing changes do not change the avatar.
+Newly discovered bots receive a deterministic variant immediately. Idle avatars breathe and blink;
+thinking has its own animation. Pause when the document is hidden and honor reduced motion.
+Settings exposes the collection by color without mounting all 96 animations at once.
+
 ## Interaction and reliability
 
 - Connection state comes from the transport. A failed conversation subscription is a local
