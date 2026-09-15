@@ -655,3 +655,14 @@ results.
 - Cream variants use a contrasting outline and eyes against the light UI. Full `bun run check`
   passes with 38 web tests. Browser frame sampling confirmed all eight visible idle avatars change
   over time, and Ada's sidebar/header colors agree; the 96-variant collection is visible in Settings.
+
+## Automation run card polish
+
+- Replaced the flat gray latest-run block with a bordered card, semantic status badge, compact
+  duration, aligned timestamps, and a separate failure reason. Successful runs omit the empty
+  failure field. Existing data and actions are unchanged.
+- Live verification exposed an agent-document union branch stripping automation lifecycle during
+  response decoding. Moved the less-specific branch after richer results and added a regression
+  covering both automation lifecycles and agent documents. The automation files were unaffected.
+- Full standalone build/check/tests passed; after an idle resident restart the browser again shows
+  the weather definition, Edit action, lifecycle, and polished run card without a decoding error.

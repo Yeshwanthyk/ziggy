@@ -553,9 +553,85 @@ button {
 }
 
 .run-card {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 2px 5px #00000004;
+}
+
+.run-card-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.run-status-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 7px;
   background: var(--muted);
-  border-radius: 10px;
-  padding: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.run-status svg,
+.run-duration svg {
+  width: 14px;
+  height: 14px;
+}
+.run-card[data-state="failed"] .run-status {
+  background: oklch(0.96 0.025 25);
+  color: oklch(0.45 0.16 25);
+}
+.run-card[data-state="completed"] .run-status {
+  background: oklch(0.96 0.035 155);
+  color: oklch(0.4 0.1 155);
+}
+.run-trigger {
+  text-transform: capitalize;
+}
+.run-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.run-card.is-latest dl {
+  margin-top: 18px;
+  gap: 16px;
+}
+.run-card.is-latest dt {
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.run-card.is-latest dd {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.run-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.run-failure span {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.run-failure code {
+  font-size: 12px;
+  color: oklch(0.45 0.12 25);
+  overflow-wrap: anywhere;
 }
 
 .run-card-heading,

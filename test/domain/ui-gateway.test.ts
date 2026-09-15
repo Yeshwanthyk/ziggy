@@ -26,6 +26,24 @@ const decodeName = Schema.decodeUnknownSync(UiSessionName);
 const decodeKey = Schema.decodeUnknownSync(UiSessionKey);
 const decodeEvent = Schema.decodeUnknownSync(UiEventFrame);
 const decodeResponseResult = Schema.decodeUnknownResult(UiResponseFrame);
+const decodeResponse = Schema.decodeUnknownSync(UiResponseFrame);
+
+test("response decoding preserves automation lifecycle alongside agent documents", () => {
+  for (const lifecycle of ["active", "paused"] as const) {
+    const frame = {
+      id: "document",
+      ok: true as const,
+      result: { profileId, id: "morning-weather", lifecycle, source: "definition" },
+    };
+    expect(decodeResponse(frame)).toEqual(frame);
+  }
+  const agent = {
+    id: "agent-document",
+    ok: true as const,
+    result: { profileId, id: "ada", source: "instructions" },
+  };
+  expect(decodeResponse(agent)).toEqual(agent);
+});
 const decodeExtensionAdd = Schema.decodeUnknownSync(UiExtensionAddParams);
 const decodeExtensionFailure = Schema.decodeUnknownSync(UiExtensionFailure);
 const decodeExtensionList = Schema.decodeUnknownSync(UiExtensionListForProfileResult);

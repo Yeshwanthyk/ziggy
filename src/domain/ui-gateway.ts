@@ -889,7 +889,6 @@ export const UiGatewayResult = Schema.Union([
   UiAcknowledgedResult,
   UiAgentListResult,
   UiAgentShowResult,
-  UiAgentDocumentResult,
   UiAgentValidateResult,
   UiAgentRunResult,
   UiModelStatusResult,
@@ -911,6 +910,8 @@ export const UiGatewayResult = Schema.Union([
   UiExtensionValidationResult,
   UiPinListResult,
   UiGroupListResult,
+  // This shape is a subset of automation documents; decode richer documents first.
+  UiAgentDocumentResult,
 ]);
 export type UiGatewayResult = typeof UiGatewayResult.Type;
 

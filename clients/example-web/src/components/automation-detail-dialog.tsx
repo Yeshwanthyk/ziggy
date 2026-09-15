@@ -1,4 +1,4 @@
-import { Pencil, RefreshCw } from "lucide-react";
+import { CircleCheck, CircleX, Clock3, Pencil, RefreshCw, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DefinitionEditor } from "@/components/definition-editor";
 import { parseDefinitionSource } from "@/lib/definition-source";
@@ -205,10 +205,28 @@ export function AutomationDetailDialog({
                   ) : latestRun === undefined ? (
                     <p className="detail-muted">No runs recorded for this automation.</p>
                   ) : (
-                    <div className="run-card is-latest">
+                    <div className="run-card is-latest" data-state={latestRun.state}>
                       <div className="run-card-heading">
-                        <strong>{latestRun.state}</strong>
-                        <span>{latestRun.trigger}</span>
+                        <div className="run-status-group">
+                          <strong className="run-status">
+                            {latestRun.state === "failed" ? (
+                              <CircleX />
+                            ) : latestRun.state === "completed" ? (
+                              <CircleCheck />
+                            ) : (
+                              <Clock3 />
+                            )}
+                            {latestRun.state}
+                          </strong>
+                          <span className="run-trigger">{latestRun.trigger} run</span>
+                        </div>
+                        <span
+                          className="run-duration"
+                          aria-label={`Duration: ${formatDuration(latestRun.startedAtMs, latestRun.finishedAtMs)}`}
+                        >
+                          <Timer />
+                          {formatDuration(latestRun.startedAtMs, latestRun.finishedAtMs)}
+                        </span>
                       </div>
                       <dl>
                         <div>
@@ -219,15 +237,13 @@ export function AutomationDetailDialog({
                           <dt>Finished</dt>
                           <dd>{formatTimestamp(latestRun.finishedAtMs, timezone)}</dd>
                         </div>
-                        <div>
-                          <dt>Duration</dt>
-                          <dd>{formatDuration(latestRun.startedAtMs, latestRun.finishedAtMs)}</dd>
-                        </div>
-                        <div>
-                          <dt>Failure</dt>
-                          <dd>{latestRun.failureCategory ?? "Not reported"}</dd>
-                        </div>
                       </dl>
+                      {latestRun.state === "failed" || latestRun.failureCategory !== null ? (
+                        <div className="run-failure">
+                          <span>Failure reason</span>
+                          <code>{latestRun.failureCategory ?? "Not reported"}</code>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </section>
