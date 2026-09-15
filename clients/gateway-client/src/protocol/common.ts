@@ -210,6 +210,8 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "session.abort",
   "agent.list",
   "agent.show",
+  "agent.document",
+  "agent.save",
   "agent.create",
   "agent.validate",
   "agent.run",

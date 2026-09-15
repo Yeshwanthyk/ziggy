@@ -29,9 +29,14 @@ becomes a sheet and the composer remains reachable.
 - Other conversations are available on demand. Runtime channel inventory does not automatically
   become the home rail or a set of startup subscriptions.
 - A bot row opens that specialist's direct conversation. Group conversations show their members
-  and make the addressed recipient clear.
-- Existing automations receive compact status and action controls in the rail. Settings, memory,
-  extensions, and automation editing belong in secondary surfaces as those features are rebuilt.
+  and make the addressed recipient clear. A direct agent's header exposes its definition editor;
+  copy states that saved configuration applies to new specialist sessions instead of silently
+  changing the runtime behind an existing conversation.
+- Existing automations receive compact status and action controls in the rail. Their secondary
+  dialog leads with the task and selected automation's latest run; global scheduler status remains
+  clearly separate from that run outcome. Editing offers supported flat fields plus a literal source
+  mode and saves explicitly against the source the user opened. Settings, memory, and extensions
+  remain secondary surfaces as those features are rebuilt.
 
 ## Components and stack
 

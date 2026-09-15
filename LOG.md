@@ -546,6 +546,38 @@ results.
   empty states. Populated rail data stays visible during later refreshes, and its Radix scroll
   viewport is width-constrained so group and automation controls remain inside the compact rail.
 
+## Automation observability panel
+
+- Made each automation name open a read-only detail dialog backed by the existing definition,
+  scheduler-status, and run-history SDK calls. It presents the task before the unchanged full source,
+  structured schedule and timezone, the selected automation's latest run, exact failure category,
+  run IDs, delivery outcomes, and recent history. Subsecond durations retain millisecond precision.
+- Kept global scheduler tick and heartbeat health separate from the selected automation outcome,
+  and treats paused definitions with no scheduler row as paused instead of deleted. Independent reads
+  preserve available definition or scheduler data when another source fails; generation fencing drops
+  late results after selection changes, and run lists are filtered by automation ID before display.
+
+## Automation definition editing
+
+- Added an explicit Edit mode to the automation detail dialog with the supported flat frontmatter
+  fields, a task editor, and an unchanged full-source mode. Field edits preserve unknown lines and
+  ordering instead of serializing the definition through a generic YAML implementation; long task
+  text is collapsed in the read-only view so run evidence remains nearby.
+- Saves pass the exact source opened by the editor as `expectedSource`. Concurrent edits therefore
+  fail through the gateway compare-and-swap contract without clearing the user's draft; inputs lock
+  only while one save is in flight. Focused parser, component, and gateway tests cover preservation,
+  raw-source mode, rejected saves, and the expected-source request.
+
+## Profile agent definition editing
+
+- Added an Edit action to direct-agent conversation headers. The shared definition editor presents
+  description, provider, model, thinking, comma-separated tools, and instructions alongside the
+  literal source, preserving the Profile's flat frontmatter format and exact unknown source lines.
+- Agent saves use the same explicit expected-source guard and stale response fencing as automation
+  saves. The dialog explains that changes apply to new specialist sessions while existing open
+  conversations retain their current runtime; verification uses gateway fixtures and never writes a
+  live Profile agent definition.
+
 ## Connection recovery and saved group discovery
 
 - Fixed startup failures that left the SDK retrying after the capabilities request timed out. Failed
@@ -567,3 +599,47 @@ results.
   and the complete sidebar. Initial loading is explicit; rail controls remain inside its width.
 - Final verification: `bun run check` passes, including 13 SDK tests and 16 web hook regressions.
   The earlier standalone build also ran all core/extension/tooling tests successfully.
+
+## Rendered assistant messages
+
+- Render assistant history and streaming output as safe Markdown with GFM lists and tables, styled
+  code, and usable links. User messages remain literal text. Raw HTML is skipped, unsafe URL schemes
+  are removed, and remote images become explicit links instead of loading when a transcript opens.
+- Tightened the composer footer while retaining its send, stop, Enter, and Shift+Enter behavior and
+  40-pixel action target. Focused rendering and malicious-input tests pass.
+
+## Profile agent document editing
+
+- Added source-preserving `agent.document` and compare-and-swap `agent.save` gateway operations
+  while keeping the existing `agent.show` projection unchanged. The typed gateway SDK exposes
+  `readAgentDocument` and `saveAgent` convenience methods with matching strict wire decoders.
+- Agent saves validate the complete submitted Markdown contract before writing, reject stale source,
+  symlinked paths, and non-physical directories, then replace the file atomically while preserving
+  its mode. Per-file serialization ensures concurrent Ziggy saves with the same expected source
+  produce one winner and one typed conflict.
+- Focused filesystem, application, gateway, SDK transport, and protocol parity tests pass. Saved
+  agent configuration applies to new specialist runtimes; existing direct conversations keep their
+  current in-memory runtime and are never closed or aborted by a save.
+
+## Configured provider visibility
+
+- Auth status now prioritizes configured providers before applying the existing 16-provider wire
+  cap, then orders each configured or unconfigured group deterministically by name and ID. This
+  keeps usable late-alphabet providers visible in Settings without changing the public response
+  shape or bound. A focused gateway regression covers a configured provider after 17 unconfigured
+  entries.
+
+## Web settings and final editor verification
+
+- Expanded Settings to include connection controls, available default models and supported thinking
+  levels, configured provider status, and a collapsed list of other reported providers. Model saves
+  are explicit; disconnected and stale requests cannot report a successful change in another view.
+- The final standalone development build passed `bun run check` and all core, extension, and tooling
+  tests. The web gate includes 32 tests and the SDK gate includes 14 tests.
+- Restarted the idle Squarey resident with the checked binary and restored its local browser
+  connection. Live read proof returned Ada's complete document and all three configured providers.
+  Browser proof covered agent editor open/cancel, automation fields/source open/cancel, scoped latest
+  run details, rendered Markdown, compact composer, and model-specific thinking choices without Save.
+  No live agent definition, automation definition, or model setting was changed during verification.
+- Kept the checked preview running on port 4173. Documented credential-request UI as a proposed
+  follow-up: keeping secrets out of the transcript alone does not isolate them from shell access.

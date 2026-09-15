@@ -25,6 +25,7 @@ import {
   type ZiggyResultMap,
 } from "./common";
 import {
+  isAgentDocumentResult,
   isAgentListResult,
   isAgentRunResult,
   isAgentShowResult,
@@ -114,6 +115,9 @@ export const isMethodResult = <Method extends ZiggyMethod>(
     case "agent.show":
     case "agent.create":
       return isAgentShowResult(value) && profileMatches(value.profileId, params);
+    case "agent.document":
+    case "agent.save":
+      return isAgentDocumentResult(value) && profileMatches(value.profileId, params);
     case "agent.validate":
       return isAgentValidateResult(value) && profileMatches(value.profileId, params);
     case "agent.run":
@@ -268,7 +272,21 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         isBoundedCodePointString(value.text, 60_000)
       );
     case "agent.show":
+    case "agent.document":
       return hasProfileString(value, "agentId", isAgentId);
+    case "agent.save":
+      return (
+        hasProfileString(value, "agentId", isAgentId) &&
+        hasString(value, "source", (entry) => isBoundedCodePointString(entry, 8_000, 0)) &&
+        hasString(value, "expectedSource", (entry) => isBoundedCodePointString(entry, 8_000, 0)) &&
+        hasOptionalCommandId(value, [
+          "profileId",
+          "agentId",
+          "source",
+          "expectedSource",
+          "commandId",
+        ])
+      );
     case "agent.create":
       return (
         hasProfileString(value, "agentId", isAgentId) &&

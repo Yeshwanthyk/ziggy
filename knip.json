@@ -8,6 +8,7 @@
     "extensions/codemode/test/fixtures/mcp-server.ts",
     "extensions/codemode/test/profile-smoke.ts",
     "clients/example-web/src/main.tsx",
+    "clients/example-web/src/**/*.test.ts",
     "clients/example-web/src/**/*.test.tsx",
     "clients/example-web/vite.config.ts",
     "clients/gateway-client/src/index.ts",

@@ -40,18 +40,38 @@ adapted upstream engine and its MIT license live under `src/vendor/bloub`.
 
 - Opens and selects `local/main` for the current available Profile.
 - Lists Profile specialists and opens their direct conversations on demand.
+  Direct conversation headers expose an editor for the agent's description, model override,
+  thinking level, comma-separated tools, and instructions. Saves use source comparison and apply to
+  new specialist sessions; existing conversations keep their current runtime.
 - Lists existing groups, creates groups with up to four specialists, and addresses the host,
   everyone, or one member from the composer.
 - Lists active, paused, and conflicted automations with run, pause, and resume controls where valid.
+  Clicking a name opens its task, complete source definition, schedule, scheduler status, and runs
+  filtered to that automation. Edit exposes the supported flat fields and task or the complete
+  literal source; Save uses the displayed source as a compare-and-swap guard against overwriting a
+  newer file.
 - Reads and updates Profile-owned conversation pins.
 - Restores the selected main, specialist, or group conversation when the same tab reloads.
 - Watches only the selected live conversation; channel sessions are not subscribed at startup.
 - Reconciles history when the SDK reports an epoch, replay, or sequence gap.
 - Keeps the streamed answer visible if authoritative history cannot yet be read.
 - Uses Enter to send, Shift+Enter for a newline, and exposes Stop while the agent is working.
+- Renders assistant Markdown, including lists, tables, links, and code. Remote images stay links;
+  raw HTML is not rendered.
+- Settings exposes the connection, configured provider status, and available default models with
+  supported thinking levels. Saving changes the Profile default for new sessions; existing chats
+  retain their model. Provider credentials remain managed on the host.
 - Adapts the conversation rail into a sheet on narrow screens and respects reduced motion.
 - Keeps populated rail data visible during refresh and labels first-load restoration explicitly.
 
-Stored sessions, memory, extensions, and secondary Profile settings remain outside this compact
+Stored sessions, memory, extensions, and other Profile settings remain outside this compact
 conversation surface. Stored sessions are deliberately absent from the default rail until the client
 has an explicit past-conversations surface.
+
+## Credential requests: proposed follow-up
+
+A future agent-requested credential form should submit values outside the transcript and return
+only a success acknowledgement or opaque reference to the agent. A scoped host adapter would use
+the credential. This is not implemented by the current settings form. Keeping a value out of chat
+does not make it inaccessible to an agent that can read the same environment or files with shell
+tools; that stronger guarantee needs an isolated credential broker and restricted access.

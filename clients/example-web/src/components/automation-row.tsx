@@ -10,19 +10,27 @@ interface AutomationRowProps {
   };
   readonly busy: boolean;
   readonly onPause: () => void;
+  readonly onInspect: () => void;
   readonly onResume: () => void;
   readonly onRun: () => void;
 }
 
-export function AutomationRow({ automation, busy, onPause, onResume, onRun }: AutomationRowProps) {
+export function AutomationRow({
+  automation,
+  busy,
+  onInspect,
+  onPause,
+  onResume,
+  onRun,
+}: AutomationRowProps) {
   const actionable = automation.lifecycle !== "conflict";
   return (
     <div className="automation-row">
       <span className={`automation-status is-${automation.lifecycle}`} aria-hidden="true" />
-      <span className="automation-copy">
+      <button className="automation-copy" disabled={busy} onClick={onInspect} type="button">
         <strong>{automation.id}</strong>
         <small>{automation.message ?? automation.schedule ?? automation.lifecycle}</small>
-      </span>
+      </button>
       {actionable ? (
         <span className="automation-actions">
           <Button

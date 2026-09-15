@@ -31,6 +31,7 @@ export const safeFailureMessage = (cause: unknown, fallback: string): string => 
     return "the requested automation was not found";
   if (
     Predicate.isTagged(cause, "AutomationEditConflict") ||
+    Predicate.isTagged(cause, "ProfileAgentEditConflict") ||
     Predicate.isTagged(cause, "UiStateConflict")
   )
     return "the resource changed; reload before retrying";
@@ -75,6 +76,7 @@ export const errorCode = (cause: unknown): UiGatewayError["code"] => {
   if (Predicate.isTagged(cause, "ChatNotStreaming")) return "not_streaming";
   if (Predicate.isTagged(cause, "AutomationNotFound")) return "automation_not_found";
   if (Predicate.isTagged(cause, "AutomationEditConflict")) return "conflict";
+  if (Predicate.isTagged(cause, "ProfileAgentEditConflict")) return "conflict";
   if (Predicate.isTagged(cause, "ProfileExtensionInvalid")) return "bad_params";
   return "internal";
 };

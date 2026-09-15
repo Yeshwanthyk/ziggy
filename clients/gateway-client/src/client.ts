@@ -23,6 +23,7 @@ import {
 } from "./protocol/conversations";
 import type {
   ZiggyAgentCreateResult,
+  ZiggyAgentDocument,
   ZiggyAgentListResult,
   ZiggyAgentRunResult,
   ZiggyAgentShowResult,
@@ -82,6 +83,14 @@ interface MutableAutomationSaveParams {
   commandId?: string;
 }
 
+interface MutableAgentSaveParams {
+  profileId: ZiggyProfileId;
+  agentId: string;
+  source: string;
+  expectedSource: string;
+  commandId?: string;
+}
+
 interface MutablePinSetParams {
   profileId: ZiggyProfileId;
   pin: {
@@ -132,6 +141,14 @@ export interface ZiggyGatewayClient {
   abortSession(ref: ZiggySessionRef, commandId?: string): Promise<void>;
   listAgents(profileId: ZiggyProfileId): Promise<ZiggyAgentListResult>;
   showAgent(profileId: ZiggyProfileId, agentId: string): Promise<ZiggyAgentShowResult>;
+  readAgentDocument(profileId: ZiggyProfileId, agentId: string): Promise<ZiggyAgentDocument>;
+  saveAgent(
+    profileId: ZiggyProfileId,
+    agentId: string,
+    source: string,
+    expectedSource: string,
+    commandId?: string,
+  ): Promise<ZiggyAgentDocument>;
   createAgent(
     profileId: ZiggyProfileId,
     agentId: string,
@@ -289,6 +306,13 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
         .then(() => undefined),
     listAgents: (profileId) => connection.request("agent.list", { profileId }),
     showAgent: (profileId, agentId) => connection.request("agent.show", { profileId, agentId }),
+    readAgentDocument: (profileId, agentId) =>
+      connection.request("agent.document", { profileId, agentId }),
+    saveAgent: (profileId, agentId, source, expectedSource, commandId) => {
+      const params: MutableAgentSaveParams = { profileId, agentId, source, expectedSource };
+      if (commandId !== undefined) params.commandId = commandId;
+      return connection.request("agent.save", params);
+    },
     createAgent: (profileId, agentId, commandId) =>
       connection.request(
         "agent.create",

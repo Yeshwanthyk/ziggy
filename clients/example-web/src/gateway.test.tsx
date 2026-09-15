@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ZiggyRequestOutcomeUnknownError,
+  type ZiggyAutomationRun,
   type ZiggyClientEvent,
   type ZiggyProfileId,
   type ZiggyProfileSummary,
@@ -43,6 +44,19 @@ const initialHistory = [
   { kind: "user", timestamp: "2026-09-15T12:00:00.000Z", text: "Earlier question" },
   { kind: "assistant", timestamp: "2026-09-15T12:00:01.000Z", text: "Earlier answer" },
 ] as const satisfies ReadonlyArray<ZiggySessionHistoryEntry>;
+
+const automationRun = (automationId: string, recordedAtMs: number): ZiggyAutomationRun => ({
+  runId: `run-${automationId}-${recordedAtMs}`,
+  automationId,
+  trigger: "scheduled",
+  state: "completed",
+  scheduledForMs: recordedAtMs - 1_000,
+  recordedAtMs,
+  startedAtMs: recordedAtMs - 700,
+  finishedAtMs: recordedAtMs - 200,
+  failureCategory: null,
+  targets: [],
+});
 
 const capabilitiesResult = (
   profileId: ZiggyProfileId = profile.profileId,
@@ -114,8 +128,93 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     listSessions: vi.fn(async () => sessionListResult()),
     listPins: vi.fn(async () => ({ profileId: profile.profileId, pins: [], revision: 0 })),
     listAgents: vi.fn(async () => ({ profileId: profile.profileId, agents: [] })),
+    readAgentDocument: vi.fn(async (_profileId, agentId) => ({
+      profileId: profile.profileId,
+      id: agentId,
+      source: "---\nversion: 1\ndescription: Researcher\n---\n\nResearch carefully.\n",
+    })),
+    saveAgent: vi.fn(async (_profileId, id, source) => ({
+      profileId: profile.profileId,
+      id,
+      source,
+    })),
     listGroups: vi.fn(async () => ({ profileId: profile.profileId, groups: [] })),
+    modelStatus: vi.fn(async () => ({
+      profileId: profile.profileId,
+      providerId: "openai",
+      modelId: "gpt-5",
+      thinking: "medium",
+      authConfigured: true,
+    })),
+    listModels: vi.fn(async () => ({
+      profileId: profile.profileId,
+      models: [
+        {
+          providerId: "openai",
+          modelId: "gpt-5",
+          name: "GPT-5",
+          thinkingLevels: ["low", "medium", "high"],
+        },
+      ],
+      truncated: false,
+    })),
+    availableModels: vi.fn(async () => ({
+      profileId: profile.profileId,
+      models: [
+        {
+          providerId: "openai",
+          modelId: "gpt-5",
+          name: "GPT-5",
+          thinkingLevels: ["low", "medium", "high"],
+        },
+      ],
+      truncated: false,
+    })),
+    setModel: vi.fn(async (_profileId, providerId, modelId, thinking) => ({
+      profileId: profile.profileId,
+      providerId,
+      modelId,
+      thinking: thinking ?? null,
+    })),
+    authStatus: vi.fn(async () => ({
+      profileId: profile.profileId,
+      providers: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          supportsApiKeyLogin: true,
+          supportsOauth: true,
+          configured: true,
+          type: "oauth" as const,
+        },
+      ],
+    })),
     listAutomations: vi.fn(async () => ({ profileId: profile.profileId, automations: [] })),
+    showAutomation: vi.fn(async (_profileId, automationId) => ({
+      profileId: profile.profileId,
+      id: automationId,
+      lifecycle: "active" as const,
+      source: "---\nschedule: 0 8 * * *\n---\nCheck the weather.",
+    })),
+    automationStatus: vi.fn(async () => ({
+      profileId: profile.profileId,
+      observedAtMs: 1_757_929_000_000,
+      heartbeatAtMs: 1_757_928_900_000,
+      lastTickAtMs: 1_757_928_800_000,
+      lastTickStatus: "ok" as const,
+      lastTickError: null,
+      schedules: [],
+      activeRunCount: 0,
+      latestRun: null,
+      latestErrorRun: null,
+    })),
+    listAutomationRuns: vi.fn(async () => ({ profileId: profile.profileId, runs: [] })),
+    saveAutomation: vi.fn(async (_profileId, id, source) => ({
+      profileId: profile.profileId,
+      id,
+      lifecycle: "active" as const,
+      source,
+    })),
     watchSession: vi.fn(async () => undefined),
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
@@ -209,6 +308,37 @@ describe("useZiggyGateway", () => {
     expect(fixture.watchSession).not.toHaveBeenCalledWith(specialistRef);
     expect(hook.result.current.selectedRef).toEqual(mainRef);
     expect(hook.result.current.connection).toBe("open");
+  });
+
+  it("loads provider and model settings and saves an explicit Profile default", async () => {
+    const { client, fixture } = makeClient();
+    const hook = await connectHook(client);
+
+    await act(async () => {
+      await hook.result.current.loadModelSettings();
+    });
+
+    expect(hook.result.current.modelSettings).toMatchObject({
+      loading: false,
+      saving: false,
+      status: { providerId: "openai", modelId: "gpt-5", thinking: "medium" },
+      providers: [{ id: "openai", configured: true, type: "oauth" }],
+      availableModels: [{ providerId: "openai", modelId: "gpt-5" }],
+    });
+    expect(fixture.listModels).toHaveBeenCalledExactlyOnceWith(profile.profileId);
+    expect(fixture.availableModels).toHaveBeenCalledExactlyOnceWith(profile.profileId);
+
+    await act(async () => {
+      await hook.result.current.saveModelSettings("openai", "gpt-5", "high");
+    });
+
+    expect(fixture.setModel).toHaveBeenCalledExactlyOnceWith(
+      profile.profileId,
+      "openai",
+      "gpt-5",
+      "high",
+      expect.stringMatching(/^web-model-save-/),
+    );
   });
 
   it("loads display-ready pins, agents, groups, and automation sections without watching them", async () => {
@@ -742,5 +872,195 @@ describe("useZiggyGateway", () => {
     expect(hook.result.current.localError).toBe(
       "The connection closed after send. Check the conversation before sending again.",
     );
+  });
+
+  it("scopes automation detail runs to the selected automation", async () => {
+    const selectedRun = automationRun("morning-weather", 200);
+    const unrelatedRun = automationRun("mail-digest", 300);
+    const { client } = makeClient({
+      listAutomationRuns: vi.fn(async () => ({
+        profileId: profile.profileId,
+        runs: [unrelatedRun, selectedRun],
+      })),
+    });
+    const hook = await connectHook(client);
+
+    await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+
+    expect(hook.result.current.automationDetail?.automationId).toBe("morning-weather");
+    expect(hook.result.current.automationDetail?.runs).toEqual([selectedRun]);
+  });
+
+  it("discards automation detail that resolves after a newer selection", async () => {
+    const staleDefinition = deferred<Awaited<ReturnType<GatewayClient["showAutomation"]>>>();
+    const { client } = makeClient({
+      showAutomation: vi.fn(async (_profileId, automationId) => {
+        if (automationId === "morning-weather") return staleDefinition.promise;
+        return {
+          profileId: profile.profileId,
+          id: automationId,
+          lifecycle: "paused" as const,
+          source: "Read mail.",
+        };
+      }),
+    });
+    const hook = await connectHook(client);
+
+    let staleLoad: Promise<void> | undefined;
+    act(() => {
+      staleLoad = hook.result.current.loadAutomationDetail("morning-weather");
+    });
+    await act(async () => hook.result.current.loadAutomationDetail("mail-digest"));
+    staleDefinition.resolve({
+      profileId: profile.profileId,
+      id: "morning-weather",
+      lifecycle: "active",
+      source: "Check weather.",
+    });
+    await act(async () => staleLoad);
+
+    expect(hook.result.current.automationDetail?.automationId).toBe("mail-digest");
+    expect(hook.result.current.automationDetail?.definition?.source).toBe("Read mail.");
+  });
+
+  it("keeps available automation detail when run history fails", async () => {
+    const { client } = makeClient({
+      listAutomationRuns: vi.fn(async () => {
+        throw new Error("run journal unavailable");
+      }),
+    });
+    const hook = await connectHook(client);
+
+    await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+
+    expect(hook.result.current.automationDetail?.definition?.id).toBe("morning-weather");
+    expect(hook.result.current.automationDetail?.status?.lastTickStatus).toBe("ok");
+    expect(hook.result.current.automationDetail?.runs).toEqual([]);
+    expect(hook.result.current.automationDetail?.errors).toEqual([
+      { source: "runs", message: "run journal unavailable" },
+    ]);
+  });
+
+  it("saves automation source with the displayed source as the CAS expectation", async () => {
+    const oldSource = "---\nversion: 1\ncron: 0 8 * * *\n---\nOld task.\n";
+    const newSource = "---\nversion: 1\ncron: 30 8 * * *\n---\nNew task.\n";
+    const saveAutomation = vi.fn(async (_profileId, id, source) => ({
+      profileId: profile.profileId,
+      id,
+      lifecycle: "active" as const,
+      source,
+    }));
+    const { client } = makeClient({
+      saveAutomation,
+      showAutomation: vi.fn(async (_profileId, id) => ({
+        profileId: profile.profileId,
+        id,
+        lifecycle: "active" as const,
+        source: oldSource,
+      })),
+    });
+    const hook = await connectHook(client);
+    await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+
+    await act(async () =>
+      hook.result.current.saveAutomationDefinition("morning-weather", newSource, oldSource),
+    );
+
+    expect(saveAutomation).toHaveBeenCalledWith(
+      profile.profileId,
+      "morning-weather",
+      newSource,
+      oldSource,
+      expect.stringMatching(/^web-automation-save-/),
+    );
+    expect(hook.result.current.automationDetail?.definition?.source).toBe(newSource);
+  });
+
+  it("does not apply a saved definition after automation detail selection changes", async () => {
+    const saved = deferred<Awaited<ReturnType<GatewayClient["saveAutomation"]>>>();
+    const { client } = makeClient({
+      saveAutomation: vi.fn(async () => saved.promise),
+    });
+    const hook = await connectHook(client);
+    await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+
+    let save: Promise<void> | undefined;
+    act(() => {
+      save = hook.result.current.saveAutomationDefinition(
+        "morning-weather",
+        "Updated weather.",
+        "Check the weather.",
+      );
+    });
+    await act(async () => hook.result.current.loadAutomationDetail("mail-digest"));
+    saved.resolve({
+      profileId: profile.profileId,
+      id: "morning-weather",
+      lifecycle: "active",
+      source: "Updated weather.",
+    });
+    await act(async () => save);
+
+    expect(hook.result.current.automationDetail?.automationId).toBe("mail-digest");
+    expect(hook.result.current.automationDetail?.definition?.source).not.toBe("Updated weather.");
+  });
+
+  it("loads and saves an agent definition with the displayed source expectation", async () => {
+    const oldSource = "---\nversion: 1\ndescription: Researcher\n---\n\nResearch carefully.\n";
+    const newSource =
+      "---\nversion: 1\ndescription: Evidence-first researcher\n---\n\nResearch carefully.\n";
+    const saveAgent = vi.fn(async (_profileId, id, source) => ({
+      profileId: profile.profileId,
+      id,
+      source,
+    }));
+    const { client } = makeClient({
+      readAgentDocument: vi.fn(async (_profileId, id) => ({
+        profileId: profile.profileId,
+        id,
+        source: oldSource,
+      })),
+      saveAgent,
+    });
+    const hook = await connectHook(client);
+    await act(async () => hook.result.current.loadAgentDefinition("researcher"));
+
+    await act(async () =>
+      hook.result.current.saveAgentDefinition("researcher", newSource, oldSource),
+    );
+
+    expect(saveAgent).toHaveBeenCalledWith(
+      profile.profileId,
+      "researcher",
+      newSource,
+      oldSource,
+      expect.stringMatching(/^web-agent-save-/),
+    );
+    expect(hook.result.current.agentDefinitionDetail?.document?.source).toBe(newSource);
+  });
+
+  it("does not restore a saved agent document after its editor closes", async () => {
+    const saved = deferred<Awaited<ReturnType<GatewayClient["saveAgent"]>>>();
+    const { client } = makeClient({ saveAgent: vi.fn(async () => saved.promise) });
+    const hook = await connectHook(client);
+    await act(async () => hook.result.current.loadAgentDefinition("researcher"));
+
+    let save: Promise<void> | undefined;
+    act(() => {
+      save = hook.result.current.saveAgentDefinition(
+        "researcher",
+        "Updated researcher.",
+        "Research carefully.",
+      );
+    });
+    act(() => hook.result.current.clearAgentDefinition());
+    saved.resolve({
+      profileId: profile.profileId,
+      id: "researcher",
+      source: "Updated researcher.",
+    });
+    await act(async () => save);
+
+    expect(hook.result.current.agentDefinitionDetail).toBeUndefined();
   });
 });

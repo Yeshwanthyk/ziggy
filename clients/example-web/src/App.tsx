@@ -3,6 +3,7 @@ import {
   ArrowUp,
   Menu,
   PanelLeftClose,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -17,13 +18,16 @@ import type {
   ZiggySessionRef,
 } from "../../gateway-client/src/index";
 import { AutomationRow } from "@/components/automation-row";
+import { AutomationDetailDialog } from "@/components/automation-detail-dialog";
+import { AgentDefinitionDialog } from "@/components/agent-definition-dialog";
 import { Button } from "@/components/ui/button";
 import { BotAvatar } from "@/components/bot-avatar";
 import { GroupDialog } from "@/components/group-dialog";
+import { MessageMarkdown } from "@/components/message-markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SidebarSection } from "@/components/sidebar-section";
 import { Textarea } from "@/components/ui/textarea";
-import { ConnectionDialog, readSavedConnection } from "@/components/connection-dialog";
+import { readSavedConnection, SettingsDialog } from "@/components/connection-dialog";
 import { type ConversationSummary, useZiggyGateway } from "@/gateway";
 
 const avatar = (name: string, active = false, size = 36) => (
@@ -119,7 +123,9 @@ function HistoryEntry({
   return (
     <article className={`message ${entry.kind}`}>
       <div className="message-author">{entry.kind === "user" ? "You" : assistantName}</div>
-      <div className="message-body">{entry.text}</div>
+      <div className="message-body">
+        {entry.kind === "assistant" ? <MessageMarkdown>{entry.text}</MessageMarkdown> : entry.text}
+      </div>
     </article>
   );
 }
@@ -131,6 +137,8 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupError, setGroupError] = useState<string>();
+  const [selectedAutomationId, setSelectedAutomationId] = useState<string>();
+  const [agentEditorOpen, setAgentEditorOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
   const [recipient, setRecipient] = useState("all");
@@ -189,6 +197,16 @@ export function App() {
   const selectedPin = gateway.pinnedConversations.find((pin) =>
     sameSession(gateway.selectedRef, pin.ref),
   );
+  const selectedAgent = gateway.agents.find(
+    (agent) =>
+      gateway.selectedRef?.kind === "live" &&
+      gateway.selectedRef.key === `local/agents/${agent.id}`,
+  );
+  const selectedAutomation = [
+    ...gateway.automationSections.active,
+    ...gateway.automationSections.paused,
+    ...gateway.automationSections.attention,
+  ].find((automation) => automation.id === selectedAutomationId);
 
   useEffect(() => {
     const current = selectedGroup?.defaultRecipient;
@@ -451,6 +469,10 @@ export function App() {
                     localAction === `automation:${automation.id}`
                   }
                   key={automation.id}
+                  onInspect={() => {
+                    setSelectedAutomationId(automation.id);
+                    void gateway.loadAutomationDetail(automation.id).catch(() => undefined);
+                  }}
                   onPause={() =>
                     void runSidebarAction(`automation:${automation.id}`, () =>
                       gateway.pauseAutomation(automation.id),
@@ -479,13 +501,17 @@ export function App() {
             <small>{gateway.connection === "open" ? "Connected" : gateway.connection}</small>
           </span>
           <Button
-            aria-label="Connection settings"
+            aria-label="Settings"
             className="settings-button"
-            onClick={() => setConnectionOpen(true)}
-            size="icon"
+            onClick={() => {
+              setConnectionOpen(true);
+              if (connected) void gateway.loadModelSettings();
+            }}
+            size="sm"
             variant="ghost"
           >
             <Settings2 />
+            <span>Settings</span>
           </Button>
         </Stack>
       </aside>
@@ -516,25 +542,42 @@ export function App() {
                       : "Connect to begin"}
             </span>
           </div>
-          <Button
-            aria-label={selectedPin === undefined ? "Pin conversation" : "Unpin conversation"}
-            className={`header-action ${selectedPin === undefined ? "" : "is-selected"}`}
-            disabled={!connected || gateway.selectedRef === undefined || gateway.sidebarBusy}
-            onClick={() => {
-              const ref = gateway.selectedRef;
-              if (ref === undefined) return;
-              void runSidebarAction("pin", () =>
-                selectedPin === undefined
-                  ? gateway.setConversationPin(ref, gateway.selectedTitle)
-                  : gateway.removeConversationPin(selectedPin.pinId),
-              );
-            }}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <Star />
-          </Button>
+          <div className="header-actions">
+            <Button
+              aria-label="Edit agent"
+              disabled={!connected}
+              hidden={selectedAgent === undefined}
+              onClick={() => {
+                if (selectedAgent === undefined) return;
+                setAgentEditorOpen(true);
+                void gateway.loadAgentDefinition(selectedAgent.id);
+              }}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil />
+            </Button>
+            <Button
+              aria-label={selectedPin === undefined ? "Pin conversation" : "Unpin conversation"}
+              className={selectedPin === undefined ? "" : "is-selected"}
+              disabled={!connected || gateway.selectedRef === undefined || gateway.sidebarBusy}
+              onClick={() => {
+                const ref = gateway.selectedRef;
+                if (ref === undefined) return;
+                void runSidebarAction("pin", () =>
+                  selectedPin === undefined
+                    ? gateway.setConversationPin(ref, gateway.selectedTitle)
+                    : gateway.removeConversationPin(selectedPin.pinId),
+                );
+              }}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <Star />
+            </Button>
+          </div>
         </Stack>
 
         <ScrollArea className="transcript-scroll">
@@ -599,7 +642,9 @@ export function App() {
             {gateway.streamText.length === 0 ? null : (
               <article className="message assistant streaming">
                 <div className="message-author">{gateway.selectedTitle}</div>
-                <div className="message-body">{gateway.streamText}</div>
+                <div className="message-body">
+                  <MessageMarkdown>{gateway.streamText}</MessageMarkdown>
+                </div>
               </article>
             )}
             {gateway.localError === undefined ? null : (
@@ -612,61 +657,63 @@ export function App() {
         </ScrollArea>
 
         <div className="composer-wrap">
-          {selectedGroup === undefined ? null : (
-            <label className="recipient-control">
-              <span>Send to</span>
-              <select onChange={(event) => setRecipient(event.target.value)} value={recipient}>
-                <option value="all">Everyone</option>
-                <option value="host">{gateway.profile?.name ?? "Host"}</option>
-                {selectedGroup.memberAgentIds.map((agentId) => (
-                  <option key={agentId} value={agentId}>
-                    {agentId}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <form className="composer" onSubmit={(event) => void send(event)}>
-            <Textarea
-              aria-label={`Message ${gateway.selectedTitle}`}
-              disabled={!connected || !selectedIsLive}
-              maxLength={gateway.maxPromptCodePoints}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={composerKeyDown}
-              placeholder={
-                !connected
-                  ? "Connect to begin"
-                  : selectedIsLive
-                    ? `Message ${gateway.selectedTitle}`
-                    : "Past conversations are read only"
-              }
-              rows={1}
-              value={draft}
-            />
-            {gateway.busy ? (
-              <Button
-                aria-label="Stop generating"
-                className="send-button"
-                onClick={() => void gateway.abort()}
-                size="icon"
-                type="button"
-                variant="secondary"
-              >
-                <Square />
-              </Button>
-            ) : (
-              <Button
-                aria-label="Send message"
-                className="send-button"
-                disabled={!connected || !selectedIsLive || draft.trim().length === 0}
-                size="icon"
-                type="submit"
-              >
-                <ArrowUp />
-              </Button>
+          <div className="composer-panel">
+            {selectedGroup === undefined ? null : (
+              <label className="recipient-control">
+                <span>Send to</span>
+                <select onChange={(event) => setRecipient(event.target.value)} value={recipient}>
+                  <option value="all">Everyone</option>
+                  <option value="host">{gateway.profile?.name ?? "Host"}</option>
+                  {selectedGroup.memberAgentIds.map((agentId) => (
+                    <option key={agentId} value={agentId}>
+                      {agentId}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
-          </form>
-          <p>Enter to send · Shift+Enter for a new line</p>
+            <form className="composer" onSubmit={(event) => void send(event)}>
+              <Textarea
+                aria-label={`Message ${gateway.selectedTitle}`}
+                disabled={!connected || !selectedIsLive}
+                maxLength={gateway.maxPromptCodePoints}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={composerKeyDown}
+                placeholder={
+                  !connected
+                    ? "Connect to begin"
+                    : selectedIsLive
+                      ? `Message ${gateway.selectedTitle}`
+                      : "Past conversations are read only"
+                }
+                rows={1}
+                value={draft}
+              />
+              {gateway.busy ? (
+                <Button
+                  aria-label="Stop generating"
+                  className="send-button"
+                  onClick={() => void gateway.abort()}
+                  size="icon"
+                  type="button"
+                  variant="secondary"
+                >
+                  <Square />
+                </Button>
+              ) : (
+                <Button
+                  aria-label="Send message"
+                  className="send-button"
+                  disabled={!connected || !selectedIsLive || draft.trim().length === 0}
+                  size="icon"
+                  type="submit"
+                >
+                  <ArrowUp />
+                </Button>
+              )}
+            </form>
+            <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
+          </div>
         </div>
       </main>
 
@@ -686,12 +733,57 @@ export function App() {
         open={groupDialogOpen}
         pending={localAction === "group:create"}
       />
-      <ConnectionDialog
-        error={gateway.localError}
+      <AutomationDetailDialog
+        automation={selectedAutomation}
+        available={connected}
+        detail={gateway.automationDetail}
+        onOpenChange={(open) => {
+          if (open) return;
+          setSelectedAutomationId(undefined);
+          gateway.clearAutomationDetail();
+        }}
+        onRefresh={() => {
+          if (selectedAutomationId !== undefined)
+            void gateway.loadAutomationDetail(selectedAutomationId).catch(() => undefined);
+        }}
+        onSave={async (source, expectedSource) => {
+          if (selectedAutomationId === undefined) return;
+          await gateway.saveAutomationDefinition(selectedAutomationId, source, expectedSource);
+        }}
+        open={selectedAutomationId !== undefined}
+      />
+      <AgentDefinitionDialog
+        agent={selectedAgent}
+        available={connected}
+        detail={gateway.agentDefinitionDetail}
+        onOpenChange={(open) => {
+          setAgentEditorOpen(open);
+          if (!open) gateway.clearAgentDefinition();
+        }}
+        onRefresh={() => {
+          if (selectedAgent !== undefined) void gateway.loadAgentDefinition(selectedAgent.id);
+        }}
+        onSave={async (source, expectedSource) => {
+          if (selectedAgent === undefined) return;
+          await gateway.saveAgentDefinition(selectedAgent.id, source, expectedSource);
+          setAgentEditorOpen(false);
+          gateway.clearAgentDefinition();
+        }}
+        open={agentEditorOpen && selectedAgent !== undefined}
+      />
+      <SettingsDialog
+        connected={connected}
+        connectionError={gateway.localError}
+        connectionPending={gateway.connection === "connecting"}
+        modelSettings={gateway.modelSettings}
         onConnect={connect}
-        onOpenChange={setConnectionOpen}
+        onOpenChange={(open) => {
+          setConnectionOpen(open);
+          if (!open) gateway.clearModelSettings();
+        }}
+        onSaveModel={gateway.saveModelSettings}
         open={connectionOpen}
-        pending={gateway.connection === "connecting"}
+        profileName={gateway.profile?.name ?? "Squarey"}
       />
       <div aria-live="polite" className="sr-only">
         {gateway.busy

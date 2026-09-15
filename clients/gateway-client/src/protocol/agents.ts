@@ -32,6 +32,20 @@ export interface ZiggyAgentShowResult {
 
 export type ZiggyAgentCreateResult = ZiggyAgentShowResult;
 
+export interface ZiggyAgentDocument {
+  readonly profileId: ZiggyProfileId;
+  readonly id: string;
+  readonly source: string;
+}
+
+export interface ZiggyAgentSaveParams {
+  readonly profileId: ZiggyProfileId;
+  readonly agentId: string;
+  readonly source: string;
+  readonly expectedSource: string;
+  readonly commandId?: string;
+}
+
 export interface ZiggyAgentValidation {
   readonly id: string;
   readonly valid: boolean;
@@ -60,6 +74,8 @@ export interface ZiggyAgentRunResult {
 export interface ZiggyAgentRequestMap {
   readonly "agent.list": { readonly profileId: ZiggyProfileId };
   readonly "agent.show": { readonly profileId: ZiggyProfileId; readonly agentId: string };
+  readonly "agent.document": { readonly profileId: ZiggyProfileId; readonly agentId: string };
+  readonly "agent.save": ZiggyAgentSaveParams;
   readonly "agent.create": {
     readonly profileId: ZiggyProfileId;
     readonly agentId: string;
@@ -72,6 +88,8 @@ export interface ZiggyAgentRequestMap {
 export interface ZiggyAgentResultMap {
   readonly "agent.list": ZiggyAgentListResult;
   readonly "agent.show": ZiggyAgentShowResult;
+  readonly "agent.document": ZiggyAgentDocument;
+  readonly "agent.save": ZiggyAgentDocument;
   readonly "agent.create": ZiggyAgentCreateResult;
   readonly "agent.validate": ZiggyAgentValidateResult;
   readonly "agent.run": ZiggyAgentRunResult;
@@ -119,6 +137,13 @@ export const isAgentShowResult = (value: unknown): value is ZiggyAgentShowResult
   hasOnlyKeys(value, ["profileId", "agent"]) &&
   isProfileId(value.profileId) &&
   isAgent(value.agent);
+
+export const isAgentDocumentResult = (value: unknown): value is ZiggyAgentDocument =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "id", "source"]) &&
+  isProfileId(value.profileId) &&
+  isAgentId(value.id) &&
+  isBoundedCodePointString(value.source, 8_000, 0);
 
 export const isAgentValidateResult = (value: unknown): value is ZiggyAgentValidateResult =>
   isRecord(value) &&

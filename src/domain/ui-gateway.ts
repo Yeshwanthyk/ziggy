@@ -197,6 +197,14 @@ export const UiAgentShowParams = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
 });
+export const UiAgentDocumentParams = UiAgentShowParams;
+export const UiAgentSaveParams = Schema.Struct({
+  profileId: ProfileId,
+  agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
+  expectedSource: boundedCodePointString("expected Profile agent source", 8_000, 0),
+  source: boundedCodePointString("Profile agent source", 8_000, 0),
+  commandId: Schema.optionalKey(UiCommandId),
+});
 export const UiAgentValidateParams = Schema.Struct({
   profileId: ProfileId,
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
@@ -388,6 +396,8 @@ export const UI_METHODS = [
   "session.abort",
   "agent.list",
   "agent.show",
+  "agent.document",
+  "agent.save",
   "agent.create",
   "agent.validate",
   "agent.run",
@@ -587,6 +597,12 @@ export const UiAgentListResult = Schema.Struct({
 export type UiAgentListResult = typeof UiAgentListResult.Type;
 export const UiAgentShowResult = Schema.Struct({ profileId: ProfileId, agent: UiProfileAgent });
 export type UiAgentShowResult = typeof UiAgentShowResult.Type;
+export const UiAgentDocumentResult = Schema.Struct({
+  profileId: ProfileId,
+  id: ProfileAgentId.check(Schema.isMaxLength(80)),
+  source: boundedCodePointString("Profile agent source", 8_000, 0),
+}).check(resultWithinWireBudget);
+export type UiAgentDocumentResult = typeof UiAgentDocumentResult.Type;
 export const UiAgentCreateResult = UiAgentShowResult;
 export type UiAgentCreateResult = typeof UiAgentCreateResult.Type;
 export const UiAgentValidation = Schema.Struct({
@@ -873,6 +889,7 @@ export const UiGatewayResult = Schema.Union([
   UiAcknowledgedResult,
   UiAgentListResult,
   UiAgentShowResult,
+  UiAgentDocumentResult,
   UiAgentValidateResult,
   UiAgentRunResult,
   UiModelStatusResult,

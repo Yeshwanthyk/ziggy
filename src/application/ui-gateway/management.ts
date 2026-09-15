@@ -182,6 +182,20 @@ const mapAuth = (provider: ProviderAuthStatus) => {
   return { ...result, type: provider.configured.type };
 };
 
+const compareText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const authProviderOrder = (
+  providers: ReadonlyArray<ProviderAuthStatus>,
+): ReadonlyArray<ProviderAuthStatus> =>
+  [...providers].sort((left, right) => {
+    const configured =
+      Number(right.configured !== undefined) - Number(left.configured !== undefined);
+    if (configured !== 0) return configured;
+    const byName = compareText(left.name, right.name);
+    return byName !== 0 ? byName : compareText(left.id, right.id);
+  });
+
 const mapAutomationRun = (run: AutomationRunProjection) => ({
   runId: boundedText(run.runId, 256, "run"),
   automationId: run.automationId,
@@ -320,7 +334,7 @@ export const dispatchSettings = (
             : config.auth.readOnlyStatus(branch.target).pipe(
                 Effect.map((providers) => ({
                   profileId: branch.profileId,
-                  providers: providers.slice(0, 16).map(mapAuth),
+                  providers: authProviderOrder(providers).slice(0, 16).map(mapAuth),
                 })),
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               ),

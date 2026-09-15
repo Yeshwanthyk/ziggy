@@ -7,6 +7,8 @@ import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/applic
 import { makeChatRegistry, type ChatRegistryApi } from "ziggy/application/chat-registry";
 import type { SessionsApi } from "ziggy/application/sessions";
 import type { ModelsApi } from "ziggy/application/models";
+import type { AuthApi } from "ziggy/application/auth";
+import type { ProfileAgentsApi } from "ziggy/application/profile-agents";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
@@ -16,6 +18,7 @@ import {
 } from "ziggy/domain/profile-extension";
 import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
 import { SessionNotFound, SessionReadFailed } from "ziggy/domain/session";
+import { ProfileAgentEditConflict } from "ziggy/domain/profile";
 import { UiEventFrame, UiResponseFrame, type UiGroupRecord } from "ziggy/domain/ui-gateway";
 import { UiGroupState, type UiGroupState as UiGroupStateValue } from "ziggy/domain/ui-state";
 
@@ -67,10 +70,23 @@ const makeAgent = (
   ...overrides,
 });
 
+const makeProfileAgents = (overrides: Partial<ProfileAgentsApi> = {}): ProfileAgentsApi => ({
+  create: () => Effect.never,
+  list: () => Effect.never,
+  show: () => Effect.never,
+  document: () => Effect.never,
+  save: () => Effect.never,
+  validate: () => Effect.never,
+  run: () => Effect.never,
+  ...overrides,
+});
+
 interface TestConfigExtras {
   readonly groups?: UiGroupStore;
   readonly models?: ModelsApi;
   readonly sessions?: SessionsApi;
+  readonly profileAgents?: ProfileAgentsApi;
+  readonly auth?: AuthApi;
 }
 
 const makeConfig = (
@@ -478,6 +494,143 @@ test("command retries preserve the current transport request id", async () => {
 
   expect(sent.map((frame) => decodeResponse(frame).id)).toEqual(["transport-1", "transport-2"]);
   expect(openCount).toBe(1);
+});
+
+test("agent document/save preserves source, deduplicates command ids, and maps conflicts", async () => {
+  const sent: string[] = [];
+  const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+  const source = "---\nversion: 1\ndescription: Researcher\n---\n\nResearch.\n";
+  const edited = source.replace("Research.", "Research carefully.");
+  let saveCount = 0;
+  const profileAgents = makeProfileAgents({
+    document: (_target, id) => Effect.succeed({ id, source }),
+    save: (_target, id, expectedSource, nextSource) => {
+      saveCount += 1;
+      return expectedSource === source
+        ? Effect.succeed({ id, source: nextSource })
+        : Effect.fail(
+            new ProfileAgentEditConflict({
+              id,
+              path: `/profile/agents/${id}.md`,
+              message: "stale",
+            }),
+          );
+    },
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { profileAgents }),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "document",
+          method: "agent.document",
+          params: { profileId, agentId: "researcher" },
+        });
+        const saveParams = {
+          profileId,
+          agentId: "researcher",
+          expectedSource: source,
+          source: edited,
+          commandId: "save-researcher-1",
+        } as const;
+        yield* connection.request({ id: "save-1", method: "agent.save", params: saveParams });
+        yield* connection.request({ id: "save-2", method: "agent.save", params: saveParams });
+        yield* connection.request({
+          id: "conflict",
+          method: "agent.save",
+          params: {
+            profileId,
+            agentId: "researcher",
+            expectedSource: "stale",
+            source: edited,
+          },
+        });
+      }),
+    ),
+  );
+
+  expect(sent.map((frame) => decodeResponse(frame))).toEqual([
+    { id: "document", ok: true, result: { profileId, id: "researcher", source } },
+    { id: "save-1", ok: true, result: { profileId, id: "researcher", source: edited } },
+    { id: "save-2", ok: true, result: { profileId, id: "researcher", source: edited } },
+    {
+      id: "conflict",
+      ok: false,
+      error: { code: "conflict", message: "the resource changed; reload before retrying" },
+    },
+  ]);
+  expect(saveCount).toBe(2);
+});
+
+test("auth status retains configured providers beyond the sixteen-provider cap", async () => {
+  const sent: string[] = [];
+  const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+  const unconfigured = Array.from({ length: 17 }, (_, index) => ({
+    id: `provider-${String(index).padStart(2, "0")}`,
+    name: `Provider ${String(index).padStart(2, "0")}`,
+    supportsApiKeyLogin: true,
+    ambientOnly: false,
+    supportsOauth: false,
+    configured: undefined,
+  }));
+  const configured = {
+    id: "zulu-configured",
+    name: "Zulu Configured",
+    supportsApiKeyLogin: false,
+    ambientOnly: false,
+    supportsOauth: true,
+    configured: { type: "oauth" as const },
+  };
+  const auth: AuthApi = {
+    status: () => Effect.never,
+    readOnlyStatus: () => Effect.succeed([...unconfigured, configured]),
+    login: () => Effect.never,
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const connection = makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { auth }),
+        ).connect((frame) => sent.push(frame));
+        yield* connection.request({
+          id: "auth",
+          method: "auth.status",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(decodeResponse(sent[0] ?? "null")).toEqual({
+    id: "auth",
+    ok: true,
+    result: {
+      profileId,
+      providers: [
+        {
+          id: "zulu-configured",
+          name: "Zulu Configured",
+          configured: true,
+          type: "oauth",
+          supportsApiKeyLogin: false,
+          supportsOauth: true,
+        },
+        ...unconfigured.slice(0, 15).map((provider) => ({
+          id: provider.id,
+          name: provider.name,
+          configured: false,
+          supportsApiKeyLogin: true,
+          supportsOauth: false,
+        })),
+      ],
+    },
+  });
 });
 
 test("reopening a session replaces its subscription instead of leaking listeners", async () => {

@@ -4,8 +4,10 @@ import { Context, Deferred, Effect, Option, Schema } from "effect";
 import { makeUiGroupStore, makeUiPinStore } from "../adapters/fs/ui-state";
 import {
   UiAgentCreateParams,
+  UiAgentDocumentParams,
   UiAgentListParams,
   UiAgentRunParams,
+  UiAgentSaveParams,
   UiAgentShowParams,
   UiAgentValidateParams,
   UiEmptyParams,
@@ -71,6 +73,12 @@ const decodeAgentList = Schema.decodeUnknownEffect(UiAgentListParams, {
   onExcessProperty: "error",
 });
 const decodeAgentShow = Schema.decodeUnknownEffect(UiAgentShowParams, {
+  onExcessProperty: "error",
+});
+const decodeAgentDocument = Schema.decodeUnknownEffect(UiAgentDocumentParams, {
+  onExcessProperty: "error",
+});
+const decodeAgentSave = Schema.decodeUnknownEffect(UiAgentSaveParams, {
   onExcessProperty: "error",
 });
 const decodeAgentValidate = Schema.decodeUnknownEffect(UiAgentValidateParams, {
@@ -990,6 +998,32 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           const { path: _path, ...withoutPath } = agent;
           return { profileId: branch.profileId, agent: profileAgentProjection(withoutPath) };
+        });
+      case "agent.document":
+        return Effect.gen(function* () {
+          const params = yield* decodeAgentDocument(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+          const branch = yield* route(params.profileId);
+          if (config.profileAgents === undefined)
+            return yield* Effect.fail(noService(request.method));
+          const document = yield* config.profileAgents
+            .document(branch.target, params.agentId)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+          return { profileId: branch.profileId, ...document };
+        });
+      case "agent.save":
+        return Effect.gen(function* () {
+          const params = yield* decodeAgentSave(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+          const branch = yield* route(params.profileId);
+          if (config.profileAgents === undefined)
+            return yield* Effect.fail(noService(request.method));
+          const document = yield* config.profileAgents
+            .save(branch.target, params.agentId, params.expectedSource, params.source)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+          return { profileId: branch.profileId, ...document };
         });
       case "agent.create":
         return Effect.gen(function* () {

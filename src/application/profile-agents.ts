@@ -6,10 +6,12 @@ import {
   discoverProfileAgents,
   inspectProfileAgentFiles,
   readProfileAgent,
+  replaceProfileAgentFile,
 } from "../adapters/fs/profile-agents";
 import type { ProfileAgentRunResult, ProfileSpecialistError } from "../domain/agent";
 import {
   ProfileAgentId,
+  ProfileAgentEditConflict,
   ProfileAgentInvalid,
   type ProfileAgent,
   type ProfileFileSystemError,
@@ -38,7 +40,13 @@ export interface ProfileAgentValidation {
   readonly message?: string;
 }
 
+export interface ProfileAgentDocument {
+  readonly id: string;
+  readonly source: string;
+}
+
 export type ProfileAgentsError =
+  | ProfileAgentEditConflict
   | ProfileAgentInvalid
   | ProfileFileSystemError
   | ModelsError
@@ -59,6 +67,19 @@ export interface ProfileAgentsApi {
     target: ProfileTarget,
     id: string,
   ) => Effect.Effect<ProfileAgentProjection, ProfileAgentInvalid | ProfileFileSystemError>;
+  readonly document: (
+    target: ProfileTarget,
+    id: string,
+  ) => Effect.Effect<ProfileAgentDocument, ProfileAgentInvalid | ProfileFileSystemError>;
+  readonly save: (
+    target: ProfileTarget,
+    id: string,
+    expectedSource: string,
+    source: string,
+  ) => Effect.Effect<
+    ProfileAgentDocument,
+    ProfileAgentEditConflict | ProfileAgentInvalid | ProfileFileSystemError
+  >;
   readonly validate: (
     target: ProfileTarget,
     id?: string,
@@ -154,6 +175,18 @@ export const makeProfileAgents = (
       const id = yield* validAgentId(idSource);
       const loaded = yield* readProfileAgent(target.path, id);
       return projection(target.path, loaded.agent);
+    }),
+  document: (target, idSource) =>
+    Effect.gen(function* () {
+      const id = yield* validAgentId(idSource);
+      const loaded = yield* readProfileAgent(target.path, id);
+      return { id, source: loaded.source };
+    }),
+  save: (target, idSource, expectedSource, source) =>
+    Effect.gen(function* () {
+      const id = yield* validAgentId(idSource);
+      const saved = yield* replaceProfileAgentFile(target.path, id, expectedSource, source);
+      return { id, source: saved.source };
     }),
   validate: (target, selectedId) =>
     Effect.gen(function* () {

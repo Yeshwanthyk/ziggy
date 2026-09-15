@@ -3,11 +3,19 @@ import {
   isSessionReference,
   ZiggyRequestOutcomeUnknownError,
   type ZiggyAutomationDefinition,
+  type ZiggyAutomationDocument,
+  type ZiggyAutomationRun,
+  type ZiggyAutomationStatusResult,
   type ZiggyClientEvent,
   type ZiggyConversationContext,
   type ZiggyGatewayClient,
   type ZiggyGatewayEvent,
+  type ZiggyAgentDocument,
+  type ZiggyModelDescriptor,
+  type ZiggyModelStatusResult,
+  type ZiggyModelThinkingLevel,
   type ZiggyPin,
+  type ZiggyProviderAuthStatus,
   type ZiggyProfileAgent,
   type ZiggyProfileSummary,
   type ZiggyRecipientId,
@@ -41,6 +49,13 @@ export interface AgentSummary {
   readonly description: string;
 }
 
+export interface AgentDefinitionDetail {
+  readonly agentId: string;
+  readonly document?: ZiggyAgentDocument;
+  readonly error?: string;
+  readonly loading: boolean;
+}
+
 export interface GroupConversationSummary {
   readonly ref?: Extract<ZiggySessionRef, { readonly kind: "live" }>;
   readonly groupId: string;
@@ -62,8 +77,10 @@ export interface OpenGroupInput {
 
 export interface AutomationSummary {
   readonly id: string;
+  readonly gateState?: ZiggyAutomationDefinition["gateState"];
   readonly lifecycle: ZiggyAutomationDefinition["lifecycle"];
   readonly schedule?: string;
+  readonly timezone?: string;
   readonly message?: string;
 }
 
@@ -73,9 +90,33 @@ export interface AutomationSections {
   readonly attention: ReadonlyArray<AutomationSummary>;
 }
 
+export interface AutomationDetailError {
+  readonly source: "definition" | "runs" | "scheduler";
+  readonly message: string;
+}
+
+export interface AutomationDetail {
+  readonly automationId: string;
+  readonly definition?: ZiggyAutomationDocument;
+  readonly errors: ReadonlyArray<AutomationDetailError>;
+  readonly loading: boolean;
+  readonly runs: ReadonlyArray<ZiggyAutomationRun>;
+  readonly status?: ZiggyAutomationStatusResult;
+}
+
 export interface ConnectInput {
   readonly url: string;
   readonly token: string;
+}
+
+export interface ModelSettingsState {
+  readonly availableModels: ReadonlyArray<ZiggyModelDescriptor>;
+  readonly error?: string;
+  readonly loading: boolean;
+  readonly models: ReadonlyArray<ZiggyModelDescriptor>;
+  readonly providers: ReadonlyArray<ZiggyProviderAuthStatus>;
+  readonly saving: boolean;
+  readonly status?: ZiggyModelStatusResult;
 }
 
 export type GatewayClient = Pick<
@@ -86,11 +127,14 @@ export type GatewayClient = Pick<
   | "currentProfile"
   | "getSessionHistory"
   | "listAgents"
+  | "listAutomationRuns"
   | "listAutomations"
   | "listGroups"
+  | "listModels"
   | "listPins"
   | "listProfiles"
   | "listSessions"
+  | "modelStatus"
   | "onAny"
   | "openMain"
   | "openSpecialist"
@@ -99,11 +143,19 @@ export type GatewayClient = Pick<
   | "request"
   | "resumeAutomation"
   | "runAutomation"
+  | "saveAutomation"
+  | "readAgentDocument"
+  | "saveAgent"
+  | "showAutomation"
+  | "automationStatus"
   | "setPin"
+  | "setModel"
   | "state"
   | "submitPrompt"
   | "unwatchSession"
   | "watchSession"
+  | "availableModels"
+  | "authStatus"
 >;
 
 export type GatewayConnector = (input: ConnectInput) => GatewayClient;
@@ -221,8 +273,11 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [pins, setPins] = useState<ReadonlyArray<ZiggyPin>>([]);
   const [pinRevision, setPinRevision] = useState(0);
   const [agents, setAgents] = useState<ReadonlyArray<AgentSummary>>([]);
+  const [agentDefinitionDetail, setAgentDefinitionDetail] = useState<AgentDefinitionDetail>();
   const [groups, setGroups] = useState<ReadonlyArray<GroupConversationSummary>>([]);
   const [automations, setAutomations] = useState<ReadonlyArray<AutomationSummary>>([]);
+  const [automationDetail, setAutomationDetail] = useState<AutomationDetail>();
+  const [modelSettings, setModelSettings] = useState<ModelSettingsState>();
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [sidebarBusy, setSidebarBusy] = useState(false);
   const [selectedRef, setSelectedRef] = useState<ZiggySessionRef>();
@@ -245,6 +300,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const profileRef = useRef<ZiggyProfileSummary | undefined>(undefined);
   const pinRevisionRef = useRef(0);
   const sidebarGenerationRef = useRef(0);
+  const automationDetailGenerationRef = useRef(0);
+  const agentDefinitionGenerationRef = useRef(0);
+  const modelSettingsGenerationRef = useRef(0);
   const sidebarMutationRef = useRef(false);
   const historyGenerationRef = useRef(0);
   const selectionGenerationRef = useRef(0);
@@ -541,8 +599,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         setAutomations(
           automationResult.value.automations.map((automation) => ({
             id: automation.id,
+            gateState: automation.gateState,
             lifecycle: automation.lifecycle,
             schedule: automation.schedule,
+            timezone: automation.timezone,
             message: automation.message,
           })),
         );
@@ -660,6 +720,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       clientRef.current?.close();
       const connectionGeneration = ++connectionGenerationRef.current;
       selectionGenerationRef.current += 1;
+      automationDetailGenerationRef.current += 1;
+      agentDefinitionGenerationRef.current += 1;
+      modelSettingsGenerationRef.current += 1;
+      setAutomationDetail(undefined);
+      setAgentDefinitionDetail(undefined);
+      setModelSettings(undefined);
       setConnection("connecting");
       setLocalError(undefined);
       const client = connector({ url, token });
@@ -928,6 +994,283 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     [requireOpenSidebarClient],
   );
 
+  const loadModelSettings = useCallback(async (): Promise<void> => {
+    const client = clientRef.current;
+    const selectedProfile = profileRef.current;
+    if (client === undefined || selectedProfile === undefined || client.state !== "open") return;
+    const generation = ++modelSettingsGenerationRef.current;
+    setModelSettings((current) => ({
+      availableModels: current?.availableModels ?? [],
+      loading: true,
+      models: current?.models ?? [],
+      providers: current?.providers ?? [],
+      saving: current?.saving ?? false,
+      ...(current?.status === undefined ? {} : { status: current.status }),
+    }));
+    const [statusResult, modelsResult, availableResult, authResult] = await Promise.allSettled([
+      client.modelStatus(selectedProfile.profileId),
+      client.listModels(selectedProfile.profileId),
+      client.availableModels(selectedProfile.profileId),
+      client.authStatus(selectedProfile.profileId),
+    ]);
+    if (
+      generation !== modelSettingsGenerationRef.current ||
+      clientRef.current !== client ||
+      profileRef.current?.profileId !== selectedProfile.profileId
+    )
+      return;
+    const failures = [statusResult, modelsResult, availableResult, authResult].filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    setModelSettings({
+      availableModels: availableResult.status === "fulfilled" ? availableResult.value.models : [],
+      ...(failures.length === 0
+        ? {}
+        : {
+            error: failures
+              .map((failure) =>
+                failure.reason instanceof Error ? failure.reason.message : "Settings unavailable",
+              )
+              .join(" · "),
+          }),
+      loading: false,
+      models: modelsResult.status === "fulfilled" ? modelsResult.value.models : [],
+      providers: authResult.status === "fulfilled" ? authResult.value.providers : [],
+      saving: false,
+      ...(statusResult.status === "fulfilled" ? { status: statusResult.value } : {}),
+    });
+  }, []);
+
+  const clearModelSettings = useCallback((): void => {
+    modelSettingsGenerationRef.current += 1;
+    setModelSettings(undefined);
+  }, []);
+
+  const saveModelSettings = useCallback(
+    async (
+      providerId: string,
+      modelId: string,
+      thinking: ZiggyModelThinkingLevel,
+    ): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || client.state !== "open") {
+        const error = new Error("Connect to Ziggy before saving model settings.");
+        setModelSettings((current) =>
+          current === undefined ? current : { ...current, error: error.message, saving: false },
+        );
+        throw error;
+      }
+      const generation = modelSettingsGenerationRef.current;
+      setModelSettings((current) =>
+        current === undefined ? current : { ...current, error: undefined, saving: true },
+      );
+      try {
+        await client.setModel(
+          selectedProfile.profileId,
+          providerId,
+          modelId,
+          thinking,
+          `web-model-save-${crypto.randomUUID()}`,
+        );
+        if (
+          generation !== modelSettingsGenerationRef.current ||
+          clientRef.current !== client ||
+          profileRef.current?.profileId !== selectedProfile.profileId
+        )
+          return;
+        await loadModelSettings();
+      } catch (cause) {
+        if (
+          generation !== modelSettingsGenerationRef.current ||
+          clientRef.current !== client ||
+          profileRef.current?.profileId !== selectedProfile.profileId
+        )
+          throw cause;
+        setModelSettings((current) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                error:
+                  cause instanceof ZiggyRequestOutcomeUnknownError
+                    ? "The model change outcome is unknown. Reload settings before trying again."
+                    : cause instanceof Error
+                      ? cause.message
+                      : "The model setting could not be saved.",
+                saving: false,
+              },
+        );
+        throw cause;
+      }
+    },
+    [loadModelSettings],
+  );
+
+  const loadAutomationDetail = useCallback(
+    async (automationId: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined) return;
+      requireOpenSidebarClient(client);
+      const generation = ++automationDetailGenerationRef.current;
+      setAutomationDetail({ automationId, errors: [], loading: true, runs: [] });
+      const [definitionResult, statusResult, runsResult] = await Promise.allSettled([
+        client.showAutomation(selectedProfile.profileId, automationId),
+        client.automationStatus(selectedProfile.profileId),
+        client.listAutomationRuns(selectedProfile.profileId, automationId),
+      ]);
+      if (
+        generation !== automationDetailGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId
+      )
+        return;
+      const errors: AutomationDetailError[] = [];
+      const addError = (
+        source: AutomationDetailError["source"],
+        result: PromiseRejectedResult,
+      ): void => {
+        errors.push({
+          source,
+          message: result.reason instanceof Error ? result.reason.message : `${source} unavailable`,
+        });
+      };
+      if (definitionResult.status === "rejected") addError("definition", definitionResult);
+      if (statusResult.status === "rejected") addError("scheduler", statusResult);
+      if (runsResult.status === "rejected") addError("runs", runsResult);
+      const runs =
+        runsResult.status === "fulfilled"
+          ? runsResult.value.runs
+              .filter((run) => run.automationId === automationId)
+              .sort((left, right) => right.recordedAtMs - left.recordedAtMs)
+          : [];
+      setAutomationDetail({
+        automationId,
+        ...(definitionResult.status === "fulfilled" ? { definition: definitionResult.value } : {}),
+        errors,
+        loading: false,
+        runs,
+        ...(statusResult.status === "fulfilled" ? { status: statusResult.value } : {}),
+      });
+    },
+    [requireOpenSidebarClient],
+  );
+
+  const clearAutomationDetail = useCallback((): void => {
+    automationDetailGenerationRef.current += 1;
+    setAutomationDetail(undefined);
+  }, []);
+
+  const loadAgentDefinition = useCallback(async (agentId: string): Promise<void> => {
+    const client = clientRef.current;
+    const selectedProfile = profileRef.current;
+    if (client === undefined || selectedProfile === undefined) return;
+    const generation = ++agentDefinitionGenerationRef.current;
+    setAgentDefinitionDetail({ agentId, loading: true });
+    try {
+      const document = await client.readAgentDocument(selectedProfile.profileId, agentId);
+      if (
+        generation !== agentDefinitionGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId
+      )
+        return;
+      setAgentDefinitionDetail({ agentId, document, loading: false });
+    } catch (cause) {
+      if (
+        generation !== agentDefinitionGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId
+      )
+        return;
+      setAgentDefinitionDetail({
+        agentId,
+        error: cause instanceof Error ? cause.message : "The agent definition is unavailable.",
+        loading: false,
+      });
+    }
+  }, []);
+
+  const clearAgentDefinition = useCallback((): void => {
+    agentDefinitionGenerationRef.current += 1;
+    setAgentDefinitionDetail(undefined);
+  }, []);
+
+  const saveAgentDefinition = useCallback(
+    async (agentId: string, source: string, expectedSource: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined) {
+        const error = new Error("Connect to Ziggy before saving an agent definition.");
+        setLocalError(error.message);
+        throw error;
+      }
+      requireOpenSidebarClient(client);
+      const generation = agentDefinitionGenerationRef.current;
+      const document = await client.saveAgent(
+        selectedProfile.profileId,
+        agentId,
+        source,
+        expectedSource,
+        `web-agent-save-${crypto.randomUUID()}`,
+      );
+      if (
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId ||
+        generation !== agentDefinitionGenerationRef.current
+      )
+        return;
+      setAgentDefinitionDetail((current) =>
+        current?.agentId === agentId ? { agentId, document, loading: false } : current,
+      );
+      const mainRef: ZiggySessionRef = {
+        profileId: selectedProfile.profileId,
+        kind: "live",
+        key: "local/main",
+      };
+      await refreshSidebarFor(client, selectedProfile, mainRef);
+    },
+    [refreshSidebarFor, requireOpenSidebarClient],
+  );
+
+  const saveAutomationDefinition = useCallback(
+    async (automationId: string, source: string, expectedSource: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined) {
+        const error = new Error("Connect to Ziggy before saving an automation definition.");
+        setLocalError(error.message);
+        throw error;
+      }
+      requireOpenSidebarClient(client);
+      const generation = automationDetailGenerationRef.current;
+      const saved = await client.saveAutomation(
+        selectedProfile.profileId,
+        automationId,
+        source,
+        expectedSource,
+        `web-automation-save-${crypto.randomUUID()}`,
+      );
+      if (
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId ||
+        generation !== automationDetailGenerationRef.current
+      )
+        return;
+      setAutomationDetail((current) =>
+        current?.automationId === automationId ? { ...current, definition: saved } : current,
+      );
+      const mainRef: ZiggySessionRef = {
+        profileId: selectedProfile.profileId,
+        kind: "live",
+        key: "local/main",
+      };
+      await refreshSidebarFor(client, selectedProfile, mainRef);
+    },
+    [refreshSidebarFor, requireOpenSidebarClient],
+  );
+
   const updateAutomation = useCallback(
     async (automationId: string, action: "pause" | "resume" | "run"): Promise<void> => {
       const client = clientRef.current;
@@ -1079,7 +1422,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
 
   return {
     abort,
+    agentDefinitionDetail,
+    automationDetail,
     busy,
+    clearAutomationDetail,
+    clearAgentDefinition,
+    clearModelSettings,
     connect,
     connection,
     conversations,
@@ -1090,8 +1438,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     history,
     loadEarlier,
     loadingHistory,
+    loadAutomationDetail,
+    loadAgentDefinition,
+    loadModelSettings,
     localError,
     maxPromptCodePoints,
+    modelSettings,
     openGroup,
     openSpecialist,
     pauseAutomation,
@@ -1104,6 +1456,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     removeConversationPin,
     resumeAutomation,
     runAutomation,
+    saveAutomationDefinition,
+    saveAgentDefinition,
+    saveModelSettings,
     selectedRef,
     selectedTitle,
     selectConversation,

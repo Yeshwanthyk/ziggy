@@ -292,6 +292,22 @@ const methodFixtures = (): ReadonlyArray<{
       result: { profileId: PROFILE_A, agent },
     },
     {
+      method: "agent.document",
+      params: { profileId: PROFILE_A, agentId: "researcher" },
+      result: { profileId: PROFILE_A, id: "researcher", source: "---\nversion: 1\n---\n" },
+    },
+    {
+      method: "agent.save",
+      params: {
+        profileId: PROFILE_A,
+        agentId: "researcher",
+        source: "---\nversion: 1\n---\n",
+        expectedSource: "",
+        commandId: "save-agent-1",
+      },
+      result: { profileId: PROFILE_A, id: "researcher", source: "---\nversion: 1\n---\n" },
+    },
+    {
       method: "agent.create",
       params: { profileId: PROFILE_A, agentId: "researcher" },
       result: { profileId: PROFILE_A, agent },
@@ -485,6 +501,52 @@ const methodFixtures = (): ReadonlyArray<{
 };
 
 describe("gateway client transport", () => {
+  test("reads and saves agent documents through typed convenience methods", async () => {
+    const socket = new FakeSocket();
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      socketFactory: () => socket,
+    });
+    socket.open();
+    const source = "---\nversion: 1\ndescription: Researcher\n---\n\nResearch.\n";
+
+    const read = client.readAgentDocument(PROFILE_A, "researcher");
+    expect(frame(socket, 0)).toMatchObject({
+      method: "agent.document",
+      params: { profileId: PROFILE_A, agentId: "researcher" },
+    });
+    socket.message({
+      id: frameId(socket, 0),
+      ok: true,
+      result: { profileId: PROFILE_A, id: "researcher", source },
+    });
+    expect(await read).toEqual({ profileId: PROFILE_A, id: "researcher", source });
+
+    const saved = client.saveAgent(PROFILE_A, "researcher", `${source}\n`, source, "agent-save-1");
+    expect(frame(socket, 1)).toMatchObject({
+      method: "agent.save",
+      params: {
+        profileId: PROFILE_A,
+        agentId: "researcher",
+        source: `${source}\n`,
+        expectedSource: source,
+        commandId: "agent-save-1",
+      },
+    });
+    socket.message({
+      id: frameId(socket, 1),
+      ok: true,
+      result: { profileId: PROFILE_A, id: "researcher", source: `${source}\n` },
+    });
+    expect(await saved).toEqual({
+      profileId: PROFILE_A,
+      id: "researcher",
+      source: `${source}\n`,
+    });
+    client.close();
+  });
+
   test("listGroups requests and decodes persisted group summaries", async () => {
     const socket = new FakeSocket();
     const client = connectZiggy({

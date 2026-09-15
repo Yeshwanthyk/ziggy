@@ -48,6 +48,15 @@ export class ProfileAgentInvalid extends Schema.TaggedErrorClass<ProfileAgentInv
   },
 ) {}
 
+export class ProfileAgentEditConflict extends Schema.TaggedErrorClass<ProfileAgentEditConflict>()(
+  "ProfileAgentEditConflict",
+  {
+    id: Schema.String,
+    path: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 export class ProfileAgentMentionInvalid extends Schema.TaggedErrorClass<ProfileAgentMentionInvalid>()(
   "ProfileAgentMentionInvalid",
   {
