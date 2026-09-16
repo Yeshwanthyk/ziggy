@@ -263,10 +263,11 @@ button {
 }
 
 .automation-row {
+  position: relative;
   align-items: center;
   border-radius: 9px;
   display: grid;
-  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr);
   column-gap: var(--row-content-gap);
   min-height: 44px;
   padding: 5px 4px 5px 8px;
@@ -291,6 +292,13 @@ button {
 
 .automation-status.is-conflict {
   background: var(--destructive);
+}
+
+.automation-warning {
+  color: var(--destructive);
+  height: 16px;
+  width: 16px;
+  justify-self: center;
 }
 
 .automation-copy {
@@ -330,12 +338,42 @@ button {
 
 .automation-copy small {
   color: var(--muted-foreground);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .automation-actions {
   display: flex;
   flex: 0 0 auto;
+  position: absolute;
+  right: 4px;
+  background: var(--rail);
+}
+
+.automation-copy {
+  padding-right: 64px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .automation-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .automation-copy {
+    padding-right: 4px;
+  }
+
+  .automation-row:hover .automation-copy,
+  .automation-row:focus-within .automation-copy {
+    padding-right: 64px;
+  }
+
+  .automation-row:hover .automation-actions,
+  .automation-row:focus-within .automation-actions {
+    background: oklch(0.94 0.006 260);
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .automation-dialog {
