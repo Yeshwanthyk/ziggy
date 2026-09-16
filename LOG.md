@@ -720,6 +720,12 @@ results.
 - Moved `clients/gateway-client` to `packages/ui-sdk`, renamed the package to `@ziggy/ui-sdk`, and updated web imports, Knip entries, plan references, and the root `check:ui-sdk` command. Historical changelog, log, and research entries retain the old name. Transport APIs are unchanged.
 - SDK lint, typecheck, and all 14 tests pass; web formatting, lint, all 45 tests, and build pass. Full `bun run check` stops at root typechecking because separately deleted `extensions/diffs/index.ts` and `extensions/linear/index.ts` are still referenced by generated resources. Left those unrelated deletions untouched; no commit made.
 
+## Remove completed plans
+
+- Deleted eleven completed or superseded planning documents rather than archiving copies; Git retains their history. Kept the five documents with unresolved implementation, architecture, or live-proof work.
+- Added `docs/plans/README.md` to identify remaining scope and preserve channel, Linux service, ACP, and standalone verification gaps. Replaced the ACP research link to a deleted plan with current operations guidance and removed stale plan dependencies from the standalone packet.
+- Documentation-only cleanup; unrelated SDK and extension work remains untouched. No runtime tests rerun for these deletions.
+
 ## Recover UI subscriptions after replay rollover
 
 - Distinguished a fresh event subscription from an explicit resume cursor: fresh opens/watches replay the retained activity window and attach live, while expired/future cursors and stale server epochs still fail. Persisted Pi session history remains the transcript authority. Rejected replacement watches preserve their existing listener.

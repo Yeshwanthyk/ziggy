@@ -437,7 +437,7 @@ but they must preserve the contracts and report the change in `LOG.md`.
 | CLI output           | `src/main.ts` and `src/faces/cli.ts` — preserve the small public command surface                                              |
 | Release tooling      | `tooling/extensions/` — validate, archive, hash, and render catalogue rows                                                    |
 | Compiled proof       | `tooling/standalone-smoke.ts` plus focused Bun tests                                                                          |
-| Product contract     | this plan, `docs/plans/skills-catalog.md`, `docs/plans/primitive-status.md`, `docs/research/minimal-ziggy-scout.md`, `LOG.md` |
+| Product contract     | this plan, `catalog.json`, `docs/research/minimal-ziggy-scout.md`, `LOG.md`; former catalog/status plans are available in Git history |
 
 Delete `src/catalog.ts` when no production caller needs the embedded catalogue. Do not leave it as a
 second authority.

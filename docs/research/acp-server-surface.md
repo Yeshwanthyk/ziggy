@@ -143,4 +143,4 @@ HTTP/WebSocket transports, or a second Ziggy management protocol.
 - [ACP v1 transports](https://agentclientprotocol.com/protocol/v1/transports)
 - [Official TypeScript SDK repository](https://github.com/agentclientprotocol/typescript-sdk/tree/v1.3.0)
 - Ziggy's client-neutral runtime contract: [`docs/research/minimal-ziggy-scout.md`](minimal-ziggy-scout.md)
-- Settled ACP face plan and Buzz decision: [`docs/plans/open-ziggy-readiness.md`](../plans/open-ziggy-readiness.md#chunk-4---ziggy-acp)
+- Historical ACP face plan and Buzz decision: `docs/plans/open-ziggy-readiness.md` (removed after implementation; available in Git history). Current operation: [ACP/Buzz](../operations/acp-buzz.md).
