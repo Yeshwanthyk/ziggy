@@ -85,6 +85,7 @@ export interface ZiggyConnection {
 }
 
 interface PendingRequest {
+  readonly id: string;
   readonly method: ZiggyMethod;
   readonly params: unknown;
   readonly resolve: (value: unknown) => void;
@@ -140,6 +141,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
   const now = options.now ?? Date.now;
   const pending = new Map<string, PendingRequest>();
   const watches = new Map<string, WatchState>();
+  const watchRequests = new Map<string, string>();
   const cursors = new Map<string, SequenceState>();
   const seenEventIds = new Set<string>();
   const handlers = new Map<ZiggyEventName, Set<(event: ZiggyClientEvent) => void>>();
@@ -221,6 +223,14 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
       return Promise.reject(new Error(`Invalid Ziggy gateway parameters for ${method}`));
     }
     const id = `ziggy-${now().toString(36)}-${(++requestCounter).toString(36)}`;
+    if (
+      (method === "session.watch" || method === "session.unwatch" || method === "session.close") &&
+      isRecord(params) &&
+      isSessionReference(params.ref)
+    ) {
+      watchRequests.set(watchKey(params.ref), id);
+      if (method !== "session.watch") watches.delete(watchKey(params.ref));
+    }
     return new Promise<ZiggyResultMap[Method]>((resolve, reject) => {
       let entry: PendingRequest | undefined;
       const timeout = setTimeout(() => {
@@ -232,6 +242,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
         );
       }, requestTimeoutMs);
       entry = {
+        id,
         method,
         params,
         resolve: (value) => {
@@ -255,6 +266,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
     if (entry.method === "session.watch" && isSessionReference(entry.params.ref)) {
       const ref = entry.params.ref;
       const key = watchKey(ref);
+      if (watchRequests.get(key) !== entry.id) return;
       const previous = watches.get(key);
       const latest = streamKeyForRef(ref);
       const latestSequence = cursors.get(latest);
@@ -275,6 +287,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
       (entry.method === "session.unwatch" || entry.method === "session.close") &&
       isSessionReference(entry.params.ref)
     ) {
+      if (watchRequests.get(watchKey(entry.params.ref)) !== entry.id) return;
       watches.delete(watchKey(entry.params.ref));
       const stream = streamKeyForRef(entry.params.ref);
       cursors.delete(stream);
@@ -387,24 +400,48 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
   };
 
   const restoreWatches = (): void => {
+    const restoringGeneration = generation;
     for (const watch of watches.values()) {
       if (watch.ref.kind !== "live") continue;
       const ref = watch.ref;
+      const previous = watch.cursor;
       const params =
-        watch.cursor === undefined
-          ? { ref }
-          : { ref, afterSeq: watch.cursor.seq, epoch: watch.cursor.epoch };
-      void request("session.watch", params).catch((reason: unknown) => {
+        previous === undefined ? { ref } : { ref, afterSeq: previous.seq, epoch: previous.epoch };
+      const restoring = request("session.watch", params);
+      let restoringRequest = watchRequests.get(watchKey(ref));
+      const reconcileRestoredWatch = (): void => {
         if (
-          reason instanceof ZiggyGatewayError &&
-          (reason.code === "stale_cursor" || reason.code === "replay_gap")
-        ) {
-          const previous = watch.cursor;
-          watch.cursor = undefined;
-          cursors.delete(streamKeyForRef(ref));
-          reconcile(ref.profileId, ref, "replay-gap", previous, undefined);
-        }
-      });
+          stopped ||
+          generation !== restoringGeneration ||
+          !watches.has(watchKey(ref)) ||
+          watchRequests.get(watchKey(ref)) !== restoringRequest
+        )
+          return;
+        reconcile(ref.profileId, ref, "replay-gap", previous, undefined);
+      };
+      void restoring
+        .then(() => {
+          if (previous === undefined) reconcileRestoredWatch();
+        })
+        .catch((reason: unknown) => {
+          if (
+            !stopped &&
+            generation === restoringGeneration &&
+            watchRequests.get(watchKey(ref)) === restoringRequest &&
+            watches.get(watchKey(ref)) === watch &&
+            previous !== undefined &&
+            reason instanceof ZiggyGatewayError &&
+            (reason.code === "stale_cursor" || reason.code === "replay_gap")
+          ) {
+            watch.cursor = undefined;
+            cursors.delete(streamKeyForRef(ref));
+            // Attach before requesting history so events during that read remain observable.
+            // Only the rejected cursor is retried; sent user commands are never replayed.
+            const freshWatch = request("session.watch", { ref });
+            restoringRequest = watchRequests.get(watchKey(ref));
+            void freshWatch.then(reconcileRestoredWatch, reconcileRestoredWatch);
+          }
+        });
     }
   };
 

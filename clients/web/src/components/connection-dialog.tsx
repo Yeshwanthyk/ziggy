@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ModelSettingsState } from "@/gateway";
-import type { ZiggyModelThinkingLevel } from "../../../gateway-client/src/index";
+import type { ZiggyModelThinkingLevel } from "../../../../packages/ui-sdk/src/index";
 import { Info } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import "./connection-dialog.css";

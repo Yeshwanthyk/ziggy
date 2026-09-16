@@ -11,8 +11,8 @@
     "clients/web/src/**/*.test.ts",
     "clients/web/src/**/*.test.tsx",
     "clients/web/vite.config.ts",
-    "clients/gateway-client/src/index.ts",
-    "clients/gateway-client/test/**/*.test.ts",
+    "packages/ui-sdk/src/index.ts",
+    "packages/ui-sdk/test/**/*.test.ts",
     "tooling/generate-*.mjs",
     "tooling/oxlint/*-plugin.mjs",
     "tooling/**/*.test.ts"

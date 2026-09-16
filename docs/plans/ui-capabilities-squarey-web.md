@@ -19,7 +19,7 @@ the current worktree and land clean end-to-end slices.
 ## Outcome
 
 Expose Ziggy's complete browser-appropriate interaction surface through the existing serve-owned
-UI gateway and `@ziggy/gateway-client`. Redesign the existing `clients/web` into a
+UI gateway and `@ziggy/ui-sdk`. Redesign the existing `clients/web` into a
 Grok-style bot client that runs against Squarey. Extend the bundled `ziggy-operations` skill so an
 agent can use the same capabilities to create a different UI.
 
@@ -78,7 +78,7 @@ not provide capability negotiation, transcript content, event cursors, or replay
 
 ### Existing gateway client
 
-`clients/gateway-client/src/index.ts` is already the framework-neutral interaction client. It
+`packages/ui-sdk/src/index.ts` is already the framework-neutral interaction client. It
 provides typed requests, pushed events, request timeouts, reconnect, and watch restoration. It
 manually mirrors the gateway protocol and currently has no capability handshake or replay cursor.
 
@@ -389,7 +389,7 @@ extensions/ziggy-operations/skills/ziggy-operations/references/ui.md
 The reference explains:
 
 - Start or locate `ziggy serve` for one Profile.
-- Connect through `@ziggy/gateway-client`.
+- Connect through `@ziggy/ui-sdk`.
 - Perform capability negotiation before rendering optional UI.
 - Load history before watching from a cursor.
 - Keep tokens runtime-only.
@@ -433,8 +433,8 @@ Primary files:
 
 - `src/domain/ui-gateway.ts`
 - `src/application/ui-gateway.ts`
-- `clients/gateway-client/src/index.ts`
-- `clients/gateway-client/test/client.test.ts`
+- `packages/ui-sdk/src/index.ts`
+- `packages/ui-sdk/test/client.test.ts`
 - `test/domain/ui-gateway.test.ts`
 - `test/application/ui-gateway.test.ts`
 - `clients/web/main.ts`
@@ -468,7 +468,7 @@ Primary files:
 - `src/application/chat-registry.ts`
 - `src/application/ui-gateway.ts`
 - matching `test/` files
-- `clients/gateway-client/**`
+- `packages/ui-sdk/**`
 - `clients/web/**`
 
 Exit proof:
@@ -548,7 +548,7 @@ Exit proof:
 ### Slice 7 — bundled UI-author guidance
 
 Update the existing `ziggy-operations` skill and add `references/ui.md`. Use the skill in a clean
-Profile-shaped smoke test to produce or modify a tiny client against the gateway-client contract.
+Profile-shaped smoke test to produce or modify a tiny client against the UI SDK contract.
 
 Exit proof:
 
@@ -611,7 +611,7 @@ Run the smallest focused test first, then:
 bun run fmt
 bun run lint
 bun run typecheck
-bun run check:gateway-client
+bun run check:ui-sdk
 git diff --check
 ```
 

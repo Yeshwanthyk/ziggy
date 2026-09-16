@@ -1,5 +1,5 @@
 {
-  "name": "@ziggy/gateway-client",
+  "name": "@ziggy/ui-sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",

@@ -672,6 +672,111 @@ describe("gateway client transport", () => {
     client.close();
   });
 
+  test.each([
+    ["replay_gap", EPOCH_A, 300],
+    ["replay_gap", EPOCH_B, 1],
+    ["stale_cursor", EPOCH_A, 300],
+  ] as const)(
+    "reattaches after %s in %s before reconciling history",
+    async (code, epoch, sequence) => {
+      const sockets: FakeSocket[] = [];
+      const client = connectZiggy({
+        url: "ws://localhost/ws",
+        token: "token",
+        reconnectBaseDelayMs: 1,
+        socketFactory: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+      });
+      const reconciliations: string[] = [];
+      const received: string[] = [];
+      client.on("history-reconciliation", (value) => reconciliations.push(value.reason));
+      client.on("assistant-text", (value) => received.push(value.payload.snapshot));
+      const first = socketAt(sockets, 0);
+      first.open();
+      const watching = client.watchSession(MAIN_A);
+      first.message({ id: frameId(first, 0), ok: true, result: { acknowledged: true } });
+      await watching;
+      first.message(event(PROFILE_A, "local/main", "old", 1, "before disconnect"));
+      first.close();
+      await waitFor(() => sockets.length === 2);
+      const second = socketAt(sockets, 1);
+      second.open();
+      second.message({
+        id: frameId(second, 0),
+        ok: false,
+        error: { code, message: "expired replay" },
+      });
+      await waitFor(() => second.sent.length === 2);
+      expect(frame(second, 1)).toMatchObject({ method: "session.watch", params: { ref: MAIN_A } });
+      expect(reconciliations).toEqual([]);
+      second.message(
+        event(PROFILE_A, "local/main", "bootstrap", sequence, "retained activity", epoch),
+      );
+      second.message({ id: frameId(second, 1), ok: true, result: { acknowledged: true } });
+      await waitFor(() => reconciliations.includes("replay-gap"));
+      second.message(
+        event(PROFILE_A, "local/main", "next", sequence + 1, "during history read", epoch),
+      );
+      second.message(
+        event(PROFILE_A, "local/main", "next", sequence + 1, "during history read", epoch),
+      );
+      expect(received).toEqual(["before disconnect", "retained activity", "during history read"]);
+      second.close();
+      await waitFor(() => sockets.length === 3);
+      const third = socketAt(sockets, 2);
+      third.open();
+      expect(frame(third, 0)).toMatchObject({
+        method: "session.watch",
+        params: { ref: MAIN_A, epoch, afterSeq: sequence + 1 },
+      });
+      third.message({ id: frameId(third, 0), ok: true, result: { acknowledged: true } });
+      client.close();
+    },
+  );
+
+  test("a late replay failure cannot restore an explicitly unwatched session", async () => {
+    const sockets: FakeSocket[] = [];
+    const client = connectZiggy({
+      url: "ws://localhost/ws",
+      token: "token",
+      reconnectBaseDelayMs: 1,
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const first = socketAt(sockets, 0);
+    first.open();
+    const watching = client.watchSession(MAIN_A, { epoch: EPOCH_A, seq: 1 });
+    first.message({ id: frameId(first, 0), ok: true, result: { acknowledged: true } });
+    await watching;
+    first.close();
+    await waitFor(() => sockets.length === 2);
+    const second = socketAt(sockets, 1);
+    second.open();
+    const unwatching = client.unwatchSession(MAIN_A);
+    second.message({
+      id: frameId(second, 0),
+      ok: false,
+      error: { code: "replay_gap", message: "expired" },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(second.sent).toHaveLength(2);
+    second.message({ id: frameId(second, 1), ok: true, result: { acknowledged: true } });
+    await unwatching;
+    second.close();
+    await waitFor(() => sockets.length === 3);
+    const third = socketAt(sockets, 2);
+    third.open();
+    expect(third.sent).toEqual([]);
+    client.close();
+  });
+
   test("signals epoch changes and replay gaps with stable event dedupe", () => {
     const socket = new FakeSocket();
     const client = connectZiggy({

@@ -13,7 +13,7 @@ import {
   type ZiggySessionRef,
   type ZiggySessionListResult,
   type ZiggySystemCapabilitiesResult,
-} from "../../gateway-client/src/index";
+} from "../../../packages/ui-sdk/src/index";
 import {
   useZiggyGateway,
   type ConversationSummary,
@@ -282,6 +282,101 @@ beforeEach(() => {
 });
 
 describe("useZiggyGateway", () => {
+  it("keeps session.open replay delivered before the selected reference is known", async () => {
+    let emit: (event: ZiggyClientEvent) => void = () => undefined;
+    const { client } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+      openMain: vi.fn(async () => {
+        emit({
+          event: "assistant-text",
+          eventId: "opening",
+          epoch: "epoch-1",
+          seq: 300,
+          profileId: profile.profileId,
+          session: mainRef,
+          payload: { delta: "Already responding", snapshot: "Already responding" },
+        });
+        return mainRef;
+      }),
+    });
+    const hook = await connectHook(client);
+    expect(hook.result.current.history).toEqual(initialHistory);
+    expect(hook.result.current.streamText).toBe("Already responding");
+    expect(hook.result.current.busy).toBe(true);
+    await act(async () =>
+      hook.result.current.connect({ url: "ws://127.0.0.1:9876/ws", token: "token" }),
+    );
+    expect(hook.result.current.streamText).toBe("Already responding");
+    expect(hook.result.current.busy).toBe(true);
+  });
+
+  it("preserves activity replayed before and delivered during history reconciliation", async () => {
+    let emit: (event: ZiggyClientEvent) => void = () => undefined;
+    const reload = deferred<ZiggySessionHistoryResult>();
+    const { client, fixture } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    });
+    const hook = await connectHook(client);
+    vi.mocked(fixture.getSessionHistory).mockImplementationOnce(() => reload.promise);
+    act(() => {
+      emit({
+        event: "assistant-text",
+        eventId: "before-reload",
+        epoch: "epoch-1",
+        seq: 300,
+        profileId: profile.profileId,
+        session: mainRef,
+        payload: { delta: "Retained", snapshot: "Retained" },
+      });
+      emit({
+        event: "history-reconciliation",
+        profileId: profile.profileId,
+        session: mainRef,
+        reason: "replay-gap",
+      });
+    });
+    expect(hook.result.current.reconciling).toBe(true);
+    act(() => {
+      emit({
+        event: "assistant-text",
+        eventId: "during-reload",
+        epoch: "epoch-1",
+        seq: 301,
+        profileId: profile.profileId,
+        session: mainRef,
+        payload: { delta: " activity", snapshot: "Retained activity" },
+      });
+    });
+    await act(async () => reload.resolve(historyResult(mainRef)));
+    expect(hook.result.current.history).toEqual(initialHistory);
+    expect(hook.result.current.streamText).toBe("Retained activity");
+    expect(hook.result.current.busy).toBe(true);
+    expect(hook.result.current.reconciling).toBe(false);
+
+    const settledReload = deferred<ZiggySessionHistoryResult>();
+    vi.mocked(fixture.getSessionHistory).mockImplementationOnce(() => settledReload.promise);
+    act(() =>
+      emit({
+        event: "settled",
+        eventId: "settled",
+        epoch: "epoch-1",
+        seq: 302,
+        profileId: profile.profileId,
+        session: mainRef,
+        payload: {},
+      }),
+    );
+    await act(async () => settledReload.resolve(historyResult(mainRef)));
+    expect(hook.result.current.streamText).toBe("");
+    expect(hook.result.current.busy).toBe(false);
+  });
+
   it("keeps one startup connection alive through Strict Mode effect replay", async () => {
     const { client, fixture } = makeClient();
     const connector = vi.fn<GatewayConnector>(() => client);

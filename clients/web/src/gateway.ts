@@ -23,7 +23,7 @@ import {
   type ZiggySessionHistoryEntry,
   type ZiggySessionListResult,
   type ZiggySessionRef,
-} from "../../gateway-client/src/index";
+} from "../../../packages/ui-sdk/src/index";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ConversationSummary {
@@ -330,6 +330,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const modelSettingsGenerationRef = useRef(0);
   const sidebarMutationRef = useRef(false);
   const historyGenerationRef = useRef(0);
+  const activityActiveRef = useRef(false);
+  const unselectedEventsRef = useRef<ZiggyGatewayEvent[]>([]);
   const selectionGenerationRef = useRef(0);
   const connectionGenerationRef = useRef(0);
   const reconciliationInFlightRef = useRef(false);
@@ -386,7 +388,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       );
       setHistoryCursor(result.nextCursor);
       setHasMoreHistory(result.hasMore);
-      if (before === undefined) {
+      if (before === undefined && !activityActiveRef.current) {
         setPendingUser(undefined);
         setStreamText("");
         setTools([]);
@@ -409,15 +411,18 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const replaceConversationActivity = useCallback((event: ZiggyGatewayEvent): void => {
     if (!sameRef(selectedRefRef.current, event.session)) return;
     if (event.event === "assistant-text") {
+      activityActiveRef.current = true;
       setStreamText(event.payload.snapshot);
       setBusy(true);
       return;
     }
     if (event.event === "thinking") {
+      activityActiveRef.current = true;
       setBusy(true);
       return;
     }
     if (event.event === "tool") {
+      activityActiveRef.current = true;
       setBusy(true);
       setTools((current) => {
         const next: ToolActivity = {
@@ -435,11 +440,15 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       return;
     }
     if (event.event === "settled") {
+      activityActiveRef.current = false;
+      setStreamText("");
+      setTools([]);
       setBusy(false);
       void loadHistoryRef.current?.(event.session);
       return;
     }
     if (event.event === "error") {
+      activityActiveRef.current = false;
       setBusy(false);
       setLocalError(event.payload.message);
     }
@@ -460,6 +469,11 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           reconciliationInFlightRef.current = false;
           setReconciling(false);
         });
+        return;
+      }
+      if (!sameRef(selectedRefRef.current, event.session)) {
+        unselectedEventsRef.current.push(event);
+        if (unselectedEventsRef.current.length > 256) unselectedEventsRef.current.shift();
         return;
       }
       replaceConversationActivity(event);
@@ -491,9 +505,13 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       setStreamText("");
       setTools([]);
       setPendingUser(undefined);
+      activityActiveRef.current = false;
       setBusy(false);
       setLocalError(undefined);
       setReconciling(false);
+      const openingEvents = unselectedEventsRef.current;
+      unselectedEventsRef.current = [];
+      for (const event of openingEvents) replaceConversationActivity(event);
       if (previous?.kind === "live" && !sameRef(previous, conversation.ref)) {
         await client.unwatchSession(previous).catch(() => undefined);
       }
@@ -519,7 +537,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (selectionGeneration !== selectionGenerationRef.current) return;
       await loadHistory(conversation.ref);
     },
-    [loadHistory],
+    [loadHistory, replaceConversationActivity],
   );
 
   const buildConversationList = useCallback(
@@ -750,6 +768,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     async ({ url, token }: ConnectInput): Promise<void> => {
       unsubscribeRef.current?.();
       clientRef.current?.close();
+      selectedRefRef.current = undefined;
+      setSelectedRef(undefined);
+      unselectedEventsRef.current = [];
       const connectionGeneration = ++connectionGenerationRef.current;
       selectionGenerationRef.current += 1;
       automationDetailGenerationRef.current += 1;
@@ -1435,6 +1456,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         return;
       }
       setPendingUser(text);
+      activityActiveRef.current = true;
       setBusy(true);
       try {
         if (recipient === undefined) {
@@ -1443,6 +1465,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           await client.request("prompt.submit", { ref, text, recipient, commandId });
         }
       } catch (cause) {
+        activityActiveRef.current = false;
         setBusy(false);
         setPendingUser(undefined);
         setLocalError(

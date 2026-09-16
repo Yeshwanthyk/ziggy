@@ -714,3 +714,15 @@ results.
 
 - Deleted the unused web `BlobCollection` component, its gallery-only CSS, and the stale Settings gallery reference in the README. Kept the identity catalog and active bot avatars.
 - Full `bun run check` passes, including Knip, typechecking, 14 gateway-client tests, 45 web tests, production build, and generated catalog/docs checks. The build retains its non-blocking large-chunk warning.
+
+## Name and locate the UI SDK
+
+- Moved `clients/gateway-client` to `packages/ui-sdk`, renamed the package to `@ziggy/ui-sdk`, and updated web imports, Knip entries, plan references, and the root `check:ui-sdk` command. Historical changelog, log, and research entries retain the old name. Transport APIs are unchanged.
+- SDK lint, typecheck, and all 14 tests pass; web formatting, lint, all 45 tests, and build pass. Full `bun run check` stops at root typechecking because separately deleted `extensions/diffs/index.ts` and `extensions/linear/index.ts` are still referenced by generated resources. Left those unrelated deletions untouched; no commit made.
+
+## Recover UI subscriptions after replay rollover
+
+- Distinguished a fresh event subscription from an explicit resume cursor: fresh opens/watches replay the retained activity window and attach live, while expired/future cursors and stale server epochs still fail. Persisted Pi session history remains the transcript authority. Rejected replacement watches preserve their existing listener.
+- The UI SDK now reattaches without the rejected cursor before reconciling history. Request and connection fences prevent late recovery responses from reviving an explicitly unwatched session; sent user commands are not retried. Cursor-free reconnects also request history reconciliation because continuity is unknown.
+- Preserved active text/tool state across web history reads, including activity replayed before a reload and events received while it is pending. A bounded opening-event buffer retains replay delivered before the selected session reference is known. Settlement clears completed activity without erasing a subsequent active turn.
+- Verification: 22 focused core registry/gateway tests, 18 SDK tests, and all 47 web tests pass. Full `bun run check` passes formatting, lint, typechecking, Knip, SDK/web tests, web build, and generated catalog/docs checks; the existing web chunk-size warning remains. Tests exercise real registry/gateway code and SDK/hook fixtures; no live resident restart, browser session, or deployment was performed.

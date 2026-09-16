@@ -4,7 +4,60 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Ref } from "effect";
 import { ProfileNotInitialized } from "ziggy/domain/agent";
 import { makeChatHandle, type ChatEvent, type ChatHandle } from "ziggy/application/agent";
-import { MAX_UI_SESSIONS, makeChatRegistry } from "ziggy/application/chat-registry";
+import {
+  CHAT_REPLAY_LIMIT,
+  MAX_UI_SESSIONS,
+  makeChatRegistry,
+} from "ziggy/application/chat-registry";
+
+test("fresh subscriptions bootstrap retained activity while resume cursors require continuity", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        yield* registry.getOrOpenUi(
+          "local/main",
+          Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
+        );
+        for (let index = 0; index <= CHAT_REPLAY_LIMIT; index += 1) {
+          yield* registry.publish("local/main", { kind: "settled" });
+        }
+        const received: number[] = [];
+        const unsubscribe = yield* registry.subscribeSequenced("local/main", (event) =>
+          received.push(event.seq),
+        );
+        expect(received).toEqual(
+          Array.from({ length: CHAT_REPLAY_LIMIT }, (_, index) => index + 2),
+        );
+        for (const afterSeq of [0, CHAT_REPLAY_LIMIT + 2]) {
+          expect(
+            yield* Effect.result(
+              registry.subscribeSequenced("local/main", () => undefined, afterSeq),
+            ),
+          ).toMatchObject({ _tag: "Failure", failure: { code: "replay_gap" } });
+        }
+        const resumed: number[] = [];
+        const stopResume = yield* registry.subscribeSequenced(
+          "local/main",
+          (event) => resumed.push(event.seq),
+          CHAT_REPLAY_LIMIT,
+        );
+        yield* registry.publish("local/main", { kind: "settled" });
+        expect(received.at(-1)).toBe(CHAT_REPLAY_LIMIT + 2);
+        expect(resumed).toEqual([CHAT_REPLAY_LIMIT + 1, CHAT_REPLAY_LIMIT + 2]);
+        unsubscribe();
+        stopResume();
+        yield* registry.publish("local/main", { kind: "settled" });
+        expect(received).toHaveLength(CHAT_REPLAY_LIMIT + 1);
+        expect(resumed).toHaveLength(2);
+        expect(yield* Effect.result(registry.replay("local/main", 0))).toMatchObject({
+          _tag: "Failure",
+          failure: { code: "replay_gap" },
+        });
+      }),
+    ),
+  );
+});
 
 test("concurrent UI opens share one handle and a failed opening is retryable", async () => {
   await Effect.runPromise(

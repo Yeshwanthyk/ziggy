@@ -17,7 +17,7 @@ import type {
   ZiggyRecipientId,
   ZiggySessionHistoryEntry,
   ZiggySessionRef,
-} from "../../gateway-client/src/index";
+} from "../../../packages/ui-sdk/src/index";
 import { AutomationRow } from "@/components/automation-row";
 import { AutomationDetailDialog } from "@/components/automation-detail-dialog";
 import { AgentDefinitionDialog } from "@/components/agent-definition-dialog";

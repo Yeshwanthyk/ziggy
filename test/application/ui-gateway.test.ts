@@ -4,7 +4,11 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Effect, Result, Schema } from "effect";
 import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/application/agent";
-import { makeChatRegistry, type ChatRegistryApi } from "ziggy/application/chat-registry";
+import {
+  CHAT_REPLAY_LIMIT,
+  makeChatRegistry,
+  type ChatRegistryApi,
+} from "ziggy/application/chat-registry";
 import type { SessionsApi } from "ziggy/application/sessions";
 import type { ModelsApi } from "ziggy/application/models";
 import type { AuthApi } from "ziggy/application/auth";
@@ -457,6 +461,108 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
           },
         });
         expect(restarted.at(-1)).toMatchObject({ ok: false, error: { code: "replay_gap" } });
+      }),
+    ),
+  );
+});
+
+test("rolled replay windows allow fresh opens and watches without losing history or subscriptions", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const handle = makeChatHandle({
+          prompt: () => Effect.succeed("ok"),
+          currentSession: Effect.succeed({ id: "durable-session", file: "/private/session.jsonl" }),
+        });
+        let opens = 0;
+        const agent = makeAgent(handle, {
+          openChat: () =>
+            Effect.sync(() => {
+              opens += 1;
+              return handle;
+            }),
+        });
+        const historyEntries = [
+          {
+            kind: "assistant" as const,
+            timestamp: "2026-09-16T12:00:00Z",
+            text: "Durable history",
+          },
+        ];
+        const sessions: SessionsApi = {
+          ...makeSessions(),
+          history: (_target, reference) =>
+            Effect.sync(() => {
+              expect(reference).toBe("durable-session");
+              return {
+                entries: historyEntries,
+                terminalState: "completed" as const,
+                truncated: false,
+                hasMore: false,
+              };
+            }),
+        };
+        const gateway = makeUiGateway(makeConfig(registry, agent, undefined, { sessions }));
+        const frames: string[] = [];
+        const connection = gateway.connect((frame) => frames.push(frame));
+        const ref = { profileId, kind: "live" as const, key: "local/main" };
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        for (let index = 0; index <= CHAT_REPLAY_LIMIT; index += 1) {
+          yield* registry.publish("local/main", { kind: "settled" });
+        }
+        for (const method of ["session.open", "session.watch"] as const) {
+          frames.length = 0;
+          yield* connection.request({
+            id: method,
+            method,
+            params: method === "session.open" ? { profileId, context: { kind: "local" } } : { ref },
+          });
+          expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({ id: method, ok: true });
+          const events = frames
+            .map((frame) => decodeEventResult(frame))
+            .filter(Result.isSuccess)
+            .map((result) => result.success);
+          expect(events).toHaveLength(CHAT_REPLAY_LIMIT);
+          expect(events[0]?.seq).toBe(2);
+          expect(events.at(-1)?.seq).toBe(CHAT_REPLAY_LIMIT + 1);
+        }
+        expect(opens).toBe(1);
+        yield* connection.request({ id: "history", method: "session.history", params: { ref } });
+        expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({
+          id: "history",
+          ok: true,
+          result: { entries: historyEntries },
+        });
+        for (const params of [
+          { ref, afterSeq: 0 },
+          { ref, afterSeq: CHAT_REPLAY_LIMIT + 1, epoch: "expired-epoch" },
+        ]) {
+          yield* connection.request({ id: "invalid-resume", method: "session.watch", params });
+          expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({
+            ok: false,
+            error: { code: "replay_gap" },
+          });
+        }
+        frames.length = 0;
+        yield* registry.publish("local/main", { kind: "settled" });
+        expect(frames).toHaveLength(1);
+        expect(decodeEventResult(frames[0] ?? "null")).toMatchObject({
+          success: { seq: CHAT_REPLAY_LIMIT + 2 },
+        });
+        yield* connection.request({ id: "unwatch", method: "session.unwatch", params: { ref } });
+        frames.length = 0;
+        yield* registry.publish("local/main", { kind: "settled" });
+        expect(frames).toEqual([]);
+        yield* connection.request({ id: "rewatch", method: "session.watch", params: { ref } });
+        yield* connection.close;
+        frames.length = 0;
+        yield* registry.publish("local/main", { kind: "settled" });
+        expect(frames).toEqual([]);
       }),
     ),
   );

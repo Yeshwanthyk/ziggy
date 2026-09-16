@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ZiggyModelDescriptor } from "../../../gateway-client/src/index";
+import type { ZiggyModelDescriptor } from "../../../../packages/ui-sdk/src/index";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 

@@ -519,7 +519,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
     send: (frame: string) => void,
     branch: UiGatewayBranch,
     ref: UiSessionRef,
-    afterSeq: number,
+    afterSeq: number | undefined,
     epoch: string | undefined,
     correlationId: UiCommandId | undefined,
   ): Effect.Effect<() => void, UiGatewayError> => {
@@ -801,8 +801,15 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           yield* branch.registry.getOrOpenUi(key, open, metadata);
           const ref = sessionRef(branch.profileId, key);
           const subscriptionKey = `${branch.profileId}:${key}`;
+          const unsubscribe = yield* subscribe(
+            send,
+            branch,
+            ref,
+            undefined,
+            undefined,
+            params.commandId,
+          );
           subscriptions.get(subscriptionKey)?.();
-          const unsubscribe = yield* subscribe(send, branch, ref, 0, undefined, params.commandId);
           subscriptions.set(subscriptionKey, unsubscribe);
           return { ref };
         });
@@ -816,15 +823,15 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           }
           const branch = yield* route(params.ref.profileId);
           const subscriptionKey = `${params.ref.profileId}:${params.ref.key}`;
-          subscriptions.get(subscriptionKey)?.();
           const unsubscribe = yield* subscribe(
             send,
             branch,
             params.ref,
-            params.afterSeq ?? 0,
+            params.afterSeq,
             params.epoch,
             params.commandId,
           );
+          subscriptions.get(subscriptionKey)?.();
           subscriptions.set(subscriptionKey, unsubscribe);
           return { acknowledged: true as const };
         });

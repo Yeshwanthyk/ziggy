@@ -394,7 +394,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             return () => entry.listeners.delete(listener);
           }),
         ),
-      subscribeSequenced: (key, listener, afterSeq = 0) =>
+      subscribeSequenced: (key, listener, afterSeq) =>
         statePermit.withPermit(
           Effect.gen(function* () {
             const candidate = entries.get(key);
@@ -403,14 +403,17 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             const entry = candidate;
             const oldestSeq = entry.replay[0]?.seq ?? entry.nextSeq;
             const latestSeq = entry.nextSeq - 1;
-            if (afterSeq > latestSeq || afterSeq < oldestSeq - 1) {
+            // Fresh subscriptions bootstrap from retained activity; only a supplied cursor
+            // promises continuity. Durable conversation history belongs to the session store.
+            const replayAfter = afterSeq ?? oldestSeq - 1;
+            if (replayAfter > latestSeq || replayAfter < oldestSeq - 1) {
               return yield* failure(
                 "replay_gap",
                 `replay window for ${key} does not contain sequence ${afterSeq}`,
               );
             }
             for (const event of entry.replay) {
-              if (event.seq > afterSeq) listener(event);
+              if (event.seq > replayAfter) listener(event);
             }
             entry.sequencedListeners.add(listener);
             return () => entry.sequencedListeners.delete(listener);
