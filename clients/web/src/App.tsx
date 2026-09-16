@@ -1,3 +1,4 @@
+import { NewChatDialog } from "@/components/new-chat-dialog";
 import Stack from "@nkzw/stack";
 import {
   ArrowUp,
@@ -21,6 +22,7 @@ import { AutomationRow } from "@/components/automation-row";
 import { AutomationDetailDialog } from "@/components/automation-detail-dialog";
 import { AgentDefinitionDialog } from "@/components/agent-definition-dialog";
 import { Button } from "@/components/ui/button";
+import { PrismArt } from "@/components/prism-art";
 import { BotAvatar } from "@/components/bot-avatar";
 import { GroupDialog } from "@/components/group-dialog";
 import { MessageMarkdown } from "@/components/message-markdown";
@@ -135,6 +137,7 @@ export function App() {
   const [connectionOpen, setConnectionOpen] = useState(() => readSavedConnection() === undefined);
   const [startupPending, setStartupPending] = useState(() => readSavedConnection() !== undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupError, setGroupError] = useState<string>();
   const [selectedAutomationId, setSelectedAutomationId] = useState<string>();
@@ -266,10 +269,10 @@ export function App() {
     }
   };
 
-  const send = async (event?: FormEvent): Promise<void> => {
+  const send = async (event?: FormEvent, mode: "steer" | "queue" = "steer"): Promise<void> => {
     event?.preventDefault();
     const text = draft.trim();
-    if (text.length === 0 || gateway.busy) return;
+    if (text.length === 0) return;
     const target: ZiggyRecipientId | undefined =
       selectedGroup === undefined
         ? undefined
@@ -279,10 +282,10 @@ export function App() {
             ? { kind: "host" }
             : { kind: "agent", agentId: recipient };
     try {
-      await gateway.submit(text, target);
-      setDraft((current) => (current.trim() === text ? "" : current));
+      setDraft("");
+      await gateway.submit(text, target, mode);
     } catch {
-      // The gateway keeps the precise error and the draft stays available for review.
+      setDraft((current) => (current.length === 0 ? text : current));
     }
   };
 
@@ -301,7 +304,10 @@ export function App() {
     <div className="app-shell">
       <aside className="sidebar" data-open={sidebarOpen || undefined}>
         <Stack alignCenter between className="sidebar-heading">
-          <strong>Ziggy</strong>
+          <span className="ziggy-brand">
+            <PrismArt compact />
+            <strong>Ziggy</strong>
+          </span>
           <Stack alignCenter gap={2}>
             <Button
               aria-label="Refresh sidebar"
@@ -357,11 +363,17 @@ export function App() {
 
             <SidebarSection
               title="Pinned"
+              action={{
+                label: "New chat",
+                icon: <Plus />,
+                disabled: !connected || gateway.sidebarBusy,
+                onClick: () => setNewChatOpen(true),
+              }}
               empty={
                 sidebarPending
                   ? "Restoring pinned chats…"
                   : connected
-                    ? "Pin a chat to keep it close."
+                    ? "Create a chat or pin an existing conversation."
                     : "Connect to see pinned chats."
               }
             >
@@ -605,7 +617,7 @@ export function App() {
             !gateway.loadingHistory &&
             !startupPending ? (
               <div className="welcome-state">
-                {avatar(gateway.selectedTitle, false, 56)}
+                <PrismArt />
                 <h1>{connected ? `Talk with ${gateway.selectedTitle}` : "Meet Squarey"}</h1>
                 <p>
                   {connected
@@ -672,6 +684,17 @@ export function App() {
                 </select>
               </label>
             )}
+            {gateway.pendingInputs.length > 0 ? (
+              <section className="pending-inputs" aria-label="Pending messages">
+                <strong>Pending from this tab · {gateway.pendingInputs.length}</strong>
+                {gateway.pendingInputs.map((input) => (
+                  <div key={input.id}>
+                    <span>{input.mode === "queue" ? "Queued" : "Steering"}</span>
+                    <p>{input.text}</p>
+                  </div>
+                ))}
+              </section>
+            ) : null}
             <form className="composer" onSubmit={(event) => void send(event)}>
               <Textarea
                 aria-label={`Message ${gateway.selectedTitle}`}
@@ -700,23 +723,42 @@ export function App() {
                 >
                   <Square />
                 </Button>
-              ) : (
+              ) : null}
+              {gateway.busy ? (
                 <Button
-                  aria-label="Send message"
-                  className="send-button"
-                  disabled={!connected || !selectedIsLive || draft.trim().length === 0}
-                  size="icon"
-                  type="submit"
+                  type="button"
+                  variant="secondary"
+                  disabled={draft.trim().length === 0 || !connected}
+                  onClick={() => void send(undefined, "queue")}
                 >
-                  <ArrowUp />
+                  Queue
                 </Button>
-              )}
+              ) : null}
+              <Button
+                aria-label={gateway.busy ? "Steer response" : "Send message"}
+                className="send-button"
+                disabled={!connected || !selectedIsLive || draft.trim().length === 0}
+                size="icon"
+                type="submit"
+              >
+                <ArrowUp />
+              </Button>
             </form>
-            <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
+            <p className="composer-hint">
+              {gateway.busy
+                ? "Enter to steer · Queue to send after this response"
+                : "Enter to send"}{" "}
+              · Shift+Enter for a new line
+            </p>
           </div>
         </div>
       </main>
 
+      <NewChatDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        onCreate={gateway.createChat}
+      />
       {sidebarOpen ? (
         <button
           aria-label="Close conversations"

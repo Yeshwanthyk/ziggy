@@ -1,8 +1,16 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { blobVariantById, blobVariantForIdentity, type BlobVariantId } from "../lib/blob-catalog";
+import {
+  blobPhaseForIdentity,
+  blobVariantById,
+  blobVariantForIdentity,
+  type BlobVariantId,
+} from "../lib/blob-catalog";
 import { BotEngine, type BotFrame } from "../vendor/bloub/engine";
 import { DEMI_VIEWBOX, RAYON } from "../vendor/bloub/repere";
+
+const IDLE_VIEWBOX_RADIUS = 126;
+const FRAME_INTERVAL = 1000 / 60;
 
 export interface BotAvatarProps {
   name: string;
@@ -45,30 +53,43 @@ export function BotAvatar({
     () => (variantId ? blobVariantById(variantId) : undefined) ?? blobVariantForIdentity(identity),
     [identity, variantId],
   );
+  const phase = useMemo(() => blobPhaseForIdentity(identity), [identity]);
   const engine = useMemo(
-    () => new BotEngine(RAYON, active ? "thinking" : "idle", variant.shape.radii),
-    [active, variant.shape],
+    () => new BotEngine(RAYON, "idle", variant.shape.radii),
+    [identity, variant.id, variant.shape.radii],
   );
-  const [frame, setFrame] = useState<BotFrame>(() => engine.sample(0));
+  const engineTime = useRef(phase);
+  const [frame, setFrame] = useState<BotFrame>(() => engine.sample(phase));
   const reactId = useId();
   const maskId = `bloub-mask-${reactId.replaceAll(":", "")}`;
 
   useEffect(() => {
-    setFrame(engine.sample(0));
+    engineTime.current = phase;
+    setFrame(engine.sample(phase));
+  }, [engine, phase]);
+
+  useEffect(() => {
+    engine.setState(active ? "wide" : "idle", engineTime.current);
+    engine.setLook({ yaw: 0, pitch: 0, mix: 0, spin: 0, wander: 0.45 }, engineTime.current);
+    if (reducedMotion) {
+      engineTime.current += 1;
+      setFrame(engine.sample(engineTime.current));
+      return;
+    }
+
     if (!animated) return;
 
     let animationFrame = 0;
-    let elapsedSeconds = 0;
     let segmentStartedAt: number | undefined;
     let lastRenderedAt = -Infinity;
 
     const tick = (now: number) => {
       segmentStartedAt ??= now;
-      if (now - lastRenderedAt >= 1000 / 30) {
-        elapsedSeconds += (now - segmentStartedAt) / 1000;
+      if (now - lastRenderedAt >= FRAME_INTERVAL) {
+        engineTime.current += (now - segmentStartedAt) / 1000;
         segmentStartedAt = now;
         lastRenderedAt = now;
-        setFrame(engine.sample(elapsedSeconds));
+        setFrame(engine.sample(engineTime.current));
       }
       animationFrame = requestAnimationFrame(tick);
     };
@@ -95,9 +116,10 @@ export function BotAvatar({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       stop();
     };
-  }, [animated, engine]);
+  }, [active, animated, engine, reducedMotion]);
 
   const ink = variant.color.hex;
+  const viewBoxRadius = IDLE_VIEWBOX_RADIUS;
 
   return (
     <svg
@@ -105,7 +127,7 @@ export function BotAvatar({
       className={className}
       height={size}
       role="img"
-      viewBox={`${-DEMI_VIEWBOX} ${-DEMI_VIEWBOX} ${DEMI_VIEWBOX * 2} ${DEMI_VIEWBOX * 2}`}
+      viewBox={`${-viewBoxRadius} ${-viewBoxRadius} ${viewBoxRadius * 2} ${viewBoxRadius * 2}`}
       width={size}
     >
       <defs>

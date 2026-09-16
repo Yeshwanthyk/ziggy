@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@ziggy/example-web",
+      "name": "@ziggy/web",
       "dependencies": {
         "@nkzw/stack": "^2.3.2",
         "@radix-ui/react-dialog": "^1.1.15",

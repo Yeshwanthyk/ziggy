@@ -9,6 +9,7 @@ import {
   type ZiggyClientEvent,
   type ZiggyConversationContext,
   type ZiggyGatewayClient,
+  type ZiggyExtensionListResult,
   type ZiggyGatewayEvent,
   type ZiggyAgentDocument,
   type ZiggyModelDescriptor,
@@ -110,6 +111,7 @@ export interface ConnectInput {
 }
 
 export interface ModelSettingsState {
+  readonly extensions?: ZiggyExtensionListResult;
   readonly availableModels: ReadonlyArray<ZiggyModelDescriptor>;
   readonly error?: string;
   readonly loading: boolean;
@@ -131,6 +133,7 @@ export type GatewayClient = Pick<
   | "listAutomations"
   | "listGroups"
   | "listModels"
+  | "listExtensionsForProfile"
   | "listPins"
   | "listProfiles"
   | "listSessions"
@@ -152,6 +155,8 @@ export type GatewayClient = Pick<
   | "setModel"
   | "state"
   | "submitPrompt"
+  | "steerSession"
+  | "followUp"
   | "unwatchSession"
   | "watchSession"
   | "availableModels"
@@ -290,6 +295,26 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [tools, setTools] = useState<ReadonlyArray<ToolActivity>>([]);
   const [pendingUser, setPendingUser] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [pendingInputs, setPendingInputs] = useState<
+    ReadonlyArray<{
+      id: string;
+      ref: ZiggySessionRef;
+      text: string;
+      mode: "steer" | "queue";
+      occurrence: number;
+    }>
+  >([]);
+  useEffect(() => {
+    if (selectedRef === undefined) return;
+    setPendingInputs((current) =>
+      current.filter(
+        (input) =>
+          !sameRef(selectedRef, input.ref) ||
+          history.filter((entry) => entry.kind === "user" && entry.text === input.text).length <
+            input.occurrence,
+      ),
+    );
+  }, [history, selectedRef]);
   const [localError, setLocalError] = useState<string>();
   const [reconciling, setReconciling] = useState(false);
   const [maxPromptCodePoints, setMaxPromptCodePoints] = useState(16_000);
@@ -475,6 +500,13 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (selectionGeneration !== selectionGenerationRef.current) return;
       if (conversation.ref.kind === "live") {
         try {
+          if (conversation.ref.key.startsWith("ui/chat-")) {
+            await client.request("session.open", {
+              profileId: conversation.ref.profileId,
+              context: { kind: "local" },
+              name: conversation.ref.key.slice(3),
+            });
+          }
           await client.watchSession(conversation.ref);
         } catch (cause) {
           setLocalError(
@@ -728,10 +760,15 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       setModelSettings(undefined);
       setConnection("connecting");
       setLocalError(undefined);
-      const client = connector({ url, token });
-      clientRef.current = client;
-      unsubscribeRef.current = client.onAny(handleEvent);
+      let client: GatewayClient | undefined;
       try {
+        const endpoint = new URL(url);
+        if (endpoint.protocol !== "ws:" && endpoint.protocol !== "wss:") {
+          throw new Error("Use a ws:// or wss:// WebSocket endpoint.");
+        }
+        client = connector({ url, token });
+        clientRef.current = client;
+        unsubscribeRef.current = client.onAny(handleEvent);
         const [capabilities, listedProfiles, current] = await Promise.all([
           client.capabilities(),
           client.listProfiles(),
@@ -775,10 +812,13 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       } catch (cause) {
         if (
           connectionGeneration !== connectionGenerationRef.current ||
-          clientRef.current !== client
+          (client !== undefined && clientRef.current !== client)
         )
           return;
-        if (client.state === "open") {
+        if (client === undefined) {
+          setConnection("closed");
+          setLocalError(cause instanceof Error ? cause.message : "Invalid WebSocket endpoint.");
+        } else if (client.state === "open") {
           setConnection("open");
           setLocalError(cause instanceof Error ? cause.message : "Could not connect to Ziggy.");
         } else {
@@ -1007,21 +1047,27 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       saving: current?.saving ?? false,
       ...(current?.status === undefined ? {} : { status: current.status }),
     }));
-    const [statusResult, modelsResult, availableResult, authResult] = await Promise.allSettled([
-      client.modelStatus(selectedProfile.profileId),
-      client.listModels(selectedProfile.profileId),
-      client.availableModels(selectedProfile.profileId),
-      client.authStatus(selectedProfile.profileId),
-    ]);
+    const [statusResult, modelsResult, availableResult, authResult, extensionsResult] =
+      await Promise.allSettled([
+        client.modelStatus(selectedProfile.profileId),
+        client.listModels(selectedProfile.profileId),
+        client.availableModels(selectedProfile.profileId),
+        client.authStatus(selectedProfile.profileId),
+        client.listExtensionsForProfile(selectedProfile.profileId),
+      ]);
     if (
       generation !== modelSettingsGenerationRef.current ||
       clientRef.current !== client ||
       profileRef.current?.profileId !== selectedProfile.profileId
     )
       return;
-    const failures = [statusResult, modelsResult, availableResult, authResult].filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
+    const failures = [
+      statusResult,
+      modelsResult,
+      availableResult,
+      authResult,
+      extensionsResult,
+    ].filter((result): result is PromiseRejectedResult => result.status === "rejected");
     setModelSettings({
       availableModels: availableResult.status === "fulfilled" ? availableResult.value.models : [],
       ...(failures.length === 0
@@ -1037,6 +1083,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       models: modelsResult.status === "fulfilled" ? modelsResult.value.models : [],
       providers: authResult.status === "fulfilled" ? authResult.value.providers : [],
       saving: false,
+      ...(extensionsResult.status === "fulfilled" ? { extensions: extensionsResult.value } : {}),
       ...(statusResult.status === "fulfilled" ? { status: statusResult.value } : {}),
     });
   }, []);
@@ -1328,21 +1375,68 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     [updateAutomation],
   );
 
+  const createChat = useCallback(
+    async (title: string): Promise<void> => {
+      const client = clientRef.current;
+      const selectedProfile = profileRef.current;
+      if (client === undefined || selectedProfile === undefined || client.state !== "open") {
+        throw new Error("Connect before creating a chat.");
+      }
+      const { ref } = await client.request("session.open", {
+        profileId: selectedProfile.profileId,
+        context: { kind: "local" },
+        name: `chat-${crypto.randomUUID()}`,
+      });
+      await setConversationPin(ref, title);
+      const conversation: ConversationSummary = {
+        ref,
+        title,
+        subtitle: "Conversation",
+        active: false,
+      };
+      setConversations((current) => upsertConversation(current, conversation));
+      await selectConversation(conversation);
+    },
+    [selectConversation, setConversationPin],
+  );
+
   const submit = useCallback(
-    async (text: string, recipient?: ZiggyRecipientId): Promise<void> => {
+    async (
+      text: string,
+      recipient?: ZiggyRecipientId,
+      mode: "steer" | "queue" = "steer",
+    ): Promise<void> => {
       const client = clientRef.current;
       const ref = selectedRefRef.current;
-      if (client === undefined || ref?.kind !== "live" || busy) return;
+      if (client === undefined || ref?.kind !== "live") return;
       if (client.state !== "open") {
         const error = new Error("Ziggy is reconnecting. Wait for the connection before sending.");
         setLocalError(error.message);
         throw error;
       }
       setLocalError(undefined);
+      const commandId = `web-${crypto.randomUUID()}`;
+      if (busy) {
+        const occurrence =
+          history.filter((entry) => entry.kind === "user" && entry.text === text).length +
+          pendingInputs.filter((input) => sameRef(ref, input.ref) && input.text === text).length +
+          1;
+        setPendingInputs((current) => [...current, { id: commandId, ref, text, mode, occurrence }]);
+        try {
+          if (mode === "queue") await client.followUp(ref, text, commandId);
+          else await client.steerSession(ref, text, commandId);
+        } catch (cause) {
+          setPendingInputs((current) => current.filter((input) => input.id !== commandId));
+          setLocalError(
+            cause instanceof Error ? cause.message : "Could not send while responding.",
+          );
+          throw cause;
+        }
+        return;
+      }
       setPendingUser(text);
       setBusy(true);
       try {
-        const commandId = `web-${crypto.randomUUID()}`;
         if (recipient === undefined) {
           await client.submitPrompt(ref, text, commandId);
         } else {
@@ -1361,7 +1455,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         throw cause;
       }
     },
-    [busy],
+    [busy, history, pendingInputs],
   );
 
   const abort = useCallback(async (): Promise<void> => {
@@ -1424,6 +1518,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     abort,
     agentDefinitionDetail,
     automationDetail,
+    pendingInputs: pendingInputs.filter(
+      (input) => selectedRef !== undefined && sameRef(selectedRef, input.ref),
+    ),
     busy,
     clearAutomationDetail,
     clearAgentDefinition,
@@ -1467,6 +1564,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     sidebarLoading,
     streamText,
     submit,
+    createChat,
     tools,
   };
 };

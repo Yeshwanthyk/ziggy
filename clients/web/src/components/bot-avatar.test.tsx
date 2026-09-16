@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe("BotAvatar", () => {
-  it("evolves the idle body while capping state updates to about 30fps", () => {
+  it("evolves a desynchronized idle body at normal speed", () => {
     const { container } = render(<BotAvatar name="Ada" />);
     const body = container.querySelector("mask path");
     const initialPath = body?.getAttribute("d");
@@ -65,8 +65,39 @@ describe("BotAvatar", () => {
     act(() => runAnimationFrame(10));
     expect(body?.getAttribute("d")).toBe(initialPath);
 
-    act(() => runAnimationFrame(100));
+    act(() => runAnimationFrame(80));
     expect(body?.getAttribute("d")).not.toBe(initialPath);
+
+    cleanup();
+    const pair = render(
+      <>
+        <BotAvatar name="Ada" variantId="cercle-bleu" />
+        <BotAvatar name="Grace" variantId="cercle-bleu" />
+      </>,
+    );
+    const bodies = pair.container.querySelectorAll("mask path");
+    expect(bodies[0]?.getAttribute("d")).not.toBe(bodies[1]?.getAttribute("d"));
+  });
+
+  it("keeps the engine frame continuous when activity changes", () => {
+    const { container, rerender } = render(
+      <BotAvatar identity="ada" name="Ada" variantId="cercle-bleu" />,
+    );
+    act(() => runAnimationFrame(0));
+    act(() => runAnimationFrame(80));
+    const body = container.querySelector("mask path");
+    const idlePath = body?.getAttribute("d");
+
+    rerender(<BotAvatar active identity="ada" name="Ada" variantId="cercle-bleu" />);
+    expect(body?.getAttribute("d")).toBe(idlePath);
+
+    act(() => runAnimationFrame(200));
+    act(() => runAnimationFrame(280));
+    expect(body?.getAttribute("d")).not.toBe(idlePath);
+
+    act(() => runAnimationFrame(2_280));
+    expect(container.querySelector("svg circle")).toBeNull();
+    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("-126 -126 252 252");
   });
 
   it("uses the requested catalog variant independently of its accessible name", () => {
@@ -78,6 +109,7 @@ describe("BotAvatar", () => {
     expect(container.querySelector("svg")?.getAttribute("aria-label")).toBe(
       "Renamed agent assistant",
     );
+    expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("-126 -126 252 252");
   });
 
   it("freezes a distinct thinking pose when reduced motion is preferred", () => {

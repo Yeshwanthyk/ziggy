@@ -529,7 +529,7 @@ workspace):**
 clients/gateway-client/
   package.json            # name: @ziggy/gateway-client, private for now
   src/index.ts
-clients/example-web/
+clients/web/
   index.html
   main.ts
   README.md
@@ -548,7 +548,7 @@ clients/example-web/
   internals; keeping the protocol tiny is the mitigation.)
 - Plain TypeScript, no Effect dependency — this package is for outsiders.
 
-**Example web page (`clients/example-web/`):**
+**Ziggy web client (`clients/web/`):**
 - One HTML page + one TS module, bundled with `bun build`. Inputs for port and token
   (user pastes from `.runtime/ui-server.json`; a browser cannot read it from disk).
 - Shows: session list (live + stored), open a `ui/` session, send prompts, streamed

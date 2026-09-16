@@ -666,3 +666,51 @@ results.
   covering both automation lifecycles and agent documents. The automation files were unaffected.
 - Full standalone build/check/tests passed; after an idle resident restart the browser again shows
   the weather definition, Edit action, lifecycle, and polished run card without a decoding error.
+
+## 2026-09-15
+
+**Prism asset pack.** Added four approved illustrated prism compositions under `assets/ziggy-prism`, preserving original PNG masters and generating 12 quality-90 WebPs for full-size and responsive delivery. Added usage notes, generation prompts, and a dimensions/size manifest. Full-size WebPs reduce total size by 91.7%. Verified all output images decode, dimensions match intended formats, and masters match source bytes. No runtime code changed.
+
+## Web preview animation and connection recovery
+
+- Restored real-time Bloub animation at up to 60 fps, with reduced idle wander instead of slowing blinks and transitions.
+- Moved endpoint validation and connector construction inside startup error handling so synchronous URL/WebSocket failures clear Connecting and permit retry.
+- Verified frontend check (43 tests, lint, formatting, build) and TypeScript; local preview reconnects after refresh.
+
+## Focus-expand composer
+
+- Composer grows to a multiline writing area while focus is within the form and returns to one-line height on blur. Draft text is preserved; send-button focus keeps it expanded.
+
+## Group dialog sizing
+
+- Constrained form and fieldset intrinsic widths, wrapped member descriptions to two lines, added selected-row treatment and member counts, and bounded dialog height for small screens.
+- Frontend checks pass: 43 tests, formatting, lint, and preview build.
+
+## Steering, queue visibility, and Settings inventory
+
+- Keep Send available while busy: defaults to session.steer; Queue uses session.follow-up. Clear composer immediately and restore an unsent draft on failure. Show pending submissions from this tab until reconciled in history.
+- Added a regression for steering vs explicit follow-up routing.
+- Removed the blob preview gallery from user Settings; added read-only selected extension inventory and clarified unavailable model status.
+- Group deletion is not exposed by the gateway; no group data was deleted.
+
+## Integrate Ziggy prism artwork
+
+- Added responsive existing WebP artwork to welcome and Settings, a square brand image to the rail, and restrained blue brand tokens. Documented placement in DESIGN.md; original assets preserved.
+
+## New named chat
+
+- Added New chat in Pinned, with a name dialog and automatic persistent pin. Uses distinct session.open names and reopens named sessions when selected after a resident restart. Main conversation remains separate.
+
+## Ziggy favicon
+
+- Replaced the empty data favicon with the approved square prism WebP, served from public assets.
+
+## Rename the web client
+
+- Renamed `clients/example-web` to `clients/web` and its package to `@ziggy/web`; updated root typechecking, Knip entries, ignored build output, run instructions, and plan paths. The frontend check command is now `bun run check:web`. Historical log and research entries retain their original names.
+- Verified web formatting, lint, all 45 tests, and production build after the move. Root formatting, lint, and typechecking pass; `bun run check` remains blocked by the pre-existing unused `src/components/blob-collection.tsx` in the web client. No commit made while that gate fails.
+
+## Remove the retired blob gallery
+
+- Deleted the unused web `BlobCollection` component, its gallery-only CSS, and the stale Settings gallery reference in the README. Kept the identity catalog and active bot avatars.
+- Full `bun run check` passes, including Knip, typechecking, 14 gateway-client tests, 45 web tests, production build, and generated catalog/docs checks. The build retains its non-blocking large-chunk warning.

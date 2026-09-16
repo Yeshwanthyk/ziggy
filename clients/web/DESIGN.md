@@ -53,9 +53,11 @@ text labels so color or shape is never the only identifier.
 
 The supplied client keeps a catalog of 96 named Bloub variants (eight shapes, twelve colors).
 Normalize bot identities before assigning a variant so casing changes do not change the avatar.
-Newly discovered bots receive a deterministic variant immediately. Idle avatars breathe and blink;
-thinking has its own animation. Pause when the document is hidden and honor reduced motion.
-Settings exposes the collection by color without mounting all 96 animations at once.
+Newly discovered bots receive a deterministic variant from a curated subset of compact silhouettes
+and readable colors; the complete catalog remains available for previews. Idle motion is restrained
+and staggered by identity. Working expressions preserve the bot's silhouette and transition through
+one persistent engine. Pause when the document is hidden and honor reduced motion.
+The full collection is a development asset, not a user Settings section.
 
 ## Interaction and reliability
 
@@ -80,3 +82,11 @@ same shared components. Keep the browser preview running and refresh after each 
 Use the checked static preview for user review and the hot-reloading server for active development.
 Verify desktop and narrow layouts, keyboard focus, readable contrast, and reduced motion.
 Record implemented behavior and future work in the client README.
+
+## Ziggy prism identity
+
+Use the approved artwork in `assets/ziggy-prism/web` for the Ziggy brand: a small square
+image in the rail, and the wide composition in welcome and Settings surfaces. Preserve
+aspect ratios and use responsive WebP sources. Keep conversation text on plain surfaces.
+The prism palette informs muted blue rail selections and deep blue primary actions;
+Bloub avatars continue to identify individual agents and groups.

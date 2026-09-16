@@ -1,0 +1,461 @@
+.ziggy-settings-dialog {
+  border-radius: 14px;
+  max-height: min(92dvh, 820px);
+  overflow: hidden;
+  padding: 0;
+}
+
+.ziggy-settings-dialog > button[data-radix-dialog-close] {
+  right: 22px;
+  top: 22px;
+}
+
+.ziggy-settings-header {
+  border-bottom: 1px solid var(--border);
+  padding: 22px 56px 18px 22px;
+}
+
+.ziggy-settings-header h2 {
+  letter-spacing: -0.015em;
+}
+
+.ziggy-settings-body {
+  max-height: calc(min(92dvh, 820px) - 82px);
+  overflow-y: auto;
+  padding: 0 22px 22px;
+}
+
+.ziggy-settings-block {
+  border-top: 1px solid var(--border);
+  padding: 22px 0;
+}
+
+.ziggy-settings-block:first-child {
+  border-top: 0;
+}
+
+.ziggy-settings-block:last-child {
+  padding-bottom: 0;
+}
+
+.ziggy-settings-block-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.ziggy-settings-block-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ziggy-settings-block-title h3 {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  margin: 0;
+}
+
+.ziggy-settings-block-title small,
+.ziggy-settings-muted,
+.provider-row small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ziggy-settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.ziggy-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ziggy-settings-field > span,
+.thinking-fieldset legend {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.model-picker-trigger {
+  box-shadow: none;
+  height: auto;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 8px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.model-picker-trigger:hover {
+  background: var(--muted);
+}
+
+.model-picker-trigger-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.model-picker-trigger-copy strong,
+.model-picker-trigger-copy small,
+.model-picker-placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-picker-trigger-copy strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.model-picker-trigger-copy small {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  font-weight: 450;
+}
+
+.model-picker-placeholder {
+  color: var(--muted-foreground);
+  font-weight: 450;
+}
+
+.model-picker-trigger > svg {
+  color: var(--muted-foreground);
+}
+
+.thinking-fieldset {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.thinking-fieldset legend {
+  margin-bottom: 8px;
+}
+
+.thinking-options {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+}
+
+.thinking-option {
+  align-items: center;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 10px;
+  text-transform: capitalize;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    color 160ms ease-out;
+}
+
+.thinking-option:hover {
+  background: var(--muted);
+}
+
+.thinking-option:has(input:checked) {
+  background: var(--foreground);
+  border-color: var(--foreground);
+  color: var(--background);
+}
+
+.thinking-option:has(input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.thinking-option:has(input:disabled) {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.thinking-option input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.ziggy-settings-note {
+  align-items: flex-start;
+  background: var(--muted);
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 11.5px;
+  gap: 8px;
+  line-height: 1.45;
+  margin: 16px 0 0;
+  padding: 10px 11px;
+}
+
+.ziggy-settings-note svg {
+  flex: 0 0 auto;
+  height: 15px;
+  margin-top: 1px;
+  width: 15px;
+}
+
+.ziggy-settings-actions {
+  margin-top: 16px;
+}
+
+.ziggy-connection-fields {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.75fr);
+  margin: 16px 0 12px;
+}
+
+.ziggy-connection-fields label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ziggy-connection-fields input {
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 9px;
+  color: var(--foreground);
+  height: 40px;
+  min-width: 0;
+  outline: 0;
+  padding: 0 11px;
+}
+
+.ziggy-connection-fields input:focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid color-mix(in oklch, var(--ring) 16%, transparent);
+}
+
+.ziggy-connection-fields .form-error {
+  grid-column: 1 / -1;
+}
+
+.ziggy-settings-muted {
+  margin: 12px 0 0;
+}
+
+.model-picker-dialog {
+  border-radius: 14px;
+  gap: 0;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.model-picker-search {
+  align-items: center;
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+  min-height: 42px;
+  padding: 0 11px;
+}
+
+.model-picker-search:focus-within {
+  border-color: var(--ring);
+  outline: 2px solid color-mix(in oklch, var(--ring) 16%, transparent);
+}
+
+.model-picker-search svg {
+  color: var(--muted-foreground);
+  height: 16px;
+  width: 16px;
+}
+
+.model-picker-search input {
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.model-picker-search input::placeholder {
+  color: oklch(0.44 0.012 260);
+  opacity: 1;
+}
+
+.model-picker-search kbd {
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.model-picker-scroll {
+  height: min(52dvh, 430px);
+  margin: 14px -8px -8px 0;
+  padding-right: 8px;
+}
+
+.model-picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.model-picker-provider-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 0 7px;
+}
+
+.model-picker-provider-heading h3 {
+  font-size: 12px;
+  font-weight: 650;
+  margin: 0;
+}
+
+.model-picker-provider-heading span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.model-picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-picker-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  min-height: 50px;
+  padding: 7px;
+  text-align: left;
+  transition: background-color 160ms ease-out;
+  width: 100%;
+}
+
+.model-picker-option:hover,
+.model-picker-option[aria-pressed="true"] {
+  background: var(--muted);
+}
+
+.model-picker-option:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.model-picker-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.model-picker-option strong,
+.model-picker-option small {
+  overflow-wrap: anywhere;
+}
+
+.model-picker-option strong {
+  font-size: 13px;
+  font-weight: 610;
+}
+
+.model-picker-option small {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+}
+
+.model-picker-option > svg {
+  color: var(--foreground);
+  flex: 0 0 auto;
+  height: 17px;
+  margin-right: 4px;
+  width: 17px;
+}
+
+.model-picker-empty {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+  min-height: 240px;
+  text-align: center;
+}
+
+.model-picker-empty svg {
+  height: 19px;
+  margin-bottom: 4px;
+  width: 19px;
+}
+
+.model-picker-empty strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.model-picker-empty span {
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .ziggy-settings-header {
+    padding: 18px 52px 16px 18px;
+  }
+
+  .ziggy-settings-body {
+    padding: 0 18px 18px;
+  }
+
+  .ziggy-connection-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .thinking-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .model-picker-dialog {
+    max-height: 92dvh;
+    padding: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-picker-option,
+  .thinking-option {
+    transition-duration: 0.01ms;
+  }
+}

@@ -63,13 +63,11 @@ export function GroupDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="group-dialog sm:max-w-[440px]">
+      <DialogContent className="group-dialog sm:max-w-[480px]">
         <form onSubmit={(event) => void submit(event)}>
           <DialogHeader>
             <DialogTitle>New group conversation</DialogTitle>
-            <DialogDescription>
-              Choose the local specialists who should join this conversation.
-            </DialogDescription>
+            <DialogDescription>Give your group a name and choose who joins.</DialogDescription>
           </DialogHeader>
           <div className="group-fields">
             <label className="field-label">
@@ -82,11 +80,12 @@ export function GroupDialog({
               />
             </label>
             <fieldset>
-              <legend>Members</legend>
+              <legend>Members · {members.length}/4 selected</legend>
               {agents.map((agent) => (
                 <label className="member-option" key={agent.id}>
                   <input
                     checked={members.includes(agent.id)}
+                    disabled={pending || (!members.includes(agent.id) && members.length >= 4)}
                     onChange={(event) =>
                       setMembers((current) =>
                         event.target.checked

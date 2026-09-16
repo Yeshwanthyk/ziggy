@@ -1,5 +1,6 @@
+import { PrismArt } from "@/components/prism-art";
 import { Button } from "@/components/ui/button";
-import { BlobCollection } from "@/components/blob-collection";
+import { ModelPicker } from "@/components/model-picker";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +11,9 @@ import {
 } from "@/components/ui/dialog";
 import type { ModelSettingsState } from "@/gateway";
 import type { ZiggyModelThinkingLevel } from "../../../gateway-client/src/index";
+import { Info } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import "./connection-dialog.css";
 
 interface SettingsDialogProps {
   readonly connected: boolean;
@@ -142,20 +145,107 @@ export function SettingsDialog({
     await onSaveModel(selectedModel.providerId, selectedModel.modelId, thinking);
   };
 
+  const selectModel = (nextModel: (typeof availableModels)[number]): void => {
+    setSelectedModelKey(modelKey(nextModel.providerId, nextModel.modelId));
+    const levels = nextModel.thinkingLevels.filter(isThinkingLevel);
+    setThinking((current) =>
+      current !== "" && levels.includes(current) ? current : (levels[0] ?? ""),
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="settings-dialog sm:max-w-[540px]">
-        <DialogHeader>
+      <DialogContent className="ziggy-settings-dialog sm:max-w-[680px]">
+        <DialogHeader className="ziggy-settings-header">
           <DialogTitle>{profileName} settings</DialogTitle>
           <DialogDescription>
             Manage this browser connection and the Profile default used when sessions open.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="settings-body">
-          <section className="settings-section" aria-labelledby="connection-heading">
-            <div className="settings-section-heading">
-              <span>
+        <div className="ziggy-settings-body">
+          <PrismArt />
+          <section className="ziggy-settings-block" aria-labelledby="model-heading">
+            <div className="ziggy-settings-block-header">
+              <span className="ziggy-settings-block-title">
+                <h3 id="model-heading">Default model</h3>
+                <small>
+                  {statusProvider && statusModel
+                    ? `Current: ${statusProvider}/${statusModel} · ${statusThinking}`
+                    : modelSettings?.loading
+                      ? "Loading model settings…"
+                      : "The runtime could not report a usable Profile default."}
+                </small>
+              </span>
+            </div>
+            <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
+              <div className="ziggy-settings-fields">
+                <div className="ziggy-settings-field">
+                  <span>Model</span>
+                  <ModelPicker
+                    disabled={!connected || modelSettings?.loading || availableModels.length === 0}
+                    models={availableModels}
+                    onSelect={selectModel}
+                    selected={selectedModel}
+                  />
+                </div>
+                <fieldset className="thinking-fieldset">
+                  <legend>Thinking</legend>
+                  <div className="thinking-options">
+                    {selectedModel === undefined ? (
+                      <p className="ziggy-settings-muted">
+                        Choose an available model to see its thinking options.
+                      </p>
+                    ) : null}
+                    {supportedThinking.map((level) => (
+                      <label className="thinking-option" key={level}>
+                        <input
+                          checked={thinking === level}
+                          disabled={!connected || selectedModel === undefined}
+                          name="model-thinking"
+                          onChange={() => setThinking(level)}
+                          type="radio"
+                          value={level}
+                        />
+                        <span>{level}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+              <p className="ziggy-settings-note">
+                <Info aria-hidden="true" />
+                <span>
+                  New sessions use this default. Existing chats keep their current model until the
+                  resident restarts.
+                </span>
+              </p>
+              {modelSettings?.error === undefined ? null : (
+                <p className="form-error" role="alert">
+                  {modelSettings.error}
+                </p>
+              )}
+              <DialogFooter className="ziggy-settings-actions">
+                <Button
+                  disabled={
+                    !connected ||
+                    modelSettings?.loading ||
+                    modelSettings?.saving ||
+                    selectedModel === undefined ||
+                    thinking === "" ||
+                    !modelChanged
+                  }
+                  type="submit"
+                >
+                  {modelSettings?.saving ? "Saving…" : "Save model"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </section>
+
+          <section className="ziggy-settings-block" aria-labelledby="connection-heading">
+            <div className="ziggy-settings-block-header">
+              <span className="ziggy-settings-block-title">
                 <h3 id="connection-heading">Connection</h3>
                 <small>
                   {connected ? "Connected to the local resident" : "Connection required"}
@@ -166,7 +256,7 @@ export function SettingsDialog({
               </span>
             </div>
             <form onSubmit={(event) => void submitConnection(event)}>
-              <div className="connection-fields">
+              <div className="ziggy-connection-fields">
                 <label>
                   <span>WebSocket endpoint</span>
                   <input
@@ -209,111 +299,17 @@ export function SettingsDialog({
             </form>
           </section>
 
-          <section className="settings-section" aria-labelledby="model-heading">
-            <div className="settings-section-heading">
-              <span>
-                <h3 id="model-heading">Default model</h3>
-                <small>
-                  {statusProvider && statusModel
-                    ? `Current: ${statusProvider}/${statusModel} · ${statusThinking}`
-                    : "No Profile default is selected"}
-                </small>
-              </span>
-            </div>
-            <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
-              <div className="model-fields">
-                <label>
-                  <span>Model</span>
-                  <select
-                    disabled={!connected || modelSettings?.loading || availableModels.length === 0}
-                    onChange={(event) => {
-                      const nextKey = event.target.value;
-                      const nextModel = availableModels.find(
-                        (model) => modelKey(model.providerId, model.modelId) === nextKey,
-                      );
-                      setSelectedModelKey(nextKey);
-                      const levels = (nextModel?.thinkingLevels ?? []).filter(isThinkingLevel);
-                      setThinking((current) =>
-                        current !== "" && levels.includes(current) ? current : (levels[0] ?? ""),
-                      );
-                    }}
-                    value={
-                      availableModels.some(
-                        (model) => modelKey(model.providerId, model.modelId) === selectedModelKey,
-                      )
-                        ? selectedModelKey
-                        : ""
-                    }
-                  >
-                    <option value="">Choose an available model</option>
-                    {availableModels.map((model) => (
-                      <option
-                        key={modelKey(model.providerId, model.modelId)}
-                        value={modelKey(model.providerId, model.modelId)}
-                      >
-                        {model.name} · {model.providerId}/{model.modelId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Thinking</span>
-                  <select
-                    disabled={
-                      !connected || selectedModel === undefined || supportedThinking.length === 0
-                    }
-                    onChange={(event) => {
-                      if (isThinkingLevel(event.target.value)) setThinking(event.target.value);
-                    }}
-                    value={thinking !== "" && supportedThinking.includes(thinking) ? thinking : ""}
-                  >
-                    <option value="">Choose a supported level</option>
-                    {supportedThinking.map((level) => (
-                      <option key={level} value={level}>
-                        {level}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <p className="settings-muted model-effect-note">
-                New sessions use this default. Existing chats keep their current model until the
-                resident restarts.
-              </p>
-              {modelSettings?.error === undefined ? null : (
-                <p className="form-error" role="alert">
-                  {modelSettings.error}
-                </p>
-              )}
-              <DialogFooter>
-                <Button
-                  disabled={
-                    !connected ||
-                    modelSettings?.loading ||
-                    modelSettings?.saving ||
-                    selectedModel === undefined ||
-                    thinking === "" ||
-                    !modelChanged
-                  }
-                  type="submit"
-                >
-                  {modelSettings?.saving ? "Saving…" : "Save model"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </section>
-
-          <section className="settings-section" aria-labelledby="providers-heading">
-            <div className="settings-section-heading">
-              <span>
+          <section className="ziggy-settings-block" aria-labelledby="providers-heading">
+            <div className="ziggy-settings-block-header">
+              <span className="ziggy-settings-block-title">
                 <h3 id="providers-heading">Providers</h3>
                 <small>Credentials are managed on the Ziggy host.</small>
               </span>
             </div>
             {!connected ? (
-              <p className="settings-muted">Connect to inspect provider credentials.</p>
+              <p className="ziggy-settings-muted">Connect to inspect provider credentials.</p>
             ) : modelSettings?.loading && modelSettings.providers.length === 0 ? (
-              <p className="settings-muted">Loading providers…</p>
+              <p className="ziggy-settings-muted">Loading providers…</p>
             ) : configuredProviders.length > 0 || otherProviders.length > 0 ? (
               <div className="provider-list">
                 {configuredProviders.map((provider) => (
@@ -341,11 +337,33 @@ export function SettingsDialog({
                 )}
               </div>
             ) : (
-              <p className="settings-muted">No providers reported.</p>
+              <p className="ziggy-settings-muted">No providers reported.</p>
             )}
           </section>
-          <section className="settings-section">
-            <BlobCollection />
+          <section className="ziggy-settings-block" aria-label="Extensions">
+            <h3>Extensions</h3>
+            <p className="ziggy-settings-muted">
+              Selected for this Profile. Existing sessions may need to restart to pick up changes.
+            </p>
+            {modelSettings?.extensions === undefined ? (
+              <p className="ziggy-settings-muted">
+                {connected ? "Extension list unavailable." : "Connect to see extensions."}
+              </p>
+            ) : modelSettings.extensions.selected.length === 0 ? (
+              <p className="ziggy-settings-muted">No extensions selected.</p>
+            ) : (
+              modelSettings.extensions.selected.map((id) => {
+                const extension = modelSettings.extensions?.available.find(
+                  (item) => item.id === id,
+                );
+                return (
+                  <div className="settings-extension" key={id}>
+                    <strong>{id}</strong>
+                    <p className="ziggy-settings-muted">{extension?.description}</p>
+                  </div>
+                );
+              })
+            )}
           </section>
         </div>
       </DialogContent>

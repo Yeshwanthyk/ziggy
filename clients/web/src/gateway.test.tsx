@@ -139,6 +139,11 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
       source,
     })),
     listGroups: vi.fn(async () => ({ profileId: profile.profileId, groups: [] })),
+    listExtensionsForProfile: vi.fn(async () => ({
+      profileId: profile.profileId,
+      available: [],
+      selected: [],
+    })),
     modelStatus: vi.fn(async () => ({
       profileId: profile.profileId,
       providerId: "openai",
@@ -219,6 +224,8 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
     submitPrompt: vi.fn(async () => undefined),
+    steerSession: vi.fn(async () => undefined),
+    followUp: vi.fn(async () => undefined),
     request: vi.fn(async () => {
       throw new Error("Unexpected direct gateway request");
     }),
@@ -637,6 +644,28 @@ describe("useZiggyGateway", () => {
     ]);
   });
 
+  it("clears connecting when the WebSocket constructor throws and permits retry", async () => {
+    const { client } = makeClient();
+    const connector = vi
+      .fn<GatewayConnector>()
+      .mockImplementationOnce(() => {
+        throw new Error("WebSocket blocked");
+      })
+      .mockReturnValue(client);
+    const hook = renderHook(() => useZiggyGateway(connector));
+    await act(async () => {
+      await expect(
+        hook.result.current.connect({ url: "ws://127.0.0.1:9876/ws", token: "token" }),
+      ).rejects.toThrow("WebSocket blocked");
+    });
+    expect(hook.result.current.connection).toBe("closed");
+    expect(hook.result.current.localError).toBe("WebSocket blocked");
+    await act(async () => {
+      await hook.result.current.connect({ url: "ws://127.0.0.1:9876/ws", token: "token" });
+    });
+    expect(hook.result.current.connection).toBe("open");
+  });
+
   it("closes a failed bootstrap client so its reconnect loop cannot survive", async () => {
     const { client, fixture } = makeClient({
       state: "reconnecting",
@@ -847,6 +876,58 @@ describe("useZiggyGateway", () => {
     expect(hook.result.current.selectedRef).toEqual(storedB);
     expect(hook.result.current.selectedTitle).toBe("Current selection");
     expect(hook.result.current.history).toEqual(historyB);
+  });
+
+  it("creates and pins a separate named chat without reopening main", async () => {
+    const ref = { profileId: profile.profileId, kind: "live", key: "ui/chat-test" } as const;
+    const { client, fixture } = makeClient();
+    const request = vi.spyOn(client, "request").mockResolvedValue({ ref });
+    const hook = await connectHook(client);
+    await act(async () => {
+      await hook.result.current.createChat("Planning");
+    });
+    expect(request).toHaveBeenCalledWith(
+      "session.open",
+      expect.objectContaining({
+        name: expect.stringMatching(/^chat-/u),
+        context: { kind: "local" },
+      }),
+    );
+    expect(fixture.setPin).toHaveBeenCalledWith(
+      profile.profileId,
+      expect.objectContaining({ ref, label: "Planning" }),
+      expect.any(Number),
+      expect.any(String),
+    );
+    expect(hook.result.current.selectedRef).toEqual(ref);
+    expect(hook.result.current.selectedTitle).toBe("Planning");
+    expect(fixture.openMain).toHaveBeenCalledTimes(1);
+  });
+
+  it("steers by default while busy and explicitly queues follow-ups", async () => {
+    const { client, fixture } = makeClient();
+    const hook = await connectHook(client);
+    await act(async () => {
+      await hook.result.current.submit("Start");
+    });
+    await act(async () => {
+      await hook.result.current.submit("Change direction");
+    });
+    await act(async () => {
+      await hook.result.current.submit("Next task", undefined, "queue");
+    });
+    expect(fixture.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(fixture.steerSession).toHaveBeenCalledWith(
+      mainRef,
+      "Change direction",
+      expect.any(String),
+    );
+    expect(fixture.followUp).toHaveBeenCalledWith(mainRef, "Next task", expect.any(String));
+    expect(hook.result.current.pendingInputs.map((input) => input.mode)).toEqual([
+      "steer",
+      "queue",
+    ]);
+    expect(hook.result.current.busy).toBe(true);
   });
 
   it("preserves the selected conversation and transcript when send outcome is unknown", async () => {

@@ -8,7 +8,7 @@
   --card-foreground: oklch(0.2 0.01 260);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.2 0.01 260);
-  --primary: oklch(0.22 0.012 260);
+  --primary: oklch(0.32 0.055 255);
   --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.95 0.006 260);
   --secondary-foreground: oklch(0.24 0.01 260);
@@ -22,8 +22,8 @@
   --input: oklch(0.88 0.006 260);
   --ring: oklch(0.58 0.18 252);
   --radius: 0.65rem;
-  --rail: oklch(0.97 0.004 260);
-  --rail-selected: oklch(0.91 0.01 260);
+  --rail: oklch(0.965 0.009 255);
+  --rail-selected: oklch(0.915 0.021 255);
   --message: oklch(0.955 0.004 260);
   font-family:
     Inter,
@@ -965,11 +965,16 @@ button {
   field-sizing: content;
   font-size: 15px;
   line-height: 1.5;
-  max-height: 180px;
+  max-height: 38px;
   min-height: 38px;
   min-width: 0;
   padding: 7px 0 6px;
   resize: none;
+}
+
+.composer:focus-within textarea {
+  max-height: 180px;
+  min-height: 112px;
 }
 
 .composer textarea:focus-visible {
@@ -1207,8 +1212,18 @@ button {
 }
 
 .group-dialog {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   border-radius: 14px;
   padding: 22px;
+}
+
+.group-dialog > form,
+.group-fields,
+.group-fields fieldset,
+.group-fields .field-label {
+  min-width: 0;
+  width: 100%;
 }
 
 .group-fields {
@@ -1254,7 +1269,13 @@ button {
   padding: 9px 10px;
 }
 
+.member-option:has(input:checked) {
+  background: var(--accent);
+  border-color: var(--input);
+}
+
 .member-option input {
+  flex-shrink: 0;
   accent-color: var(--primary);
   height: 16px;
   width: 16px;
@@ -1274,8 +1295,12 @@ button {
   color: var(--muted-foreground);
   font-size: 11px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 
 .form-error {
@@ -1409,62 +1434,6 @@ button {
   }
 }
 
-.blob-collection > summary {
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.blob-collection-body {
-  margin-top: 12px;
-}
-.blob-colors {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin: 12px 0;
-}
-.blob-colors button {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  cursor: pointer;
-}
-.blob-colors button[aria-pressed="true"] {
-  border-color: var(--foreground);
-}
-.blob-colors button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.blob-colors button span {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px #0002;
-}
-.blob-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-.blob-preview {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 4px;
-  border-radius: 12px;
-  background: var(--muted);
-}
-.blob-preview span {
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-
 .sr-only {
   border: 0;
   clip: rect(0, 0, 0, 0);
@@ -1475,4 +1444,60 @@ button {
   position: absolute;
   white-space: nowrap;
   width: 1px;
+}
+
+.pending-inputs {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
+}
+.pending-inputs > div {
+  display: flex;
+  gap: 12px;
+  padding-top: 8px;
+}
+.pending-inputs span {
+  color: var(--muted-foreground);
+  flex: 0 0 55px;
+}
+.pending-inputs p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-extension {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.settings-extension p {
+  margin: 4px 0 0;
+}
+
+.ziggy-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.ziggy-brand-image {
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.ziggy-prism-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+.welcome-state > .ziggy-prism-art {
+  max-width: 640px;
+  margin: 0 auto 24px;
+}
+.ziggy-settings-body > .ziggy-prism-art {
+  margin-bottom: 24px;
 }

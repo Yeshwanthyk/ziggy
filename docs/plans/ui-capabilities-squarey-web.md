@@ -19,7 +19,7 @@ the current worktree and land clean end-to-end slices.
 ## Outcome
 
 Expose Ziggy's complete browser-appropriate interaction surface through the existing serve-owned
-UI gateway and `@ziggy/gateway-client`. Redesign the existing `clients/example-web` into a
+UI gateway and `@ziggy/gateway-client`. Redesign the existing `clients/web` into a
 Grok-style bot client that runs against Squarey. Extend the bundled `ziggy-operations` skill so an
 agent can use the same capabilities to create a different UI.
 
@@ -86,7 +86,7 @@ Do not introduce a second SDK package. Improve this client in place.
 
 ### Existing browser example
 
-`clients/example-web` already exists and is included in root typechecking. It currently provides a
+`clients/web` already exists and is included in root typechecking. It currently provides a
 small signal desk with manual port/token entry, session listing, one UI chat, streaming replies,
 and channel watching.
 
@@ -341,7 +341,7 @@ sections rather than turning the product into a dashboard.
 
 ### UI-owned composition
 
-These features use generic capabilities and live only in `clients/example-web`:
+These features use generic capabilities and live only in `clients/web`:
 
 ```text
 mailbox      = sessions + ordered events + UI-owned unread markers
@@ -437,7 +437,7 @@ Primary files:
 - `clients/gateway-client/test/client.test.ts`
 - `test/domain/ui-gateway.test.ts`
 - `test/application/ui-gateway.test.ts`
-- `clients/example-web/main.ts`
+- `clients/web/main.ts`
 
 Exit proof:
 
@@ -469,7 +469,7 @@ Primary files:
 - `src/application/ui-gateway.ts`
 - matching `test/` files
 - `clients/gateway-client/**`
-- `clients/example-web/**`
+- `clients/web/**`
 
 Exit proof:
 
@@ -531,7 +531,7 @@ Exit proof:
 
 ### Slice 6 — custom UI composition proof
 
-Implement only in `clients/example-web`:
+Implement only in `clients/web`:
 
 - Local pinned-session state.
 - Derived unread/mailbox markers.
@@ -663,7 +663,7 @@ medium agent for verification. Implement one clean end-to-end vertical slice at 
 LOG.md, run focused checks plus the required gates, and commit each slice. Start with Slice 1 only.
 
 The architectural rule is: improve the existing UI gateway and gateway client; redesign the
-existing clients/example-web; load UI-building guidance through the existing ziggy-operations
+existing clients/web; load UI-building guidance through the existing ziggy-operations
 skill. Do not create a separate SDK subsystem, UI backend, transcript store, or product-specific
 mailbox/group/widget/pin methods.
 ```
