@@ -29,12 +29,12 @@ export const assertPublishApproval = (
   },
 ): void => {
   if (context.sessionId !== approval.sessionId) {
-    throw new Error("Workflow publish approval belongs to a different session.");
+    throw new Error("Workflow save approval belongs to a different session.");
   }
   if (context.cwd !== approval.cwd) {
-    throw new Error("Workflow publish approval belongs to a different Profile directory.");
+    throw new Error("Workflow save approval belongs to a different Profile directory.");
   }
   if (context.userInput <= approval.preparedAtUserInput) {
-    throw new Error("Workflow publishing requires a newer user response after preparation.");
+    throw new Error("Workflow saving requires a newer user response after preparation.");
   }
 };

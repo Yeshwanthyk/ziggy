@@ -720,11 +720,41 @@ results.
 - Moved `clients/gateway-client` to `packages/ui-sdk`, renamed the package to `@ziggy/ui-sdk`, and updated web imports, Knip entries, plan references, and the root `check:ui-sdk` command. Historical changelog, log, and research entries retain the old name. Transport APIs are unchanged.
 - SDK lint, typecheck, and all 14 tests pass; web formatting, lint, all 45 tests, and build pass. Full `bun run check` stops at root typechecking because separately deleted `extensions/diffs/index.ts` and `extensions/linear/index.ts` are still referenced by generated resources. Left those unrelated deletions untouched; no commit made.
 
+## Browser login and background workflow research
+
+- Compared current OpenClaw and Hermes browser/profile/desktop boundaries with three Luna high scouts; recorded pinned sources and a replacement-friendly recommendation in `docs/research/browser-login-and-background-workflows.md`.
+- Recommended one persistent browser owner with visible login, headless execution, human attention, and browser-native workflows; documented the current temporary-profile, driver-sharing, and manual-step gaps. No runtime implementation changed.
+- Ran the existing focused extension tests: 41 passed, zero failed. Inspected installed CLI help and version drift; authenticated browser execution and the proposed handoff remain untested.
+
+## Persistent browser profiles in the pi-computer-use fork
+
+- The user selected extending the existing MIT pi-computer-use integration first. Moved the abandoned, unselected Playwright prototype out of Ziggy's source tree to `dump/browser-workflows-playwright-prototype`; workflow teaching/replay remains deferred.
+- Extended `launch_browser` with an optional named profile and actual headed/background mode, retaining unnamed temporary launch behavior. Added `close_browser`, Profile-scoped private browser data, serialized lifecycle, cross-process ownership locks, and process-exit-before-release cleanup. Stale locks fail closed; native helper binaries and license are unchanged.
+- Kept existing CDP observation/action tools. Browser-only dispatch avoids native desktop permission probes, and a no-match browser search no longer attempts desktop OCR.
+- Selected the fork in `/Users/yesh/code/personal/dump/browser-workflows`, retaining its verified `openai-codex/gpt-5.6-luna` / `max` default. Profile OpenAI authentication is not configured.
+- Verification: 42 focused existing/new browser and workflow tests passed; extension build/typecheck passed. An independent harness used Pi's public loader against the deployed Profile copy and passed eight real Chrome checks: semantic headed login, cookie/localStorage persistence into headless execution, authenticated read, cross-process lock rejection, named-profile isolation, original-account retention, fresh-process restoration, and pre-aborted launch rejection. This proves the local fixture, not LinkedIn login.
+- Full `bun run check` passes formatting and lint but remains blocked by pre-existing missing `extensions/diffs/index.ts` and `extensions/linear/index.ts` referenced by generated resources. No commit made while the required gate fails.
+
 ## Remove completed plans
 
 - Deleted eleven completed or superseded planning documents rather than archiving copies; Git retains their history. Kept the five documents with unresolved implementation, architecture, or live-proof work.
 - Added `docs/plans/README.md` to identify remaining scope and preserve channel, Linux service, ACP, and standalone verification gaps. Replaced the ACP research link to a deleted plan with current operations guidance and removed stale plan dependencies from the standalone packet.
 - Documentation-only cleanup; unrelated SDK and extension work remains untouched. No runtime tests rerun for these deletions.
+
+## Save and run two-page browser job workflows
+
+- Added local `browser_workflow_save/list/show/run` tools in the existing `computer-workflows` extension. Recipes declare two URLs, named browser profile, authentication/readiness/empty checkpoints, and bounded job ID/title/link/company extraction. Renamed taught-workflow tools to `workflow_save_prepare` and `workflow_save`; existing persisted semantic formats remain readable.
+- Reused the pi-computer-use fork through Pi's shared event bus and one token-owned browser lease. Runs refuse an active human browser, block competing UI operations, and await owned-browser cleanup. No additional browser driver was introduced.
+- Added immutable recipe revisions, full-run reports, stable-ID union baselines, overlap deduplication, source-change resets, and fail-closed run locks. Failed, cancelled, unauthenticated, incomplete, or oversized runs preserve the baseline. Reports are durable before advancing seen IDs.
+- Installed and selected both packages in `dump/browser-workflows`, retaining Luna/max. The deployed copies passed eleven real Chrome/public-Pi-loader fixture checks covering save/discovery, authenticated two-page extraction, new/unchanged jobs, page-two failure recovery, expired login, human-browser preservation, concurrent-run rejection/cancellation and timeout recovery, explicit empty pages, and fresh-process reuse. Proof scripts and results are saved in that Profile's `verification/` directory.
+- Package checks passed: computer-use build/typecheck/lint and 18 tests; computer-workflows format/typecheck/lint and 24 tests. Full `bun run check` passes formatting/lint but remains blocked by the unrelated deleted diffs/linear imports in generated resources. No commit made.
+- Real LinkedIn login/selectors and scheduling remain unconfigured. This slice saves manually defined recipes; human-click recording, optimization, and automatic skill/extension packaging remain future work.
+
+## Reconcile removed extensions
+
+- Removed diffs, gh-issues, linear, nano-pdf, notion, onepassword, and xurl from the approved catalog after their source directories were deleted. Regenerated bundled metadata, factory imports, and embedded resources from the remaining packages.
+- Updated the existing catalog-loading test for the remaining 21 skills and current saved-browser workflow tools.
+- Verification: all 11 resource-discovery/catalog tests pass; full `bun run check` passes, including format, lint, typechecking, Knip, SDK/web tests, web build, and generated catalog/docs checks. The web build retains its non-blocking chunk-size warning.
 
 ## Recover UI subscriptions after replay rollover
 

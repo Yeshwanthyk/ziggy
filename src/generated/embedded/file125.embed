@@ -1,53 +1,47 @@
 ---
 name: computer-workflows
-description: Teach, review, publish, and replay semantic computer-use workflows without storing transient refs or secret values.
+description: Save and run fixed read-only browser jobs or teach reviewed semantic computer-use workflows.
 ---
 
 # Computer workflows
 
-Use this skill only with the `workflow_*` tools and available computer-use tools.
+Use the `browser_workflow_*` path for a recurring read-only browser monitor. Use the
+`workflow_record_*` path when the user teaches a semantic desktop or browser interaction.
 
-## Teach
+## Saved browser jobs
+
+Define exactly two explicit HTTP(S) page URLs and one persistent named browser profile. Each page
+must declare a signed-in checkpoint, a ready checkpoint, an explicit empty checkpoint, and bounded
+CSS fields for stable ID, title, link, and optional company extraction. The workflow accepts no
+JavaScript or arbitrary actions.
+
+Call `browser_workflow_save` with the complete recipe, then use `browser_workflow_show` or
+`browser_workflow_list` to verify the saved artifact. A direct user request to save the recipe is
+authorization to save it; no separate publication prompt applies.
+
+Call `browser_workflow_run` to execute the saved recipe without model-directed steps. The run owns
+one computer-use browser lease for its whole lifetime and releases only that lease. A busy managed
+browser, failed auth or ready checkpoint, unverified empty page, cancellation, timeout, conflicting
+stable ID, incomplete extraction, or output cap produces a failed report and preserves the prior
+baseline. The first full success establishes the baseline; later full successes return unseen jobs
+and atomically extend the union of seen IDs. A source URL, profile, checkpoint, or extraction change
+starts a new baseline after its first full success.
+
+Obtain real service URLs, browser profile names, and schedules from the user or demonstrated target
+before saving a monitor.
+
+## Taught semantic workflows
 
 1. Call `workflow_record_start` with a concise name and goal.
 2. Complete the task once with computer-use tools.
-3. Call `workflow_record_stop` even when the demonstration had a recoverable mistake.
-4. Read the draft with `workflow_draft_show`.
+3. Call `workflow_record_stop`, including after a recoverable mistake, then inspect the redacted
+   draft with `workflow_draft_show`.
+4. Convert the draft to durable semantic targets and mandatory postconditions. Keep typed text,
+   URLs, credentials, tokens, OTPs, and other sensitive values in declared variables rather than
+   recorded steps.
+5. Call `workflow_save_prepare` and show the returned workflow exactly. A newer explicit user turn
+   must approve that prepared workflow before `workflow_save`.
 
-Recording is evidence, not a publishable workflow. Transient refs, state ids, coordinates, typed
-text, URLs, exact values, browser code, images, and result bodies are deliberately absent.
-
-## Review and publish
-
-Convert the draft into semantic steps. Every replayable action must follow a durable `find_roots`
-query and its target must have stable text, role, or capability evidence. Put app identity in
-`find_roots`; an app-only action target is not replayable. Replace typed text and URLs with declared variables. Mark credentials,
-tokens, OTPs, cookies, and other sensitive inputs as secret variables. Add checkpoints after actions
-whose success matters.
-
-Call `workflow_publish_prepare`, then show the returned workflow exactly and ask the user whether to
-publish it. Preparation never publishes. Only after a newer user response explicitly approves that
-workflow may you call `workflow_publish` with the approval ID. Do not prepare and publish in one
-turn. This later-input boundary applies in every face and does not depend on a TUI dialog.
-
-## Replay
-
-Call `workflow_plan`. It returns compact `run_ui_segment` calls for compatible semantic actions but
-does not invoke computer-use itself. Call each returned segment once; the driver resolves fresh UI
-state before every target, requires a unique match, and stops on cancellation, stale or unknown
-state, driver failure, or a failed checkpoint. Steps with text input, missing semantic targets, or no
-postcondition remain manual. Ask the user to enter all text and secret variables directly in the
-target app; never request a secret through workflow or segment tool arguments.
-
-Keypress replay is limited to navigation/control keys and explicit modifier chords such as `CMD+A`
-or `CTRL+L`. Bare letters, digits, punctuation, and character sequences are text input and remain
-manual.
-
-For logged-in browser acceptance, target the existing native browser window. Make the first
-`wait`/assertion prove the expected logged-in UI before any action. `launch_browser` creates a
-managed temporary browser profile that is isolated and logged out unless it was authenticated
-separately; do not treat it as the user's existing browser session.
-
-Always call `workflow_run_finish` with the returned run ID, including after an error or incomplete
-manual step. The summary is derived from observed planned segment events; never invent or pass check
-outcomes.
+For replay, call `workflow_plan`, execute each returned `run_ui_segment` once, then always call
+`workflow_run_finish`. The driver resolves fresh semantic state and stops on ambiguity,
+cancellation, unknown state, or a failed checkpoint. Text and secret variables remain manual.

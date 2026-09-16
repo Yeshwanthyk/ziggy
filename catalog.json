@@ -50,12 +50,6 @@
       "path": "./extensions/dev-browser"
     },
     {
-      "id": "diffs",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/diffs"
-    },
-    {
       "id": "executor",
       "version": "0.1.0",
       "source": "bundled",
@@ -66,12 +60,6 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/extension-authoring"
-    },
-    {
-      "id": "gh-issues",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/gh-issues"
     },
     {
       "id": "github",
@@ -98,12 +86,6 @@
       "path": "./extensions/imsg"
     },
     {
-      "id": "linear",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/linear"
-    },
-    {
       "id": "lossless-claw",
       "version": "0.1.0",
       "source": "bundled",
@@ -116,28 +98,10 @@
       "path": "./extensions/mcporter"
     },
     {
-      "id": "nano-pdf",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/nano-pdf"
-    },
-    {
-      "id": "notion",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/notion"
-    },
-    {
       "id": "obsidian",
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/obsidian"
-    },
-    {
-      "id": "onepassword",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/onepassword"
     },
     {
       "id": "pi-packages",
@@ -168,12 +132,6 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/web-search"
-    },
-    {
-      "id": "xurl",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/xurl"
     },
     {
       "id": "ziggy-operations",

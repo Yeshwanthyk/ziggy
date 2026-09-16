@@ -440,27 +440,20 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "computer-use",
     "computer-workflows",
     "dev-browser",
-    "diffs",
     "executor",
     "extension-authoring",
-    "gh-issues",
     "github",
     "gog",
     "goplaces",
     "imsg",
-    "linear",
     "lossless-claw",
     "mcporter",
-    "nano-pdf",
-    "notion",
     "obsidian",
-    "onepassword",
     "pi-packages",
     "qmd",
     "self-improvement",
     "weather",
     "web-search",
-    "xurl",
     "ziggy-operations",
   ];
   const expectedTools = [
@@ -484,19 +477,23 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "run_ui_segment",
     "wait_for",
     "launch_browser",
+    "close_browser",
+    "browser_workflow_save",
+    "browser_workflow_list",
+    "browser_workflow_show",
+    "browser_workflow_run",
     "navigate_browser",
     "evaluate_browser",
     "workflow_record_start",
     "workflow_record_stop",
     "workflow_record_cancel",
     "workflow_draft_show",
-    "workflow_publish",
-    "workflow_publish_prepare",
+    "workflow_save",
+    "workflow_save_prepare",
     "workflow_list",
     "workflow_show",
     "workflow_plan",
     "workflow_run_finish",
-    "diffs",
     "executor_call",
     "executor_resume",
     "executor_tools_describe",
@@ -507,7 +504,6 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "lcm_expand_query",
     "lcm_grep",
     "lcm_sessions",
-    "linear",
     "self_improvement_extension_write",
     "self_improvement_log",
     "self_improvement_status",
@@ -520,10 +516,8 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "computer-use",
     "computer-workflows",
     "dev-browser",
-    "diffs",
     "executor",
     "github",
-    "linear",
     "lossless-claw",
     "self-improvement",
     "web-search",
@@ -582,7 +576,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   expect(productionResources.extensionPaths).toEqual(
     executablePackages.map((id) => join(profilePath, "extensions", id)),
   );
-  expect(productionResources.skillPaths).toHaveLength(28);
+  expect(productionResources.skillPaths).toHaveLength(21);
   expect(
     productionResources.skillPaths.every((skillPath) => skillPath.startsWith(profilePath)),
   ).toBe(true);
@@ -591,7 +585,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     [...productionResources.skillPaths],
     [...productionResources.extensionFactories],
   );
-  assertCatalog(productionServices, 28);
+  assertCatalog(productionServices, 21);
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),

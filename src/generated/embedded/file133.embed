@@ -1,304 +1,280 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Process-group signaling falls back when group termination races with process exit. */
-/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
-/* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
-import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem adapter boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Boundary failures become Pi tool failures. */
+/* oxlint-disable ziggy-effect/no-json-parse -- JSON is decoded immediately through the complete TypeBox schema. */
+/* oxlint-disable ziggy/no-unknown-parameters -- Unknown JSON exists only at the decoder and serializer boundary. */
+/* oxlint-disable ziggy/no-runtime-typeof -- Node filesystem errors require a narrow code probe at this adapter boundary. */
+import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { Static, TSchema } from "typebox";
+import { Parse } from "typebox/value";
+import {
+  PublishApprovalSchema,
+  BrowserJobBaselineSchema,
+  BrowserJobRunReportSchema,
+  SavedBrowserJobSchema,
+  PublishedWorkflowSchema,
+  RunRecordSchema,
+  RunSummarySchema,
+  WorkflowDraftSchema,
+  type PublishApproval,
+  type PublishedWorkflow,
+  type RunRecord,
+  type RunSummary,
+  type WorkflowDraft,
+  type BrowserJobBaseline,
+  type BrowserJobRunReport,
+  type SavedBrowserJob,
+} from "./schema.ts";
 
-const PROFILE_PATTERN = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
-const IDLE_TIMEOUT_PATTERN = "^(?:0|[1-9][0-9]{0,8}(?:ms|s|m|h)?)$";
-const MAX_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
-const EXECUTE_TIMEOUT_MS = 120_000;
-const MAINTENANCE_TIMEOUT_MS = 15_000;
-const TERMINATION_GRACE_MS = 500;
-const OUTPUT_LIMIT = 24 * 1024;
+const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
+const runtimeRoot = (profilePath: string): string =>
+  join(profilePath, ".runtime", "computer-workflows");
+const browserJobsRoot = (profilePath: string): string => join(profilePath, "browser-workflows");
+const browserJobRuntimeRoot = (profilePath: string, workflowId: string): string =>
+  join(runtimeRoot(profilePath), "jobs", workflowId);
 
-const ExecuteParameters = Type.Object(
-  {
-    action: Type.Literal("execute"),
-    profile: Type.String({
-      description: "Logical persistent browser profile slug.",
-      minLength: 1,
-      maxLength: 48,
-      pattern: PROFILE_PATTERN,
-    }),
-    script: Type.String({
-      description: "Sandboxed dev-browser JavaScript sent on stdin, never through a shell.",
-      minLength: 1,
-      maxLength: 128 * 1024,
-    }),
-    headless: Type.Optional(
-      Type.Boolean({ description: "Launch managed Chromium headless; false is headed." }),
-    ),
-    connect: Type.Optional(
-      Type.Boolean({
-        description: "Auto-connect to a local Chrome; remote URLs are not accepted.",
-      }),
-    ),
-    idleTimeout: Type.Optional(
-      Type.String({
-        description: "Idle cleanup duration up to 24h, such as 30s, 5m, 1h, or raw ms; 0 disables.",
-        pattern: IDLE_TIMEOUT_PATTERN,
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+  return typeof cause.code === "string" ? cause.code : undefined;
+};
 
-const BrowsersParameters = Type.Object(
-  { action: Type.Literal("browsers") },
-  { additionalProperties: false },
-);
-const StatusParameters = Type.Object(
-  { action: Type.Literal("status") },
-  { additionalProperties: false },
-);
-const StopParameters = Type.Object(
-  {
-    action: Type.Literal("stop"),
-    confirmed: Type.Literal(true, {
-      description:
-        "Required confirmation that this stops the daemon and all managed browsers globally.",
-    }),
-  },
-  { additionalProperties: false },
-);
-
-export const Parameters = Type.Union([
-  ExecuteParameters,
-  BrowsersParameters,
-  StatusParameters,
-  StopParameters,
-]);
-
-type Parameters = Static<typeof Parameters>;
-type ExecuteInput = Static<typeof ExecuteParameters>;
-
-interface CapturedOutput {
-  readonly text: string;
-  readonly truncated: boolean;
-}
-
-interface CliResult {
-  readonly stdout: CapturedOutput;
-  readonly stderr: CapturedOutput;
-}
-
-interface OutputCollector {
-  readonly append: (chunk: Buffer | string) => void;
-  readonly value: () => CapturedOutput;
-}
-
-const durationMilliseconds = (duration: string): number => {
-  const match = /^(0|[1-9][0-9]{0,8})(ms|s|m|h)?$/.exec(duration);
-  if (match === null) throw new Error(`Invalid idleTimeout: ${duration}`);
-  const value = Number(match[1]);
-  const multiplier =
-    match[2] === "h" ? 3_600_000 : match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-  const milliseconds = value * multiplier;
-  if (milliseconds > MAX_IDLE_TIMEOUT_MS) {
-    throw new Error(`idleTimeout must be at most 24h; received ${duration}`);
+const assertDirectory = async (path: string): Promise<void> => {
+  try {
+    const stat = await lstat(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
+    }
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+    await mkdir(path, { recursive: true });
+    const stat = await lstat(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
+    }
   }
-  return milliseconds;
 };
 
-export const managedBrowserName = (cwd: string, logicalProfile: string): string => {
-  const namespace = createHash("sha256")
-    .update(resolve(cwd))
-    .update("\0")
-    .update(logicalProfile)
-    .digest("hex")
-    .slice(0, 20);
-  return `ziggy-${logicalProfile}-${namespace}`;
+const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 };
 
-const binary = (): string => process.env.ZIGGY_DEV_BROWSER_BIN?.trim() || "dev-browser";
+const replaceJsonAtomically = async (path: string, value: unknown): Promise<void> => {
+  const temporary = `${path}.tmp-${crypto.randomUUID()}`;
+  await writeExclusiveJson(temporary, value);
+  await rename(temporary, path);
+};
 
-const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
-  if (child.pid === undefined) return;
-  if (process.platform !== "win32") {
+const readDecoded = async <const Schema extends TSchema>(
+  path: string,
+  schema: Schema,
+): Promise<Static<Schema>> => Parse(schema, JSON.parse(await readFile(path, "utf8")));
+
+export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await writeExclusiveJson(path, draft);
+  return path;
+};
+
+export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
+  readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
+
+export const publishWorkflow = async (
+  profilePath: string,
+  published: PublishedWorkflow,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  const root = durableRoot(profilePath);
+  await assertDirectory(root);
+  const workflowRoot = join(root, published.workflow.id);
+  await assertDirectory(workflowRoot);
+  const revisionsRoot = join(workflowRoot, "revisions");
+  await assertDirectory(revisionsRoot);
+  const revisionPath = join(revisionsRoot, `${published.revision}.json`);
+  await writeExclusiveJson(revisionPath, published);
+  const manifestPath = join(workflowRoot, "workflow.json");
+  await replaceJsonAtomically(manifestPath, published);
+  return { manifestPath, revisionPath };
+};
+
+export const readWorkflow = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<PublishedWorkflow> =>
+  readDecoded(join(durableRoot(profilePath), workflowId, "workflow.json"), PublishedWorkflowSchema);
+
+export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
+  const root = durableRoot(profilePath);
+  let entries: string[];
+  try {
+    entries = await readdir(root);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+  const workflows: PublishedWorkflow[] = [];
+  for (const entry of entries.slice(0, 500)) {
     try {
-      process.kill(-child.pid, signal);
-      return;
+      workflows.push(await readWorkflow(profilePath, entry));
     } catch {
-      // Fall back if the process group has already changed or exited.
+      // Malformed entries are excluded from the index; workflow_show reports their exact failure.
     }
   }
-  child.kill(signal);
+  return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
 };
 
-const createCollector = (): OutputCollector => {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let truncated = false;
-  return {
-    append(chunk) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      const available = OUTPUT_LIMIT - size;
-      if (available <= 0) {
-        truncated = true;
-        return;
-      }
-      const selected = buffer.subarray(0, available);
-      chunks.push(selected);
-      size += selected.byteLength;
-      if (selected.byteLength < buffer.byteLength) truncated = true;
-    },
-    value: () => ({ text: Buffer.concat(chunks).toString("utf8"), truncated }),
-  };
+export const writeRunRecord = async (profilePath: string, run: RunRecord): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await writeExclusiveJson(path, Parse(RunRecordSchema, run));
+  return path;
 };
 
-const display = (output: CapturedOutput): string =>
-  output.truncated ? `${output.text}\n[output truncated]` : output.text;
-
-const streamSummary = (result: CliResult): string =>
-  `stdout:\n${display(result.stdout) || "(empty)"}\nstderr:\n${display(result.stderr) || "(empty)"}`;
-
-const runCli = (
-  args: readonly string[],
-  stdin: string,
-  cwd: string,
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-): Promise<CliResult> =>
-  new Promise((resolvePromise, reject) => {
-    const child = spawn(binary(), args, {
-      cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
-    const stdout = createCollector();
-    const stderr = createCollector();
-    let settled = false;
-    let timedOut = false;
-    let cancelled = false;
-    let terminating = false;
-    let escalation: ReturnType<typeof setTimeout> | undefined;
-
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      if (escalation !== undefined) clearTimeout(escalation);
-      signal?.removeEventListener("abort", cancel);
-    };
-    const terminate = (): void => {
-      if (terminating) return;
-      terminating = true;
-      signalProcessTree(child, "SIGTERM");
-      escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
-      escalation.unref();
-    };
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-    timeout.unref();
-    const cancel = (): void => {
-      cancelled = true;
-      terminate();
-    };
-
-    if (signal?.aborted) cancel();
-    else signal?.addEventListener("abort", cancel, { once: true });
-    child.stdout.on("data", stdout.append);
-    child.stderr.on("data", stderr.append);
-    child.on("error", (cause) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error(`dev_browser failed to start ${binary()}: ${cause.message}`));
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      const result = { stdout: stdout.value(), stderr: stderr.value() };
-      const streams = streamSummary(result);
-      if (cancelled) return reject(new Error(`dev_browser was cancelled.\n${streams}`));
-      if (timedOut)
-        return reject(new Error(`dev_browser timed out after ${timeoutMs}ms.\n${streams}`));
-      if (code !== 0)
-        return reject(new Error(`dev_browser exited with code ${code ?? "unknown"}.\n${streams}`));
-      resolvePromise(result);
-    });
-    child.stdin.on("error", () => {
-      // A fast-exiting CLI reports the useful failure through close/stderr.
-    });
-    child.stdin.end(stdin);
-  });
-
-const executeArgs = (input: ExecuteInput, cwd: string): string[] => {
-  if (input.idleTimeout !== undefined) durationMilliseconds(input.idleTimeout);
-  const args = ["--browser", managedBrowserName(cwd, input.profile)];
-  if (input.headless === true) args.push("--headless");
-  if (input.connect === true) args.push("--connect");
-  if (input.idleTimeout !== undefined) args.push("--idle-timeout", input.idleTimeout);
-  return args;
+export const writeRunSummary = async (
+  profilePath: string,
+  summary: RunSummary,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "run-summaries");
+  await assertDirectory(root);
+  const path = join(root, `${summary.id}.json`);
+  await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
+  return path;
 };
 
-const resultText = (result: CliResult): string => {
-  const stdout = display(result.stdout);
-  const stderr = display(result.stderr);
-  return stderr ? `${stdout}\n\nstderr:\n${stderr}`.trim() : stdout || "dev-browser completed.";
+export const writePublishApproval = async (
+  profilePath: string,
+  approval: PublishApproval,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "publish-approvals");
+  await assertDirectory(root);
+  const path = join(root, `${approval.id}.json`);
+  await writeExclusiveJson(path, approval);
+  return path;
 };
 
-export const executeDevBrowser = async (input: Parameters, cwd: string, signal?: AbortSignal) => {
-  if (input.action === "execute") {
-    let result: CliResult;
+export const readPublishApproval = async (
+  profilePath: string,
+  approvalId: string,
+): Promise<PublishApproval> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "publish-approvals", `${approvalId}.json`),
+    PublishApprovalSchema,
+  );
+
+export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
+  Parse(PublishedWorkflowSchema, value);
+
+export const saveBrowserJob = async (
+  profilePath: string,
+  saved: SavedBrowserJob,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  const root = browserJobsRoot(profilePath);
+  await assertDirectory(root);
+  const workflowRoot = join(root, saved.workflow.id);
+  await assertDirectory(workflowRoot);
+  const revisionsRoot = join(workflowRoot, "revisions");
+  await assertDirectory(revisionsRoot);
+  const revisionPath = join(revisionsRoot, `${saved.revision}.json`);
+  await writeExclusiveJson(revisionPath, Parse(SavedBrowserJobSchema, saved));
+  const manifestPath = join(workflowRoot, "workflow.json");
+  await replaceJsonAtomically(manifestPath, saved);
+  return { manifestPath, revisionPath };
+};
+
+export const readBrowserJob = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<SavedBrowserJob> =>
+  readDecoded(
+    join(browserJobsRoot(profilePath), workflowId, "workflow.json"),
+    SavedBrowserJobSchema,
+  );
+
+export const listBrowserJobs = async (profilePath: string): Promise<SavedBrowserJob[]> => {
+  let entries: string[];
+  try {
+    entries = await readdir(browserJobsRoot(profilePath));
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+  const jobs: SavedBrowserJob[] = [];
+  for (const entry of entries.slice(0, 500)) {
     try {
-      result = await runCli(executeArgs(input, cwd), input.script, cwd, signal, EXECUTE_TIMEOUT_MS);
-    } catch (cause) {
-      const message = String(cause);
-      if (input.idleTimeout !== undefined && message.includes("--idle-timeout")) {
-        throw new Error(
-          "This installed dev-browser does not support idleTimeout. Upgrade dev-browser to 0.2.9 or newer, or omit idleTimeout; persistent profile reuse still works without idle cleanup.",
-        );
-      }
-      throw cause;
+      jobs.push(await readBrowserJob(profilePath, entry));
+    } catch {
+      // Malformed entries are excluded from the index; browser_workflow_show reports the failure.
     }
-    return {
-      content: [{ type: "text" as const, text: resultText(result) }],
-      details: {
-        action: input.action,
-        profile: input.profile,
-        stdoutTruncated: result.stdout.truncated,
-        stderrTruncated: result.stderr.truncated,
-      },
-    };
   }
-
-  if (input.action === "stop" && input.confirmed !== true) {
-    throw new Error(
-      "dev_browser stop requires confirmed:true because it stops the daemon and all managed browsers globally.",
-    );
-  }
-  const result = await runCli([input.action], "", cwd, signal, MAINTENANCE_TIMEOUT_MS);
-  const prefix =
-    input.action === "stop"
-      ? "Stopped the dev-browser daemon and all managed browser connections. Persistent browser profile directories were preserved.\n\n"
-      : "";
-  return {
-    content: [{ type: "text" as const, text: `${prefix}${resultText(result)}`.trim() }],
-    details: {
-      action: input.action,
-      stdoutTruncated: result.stdout.truncated,
-      stderrTruncated: result.stderr.truncated,
-    },
-  };
+  return jobs.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
 };
 
-export default function devBrowser(pi: Pick<ExtensionAPI, "registerTool">): void {
-  pi.registerTool({
-    name: "dev_browser",
-    label: "dev_browser",
-    description:
-      "Run sandboxed JavaScript in a named persistent dev-browser profile, inspect global daemon state, or explicitly stop the daemon and all managed browser connections while preserving profile directories.",
-    parameters: Parameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, input, signal, _onUpdate, ctx) {
-      return executeDevBrowser(input, ctx.cwd, signal);
-    },
-  });
-}
+export const readBrowserJobBaseline = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<BrowserJobBaseline | undefined> => {
+  try {
+    return await readDecoded(
+      join(browserJobRuntimeRoot(profilePath, workflowId), "baseline.json"),
+      BrowserJobBaselineSchema,
+    );
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+export const writeBrowserJobBaseline = async (
+  profilePath: string,
+  baseline: BrowserJobBaseline,
+): Promise<void> => {
+  const root = browserJobRuntimeRoot(profilePath, baseline.workflowId);
+  await assertDirectory(root);
+  await replaceJsonAtomically(
+    join(root, "baseline.json"),
+    Parse(BrowserJobBaselineSchema, baseline),
+  );
+};
+
+export const writeBrowserJobRunReport = async (
+  profilePath: string,
+  report: BrowserJobRunReport,
+): Promise<string> => {
+  const root = join(browserJobRuntimeRoot(profilePath, report.workflowId), "runs");
+  await assertDirectory(root);
+  const path = join(root, `${report.id}.json`);
+  await writeExclusiveJson(path, Parse(BrowserJobRunReportSchema, report));
+  return path;
+};
+
+export const withBrowserJobLock = async <Result>(
+  profilePath: string,
+  workflowId: string,
+  signal: AbortSignal,
+  run: () => Promise<Result>,
+): Promise<Result> => {
+  const root = browserJobRuntimeRoot(profilePath, workflowId);
+  await assertDirectory(root);
+  const lockPath = join(root, "run.lock");
+  signal.throwIfAborted();
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") {
+      throw new Error(`Browser workflow '${workflowId}' already has an active run.`);
+    }
+    throw cause;
+  }
+  try {
+    return await run();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};

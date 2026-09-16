@@ -1,17 +1,26 @@
-# 1Password CLI get-started (summary)
+---
+name: web-search
+description: Search the web for fresh facts through Exa when local information cannot answer the request.
+---
 
-- Works on macOS, Windows, and Linux.
-  - macOS/Linux shells: bash, zsh, sh, fish.
-  - Windows shell: PowerShell.
-- Requires a 1Password subscription and the desktop app to use app integration.
-- macOS requirement: Big Sur 11.0.0 or later.
-- Linux app integration requires PolKit + an auth agent.
-- Install the CLI per the official doc for your OS.
-- Enable desktop app integration in the 1Password app:
-  - Open and unlock the app, then select your account/collection.
-  - macOS: Settings > Developer > Integrate with 1Password CLI (Touch ID optional).
-  - Windows: turn on Windows Hello, then Settings > Developer > Integrate.
-  - Linux: Settings > Security > Unlock using system authentication, then Settings > Developer > Integrate.
-- After integration, run any command to sign in (example in docs: `op vault list`).
-- If multiple accounts: use `op signin` to pick one, or `--account` / `OP_ACCOUNT`.
-- For non-integration auth, use `op account add`.
+# Web Search
+
+Use `web_search` with query words in `args`:
+
+```json
+{"args":["best time to visit the science museum this weekend"]}
+{"args":["hardware store opening hours","--n","3"]}
+```
+
+The result is:
+
+```json
+{"query":"...","answer":"...","results":[{"title":"...","url":"...","highlight":"..."}]}
+```
+
+Read the structured `results`; each `highlight` is the relevant excerpt. Cite
+one or two result URLs. `answer` is populated only when the endpoint response
+cannot be structured. No API key is required; `EXA_API_KEY` only raises service
+limits.
+
+Use this only for information that benefits from a current external search.

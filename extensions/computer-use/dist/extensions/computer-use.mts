@@ -4,6 +4,7 @@ import {
 	ensureComputerUseSetup,
 	executeAct,
 	executeEvaluateBrowser,
+	executeCloseBrowser,
 	executeExpandUi,
 	executeInspectUi,
 	executeLaunchBrowser,
@@ -142,8 +143,23 @@ const launchBrowserTool = defineTool({
 	description: "Launch the configured Pi-managed CDP browser and return an observed browser-page state.",
 	promptSnippet: "Use for browser work that needs a managed CDP context.",
 	promptGuidelines: ["Prefer curl through bash when the page is directly fetchable."],
-	parameters: Type.Object({ url: Type.Optional(Type.String({ maxLength: 8192 })) }),
+	parameters: Type.Object({
+		url: Type.Optional(Type.String({ maxLength: 8192 })),
+		profile: Type.Optional(Type.String({ pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$" })),
+		mode: Type.Optional(Type.Union([Type.Literal("headed"), Type.Literal("background")])),
+	}),
 	execute: executeLaunchBrowser,
+});
+
+const closeBrowserTool = defineTool({
+	name: "close_browser",
+	label: "Close Browser Context",
+	description: "Gracefully close the Pi-managed CDP browser and wait for its process to exit.",
+	promptSnippet: "Close a managed browser before reopening the same persistent profile in another mode.",
+	parameters: Type.Object({
+		profile: Type.Optional(Type.String({ pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$" })),
+	}),
+	execute: executeCloseBrowser,
 });
 
 const navigateBrowserTool = defineTool({
@@ -180,7 +196,7 @@ function formatConfigStatus(): string {
 }
 
 export default function computerUseExtension(pi: ExtensionAPI): void {
-	for (const tool of [findTool, observeTool, searchUiTool, expandUiTool, inspectUiTool, actTool, readTextTool, waitForTool, launchBrowserTool, navigateBrowserTool, evaluateBrowserTool]) pi.registerTool(tool);
+	for (const tool of [findTool, observeTool, searchUiTool, expandUiTool, inspectUiTool, actTool, readTextTool, waitForTool, launchBrowserTool, closeBrowserTool, navigateBrowserTool, evaluateBrowserTool]) pi.registerTool(tool);
 
 	pi.registerCommand("computer-use", {
 		description: "Show pi-computer-use configuration",

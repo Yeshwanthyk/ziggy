@@ -4,7 +4,12 @@
 /* oxlint-disable ziggy/no-unknown-parameters -- Tool results serialize boundary-owned payloads only. */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { WorkflowDefinitionSchema, WorkflowIdSchema, type RunRecord } from "./src/schema.ts";
+import {
+  BrowserJobDefinitionSchema,
+  WorkflowDefinitionSchema,
+  WorkflowIdSchema,
+  type RunRecord,
+} from "./src/schema.ts";
 import {
   finishRecording,
   observeToolCall,
@@ -23,6 +28,13 @@ import {
   writePublishApproval,
   writeRunRecord,
   writeRunSummary,
+  listBrowserJobs,
+  readBrowserJob,
+  readBrowserJobBaseline,
+  saveBrowserJob,
+  withBrowserJobLock,
+  writeBrowserJobBaseline,
+  writeBrowserJobRunReport,
 } from "./src/storage.ts";
 import { makePublishedWorkflow, validateWorkflowDefinition } from "./src/workflows.ts";
 import { compileExecutionPlan } from "./src/execution-plan.ts";
@@ -33,6 +45,12 @@ import {
   startActiveRun,
   type ActiveWorkflowRun,
 } from "./src/run-tracker.ts";
+import {
+  makeSavedBrowserJob,
+  runSavedBrowserJob,
+  validateBrowserJobDefinition,
+} from "./src/browser-jobs.ts";
+import { makeBrowserJobBridge } from "./src/browser-job-bridge.ts";
 
 const OUTPUT_LIMIT = 32 * 1024;
 const NonEmptyText = Type.String({ minLength: 1, maxLength: 1_024 });
@@ -54,6 +72,10 @@ const WorkflowParameters = Type.Object(
   { workflowId: WorkflowIdSchema },
   { additionalProperties: false },
 );
+const SaveBrowserWorkflowParameters = Type.Object(
+  { workflow: BrowserJobDefinitionSchema },
+  { additionalProperties: false },
+);
 const FinishRunParameters = Type.Object(
   { runId: WorkflowIdSchema },
   { additionalProperties: false },
@@ -68,6 +90,14 @@ const result = (payload: unknown) => ({
   content: [{ type: "text" as const, text: bounded(JSON.stringify(payload, null, 2)) }],
   details: payload,
 });
+
+const strictResult = (payload: unknown) => {
+  const text = JSON.stringify(payload, null, 2);
+  if (text.length > 256 * 1024) {
+    throw new Error("Browser workflow result exceeded the output cap and was not truncated.");
+  }
+  return { content: [{ type: "text" as const, text }], details: payload };
+};
 
 const sessionKey = (ctx: {
   readonly cwd: string;
@@ -133,6 +163,107 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "browser_workflow_save",
+    label: "Save Browser Workflow",
+    description:
+      "Validate and save one fixed two-page read-only browser monitoring workflow using a persistent named browser profile.",
+    parameters: SaveBrowserWorkflowParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      try {
+        const workflow = validateBrowserJobDefinition(parameters.workflow);
+        const saved = makeSavedBrowserJob(workflow);
+        const paths = await saveBrowserJob(ctx.cwd, saved);
+        return result({
+          ok: true,
+          status: "saved",
+          workflowId: workflow.id,
+          revision: saved.revision,
+          sourceFingerprint: saved.sourceFingerprint,
+          ...paths,
+        });
+      } catch (cause) {
+        throw boundedFailure(cause);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_workflow_list",
+    label: "List Browser Workflows",
+    description: "List saved fixed two-page browser monitoring workflows in this Profile.",
+    parameters: EmptyParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
+      try {
+        const workflows = await listBrowserJobs(ctx.cwd);
+        return result({
+          workflows: workflows.map((entry) => ({
+            id: entry.workflow.id,
+            name: entry.workflow.name,
+            revision: entry.revision,
+            savedAt: entry.savedAt,
+            browserProfile: entry.workflow.browserProfile,
+            pageCount: entry.workflow.pages.length,
+          })),
+        });
+      } catch (cause) {
+        throw boundedFailure(cause);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_workflow_show",
+    label: "Show Browser Workflow",
+    description: "Load the current saved revision of one browser monitoring workflow.",
+    parameters: WorkflowParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      try {
+        return result({ workflow: await readBrowserJob(ctx.cwd, parameters.workflowId) });
+      } catch (cause) {
+        throw boundedFailure(cause);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "browser_workflow_run",
+    label: "Run Browser Workflow",
+    description:
+      "Run a saved browser workflow directly once through the existing computer-use bridge and update its stable-ID baseline only after full success.",
+    parameters: WorkflowParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
+      try {
+        const saved = await readBrowserJob(ctx.cwd, parameters.workflowId);
+        const runSignal = signal ?? new AbortController().signal;
+        const completed = await withBrowserJobLock(
+          ctx.cwd,
+          saved.workflow.id,
+          runSignal,
+          async () =>
+            await runSavedBrowserJob({
+              saved,
+              bridge: makeBrowserJobBridge(pi, ctx),
+              store: {
+                readBaseline: async (workflowId) =>
+                  await readBrowserJobBaseline(ctx.cwd, workflowId),
+                writeBaseline: async (baseline) => await writeBrowserJobBaseline(ctx.cwd, baseline),
+                writeReport: async (report) => await writeBrowserJobRunReport(ctx.cwd, report),
+              },
+              signal: runSignal,
+            }),
+        );
+        return strictResult(completed);
+      } catch (cause) {
+        throw boundedFailure(cause);
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "workflow_record_start",
     label: "Start Workflow Recording",
     description:
@@ -157,7 +288,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     name: "workflow_record_stop",
     label: "Stop Workflow Recording",
     description:
-      "Stop this session's recording and save a redacted runtime draft for review. This never publishes a workflow.",
+      "Stop this session's recording and save a redacted runtime draft for review. This does not save a runnable workflow.",
     parameters: EmptyParameters,
     executionMode: "sequential",
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
@@ -199,7 +330,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "workflow_draft_show",
     label: "Show Workflow Draft",
-    description: "Load a redacted workflow recording draft for review before publishing.",
+    description: "Load a redacted workflow recording draft for review before saving.",
     parameters: DraftParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -212,10 +343,10 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "workflow_publish_prepare",
-    label: "Prepare Workflow Publication",
+    name: "workflow_save_prepare",
+    label: "Prepare Workflow Save",
     description:
-      "Validate and durably prepare a reviewed semantic workflow for publication. A later explicit user turn must approve publication; this call never publishes.",
+      "Validate and durably prepare a reviewed semantic workflow to save. A later explicit user turn must approve saving; this call never saves the workflow.",
     parameters: PreparePublishParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -239,7 +370,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
           workflow,
           approvalPath,
           instruction:
-            "Show this exact workflow summary to the user. Only a later user response can authorize workflow_publish.",
+            "Show this exact workflow summary to the user. Only a later user response can authorize workflow_save.",
         });
       } catch (cause) {
         throw boundedFailure(cause);
@@ -248,10 +379,10 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "workflow_publish",
-    label: "Publish Workflow Revision",
+    name: "workflow_save",
+    label: "Save Workflow Revision",
     description:
-      "Publish one prepared semantic workflow after a newer user response in the same Profile session. This works in TUI, RPC, gateway, print, and automation faces without a dialog.",
+      "Save one prepared semantic workflow after a newer user response in the same Profile session. This works in TUI, RPC, gateway, print, and automation faces without a dialog.",
     parameters: PublishParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -266,7 +397,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         const paths = await publishWorkflow(ctx.cwd, published);
         return result({
           ok: true,
-          status: "published",
+          status: "saved",
           workflowId: approval.workflow.id,
           revision: published.revision,
           ...paths,
@@ -280,7 +411,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "workflow_list",
     label: "List Workflows",
-    description: "List the current published semantic workflow revisions in this Profile.",
+    description: "List the current saved semantic workflow revisions in this Profile.",
     parameters: EmptyParameters,
     executionMode: "sequential",
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
@@ -291,7 +422,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
             id: entry.workflow.id,
             name: entry.workflow.name,
             revision: entry.revision,
-            publishedAt: entry.publishedAt,
+            savedAt: entry.publishedAt,
             stepCount: entry.workflow.steps.length,
           })),
         });
@@ -304,7 +435,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "workflow_show",
     label: "Show Workflow",
-    description: "Load the current published revision of one semantic workflow.",
+    description: "Load the current saved revision of one semantic workflow.",
     parameters: WorkflowParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {

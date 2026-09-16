@@ -6,10 +6,8 @@ import factoryCodemode from "../../../../extensions/codemode/dist/index.js";
 import factoryComputerUse from "../../../../extensions/computer-use/index.ts";
 import factoryComputerWorkflows from "../../../../extensions/computer-workflows/index.ts";
 import factoryDevBrowser from "../../../../extensions/dev-browser/index.ts";
-import factoryDiffs from "../../../../extensions/diffs/index.ts";
 import factoryExecutor from "../../../../extensions/executor/index.ts";
 import factoryGithub from "../../../../extensions/github/index.ts";
-import factoryLinear from "../../../../extensions/linear/index.ts";
 import factoryLosslessClaw from "../../../../extensions/lossless-claw/index.ts";
 import factorySelfImprovement from "../../../../extensions/self-improvement/index.ts";
 import factoryWebSearch from "../../../../extensions/web-search/index.ts";
@@ -24,10 +22,8 @@ export const builtinFactories: ReadonlyArray<{
   { id: "computer-use", factory: factoryComputerUse },
   { id: "computer-workflows", factory: factoryComputerWorkflows },
   { id: "dev-browser", factory: factoryDevBrowser },
-  { id: "diffs", factory: factoryDiffs },
   { id: "executor", factory: factoryExecutor },
   { id: "github", factory: factoryGithub },
-  { id: "linear", factory: factoryLinear },
   { id: "lossless-claw", factory: factoryLosslessClaw },
   { id: "self-improvement", factory: factorySelfImprovement },
   { id: "web-search", factory: factoryWebSearch },

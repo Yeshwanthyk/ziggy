@@ -387,6 +387,135 @@ export const PublishApprovalSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const BrowserProfile = Type.String({
+  pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$",
+  minLength: 1,
+  maxLength: 64,
+});
+const AbsoluteHttpUrl = Type.String({
+  pattern: "^https?://",
+  minLength: 8,
+  maxLength: 8_192,
+});
+const CssSelector = Type.String({ minLength: 1, maxLength: 1_024 });
+const BrowserCheckpointSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+const BrowserJobPageSchema = Type.Object(
+  {
+    id: Id,
+    url: AbsoluteHttpUrl,
+    signedInCheckpoint: BrowserCheckpointSchema,
+    readyCheckpoint: BrowserCheckpointSchema,
+    emptyCheckpoint: BrowserCheckpointSchema,
+    extraction: Type.Object(
+      {
+        itemSelector: CssSelector,
+        idAttribute: Type.String({ pattern: "^[A-Za-z_:][-A-Za-z0-9_:.]*$", maxLength: 128 }),
+        titleSelector: CssSelector,
+        linkSelector: CssSelector,
+        companySelector: Type.Optional(CssSelector),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const BrowserJobDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    browserProfile: BrowserProfile,
+    pages: Type.Tuple([BrowserJobPageSchema, BrowserJobPageSchema]),
+    overallTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 600_000 }),
+  },
+  { additionalProperties: false },
+);
+
+export const SavedBrowserJobSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-saved-browser-job"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    savedAt: Timestamp,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    workflow: BrowserJobDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+const ExtractedJobItemSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 1_024 }),
+    title: Type.String({ minLength: 1, maxLength: 4_096 }),
+    link: Type.String({ minLength: 1, maxLength: 8_192 }),
+    company: Type.Optional(Type.String({ maxLength: 4_096 })),
+    pageId: Id,
+  },
+  { additionalProperties: false },
+);
+
+export const BrowserJobBaselineSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-browser-job-baseline"),
+    formatVersion: Type.Literal(1),
+    workflowId: Id,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    updatedAt: Timestamp,
+    seenIds: Type.Array(Type.String({ minLength: 1, maxLength: 1_024 }), {
+      maxItems: 100_000,
+      uniqueItems: true,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const BrowserJobRunReportSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-browser-job-run-report"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    startedAt: Timestamp,
+    finishedAt: Timestamp,
+    status: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("cancelled")]),
+    baselineEstablished: Type.Boolean(),
+    baselineReset: Type.Boolean(),
+    itemCount: Type.Integer({ minimum: 0, maximum: 100_000 }),
+    newItems: Type.Array(ExtractedJobItemSchema, { maxItems: 100_000 }),
+    pagesCompleted: Type.Array(Id, { maxItems: 2 }),
+    failure: Type.Optional(
+      Type.Object(
+        {
+          code: Type.Union([
+            Type.Literal("browser-busy"),
+            Type.Literal("checkpoint-failed"),
+            Type.Literal("invalid-extraction"),
+            Type.Literal("duplicate-id"),
+            Type.Literal("output-cap"),
+            Type.Literal("timeout"),
+            Type.Literal("cancelled"),
+            Type.Literal("browser-error"),
+          ]),
+          pageId: Type.Optional(Id),
+          message: Type.String({ minLength: 1, maxLength: 1_024 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
 export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
 export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
@@ -395,5 +524,10 @@ export type RecordedInput = Static<typeof RecordedInputSchema>;
 export type RunRecord = Static<typeof RunRecordSchema>;
 export type RunSummary = Static<typeof RunSummarySchema>;
 export type PublishApproval = Static<typeof PublishApprovalSchema>;
+export type BrowserJobDefinition = Static<typeof BrowserJobDefinitionSchema>;
+export type SavedBrowserJob = Static<typeof SavedBrowserJobSchema>;
+export type BrowserJobBaseline = Static<typeof BrowserJobBaselineSchema>;
+export type BrowserJobRunReport = Static<typeof BrowserJobRunReportSchema>;
+export type ExtractedJobItem = Static<typeof ExtractedJobItemSchema>;
 
 export const WorkflowIdSchema = Id;

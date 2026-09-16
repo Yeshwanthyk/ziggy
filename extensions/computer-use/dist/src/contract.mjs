@@ -10,4 +10,5 @@ export const AGENT_TOOL_NAMES = new Set([
     "navigate_browser",
     "evaluate_browser",
     "launch_browser",
+    "close_browser",
 ]);

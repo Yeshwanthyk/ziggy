@@ -25,6 +25,12 @@ export interface NavigateBrowserParams extends StateTargetParams {
 
 export interface LaunchBrowserParams {
 	url?: string;
+	profile?: string;
+	mode?: "headed" | "background";
+}
+
+export interface CloseBrowserParams {
+	profile?: string;
 }
 
 export interface EvaluateBrowserParams {
@@ -101,4 +107,5 @@ export const AGENT_TOOL_NAMES = new Set([
 	"navigate_browser",
 	"evaluate_browser",
 	"launch_browser",
+	"close_browser",
 ]);

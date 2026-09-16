@@ -1,163 +1,279 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem adapter boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Boundary failures become Pi tool failures. */
-/* oxlint-disable ziggy-effect/no-json-parse -- JSON is decoded immediately through the complete TypeBox schema. */
-/* oxlint-disable ziggy/no-unknown-parameters -- Unknown JSON exists only at the decoder and serializer boundary. */
-/* oxlint-disable ziggy/no-runtime-typeof -- Node filesystem errors require a narrow code probe at this adapter boundary. */
-import { lstat, mkdir, open, readFile, readdir, rename } from "node:fs/promises";
-import { join } from "node:path";
-import type { Static, TSchema } from "typebox";
-import { Parse } from "typebox/value";
-import {
-  PublishApprovalSchema,
-  PublishedWorkflowSchema,
-  RunRecordSchema,
-  RunSummarySchema,
-  WorkflowDraftSchema,
-  type PublishApproval,
-  type PublishedWorkflow,
-  type RunRecord,
-  type RunSummary,
-  type WorkflowDraft,
-} from "./schema.ts";
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Invalid observed tool events fail the active evidence run closed. */
+/* oxlint-disable ziggy/no-unsafe-dictionary-type, ziggy/no-unknown-parameters -- Pi custom-tool inputs and result details are unknown at the event boundary and are immediately strictly decoded. */
+import { Type } from "typebox";
+import { Equal, Parse } from "typebox/value";
+import type { CompiledWorkflowExecution, WorkflowExecutionPlan } from "./execution-plan.ts";
+import type { RunRecord, RunSummary } from "./schema.ts";
 
-const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
-const runtimeRoot = (profilePath: string): string =>
-  join(profilePath, ".runtime", "computer-workflows");
+const RootQuerySchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    app: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    bundleId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    kind: Type.Optional(
+      Type.Union([
+        Type.Literal("window"),
+        Type.Literal("menu"),
+        Type.Literal("sheet"),
+        Type.Literal("popover"),
+        Type.Literal("dialog"),
+        Type.Literal("browser_page"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+const TargetSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  },
+  { additionalProperties: false },
+);
+const ConditionSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+const ActionSchema = Type.Union([
+  Type.Object(
+    {
+      action: Type.Literal("click"),
+      button: Type.Optional(
+        Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
+      ),
+      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("keypress"),
+      keys: Type.Array(Type.String({ pattern: "^[A-Za-z0-9+_-]{1,32}$" }), {
+        minItems: 1,
+        maxItems: 20,
+      }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("scroll"),
+      scrollX: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      scrollY: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
+const SegmentStepSchema = Type.Union([
+  Type.Object(
+    {
+      target: TargetSchema,
+      actions: Type.Array(ActionSchema, { minItems: 1, maxItems: 20 }),
+      expect: ConditionSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object({ assert: ConditionSchema }, { additionalProperties: false }),
+]);
+const SegmentInputSchema = Type.Object(
+  {
+    rootQuery: Type.Optional(RootQuerySchema),
+    steps: Type.Array(SegmentStepSchema, { minItems: 1, maxItems: 20 }),
+  },
+  { additionalProperties: false },
+);
+const SegmentResultDetailsSchema = Type.Object(
+  {
+    tool: Type.Literal("run_ui_segment"),
+    status: Type.Literal("completed"),
+    completed: Type.Array(
+      Type.Union([
+        Type.Object(
+          {
+            step: Type.Integer({ minimum: 1, maximum: 20 }),
+            stateId: Type.String({ minLength: 1, maxLength: 256 }),
+            ref: Type.String({ minLength: 1, maxLength: 128 }),
+            actionCount: Type.Integer({ minimum: 1, maximum: 20 }),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          {
+            step: Type.Integer({ minimum: 1, maximum: 20 }),
+            stateId: Type.String({ minLength: 1, maxLength: 256 }),
+            kind: Type.Literal("assert"),
+            actionCount: Type.Literal(0),
+          },
+          { additionalProperties: false },
+        ),
+      ]),
+      { maxItems: 20 },
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
-  return typeof cause.code === "string" ? cause.code : undefined;
-};
+type SegmentOutcome = "passed" | "failed";
 
-const assertDirectory = async (path: string): Promise<void> => {
+export interface ActiveWorkflowRun {
+  readonly record: RunRecord;
+  readonly plan: CompiledWorkflowExecution;
+  readonly pending: Map<string, number>;
+  readonly outcomes: Map<number, SegmentOutcome>;
+  nextSegment: number;
+  mismatch: boolean;
+  failure: "tool-error" | "invalid-result" | undefined;
+}
+
+export const startActiveRun = (
+  record: RunRecord,
+  plan: CompiledWorkflowExecution,
+): ActiveWorkflowRun => ({
+  record,
+  plan,
+  pending: new Map(),
+  outcomes: new Map(),
+  nextSegment: 0,
+  mismatch: false,
+  failure: undefined,
+});
+
+export const observeRunToolCall = (
+  run: ActiveWorkflowRun,
+  event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly input: Record<string, unknown>;
+  },
+): void => {
+  if (event.toolName !== "run_ui_segment") return;
+  const planned = run.plan.segments[run.nextSegment];
+  if (planned === undefined || run.pending.has(event.toolCallId)) {
+    run.mismatch = true;
+    return;
+  }
   try {
-    const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`Refusing non-directory workflow path: ${path}`);
+    const actual = Parse(SegmentInputSchema, event.input);
+    const expected = Parse(SegmentInputSchema, planned.input);
+    if (!Equal(actual, expected)) {
+      run.mismatch = true;
+      return;
     }
-  } catch (cause) {
-    if (errorCode(cause) !== "ENOENT") throw cause;
-    await mkdir(path, { recursive: true });
-    const stat = await lstat(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`Refusing non-directory workflow path: ${path}`);
-    }
+  } catch {
+    run.mismatch = true;
+    return;
   }
+  run.pending.set(event.toolCallId, run.nextSegment);
+  run.nextSegment += 1;
 };
 
-const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
-  const handle = await open(path, "wx", 0o600);
+const validCompletedSteps = (details: unknown, planned: WorkflowExecutionPlan): boolean => {
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
+    const decoded = Parse(SegmentResultDetailsSchema, details);
+    return (
+      decoded.completed.length === planned.input.steps.length &&
+      decoded.completed.every((entry, index) => entry.step === index + 1)
+    );
+  } catch {
+    return false;
   }
 };
 
-const replaceJsonAtomically = async (path: string, value: unknown): Promise<void> => {
-  const temporary = `${path}.tmp-${crypto.randomUUID()}`;
-  await writeExclusiveJson(temporary, value);
-  await rename(temporary, path);
-};
-
-const readDecoded = async <const Schema extends TSchema>(
-  path: string,
-  schema: Schema,
-): Promise<Static<Schema>> => Parse(schema, JSON.parse(await readFile(path, "utf8")));
-
-export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "drafts");
-  await assertDirectory(root);
-  const path = join(root, `${draft.id}.json`);
-  await writeExclusiveJson(path, draft);
-  return path;
-};
-
-export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
-  readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
-
-export const publishWorkflow = async (
-  profilePath: string,
-  published: PublishedWorkflow,
-): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
-  const root = durableRoot(profilePath);
-  await assertDirectory(root);
-  const workflowRoot = join(root, published.workflow.id);
-  await assertDirectory(workflowRoot);
-  const revisionsRoot = join(workflowRoot, "revisions");
-  await assertDirectory(revisionsRoot);
-  const revisionPath = join(revisionsRoot, `${published.revision}.json`);
-  await writeExclusiveJson(revisionPath, published);
-  const manifestPath = join(workflowRoot, "workflow.json");
-  await replaceJsonAtomically(manifestPath, published);
-  return { manifestPath, revisionPath };
-};
-
-export const readWorkflow = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<PublishedWorkflow> =>
-  readDecoded(join(durableRoot(profilePath), workflowId, "workflow.json"), PublishedWorkflowSchema);
-
-export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
-  const root = durableRoot(profilePath);
-  let entries: string[];
-  try {
-    entries = await readdir(root);
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return [];
-    throw cause;
+export const observeRunToolResult = (
+  run: ActiveWorkflowRun,
+  event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly isError: boolean;
+    readonly details: unknown;
+  },
+): void => {
+  if (event.toolName !== "run_ui_segment") return;
+  const segmentIndex = run.pending.get(event.toolCallId);
+  if (segmentIndex === undefined) return;
+  run.pending.delete(event.toolCallId);
+  const planned = run.plan.segments[segmentIndex];
+  if (planned === undefined) {
+    run.mismatch = true;
+    return;
   }
-  const workflows: PublishedWorkflow[] = [];
-  for (const entry of entries.slice(0, 500)) {
-    try {
-      workflows.push(await readWorkflow(profilePath, entry));
-    } catch {
-      // Malformed entries are excluded from the index; workflow_show reports their exact failure.
-    }
+  if (event.isError) {
+    run.outcomes.set(segmentIndex, "failed");
+    run.failure ??= "tool-error";
+    return;
   }
-  return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+  if (!validCompletedSteps(event.details, planned)) {
+    run.outcomes.set(segmentIndex, "failed");
+    run.failure ??= "invalid-result";
+    return;
+  }
+  run.outcomes.set(segmentIndex, "passed");
 };
 
-export const writeRunRecord = async (profilePath: string, run: RunRecord): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "runs");
-  await assertDirectory(root);
-  const path = join(root, `${run.id}.json`);
-  await writeExclusiveJson(path, Parse(RunRecordSchema, run));
-  return path;
+const expectedCondition = (step: WorkflowExecutionPlan["input"]["steps"][number]) =>
+  "assert" in step ? step.assert : step.expect;
+
+export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSummary => {
+  const checks = run.plan.segments.flatMap((segment, segmentIndex) => {
+    const segmentOutcome = run.outcomes.get(segmentIndex);
+    return segment.input.steps.map((step, stepIndex) => ({
+      sourceStep: segment.sourceSteps[stepIndex] ?? 1,
+      expected: expectedCondition(step),
+      outcome:
+        segmentOutcome === "passed"
+          ? ("passed" as const)
+          : segmentOutcome === "failed"
+            ? ("failed" as const)
+            : ("not-run" as const),
+    }));
+  });
+  const passed = [...run.outcomes.values()].filter((outcome) => outcome === "passed").length;
+  const failed = [...run.outcomes.values()].filter((outcome) => outcome === "failed").length;
+  let overall: RunSummary["overall"];
+  let stopReason: RunSummary["stopReason"];
+  if (run.failure !== undefined) {
+    overall = "failed";
+    stopReason = run.failure;
+  } else if (run.mismatch) {
+    overall = "incomplete";
+    stopReason = "input-mismatch";
+  } else if (run.plan.manual.length > 0) {
+    overall = "incomplete";
+    stopReason = "manual-steps";
+  } else if (
+    run.nextSegment < run.plan.segments.length ||
+    run.pending.size > 0 ||
+    run.outcomes.size < run.plan.segments.length
+  ) {
+    overall = "incomplete";
+    stopReason = "unfinished-segments";
+  } else {
+    overall = "passed";
+    stopReason = "completed";
+  }
+  return {
+    format: "ziggy-computer-workflow-run-summary",
+    formatVersion: 1,
+    id: run.record.id,
+    workflowId: run.record.workflowId,
+    revision: run.record.revision,
+    sessionId: run.record.sessionId,
+    preparedAt: run.record.preparedAt,
+    finishedAt: now.toISOString(),
+    overall,
+    checks,
+    segments: {
+      planned: run.plan.segments.length,
+      matched: run.nextSegment,
+      passed,
+      failed,
+    },
+    stopReason,
+  };
 };
-
-export const writeRunSummary = async (
-  profilePath: string,
-  summary: RunSummary,
-): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "run-summaries");
-  await assertDirectory(root);
-  const path = join(root, `${summary.id}.json`);
-  await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
-  return path;
-};
-
-export const writePublishApproval = async (
-  profilePath: string,
-  approval: PublishApproval,
-): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "publish-approvals");
-  await assertDirectory(root);
-  const path = join(root, `${approval.id}.json`);
-  await writeExclusiveJson(path, approval);
-  return path;
-};
-
-export const readPublishApproval = async (
-  profilePath: string,
-  approvalId: string,
-): Promise<PublishApproval> =>
-  readDecoded(
-    join(runtimeRoot(profilePath), "publish-approvals", `${approvalId}.json`),
-    PublishApprovalSchema,
-  );
-
-export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
-  Parse(PublishedWorkflowSchema, value);

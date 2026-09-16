@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +24,7 @@ const LOOK_TIMEOUT_MS = 33_000;
 const ACTION_SETTLE_MS = 280;
 const BROWSER_CONTEXT_PREFIX = "browser:";
 const MANAGED_BROWSER_READY_TIMEOUT_MS = 15_000;
+const EVALUATE_VALUE_MAX_BYTES = 256 * 1024;
 const AUTO_IMAGE_MAX_DIMENSION = 900;
 const EXPLICIT_IMAGE_MAX_DIMENSION = 1_600;
 const BROWSER_TRANSACTION_ACTIONS = new Set(["press", "click", "setText", "typeText", "keypress", "scroll", "drag", "moveMouse"]);
@@ -37,6 +38,72 @@ const runtimeState = {
 };
 const savedStates = new SavedStates();
 let resourceScheduler = new ResourceScheduler();
+let managedBrowserLifecycle = Promise.resolve();
+let activeHumanToolOperations = 0;
+let browserLeasePending = false;
+const humanToolDrainWaiters = new Set();
+function browserBusyError() {
+    return new Error("Computer-use is busy with an exclusive browser workflow.");
+}
+function enterHumanToolOperation() {
+    if (browserLeasePending || runtimeState.browserLease)
+        throw browserBusyError();
+    activeHumanToolOperations += 1;
+    let released = false;
+    return () => {
+        if (released)
+            return;
+        released = true;
+        activeHumanToolOperations -= 1;
+        if (activeHumanToolOperations === 0) {
+            for (const resolve of humanToolDrainWaiters)
+                resolve();
+            humanToolDrainWaiters.clear();
+        }
+    };
+}
+async function waitForHumanToolsToDrain(signal) {
+    while (activeHumanToolOperations > 0) {
+        throwIfAborted(signal);
+        await new Promise((resolve, reject) => {
+            const onAbort = () => {
+                humanToolDrainWaiters.delete(onDrain);
+                reject(new Error("Browser workflow acquisition was aborted."));
+            };
+            const onDrain = () => {
+                signal?.removeEventListener("abort", onAbort);
+                resolve();
+            };
+            humanToolDrainWaiters.add(onDrain);
+            signal?.addEventListener("abort", onAbort, { once: true });
+        });
+    }
+}
+async function beginBrowserLeaseAcquisition(signal) {
+    if (browserLeasePending || runtimeState.browserLease)
+        throw browserBusyError();
+    browserLeasePending = true;
+    try {
+        await waitForHumanToolsToDrain(signal);
+        throwIfAborted(signal);
+    }
+    catch (error) {
+        browserLeasePending = false;
+        throw error;
+    }
+}
+async function withManagedBrowserLifecycle(work) {
+    const previous = managedBrowserLifecycle;
+    let release;
+    managedBrowserLifecycle = new Promise((resolve) => { release = resolve; });
+    await previous.catch(() => undefined);
+    try {
+        return await work();
+    }
+    finally {
+        release();
+    }
+}
 function operationState() {
     return savedStates.current();
 }
@@ -55,20 +122,7 @@ export async function shutdownComputerUseSession() {
     await resourceScheduler.close();
     resourceScheduler = new ResourceScheduler();
     disconnectCdp();
-    const managedBrowser = runtimeState.managedBrowser;
-    runtimeState.managedBrowser = undefined;
-    if (managedBrowser) {
-        managedBrowser.kill("SIGTERM");
-        managedBrowser.unref();
-    }
-    if (runtimeState.managedBrowserCdpPort && process.env.PI_COMPUTER_USE_CDP_PORT === runtimeState.managedBrowserCdpPort) {
-        if (runtimeState.previousCdpPort === undefined)
-            delete process.env.PI_COMPUTER_USE_CDP_PORT;
-        else
-            process.env.PI_COMPUTER_USE_CDP_PORT = runtimeState.previousCdpPort;
-    }
-    runtimeState.managedBrowserCdpPort = undefined;
-    runtimeState.previousCdpPort = undefined;
+    await withManagedBrowserLifecycle(async () => { await closeManagedBrowser(); });
     savedStates.clear();
     clearStoredOutputs();
     runtimeState.windowRefs.clear();
@@ -943,7 +997,7 @@ async function performListWindows(params, signal) {
         kind: rawParams.kind,
     };
     const config = getComputerUseConfig();
-    const desktopForest = await windowDetailsForFind(query, config, signal);
+    const desktopForest = query.kind === "browser_page" ? [] : await windowDetailsForFind(query, config, signal);
     const includeBrowserPages = !query.pid && !query.bundleId && (!query.app || normalizeText(query.app) === "browser") && config.browser_use;
     const browserForest = !includeBrowserPages ? [] : (await listCdpPageContexts().catch(() => []))
         .map((page) => ({
@@ -1319,7 +1373,7 @@ async function performSearchUi(params, signal) {
     let matches = ranked.matches;
     let escalatedOCR = false;
     const look = state.currentLook;
-    if (shouldEscalateSearchOCR(matches, text) && look && look.readText?.requested !== "never" && !look.readText?.executed && state.lastSearchOcrEscalatedLookId !== look.lookId) {
+    if (!state.contextId && shouldEscalateSearchOCR(matches, text) && look && look.readText?.requested !== "never" && !look.readText?.executed && state.lastSearchOcrEscalatedLookId !== look.lookId) {
         state.lastSearchOcrEscalatedLookId = look.lookId;
         const currentTarget = await ensureTargetWindowId(await resolveCurrentTarget(signal), signal);
         // captureCurrentTarget adopts the new look/outline/capture into
@@ -1357,7 +1411,7 @@ async function performExpandUi(params, signal) {
     const depth = Math.max(1, Math.min(8, Math.trunc(toFiniteNumber(params.depth, 3))));
     const regionKey = noteRegionKeyForRef(outline, ref);
     const regionChanged = Boolean(regionKey && state.currentNote?.regions.some((region) => region.key === regionKey && region.status === "changed"));
-    if (target.truncated || regionChanged) {
+    if (!state.contextId && (target.truncated || regionChanged)) {
         const currentTarget = await ensureTargetWindowId(await resolveCurrentTarget(signal), signal);
         const targetWireRef = wireRefForNode(target);
         if (!state.resourceKey || state.epoch === undefined)
@@ -1830,9 +1884,136 @@ async function waitForCdpPort(port, signal) {
     }
     throw new Error(`Managed browser did not expose CDP on port ${port} within ${MANAGED_BROWSER_READY_TIMEOUT_MS}ms.`);
 }
+const PROFILE_SLUG = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
+const MANAGED_BROWSER_EXIT_TIMEOUT_MS = 15_000;
+function validateProfileName(value, field) {
+    const profile = trimOrUndefined(typeof value === "string" ? value : undefined);
+    if (!profile)
+        return undefined;
+    if (!PROFILE_SLUG.test(profile)) {
+        throw new Error(`${field} must be a lowercase slug containing only letters, numbers, '_' or '-' (maximum 64 characters).`);
+    }
+    return profile;
+}
+async function acquireNamedProfile(cwd, profile) {
+    const browsersRoot = path.join(path.resolve(cwd), ".runtime", "computer-use", "browsers");
+    const locksRoot = path.join(browsersRoot, ".locks");
+    const profileDir = path.join(browsersRoot, profile);
+    const lockDir = path.join(locksRoot, profile);
+    await mkdir(profileDir, { recursive: true, mode: 0o700 });
+    await mkdir(locksRoot, { recursive: true, mode: 0o700 });
+    await Promise.all([chmod(profileDir, 0o700), chmod(locksRoot, 0o700)]);
+    for (;;) {
+        try {
+            await mkdir(lockDir, { mode: 0o700 });
+            const token = randomUUID();
+            try {
+                await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: process.pid, startedAt: Date.now(), token }), { mode: 0o600 });
+            }
+            catch (error) {
+                await rm(lockDir, { recursive: true, force: true });
+                throw error;
+            }
+            let released = false;
+            return {
+                profileDir,
+                release: async () => {
+                    if (released)
+                        return;
+                    released = true;
+                    let currentToken;
+                    try {
+                        const owner = JSON.parse(await readFile(path.join(lockDir, "owner.json"), "utf8"));
+                        currentToken = owner.token;
+                    }
+                    catch {
+                        return;
+                    }
+                    if (currentToken !== token)
+                        return;
+                    await rm(lockDir, { recursive: true, force: true });
+                },
+            };
+        }
+        catch (error) {
+            if (error.code !== "EEXIST")
+                throw error;
+            let ownerPid;
+            try {
+                const owner = JSON.parse(await readFile(path.join(lockDir, "owner.json"), "utf8"));
+                ownerPid = typeof owner.pid === "number" && Number.isInteger(owner.pid) ? owner.pid : undefined;
+            }
+            catch {
+                // An incomplete owner file may belong to a concurrently starting process.
+            }
+            throw new Error(`Browser profile '${profile}' is busy or has a stale ownership lock${ownerPid ? ` from pid ${ownerPid}` : ""}. The lock is preserved to avoid overlapping profile writers.`);
+        }
+    }
+}
+function childExit(child) {
+    if (child.exitCode !== null || child.signalCode !== null)
+        return Promise.resolve();
+    return new Promise((resolve) => {
+        child.once("exit", () => resolve());
+        child.once("error", () => {
+            if (child.pid === undefined)
+                resolve();
+        });
+    });
+}
+async function finalizeManagedBrowser(managed) {
+    managed.finalization ??= (async () => {
+        const lease = runtimeState.browserLease;
+        if (runtimeState.managedBrowser === managed) {
+            runtimeState.managedBrowser = undefined;
+            if (process.env.PI_COMPUTER_USE_CDP_PORT === managed.port) {
+                if (runtimeState.previousCdpPort === undefined)
+                    delete process.env.PI_COMPUTER_USE_CDP_PORT;
+                else
+                    process.env.PI_COMPUTER_USE_CDP_PORT = runtimeState.previousCdpPort;
+            }
+            runtimeState.previousCdpPort = undefined;
+        }
+        if (lease?.managedBrowser === managed) {
+            runtimeState.browserLease = undefined;
+            runtimeState.lastReleasedLeaseToken = lease.token;
+        }
+        await managed.releaseLock?.();
+    })();
+    await managed.finalization;
+}
+async function closeManagedBrowser(profile) {
+    const managed = runtimeState.managedBrowser;
+    if (!managed)
+        return false;
+    if (profile && managed.profile !== profile) {
+        throw new Error(`Managed browser profile '${managed.profile ?? "temporary"}' is active; refusing to close requested profile '${profile}'.`);
+    }
+    disconnectCdp();
+    if (managed.process.exitCode === null && managed.process.signalCode === null)
+        managed.process.kill("SIGTERM");
+    let timer;
+    try {
+        await Promise.race([
+            managed.exit,
+            new Promise((resolve) => { timer = setTimeout(resolve, MANAGED_BROWSER_EXIT_TIMEOUT_MS); }),
+        ]);
+        if (managed.process.exitCode === null && managed.process.signalCode === null) {
+            managed.process.kill("SIGKILL");
+            await managed.exit;
+        }
+    }
+    finally {
+        if (timer)
+            clearTimeout(timer);
+        await finalizeManagedBrowser(managed);
+    }
+    return true;
+}
 // Side effects: starts a Pi-managed browser process, replaces any previous managed browser,
 // and sets PI_COMPUTER_USE_CDP_PORT for subsequent CDP context discovery.
-async function performLaunchBrowser(params, signal) {
+async function launchManagedBrowser(params, signal, ctx, replaceExisting = true) {
+    throwIfAborted(signal);
     const browser = getComputerUseConfig().managed_browser;
     const executable = await managedBrowserExecutable(browser);
     const port = await freeTcpPort();
@@ -1840,48 +2021,95 @@ async function performLaunchBrowser(params, signal) {
     if (requestedUrl && !/^https?:\/\//i.test(requestedUrl))
         throw new Error("launch_browser.url must be an absolute HTTP(S) URL.");
     const url = requestedUrl ?? "about:blank";
-    const profileDir = path.join(os.tmpdir(), `pi-${browser}-cdp-${port}`);
+    const profile = validateProfileName(params.profile, "launch_browser.profile");
+    const mode = params.mode ?? "headed";
+    if (mode !== "headed" && mode !== "background")
+        throw new Error("launch_browser.mode must be 'headed' or 'background'.");
+    if (replaceExisting)
+        await closeManagedBrowser();
+    else if (runtimeState.managedBrowser)
+        throw new Error("A managed browser is already active; the exclusive browser workflow cannot replace it.");
+    throwIfAborted(signal);
+    const namedProfile = profile ? await acquireNamedProfile(ctx.cwd, profile) : undefined;
+    if (signal?.aborted) {
+        await namedProfile?.release();
+        throwIfAborted(signal);
+    }
+    const profileDir = namedProfile?.profileDir ?? path.join(os.tmpdir(), `pi-${browser}-cdp-${port}`);
     disconnectCdp();
-    runtimeState.managedBrowser?.kill("SIGTERM");
     const args = [
         `--remote-debugging-port=${port}`,
         `--user-data-dir=${profileDir}`,
         "--no-first-run",
         "--no-default-browser-check",
+        ...(mode === "background" ? ["--headless=new"] : []),
         url,
     ];
-    if (runtimeState.previousCdpPort === undefined && runtimeState.managedBrowserCdpPort === undefined) {
+    if (runtimeState.previousCdpPort === undefined && runtimeState.managedBrowser === undefined) {
         runtimeState.previousCdpPort = process.env.PI_COMPUTER_USE_CDP_PORT;
     }
-    const managedBrowser = spawn(executable, args, { stdio: "ignore", detached: false });
-    managedBrowser.unref();
+    let child;
+    try {
+        child = spawn(executable, args, { stdio: "ignore", detached: false });
+    }
+    catch (error) {
+        await namedProfile?.release();
+        throw error;
+    }
+    child.unref();
+    const managedBrowser = {
+        process: child,
+        port: String(port),
+        profile,
+        mode,
+        exit: childExit(child),
+        releaseLock: namedProfile?.release,
+    };
     runtimeState.managedBrowser = managedBrowser;
-    runtimeState.managedBrowserCdpPort = String(port);
+    void managedBrowser.exit.then(async () => await finalizeManagedBrowser(managedBrowser)).catch(() => undefined);
     process.env.PI_COMPUTER_USE_CDP_PORT = String(port);
     try {
         await waitForCdpPort(port, signal);
+        throwIfAborted(signal);
     }
     catch (error) {
         if (runtimeState.managedBrowser === managedBrowser) {
-            runtimeState.managedBrowser = undefined;
-            managedBrowser.kill("SIGTERM");
-            if (runtimeState.previousCdpPort === undefined)
-                delete process.env.PI_COMPUTER_USE_CDP_PORT;
-            else
-                process.env.PI_COMPUTER_USE_CDP_PORT = runtimeState.previousCdpPort;
-            runtimeState.managedBrowserCdpPort = undefined;
-            runtimeState.previousCdpPort = undefined;
+            await closeManagedBrowser();
         }
         throw error;
     }
-    const page = (await listCdpPageContexts())[0];
-    if (!page)
-        throw new Error("Managed browser launched without a CDP page context.");
-    const resourceKey = `cdp:${page.targetId}`;
-    const scheduled = await resourceScheduler.read(resourceKey, async () => await cdpSnapshotForContext(page.contextId));
-    if (!scheduled.value)
-        throw new Error("Managed browser page could not be observed after launch.");
-    return browserObservationResult(scheduled.value, resourceKey, scheduled.epoch, "launch_browser");
+    try {
+        const page = (await listCdpPageContexts())[0];
+        if (!page)
+            throw new Error("Managed browser launched without a CDP page context.");
+        const resourceKey = `cdp:${page.targetId}`;
+        const scheduled = await resourceScheduler.read(resourceKey, async () => await cdpSnapshotForContext(page.contextId));
+        throwIfAborted(signal);
+        if (!scheduled.value)
+            throw new Error("Managed browser page could not be observed after launch.");
+        return browserObservationResult(scheduled.value, resourceKey, scheduled.epoch, "launch_browser");
+    }
+    catch (error) {
+        await closeManagedBrowser();
+        throw error;
+    }
+}
+async function performLaunchBrowser(params, signal, ctx) {
+    return await withManagedBrowserLifecycle(async () => {
+        throwIfAborted(signal);
+        return await launchManagedBrowser(params, signal, ctx);
+    });
+}
+async function performCloseBrowser(params, signal) {
+    const profile = validateProfileName(params.profile, "close_browser.profile");
+    const closed = await withManagedBrowserLifecycle(async () => {
+        throwIfAborted(signal);
+        return await closeManagedBrowser(profile);
+    });
+    return {
+        content: [{ type: "text", text: closed ? `Closed managed browser${profile ? ` profile '${profile}'` : ""}.` : "No managed browser is running." }],
+        details: { tool: "close_browser", status: closed ? "closed" : "not_running", profile },
+    };
 }
 async function performNavigateBrowser(params) {
     const contextId = browserContextForOperation();
@@ -1914,6 +2142,11 @@ async function performEvaluateBrowser(params) {
         const result = await cdpEvaluateForContext(contextId, expression);
         if (!result)
             throw new Error(`Browser context '${contextId}' is no longer available. Observe it again.`);
+        const serializedValue = JSON.stringify(result.value);
+        const valueBytes = serializedValue === undefined ? 0 : new TextEncoder().encode(serializedValue).byteLength;
+        if (valueBytes > EVALUATE_VALUE_MAX_BYTES) {
+            throw new Error(`Browser evaluation value is ${valueBytes} bytes; return a smaller selection within ${EVALUATE_VALUE_MAX_BYTES} bytes.`);
+        }
         const successor = await refreshBrowserSnapshot(contextId, "evaluate_browser", { stateId: baseSnapshot.snapshotId, outline: baseSnapshot.outline });
         const details = {
             tool: "evaluate_browser",
@@ -1923,47 +2156,269 @@ async function performEvaluateBrowser(params) {
             changes: successor.details.changes,
             outline: successor.details.outline,
             renderedOutline: successor.details.renderedOutline,
+            value: result.value,
+            valueBytes,
         };
-        return { content: [...successor.content, { type: "text", text: `Evaluation value: ${JSON.stringify(result.value)}` }], details };
+        return { content: [...successor.content, { type: "text", text: `Evaluation value: ${serializedValue}` }], details };
     });
 }
-async function executeTool(ctx, params, signal, run) {
-    const outputRef = trimOrUndefined(params?.ref)?.startsWith("@o") === true;
-    const requestedStateId = outputRef ? undefined : trimOrUndefined(params?.stateId);
-    const stateRecord = requestedStateId ? savedStates.get(requestedStateId) : undefined;
-    if (requestedStateId && !stateRecord) {
-        throw new Error(`State '${requestedStateId}' is unavailable or was evicted. Observe the root again.`);
+export const COMPUTER_USE_BROWSER_BRIDGE_CHANNEL = "ziggy:computer-use:browser-bridge:v1";
+function currentLease(token) {
+    if (typeof token !== "string" || !token || runtimeState.browserLease?.token !== token) {
+        throw new Error("The exclusive browser workflow ownership token is invalid or no longer active.");
     }
-    const operation = savedStates.hydrate(stateRecord);
-    return await savedStates.operations.run(operation, async () => {
-        await resourceScheduler.read("session-lifecycle", async () => await ensureReady(ctx, signal));
+    return runtimeState.browserLease;
+}
+async function withLeaseOperation(token, signal, work) {
+    const lease = currentLease(token);
+    const previous = lease.operationTail;
+    let release;
+    lease.operationTail = new Promise((resolve) => { release = resolve; });
+    await previous.catch(() => undefined);
+    try {
         throwIfAborted(signal);
-        const result = await run();
-        persistOperation(operation);
-        return result;
+        return await work(currentLease(token));
+    }
+    finally {
+        release();
+    }
+}
+async function acquireBrowserLease(request) {
+    const profile = validateProfileName(request.profile, "browser workflow profile");
+    if (!profile)
+        throw new Error("Browser workflow acquisition requires a named profile.");
+    if (request.mode !== "background")
+        throw new Error("Browser workflow acquisition requires mode 'background'.");
+    const url = trimOrUndefined(request.url);
+    if (!url || !/^https?:\/\//i.test(url))
+        throw new Error("Browser workflow acquisition requires an absolute HTTP(S) URL.");
+    await beginBrowserLeaseAcquisition(request.signal);
+    const token = randomUUID();
+    const lease = { token, profile, operationTail: Promise.resolve() };
+    try {
+        const result = await executeTool(request.ctx, { profile, mode: "background", url }, request.signal, async () => await withManagedBrowserLifecycle(async () => {
+            throwIfAborted(request.signal);
+            if (runtimeState.managedBrowser)
+                throw new Error("A managed browser is already active; the exclusive browser workflow cannot replace it.");
+            runtimeState.browserLease = lease;
+            try {
+                const launched = await launchManagedBrowser({ profile, mode: "background", url }, request.signal, request.ctx, false);
+                lease.stateId = launched.details.stateId;
+                lease.managedBrowser = runtimeState.managedBrowser;
+                return launched;
+            }
+            catch (error) {
+                if (runtimeState.browserLease?.token === token)
+                    runtimeState.browserLease = undefined;
+                throw error;
+            }
+        }), { browserOnly: true }, { acquiringLease: true });
+        throwIfAborted(request.signal);
+        return { ok: true, version: 1, requestId: request.requestId, operation: "acquire", token, stateId: result.details.stateId };
+    }
+    catch (error) {
+        if (runtimeState.browserLease?.token === token) {
+            try {
+                await releaseBrowserLease(token);
+            }
+            catch { /* Preserve the original acquisition failure. */ }
+        }
+        throw error;
+    }
+    finally {
+        browserLeasePending = false;
+    }
+}
+async function navigateBrowserLease(request) {
+    if (typeof request.token !== "string")
+        throw new Error("Browser workflow navigate requires an ownership token.");
+    const url = trimOrUndefined(request.url);
+    if (!url)
+        throw new Error("Browser workflow navigate requires a URL.");
+    return await withLeaseOperation(request.token, request.signal, async (lease) => {
+        if (!lease.stateId)
+            throw new Error("Browser workflow has no current browser state.");
+        const result = await executeTool(request.ctx, { stateId: lease.stateId, url }, request.signal, async () => await performNavigateBrowser({ stateId: lease.stateId, url }), { browserHydrated: true }, { leaseToken: lease.token });
+        lease.stateId = result.details.stateId;
+        return { ok: true, version: 1, requestId: request.requestId, operation: "navigate", stateId: lease.stateId };
     });
 }
-function makeToolExecutor(tool, perform) {
+async function waitBrowserLease(request) {
+    if (typeof request.token !== "string")
+        throw new Error("Browser workflow wait requires an ownership token.");
+    return await withLeaseOperation(request.token, request.signal, async (lease) => {
+        if (!lease.stateId)
+            throw new Error("Browser workflow has no current browser state.");
+        const params = {
+            stateId: lease.stateId,
+            text: trimOrUndefined(request.text),
+            role: trimOrUndefined(request.role),
+            until: "present",
+            timeoutMs: request.timeoutMs,
+        };
+        if (!params.text && !params.role)
+            throw new Error("Browser workflow wait requires text or role.");
+        const result = await executeTool(request.ctx, params, request.signal, async () => await performWaitFor(params, request.signal), { browserHydrated: true }, { leaseToken: lease.token });
+        lease.stateId = result.details.stateId;
+        return {
+            ok: true,
+            version: 1,
+            requestId: request.requestId,
+            operation: "wait",
+            stateId: lease.stateId,
+            found: result.details.found,
+            ...(result.details.timedOut === undefined ? {} : { timedOut: result.details.timedOut }),
+        };
+    });
+}
+async function evaluateBrowserLease(request) {
+    if (typeof request.token !== "string")
+        throw new Error("Browser workflow evaluate requires an ownership token.");
+    const expression = typeof request.expression === "string" ? request.expression : "";
+    if (!expression.trim())
+        throw new Error("Browser workflow evaluate requires a non-empty expression.");
+    return await withLeaseOperation(request.token, request.signal, async (lease) => {
+        if (!lease.stateId)
+            throw new Error("Browser workflow has no current browser state.");
+        const params = { stateId: lease.stateId, expression };
+        const result = await executeTool(request.ctx, params, request.signal, async () => await performEvaluateBrowser(params), { browserHydrated: true }, { leaseToken: lease.token });
+        lease.stateId = result.details.stateId;
+        return { ok: true, version: 1, requestId: request.requestId, operation: "evaluate", stateId: lease.stateId, value: result.details.value };
+    });
+}
+async function releaseBrowserLease(token) {
+    if (!runtimeState.browserLease) {
+        if (runtimeState.lastReleasedLeaseToken === token)
+            return false;
+        throw new Error("The exclusive browser workflow ownership token is invalid or no longer active.");
+    }
+    return await withLeaseOperation(token, undefined, async (lease) => await withManagedBrowserLifecycle(async () => {
+        if (runtimeState.managedBrowser && runtimeState.managedBrowser !== lease.managedBrowser) {
+            throw new Error("The managed browser is not owned by this exclusive browser workflow.");
+        }
+        if (runtimeState.managedBrowser === lease.managedBrowser)
+            await closeManagedBrowser(lease.profile);
+        if (runtimeState.browserLease?.token === token)
+            runtimeState.browserLease = undefined;
+        runtimeState.lastReleasedLeaseToken = token;
+        return true;
+    }));
+}
+async function dispatchBrowserBridgeRequest(request) {
+    if (request.operation === "acquire")
+        return await acquireBrowserLease(request);
+    if (request.operation === "navigate")
+        return await navigateBrowserLease(request);
+    if (request.operation === "wait")
+        return await waitBrowserLease(request);
+    if (request.operation === "evaluate")
+        return await evaluateBrowserLease(request);
+    if (request.operation === "release") {
+        if (typeof request.token !== "string")
+            throw new Error("Browser workflow release requires an ownership token.");
+        return { ok: true, version: 1, requestId: request.requestId, operation: "release", released: await releaseBrowserLease(request.token) };
+    }
+    throw new Error("Unsupported browser workflow operation.");
+}
+function browserBridgeFailure(request, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = request.signal?.aborted || /aborted/i.test(message)
+        ? "aborted"
+        : /busy|already active|cannot replace/i.test(message)
+            ? "browser-busy"
+            : /ownership token|not owned/i.test(message)
+                ? "invalid-owner"
+                : /requires|unsupported|must be/i.test(message)
+                    ? "invalid-request"
+                    : "browser-error";
+    return { ok: false, version: 1, requestId: request.requestId, operation: request.operation, error: { code, message: message.slice(0, 1_024) } };
+}
+export function handleBrowserBridgeRequest(data) {
+    if (!data || typeof data !== "object")
+        return;
+    const request = data;
+    if (typeof request.reply !== "function")
+        return;
+    const requestId = typeof request.requestId === "string" ? request.requestId : "invalid";
+    const operation = request.operation;
+    if (request.version !== 1 || !operation || !["acquire", "navigate", "wait", "evaluate", "release"].includes(operation) || !request.ctx || typeof request.ctx.cwd !== "string") {
+        request.reply({ ok: false, version: 1, requestId, operation: operation ?? "acquire", error: { code: "invalid-request", message: "Invalid computer-use browser bridge request." } });
+        return;
+    }
+    request.accept?.();
+    let replied = false;
+    const reply = (response) => {
+        if (replied)
+            return;
+        replied = true;
+        request.reply(response);
+    };
+    void dispatchBrowserBridgeRequest(request)
+        .then(reply)
+        .catch(async (error) => {
+        if (typeof request.token === "string" && request.signal?.aborted && request.operation !== "release") {
+            try {
+                await releaseBrowserLease(request.token);
+            }
+            catch { /* ownership may already be gone */ }
+        }
+        reply(browserBridgeFailure(request, error));
+    });
+}
+async function executeTool(ctx, params, signal, run, readiness = {}, access = {}) {
+    const leaveHumanOperation = access.leaseToken || access.acquiringLease ? undefined : enterHumanToolOperation();
+    try {
+        if (access.leaseToken && runtimeState.browserLease?.token !== access.leaseToken) {
+            throw new Error("The exclusive browser workflow ownership token is no longer valid.");
+        }
+        const outputRef = trimOrUndefined(params?.ref)?.startsWith("@o") === true;
+        const requestedStateId = outputRef ? undefined : trimOrUndefined(params?.stateId);
+        const stateRecord = requestedStateId ? savedStates.get(requestedStateId) : undefined;
+        if (requestedStateId && !stateRecord) {
+            throw new Error(`State '${requestedStateId}' is unavailable or was evicted. Observe the root again.`);
+        }
+        const operation = savedStates.hydrate(stateRecord);
+        return await savedStates.operations.run(operation, async () => {
+            if (readiness.browserOnly || (readiness.browserHydrated && operation.contextId)) {
+                loadComputerUseConfig(ctx.cwd);
+                throwIfAborted(signal);
+            }
+            else {
+                await resourceScheduler.read("session-lifecycle", async () => await ensureReady(ctx, signal));
+            }
+            throwIfAborted(signal);
+            const result = await run();
+            persistOperation(operation);
+            return result;
+        });
+    }
+    finally {
+        leaveHumanOperation?.();
+    }
+}
+function makeToolExecutor(tool, perform, readiness = {}) {
     return async (_toolCallId, params, signal, _onUpdate, ctx) => {
         try {
-            return applyOutputEnvelope(tool, await executeTool(ctx, params, signal, () => perform(params, signal)));
+            const browserOnly = typeof readiness.browserOnly === "function" ? readiness.browserOnly(params) : readiness.browserOnly;
+            return applyOutputEnvelope(tool, await executeTool(ctx, params, signal, () => perform(params, signal, ctx), { browserOnly, browserHydrated: readiness.browserHydrated }));
         }
         catch (error) {
             throw boundToolError(tool, error);
         }
     };
 }
-export const executeFind = makeToolExecutor("find_roots", performListWindows);
-export const executeReadText = makeToolExecutor("read_text", performReadText);
-export const executeWaitFor = makeToolExecutor("wait_for", performWaitFor);
-export const executeObserve = makeToolExecutor("observe_ui", performObserve);
-export const executeSearchUi = makeToolExecutor("search_ui", performSearchUi);
-export const executeExpandUi = makeToolExecutor("expand_ui", performExpandUi);
-export const executeInspectUi = makeToolExecutor("inspect_ui", performInspectUi);
-export const executeAct = makeToolExecutor("act_ui", performAct);
-export const executeNavigateBrowser = makeToolExecutor("navigate_browser", performNavigateBrowser);
-export const executeEvaluateBrowser = makeToolExecutor("evaluate_browser", performEvaluateBrowser);
-export const executeLaunchBrowser = makeToolExecutor("launch_browser", performLaunchBrowser);
+export const executeFind = makeToolExecutor("find_roots", performListWindows, { browserOnly: (params) => params.kind === "browser_page" });
+export const executeReadText = makeToolExecutor("read_text", performReadText, { browserHydrated: true });
+export const executeWaitFor = makeToolExecutor("wait_for", performWaitFor, { browserHydrated: true });
+export const executeObserve = makeToolExecutor("observe_ui", performObserve, { browserOnly: (params) => typeof params.root === "string" && runtimeState.browserContextByRoot.has(params.root) });
+export const executeSearchUi = makeToolExecutor("search_ui", performSearchUi, { browserHydrated: true });
+export const executeExpandUi = makeToolExecutor("expand_ui", performExpandUi, { browserHydrated: true });
+export const executeInspectUi = makeToolExecutor("inspect_ui", performInspectUi, { browserHydrated: true });
+export const executeAct = makeToolExecutor("act_ui", performAct, { browserHydrated: true });
+export const executeNavigateBrowser = makeToolExecutor("navigate_browser", performNavigateBrowser, { browserHydrated: true });
+export const executeEvaluateBrowser = makeToolExecutor("evaluate_browser", performEvaluateBrowser, { browserHydrated: true });
+export const executeLaunchBrowser = makeToolExecutor("launch_browser", performLaunchBrowser, { browserOnly: true });
+export const executeCloseBrowser = makeToolExecutor("close_browser", performCloseBrowser, { browserOnly: true });
 export function reconstructStateFromBranch(ctx) {
     savedStates.clear();
     clearStoredOutputs();

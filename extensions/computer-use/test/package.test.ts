@@ -40,6 +40,7 @@ test("declares the concrete Pi 0.84.1 entrypoint and expected tool surface", asy
     "read_text",
     "wait_for",
     "launch_browser",
+    "close_browser",
     "navigate_browser",
     "evaluate_browser",
   ]);
@@ -63,11 +64,25 @@ test("loads the upstream tools and Ziggy segment tool through Pi 0.84.1's public
       "read_text",
       "wait_for",
       "launch_browser",
+      "close_browser",
       "navigate_browser",
       "evaluate_browser",
       "run_ui_segment",
     ],
   ]);
+  const lifecycleSchemas = loaded.extensions.flatMap((extension) => {
+    const launch = extension.tools.get("launch_browser");
+    const close = extension.tools.get("close_browser");
+    return launch && close ? [{ launch: launch.definition.parameters }] : [];
+  });
+  expect(
+    lifecycleSchemas.map(({ launch }) => ({
+      legacy: Check(launch, {}),
+      urlOnly: Check(launch, { url: "https://example.com" }),
+      persistentBackground: Check(launch, { profile: "signed-in", mode: "background" }),
+      unsafeProfile: Check(launch, { profile: "../escape" }),
+    })),
+  ).toEqual([{ legacy: true, urlOnly: true, persistentBackground: true, unsafeProfile: false }]);
   const segmentSchemas = loaded.extensions.flatMap((extension) => {
     const tool = extension.tools.get("run_ui_segment");
     return tool === undefined ? [] : [tool.definition.parameters];

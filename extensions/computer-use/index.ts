@@ -8,6 +8,8 @@ import { executeSegment, type SegmentBridge } from "./segment.ts";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
 type SegmentBridgeModule = {
+  readonly COMPUTER_USE_BROWSER_BRIDGE_CHANNEL: string;
+  readonly handleBrowserBridgeRequest: (data: unknown) => void;
   readonly executeAct: SegmentBridge["act"];
   readonly executeFind: SegmentBridge["find"];
   readonly executeObserve: SegmentBridge["observe"];
@@ -23,8 +25,17 @@ const isExtensionModule = (value: unknown): value is { readonly default: Extensi
 
 const isSegmentBridgeModule = (value: unknown): value is SegmentBridgeModule => {
   if (value !== Object(value)) return false;
-  return ["executeAct", "executeFind", "executeObserve", "executeSearchUi", "executeWaitFor"].every(
-    (name) => typeof Object.getOwnPropertyDescriptor(value, name)?.value === "function",
+  return (
+    typeof Object.getOwnPropertyDescriptor(value, "COMPUTER_USE_BROWSER_BRIDGE_CHANNEL")?.value ===
+      "string" &&
+    [
+      "handleBrowserBridgeRequest",
+      "executeAct",
+      "executeFind",
+      "executeObserve",
+      "executeSearchUi",
+      "executeWaitFor",
+    ].every((name) => typeof Object.getOwnPropertyDescriptor(value, name)?.value === "function")
   );
 };
 
@@ -118,6 +129,10 @@ const AssertionStep = Type.Object({ assert: Condition }, { additionalProperties:
 
 export default ((pi: ExtensionAPI): void => {
   upstreamModule.default(pi);
+  pi.events.on(
+    bridgeModule.COMPUTER_USE_BROWSER_BRIDGE_CHANNEL,
+    bridgeModule.handleBrowserBridgeRequest,
+  );
   pi.registerTool({
     name: "run_ui_segment",
     label: "Run Semantic UI Segment",

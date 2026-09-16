@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Teach, review, publish, and plan semantic computer-use workflows.",
+  "description": "Save and run fixed browser jobs and reviewed semantic computer-use workflows.",
   "keywords": ["pi-package", "computer-use", "workflows"],
   "scripts": {
     "test": "bun test ./test",
