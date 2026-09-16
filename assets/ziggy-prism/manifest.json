@@ -1,0 +1,74 @@
+[
+  {
+    "file": "web/prism-hero-wide-2172.webp",
+    "width": 2172,
+    "height": 724,
+    "bytes": 145396
+  },
+  {
+    "file": "web/prism-hero-wide-768.webp",
+    "width": 768,
+    "height": 256,
+    "bytes": 21916
+  },
+  {
+    "file": "web/prism-hero-wide-1440.webp",
+    "width": 1440,
+    "height": 480,
+    "bytes": 61626
+  },
+  {
+    "file": "web/prism-card-landscape-1536.webp",
+    "width": 1536,
+    "height": 1024,
+    "bytes": 213468
+  },
+  {
+    "file": "web/prism-card-landscape-480.webp",
+    "width": 480,
+    "height": 320,
+    "bytes": 23138
+  },
+  {
+    "file": "web/prism-card-landscape-960.webp",
+    "width": 960,
+    "height": 640,
+    "bytes": 76830
+  },
+  {
+    "file": "web/prism-tile-square-1254.webp",
+    "width": 1254,
+    "height": 1254,
+    "bytes": 205604
+  },
+  {
+    "file": "web/prism-tile-square-320.webp",
+    "width": 320,
+    "height": 320,
+    "bytes": 14006
+  },
+  {
+    "file": "web/prism-tile-square-640.webp",
+    "width": 640,
+    "height": 640,
+    "bytes": 47886
+  },
+  {
+    "file": "web/prism-portrait-1024.webp",
+    "width": 1024,
+    "height": 1536,
+    "bytes": 188300
+  },
+  {
+    "file": "web/prism-portrait-480.webp",
+    "width": 480,
+    "height": 720,
+    "bytes": 37340
+  },
+  {
+    "file": "web/prism-portrait-768.webp",
+    "width": 768,
+    "height": 1152,
+    "bytes": 92146
+  }
+]
