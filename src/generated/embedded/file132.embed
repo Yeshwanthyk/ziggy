@@ -1,17 +1,26 @@
 import { Type, type Static } from "typebox";
 
 const Id = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 1, maxLength: 80 });
+
 const Text = Type.String({ minLength: 1, maxLength: 1_024 });
+
 const ShortText = Type.String({ minLength: 1, maxLength: 256 });
+
 const Timestamp = Type.String({ format: "date-time" });
+
 const Button = Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]);
+
 const PrimaryModifierKey = Type.String({ pattern: "^(?:CMD|COMMAND|CTRL|CONTROL|META)$" });
+
 const SecondaryModifierKey = Type.String({ pattern: "^(?:SHIFT|ALT|OPTION)$" });
+
 const ControlKey = Type.String({
   pattern:
     "^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$",
 });
+
 const ChordKey = Type.Union([ControlKey, Type.String({ pattern: "^[A-Z0-9]$" })]);
+
 export const SafeKeypressKeysSchema = Type.Union([
   Type.Tuple([ControlKey]),
   Type.Tuple([SecondaryModifierKey, ControlKey]),
@@ -392,12 +401,15 @@ const BrowserProfile = Type.String({
   minLength: 1,
   maxLength: 64,
 });
+
 const AbsoluteHttpUrl = Type.String({
   pattern: "^https?://",
   minLength: 8,
   maxLength: 8_192,
 });
+
 const CssSelector = Type.String({ minLength: 1, maxLength: 1_024 });
+
 const BrowserCheckpointSchema = Type.Object(
   {
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
@@ -406,6 +418,7 @@ const BrowserCheckpointSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const BrowserJobPageSchema = Type.Object(
   {
     id: Id,
@@ -517,17 +530,29 @@ export const BrowserJobRunReportSchema = Type.Object(
 );
 
 export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
+
 export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
+
 export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
+
 export type RecordedCall = Static<typeof RecordedCallSchema>;
+
 export type RecordedInput = Static<typeof RecordedInputSchema>;
+
 export type RunRecord = Static<typeof RunRecordSchema>;
+
 export type RunSummary = Static<typeof RunSummarySchema>;
+
 export type PublishApproval = Static<typeof PublishApprovalSchema>;
+
 export type BrowserJobDefinition = Static<typeof BrowserJobDefinitionSchema>;
+
 export type SavedBrowserJob = Static<typeof SavedBrowserJobSchema>;
+
 export type BrowserJobBaseline = Static<typeof BrowserJobBaselineSchema>;
+
 export type BrowserJobRunReport = Static<typeof BrowserJobRunReportSchema>;
+
 export type ExtractedJobItem = Static<typeof ExtractedJobItemSchema>;
 
 export const WorkflowIdSchema = Id;

@@ -43,7 +43,9 @@ const preflightCoreOptions = (
   agents: ProfileCoreInlineExtensionOptions["agents"],
 ): ProfileCoreInlineExtensionOptions => {
   const memory = memoryFilePaths(profilePath, { kind: "local" });
+
   if (!memory.ok) throw memory.error;
+
   return {
     profilePath,
     agents,
@@ -75,6 +77,7 @@ export const makeProfileExtensionPreflight = (
   preflight: (profilePath, _repositoryRoot, selected) =>
     Effect.gen(function* () {
       const resources = yield* composePiResources(profilePath, selected);
+
       const agents = yield* discoverProfileAgents(profilePath).pipe(
         Effect.mapError((cause) =>
           preflightFailure(
@@ -85,6 +88,7 @@ export const makeProfileExtensionPreflight = (
           ),
         ),
       );
+
       const systemPrompt = yield* loadProfileSystemPrompt(
         profilePath,
         join(profilePath, "SOUL.md"),
@@ -98,6 +102,7 @@ export const makeProfileExtensionPreflight = (
           ),
         ),
       );
+
       const inlineExtensions: ReadonlyArray<InlineExtension> = yield* Effect.try({
         try: () => createCoreInlineExtensions(preflightCoreOptions(profilePath, agents)),
         catch: (cause) =>
@@ -108,6 +113,7 @@ export const makeProfileExtensionPreflight = (
             cause,
           ),
       });
+
       const temporaryAgentDir = yield* Effect.tryPromise({
         try: () => mkdtemp(join(tmpdir(), "ziggy-profile-preflight-")),
         catch: (cause) =>
@@ -118,6 +124,7 @@ export const makeProfileExtensionPreflight = (
             cause,
           ),
       });
+
       return yield* Effect.acquireUseRelease(
         Effect.succeed(temporaryAgentDir),
         (agentDir) =>
@@ -142,18 +149,22 @@ export const makeProfileExtensionPreflight = (
           }).pipe(
             Effect.flatMap((services) => {
               const diagnostics = collectPiResourceDiagnostics(services);
+
               const diagnosticFailure = piResourceDiagnosticFailure(
                 profilePath,
                 services,
                 diagnostics,
               );
+
               if (diagnosticFailure !== undefined) return Effect.fail(diagnosticFailure);
+
               const result: ProfileExtensionPreflightResult = {
                 extensionPathCount: resources.extensionPaths.length,
                 skillPathCount: resources.skillPaths.length,
                 extensionFactoryCount:
                   inlineExtensions.length + resources.extensionFactories.length,
               };
+
               return Effect.succeed(result);
             }),
           ),

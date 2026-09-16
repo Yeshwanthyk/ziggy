@@ -38,12 +38,15 @@ const Invocation = Type.Object(
 );
 
 const fixtures: string[] = [];
+
 const originalBinary = process.env.ZIGGY_DEV_BROWSER_BIN;
+
 const originalDescendantMarker = process.env.DESCENDANT_MARKER;
 
 afterEach(async () => {
   if (originalBinary === undefined) delete process.env.ZIGGY_DEV_BROWSER_BIN;
   else process.env.ZIGGY_DEV_BROWSER_BIN = originalBinary;
+
   if (originalDescendantMarker === undefined) delete process.env.DESCENDANT_MARKER;
   else process.env.DESCENDANT_MARKER = originalDescendantMarker;
   await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { recursive: true })));
@@ -52,6 +55,7 @@ afterEach(async () => {
 const fixtureDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join(tmpdir(), prefix));
   fixtures.push(directory);
+
   return directory;
 };
 
@@ -66,6 +70,7 @@ process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.
 `,
   );
   await chmod(executable, 0o755);
+
   return executable;
 };
 
@@ -74,15 +79,19 @@ const invoke = async (cwd: string, input: ToolInput, signal?: AbortSignal): Prom
 
 const invocationFrom = (result: ToolResult): Static<typeof Invocation> => {
   const text = result.content[0]?.text;
+
   if (text === undefined) throw new Error("tool returned no text");
   const parsed: unknown = JSON.parse(text);
+
   if (!Check(Invocation, parsed)) throw new Error("fake CLI returned an invalid invocation");
+
   return parsed;
 };
 
 const processExists = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch {
     return false;
@@ -94,6 +103,7 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>): Promise<voi
     if (await predicate()) return;
     await Bun.sleep(25);
   }
+
   throw new Error("timed out waiting for process fixture");
 };
 
@@ -129,6 +139,7 @@ test("passes execute flags and script through stdin from the Profile cwd", async
   const profile = await fixtureDirectory("dev-browser-profile-");
   process.env.ZIGGY_DEV_BROWSER_BIN = await fakeCli(profile);
   const script = `const page = await browser.getPage("main");\nconsole.log(await page.title());`;
+
   const result = await invoke(profile, {
     action: "execute",
     profile: "signed-in-shop",
@@ -137,6 +148,7 @@ test("passes execute flags and script through stdin from the Profile cwd", async
     connect: true,
     idleTimeout: "5m",
   });
+
   const actualCwd = await realpath(profile);
 
   expect(invocationFrom(result)).toEqual({
@@ -162,6 +174,7 @@ test("passes execute flags and script through stdin from the Profile cwd", async
 test("keeps headed execution flag-free and rejects an idle timeout over 24h", async () => {
   const profile = await fixtureDirectory("dev-browser-headed-");
   process.env.ZIGGY_DEV_BROWSER_BIN = await fakeCli(profile);
+
   const result = await invoke(profile, {
     action: "execute",
     profile: "headed",
@@ -261,11 +274,13 @@ process.exit(7);
 `,
   );
   let message = "";
+
   try {
     await invoke(profile, { action: "browsers" });
   } catch (error) {
     message = String(error);
   }
+
   expect(message).toContain("exited with code 7");
   expect(message.match(/\[output truncated\]/g)?.length).toBe(2);
   expect(message.length).toBeLessThan(50_000);
@@ -285,11 +300,13 @@ await new Promise(() => {});
 `,
   );
   const controller = new AbortController();
+
   const running = invoke(
     profile,
     { action: "execute", profile: "cancel", script: "1" },
     controller.signal,
   );
+
   await waitFor(() => Bun.file(marker).exists());
   const descendantPid = Number((await readFile(marker, "utf8")).trim());
 

@@ -31,6 +31,7 @@ export default function codeMode(pi: Pick<ExtensionAPI, "on" | "registerTool">):
     executionMode: "sequential",
     async execute(_toolCallId, { code }, signal, _onUpdate, ctx) {
       const details = await Effect.runPromise(executeCodeMode(session, ctx.cwd, code), { signal });
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(details) }],
         details,

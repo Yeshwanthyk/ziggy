@@ -45,13 +45,16 @@ export const writeSlackHealth = (
   const runtimePath = join(profilePath, ".runtime");
   const destination = slackHealthPath(profilePath);
   const temporary = join(runtimePath, `.slack-health-${randomUUID()}.tmp`);
+
   return Effect.tryPromise({
     try: async (signal) => {
       await mkdir(runtimePath, { recursive: true, mode: 0o700 });
       const runtime = await lstat(runtimePath);
+
       if (!runtime.isDirectory() || runtime.isSymbolicLink()) {
         throw new Error("unsafe Slack runtime path");
       }
+
       await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, {
         encoding: "utf8",
         mode: 0o600,
@@ -77,30 +80,40 @@ export const readSlackHealth = (
   Effect.gen(function* () {
     const configPath = join(profilePath, "slack.json");
     const config = yield* inspect(configPath).pipe(Effect.result);
+
     if (Result.isFailure(config)) {
       if (missing(config.failure)) return { _tag: "not-configured" } as const;
+
       return yield* projectionError("read", configPath, config.failure);
     }
+
     if (!config.success.isFile() || config.success.isSymbolicLink()) {
       return yield* projectionError("read", configPath, new Error("unsafe Slack config path"));
     }
 
     const path = slackHealthPath(profilePath);
     const status = yield* inspect(path).pipe(Effect.result);
+
     if (Result.isFailure(status)) {
       if (missing(status.failure)) return { _tag: "not-observed" } as const;
+
       return yield* projectionError("read", path, status.failure);
     }
+
     if (!status.success.isFile() || status.success.isSymbolicLink()) {
       return yield* projectionError("read", path, new Error("unsafe Slack health path"));
     }
+
     const content = yield* Effect.tryPromise({
       try: (signal) => readFile(path, { encoding: "utf8", signal }),
       catch: (cause) => cause,
     }).pipe(Effect.result);
+
     if (Result.isFailure(content)) return yield* projectionError("read", path, content.failure);
+
     const snapshot = yield* decodeSnapshotJson(content.success).pipe(
       Effect.mapError((cause) => projectionError("read", path, cause)),
     );
+
     return { _tag: "observed", observedAtMs, snapshot } as const;
   });

@@ -15,6 +15,7 @@ export default {
     const enterConditional = () => {
       conditionalDepth++;
     };
+
     const exitConditional = () => {
       conditionalDepth--;
     };
@@ -23,6 +24,7 @@ export default {
       CallExpression(node) {
         if (conditionalDepth === 0) return;
         const name = getCallName(node.callee);
+
         if (name !== "expect") return;
         context.report({
           node,

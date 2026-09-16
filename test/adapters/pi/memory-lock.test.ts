@@ -11,6 +11,7 @@ const temporaryProfiles: Array<string> = [];
 const temporaryProfile = async (): Promise<string> => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-memory-"));
   temporaryProfiles.push(profilePath);
+
   return profilePath;
 };
 
@@ -18,9 +19,11 @@ const resultText = (
   result: Awaited<ReturnType<ReturnType<typeof createMemoryWriteTool>["execute"]>>,
 ): string => {
   const content = result.content[0];
+
   if (content?.type !== "text") {
     throw new Error("expected a text tool result");
   }
+
   return content.text;
 };
 
@@ -29,6 +32,7 @@ const memoryLockPath = (profilePath: string, relativePath: string): string =>
 
 const expectMemoryLockAvailable = (profilePath: string, relativePath: string): void => {
   const database = new Database(memoryLockPath(profilePath, relativePath), { create: true });
+
   try {
     database.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
     expect(database.inTransaction).toBeTrue();
@@ -86,6 +90,7 @@ describe("memory_write locking", () => {
     holder.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
     const controller = new AbortController();
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
+
     const pending = tool.execute(
       "interrupted",
       { scope: "shared", operations: [{ action: "add", content: "must not persist" }] },
@@ -93,6 +98,7 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     await Bun.sleep(75);
 
     controller.abort();
@@ -165,12 +171,14 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(result)).toContain("applied 1 operation(s)");
 
     const backupDirectory = join(profilePath, ".runtime", "memory-backups", "MEMORY.md");
     const backups = await readdir(backupDirectory);
     expect(backups).toHaveLength(1);
     const backupName = backups[0];
+
     if (backupName === undefined) throw new Error("expected one memory backup");
     const backupPath = join(backupDirectory, backupName);
     expect(await readFile(backupPath)).toEqual(initial);
@@ -180,6 +188,7 @@ describe("memory_write locking", () => {
   test("does not create backups for missing, no-op, rejected, or overflow writes", async () => {
     const profilePath = await temporaryProfile();
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
+
     const missing = await tool.execute(
       "missing",
       { scope: "shared", operations: [{ action: "add", content: "first" }] },
@@ -187,6 +196,7 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(missing)).toContain("applied 1 operation(s)");
     expect((await stat(join(profilePath, "MEMORY.md"))).mode & 0o777).toBe(0o600);
     await expect(stat(join(profilePath, ".runtime", "memory-backups"))).rejects.toHaveProperty(
@@ -201,7 +211,9 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(noOp)).toBe("no change");
+
     const rejected = await tool.execute(
       "rejected",
       { scope: "shared", operations: [{ action: "add", content: "bad\n§\nentry" }] },
@@ -209,7 +221,9 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(rejected)).toContain("ERROR:");
+
     const overflow = await tool.execute(
       "overflow",
       { scope: "shared", operations: [{ action: "add", content: "x".repeat(2_200) }] },
@@ -217,6 +231,7 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(overflow)).toContain("ERROR: memory full:");
     await expect(stat(join(profilePath, ".runtime", "memory-backups"))).rejects.toHaveProperty(
       "code",
@@ -229,6 +244,7 @@ describe("memory_write locking", () => {
     const memoryPath = join(profilePath, "MEMORY.md");
     await writeFile(memoryPath, "entry 0\n");
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
+
     for (let index = 1; index <= 11; index += 1) {
       const result = await tool.execute(
         `write-${index}`,
@@ -237,8 +253,10 @@ describe("memory_write locking", () => {
         undefined,
         Object.create(null),
       );
+
       expect(resultText(result)).toContain("applied 1 operation(s)");
     }
+
     const backups = await readdir(join(profilePath, ".runtime", "memory-backups", "MEMORY.md"));
     expect(backups).toHaveLength(10);
   });
@@ -251,6 +269,7 @@ describe("memory_write locking", () => {
     await mkdir(join(profilePath, ".runtime", "memory-backups"), { recursive: true });
     await writeFile(join(profilePath, ".runtime", "memory-backups", "MEMORY.md"), "not a dir\n");
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
+
     const blocked = await tool.execute(
       "blocked",
       { scope: "shared", operations: [{ action: "add", content: "must not publish" }] },
@@ -258,6 +277,7 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(blocked)).toContain("ERROR: memory backup failed");
     expect(await readFile(memoryPath, "utf8")).toBe(initial);
 
@@ -265,6 +285,7 @@ describe("memory_write locking", () => {
     await writeFile(elsewhere, initial);
     await rm(memoryPath);
     await symlink(elsewhere, memoryPath);
+
     const rejected = await tool.execute(
       "symlink",
       { scope: "shared", operations: [{ action: "add", content: "must reject" }] },
@@ -272,6 +293,7 @@ describe("memory_write locking", () => {
       undefined,
       Object.create(null),
     );
+
     expect(resultText(rejected)).toContain("ERROR: memory write failed");
     expect(await readFile(elsewhere, "utf8")).toBe(initial);
   });
@@ -289,6 +311,7 @@ describe("memory_write locking", () => {
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
 
     setSystemTime(now);
+
     try {
       const result = await tool.execute(
         "post-write-failure",
@@ -297,6 +320,7 @@ describe("memory_write locking", () => {
         undefined,
         Object.create(null),
       );
+
       expect(resultText(result)).toContain("ERROR: memory backup failed");
     } finally {
       setSystemTime();

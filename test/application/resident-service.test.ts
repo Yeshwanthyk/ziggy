@@ -16,10 +16,12 @@ import {
 } from "ziggy/application/resident-service";
 
 const paths: Array<string> = [];
+
 const profile = async () => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-service-app-"));
   paths.push(path);
   await writeFile(join(path, "SOUL.md"), "# Test\n");
+
   return { path, name: "Test" };
 };
 
@@ -84,6 +86,7 @@ const runtime = (
   user: "fixture-user",
   commands: makeResidentPlatformCommands(async (command) => {
     seen.push(command);
+
     return response(command);
   }),
   inspectDefinition: () =>
@@ -99,6 +102,7 @@ describe("resident service orchestration", () => {
   test("installs and enables systemd without starting for --no-start", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const service = makeResidentService(
       gateway(),
       scheduler(),
@@ -124,6 +128,7 @@ describe("resident service orchestration", () => {
   test("installs launchd without bootstrap for --no-start", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const service = makeResidentService(
       gateway(),
       scheduler(),
@@ -142,6 +147,7 @@ describe("resident service orchestration", () => {
   test("starts through the manager and reports bounded owner readiness", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const service = makeResidentService(
       gateway(),
       scheduler(),
@@ -177,6 +183,7 @@ describe("resident service orchestration", () => {
   test("kickstarts an already loaded launchd service", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const service = makeResidentService(
       gateway(),
       scheduler(),
@@ -198,6 +205,7 @@ describe("resident service orchestration", () => {
   test("treats launchd's missing-service response as a stopped supervisor", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const service = makeResidentService(
       gateway("stopped"),
       scheduler(),
@@ -230,6 +238,7 @@ describe("resident service orchestration", () => {
   test("status preserves process and supervisor results when other projections fail", async () => {
     const target = await profile();
     const seen: Array<ReadonlyArray<string>> = [];
+
     const definitionFailure = new ResidentServiceError({
       operation: "inspect definition",
       reason: "filesystem",
@@ -237,6 +246,7 @@ describe("resident service orchestration", () => {
       message: "definition unreadable",
       cause: "fixture",
     });
+
     const service = makeResidentService(
       gateway(),
       scheduler(true),

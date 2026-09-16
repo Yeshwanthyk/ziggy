@@ -41,6 +41,7 @@ export class Memory extends Context.Service<Memory, MemoryApi>()("ziggy/Memory")
 
 const view = (loaded: MemoryDocumentRead): MemoryDocumentView => {
   const entries = memoryEntries(loaded.content);
+
   return {
     document: loaded.document,
     state: loaded.exists ? (entries.length === 0 ? "empty" : "present") : "missing",
@@ -55,18 +56,23 @@ export const makeMemory = (files: MemoryFilesApi): MemoryApi => ({
   list: (target) =>
     Effect.gen(function* () {
       const documents = yield* files.list(target.path);
+
       const loaded = yield* Effect.forEach(documents, (document) => files.read(document), {
         concurrency: 1,
       });
+
       return loaded.flatMap((document) => {
         const item = view(document);
+
         return item.state === "missing" ? [] : [item];
       });
     }),
   show: (target, scope) =>
     Effect.gen(function* () {
       const resolved = memoryDocumentForScope(target.path, scope);
+
       if (!resolved.ok) return yield* resolved.error;
+
       return view(yield* files.read(resolved.document));
     }),
 });

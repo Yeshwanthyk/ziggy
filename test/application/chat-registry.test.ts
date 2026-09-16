@@ -19,16 +19,21 @@ test("fresh subscriptions bootstrap retained activity while resume cursors requi
           "local/main",
           Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
         );
+
         for (let index = 0; index <= CHAT_REPLAY_LIMIT; index += 1) {
           yield* registry.publish("local/main", { kind: "settled" });
         }
+
         const received: number[] = [];
+
         const unsubscribe = yield* registry.subscribeSequenced("local/main", (event) =>
           received.push(event.seq),
         );
+
         expect(received).toEqual(
           Array.from({ length: CHAT_REPLAY_LIMIT }, (_, index) => index + 2),
         );
+
         for (const afterSeq of [0, CHAT_REPLAY_LIMIT + 2]) {
           expect(
             yield* Effect.result(
@@ -36,12 +41,15 @@ test("fresh subscriptions bootstrap retained activity while resume cursors requi
             ),
           ).toMatchObject({ _tag: "Failure", failure: { code: "replay_gap" } });
         }
+
         const resumed: number[] = [];
+
         const stopResume = yield* registry.subscribeSequenced(
           "local/main",
           (event) => resumed.push(event.seq),
           CHAT_REPLAY_LIMIT,
         );
+
         yield* registry.publish("local/main", { kind: "settled" });
         expect(received.at(-1)).toBe(CHAT_REPLAY_LIMIT + 2);
         expect(resumed).toEqual([CHAT_REPLAY_LIMIT + 1, CHAT_REPLAY_LIMIT + 2]);
@@ -68,11 +76,13 @@ test("concurrent UI opens share one handle and a failed opening is retryable", a
         const release = yield* Deferred.make<void>();
         const openCount = yield* Ref.make(0);
         const shared = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+
         const open = Ref.update(openCount, (count) => count + 1).pipe(
           Effect.andThen(Deferred.succeed(entered, undefined)),
           Effect.andThen(Deferred.await(release)),
           Effect.as(shared),
         );
+
         const first = yield* registry.getOrOpenUi("ui/main", open).pipe(Effect.forkScoped);
         yield* Deferred.await(entered);
         const second = yield* registry.getOrOpenUi("ui/main", open).pipe(Effect.forkScoped);
@@ -87,6 +97,7 @@ test("concurrent UI opens share one handle and a failed opening is retryable", a
             new ProfileNotInitialized({ profilePath: "/profile", message: "not initialized" }),
           ),
         );
+
         expect((yield* Effect.result(failed))._tag).toBe("Failure");
         const retry = makeChatHandle({ prompt: () => Effect.succeed("retry") });
         expect(yield* registry.getOrOpenUi("ui/retry", Effect.succeed(retry))).toBe(retry);
@@ -100,18 +111,21 @@ test("UI capacity counts live sessions and openings", async () => {
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         for (let index = 0; index < MAX_UI_SESSIONS; index += 1) {
           yield* registry.getOrOpenUi(
             `ui/s${index}`,
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
           );
         }
+
         const overflow = yield* Effect.result(
           registry.getOrOpenUi(
             "ui/overflow",
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("no") })),
           ),
         );
+
         expect(overflow).toMatchObject({
           _tag: "Failure",
           failure: { _tag: "UiGatewayError", code: "capacity_exceeded" },
@@ -150,6 +164,7 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
         const releasePrompt = yield* Deferred.make<void>();
         const listeners = new Set<(event: ChatEvent) => void>();
         let idle = true;
+
         const handle: ChatHandle = {
           get isIdle() {
             return idle;
@@ -160,7 +175,9 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
               yield* Deferred.succeed(promptStarted, undefined);
               yield* Deferred.await(releasePrompt);
               idle = true;
+
               for (const listener of listeners) listener({ kind: "settled" });
+
               return "done";
             }),
           abort: Effect.sync(() => {
@@ -170,12 +187,14 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
           followUp: () => Effect.void,
           subscribe: (listener) => {
             listeners.add(listener);
+
             return () => listeners.delete(listener);
           },
           dispose: Effect.sync(() => {
             disposals += 1;
           }),
         };
+
         const registry = yield* makeChatRegistry();
         yield* registry.getOrOpenUi("ui/main", Effect.succeed(handle));
         const disconnect = yield* registry.subscribe("ui/main", (event) => events.push(event));

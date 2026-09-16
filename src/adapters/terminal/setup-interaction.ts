@@ -11,6 +11,7 @@ const readLine = (): Promise<string> =>
       output: process.stdout,
       terminal: true,
     });
+
     readline.question("> ", (answer) => {
       readline.close();
       process.stdin.pause();
@@ -26,6 +27,7 @@ const select = (
   Effect.gen(function* () {
     console.log(message);
     choices.forEach((choice, index) => console.log(`${index + 1}) ${choice.label}`));
+
     while (true) {
       const answer = yield* Effect.tryPromise({
         try: () => readLine(),
@@ -35,11 +37,14 @@ const select = (
             message: "terminal setup prompt failed",
           }),
       });
+
       const index = Number(answer.trim());
+
       const selected =
         Number.isInteger(index) && index >= 1 && index <= choices.length
           ? choices[index - 1]
           : choices.find((choice) => choice.id === answer.trim());
+
       if (selected !== undefined) return selected.id;
       console.log("invalid selection; enter an option number or id");
     }

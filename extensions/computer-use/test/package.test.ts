@@ -7,6 +7,7 @@ import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import { Check } from "typebox/value";
 
 const packageRoot = join(import.meta.dir, "..");
+
 const fixtures: string[] = [];
 
 afterEach(async () => {
@@ -15,10 +16,12 @@ afterEach(async () => {
 
 test("declares the concrete Pi 0.84.1 entrypoint and expected tool surface", async () => {
   const manifest = await Bun.file(join(packageRoot, "package.json")).json();
+
   const source = await readFile(
     join(packageRoot, "dist", "extensions", "computer-use.mts"),
     "utf8",
   );
+
   const names = [...source.matchAll(/name:\s*"([a-z_]+)"/gu)].map((match) => match[1]);
 
   expect(manifest).toMatchObject({
@@ -70,11 +73,14 @@ test("loads the upstream tools and Ziggy segment tool through Pi 0.84.1's public
       "run_ui_segment",
     ],
   ]);
+
   const lifecycleSchemas = loaded.extensions.flatMap((extension) => {
     const launch = extension.tools.get("launch_browser");
     const close = extension.tools.get("close_browser");
+
     return launch && close ? [{ launch: launch.definition.parameters }] : [];
   });
+
   expect(
     lifecycleSchemas.map(({ launch }) => ({
       legacy: Check(launch, {}),
@@ -83,10 +89,13 @@ test("loads the upstream tools and Ziggy segment tool through Pi 0.84.1's public
       unsafeProfile: Check(launch, { profile: "../escape" }),
     })),
   ).toEqual([{ legacy: true, urlOnly: true, persistentBackground: true, unsafeProfile: false }]);
+
   const segmentSchemas = loaded.extensions.flatMap((extension) => {
     const tool = extension.tools.get("run_ui_segment");
+
     return tool === undefined ? [] : [tool.definition.parameters];
   });
+
   const steps = [
     {
       target: { text: "Save" },
@@ -94,6 +103,7 @@ test("loads the upstream tools and Ziggy segment tool through Pi 0.84.1's public
       expect: { text: "Saved", until: "present" },
     },
   ];
+
   expect(
     segmentSchemas.map((schema) => ({
       semantic: Check(schema, { rootQuery: { app: "TextEdit", kind: "window" }, steps }),
@@ -129,6 +139,7 @@ test("loads the upstream tools and Ziggy segment tool through Pi 0.84.1's public
 
 test("retains the upstream license and native helper payloads", async () => {
   const license = await readFile(join(packageRoot, "LICENSE"), "utf8");
+
   const macosHelper = await stat(
     join(
       packageRoot,
@@ -141,6 +152,7 @@ test("retains the upstream license and native helper payloads", async () => {
       "bridge",
     ),
   );
+
   const linuxArm64 = await stat(join(packageRoot, "prebuilt", "linux", "arm64", "linux-bridge"));
   const linuxX64 = await stat(join(packageRoot, "prebuilt", "linux", "x64", "linux-bridge"));
 
@@ -170,6 +182,7 @@ test("installs the published macOS helper into an isolated destination", async (
     0o644,
   );
   const helperPath = join(fixture, "pi-computer-use.app");
+
   const child = Bun.spawn(
     [process.execPath, join(stagedPackage, "scripts", "setup-helper.mjs"), "--runtime"],
     {
@@ -179,6 +192,7 @@ test("installs the published macOS helper into an isolated destination", async (
       stderr: "pipe",
     },
   );
+
   const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
 
   expect(exitCode, stderr).toBe(0);

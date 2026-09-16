@@ -5,12 +5,15 @@ describe("Slack health projection", () => {
   test("tracks lifecycle counts without retaining message or Slack routing content", () => {
     const connected = evolveSlackHealth(initialSlackHealth(1), { _tag: "connected", atMs: 2 });
     const inbound = evolveSlackHealth(connected, { _tag: "inbound", atMs: 3 });
+
     const accepted = evolveSlackHealth(inbound, {
       _tag: "accepted",
       atMs: 4,
       queued: true,
     });
+
     const started = evolveSlackHealth(accepted, { _tag: "started", atMs: 5, wasQueued: true });
+
     const completed = evolveSlackHealth(started, {
       _tag: "completed",
       atMs: 6,
@@ -44,6 +47,7 @@ describe("Slack health projection", () => {
       atMs: 2,
       queued: false,
     });
+
     const cancelled = evolveSlackHealth(accepted, { _tag: "cancelled", atMs: 3 });
 
     expect(cancelled.activeTurnCount).toBe(0);

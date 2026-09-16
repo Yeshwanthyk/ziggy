@@ -12,15 +12,19 @@ import {
 } from "../src/manager.ts";
 
 const roots: string[] = [];
+
 const makeProfile = async (): Promise<string> => {
   const profile = await mkdtemp(join(tmpdir(), "ziggy-self-improvement-"));
   roots.push(profile);
+
   return profile;
 };
+
 const entries = (stopReason = "stop"): ReadonlyArray<SessionEntry> => [
   { type: "message", message: { role: "user" } },
   { type: "message", message: { role: "assistant", stopReason } },
 ];
+
 const body = (id: string, description = `${id} procedure`): string =>
   `---\nname: ${id}\ndescription: ${description}\n---\n\n# ${id}\n\nUse the verified procedure.\n`;
 
@@ -31,6 +35,7 @@ afterEach(async () => {
 describe("self-improvement observation", () => {
   test("records only three distinct completed foreground sessions and arms readiness", async () => {
     const profile = await makeProfile();
+
     for (const [index, name] of ["one", "two", "three"].entries()) {
       const result = await observeCompletedForegroundSession({
         profilePath: profile,
@@ -38,13 +43,16 @@ describe("self-improvement observation", () => {
         entries: entries(),
         observedAt: new Date(`2026-08-11T0${index}:00:00.000Z`),
       });
+
       expect(result.observed).toBe(true);
     }
+
     const duplicate = await observeCompletedForegroundSession({
       profilePath: profile,
       sessionFile: join(profile, "sessions", "three.jsonl"),
       entries: entries(),
     });
+
     expect(duplicate.observed).toBe(false);
     const status = await readStatus(profile);
     expect(status.completedSessionIds).toHaveLength(3);
@@ -56,6 +64,7 @@ describe("self-improvement observation", () => {
 
   test("skips automation, specialist, empty, and failed sessions", async () => {
     const profile = await makeProfile();
+
     for (const sessionFile of [
       join(profile, "sessions/automations/curator/run.jsonl"),
       join(profile, "sessions/agents/research/run.jsonl"),
@@ -67,8 +76,10 @@ describe("self-improvement observation", () => {
         sessionFile,
         entries: sessionFile.endsWith("foreground.jsonl") ? entries("error") : [],
       });
+
       expect(result.observed).toBe(false);
     }
+
     expect((await readStatus(profile)).completedSessionIds).toHaveLength(0);
   });
 });
@@ -78,22 +89,26 @@ describe("self-improvement logging and package writer", () => {
     const profile = await makeProfile();
     await mkdir(join(profile, ".runtime/self-improvement"), { recursive: true });
     await writeFile(join(profile, ".runtime/self-improvement/curator-ready"), "ready\n");
+
     const result = await appendReviewLog(profile, {
       decision: "no-op",
       detail: "No durable recurrence.",
       clearReady: true,
       at: new Date("2026-08-11T04:00:00.000Z"),
     });
+
     expect(result.clearedReady).toBe(true);
     expect((await readStatus(profile)).ready).toBe(false);
   });
 
   test("creates a real skill-only package without overwrite and replaces only managed packages", async () => {
     const profile = await makeProfile();
+
     const created = await writeCuratorExtension(profile, {
       id: "morning-routine",
       body: body("morning-routine"),
     });
+
     expect(created.action).toBe("created");
     expect(
       await readFile(join(profile, "extensions/morning-routine/package.json"), "utf8"),

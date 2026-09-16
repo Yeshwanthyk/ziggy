@@ -27,10 +27,15 @@ import { UiEventFrame, UiResponseFrame, type UiGroupRecord } from "ziggy/domain/
 import { UiGroupState, type UiGroupState as UiGroupStateValue } from "ziggy/domain/ui-state";
 
 const target = { path: "/profile", name: "Profile" } as const;
+
 const profileId = stableProfileId(target.path);
+
 const repositoryRoot = "/repository";
+
 const decodeResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
+
 const decodeEventResult = Schema.decodeUnknownResult(Schema.fromJsonString(UiEventFrame));
+
 const decodeEmptyGroupState = Schema.decodeUnknownSync(UiGroupState);
 
 const makeProfileExtensions = (
@@ -110,9 +115,11 @@ const makeConfig = (
 test("UI gateway opens local Pi sessions, emits sequenced events, and detaches on close", async () => {
   const sent: string[] = [];
   const listeners = new Set<(event: ChatEvent) => void>();
+
   let opened:
     | { readonly directory: string; readonly mode: string | undefined; readonly context: string }
     | undefined;
+
   const handle = makeChatHandle({
     prompt: (text) =>
       Effect.sync(() => {
@@ -120,16 +127,20 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
           listener({ kind: "assistant-text", delta: text, snapshot: text });
           listener({ kind: "settled" });
         }
+
         return text;
       }),
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => listeners.delete(listener);
     },
   });
+
   const agent = makeAgent(handle, {
     openChat: (_target, context, directory, mode) => {
       opened = { directory, mode, context: context.kind };
+
       return Effect.succeed(handle);
     },
   });
@@ -138,9 +149,11 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(makeConfig(registry, agent)).connect((frame) =>
           sent.push(frame),
         );
+
         yield* connection.request({
           id: "1",
           method: "session.open",
@@ -184,10 +197,13 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
           params: { ref: { profileId, kind: "live", key: "ui/main" }, text: "hello" },
         });
         yield* Effect.yieldNow;
+
         const events = sent.flatMap((frame) => {
           const decoded = decodeEventResult(frame);
+
           return Result.isSuccess(decoded) ? [decoded.success] : [];
         });
+
         expect(events).toHaveLength(2);
         expect(events[0]).toMatchObject({
           profileId,
@@ -202,6 +218,7 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
 
         const beforeClose = sent.length;
         yield* connection.close;
+
         for (const listener of listeners) listener({ kind: "settled" });
         expect(sent).toHaveLength(beforeClose);
         expect((yield* registry.get("ui/main")).handle).toBe(handle);
@@ -214,15 +231,18 @@ test("live session history resolves the handle's current transcript identity at 
   const sent: string[] = [];
   const historyReferences: string[] = [];
   let currentId = "pi-session-a";
+
   const handle = makeChatHandle({
     currentSession: Effect.sync(() => ({ id: currentId, file: `/private/${currentId}.jsonl` })),
     prompt: () => Effect.succeed("ok"),
   });
+
   const sessions: SessionsApi = {
     ...makeSessions(),
     history: (_target, reference) =>
       Effect.sync(() => {
         historyReferences.push(reference);
+
         return {
           entries: [
             {
@@ -242,9 +262,11 @@ test("live session history resolves the handle's current transcript identity at 
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "open",
           method: "session.open",
@@ -281,15 +303,18 @@ test("live session history resolves the handle's current transcript identity at 
 test("live session history is empty only while its Pi transcript is not materialized", async () => {
   const sent: string[] = [];
   let historyCalls = 0;
+
   const handle = makeChatHandle({
     currentSession: Effect.succeed(undefined),
     prompt: () => Effect.succeed("ok"),
   });
+
   const sessions: SessionsApi = {
     ...makeSessions(),
     history: () =>
       Effect.sync(() => {
         historyCalls += 1;
+
         return {
           entries: [],
           terminalState: "incomplete" as const,
@@ -303,9 +328,11 @@ test("live session history is empty only while its Pi transcript is not material
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "open",
           method: "session.open",
@@ -350,10 +377,12 @@ test("live session history is empty only while its Pi transcript is not material
 
 test("live session history preserves transcript read failures without exposing its path", async () => {
   const sent: string[] = [];
+
   const handle = makeChatHandle({
     currentSession: Effect.succeed({ id: "pi-session", file: "/private/pi-session.jsonl" }),
     prompt: () => Effect.succeed("ok"),
   });
+
   const sessions: SessionsApi = {
     ...makeSessions(),
     history: () =>
@@ -371,9 +400,11 @@ test("live session history preserves transcript read failures without exposing i
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "open",
           method: "session.open",
@@ -398,13 +429,16 @@ test("live session history preserves transcript read failures without exposing i
 
 test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () => {
   const listeners = new Set<(event: ChatEvent) => void>();
+
   const handle = makeChatHandle({
     prompt: () => Effect.succeed("ok"),
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => listeners.delete(listener);
     },
   });
+
   const events: string[] = [];
   await Effect.runPromise(
     Effect.scoped(
@@ -417,16 +451,20 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
           method: "session.open",
           params: { profileId, context: { kind: "local" }, name: "main" },
         });
+
         for (const listener of listeners)
           listener({ kind: "assistant-text", delta: "one", snapshot: "one" });
+
         const firstEvent = events
           .map((frame) => decodeEventResult(frame))
           .flatMap((result) => (Result.isSuccess(result) ? [result.success] : []))[0];
+
         expect(firstEvent).toBeDefined();
         yield* first.close;
 
         const replayed: string[] = [];
         const second = gateway.connect((frame) => replayed.push(frame));
+
         const watchParams =
           firstEvent?.epoch === undefined
             ? { ref: { profileId, kind: "live" as const, key: "ui/main" }, afterSeq: 0 }
@@ -435,6 +473,7 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
                 afterSeq: 0,
                 epoch: firstEvent.epoch,
               };
+
         yield* second.request({
           id: "watch",
           method: "session.watch",
@@ -443,14 +482,17 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
         expect(
           replayed.some((frame) => {
             const decoded = decodeEventResult(frame);
+
             return Result.isSuccess(decoded) && decoded.success.seq === 1;
           }),
         ).toBe(true);
 
         const restarted: (typeof UiResponseFrame.Type)[] = [];
+
         const third = makeUiGateway(makeConfig(registry, makeAgent(handle))).connect((frame) =>
           restarted.push(decodeResponse(frame)),
         );
+
         yield* third.request({
           id: "restart",
           method: "session.watch",
@@ -471,18 +513,23 @@ test("rolled replay windows allow fresh opens and watches without losing history
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const handle = makeChatHandle({
           prompt: () => Effect.succeed("ok"),
           currentSession: Effect.succeed({ id: "durable-session", file: "/private/session.jsonl" }),
         });
+
         let opens = 0;
+
         const agent = makeAgent(handle, {
           openChat: () =>
             Effect.sync(() => {
               opens += 1;
+
               return handle;
             }),
         });
+
         const historyEntries = [
           {
             kind: "assistant" as const,
@@ -490,11 +537,13 @@ test("rolled replay windows allow fresh opens and watches without losing history
             text: "Durable history",
           },
         ];
+
         const sessions: SessionsApi = {
           ...makeSessions(),
           history: (_target, reference) =>
             Effect.sync(() => {
               expect(reference).toBe("durable-session");
+
               return {
                 entries: historyEntries,
                 terminalState: "completed" as const,
@@ -503,6 +552,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
               };
             }),
         };
+
         const gateway = makeUiGateway(makeConfig(registry, agent, undefined, { sessions }));
         const frames: string[] = [];
         const connection = gateway.connect((frame) => frames.push(frame));
@@ -512,9 +562,11 @@ test("rolled replay windows allow fresh opens and watches without losing history
           method: "session.open",
           params: { profileId, context: { kind: "local" } },
         });
+
         for (let index = 0; index <= CHAT_REPLAY_LIMIT; index += 1) {
           yield* registry.publish("local/main", { kind: "settled" });
         }
+
         for (const method of ["session.open", "session.watch"] as const) {
           frames.length = 0;
           yield* connection.request({
@@ -523,14 +575,17 @@ test("rolled replay windows allow fresh opens and watches without losing history
             params: method === "session.open" ? { profileId, context: { kind: "local" } } : { ref },
           });
           expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({ id: method, ok: true });
+
           const events = frames
             .map((frame) => decodeEventResult(frame))
             .filter(Result.isSuccess)
             .map((result) => result.success);
+
           expect(events).toHaveLength(CHAT_REPLAY_LIMIT);
           expect(events[0]?.seq).toBe(2);
           expect(events.at(-1)?.seq).toBe(CHAT_REPLAY_LIMIT + 1);
         }
+
         expect(opens).toBe(1);
         yield* connection.request({ id: "history", method: "session.history", params: { ref } });
         expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({
@@ -538,6 +593,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
           ok: true,
           result: { entries: historyEntries },
         });
+
         for (const params of [
           { ref, afterSeq: 0 },
           { ref, afterSeq: CHAT_REPLAY_LIMIT + 1, epoch: "expired-epoch" },
@@ -548,6 +604,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
             error: { code: "replay_gap" },
           });
         }
+
         frames.length = 0;
         yield* registry.publish("local/main", { kind: "settled" });
         expect(frames).toHaveLength(1);
@@ -572,9 +629,11 @@ test("command retries preserve the current transport request id", async () => {
   const sent: string[] = [];
   let openCount = 0;
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+
   const agent = makeAgent(handle, {
     openChat: () => {
       openCount += 1;
+
       return Effect.succeed(handle);
     },
   });
@@ -583,15 +642,18 @@ test("command retries preserve the current transport request id", async () => {
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(makeConfig(registry, agent)).connect((frame) =>
           sent.push(frame),
         );
+
         const params = {
           profileId,
           context: { kind: "local" as const },
           name: "retry",
           commandId: "same-logical-command",
         };
+
         yield* connection.request({ id: "transport-1", method: "session.open", params });
         yield* connection.request({ id: "transport-2", method: "session.open", params });
       }),
@@ -608,10 +670,12 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
   const source = "---\nversion: 1\ndescription: Researcher\n---\n\nResearch.\n";
   const edited = source.replace("Research.", "Research carefully.");
   let saveCount = 0;
+
   const profileAgents = makeProfileAgents({
     document: (_target, id) => Effect.succeed({ id, source }),
     save: (_target, id, expectedSource, nextSource) => {
       saveCount += 1;
+
       return expectedSource === source
         ? Effect.succeed({ id, source: nextSource })
         : Effect.fail(
@@ -628,14 +692,17 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { profileAgents }),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "document",
           method: "agent.document",
           params: { profileId, agentId: "researcher" },
         });
+
         const saveParams = {
           profileId,
           agentId: "researcher",
@@ -643,6 +710,7 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
           source: edited,
           commandId: "save-researcher-1",
         } as const;
+
         yield* connection.request({ id: "save-1", method: "agent.save", params: saveParams });
         yield* connection.request({ id: "save-2", method: "agent.save", params: saveParams });
         yield* connection.request({
@@ -675,6 +743,7 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
 test("auth status retains configured providers beyond the sixteen-provider cap", async () => {
   const sent: string[] = [];
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+
   const unconfigured = Array.from({ length: 17 }, (_, index) => ({
     id: `provider-${String(index).padStart(2, "0")}`,
     name: `Provider ${String(index).padStart(2, "0")}`,
@@ -683,6 +752,7 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
     supportsOauth: false,
     configured: undefined,
   }));
+
   const configured = {
     id: "zulu-configured",
     name: "Zulu Configured",
@@ -691,6 +761,7 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
     supportsOauth: true,
     configured: { type: "oauth" as const },
   };
+
   const auth: AuthApi = {
     status: () => Effect.never,
     readOnlyStatus: () => Effect.succeed([...unconfigured, configured]),
@@ -701,9 +772,11 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { auth }),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "auth",
           method: "auth.status",
@@ -742,6 +815,7 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
 test("reopening a session replaces its subscription instead of leaking listeners", async () => {
   const sent: string[] = [];
   const listeners = new Set<(event: ChatEvent) => void>();
+
   const handle = makeChatHandle({
     prompt: (text) =>
       Effect.sync(() => {
@@ -749,10 +823,12 @@ test("reopening a session replaces its subscription instead of leaking listeners
           listener({ kind: "assistant-text", delta: text, snapshot: text });
           listener({ kind: "settled" });
         }
+
         return text;
       }),
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => listeners.delete(listener);
     },
   });
@@ -761,9 +837,11 @@ test("reopening a session replaces its subscription instead of leaking listeners
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(makeConfig(registry, makeAgent(handle))).connect((frame) =>
           sent.push(frame),
         );
+
         const params = { profileId, context: { kind: "local" as const }, name: "same" };
         yield* connection.request({ id: "open-1", method: "session.open", params });
         yield* connection.request({ id: "open-2", method: "session.open", params });
@@ -779,8 +857,10 @@ test("reopening a session replaces its subscription instead of leaking listeners
 
   const events = sent.flatMap((frame) => {
     const decoded = decodeEventResult(frame);
+
     return Result.isSuccess(decoded) ? [decoded.success] : [];
   });
+
   expect(events).toHaveLength(2);
 });
 
@@ -812,12 +892,14 @@ test("returns a bounded internal frame when a successful result cannot be encode
         },
       ]),
   };
+
   const sent: string[] = [];
 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(
             registry,
@@ -826,6 +908,7 @@ test("returns a bounded internal frame when a successful result cannot be encode
             { sessions: oversizedSessions },
           ),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "list",
           method: "session.list",
@@ -845,16 +928,20 @@ test("returns a bounded internal frame when a successful result cannot be encode
 test("specialist session.open uses local specialist Pi primitive, never a channel alias", async () => {
   const calls: string[] = [];
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+
   const agent = makeAgent(handle, {
     openChat: () => {
       calls.push("channel-or-host");
+
       return Effect.succeed(handle);
     },
     openSpecialistChat: (_target, agentId) => {
       calls.push(`specialist:${agentId}`);
+
       return Effect.succeed(handle);
     },
   });
+
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -881,6 +968,7 @@ test("group.list discovers persisted groups for the requested Profile", async ()
     defaultRecipient: { kind: "host" },
     revision: 2,
   };
+
   const groups: UiGroupStore = {
     read: () =>
       Effect.succeed({
@@ -891,12 +979,14 @@ test("group.list discovers persisted groups for the requested Profile", async ()
     upsert: () => Effect.never,
     remove: () => Effect.never,
   };
+
   const sent: string[] = [];
 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(
             registry,
@@ -905,6 +995,7 @@ test("group.list discovers persisted groups for the requested Profile", async ()
             { groups },
           ),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "groups",
           method: "group.list",
@@ -924,27 +1015,33 @@ test("group.list discovers persisted groups for the requested Profile", async ()
 test("group prompts run bounded specialist turns sequentially and synthesize through one host writer", async () => {
   const specialistCalls: Array<{ readonly agentId: string; readonly directory: string }> = [];
   const promptOptions: Array<unknown> = [];
+
   const handle = makeChatHandle({
     prompt: (text, options) =>
       Effect.sync(() => {
         promptOptions.push(options);
+
         return text;
       }),
   });
+
   const agent = makeAgent(handle, {
     runSpecialist: (profile, agentId, _task, context) => {
       specialistCalls.push({ agentId, directory: context.sessionDirectory });
+
       return Effect.succeed({
         answer: `${agentId} answer`,
         session: { id: `${agentId}-child`, file: `${agentId}.jsonl` },
       });
     },
   });
+
   let groupState: UiGroupStateValue = decodeEmptyGroupState({
     version: 1,
     groups: [],
     commands: [],
   });
+
   const groups: UiGroupStore = {
     read: () => Effect.succeed(groupState),
     upsert: (_path, group, _expectedRevision, commandId) =>
@@ -963,6 +1060,7 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
             },
           ],
         };
+
         return groupState;
       }),
     remove: () => Effect.succeed(groupState),
@@ -973,17 +1071,20 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
         const sent: string[] = [];
+
         const connection = makeUiGateway(
           makeConfig(registry, agent, makeProfileExtensions(), {
             groups,
           }),
         ).connect((frame) => sent.push(frame));
+
         const context = {
           kind: "group" as const,
           groupId: "planning",
           memberAgentIds: ["researcher", "writer"],
           defaultRecipient: { kind: "host" as const },
         };
+
         yield* connection.request({
           id: "empty-group",
           method: "session.open",
@@ -1001,11 +1102,13 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           method: "session.open",
           params: { profileId, context },
         });
+
         const groupRef = {
           profileId,
           kind: "live" as const,
           key: `ui/group-${createHash("sha256").update("planning").digest("hex").slice(0, 32)}` as const,
         };
+
         yield* connection.request({
           id: "watch",
           method: "session.watch",
@@ -1029,11 +1132,13 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
         expect(promptOptions[0]).toMatchObject({
           ephemeralContext: expect.stringContaining("researcher"),
         });
+
         const firstVoices = sent
           .map((frame) => decodeEventResult(frame))
           .filter(Result.isSuccess)
           .map((result) => result.success)
           .filter((event) => event.event === "voice");
+
         expect(firstVoices.map((event) => event.payload.agentId)).toEqual(["researcher", "writer"]);
         yield* connection.request({
           id: "default-host",
@@ -1056,11 +1161,13 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
           "writer",
           "researcher",
         ]);
+
         const allVoices = sent
           .map((frame) => decodeEventResult(frame))
           .filter(Result.isSuccess)
           .map((result) => result.success)
           .filter((event) => event.event === "voice");
+
         expect(allVoices.map((event) => event.payload.agentId)).toEqual([
           "researcher",
           "writer",
@@ -1107,9 +1214,11 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
 test("UI gateway routes all management operations through decoded explicit Profile params", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
   const calls: string[] = [];
+
   const profileExtensions = makeProfileExtensions({
     listForProfile: (profilePath, root) => {
       calls.push(`list:${profilePath}:${root}`);
+
       return Effect.succeed({
         available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
         selected: ["weather"],
@@ -1117,14 +1226,17 @@ test("UI gateway routes all management operations through decoded explicit Profi
     },
     add: (profile, root, id) => {
       calls.push(`add:${profile.path}:${root}:${id}`);
+
       return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: true });
     },
     remove: (profile, root, id) => {
       calls.push(`remove:${profile.path}:${root}:${id}`);
+
       return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: false });
     },
     validate: (profile, root) => {
       calls.push(`validate:${profile.path}:${root}`);
+
       return Effect.succeed({
         selected: ["weather"],
         preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
@@ -1136,6 +1248,7 @@ test("UI gateway routes all management operations through decoded explicit Profi
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(
             registry,
@@ -1143,6 +1256,7 @@ test("UI gateway routes all management operations through decoded explicit Profi
             profileExtensions,
           ),
         ).connect((frame) => responses.push(decodeResponse(frame)));
+
         yield* connection.request({
           id: "1",
           method: "extension.list-for-profile",
@@ -1176,6 +1290,7 @@ test("UI gateway routes all management operations through decoded explicit Profi
 
 test("UI gateway maps extension failures to bounded typed details without filesystem paths", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
+
   const profileExtensions = makeProfileExtensions({
     add: () =>
       Effect.fail(
@@ -1198,10 +1313,12 @@ test("UI gateway maps extension failures to bounded typed details without filesy
         }),
       ),
   });
+
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(
             registry,
@@ -1209,6 +1326,7 @@ test("UI gateway maps extension failures to bounded typed details without filesy
             profileExtensions,
           ),
         ).connect((frame) => responses.push(decodeResponse(frame)));
+
         yield* connection.request({
           id: "1",
           method: "extension.add",
@@ -1236,6 +1354,7 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
     name: "\u0000".repeat(256),
     thinkingLevels: ["off", "low", "medium", "high"],
   }));
+
   const modelService: ModelsApi = {
     status: () =>
       Effect.succeed({
@@ -1256,12 +1375,14 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
     set: (_target, providerId, modelId, thinking) =>
       Effect.succeed({ providerId, modelId, thinking }),
   };
+
   const sent: string[] = [];
 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
+
         const connection = makeUiGateway(
           makeConfig(
             registry,
@@ -1270,6 +1391,7 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
             { models: modelService },
           ),
         ).connect((frame) => sent.push(frame));
+
         yield* connection.request({
           id: "large-model-catalog",
           method: "model.available",

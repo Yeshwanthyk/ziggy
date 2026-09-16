@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 export const DoctorSeverity = Schema.Literals(["ok", "warn", "error"]);
+
 export type DoctorSeverity = typeof DoctorSeverity.Type;
 
 export const DoctorCheck = Schema.Struct({
@@ -8,6 +9,7 @@ export const DoctorCheck = Schema.Struct({
   severity: DoctorSeverity,
   message: Schema.String,
 });
+
 export type DoctorCheck = typeof DoctorCheck.Type;
 
 export interface DoctorReport {

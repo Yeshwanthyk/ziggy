@@ -36,9 +36,11 @@ describe("Discord health projection filesystem boundary", () => {
 
     await Effect.runPromise(writeDiscordHealth(profilePath, initialDiscordHealth(12)));
     await writeFile(join(profilePath, ".runtime", "discord-health.json"), '{"prompt":"secret"}\n');
+
     const malformed = await Effect.runPromise(
       readDiscordHealth(profilePath, 13).pipe(Effect.result),
     );
+
     expect(Result.isFailure(malformed)).toBe(true);
   });
 });

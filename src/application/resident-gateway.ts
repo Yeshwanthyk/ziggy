@@ -69,6 +69,7 @@ export const loadResidentGatewayConfig = (
     const discordConfig = discord ? yield* loadDiscordGatewayConfig(target) : undefined;
     const slack = yield* gatewayConfigPresent(join(target.path, "slack.json"));
     const slackConfig = slack ? yield* loadSlackGatewayConfig(target) : undefined;
+
     return { telegram: telegramConfig, discord: discordConfig, slack: slackConfig };
   });
 
@@ -140,7 +141,9 @@ const makeLiveUiRuntime = (
         target,
         registry,
       };
+
       let openedGateway: UiGatewayApi;
+
       if (profileRegistryPath === undefined) {
         openedGateway = makeUiGateway({
           defaultProfile: defaultBranch,
@@ -151,6 +154,7 @@ const makeLiveUiRuntime = (
         const profileDirectory = makeProfileDirectory(target, {
           registryPath: profileRegistryPath,
         });
+
         const entries = yield* profileDirectory.entries().pipe(
           Effect.mapError(
             (cause) =>
@@ -161,6 +165,7 @@ const makeLiveUiRuntime = (
               }),
           ),
         );
+
         const branches = yield* Effect.forEach(
           entries.filter((entry) => entry.available || entry.profileId === defaultBranch.profileId),
           (entry) =>
@@ -177,6 +182,7 @@ const makeLiveUiRuntime = (
                 ),
           { concurrency: 1 },
         );
+
         openedGateway = makeSharedUiGateway({
           defaultProfile: defaultBranch,
           branches,
@@ -185,23 +191,31 @@ const makeLiveUiRuntime = (
           ...capabilities,
         });
       }
+
       const connections = new Map<string, UiGatewayConnection>();
+
       const connectionFor = (transport: UiServerConnection): UiGatewayConnection => {
         const existing = connections.get(transport.id);
+
         if (existing !== undefined) return existing;
         const opened = openedGateway.connect(transport.send);
         connections.set(transport.id, opened);
+
         return opened;
       };
+
       yield* openUiServer(target.path, {
         onRequest: (connection, request) => connectionFor(connection).request(request),
         onClose: (connection) => {
           const opened = connections.get(connection.id);
+
           if (opened === undefined) return Effect.void;
           connections.delete(connection.id);
+
           return opened.close;
         },
       });
+
       return yield* Effect.never;
     }),
 });
@@ -218,10 +232,12 @@ export const makeResidentGateway = (
   run: (target) =>
     Effect.gen(function* () {
       const config = yield* runtime.loadConfig(target);
+
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* runtime.acquireOwner(target);
           const registry = yield* makeChatRegistry();
+
           const branches: Array<Effect.Effect<never, AutomationSchedulerError, Scope.Scope>> = [
             scheduler.run(target, owner),
             ui
@@ -234,6 +250,7 @@ export const makeResidentGateway = (
                 ),
               ),
           ];
+
           if (config.telegram !== undefined)
             branches.push(
               telegram
@@ -246,6 +263,7 @@ export const makeResidentGateway = (
                   ),
                 ),
             );
+
           if (config.discord !== undefined)
             branches.push(
               discord.runLoop(target, config.discord, registry).pipe(
@@ -263,6 +281,7 @@ export const makeResidentGateway = (
                 ),
               ),
             );
+
           if (config.slack !== undefined)
             branches.push(
               slack.runLoop(target, config.slack, registry).pipe(
@@ -278,6 +297,7 @@ export const makeResidentGateway = (
                 ),
               ),
             );
+
           return yield* Effect.all(branches, { concurrency: "unbounded", discard: true }).pipe(
             Effect.andThen(Effect.never),
           );

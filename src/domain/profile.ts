@@ -66,6 +66,7 @@ export class ProfileAgentMentionInvalid extends Schema.TaggedErrorClass<ProfileA
 ) {}
 
 export const ProfileAgentId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
+
 export const ProfileAgentThinking = Schema.Literals([
   "off",
   "minimal",
@@ -75,6 +76,7 @@ export const ProfileAgentThinking = Schema.Literals([
   "xhigh",
   "max",
 ]);
+
 export type ProfileAgentThinking = typeof ProfileAgentThinking.Type;
 
 export const ProfileAgent = Schema.Struct({
@@ -108,19 +110,23 @@ export const parseLeadingProfileAgentMention = (text: string): LeadingProfileAge
   if (!text.startsWith("@")) return { kind: "untagged" };
   const tokenEnd = text.search(/\s/u);
   const token = (tokenEnd === -1 ? text : text.slice(0, tokenEnd)).slice(1);
+
   if (!profileAgentIdPattern.test(token)) {
     return {
       kind: "invalid",
       message: "a leading Profile agent mention must use lowercase kebab-case @agent-id",
     };
   }
+
   const task = text.slice(tokenEnd === -1 ? text.length : tokenEnd).trim();
+
   if (task.length === 0) {
     return {
       kind: "invalid",
       message: "a leading Profile agent mention must be followed by a non-empty task",
     };
   }
+
   return { kind: "tagged", agentId: token, task };
 };
 
@@ -134,12 +140,16 @@ export const prepareProfileAgentPrompt = (
   agents: ReadonlyArray<ProfileAgent>,
 ): PreparedProfileAgentPrompt => {
   const mention = parseLeadingProfileAgentMention(text);
+
   if (mention.kind === "untagged") return { ok: true, text };
+
   if (mention.kind === "invalid") return { ok: false, message: mention.message };
   const agent = agents.find((candidate) => candidate.id === mention.agentId);
+
   if (agent === undefined) {
     return { ok: false, message: `unknown Profile agent: ${mention.agentId}` };
   }
+
   return {
     ok: true,
     text: `${text}\n\n[Ziggy dispatch guidance: call agent_run for the named agent "${agent.id}" with the user's task, then use the result to answer. This is model-guided; @ syntax does not bypass the core model.]`,
@@ -177,6 +187,7 @@ export const resolveProfileTarget = (
   const targetPath = hasPathSyntax(value)
     ? path.resolve(options.cwd, expandLeadingTilde(value, options.homedir))
     : path.join(resolveProfilesDirectory(options), value);
+
   const basename = path.basename(targetPath);
 
   return {

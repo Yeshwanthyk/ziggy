@@ -22,12 +22,14 @@ import type {
 
 const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   const output: string[] = [];
+
   const visit = async (directory: string) => {
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute);
+
       if (entry.isDirectory()) {
         output.push(`${relative}/`);
         await visit(absolute);
@@ -36,7 +38,9 @@ const tree = async (root: string): Promise<ReadonlyArray<string>> => {
       }
     }
   };
+
   await visit(root);
+
   return output;
 };
 
@@ -135,6 +139,7 @@ const noLock: ProfileExtensionMutationLockApi = {
 
 test("doctor is read-only and renders checks in stable owning-validator order", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     await mkdir(path.join(profilePath, "agents"));
@@ -147,6 +152,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
         path.resolve(import.meta.dir, "../.."),
       ),
     );
+
     const rendered = renderDoctor(report);
 
     expect(report.checks.map((check) => check.id)).toEqual([
@@ -212,6 +218,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
 
 test("doctor uses the ProfileExtensions service without publishing or activating resources", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-profile-extensions-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     const before = await tree(profilePath);
@@ -237,16 +244,19 @@ test("doctor uses the ProfileExtensions service without publishing or activating
 
 test("doctor excludes the format README from memory size checks", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-memory-readme-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     await mkdir(path.join(profilePath, "memory"));
     await writeFile(path.join(profilePath, "memory", "README.md"), "x".repeat(10_000));
+
     const report = await Effect.runPromise(
       makeDoctor(auth, models, profileExtensions).check(
         { path: profilePath, name: "Test" },
         path.resolve(import.meta.dir, "../.."),
       ),
     );
+
     expect(report.checks.find((check) => check.id === "memory")).toEqual({
       id: "memory",
       severity: "ok",
@@ -259,6 +269,7 @@ test("doctor excludes the format README from memory size checks", async () => {
 
 test("doctor uses the session projection for broken parent links", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-lineage-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     await mkdir(path.join(profilePath, "sessions"));
@@ -295,6 +306,7 @@ test("doctor uses the session projection for broken parent links", async () => {
 
 test("doctor warns when configured Slack has no runtime observation", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-slack-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     await writeFile(
@@ -323,6 +335,7 @@ test("doctor warns when configured Slack has no runtime observation", async () =
 
 test("doctor continues independent checks after malformed session metadata", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-error-"));
+
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     await mkdir(path.join(profilePath, "sessions"));
@@ -334,6 +347,7 @@ test("doctor continues independent checks after malformed session metadata", asy
         path.resolve(import.meta.dir, "../.."),
       ),
     );
+
     const rendered = renderDoctor(report);
 
     expect(report.checks.find((check) => check.id === "sessions")?.severity).toBe("error");

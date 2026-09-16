@@ -21,6 +21,7 @@ import {
 import { fileSystemCauseDetails } from "../fs/cause";
 
 export type ProviderAuthType = "api_key" | "oauth";
+
 export type { AuthEvent, AuthInteraction, AuthPrompt };
 
 export interface ProviderAuthStatus {
@@ -72,6 +73,7 @@ const requireSoul = (
   profilePath: string,
 ): Effect.Effect<void, ProfileNotInitialized | ProviderConfigError> => {
   const soulPath = join(profilePath, "SOUL.md");
+
   return Effect.tryPromise({
     try: () => stat(soulPath),
     catch: (cause) =>
@@ -144,12 +146,14 @@ const unsupportedMessage = (
     ...(supportsApiKeyLogin ? ["api_key"] : []),
     ...(supportsOauth ? ["oauth"] : []),
   ];
+
   const supportDescription =
     supported.length > 0
       ? `supported: ${supported.join(", ")}`
       : ambientOnly
         ? "ambient only — set the provider env var"
         : "no interactive login is available";
+
   return `provider ${providerId} does not support ${requested} login; ${supportDescription}`;
 };
 
@@ -171,6 +175,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
   > =>
     Effect.gen(function* () {
       yield* requireSoul(profilePath);
+
       const runtime = yield* Effect.tryPromise({
         try: () => createRuntime(profilePath),
         catch: (cause) =>
@@ -181,6 +186,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
             cause,
           }),
       });
+
       return yield* Effect.forEach(
         runtime.getProviders(),
         (provider): Effect.Effect<ProviderAuthStatus, ProviderConfigError> =>
@@ -223,6 +229,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
   > =>
     Effect.gen(function* () {
       yield* requireSoul(profilePath);
+
       const runtime = yield* Effect.tryPromise({
         try: () => createRuntime(profilePath),
         catch: (cause) =>
@@ -232,7 +239,9 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
             cause,
           }),
       });
+
       const provider = runtime.getProviders().find((candidate) => candidate.id === providerId);
+
       if (provider === undefined) {
         return yield* new AuthProviderUnknown({
           profilePath,
@@ -242,9 +251,12 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
       }
 
       const supportsApiKeyLogin = provider.auth.apiKey?.login !== undefined;
+
       const ambientOnly =
         provider.auth.apiKey !== undefined && provider.auth.apiKey.login === undefined;
+
       const supportsOauth = provider.auth.oauth !== undefined;
+
       if ((type === "api_key" && !supportsApiKeyLogin) || (type === "oauth" && !supportsOauth)) {
         return yield* new AuthTypeUnsupported({
           providerId,
@@ -262,10 +274,12 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
       yield* Effect.tryPromise({
         try: (signal) => {
           if (type === "oauth") registerOAuthFlows();
+
           const loginSignal =
             interaction.signal === undefined
               ? signal
               : AbortSignal.any([interaction.signal, signal]);
+
           return runtime.login(providerId, type, { ...interaction, signal: loginSignal });
         },
         catch: (cause) =>
@@ -275,6 +289,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
             cause,
           }),
       });
+
       const configured = yield* Effect.tryPromise({
         try: () => runtime.checkAuth(providerId),
         catch: (cause) =>
@@ -284,6 +299,7 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
             cause,
           }),
       });
+
       return { providerId, type, source: configured?.source };
     });
 
@@ -291,7 +307,11 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
 };
 
 const piAuth = makePiAuth();
+
 const piReadOnlyAuth = makePiAuth(createReadOnlyModelRuntime);
+
 export const listAuthStatus = piAuth.listAuthStatus;
+
 export const listAuthStatusReadOnly = piReadOnlyAuth.listAuthStatus;
+
 export const loginProvider = piAuth.loginProvider;

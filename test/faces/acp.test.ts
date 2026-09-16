@@ -19,6 +19,7 @@ import type { ModelsApi } from "ziggy/application/models";
 import { makeAcpAgent } from "ziggy/faces/acp";
 
 const target = { path: "/profile", name: "Profile" } as const;
+
 const decodeNewSessionResponseLine = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -81,6 +82,7 @@ const stubModels: ModelsApi = {
 
 test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text", async () => {
   const updates: Array<SessionNotification> = [];
+
   let opened:
     | {
         readonly context: string;
@@ -88,8 +90,10 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
         readonly mode: string | undefined;
       }
     | undefined;
+
   let promptText = "";
   let disposals = 0;
+
   const handle = makeChatHandle({
     prompt: (text, options) =>
       Effect.sync(() => {
@@ -104,6 +108,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
           delta: " world",
           snapshot: "hello world",
         });
+
         return "hello world";
       }),
     dispose: Effect.sync(() => {
@@ -119,16 +124,21 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
           false,
           stubAgent((_target, context, directory, mode) => {
             opened = { context: context.kind, directory, mode };
+
             return Effect.succeed(handle);
           }),
           stubModels,
         );
+
         const clientToAgent = new TransformStream<Uint8Array>();
         const agentToClient = new TransformStream<Uint8Array>();
+
         const agentConnection = app.connect(
           ndJsonStream(agentToClient.writable, clientToAgent.readable),
         );
+
         yield* Effect.addFinalizer(() => Effect.sync(() => agentConnection.close()));
+
         return yield* Effect.promise(() =>
           client({ name: "test-client" })
             .onNotification(methods.client.session.update, ({ params }) => {
@@ -141,10 +151,12 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
                   protocolVersion: PROTOCOL_VERSION,
                   clientCapabilities: {},
                 });
+
                 const session = await agentContext.request(methods.agent.session.new, {
                   cwd: "/workspace",
                   mcpServers: [],
                 });
+
                 const prompted = await agentContext.request(methods.agent.session.prompt, {
                   sessionId: session.sessionId,
                   prompt: [
@@ -157,6 +169,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
                     },
                   ],
                 });
+
                 return { initialized, session, prompted };
               },
             ),
@@ -202,10 +215,12 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
           true,
           stubAgent((_target, context) => {
             groupId = context.kind === "group" ? context.groupId : undefined;
+
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
           }),
           stubModels,
         );
+
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
             for (const request of [
@@ -220,10 +235,12 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
                 agentContext.request(methods.agent.session.new, request),
               ).rejects.toMatchObject({ code: -32_602 });
             }
+
             const session = await agentContext.request(methods.agent.session.new, {
               cwd: "/workspace",
               mcpServers: [],
             });
+
             expect(groupId).toBe(`acp-${session.sessionId}`);
             await expect(
               agentContext.request(methods.agent.session.prompt, {
@@ -254,6 +271,7 @@ test("ACP session/new announces auth-configured models and session/set_model val
           stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
           stubModels,
         );
+
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
             const session = decodeNewSessionWithModels(
@@ -262,6 +280,7 @@ test("ACP session/new announces auth-configured models and session/set_model val
                 mcpServers: [],
               }),
             );
+
             expect(session.models).toEqual({
               availableModels: [
                 {
@@ -272,10 +291,12 @@ test("ACP session/new announces auth-configured models and session/set_model val
               ],
               currentModelId: "openai/gpt-5",
             });
+
             const accepted = await agentContext.request("session/set_model", {
               sessionId: session.sessionId,
               modelId: "openai/gpt-5",
             });
+
             expect(accepted).toEqual({});
             await expect(
               agentContext.request("session/set_model", {
@@ -312,6 +333,7 @@ test("ACP routes sessions to a specialist when --agent is set", async () => {
             openSpecialistChat: (target, agentId) =>
               Effect.sync(() => {
                 opened.push(`${target.name}:${agentId}`);
+
                 return handle;
               }),
             runSpecialist: () => Effect.never,
@@ -319,12 +341,14 @@ test("ACP routes sessions to a specialist when --agent is set", async () => {
           stubModels,
           "ada",
         );
+
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
             const session = await agentContext.request(methods.agent.session.new, {
               cwd: "/workspace",
               mcpServers: [],
             });
+
             expect(session.sessionId).toEqual(expect.any(String));
           }),
         );
@@ -338,6 +362,7 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
   let aborts = 0;
   const started = await Effect.runPromise(Deferred.make<void>());
   const release = await Effect.runPromise(Deferred.make<void>());
+
   const handle: ChatHandle = makeChatHandle({
     prompt: (_text: string, _options?: ChatPromptOptions) =>
       Deferred.succeed(started, undefined).pipe(
@@ -358,16 +383,19 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
           stubAgent(() => Effect.succeed(handle)),
           stubModels,
         );
+
         return yield* Effect.promise(() =>
           client().connectWith(app, async (agentContext) => {
             const session = await agentContext.request(methods.agent.session.new, {
               cwd: "/workspace",
               mcpServers: [],
             });
+
             const prompting = agentContext.request(methods.agent.session.prompt, {
               sessionId: session.sessionId,
               prompt: [{ type: "text", text: "wait" }],
             });
+
             await Effect.runPromise(Deferred.await(started));
             await agentContext.notify(methods.agent.session.cancel, {
               sessionId: session.sessionId,
@@ -383,6 +411,7 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
 
 test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => {
   const faceUrl = new URL("../../src/faces/acp.ts", import.meta.url).href;
+
   const script = `
     import { Effect } from "effect";
     import { makeChatHandle } from "ziggy/application/agent";
@@ -409,24 +438,28 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
       runAcp({ path: "/profile", name: "Profile" }, false, agent, models),
     );
   `;
+
   const request = `${JSON.stringify({
     jsonrpc: "2.0",
     id: 1,
     method: "session/new",
     params: { cwd: "/workspace", mcpServers: [] },
   })}\n`;
+
   const subprocess = Bun.spawn([process.execPath, "-e", script], {
     cwd: process.cwd(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
+
   subprocess.stdin.write(request);
   subprocess.stdin.flush();
   const stdoutReader = subprocess.stdout.getReader();
   const first = await stdoutReader.read();
   const stdout = first.done ? "" : new TextDecoder().decode(first.value);
   subprocess.stdin.end();
+
   const [exitCode, stderr] = await Promise.all([
     subprocess.exited,
     new Response(subprocess.stderr).text(),

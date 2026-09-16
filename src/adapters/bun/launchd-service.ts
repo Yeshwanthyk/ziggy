@@ -43,6 +43,7 @@ export const renderLaunchdService = (
 ): ResidentServiceDefinition => {
   const throttleSeconds = boundedSeconds(options.throttleSeconds, 10);
   const stopTimeoutSeconds = boundedSeconds(options.stopTimeoutSeconds, 30);
+
   const environment = {
     HOME: options.home,
     ZIGGY_HOME: options.ziggyHome,
@@ -50,8 +51,10 @@ export const renderLaunchdService = (
       options.pathEnvironment ??
       `${join(options.home, ".local", "bin")}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,
   };
+
   const path = launchdDefinitionPath(options.home, options.identity);
   const logs = launchdLogPaths(options.ziggyHome, options.identity);
+
   const fingerprint = residentServiceFingerprint(
     JSON.stringify({
       manager: "launchd",
@@ -64,9 +67,11 @@ export const renderLaunchdService = (
       stopTimeoutSeconds,
     }),
   );
+
   const argumentsXml = options.launchVector
     .map((argument) => `    <string>${xml(argument)}</string>`)
     .join("\n");
+
   const content = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- ${launchdManagedMarker} -->
@@ -108,6 +113,7 @@ ${argumentsXml}
 </dict>
 </plist>
 `;
+
   return {
     manager: "launchd",
     identity: options.identity,
@@ -120,24 +126,30 @@ ${argumentsXml}
 };
 
 export const launchdDomain = (uid: number): string => `gui/${uid}`;
+
 export const launchdDomainLabel = (uid: number, identity: ResidentServiceIdentity): string =>
   `${launchdDomain(uid)}/${identity.launchdLabel}`;
+
 export const launchdBootstrapCommand = (
   uid: number,
   definitionPath: string,
 ): ResidentLaunchVector => ["launchctl", "bootstrap", launchdDomain(uid), definitionPath];
+
 export const launchdBootoutCommand = (
   uid: number,
   identity: ResidentServiceIdentity,
 ): ResidentLaunchVector => ["launchctl", "bootout", launchdDomainLabel(uid, identity)];
+
 export const launchdKickstartCommand = (
   uid: number,
   identity: ResidentServiceIdentity,
 ): ResidentLaunchVector => ["launchctl", "kickstart", "-k", launchdDomainLabel(uid, identity)];
+
 export const launchdStatusCommand = (
   uid: number,
   identity: ResidentServiceIdentity,
 ): ResidentLaunchVector => ["launchctl", "print", launchdDomainLabel(uid, identity)];
+
 export const launchdLogsCommand = (
   paths: ReturnType<typeof launchdLogPaths>,
   follow: boolean,

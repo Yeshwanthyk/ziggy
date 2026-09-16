@@ -2,8 +2,11 @@ import { Schema } from "effect";
 import { UiGatewayMessage, UiGroupRecord, UiPin } from "./ui-gateway";
 
 export const UiStateVersion = Schema.Literal(1);
+
 export const UI_PIN_LIMIT = 256;
+
 export const UI_GROUP_LIMIT = 256;
+
 export const UiCommandFingerprint = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(512),
@@ -21,6 +24,7 @@ export const UiPinState = Schema.Struct({
     }),
   ).check(Schema.isMaxLength(128)),
 });
+
 export type UiPinState = typeof UiPinState.Type;
 
 export const UiGroupState = Schema.Struct({
@@ -35,6 +39,7 @@ export const UiGroupState = Schema.Struct({
     }),
   ).check(Schema.isMaxLength(128)),
 });
+
 export type UiGroupState = typeof UiGroupState.Type;
 
 export class UiStateReadError extends Schema.TaggedErrorClass<UiStateReadError>()(

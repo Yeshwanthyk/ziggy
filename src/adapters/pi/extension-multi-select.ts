@@ -27,29 +27,39 @@ export class ExtensionMultiSelect {
     if (matchesKey(data, Key.up)) {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       this.onChange();
+
       return;
     }
+
     if (matchesKey(data, Key.down)) {
       this.selectedIndex = Math.min(this.extensions.length - 1, this.selectedIndex + 1);
       this.onChange();
+
       return;
     }
+
     if (matchesKey(data, Key.space)) {
       const extension = this.extensions[this.selectedIndex];
+
       if (extension !== undefined) {
         if (this.checked.has(extension.id)) {
           this.checked.delete(extension.id);
         } else {
           this.checked.add(extension.id);
         }
+
         this.onChange();
       }
+
       return;
     }
+
     if (matchesKey(data, Key.enter)) {
       this.done(this.extensions.flatMap(({ id }) => (this.checked.has(id) ? [id] : [])));
+
       return;
     }
+
     if (matchesKey(data, Key.escape)) {
       this.done(undefined);
     }
@@ -57,6 +67,7 @@ export class ExtensionMultiSelect {
 
   render(width: number): Array<string> {
     const availableWidth = Math.max(1, width);
+
     const first = Math.max(
       0,
       Math.min(
@@ -64,7 +75,9 @@ export class ExtensionMultiSelect {
         this.extensions.length - this.visibleRows,
       ),
     );
+
     const visible = this.extensions.slice(first, first + this.visibleRows);
+
     const lines = [
       truncateToWidth(
         this.theme.fg("accent", this.theme.bold("Profile extensions")),
@@ -103,6 +116,7 @@ export class ExtensionMultiSelect {
         ),
       );
     }
+
     return lines;
   }
 

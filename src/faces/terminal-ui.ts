@@ -18,6 +18,7 @@ export const truncateMiddle = (value: string, maximumWidth: number): string => {
   const leftWidth = Math.ceil(available * 0.62);
   const rightWidth = available - leftWidth;
   const totalWidth = Bun.stringWidth(value);
+
   return `${Bun.sliceAnsi(value, 0, leftWidth)}…${Bun.sliceAnsi(value, totalWidth - rightWidth, totalWidth)}`;
 };
 
@@ -29,6 +30,7 @@ export const truncateEnd = (value: string, maximumWidth: number): string =>
 export const alignEdges = (left: string, right: string, width: number): string => {
   if (right.length === 0) return left;
   const gap = Math.max(2, width - Bun.stringWidth(left) - Bun.stringWidth(right));
+
   return `${left}${" ".repeat(gap)}${right}`;
 };
 
@@ -44,6 +46,7 @@ export const panelLine = (color: TerminalColors, content: string, width: number)
   const innerWidth = width - 4;
   const fitted = truncateEnd(content, innerWidth);
   const padding = " ".repeat(innerWidth - Bun.stringWidth(fitted));
+
   return `${color.dim("│")} ${fitted}${padding} ${color.dim("│")}`;
 };
 

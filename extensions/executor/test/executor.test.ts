@@ -6,6 +6,7 @@ import { runExecutorCommand } from "../index.ts";
 describe("Executor command boundary", () => {
   test("passes cwd, signal, and timeout and bounds successful output", async () => {
     const controller = new AbortController();
+
     let observed:
       | {
           command: string;
@@ -13,8 +14,10 @@ describe("Executor command boundary", () => {
           options: Parameters<ExtensionAPI["exec"]>[2];
         }
       | undefined;
+
     const exec: ExtensionAPI["exec"] = async (command, args, options) => {
       observed = { command, args, options };
+
       return { stdout: "x".repeat(40_000), stderr: "", code: 0, killed: false };
     };
 

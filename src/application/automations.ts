@@ -53,6 +53,7 @@ export interface AutomationsApi {
     trigger: AutomationTrigger,
   ) => Effect.Effect<AutomationRunOutcome, AutomationError>;
 }
+
 export class Automations extends Context.Service<Automations, AutomationsApi>()(
   "ziggy/Automations",
 ) {}
@@ -96,6 +97,7 @@ const readAutomation = (
   Effect.gen(function* () {
     const id = yield* validateAutomationId(idSource);
     const loaded = yield* files.readDefinition(target, id, allowPaused);
+
     return yield* parseAutomationFile(id, loaded.path, loaded.source);
   });
 
@@ -113,26 +115,36 @@ const resolveTargets = (
 ): Effect.Effect<TargetResolution> =>
   Effect.gen(function* () {
     let homes: ReadonlyArray<AutomationTarget> | undefined;
+
     if (automation.broadcast.includes("all")) {
       const path = join(target.path, "broadcasts.json");
       const sourceResult = yield* files.readBroadcasts(target).pipe(Effect.result);
+
       if (Result.isFailure(sourceResult)) {
         return { ok: false, category: "broadcasts-unreadable" };
       }
+
       const source = sourceResult.success ?? '{"targets":[]}';
       const decoded = yield* decodeBroadcastsFileJson(source).pipe(Effect.option);
+
       if (Option.isNone(decoded)) return { ok: false, category: "broadcasts-invalid" };
       const parsed: Array<AutomationTarget> = [];
+
       for (const value of decoded.value.targets) {
         const item = yield* parseAutomationTarget(automation.id, path, value).pipe(Effect.option);
+
         if (Option.isNone(item)) return { ok: false, category: "broadcasts-invalid" };
         parsed.push(item.value);
       }
+
       homes = parsed;
+
       if (homes.length === 0) return { ok: false, category: "all-empty" };
     }
+
     const resolved: Array<AutomationTarget> = [];
     const seen = new Set<string>();
+
     for (const token of automation.broadcast) {
       const additions =
         token === "origin"
@@ -142,6 +154,7 @@ const resolveTargets = (
           : token === "all"
             ? (homes ?? [])
             : [token];
+
       for (const addition of additions) {
         if (!seen.has(addition.target)) {
           seen.add(addition.target);
@@ -149,6 +162,7 @@ const resolveTargets = (
         }
       }
     }
+
     return { ok: true, targets: resolved };
   });
 
@@ -156,6 +170,7 @@ type DeliveryFailure = {
   readonly category: AutomationDeliveryFailureCategory;
   readonly retriable: boolean;
 };
+
 const apiFailure = (error: TelegramApiError | DiscordApiError | SlackApiError): DeliveryFailure => {
   switch (error.reason) {
     case "network":
@@ -189,34 +204,42 @@ const deliver = (
         .pipe(
           Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
         );
+
       for (const chunk of telegramMessageChunks(reply))
         yield* capabilities
           .sendTelegram(config.botToken, target.chatId, chunk)
           .pipe(Effect.mapError(apiFailure));
+
       return;
     }
+
     if (Predicate.isTagged("discord")(target)) {
       const config = yield* capabilities
         .loadDiscordConfig(profile)
         .pipe(
           Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
         );
+
       for (const chunk of discordMessageChunks(reply))
         yield* capabilities
           .sendDiscord(config.botToken, target.channelId, chunk)
           .pipe(Effect.mapError(apiFailure));
+
       return;
     }
+
     const config = yield* capabilities
       .loadSlackConfig(profile)
       .pipe(
         Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
       );
+
     for (const chunk of slackMessageChunks(reply))
       yield* capabilities
         .sendSlack(config.botToken, target.channelId, chunk, target.threadTs)
         .pipe(Effect.mapError(apiFailure));
   });
+
   return operation.pipe(
     Effect.as<AutomationTargetOutcome>({ target: target.target, status: "delivered" }),
     Effect.catch((failure) =>
@@ -227,6 +250,7 @@ const deliver = (
 
 // oxfmt-ignore
 export interface AutomationRunRuntime { readonly store: AutomationRunStore; readonly now: Effect.Effect<number>; readonly makeManualRunId: () => string }
+
 const liveRunRuntime: AutomationRunRuntime = {
   store: automationRunStore,
   now: Clock.currentTimeMillis,
@@ -265,6 +289,7 @@ const chatModelOverride = (automation: Automation): ChatModelOverride | undefine
           thinking: automation.thinking,
         };
   }
+
   return automation.thinking === undefined ? undefined : { thinking: automation.thinking };
 };
 
@@ -277,25 +302,32 @@ export const makeAutomations = (
     Effect.gen(function* () {
       const automationId = yield* validateAutomationId(automationIdSource);
       const admittedAt = yield* runtime.now;
+
       const runId =
         trigger.kind === "manual-force"
           ? runtime.makeManualRunId()
           : scheduledRunId(automationId, Date.parse(trigger.scheduledFor));
+
       if (trigger.kind === "manual-force") {
         yield* runtime.store.recover(target.path, admittedAt);
+
         const admission = yield* runtime.store.admitManual(
           target.path,
           automationId,
           runId,
           admittedAt,
         );
+
         if (admission === "skipped-busy") return { kind: "skipped-busy" };
       }
+
       const fingerprint = trigger.kind === "scheduled" ? trigger.scheduleFingerprint : null;
+
       const owner =
         trigger.kind === "scheduled"
           ? { kind: "resident" as const, id: trigger.residentOwnerId }
           : undefined;
+
       yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint, owner);
 
       const finish = (
@@ -313,6 +345,7 @@ export const makeAutomations = (
           automationId,
           trigger.kind === "scheduled",
         );
+
         if (trigger.kind === "scheduled" && automation.gate === undefined) {
           return {
             outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },
@@ -325,8 +358,10 @@ export const makeAutomations = (
             targets: [],
           };
         }
+
         if (automation.gate !== undefined) {
           const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
+
           if (gate.kind === "declined") {
             return {
               outcome: { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode },
@@ -340,6 +375,7 @@ export const makeAutomations = (
             };
           }
         }
+
         const reply =
           automation.specialist === undefined
             ? yield* Effect.acquireUseRelease(
@@ -376,8 +412,10 @@ export const makeAutomations = (
                   ),
                 },
               )).answer;
+
         yield* capabilities.printReply(reply);
         const resolution = yield* resolveTargets(capabilities.files, target, automation);
+
         if (!resolution.ok) {
           return {
             outcome: {
@@ -393,10 +431,13 @@ export const makeAutomations = (
             targets: [],
           };
         }
+
         const outcomes: Array<AutomationTargetOutcome> = [];
+
         for (const destination of resolution.targets)
           outcomes.push(yield* deliver(capabilities, target, destination, reply));
         const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
+
         return {
           outcome: { kind: "executed", delivery: { kind: "resolved", targets: outcomes } },
           terminal:
@@ -447,6 +488,7 @@ export const AutomationsLive = Layer.effect(
   Automations,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
+
     return makeAutomations(agent);
   }),
 );

@@ -6,8 +6,11 @@ import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 const OSASCRIPT = "/usr/bin/osascript";
+
 const SCRIPT_PATH = join(import.meta.dirname, "scripts", "reminders.applescript");
+
 const TIMEOUT_MS = 45_000;
+
 const OUTPUT_LIMIT = 32 * 1024;
 
 const RequiredText = Type.String({ minLength: 1, maxLength: 1_024 });
@@ -107,6 +110,7 @@ const DeleteParameters = Type.Object(
 );
 
 type CalendarDateValue = Static<typeof CalendarDate>;
+
 type DueValue = Static<typeof Due>;
 
 export type AppleRemindersInvocation =
@@ -144,6 +148,7 @@ export type AppleRemindersInvocation =
 
 const assertCalendarDate = (date: CalendarDateValue): void => {
   const candidate = new Date(Date.UTC(date.year, date.month - 1, date.day));
+
   if (
     candidate.getUTCFullYear() !== date.year ||
     candidate.getUTCMonth() !== date.month - 1 ||
@@ -156,6 +161,7 @@ const assertCalendarDate = (date: CalendarDateValue): void => {
 const dueArguments = (due: DueValue | undefined): string[] => {
   if (due === undefined) return ["none", "0", "0", "0", "0", "0"];
   assertCalendarDate(due);
+
   return [
     due.kind,
     String(due.year),
@@ -172,6 +178,7 @@ export const appleRemindersArguments = (invocation: AppleRemindersInvocation): s
       return [invocation.operation, invocation.list ?? ""];
     case "list-due":
       assertCalendarDate(invocation.date);
+
       return [
         invocation.operation,
         String(invocation.date.year),
@@ -206,6 +213,7 @@ export const appleRemindersArguments = (invocation: AppleRemindersInvocation): s
       if (invocation.confirmed !== true) {
         throw new Error("Apple Reminders deletion requires explicit confirmation.");
       }
+
       return [invocation.operation, invocation.name, invocation.source_list, "confirmed"];
   }
 };
@@ -218,9 +226,13 @@ const truncate = (text: string): string =>
 const resultText = (result: ExecResult): string => {
   const stdout = truncate(result.stdout.trim());
   const stderr = truncate(result.stderr.trim());
+
   if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
+
   if (stdout.length > 0) return stdout;
+
   if (stderr.length > 0) return `stderr:\n${stderr}`;
+
   return "Apple Reminders command completed successfully.";
 };
 
@@ -234,25 +246,31 @@ export const runAppleReminders = async (
   signal: AbortSignal | undefined,
 ) => {
   const argv = appleRemindersArguments(invocation);
+
   const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
     cwd,
     timeout: TIMEOUT_MS,
   };
+
   if (signal !== undefined) {
     execOptions.signal = signal;
   }
+
   const result = await exec(OSASCRIPT, [SCRIPT_PATH, ...argv], execOptions);
 
   if (result.code !== 0) {
     const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
     const output = resultText(result);
+
     const mutationWarning = isMutation(invocation.operation)
       ? "\nThe mutation was not retried. Inspect Reminders before attempting another write."
       : "";
+
     throw new Error(`Apple Reminders ${reason}\n${output}${mutationWarning}`);
   }
 
   const text = resultText(result);
+
   return {
     content: [{ type: "text" as const, text }],
     details: {

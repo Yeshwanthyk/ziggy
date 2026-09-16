@@ -9,9 +9,11 @@ import type { ProfileExtensionInvalid, ProfileFileSystemError, ProfileTarget } f
 export const ProfileExtensionId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 );
+
 export type ProfileExtensionId = typeof ProfileExtensionId.Type;
 
 export type ProfileExtensionKind = "skill" | "code" | "skill+code" | "remote";
+
 export type ProfileExtensionCatalogSource = "bundled" | "remote-approved";
 
 export interface ProfileExtensionCatalogListing {
@@ -74,6 +76,7 @@ export class ProfileExtensionRollbackFailed extends Schema.TaggedErrorClass<Prof
     cause: Schema.Defect(),
   },
 ) {}
+
 export interface ProfileExtensionPreflightResult {
   readonly extensionPathCount: number;
   readonly skillPathCount: number;

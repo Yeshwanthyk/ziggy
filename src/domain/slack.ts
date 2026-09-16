@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 
 const NonEmptyString = Schema.String.check(Schema.isMinLength(1));
+
 export const SlackChannelMode = Schema.Literals(["mention", "always"]);
+
 const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{8,31}$/;
 
 export const SlackChannelPolicies = Schema.Record(Schema.String, SlackChannelMode).check(

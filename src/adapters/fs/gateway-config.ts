@@ -13,6 +13,7 @@ export const validateGatewayProfile = (
   target: ProfileTarget,
 ): Effect.Effect<void, ProfileNotInitialized | GatewayConfigError> => {
   const soulPath = join(target.path, "SOUL.md");
+
   return Effect.tryPromise({
     try: () => stat(soulPath),
     catch: (cause) =>
@@ -75,6 +76,7 @@ export const loadTelegramConfigFile = (
   target: ProfileTarget,
 ): Effect.Effect<TelegramGatewayConfig, ProfileNotInitialized | GatewayConfigError> => {
   const path = join(target.path, "telegram.json");
+
   return validateGatewayProfile(target).pipe(
     Effect.andThen(
       loadConfig(
@@ -90,6 +92,7 @@ export const loadDiscordConfigFile = (
   target: ProfileTarget,
 ): Effect.Effect<DiscordGatewayConfig, GatewayConfigError> => {
   const path = join(target.path, "discord.json");
+
   return validateGatewayProfile(target).pipe(
     Effect.mapError((failure) =>
       failure._tag === "GatewayConfigError"
@@ -114,6 +117,7 @@ export const loadSlackConfigFile = (
   target: ProfileTarget,
 ): Effect.Effect<SlackGatewayConfig, GatewayConfigError> => {
   const path = join(target.path, "slack.json");
+
   return validateGatewayProfile(target).pipe(
     Effect.mapError((failure) =>
       failure._tag === "GatewayConfigError"

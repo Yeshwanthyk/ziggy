@@ -22,9 +22,11 @@ const Output = Type.Object({
 
 test("registers the native web_search tool", () => {
   const names: string[] = [];
+
   const registerTool: ExtensionAPI["registerTool"] = (tool) => {
     names.push(tool.name);
   };
+
   const exec: ExtensionAPI["exec"] = async () => ({
     stdout: "",
     stderr: "",
@@ -40,6 +42,7 @@ test("registers the native web_search tool", () => {
 test("runs the package-relative helper through pi.exec with the Profile boundary", async () => {
   const profile = "/tmp/web-search-profile";
   const controller = new AbortController();
+
   const calls: Array<{
     command: string;
     args: string[];
@@ -47,6 +50,7 @@ test("runs the package-relative helper through pi.exec with the Profile boundary
     signal: AbortSignal | undefined;
     timeout: number | undefined;
   }> = [];
+
   const exec: ExtensionAPI["exec"] = async (command, args, options) => {
     calls.push({
       command,
@@ -55,6 +59,7 @@ test("runs the package-relative helper through pi.exec with the Profile boundary
       signal: options?.signal,
       timeout: options?.timeout,
     });
+
     return { stdout: "{}\n", stderr: "", code: 0, killed: false };
   };
 
@@ -88,11 +93,13 @@ test("returns deterministic bounded fake-key results without network access", as
       stderr: "pipe",
     },
   );
+
   const [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
   const parsed: unknown = JSON.parse(stdout);
 
   expect(exitCode).toBe(0);
   expect(Check(Output, parsed)).toBe(true);
+
   if (!Check(Output, parsed)) throw new Error("search returned an invalid response");
   expect(parsed).toEqual({
     query: "effect boundaries",

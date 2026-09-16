@@ -23,6 +23,7 @@ const RootQuerySchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const TargetSchema = Type.Object(
   {
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
@@ -31,6 +32,7 @@ const TargetSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const ConditionSchema = Type.Object(
   {
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
@@ -40,6 +42,7 @@ const ConditionSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const ActionSchema = Type.Union([
   Type.Object(
     {
@@ -70,6 +73,7 @@ const ActionSchema = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const SegmentStepSchema = Type.Union([
   Type.Object(
     {
@@ -81,6 +85,7 @@ const SegmentStepSchema = Type.Union([
   ),
   Type.Object({ assert: ConditionSchema }, { additionalProperties: false }),
 ]);
+
 const SegmentInputSchema = Type.Object(
   {
     rootQuery: Type.Optional(RootQuerySchema),
@@ -88,6 +93,7 @@ const SegmentInputSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const SegmentResultDetailsSchema = Type.Object(
   {
     tool: Type.Literal("run_ui_segment"),
@@ -154,21 +160,28 @@ export const observeRunToolCall = (
 ): void => {
   if (event.toolName !== "run_ui_segment") return;
   const planned = run.plan.segments[run.nextSegment];
+
   if (planned === undefined || run.pending.has(event.toolCallId)) {
     run.mismatch = true;
+
     return;
   }
+
   try {
     const actual = Parse(SegmentInputSchema, event.input);
     const expected = Parse(SegmentInputSchema, planned.input);
+
     if (!Equal(actual, expected)) {
       run.mismatch = true;
+
       return;
     }
   } catch {
     run.mismatch = true;
+
     return;
   }
+
   run.pending.set(event.toolCallId, run.nextSegment);
   run.nextSegment += 1;
 };
@@ -176,6 +189,7 @@ export const observeRunToolCall = (
 const validCompletedSteps = (details: unknown, planned: WorkflowExecutionPlan): boolean => {
   try {
     const decoded = Parse(SegmentResultDetailsSchema, details);
+
     return (
       decoded.completed.length === planned.input.steps.length &&
       decoded.completed.every((entry, index) => entry.step === index + 1)
@@ -196,23 +210,31 @@ export const observeRunToolResult = (
 ): void => {
   if (event.toolName !== "run_ui_segment") return;
   const segmentIndex = run.pending.get(event.toolCallId);
+
   if (segmentIndex === undefined) return;
   run.pending.delete(event.toolCallId);
   const planned = run.plan.segments[segmentIndex];
+
   if (planned === undefined) {
     run.mismatch = true;
+
     return;
   }
+
   if (event.isError) {
     run.outcomes.set(segmentIndex, "failed");
     run.failure ??= "tool-error";
+
     return;
   }
+
   if (!validCompletedSteps(event.details, planned)) {
     run.outcomes.set(segmentIndex, "failed");
     run.failure ??= "invalid-result";
+
     return;
   }
+
   run.outcomes.set(segmentIndex, "passed");
 };
 
@@ -222,6 +244,7 @@ const expectedCondition = (step: WorkflowExecutionPlan["input"]["steps"][number]
 export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSummary => {
   const checks = run.plan.segments.flatMap((segment, segmentIndex) => {
     const segmentOutcome = run.outcomes.get(segmentIndex);
+
     return segment.input.steps.map((step, stepIndex) => ({
       sourceStep: segment.sourceSteps[stepIndex] ?? 1,
       expected: expectedCondition(step),
@@ -233,10 +256,12 @@ export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSu
             : ("not-run" as const),
     }));
   });
+
   const passed = [...run.outcomes.values()].filter((outcome) => outcome === "passed").length;
   const failed = [...run.outcomes.values()].filter((outcome) => outcome === "failed").length;
   let overall: RunSummary["overall"];
   let stopReason: RunSummary["stopReason"];
+
   if (run.failure !== undefined) {
     overall = "failed";
     stopReason = run.failure;
@@ -257,6 +282,7 @@ export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSu
     overall = "passed";
     stopReason = "completed";
   }
+
   return {
     format: "ziggy-computer-workflow-run-summary",
     formatVersion: 1,

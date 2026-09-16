@@ -10,11 +10,15 @@ export const ProfileAgentProjectionJson = Schema.Struct({
   tools: Schema.Array(Schema.String),
   path: Schema.String,
 });
+
 export type ProfileAgentProjectionJson = typeof ProfileAgentProjectionJson.Type;
 
 export const ProfileAgentsJson = Schema.Array(ProfileAgentProjectionJson);
+
 export type ProfileAgentsJson = typeof ProfileAgentsJson.Type;
+
 const encodeProfileAgents = Schema.encodeSync(ProfileAgentsJson);
+
 const encodeProfileAgent = Schema.encodeSync(ProfileAgentProjectionJson);
 
 const model = (agent: ProfileAgentProjection): string =>

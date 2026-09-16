@@ -23,13 +23,17 @@ export const profileResourceLoaderOptions = (
     noContextFiles: true,
     extensionFactories: [...inlineExtensions, ...resources.extensionFactories],
   };
+
   if (resources.extensionPaths.length > 0) {
     options.additionalExtensionPaths = [...resources.extensionPaths];
   }
+
   if (resources.skillPaths.length > 0) {
     options.additionalSkillPaths = [...resources.skillPaths];
   }
+
   const embeddedSkillPaths = new Set(resources.skillPaths.filter(isEmbeddedBundledSkillPath));
+
   if (embeddedSkillPaths.size > 0) {
     options.skillsOverride = (base) => ({
       skills: base.skills,
@@ -44,5 +48,6 @@ export const profileResourceLoaderOptions = (
       ),
     });
   }
+
   return options;
 };

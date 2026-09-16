@@ -12,6 +12,7 @@ import {
 } from "../segment.ts";
 
 const ctx = {} as ExtensionContext;
+
 const result = (details: object): AgentToolResult<unknown> => ({
   content: [{ type: "text", text: "fixture" }],
   details,
@@ -41,25 +42,31 @@ describe("semantic segment execution", () => {
     const calls: Array<{ tool: string; parameters: Record<string, unknown> }> = [];
     let searched = false;
     let acted = false;
+
     const fixture = bridge({
       find: async (_id, input) => {
         calls.push({ tool: "find", parameters: input });
+
         return result({ totalMatches: 1, windows: [{ windowRef: "@r3" }] });
       },
       observe: async (_id, input) => {
         calls.push({ tool: "observe", parameters: input });
+
         return result({ capture: { stateId: "assert-observed" } });
       },
       search: async () => {
         searched = true;
+
         return result({ totalMatches: 1, matches: [{ ref: "@e1" }] });
       },
       act: async () => {
         acted = true;
+
         return result({ capture: { stateId: "unexpected" }, status: "ok" });
       },
       wait: async (_id, input) => {
         calls.push({ tool: "wait", parameters: input });
+
         return result({ stateId: "assert-verified", found: true });
       },
     });
@@ -110,13 +117,16 @@ describe("semantic segment execution", () => {
   test("fails a read-only assertion without searching or acting", async () => {
     let searched = false;
     let acted = false;
+
     const fixture = bridge({
       search: async () => {
         searched = true;
+
         return result({ totalMatches: 1, matches: [{ ref: "@e1" }] });
       },
       act: async () => {
         acted = true;
+
         return result({ capture: { stateId: "unexpected" }, status: "ok" });
       },
       wait: async () => result({ stateId: "assert-failed", found: false, timedOut: true }),
@@ -138,17 +148,21 @@ describe("semantic segment execution", () => {
   test("resolves a durable root query freshly before every step", async () => {
     const calls: string[] = [];
     let discovery = 0;
+
     const fixture = bridge({
       find: async (id, input) => {
         calls.push(`find:${id}:${String(input.app)}`);
         discovery += 1;
+
         return result({ totalMatches: 1, windows: [{ windowRef: `@r${discovery}` }] });
       },
       observe: async (id, input) => {
         calls.push(`observe:${id}:${String(input.root)}`);
+
         return result({ capture: { stateId: `observed-${discovery}` } });
       },
     });
+
     const queried = {
       ...parameters(),
       rootQuery: { app: "TextEdit", text: "Document", kind: "window" as const },
@@ -168,10 +182,12 @@ describe("semantic segment execution", () => {
 
   test("fails closed when a durable root query finds no current window", async () => {
     let observed = false;
+
     const fixture = bridge({
       find: async () => result({ totalMatches: 0, windows: [] }),
       observe: async () => {
         observed = true;
+
         return result({ capture: { stateId: "unexpected" } });
       },
     });
@@ -190,11 +206,13 @@ describe("semantic segment execution", () => {
 
   test("fails closed when a durable root query is ambiguous", async () => {
     let observed = false;
+
     const fixture = bridge({
       find: async () =>
         result({ totalMatches: 2, windows: [{ windowRef: "@r1" }, { windowRef: "@r2" }] }),
       observe: async () => {
         observed = true;
+
         return result({ capture: { stateId: "unexpected" } });
       },
     });
@@ -213,21 +231,26 @@ describe("semantic segment execution", () => {
 
   test("resolves a unique target from fresh state and verifies the successor", async () => {
     const calls: Array<{ tool: string; parameters: Record<string, unknown> }> = [];
+
     const fixture = bridge({
       observe: async (_id, input) => {
         calls.push({ tool: "observe", parameters: input });
+
         return result({ capture: { stateId: "fresh" } });
       },
       search: async (_id, input) => {
         calls.push({ tool: "search", parameters: input });
+
         return result({ totalMatches: 1, matches: [{ ref: "@e9" }] });
       },
       act: async (_id, input) => {
         calls.push({ tool: "act", parameters: input });
+
         return result({ capture: { stateId: "successor" }, status: "ok" });
       },
       wait: async (_id, input) => {
         calls.push({ tool: "wait", parameters: input });
+
         return result({ stateId: "verified", found: true });
       },
     });
@@ -267,10 +290,12 @@ describe("semantic segment execution", () => {
 
   test("stops before acting when semantic resolution is ambiguous", async () => {
     let acted = false;
+
     const fixture = bridge({
       search: async () => result({ totalMatches: 2, matches: [{ ref: "@e1" }, { ref: "@e2" }] }),
       act: async () => {
         acted = true;
+
         return result({ capture: { stateId: "unexpected" } });
       },
     });
@@ -283,13 +308,16 @@ describe("semantic segment execution", () => {
 
   test("stops after a failed postcondition and does not continue", async () => {
     let observations = 0;
+
     const fixture = bridge({
       observe: async () => {
         observations += 1;
+
         return result({ capture: { stateId: `observed-${observations}` } });
       },
       wait: async () => result({ stateId: "failed", found: false, timedOut: true }),
     });
+
     const twoSteps = { ...parameters(), steps: [...parameters().steps, ...parameters().steps] };
 
     await expect(executeSegment("segment-3", twoSteps, undefined, ctx, fixture)).rejects.toThrow(
@@ -300,6 +328,7 @@ describe("semantic segment execution", () => {
 
   test("fails closed when act_ui returns successor state after a swallowed driver failure", async () => {
     let verified = false;
+
     const fixture = bridge({
       act: async () =>
         result({
@@ -309,6 +338,7 @@ describe("semantic segment execution", () => {
         }),
       wait: async () => {
         verified = true;
+
         return result({ stateId: "unexpected", found: true });
       },
     });
@@ -324,6 +354,7 @@ describe("semantic segment execution", () => {
       ...parameters(),
       steps: Array.from({ length: SEGMENT_MAX_STEPS + 1 }, () => parameters().steps[0]!),
     };
+
     expect(() => validateSegment(tooMany)).toThrow(`at most ${SEGMENT_MAX_STEPS} steps`);
     expect(() => validateSegment({ ...parameters(), rootQuery: {} })).toThrow(
       "rootQuery must include",
@@ -340,6 +371,7 @@ describe("semantic segment execution", () => {
         },
       ],
     } as unknown as SegmentParameters;
+
     expect(() => validateSegment(unsafe)).toThrow("not in the reversible semantic allowlist");
   });
 
@@ -369,12 +401,15 @@ describe("semantic segment execution", () => {
     const controller = new AbortController();
     controller.abort();
     let observed = false;
+
     const fixture = bridge({
       observe: async () => {
         observed = true;
+
         return result({ capture: { stateId: "unexpected" } });
       },
     });
+
     await expect(
       executeSegment("segment-4", parameters(), controller.signal, ctx, fixture),
     ).rejects.toThrow("cancelled");

@@ -18,6 +18,7 @@ import { Effect, Result, Schema } from "effect";
 import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
 
 const temporaryPaths: Array<string> = [];
+
 const usage = (input: number, output: number, cost: number) => ({
   input,
   output,
@@ -27,6 +28,7 @@ const usage = (input: number, output: number, cost: number) => ({
   totalTokens: input + output + 3,
   cost: { input: cost / 2, output: cost / 2, cacheRead: 0, cacheWrite: 0, total: cost },
 });
+
 const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 interface TestSessionMessage {
@@ -54,32 +56,42 @@ const header = (id: string, parentSession?: string) => {
     timestamp: "2026-08-08T10:00:00.000Z",
     cwd: "/profile",
   };
+
   if (parentSession === undefined) return value;
+
   return { ...value, parentSession };
 };
+
 const entry = (id: string, parentId: string | null, value: TestSessionEntryBody) => ({
   id,
   parentId,
   timestamp: `2026-08-08T10:00:0${id.length}.000Z`,
   ...value,
 });
+
 const writeJsonl = async (file: string, values: ReadonlyArray<object>) => {
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${values.map((value) => JSON.stringify(value)).join("\n")}\n`);
 };
+
 const profile = async () => {
   const directory = await mkdtemp(join(tmpdir(), "ziggy-sessions-"));
   temporaryPaths.push(directory);
+
   return directory;
 };
+
 const snapshot = async (root: string): Promise<ReadonlyArray<string>> => {
   const status = await lstat(root).catch(() => undefined);
+
   if (status === undefined) return [];
   const values: Array<string> = [];
+
   const walk = async (directory: string) => {
     for (const name of (await readdir(directory)).sort()) {
       const target = join(directory, name);
       const child = await lstat(target);
+
       if (child.isDirectory()) {
         values.push(`${target.slice(root.length)}:dir:${child.mtimeMs}`);
         await walk(target);
@@ -90,7 +102,9 @@ const snapshot = async (root: string): Promise<ReadonlyArray<string>> => {
       }
     }
   };
+
   await walk(root);
+
   return values;
 };
 
@@ -200,9 +214,11 @@ describe("Pi session metadata adapter", () => {
     const root = await profile();
     expect(await Effect.runPromise(listProfileSessions(root))).toEqual([]);
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
+
     const result = await Effect.runPromise(
       showProfileSession(root, "../outside").pipe(Effect.result),
     );
+
     expect(Result.isFailure(result) && result.failure._tag).toBe("SessionNotFound");
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
   });
@@ -218,9 +234,11 @@ describe("Pi session metadata adapter", () => {
     expect(
       (await Effect.runPromise(listProfileSessions(root))).map((session) => session.id),
     ).toEqual(["valid"]);
+
     const result = await Effect.runPromise(
       showProfileSession(root, "oversized").pipe(Effect.result),
     );
+
     expect(result).toMatchObject({
       failure: { _tag: "SessionNotFound", reference: "oversized" },
     });
@@ -271,6 +289,7 @@ describe("Pi session metadata adapter", () => {
       }),
     ]);
     const before = await snapshot(root);
+
     for (const args of [
       ["sessions", "list", root],
       ["sessions", "show", root, "cli-id"],
@@ -279,10 +298,12 @@ describe("Pi session metadata adapter", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
+
       expect(result.exitCode).toBe(0);
       expect(result.stderr.toString()).toBe("");
       expect(result.stdout.toString()).not.toMatch(/CLI-PROMPT-SECRET|CLI-REPLY-SECRET/);
     }
+
     expect(await snapshot(root)).toEqual(before);
   });
 
@@ -296,10 +317,12 @@ describe("Pi session metadata adapter", () => {
     );
 
     const requests: Array<string> = [];
+
     const server = Bun.serve({
       port: 0,
       fetch: async (request) => {
         requests.push(await request.text());
+
         return new Response(
           [
             'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"selected answer"},"finish_reason":null}]}',
@@ -311,6 +334,7 @@ describe("Pi session metadata adapter", () => {
         );
       },
     });
+
     await writeFile(
       join(root, "models.json"),
       JSON.stringify({
@@ -346,6 +370,7 @@ describe("Pi session metadata adapter", () => {
       });
       const olderId = older.getSessionId();
       const olderFile = older.getSessionFile();
+
       if (olderFile === undefined) throw new Error("expected older session file");
 
       const newer = SessionManager.create(root, sessionDirectory);
@@ -365,6 +390,7 @@ describe("Pi session metadata adapter", () => {
         timestamp: Date.now(),
       });
       const newerFile = newer.getSessionFile();
+
       if (newerFile === undefined) throw new Error("expected newer session file");
       await utimes(newerFile, new Date(2_000), new Date(2_000));
       await utimes(olderFile, new Date(1_000), new Date(1_000));
@@ -382,6 +408,7 @@ describe("Pi session metadata adapter", () => {
         ],
         { stdout: "pipe", stderr: "pipe", cwd: process.cwd() },
       );
+
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
@@ -392,6 +419,7 @@ describe("Pi session metadata adapter", () => {
       expect(stderr).toBe("");
       const eventLines = stdout.trim().split("\n");
       expect(eventLines.length).toBeGreaterThan(0);
+
       for (const line of eventLines) expect(() => decodeJsonLine(line)).not.toThrow();
       expect(requests).toHaveLength(1);
       expect(requests[0]).toContain("OLDER-HISTORY");

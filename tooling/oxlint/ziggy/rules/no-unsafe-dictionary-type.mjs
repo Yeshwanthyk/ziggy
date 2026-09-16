@@ -3,6 +3,7 @@ import {
   classifyUnsafeDictionaryValue,
   createTypeEnvironment,
 } from "../dictionary-types.mjs";
+
 const typeNodeKinds = new Set([
   "JSDocNonNullableType",
   "JSDocNullableType",
@@ -42,36 +43,48 @@ const typeNodeKinds = new Set([
   "TSUnknownKeyword",
   "TSVoidKeyword",
 ]);
+
 function isTypeNode(node) {
   return typeNodeKinds.has(node.type);
 }
+
 function typeReferenceName(type) {
   return type.typeName.type === "Identifier" ? type.typeName.name : null;
 }
+
 function isInsideTypeAliasDeclaration(node) {
   let current = node.parent;
+
   while (current !== null && current.type !== "Program") {
     if (current.type === "TSTypeAliasDeclaration") return true;
     current = current.parent;
   }
+
   return false;
 }
+
 function isPlainAliasConsumerUse(node, environment) {
   if (node.type !== "TSTypeReference" || node.typeArguments?.params.length) return false;
   const name = typeReferenceName(node);
+
   return name !== null && environment.aliases.has(name) && !isInsideTypeAliasDeclaration(node);
 }
+
 function shouldReportType(node, environment) {
   if (isPlainAliasConsumerUse(node, environment)) return false;
+
   if (classifyUnsafeDictionary(node, environment) === null) return false;
   let current = node.parent;
+
   while (current !== null && current.type !== "Program") {
     if (isTypeNode(current) && classifyUnsafeDictionary(current, environment) !== null)
       return false;
     current = current.parent;
   }
+
   return true;
 }
+
 export default {
   meta: {
     type: "problem",
@@ -86,15 +99,19 @@ export default {
   },
   createOnce(context) {
     let environment = null;
+
     const report = (node, value) => {
       context.report({ node, messageId: "unsafeDictionary", data: { value } });
     };
+
     const reportIfUnsafe = (node) => {
       if (environment === null || !shouldReportType(node, environment)) return;
       const unsafe = classifyUnsafeDictionary(node, environment);
+
       if (unsafe === null) return;
       report(node, unsafe.unsafeValue);
     };
+
     return {
       Program(node) {
         environment = createTypeEnvironment(node);
@@ -109,10 +126,12 @@ export default {
           node.parent.type === "TSTypeLiteral"
         )
           return;
+
         const unsafe = classifyUnsafeDictionaryValue(
           node.typeAnnotation.typeAnnotation,
           environment,
         );
+
         if (unsafe !== null) report(node, unsafe.unsafeValue);
       },
     };

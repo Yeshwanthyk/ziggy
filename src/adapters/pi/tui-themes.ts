@@ -14,13 +14,21 @@ import photonWasmFile from "../../../node_modules/@silvia-odwyer/photon-node/pho
 // Bun `{ type: "file" }` yields a path string. TypeScript types resolved `.json` files as
 // parsed objects and does not honor ambient `*theme/*.json` modules for those specifiers.
 export const piBuiltinDarkThemePath: string = `${darkThemeFile}`;
+
 export const piBuiltinLightThemePath: string = `${lightThemeFile}`;
+
 export const piBuiltinClankolasPath: string = `${clankolasFile}`;
+
 export const piBuiltinExportCssPath: string = `${exportCssFile}`;
+
 export const piBuiltinExportHtmlPath: string = `${exportHtmlFile}`;
+
 export const piBuiltinExportJsPath: string = `${exportJsFile}`;
+
 export const piBuiltinHighlightJsPath: string = `${highlightJsFile}`;
+
 export const piBuiltinMarkedJsPath: string = `${markedJsFile}`;
+
 export const piBuiltinPhotonWasmPath: string = `${photonWasmFile}`;
 
 /** Compiled Bun TUI layout under `PI_PACKAGE_DIR` (`isBunBinary` in Pi 0.84.1). */
@@ -81,6 +89,7 @@ export const materializeCompiledPiTuiPackageDir = async (destRoot: string): Prom
     // copyFileSync cannot read Bun's compiled `$bunfs` file embeds; read/write can.
     await writeFile(destinationPath, await readFile(embeddedPath), { flag: "wx" });
   }
+
   return destRoot;
 };
 
@@ -95,6 +104,7 @@ export const leaseCompiledPiTuiAssets = async (
   compiled: boolean = compiledPiTuiRuntime(),
 ): Promise<CompiledPiTuiAssetsLease> => {
   const existing = process.env.PI_PACKAGE_DIR;
+
   if ((existing !== undefined && existing !== "") || !compiled) {
     return noopLease;
   }
@@ -103,6 +113,7 @@ export const leaseCompiledPiTuiAssets = async (
   const previousPackageDirectory = process.env.PI_PACKAGE_DIR;
   const previousOffline = process.env.PI_OFFLINE;
   const previousVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+
   const restoreEnvironment = () => {
     restoreProcessEnv("PI_PACKAGE_DIR", previousPackageDirectory);
     restoreProcessEnv("PI_OFFLINE", previousOffline);
@@ -114,6 +125,7 @@ export const leaseCompiledPiTuiAssets = async (
     process.env.PI_PACKAGE_DIR = packageDirectory;
     process.env.PI_OFFLINE = "1";
     process.env.PI_SKIP_VERSION_CHECK = "1";
+
     return {
       packageDirectory,
       release: async () => {

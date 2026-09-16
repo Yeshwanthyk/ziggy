@@ -26,7 +26,9 @@ const COMPUTER_USE_TOOLS = new Set([
 ]);
 
 const Ref = Type.String({ pattern: "^@[ero][A-Za-z0-9._:-]*$" });
+
 const StateId = Type.String({ minLength: 1, maxLength: 256 });
+
 const FindInput = Type.Object(
   {
     text: Type.Optional(Type.String({ maxLength: 256 })),
@@ -46,6 +48,7 @@ const FindInput = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const ObserveInput = Type.Object(
   {
     root: Type.Optional(Ref),
@@ -55,6 +58,7 @@ const ObserveInput = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const SearchInput = Type.Object(
   {
     text: Type.Optional(Type.String({ maxLength: 256 })),
@@ -64,6 +68,7 @@ const SearchInput = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const Condition = {
   ref: Type.Optional(Ref),
   scopeRef: Type.Optional(Ref),
@@ -73,7 +78,9 @@ const Condition = {
   until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")])),
   timeoutMs: Type.Optional(Type.Number({ minimum: 100, maximum: 60_000 })),
 };
+
 const Point = { x: Type.Number(), y: Type.Number() };
+
 const Action = Type.Union([
   Type.Object({ action: Type.Literal("press"), ref: Ref }, { additionalProperties: false }),
   Type.Object(
@@ -128,6 +135,7 @@ const Action = Type.Union([
   ),
   Type.Object({ action: Type.Literal("moveMouse"), ...Point }, { additionalProperties: false }),
 ]);
+
 const ActInput = Type.Object(
   {
     stateId: StateId,
@@ -136,7 +144,9 @@ const ActInput = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const WaitInput = Type.Object({ ...Condition, stateId: StateId }, { additionalProperties: false });
+
 const BrowserInput = Type.Object(
   { url: Type.Optional(Type.String({ maxLength: 8_192 })), stateId: Type.Optional(StateId) },
   { additionalProperties: false },
@@ -178,6 +188,7 @@ const sanitizeActions = (
   const sanitized: Extract<RecordedInput, { kind: "safe_actions" }>["actions"] = [];
   const issues: string[] = [];
   let variableIndex = 0;
+
   for (const action of safeActions) {
     if (action.action === "setText" || action.action === "typeText") {
       variableIndex += 1;
@@ -191,6 +202,7 @@ const sanitizeActions = (
       );
     } else if (action.action === "keypress") {
       const normalized = normalizeSafeControlKeypress(action.keys);
+
       if (normalized === undefined) {
         sanitized.push({ action: "requires-review", reason: "unsupported-action" });
         issues.push(
@@ -210,6 +222,7 @@ const sanitizeActions = (
         ...(action.scrollY === undefined ? {} : { scrollY: action.scrollY }),
         target: action.ref === undefined ? "root" : "requires-review",
       });
+
       if (action.ref !== undefined) issues.push("Replace the transient scroll ref with a target.");
     } else if (action.action === "press" || (action.action === "click" && "ref" in action)) {
       sanitized.push({ action: "requires-review", reason: "transient-target" });
@@ -225,6 +238,7 @@ const sanitizeActions = (
       );
     }
   }
+
   return { input: { kind: "safe_actions", actions: sanitized }, issues };
 };
 
@@ -236,6 +250,7 @@ const sanitizeComputerUseInput = (
   try {
     if (toolName === "find_roots") {
       const decoded = Parse(FindInput, input);
+
       return {
         input: {
           kind: "find_roots",
@@ -252,8 +267,10 @@ const sanitizeComputerUseInput = (
             : ["Process ids are session-specific and were not recorded."],
       };
     }
+
     if (toolName === "observe_ui") {
       const decoded = Parse(ObserveInput, input);
+
       return {
         input: {
           kind: "observe_ui",
@@ -262,8 +279,10 @@ const sanitizeComputerUseInput = (
         issues: decoded.root === undefined ? [] : ["The transient root ref was not recorded."],
       };
     }
+
     if (toolName === "search_ui") {
       const decoded = Parse(SearchInput, input);
+
       return {
         input: {
           kind: "search_ui",
@@ -274,13 +293,17 @@ const sanitizeComputerUseInput = (
         issues: [],
       };
     }
+
     if (toolName === "act_ui") {
       const decoded = Parse(ActInput, input);
+
       return sanitizeActions(decoded.actions, sequence);
     }
+
     if (toolName === "wait_for") {
       const decoded = Parse(WaitInput, input);
       const text = withoutTransientText(decoded.text);
+
       return {
         input: {
           kind: "wait_for",
@@ -295,19 +318,23 @@ const sanitizeComputerUseInput = (
             : ["Transient refs and exact values were not recorded; review the wait condition."],
       };
     }
+
     if (toolName === "launch_browser" || toolName === "navigate_browser") {
       Parse(BrowserInput, input);
+
       return {
         input: { kind: toolName, urlVariable: `url-${sequence}` },
         issues: ["The browser URL was not recorded; define and bind the generated variable."],
       };
     }
+
     if (toolName === "evaluate_browser") {
       return {
         input: withheld("arbitrary-code"),
         issues: ["Arbitrary browser code is never recorded."],
       };
     }
+
     if (toolName === "expand_ui" || toolName === "inspect_ui" || toolName === "read_text") {
       return {
         input: withheld("transient-reference"),
@@ -320,6 +347,7 @@ const sanitizeComputerUseInput = (
       issues: ["The observed tool input failed strict decoding and was withheld."],
     };
   }
+
   return { input: withheld("unsupported-input"), issues: ["Unsupported tool input was withheld."] };
 };
 
@@ -369,6 +397,7 @@ export const observeToolResult = (
   now = new Date(),
 ): void => {
   const pending = recording.pending.get(event.toolCallId);
+
   if (pending === undefined || pending.toolName !== event.toolName) return;
   recording.pending.delete(event.toolCallId);
   recording.completed.push({
@@ -383,7 +412,9 @@ export const finishRecording = (recording: ActiveRecording, now = new Date()): W
     (call) =>
       `Tool call ${call.sequence} had not completed when recording stopped and was omitted.`,
   );
+
   const calls = recording.completed.toSorted((left, right) => left.sequence - right.sequence);
+
   return {
     format: "ziggy-computer-workflow-draft",
     formatVersion: 1,

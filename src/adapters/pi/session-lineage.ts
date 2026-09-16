@@ -10,6 +10,7 @@ export const profileAgentChildSessionDirectory = (
 
 export const sessionReference = (manager: SessionManager): SessionReference | undefined => {
   const file = manager.getSessionFile();
+
   return file === undefined ? undefined : { id: manager.getSessionId(), file };
 };
 
@@ -18,12 +19,16 @@ export const createProfileAgentChildSession = (
   parent: SessionManager,
 ): { readonly manager: SessionManager; readonly reference: SessionReference } | undefined => {
   const parentFile = parent.getSessionFile();
+
   if (!parent.isPersisted() || parentFile === undefined) return undefined;
+
   const manager = SessionManager.create(
     profilePath,
     profileAgentChildSessionDirectory(profilePath, parent.getSessionId()),
     { parentSession: parentFile },
   );
+
   const reference = sessionReference(manager);
+
   return reference === undefined ? undefined : { manager, reference };
 };

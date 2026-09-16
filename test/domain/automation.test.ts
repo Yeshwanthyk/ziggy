@@ -21,6 +21,7 @@ const source = (fields: ReadonlyArray<string>, body = "Do the work.") =>
 
 const parse = async (fields: ReadonlyArray<string>, body?: string) => {
   const id = await Effect.runPromise(validateAutomationId("daily-note"));
+
   return Effect.runPromise(
     parseAutomationFile(id, "/profile/automations/daily-note.md", source(fields, body)),
   );
@@ -28,6 +29,7 @@ const parse = async (fields: ReadonlyArray<string>, body?: string) => {
 
 const invalidMessage = async (fields: ReadonlyArray<string>, body?: string) => {
   const id = await Effect.runPromise(validateAutomationId("daily-note"));
+
   return Effect.runPromise(
     parseAutomationFile(id, "/profile/automations/daily-note.md", source(fields, body)).pipe(
       Effect.map(() => "success"),
@@ -43,6 +45,7 @@ describe("automation lifecycle", () => {
       path: "/profile/automations/daily.paused.md",
       message: "automation daily is paused",
     });
+
     expect(failure._tag).toBe("AutomationPaused");
     expect(failure.message).toContain("paused");
   });
@@ -87,6 +90,7 @@ describe("automation definition", () => {
       parse(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 0 9 * * *", "timezone: Europe/London", "broadcast: none"]),
     ]);
+
     expect(values.map((value) => [value.schedule.cronSource, value.schedule.timezone])).toEqual([
       ["0 9 * * *", "UTC"],
       ["0 0 9 * * *", "Europe/London"],
@@ -102,6 +106,7 @@ describe("automation definition", () => {
       parse(["cron: 0 10 * * *", "timezone: UTC", "broadcast: none"]),
       parse(["cron: 0 9 * * *", "timezone: Europe/London", "broadcast: none"]),
     ]);
+
     expect(automationScheduleFingerprint(five)).toBe(automationScheduleFingerprint(six));
     expect(automationScheduleFingerprint(steppedFive)).toBe(
       automationScheduleFingerprint(steppedSix),
@@ -125,9 +130,11 @@ describe("automation definition", () => {
       ["cron: 0 9 * * *", "timezone: UTC "],
       ["cron: 0 9 * * *", "timezone:"],
     ];
+
     const messages = await Promise.all(
       cases.map((fields) => invalidMessage([...fields, "broadcast: none"])),
     );
+
     expect(messages.every((message) => message.startsWith("invalid automation daily-note:"))).toBe(
       true,
     );
@@ -141,10 +148,13 @@ describe("automation definition", () => {
       "slack:channel:C0123ABCDE",
       "slack:channel:G0123ABCDE:thread:1712345678.123456",
     ];
+
     const parsed = await Promise.all(
       valid.map((value) => Effect.runPromise(parseAutomationTarget("x", "/x", value))),
     );
+
     expect(parsed.map((value) => value.target)).toEqual(valid);
+
     const invalid = [
       "telegram:chat:0",
       "telegram:chat:+42",
@@ -156,6 +166,7 @@ describe("automation definition", () => {
       "slack:channel:C0123ABCDE:thread:1.2",
       "telegram:42",
     ];
+
     const results = await Promise.all(
       invalid.map((value) =>
         Effect.runPromise(
@@ -166,6 +177,7 @@ describe("automation definition", () => {
         ),
       ),
     );
+
     expect(results).toEqual(invalid.map(() => "invalid"));
   });
 
@@ -179,17 +191,21 @@ describe("automation definition", () => {
       "all, telegram:chat:1",
       "all,,origin",
     ];
+
     const messages = await Promise.all(
       invalid.map((broadcast) =>
         invalidMessage(["cron: 0 9 * * *", "timezone: UTC", `broadcast: ${broadcast}`]),
       ),
     );
+
     expect(messages.every((message) => message !== "success")).toBe(true);
+
     const duplicate = await parse([
       "cron: 0 9 * * *",
       "timezone: UTC",
       "broadcast: telegram:chat:1,telegram:chat:1",
     ]);
+
     expect(duplicate.broadcast.map(broadcastTokenSource)).toEqual([
       "telegram:chat:1",
       "telegram:chat:1",
@@ -201,10 +217,12 @@ describe("automation definition", () => {
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
       "@research-helper\nWrite the daily note.",
     );
+
     const inline = await parse(
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
       "@research-helper Write the daily note.",
     );
+
     expect(newline.specialist).toEqual({
       agentId: "research-helper",
       task: "Write the daily note.",
@@ -213,10 +231,12 @@ describe("automation definition", () => {
       prompt: "Write the daily note.",
       specialist: { agentId: "research-helper" },
     });
+
     const indented = await parse(
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"],
       "  @research-helper\nWrite the daily note.",
     );
+
     expect(indented.specialist).toBeUndefined();
     expect(indented.prompt).toBe("@research-helper\nWrite the daily note.");
   });
@@ -227,6 +247,7 @@ describe("automation definition", () => {
         invalidMessage(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none"], body),
       ),
     );
+
     expect(messages).toEqual([
       "invalid automation daily-note: a leading Profile agent mention must use lowercase kebab-case @agent-id",
       "invalid automation daily-note: a leading Profile agent mention must be followed by a non-empty task",
@@ -241,6 +262,7 @@ describe("automation definition", () => {
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none", "prompt: shadow"],
       ["cron: 0 9 * * *", "timezone: UTC", "broadcast: none", " continued"],
     ];
+
     const messages = await Promise.all(cases.map((fields) => invalidMessage(fields)));
     expect(messages.every((message) => message !== "success")).toBe(true);
     expect(
@@ -262,6 +284,7 @@ describe("automation definition", () => {
       "model: claude-sonnet",
       "thinking: high",
     ]);
+
     expect({
       provider: overridden.provider,
       model: overridden.model,
@@ -278,6 +301,7 @@ describe("automation definition", () => {
       "broadcast: none",
       "thinking: off",
     ]);
+
     expect(thinkingOnly.provider).toBeUndefined();
     expect(thinkingOnly.model).toBeUndefined();
     expect(thinkingOnly.thinking).toBe("off");

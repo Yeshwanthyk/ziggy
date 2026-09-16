@@ -5,7 +5,9 @@ import { ResidentServiceError } from "ziggy/domain/resident-service";
 import { renderServeStatus } from "ziggy/faces/serve-cli";
 
 const profilePath = "/profiles/pal";
+
 const ownerPath = `${profilePath}/.runtime/gateway-owner.lock`;
+
 const scheduler = {
   profilePath,
   observedAtMs: 100_000,
@@ -116,6 +118,7 @@ describe("serve status CLI projection", () => {
       message: "definition unreadable\nwith details",
       cause: undefined,
     });
+
     const rendered = renderServeStatus(status({ managed: Result.fail(failure) }));
 
     expect(rendered.text).toContain(

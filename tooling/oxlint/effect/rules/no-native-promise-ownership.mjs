@@ -16,6 +16,7 @@ const isFunction = (node) =>
 
 const isPromiseType = (node) => {
   const name = typeReferenceName(node);
+
   return name === "Promise" || name === "globalThis.Promise";
 };
 
@@ -27,6 +28,7 @@ const isPromiseConstructor = (node) =>
 
 const isPromiseStaticCall = (node) => {
   const expression = unwrapExpression(node);
+
   return expression?.type === "MemberExpression" && isPromiseConstructor(expression.object);
 };
 
@@ -52,7 +54,9 @@ export default {
       },
       AwaitExpression(node) {
         let current = node.parent;
+
         while (current && !isFunction(current)) current = current.parent;
+
         if (!current) context.report({ node, message });
       },
       TSTypeReference(node) {

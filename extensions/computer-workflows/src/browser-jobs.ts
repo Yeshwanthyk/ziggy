@@ -18,8 +18,11 @@ import {
 } from "./schema.ts";
 
 const MAX_EVALUATION_BYTES = 256 * 1024;
+
 const MAX_REPORT_BYTES = 224 * 1024;
+
 const MAX_ITEMS = 100_000;
+
 const ExtractedValueSchema = Type.Object(
   {
     overflow: Type.Boolean(),
@@ -94,17 +97,22 @@ const checkpointInput = (
 
 export const validateBrowserJobDefinition = (value: unknown): BrowserJobDefinition => {
   const workflow = Parse(BrowserJobDefinitionSchema, value);
+
   if (workflow.pages[0].id === workflow.pages[1].id) {
     throw new Error(`Duplicate page id '${workflow.pages[0].id}'.`);
   }
+
   for (const page of workflow.pages) {
     const url = new URL(page.url);
+
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error(`Page '${page.id}' URL must use HTTP(S).`);
     }
+
     if (url.username !== "" || url.password !== "") {
       throw new Error(`Page '${page.id}' URL must not contain credentials.`);
     }
+
     for (const [label, checkpoint] of [
       ["signed-in", page.signedInCheckpoint],
       ["ready", page.readyCheckpoint],
@@ -115,6 +123,7 @@ export const validateBrowserJobDefinition = (value: unknown): BrowserJobDefiniti
       }
     }
   }
+
   return workflow;
 };
 
@@ -139,6 +148,7 @@ export const buildExtractionExpression = (
   extraction: BrowserJobDefinition["pages"][number]["extraction"],
 ): string => {
   const config = JSON.stringify({ ...extraction, maxItems: MAX_ITEMS });
+
   return `(() => {
   const config = ${config};
   const text = (root, selector) => {
@@ -163,13 +173,17 @@ export const buildExtractionExpression = (
 
 const failureFrom = (cause: unknown, pageId?: string): JobFailure => {
   if (cause instanceof JobFailure) return cause;
+
   if (cause instanceof DOMException && cause.name === "AbortError") {
     return new JobFailure("cancelled", "The browser job was cancelled.", pageId);
   }
+
   const message = cause instanceof Error ? cause.message : "The browser operation failed.";
+
   if (/busy|ownership lock|already active/i.test(message)) {
     return new JobFailure("browser-busy", "The managed browser is already in use.", pageId);
   }
+
   return new JobFailure("browser-error", message.slice(0, 1_024), pageId);
 };
 
@@ -182,6 +196,7 @@ const waitForCheckpoint = async (
   label: string,
 ): Promise<void> => {
   const result = await bridge.wait(checkpointInput(token, checkpoint), signal);
+
   if (!result.found || result.timedOut === true) {
     throw new JobFailure(
       "checkpoint-failed",
@@ -193,11 +208,13 @@ const waitForCheckpoint = async (
 
 const parseItems = (value: unknown, pageId: string): ExtractedJobItem[] => {
   let encoded: string;
+
   try {
     encoded = JSON.stringify(value);
   } catch {
     throw new JobFailure("invalid-extraction", "Browser extraction was not serializable.", pageId);
   }
+
   if (Buffer.byteLength(encoded) > MAX_EVALUATION_BYTES) {
     throw new JobFailure(
       "output-cap",
@@ -205,7 +222,9 @@ const parseItems = (value: unknown, pageId: string): ExtractedJobItem[] => {
       pageId,
     );
   }
+
   let decoded: Static<typeof ExtractedValueSchema>;
+
   try {
     decoded = Parse(ExtractedValueSchema, value);
   } catch {
@@ -215,6 +234,7 @@ const parseItems = (value: unknown, pageId: string): ExtractedJobItem[] => {
       pageId,
     );
   }
+
   if (decoded.overflow) {
     throw new JobFailure(
       "output-cap",
@@ -222,6 +242,7 @@ const parseItems = (value: unknown, pageId: string): ExtractedJobItem[] => {
       pageId,
     );
   }
+
   return decoded.items.map((item) => ({ ...item, pageId }));
 };
 
@@ -235,12 +256,15 @@ export const runSavedBrowserJob = async (input: {
   const now = input.now ?? (() => new Date());
   const startedAt = now();
   const timeout = new AbortController();
+
   const timer = setTimeout(
     () => timeout.abort(new DOMException("Timed out", "TimeoutError")),
     input.saved.workflow.overallTimeoutMs,
   );
+
   const signal =
     input.signal === undefined ? timeout.signal : AbortSignal.any([input.signal, timeout.signal]);
+
   const pagesCompleted: string[] = [];
   const items: ExtractedJobItem[] = [];
   let token: string | undefined;
@@ -264,6 +288,7 @@ export const runSavedBrowserJob = async (input: {
         if (index > 0) {
           await input.bridge.navigate({ url: page.url, token }, signal);
         }
+
         await waitForCheckpoint(
           input.bridge,
           token,
@@ -280,11 +305,14 @@ export const runSavedBrowserJob = async (input: {
           page.id,
           "ready",
         );
+
         const evaluated = await input.bridge.evaluate(
           { token, expression: buildExtractionExpression(page.extraction) },
           signal,
         );
+
         const pageItems = parseItems(evaluated.value, page.id);
+
         if (pageItems.length === 0) {
           await waitForCheckpoint(
             input.bridge,
@@ -295,6 +323,7 @@ export const runSavedBrowserJob = async (input: {
             "empty",
           );
         }
+
         items.push(...pageItems);
         pagesCompleted.push(page.id);
       } catch (cause) {
@@ -303,8 +332,10 @@ export const runSavedBrowserJob = async (input: {
     }
 
     const byId = new Map<string, ExtractedJobItem>();
+
     for (const item of items) {
       const prior = byId.get(item.id);
+
       if (prior !== undefined) {
         if (
           prior.title !== item.title ||
@@ -316,11 +347,15 @@ export const runSavedBrowserJob = async (input: {
             `Stable job id '${item.id}' had conflicting extracted identity.`,
           );
         }
+
         continue;
       }
+
       byId.set(item.id, item);
     }
+
     items.splice(0, items.length, ...byId.values());
+
     if (Buffer.byteLength(JSON.stringify(items)) > MAX_EVALUATION_BYTES) {
       throw new JobFailure(
         "output-cap",
@@ -346,6 +381,7 @@ export const runSavedBrowserJob = async (input: {
         failure ??= failureFrom(cause);
       }
     }
+
     if (signal.aborted) {
       failure = new JobFailure(
         timeout.signal.aborted ? "timeout" : "cancelled",
@@ -358,6 +394,7 @@ export const runSavedBrowserJob = async (input: {
 
   return await (async () => {
     const prior = await input.store.readBaseline(input.saved.workflow.id);
+
     if (signal.aborted) {
       failure = new JobFailure(
         timeout.signal.aborted ? "timeout" : "cancelled",
@@ -366,14 +403,19 @@ export const runSavedBrowserJob = async (input: {
           : "The browser job was cancelled.",
       );
     }
+
     const baselineReset =
       prior !== undefined && prior.sourceFingerprint !== input.saved.sourceFingerprint;
+
     const priorIds =
       prior === undefined || baselineReset ? new Set<string>() : new Set<string>(prior.seenIds);
+
     const newItems =
       prior === undefined || baselineReset ? [] : items.filter((item) => !priorIds.has(item.id));
+
     const makeReport = (currentFailure: JobFailure | undefined): BrowserJobRunReport => {
       const successful = currentFailure === undefined;
+
       return Parse(BrowserJobRunReportSchema, {
         format: "ziggy-browser-job-run-report",
         formatVersion: 1,
@@ -404,7 +446,9 @@ export const runSavedBrowserJob = async (input: {
             }),
       });
     };
+
     let report = makeReport(failure);
+
     if (Buffer.byteLength(JSON.stringify(report, null, 2)) > MAX_REPORT_BYTES) {
       failure = new JobFailure(
         "output-cap",
@@ -412,6 +456,7 @@ export const runSavedBrowserJob = async (input: {
       );
       report = makeReport(failure);
     }
+
     const nextBaseline =
       failure === undefined
         ? Parse(BrowserJobBaselineSchema, {
@@ -423,6 +468,7 @@ export const runSavedBrowserJob = async (input: {
             seenIds: [...new Set([...priorIds, ...items.map((item) => item.id)])].sort(),
           })
         : undefined;
+
     // This is the commit linearization point. Abort and timeout are observed before the durable
     // report; once it is written, the matching baseline update must complete as one logical commit.
     if (signal.aborted) {
@@ -434,11 +480,14 @@ export const runSavedBrowserJob = async (input: {
       );
       report = makeReport(failure);
     }
+
     clearTimeout(timer);
     const reportPath = await input.store.writeReport(report);
+
     if (failure === undefined && nextBaseline !== undefined) {
       await input.store.writeBaseline(nextBaseline);
     }
+
     return { report, reportPath };
   })().finally(() => clearTimeout(timer));
 };

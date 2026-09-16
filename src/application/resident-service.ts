@@ -176,11 +176,13 @@ const definitionFor = (
 ): Effect.Effect<ResidentServiceDefinition, ResidentServiceError> =>
   Effect.gen(function* () {
     const manager = yield* managerFor(runtime.platform);
+
     const launchInput = {
       executablePath: runtime.executablePath,
       mainPath: runtime.mainPath,
       profilePath: target.path,
     };
+
     const launch = stableLaunch
       ? yield* resolveResidentLaunch(launchInput)
       : yield* resolveResidentLaunch(launchInput).pipe(
@@ -189,7 +191,9 @@ const definitionFor = (
             launchVector: [runtime.executablePath, "serve", target.path] as const,
           })),
         );
+
     const identity = deriveResidentServiceIdentity(launch.profilePath);
+
     return manager === "launchd"
       ? renderLaunchdService({
           identity,
@@ -245,20 +249,26 @@ const inspectSupervisor = (
       const result = yield* runtime.commands.run(
         launchdStatusCommand(runtime.uid, definition.identity),
       );
+
       if (result.exitCode !== 0) {
         return /Could not find service\b/u.test(result.stderr)
           ? { state: "stopped" }
           : { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
       }
+
       return /\bstate\s*=\s*running\b/u.test(result.stdout)
         ? { state: "running" }
         : { state: "stopped" };
     }
+
     const active = yield* runtime.commands.run(
       systemdCommand("is-active", definition.identity.systemdUnit),
     );
+
     const state = active.stdout.trim();
+
     if (state === "failed") return { state: "failed" };
+
     if (state !== "active") {
       return state === "inactive" || state === "deactivating"
         ? { state: "stopped" }
@@ -267,10 +277,13 @@ const inspectSupervisor = (
             reason: `systemctl is-active reported ${state || `exit ${active.exitCode}`}`,
           };
     }
+
     const pidResult = yield* runtime.commands.run(
       systemdMainPidCommand(definition.identity.systemdUnit),
     );
+
     const pid = Number(pidResult.stdout.trim());
+
     return pidResult.exitCode === 0 && Number.isSafeInteger(pid) && pid > 0
       ? { state: "running", pid }
       : { state: "running" };
@@ -289,11 +302,14 @@ const startDefinition = (
         mode,
         systemdCommand(mode, definition.identity.systemdUnit),
       );
+
       return;
     }
+
     const loaded = yield* runtime.commands.run(
       launchdStatusCommand(runtime.uid, definition.identity),
     );
+
     if (loaded.exitCode === 0) {
       yield* runRequired(
         runtime,
@@ -320,17 +336,21 @@ const waitForReady = (
 ) =>
   Effect.gen(function* () {
     let observed: GatewayOwnerStatus | undefined;
+
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const [supervisor, owner] = yield* Effect.all([
         inspectSupervisor(definition, runtime).pipe(Effect.result),
         gateway.status(target).pipe(Effect.result),
       ]);
+
       if (Result.isSuccess(owner)) observed = owner.success;
+
       const ownerChanged =
         observed?._tag === "running" &&
         (previous?._tag !== "running" ||
           observed.pid !== previous.pid ||
           observed.acquiredAt !== previous.acquiredAt);
+
       if (
         Result.isSuccess(supervisor) &&
         supervisor.success.state === "running" &&
@@ -339,9 +359,12 @@ const waitForReady = (
       ) {
         return { ready: true, owner: observed } as const;
       }
+
       if (attempt < 19) yield* runtime.sleep(250);
     }
+
     if (observed === undefined) return { ready: false } as const;
+
     return { ready: false, owner: observed } as const;
   });
 
@@ -353,12 +376,15 @@ const waitForStopped = (
 ) =>
   Effect.gen(function* () {
     let observed: GatewayOwnerStatus | undefined;
+
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const [supervisor, owner] = yield* Effect.all([
         inspectSupervisor(definition, runtime).pipe(Effect.result),
         gateway.status(target).pipe(Effect.result),
       ]);
+
       if (Result.isSuccess(owner)) observed = owner.success;
+
       if (
         Result.isSuccess(supervisor) &&
         supervisor.success.state === "stopped" &&
@@ -366,9 +392,12 @@ const waitForStopped = (
       ) {
         return { ready: true, owner: observed } as const;
       }
+
       if (attempt < 19) yield* runtime.sleep(250);
     }
+
     if (observed === undefined) return { ready: false } as const;
+
     return { ready: false, owner: observed } as const;
   });
 
@@ -392,6 +421,7 @@ export const makeResidentService = (
       const definition = yield* definitionFor(target, runtime, true);
       yield* startDefinition(definition, runtime, "start");
       const readiness = yield* waitForReady(target, definition, gateway, runtime);
+
       return {
         action: "start" as const,
         ...lifecycleBase(definition),
@@ -405,13 +435,16 @@ export const makeResidentService = (
       Effect.gen(function* () {
         yield* validateGatewayProfile(target);
         const definition = yield* definitionFor(target, runtime, true);
+
         if (definition.manager === "launchd") {
           yield* runtime.ensureDirectory(
             dirname(launchdLogPaths(runtime.ziggyHome, definition.identity).stdout),
           );
         }
+
         const write = yield* runtime.writeDefinition(definition, { force: options.force });
         const warnings: Array<string> = [];
+
         if (definition.manager === "systemd") {
           yield* runRequired(runtime, definition, "daemon-reload", systemdCommand("daemon-reload"));
           yield* runRequired(
@@ -421,12 +454,14 @@ export const makeResidentService = (
             systemdCommand("enable", definition.identity.systemdUnit),
           );
           const linger = yield* runtime.commands.run(systemdLingerCommand(runtime.user));
+
           if (linger.exitCode !== 0 || !/^Linger=yes$/mu.test(linger.stdout)) {
             warnings.push(
               `user lingering is not enabled; ask an administrator to run: loginctl enable-linger ${runtime.user}`,
             );
           }
         }
+
         if (!options.start) {
           return {
             action: "install" as const,
@@ -435,11 +470,14 @@ export const makeResidentService = (
             warnings,
           };
         }
+
         if (definition.manager === "launchd" && write === "replaced") {
           yield* runtime.commands.run(launchdBootoutCommand(runtime.uid, definition.identity));
         }
+
         yield* startDefinition(definition, runtime, "start");
         const readiness = yield* waitForReady(target, definition, gateway, runtime);
+
         return {
           action: "install" as const,
           ...lifecycleBase(definition),
@@ -452,18 +490,24 @@ export const makeResidentService = (
     stop: (target) =>
       Effect.gen(function* () {
         const definition = yield* definitionFor(target, runtime, false);
+
         const command =
           definition.manager === "launchd"
             ? launchdBootoutCommand(runtime.uid, definition.identity)
             : systemdCommand("stop", definition.identity.systemdUnit);
+
         const result = yield* runtime.commands.run(command);
+
         if (result.exitCode !== 0) {
           const installed = yield* runtime.inspectDefinition(definition);
+
           if (installed._tag !== "not-installed" && definition.manager !== "launchd") {
             return yield* commandFailure("stop", definition, result);
           }
         }
+
         const readiness = yield* waitForStopped(target, definition, gateway, runtime);
+
         return {
           action: "stop" as const,
           ...lifecycleBase(definition),
@@ -475,11 +519,14 @@ export const makeResidentService = (
       Effect.gen(function* () {
         yield* validateGatewayProfile(target);
         const definition = yield* definitionFor(target, runtime, true);
+
         const previous = yield* gateway
           .status(target)
           .pipe(Effect.orElseSucceed(() => ({ _tag: "stopped" as const, path: definition.path })));
+
         yield* startDefinition(definition, runtime, "restart");
         const readiness = yield* waitForReady(target, definition, gateway, runtime, previous);
+
         return {
           action: "restart" as const,
           ...lifecycleBase(definition),
@@ -491,7 +538,9 @@ export const makeResidentService = (
       Effect.gen(function* () {
         const definition = yield* definitionFor(target, runtime, false);
         const installed = yield* runtime.inspectDefinition(definition);
+
         if (installed._tag === "refused") yield* runtime.removeDefinition(definition);
+
         if (installed._tag !== "not-installed") {
           if (definition.manager === "launchd") {
             yield* runtime.commands.run(launchdBootoutCommand(runtime.uid, definition.identity));
@@ -505,10 +554,13 @@ export const makeResidentService = (
             );
           }
         }
+
         const removed = yield* runtime.removeDefinition(definition);
+
         if (definition.manager === "systemd" && removed) {
           yield* runRequired(runtime, definition, "daemon-reload", systemdCommand("daemon-reload"));
         }
+
         return {
           action: "uninstall" as const,
           ...lifecycleBase(definition),
@@ -519,18 +571,23 @@ export const makeResidentService = (
     logs: (target, follow) =>
       Effect.gen(function* () {
         const definition = yield* definitionFor(target, runtime, false);
+
         const command =
           definition.manager === "launchd"
             ? launchdLogsCommand(launchdLogPaths(runtime.ziggyHome, definition.identity), follow)
             : systemdLogsCommand(definition.identity.systemdUnit, follow);
+
         const result = yield* runtime.commands.run(command);
+
         return { manager: definition.manager, ...result };
       }),
     status: (target) =>
       Effect.gen(function* () {
         const definitionResult = yield* definitionFor(target, runtime, false).pipe(Effect.result);
+
         if (Result.isFailure(definitionResult)) {
           const failure = definitionResult.failure;
+
           return {
             profilePath: target.path,
             manager:
@@ -547,7 +604,9 @@ export const makeResidentService = (
             slack: yield* readSlackHealth(target.path, Date.now()).pipe(Effect.result),
           };
         }
+
         const definition = definitionResult.success;
+
         const [managed, supervisor, process, schedulerStatus, discord, slack] = yield* Effect.all(
           [
             runtime.inspectDefinition(definition).pipe(Effect.result),
@@ -559,6 +618,7 @@ export const makeResidentService = (
           ],
           { concurrency: "unbounded" },
         );
+
         return {
           profilePath: target.path,
           manager: definition.manager,

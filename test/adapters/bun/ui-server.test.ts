@@ -19,6 +19,7 @@ const paths: Array<string> = [];
 const makeProfile = async (): Promise<string> => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-ui-server-"));
   paths.push(path);
+
   return path;
 };
 
@@ -52,6 +53,7 @@ const waitForOpen = (socket: WebSocket): Promise<void> =>
 const connect = async (port: number, token: string): Promise<WebSocket> => {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
   await within(waitForOpen(socket), "socket open");
+
   return socket;
 };
 
@@ -125,14 +127,18 @@ describe("Bun UI server projection and authentication", () => {
 
           const querySocket = yield* Effect.promise(() => connect(server.port, token));
           yield* Effect.promise(() => closeClient(querySocket));
+
           const bearerSocket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
             headers: { Authorization: `Bearer ${token}` },
           });
+
           yield* Effect.promise(() => within(waitForOpen(bearerSocket), "Bearer socket open"));
           yield* Effect.promise(() => closeClient(bearerSocket));
+
           const bothSocket = new WebSocket(`ws://127.0.0.1:${server.port}/ws?token=${token}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
+
           yield* Effect.promise(() => within(waitForOpen(bothSocket), "dual-auth socket open"));
           yield* Effect.promise(() => closeClient(bothSocket));
         }),
@@ -143,6 +149,7 @@ describe("Bun UI server projection and authentication", () => {
   test("keeps a replacement projection whose token belongs to another server", async () => {
     const profilePath = await makeProfile();
     const path = uiServerProjectionPath(profilePath);
+
     const replacement = {
       version: 1,
       port: 31337,
@@ -220,6 +227,7 @@ describe("Bun UI server socket lifecycle", () => {
                 ),
             }),
           );
+
           const { token } = yield* readUiServerProjection(profilePath);
           const socket = yield* Effect.promise(() => connect(server.port, token));
           const response = nextMessage(socket);
@@ -252,6 +260,7 @@ describe("Bun UI server socket lifecycle", () => {
               onClose: () => Deferred.succeed(cleaned, undefined).pipe(Effect.asVoid),
             }),
           );
+
           const { token } = yield* readUiServerProjection(profilePath);
           const socket = yield* Effect.promise(() => connect(server.port, token));
           const closed = nextClose(socket);
@@ -285,6 +294,7 @@ describe("Bun UI server socket lifecycle", () => {
                 ),
             }),
           );
+
           const { token } = yield* readUiServerProjection(profilePath);
           const socket = yield* Effect.promise(() => connect(server.port, token));
           const duplicate = nextMessage(socket);
@@ -326,14 +336,17 @@ describe("Bun UI server socket lifecycle", () => {
               onClose: () => Effect.sync(() => cleaned++),
             }),
           );
+
           const { token } = yield* readUiServerProjection(profilePath);
           const socket = yield* Effect.promise(() => connect(server.port, token));
           const closed = nextClose(socket);
           socket.send(JSON.stringify({ id: "r0", method: "ping", params: {} }));
           yield* Deferred.await(started);
+
           for (let index = 1; index <= UI_SERVER_MAX_IN_FLIGHT; index++) {
             socket.send(JSON.stringify({ id: `r${index}`, method: "ping", params: {} }));
           }
+
           expect((yield* Effect.promise(() => within(closed, "request-overflow close"))).code).toBe(
             1013,
           );
@@ -358,12 +371,15 @@ describe("Bun UI server socket lifecycle", () => {
               maxInFlightPerSocket: 1_000,
             },
           );
+
           const { token } = yield* readUiServerProjection(profilePath);
           const socket = yield* Effect.promise(() => connect(server.port, token));
           const closed = nextClose(socket);
+
           for (let index = 0; index < 128; index++) {
             socket.send(JSON.stringify({ id: `q${index}`, method: "ping", params: {} }));
           }
+
           expect((yield* Effect.promise(() => within(closed, "queue-overflow close"))).code).toBe(
             1013,
           );

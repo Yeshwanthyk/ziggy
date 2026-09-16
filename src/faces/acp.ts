@@ -106,6 +106,7 @@ const makeDispatch = (): Effect.Effect<AcpDispatch, never, Scope.Scope> =>
       Effect.sync(() => {
         open = false;
         const failure = RequestError.internalError(undefined, "ACP face is closing");
+
         for (const envelope of pending) envelope.reject(failure);
         pending.clear();
       }).pipe(Effect.andThen(Queue.shutdown(queue))),
@@ -125,6 +126,7 @@ const makeDispatch = (): Effect.Effect<AcpDispatch, never, Scope.Scope> =>
 
     return <A>(effect: Effect.Effect<A, RequestError>): Promise<A> => {
       if (!open) return Promise.reject(RequestError.internalError(undefined, "ACP face is closed"));
+
       return new Promise<A>((resolve, reject) => {
         const envelope: DispatchEnvelope = {
           run: effect.pipe(
@@ -135,7 +137,9 @@ const makeDispatch = (): Effect.Effect<AcpDispatch, never, Scope.Scope> =>
           ),
           reject,
         };
+
         pending.add(envelope);
+
         if (!Queue.offerUnsafe(queue, envelope)) {
           pending.delete(envelope);
           reject(RequestError.internalError(undefined, "ACP request queue is closed"));
@@ -147,11 +151,13 @@ const makeDispatch = (): Effect.Effect<AcpDispatch, never, Scope.Scope> =>
 const renderPrompt = (blocks: ReadonlyArray<ContentBlock>): Effect.Effect<string, RequestError> =>
   Effect.gen(function* () {
     const rendered: Array<string> = [];
+
     for (const block of blocks) {
       if (block.type === "text") {
         rendered.push(block.text);
         continue;
       }
+
       if (block.type === "resource_link") {
         rendered.push(
           [
@@ -164,12 +170,16 @@ const renderPrompt = (blocks: ReadonlyArray<ContentBlock>): Effect.Effect<string
         );
         continue;
       }
+
       return yield* Effect.fail(invalidParams(`unsupported ACP prompt content type ${block.type}`));
     }
+
     const text = rendered.join("\n\n");
+
     if (text.trim().length === 0) {
       return yield* Effect.fail(invalidParams("ACP prompt must not be empty"));
     }
+
     return text;
   });
 
@@ -191,6 +201,7 @@ export const makeAcpAgent = (
           Effect.sync(() => {
             const current = [...sessions.values()];
             sessions.clear();
+
             return current;
           }),
         )
@@ -222,14 +233,17 @@ export const makeAcpAgent = (
             if (!isAbsolute(params.cwd)) {
               return yield* Effect.fail(invalidParams("ACP cwd must be absolute"));
             }
+
             if (params.mcpServers.length !== 0) {
               return yield* Effect.fail(invalidParams("ACP MCP servers are not supported"));
             }
+
             if ((params.additionalDirectories?.length ?? 0) !== 0) {
               return yield* Effect.fail(
                 invalidParams("ACP additional directories are not supported"),
               );
             }
+
             const sessionId = randomUUID();
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
@@ -265,6 +279,7 @@ export const makeAcpAgent = (
                 ),
               ),
             );
+
             const status = yield* models
               .readOnlyStatus(target)
               .pipe(
@@ -272,6 +287,7 @@ export const makeAcpAgent = (
                   modelError(cause, "could not resolve the session model"),
                 ),
               );
+
             const available = yield* models
               .available(target)
               .pipe(
@@ -279,6 +295,7 @@ export const makeAcpAgent = (
                   modelError(cause, "could not list available session models"),
                 ),
               );
+
             return {
               sessionId,
               models: modelStateOf(status, available),
@@ -295,6 +312,7 @@ export const makeAcpAgent = (
               const slash = params.modelId.lastIndexOf("/");
               const providerId = slash === -1 ? undefined : params.modelId.slice(0, slash);
               const modelId = slash === -1 ? undefined : params.modelId.slice(slash + 1);
+
               if (providerId === undefined || modelId === undefined) {
                 return yield* Effect.fail(
                   invalidParams(
@@ -302,6 +320,7 @@ export const makeAcpAgent = (
                   ),
                 );
               }
+
               const known = yield* models
                 .available(target)
                 .pipe(
@@ -309,21 +328,27 @@ export const makeAcpAgent = (
                     modelError(cause, "could not validate the requested session model"),
                   ),
                 );
+
               if (
                 !known.some((model) => model.providerId === providerId && model.modelId === modelId)
               ) {
                 return yield* Effect.fail(invalidParams(`unknown session model ${params.modelId}`));
               }
+
               yield* statePermit.withPermit(
                 Effect.gen(function* () {
                   const session = sessions.get(params.sessionId);
+
                   if (session === undefined) {
                     return yield* Effect.fail(invalidParams("unknown ACP session"));
                   }
+
                   session.modelOverride = { providerId, modelId };
+
                   return session;
                 }),
               );
+
               return {};
             }),
           ),
@@ -332,12 +357,15 @@ export const makeAcpAgent = (
         dispatch(
           Effect.gen(function* () {
             const text = yield* renderPrompt(params.prompt);
+
             const reserved = yield* statePermit.withPermit(
               Effect.gen(function* () {
                 const session = sessions.get(params.sessionId);
+
                 if (session === undefined) {
                   return yield* Effect.fail(invalidParams("unknown ACP session"));
                 }
+
                 if (session.active !== undefined) {
                   return yield* Effect.fail(
                     RequestError.invalidRequest(
@@ -346,13 +374,16 @@ export const makeAcpAgent = (
                     ),
                   );
                 }
+
                 const active: AcpTurn = { cancelled: false };
                 session.active = active;
+
                 return { session, active };
               }),
             );
 
             let notifications = Promise.resolve();
+
             const prompt = reserved.session.handle.prompt(text, {
               onProgress: (event: ChatProgressEvent) => {
                 if (event.kind !== "assistant-text" || event.delta.length === 0) return;
@@ -367,6 +398,7 @@ export const makeAcpAgent = (
                 );
               },
             });
+
             const cancelled = Effect.callback<never, RequestError>((resume) => {
               const onAbort = () =>
                 resume(
@@ -374,31 +406,40 @@ export const makeAcpAgent = (
                     RequestError.requestCancelled(undefined, "ACP prompt request was cancelled"),
                   ),
                 );
+
               if (signal.aborted) onAbort();
               else signal.addEventListener("abort", onAbort, { once: true });
+
               return Effect.sync(() => signal.removeEventListener("abort", onAbort));
             });
+
             const promptResult = yield* Effect.raceFirst(
               prompt.pipe(
                 Effect.mapError(() => RequestError.internalError(undefined, "ACP prompt failed")),
               ),
               cancelled,
             ).pipe(Effect.result);
+
             const notificationResult = yield* Effect.tryPromise({
               try: () => notifications,
               catch: () => RequestError.internalError(undefined, "ACP update delivery failed"),
             }).pipe(Effect.result);
+
             yield* statePermit.withPermit(
               Effect.sync(() => {
                 if (reserved.session.active === reserved.active)
                   reserved.session.active = undefined;
               }),
             );
+
             if (reserved.active.cancelled) return { stopReason: "cancelled" as const };
+
             if (Result.isFailure(promptResult)) return yield* Effect.fail(promptResult.failure);
+
             if (Result.isFailure(notificationResult)) {
               return yield* Effect.fail(notificationResult.failure);
             }
+
             return { stopReason: "end_turn" as const };
           }),
         ),
@@ -409,8 +450,10 @@ export const makeAcpAgent = (
             .withPermit(
               Effect.sync(() => {
                 const session = sessions.get(params.sessionId);
+
                 if (session?.active === undefined) return undefined;
                 session.active.cancelled = true;
+
                 return session.handle;
               }),
             )
@@ -439,12 +482,15 @@ export const runAcp = (
   Effect.scoped(
     Effect.gen(function* () {
       const protocolWrite = process.stdout.write.bind(process.stdout);
+
       const protocolOutput = new WritableStream<Uint8Array>({
         write: (chunk) => {
           if (protocolWrite(chunk)) return;
+
           return new Promise<void>((resolve) => process.stdout.once("drain", resolve));
         },
       });
+
       const stdoutWriteDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "write");
       const consoleLogDescriptor = Object.getOwnPropertyDescriptor(console, "log");
       const consoleInfoDescriptor = Object.getOwnPropertyDescriptor(console, "info");
@@ -471,14 +517,17 @@ export const runAcp = (
             if (stdoutWriteDescriptor === undefined)
               Reflect.deleteProperty(process.stdout, "write");
             else Object.defineProperty(process.stdout, "write", stdoutWriteDescriptor);
+
             if (consoleLogDescriptor === undefined) Reflect.deleteProperty(console, "log");
             else Object.defineProperty(console, "log", consoleLogDescriptor);
+
             if (consoleInfoDescriptor === undefined) Reflect.deleteProperty(console, "info");
             else Object.defineProperty(console, "info", consoleInfoDescriptor);
           }),
       );
       const app = yield* makeAcpAgent(target, shared, agentApi, models, specialAgent);
       const stream = ndJsonStream(protocolOutput, Readable.toWeb(process.stdin));
+
       const connection = yield* Effect.acquireRelease(
         Effect.try({
           try: () => app.connect(stream),
@@ -487,6 +536,7 @@ export const runAcp = (
         }),
         (active) => Effect.sync(() => active.close()),
       );
+
       yield* Effect.tryPromise({
         try: () => connection.closed,
         catch: (cause) =>

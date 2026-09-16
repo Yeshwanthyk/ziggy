@@ -3,38 +3,47 @@ import { Effect, Schema } from "effect";
 const TelegramId = Schema.Finite.check(
   Schema.makeFilter(Number.isSafeInteger, { expected: "a safe integer Telegram ID" }),
 );
+
 const HttpStatus = Schema.Finite.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(100),
   Schema.isLessThanOrEqualTo(599),
 );
+
 const RetryAfterSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+
 const TelegramUser = Schema.Struct({
   id: TelegramId,
   username: Schema.optional(Schema.String),
 });
+
 const TelegramChat = Schema.Struct({
   id: TelegramId,
   type: Schema.String,
 });
+
 const TelegramMessage = Schema.Struct({
   message_id: TelegramId,
   from: Schema.optional(TelegramUser),
   chat: TelegramChat,
   text: Schema.optional(Schema.String),
 });
+
 const TelegramUpdate = Schema.Struct({
   update_id: TelegramId,
   message: Schema.optional(TelegramMessage),
 });
+
 const GetUpdatesSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   result: Schema.Array(TelegramUpdate),
 });
+
 const SendMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   result: Schema.Struct({ message_id: TelegramId }),
 });
+
 const TelegramFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error_code: HttpStatus,
@@ -45,12 +54,15 @@ const TelegramFailure = Schema.Struct({
 const decodeGetUpdatesResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([GetUpdatesSuccess, TelegramFailure])),
 );
+
 const decodeSendMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([SendMessageSuccess, TelegramFailure])),
 );
 
 export type TelegramUpdate = typeof TelegramUpdate.Type;
+
 export type TelegramApiOperation = "getUpdates" | "sendMessage";
+
 export type TelegramApiErrorReason =
   | "network"
   | "server"
@@ -89,6 +101,7 @@ const redact = (value: string, token: string): string =>
 
 const safeCause = (cause: unknown, token: string): Error => {
   const message = cause instanceof Error ? cause.message : String(cause);
+
   return new Error(redact(message, token));
 };
 
@@ -131,15 +144,18 @@ const classifyFailure = (
       status,
     });
   }
+
   if (status === 429) {
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
+
   if (status >= 500) {
     return apiError(operation, "server", true, new Error(`HTTP ${status}`), token, { status });
   }
+
   return apiError(operation, "rejected", false, new Error(`HTTP ${status}`), token, { status });
 };
 
@@ -163,6 +179,7 @@ const request = (
           signal,
         },
       );
+
       return { status: response.status, body: await response.text() };
     },
     catch: (cause) => apiError(operation, "network", true, cause, token),

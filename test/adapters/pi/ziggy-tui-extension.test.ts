@@ -23,8 +23,11 @@ import {
 } from "ziggy/adapters/pi/ziggy-tui-extension";
 
 type Extension = ReturnType<typeof createZiggyTuiExtension>;
+
 type ExtensionApi = Parameters<Extension["factory"]>[0];
+
 type TestProvider = AutocompleteProvider;
+
 type Ui = {
   setTitle(title: string): void;
   setHeader(factory: () => { invalidate(): void; render(width: number): string[] }): void;
@@ -38,6 +41,7 @@ const sessionStartEvent: SessionStartEvent = {
   type: "session_start",
   reason: "startup",
 };
+
 const sessionInfoChangedEvent: SessionInfoChangedEvent = {
   type: "session_info_changed",
   name: "renamed",
@@ -45,13 +49,17 @@ const sessionInfoChangedEvent: SessionInfoChangedEvent = {
 
 const createHarness = () => {
   type HeaderFactory = Parameters<Ui["setHeader"]>[0];
+
   type FooterFactory = Parameters<Ui["setFooter"]>[0];
 
   const titles: Array<string> = [];
   const headers: Array<HeaderFactory> = [];
   const footers: Array<FooterFactory> = [];
+
   type RegisterCommand = ExtensionApi["registerCommand"];
+
   type CommandOptions = Parameters<RegisterCommand>[1];
+
   const notifications: Array<string> = [];
   const autocompleteFactories: Array<Parameters<Ui["addAutocompleteProvider"]>[0]> = [];
   const commands: Array<{ readonly name: string; readonly options: CommandOptions }> = [];
@@ -79,6 +87,7 @@ describe("Ziggy TUI extension", () => {
     const extension = createZiggyTuiExtension(profilePath);
     const harness = createHarness();
     let sessionStart!: (event: SessionStartEvent, context: { mode: "tui"; ui: Ui }) => void;
+
     let sessionInfoChanged!: (
       event: SessionInfoChangedEvent,
       context: { mode: "tui"; ui: Ui },
@@ -123,6 +132,7 @@ describe("Ziggy TUI extension", () => {
   test("does nothing outside TUI mode", async () => {
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev");
     const harness = createHarness();
+
     const handlers: Array<
       (
         event: SessionStartEvent | SessionInfoChangedEvent,
@@ -174,6 +184,7 @@ describe("Ziggy TUI extension", () => {
         body: "Research instructions",
       },
     ]);
+
     const harness = createHarness();
 
     extension.factory({
@@ -196,7 +207,9 @@ describe("Ziggy TUI extension", () => {
       { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
       { id: "code-helper", version: 1, description: "Writes code", body: "" },
     ]);
+
     const harness = createHarness();
+
     // The provider is installed by the TUI session lifecycle, not at extension load time.
     const sessionHandlers: Array<
       (
@@ -204,6 +217,7 @@ describe("Ziggy TUI extension", () => {
         context: Parameters<Ui["setHeader"]>[0] extends never ? never : { mode: "tui"; ui: Ui },
       ) => void
     > = [];
+
     extension.factory({
       on: (event, handler) => {
         if (event === "session_start")
@@ -212,14 +226,18 @@ describe("Ziggy TUI extension", () => {
       registerCommand: () => undefined,
     });
     sessionHandlers[0]?.(sessionStartEvent, { mode: "tui", ui: harness.ui });
+
     const provider = harness.autocompleteFactories[0]?.({
       getSuggestions: async () => ({ items: [], prefix: "" }),
       applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
     });
+
     if (provider === undefined) throw new Error("autocomplete provider was not registered");
+
     const suggestions = await provider.getSuggestions(["@research"], 0, 9, {
       signal: new AbortController().signal,
     });
+
     expect(suggestions).toEqual({
       prefix: "@research",
       items: [
@@ -241,7 +259,9 @@ describe("Ziggy TUI extension", () => {
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [
       { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
     ]);
+
     const notifications: string[] = [];
+
     let inputHandler:
       | ((
           event: InputEvent,
@@ -251,9 +271,11 @@ describe("Ziggy TUI extension", () => {
           },
         ) => { action: string; text?: string })
       | undefined;
+
     let beforeStart:
       | ((event: BeforeAgentStartEvent, context: { mode: "tui" }) => { systemPrompt: string })
       | undefined;
+
     extension.factory({
       on: (event, handler) => {
         if (event === "input") inputHandler = handler as typeof inputHandler;
@@ -268,12 +290,15 @@ describe("Ziggy TUI extension", () => {
       },
       registerCommand: () => undefined,
     });
+
     if (inputHandler === undefined || beforeStart === undefined)
       throw new Error("handlers missing");
+
     const context = {
       mode: "tui" as const,
       ui: { notify: (message: string) => notifications.push(message) },
     };
+
     expect(
       inputHandler({ type: "input", text: "@missing do this", source: "interactive" }, context),
     ).toEqual({ action: "handled" });
@@ -281,13 +306,16 @@ describe("Ziggy TUI extension", () => {
     expect(
       inputHandler({ type: "input", text: "@Missing do this", source: "interactive" }, context),
     ).toEqual({ action: "handled" });
+
     const transformed = inputHandler(
       { type: "input", text: "@research-helper do this", source: "interactive" },
       context,
     );
+
     expect(transformed.action).toBe("transform");
     expect(transformed.text).toContain("@research-helper do this");
     expect(transformed.text).toContain("call agent_run");
+
     const guidance = beforeStart(
       {
         type: "before_agent_start",
@@ -297,6 +325,7 @@ describe("Ziggy TUI extension", () => {
       },
       context,
     );
+
     expect(JSON.stringify(guidance)).toMatch(/Researches carefully/);
     expect(JSON.stringify(guidance)).toMatch(/one specialist clearly matches/);
     expect(JSON.stringify(guidance)).toMatch(/agent_discuss/);
@@ -306,15 +335,18 @@ describe("Ziggy TUI extension", () => {
     const extension = createProfileAgentGuidanceExtension([
       { id: "research-helper", version: 1, description: "Researches carefully", body: "" },
     ]);
+
     let beforeStart:
       | ((event: BeforeAgentStartEvent, context: { mode: "print" }) => { systemPrompt: string })
       | undefined;
+
     extension.factory({
       on: (event, handler) => {
         if (event === "before_agent_start") beforeStart = handler as typeof beforeStart;
       },
       registerCommand: () => undefined,
     });
+
     if (beforeStart === undefined) throw new Error("before_agent_start handler missing");
     expect(
       beforeStart(
@@ -342,6 +374,7 @@ describe("Ziggy TUI extension", () => {
 
   test("saves one complete extension checklist from the TUI", async () => {
     const setCalls: Array<ReadonlyArray<string>> = [];
+
     const runner: ProfileExtensionSelectionRunner = {
       list: () =>
         Promise.resolve({
@@ -363,9 +396,11 @@ describe("Ziggy TUI extension", () => {
         }),
       setSelected: (ids) => {
         setCalls.push(ids);
+
         return Promise.resolve({ changed: true, selected: [...ids] });
       },
     };
+
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], runner);
     const harness = createHarness();
     extension.factory({
@@ -373,6 +408,7 @@ describe("Ziggy TUI extension", () => {
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
     const command = harness.commands.find(({ name }) => name === "extensions");
+
     if (command === undefined) throw new Error("extensions command missing");
 
     await command.options.handler("", {
@@ -401,13 +437,17 @@ describe("Ziggy TUI extension", () => {
 
   test("manages definitions, validated edits, scheduler status, and run history", async () => {
     const requests: Array<AutomationTuiRequest> = [];
+
     const source =
       "---\nversion: 1\ncron: 0 9 * * *\ntimezone: UTC\nbroadcast: none\n---\n\nOld task.\n";
+
     const edited = source.replace("Old task.", "New task.");
     let overviewCount = 0;
+
     const dispatch: AutomationTuiDispatch = (request) => {
       requests.push(request);
       let response: AutomationTuiResponse;
+
       switch (request.kind) {
         case "overview":
           overviewCount += 1;
@@ -461,8 +501,10 @@ describe("Ziggy TUI extension", () => {
           };
           break;
       }
+
       return Promise.resolve(response);
     };
+
     const extension = createZiggyTuiExtension("/profiles/ziggy-dev", [], undefined, dispatch);
     const harness = createHarness();
     extension.factory({
@@ -470,6 +512,7 @@ describe("Ziggy TUI extension", () => {
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
     const command = harness.commands.find(({ name }) => name === "automations");
+
     if (command === undefined) throw new Error("automations command missing");
     const selections = ["View details", "Run history", "Edit Markdown", "Scheduler overview"];
 
@@ -515,12 +558,14 @@ describe("Ziggy TUI extension", () => {
         }),
       setSelected: () => Promise.reject(new Error("must not be reached")),
     });
+
     const harness = createHarness();
     extension.factory({
       on: () => undefined,
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
     const command = harness.commands.find(({ name }) => name === "extensions");
+
     if (command === undefined) throw new Error("extensions command missing");
 
     await command.options.handler("", {
@@ -574,12 +619,14 @@ describe("Ziggy TUI extension", () => {
           }),
         ),
     });
+
     const harness = createHarness();
     extension.factory({
       on: () => undefined,
       registerCommand: (name, options) => harness.commands.push({ name, options }),
     });
     const command = harness.commands.find(({ name }) => name === "extensions");
+
     if (command === undefined) throw new Error("extensions command missing");
 
     await command.options.handler("", {

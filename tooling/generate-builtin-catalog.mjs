@@ -16,13 +16,19 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
 const metadataPath = join(repositoryRoot, "src/generated/builtin-catalog-metadata.ts");
+
 const resourcesPath = join(repositoryRoot, "src/adapters/pi/generated/builtin-resources.ts");
+
 const catalogJsonPath = join(repositoryRoot, "catalog.json");
 
 const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 const REQUIRED_PACKAGE_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
+
 const skipNames = new Set(["node_modules", ".git", "test", "tests", "tsconfig.json"]);
+
 const operationsReferenceNames = ["automations", "discord", "memory", "serve", "slack", "telegram"];
 
 const fail = (message) => {
@@ -40,6 +46,7 @@ const readJson = (path) => Bun.file(path).json();
 const syncOperationsReferences = (check) => {
   for (const name of operationsReferenceNames) {
     const source = join(repositoryRoot, "docs", "operations", `${name}.md`);
+
     const packaged = join(
       repositoryRoot,
       "extensions",
@@ -49,10 +56,14 @@ const syncOperationsReferences = (check) => {
       "references",
       `${name}.md`,
     );
+
     const sourceBytes = readFileSync(source);
+
     const matches =
       existsSync(packaged) && Buffer.compare(sourceBytes, readFileSync(packaged)) === 0;
+
     if (matches) continue;
+
     if (check) fail(`packaged operations reference is stale: ${packaged}`);
     writeFileSync(packaged, sourceBytes);
   }
@@ -60,15 +71,19 @@ const syncOperationsReferences = (check) => {
 
 const parseFrontmatter = (text) => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+
   if (match === null) return undefined;
+
   const fields = new Map(
     (match[1] ?? "")
       .split(/\r?\n/)
       .map((line) => /^([a-zA-Z]+):\s*(.*)$/.exec(line))
       .flatMap((entry) => (entry === null ? [] : [[entry[1], entry[2]]])),
   );
+
   const scalar = (value) => {
     const trimmed = value?.trim();
+
     return trimmed !== undefined &&
       trimmed.length >= 2 &&
       ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
@@ -76,12 +91,16 @@ const parseFrontmatter = (text) => {
       ? trimmed.slice(1, -1)
       : trimmed;
   };
+
   const name = scalar(fields.get("name"));
   const description = scalar(fields.get("description"));
+
   const disable = scalar(
     fields.get("disableModelInvocation") ?? fields.get("disable-model-invocation"),
   );
+
   if (name === undefined || description === undefined) return undefined;
+
   return {
     name,
     description,
@@ -91,9 +110,13 @@ const parseFrontmatter = (text) => {
 
 const walkFiles = (root) => {
   const status = lstatSync(root);
+
   if (status.isSymbolicLink()) fail(`catalog generator rejected symlink: ${root}`);
+
   if (status.isFile()) return [root];
+
   if (!status.isDirectory()) fail(`catalog generator rejected special file: ${root}`);
+
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     if (
       skipNames.has(entry.name) ||
@@ -102,6 +125,7 @@ const walkFiles = (root) => {
     ) {
       return [];
     }
+
     return walkFiles(join(root, entry.name));
   });
 };
@@ -110,29 +134,38 @@ const contain = (packagePath, declared) => {
   const resolved = resolve(packagePath, declared);
   const physicalPackage = realpathSync(packagePath);
   const physical = realpathSync(resolved);
+
   if (physical !== physicalPackage && !physical.startsWith(`${physicalPackage}${sep}`)) {
     fail(`declared path escapes package: ${declared}`);
   }
+
   return physical;
 };
 
 const skillFiles = (declaredPath) => {
   const status = lstatSync(declaredPath);
+
   if (status.isSymbolicLink()) fail(`catalog generator rejected symlink: ${declaredPath}`);
+
   if (status.isFile()) {
     return posix(basenameSkill(declaredPath)) === "SKILL.md" ? [declaredPath] : [];
   }
+
   return readdirSync(declaredPath, { withFileTypes: true }).flatMap((entry) => {
     const child = join(declaredPath, entry.name);
+
     if (entry.isDirectory()) {
       const skillFile = join(child, "SKILL.md");
+
       try {
         const skillStatus = lstatSync(skillFile);
+
         return skillStatus.isFile() && !skillStatus.isSymbolicLink() ? [skillFile] : [];
       } catch {
         return [];
       }
     }
+
     return [];
   });
 };
@@ -148,50 +181,66 @@ const importAlias = (kind, id, index) =>
 syncOperationsReferences(process.argv.includes("--check"));
 
 const catalogJson = await readJson(catalogJsonPath);
+
 const approvedIds = catalogJson.extensions.map((entry) => entry.id);
+
 if (!isSorted(approvedIds) || new Set(approvedIds).size !== approvedIds.length) {
   fail("catalog.json IDs must be unique and sorted");
 }
 
 const packages = [];
+
 for (const id of approvedIds) {
   const packagePath = join(repositoryRoot, "extensions", id);
   const manifestPath = join(packagePath, "package.json");
   const packageStatus = lstatSync(packagePath);
+
   if (!packageStatus.isDirectory() || packageStatus.isSymbolicLink()) {
     fail(`extension '${id}' is not a physical shelf directory`);
   }
+
   const manifest = await readJson(manifestPath);
+
   if (!ID.test(id) || manifest.name !== `@ziggy/${id}`) {
     fail(`extension manifest name must be '@ziggy/${id}'`);
   }
+
   const declaredExtensions = [...(manifest.pi?.extensions ?? [])].sort((left, right) =>
     left.localeCompare(right),
   );
+
   const declaredSkills = [...(manifest.pi?.skills ?? [])].sort((left, right) =>
     left.localeCompare(right),
   );
+
   const declaredAutomations = [...(manifest.ziggy?.automations ?? [])].sort((left, right) =>
     left.id.localeCompare(right.id),
   );
+
   if (new Set(declaredAutomations.map((item) => item.id)).size !== declaredAutomations.length) {
     fail(`extension '${id}' declares duplicate automation IDs`);
   }
+
   const extensionPaths = declaredExtensions.map((declared) => contain(packagePath, declared));
   const skillRoots = declaredSkills.map((declared) => contain(packagePath, declared));
+
   const automations = declaredAutomations.map((declared) => ({
     id: declared.id,
     path: contain(packagePath, declared.path),
     logicalPath: posix(relative(repositoryRoot, contain(packagePath, declared.path))),
   }));
+
   const skills = skillRoots.flatMap((root) =>
     skillFiles(root).map((filePath) => {
       const metadata = parseFrontmatter(readFileSync(filePath, "utf8"));
+
       if (metadata === undefined) fail(`invalid skill frontmatter: ${filePath}`);
       const skillDir = dirname(filePath);
+
       const files = walkFiles(skillDir)
         .map((path) => posix(relative(repositoryRoot, path)))
         .sort((left, right) => left.localeCompare(right));
+
       return {
         ...metadata,
         filePath,
@@ -201,24 +250,32 @@ for (const id of approvedIds) {
       };
     }),
   );
+
   skills.sort((left, right) => left.name.localeCompare(right.name));
+
   if (new Set(skills.map((skill) => skill.name)).size !== skills.length) {
     fail(`extension '${id}' declares duplicate skill names`);
   }
+
   const description = (manifest.description?.trim() || skills[0]?.description)
     ?.replace(/\s+/g, " ")
     .trim();
+
   if (description === undefined) fail(`extension '${id}' has no description`);
   const hasSkills = skills.length > 0;
   const hasCode = extensionPaths.length > 0;
+
   if (!hasSkills && !hasCode) fail(`extension '${id}' declares no Pi resources`);
   const sourcePath = posix(relative(repositoryRoot, packagePath));
+
   const packageFiles = walkFiles(packagePath)
     .map((path) => posix(relative(repositoryRoot, path)))
     .sort((left, right) => left.localeCompare(right));
+
   if (!packageFiles.includes(`${sourcePath}/package.json`)) {
     fail(`extension '${id}' is missing package.json in the package tree`);
   }
+
   packages.push({
     id,
     version: manifest.version ?? "0.1.0",
@@ -260,16 +317,25 @@ const fingerprintSource = JSON.stringify({
     })),
   })),
 });
+
 const fingerprint = createHash("sha256").update(fingerprintSource).digest("hex");
 
 const filesPath = join(repositoryRoot, "src/generated/builtin-files.ts");
+
 const embeddedRoot = join(repositoryRoot, "src/generated/embedded");
+
 const fileImports = [];
+
 const factoryImports = [];
+
 const skillAlias = new Map();
+
 const factoryAlias = new Map();
+
 const embedBytes = new Map();
+
 let fileIndex = 0;
+
 const registerEmbed = (file) => {
   if (skillAlias.has(file)) return;
   const alias = importAlias("file", `${fileIndex}`, 0);
@@ -278,12 +344,14 @@ const registerEmbed = (file) => {
   embedBytes.set(`${alias}.embed`, readFileSync(join(repositoryRoot, file)));
   fileImports.push(`import ${alias} from "./embedded/${alias}.embed" with { type: "file" };`);
 };
+
 for (const pkg of packages) {
   for (const [index, logicalPath] of pkg.extensionLogicalPaths.entries()) {
     const alias = importAlias("factory", pkg.id, index);
     factoryAlias.set(`${pkg.id}:${logicalPath}`, alias);
     factoryImports.push(`import ${alias} from "../../../../${logicalPath}";`);
   }
+
   for (const file of pkg.packageFiles) registerEmbed(file);
 }
 
@@ -367,6 +435,7 @@ ${packages
   .flatMap((pkg) =>
     pkg.extensionLogicalPaths.map((logicalPath) => {
       const alias = factoryAlias.get(`${pkg.id}:${logicalPath}`);
+
       return `  { id: ${quote(pkg.id)}, factory: ${alias} },`;
     }),
   )
@@ -376,9 +445,12 @@ ${packages
 
 const writeIfNeeded = async (path, contents) => {
   const current = Bun.file(path);
+
   if ((await current.exists()) && (await current.text()) === contents) return false;
+
   if (process.argv.includes("--check")) fail(`generated catalog is stale: ${path}`);
   await Bun.write(path, contents);
+
   return true;
 };
 
@@ -386,19 +458,25 @@ const syncEmbeds = (check) => {
   mkdirSync(embeddedRoot, { recursive: true });
   const existing = new Set(readdirSync(embeddedRoot));
   const expected = new Set(embedBytes.keys());
+
   for (const name of existing) {
     if (expected.has(name)) continue;
+
     if (check) fail(`generated builtin catalog is stale: extra ${join(embeddedRoot, name)}`);
     rmSync(join(embeddedRoot, name));
   }
+
   for (const [name, bytes] of embedBytes) {
     const path = join(embeddedRoot, name);
+
     if (check) {
       if (!existing.has(name) || Buffer.compare(readFileSync(path), bytes) !== 0) {
         fail(`generated builtin catalog is stale: ${path}`);
       }
+
       continue;
     }
+
     writeFileSync(path, bytes);
   }
 };
@@ -412,10 +490,12 @@ const outputs = [
 if (process.argv.includes("--check")) {
   for (const [path, contents] of outputs) {
     const current = Bun.file(path);
+
     if (!(await current.exists()) || (await current.text()) !== contents) {
       fail(`generated builtin catalog is stale: ${path}`);
     }
   }
+
   syncEmbeds(true);
   console.log(`builtin catalog fingerprint ${fingerprint}`);
   process.exit(0);
@@ -424,5 +504,7 @@ if (process.argv.includes("--check")) {
 for (const [path, contents] of outputs) {
   await writeIfNeeded(path, contents);
 }
+
 syncEmbeds(false);
+
 console.log(`wrote builtin catalog fingerprint ${fingerprint}`);

@@ -8,6 +8,7 @@ import { Parse } from "typebox/value";
 import type { BrowserJobBridge } from "./browser-jobs.ts";
 
 const CHANNEL = "ziggy:computer-use:browser-bridge:v1";
+
 const BridgeErrorCode = Type.Union([
   Type.Literal("browser-busy"),
   Type.Literal("invalid-owner"),
@@ -15,6 +16,7 @@ const BridgeErrorCode = Type.Union([
   Type.Literal("invalid-request"),
   Type.Literal("browser-error"),
 ]);
+
 const Failure = Type.Object(
   {
     version: Type.Literal(1),
@@ -25,11 +27,13 @@ const Failure = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const SuccessBase = {
   version: Type.Literal(1),
   ok: Type.Literal(true),
   requestId: Type.String(),
 };
+
 const AcquireReply = Type.Union([
   Failure,
   Type.Object(
@@ -42,6 +46,7 @@ const AcquireReply = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const NavigateReply = Type.Union([
   Failure,
   Type.Object(
@@ -49,6 +54,7 @@ const NavigateReply = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const WaitReply = Type.Union([
   Failure,
   Type.Object(
@@ -62,6 +68,7 @@ const WaitReply = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const EvaluateReply = Type.Union([
   Failure,
   Type.Object(
@@ -74,6 +81,7 @@ const EvaluateReply = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const ReleaseReply = Type.Union([
   Failure,
   Type.Object(
@@ -103,14 +111,17 @@ const request = async <
 }): Promise<Reply> => {
   input.signal.throwIfAborted();
   const requestId = crypto.randomUUID();
+
   const reply = await new Promise<unknown>((resolve, reject) => {
     let settled = false;
     let accepted = false;
+
     const finish = (value: unknown): void => {
       if (settled) return;
       settled = true;
       resolve(value);
     };
+
     input.pi.events.emit(CHANNEL, {
       version: 1,
       requestId,
@@ -123,6 +134,7 @@ const request = async <
       },
       reply: finish,
     });
+
     if (!accepted && !settled) {
       settled = true;
       reject(
@@ -133,13 +145,16 @@ const request = async <
       );
     }
   });
+
   const decoded = input.decode(reply);
+
   if (decoded.requestId !== requestId || decoded.operation !== input.operation) {
     throw new BrowserBridgeError(
       "invalid-request",
       "Computer-use returned a mismatched bridge reply.",
     );
   }
+
   return decoded;
 };
 
@@ -156,7 +171,9 @@ export const makeBrowserJobBridge = (
       signal,
       decode: (value) => Parse(AcquireReply, value),
     });
+
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+
     return { token: reply.token };
   },
   navigate: async (parameters, signal) => {
@@ -168,6 +185,7 @@ export const makeBrowserJobBridge = (
       signal,
       decode: (value) => Parse(NavigateReply, value),
     });
+
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
   },
   wait: async (parameters, signal) => {
@@ -179,7 +197,9 @@ export const makeBrowserJobBridge = (
       signal,
       decode: (value) => Parse(WaitReply, value),
     });
+
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+
     return {
       found: reply.found,
       ...(reply.timedOut === undefined ? {} : { timedOut: reply.timedOut }),
@@ -194,11 +214,14 @@ export const makeBrowserJobBridge = (
       signal,
       decode: (value) => Parse(EvaluateReply, value),
     });
+
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+
     return { value: reply.value };
   },
   release: async (parameters) => {
     const releaseSignal = new AbortController().signal;
+
     const reply = await request({
       pi,
       ctx,
@@ -207,6 +230,7 @@ export const makeBrowserJobBridge = (
       signal: releaseSignal,
       decode: (value) => Parse(ReleaseReply, value),
     });
+
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
   },
 });

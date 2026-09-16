@@ -41,11 +41,15 @@ export const SessionMetadataJson = Schema.Struct({
   usage: SessionUsageJson,
   terminalState: Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
 });
+
 export type SessionMetadataJson = typeof SessionMetadataJson.Type;
 
 export const SessionsJson = Schema.Array(SessionMetadataJson);
+
 export type SessionsJson = typeof SessionsJson.Type;
+
 const encodeSessions = Schema.encodeSync(SessionsJson);
+
 const encodeSession = Schema.encodeSync(SessionMetadataJson);
 
 const parentLabel = (session: SessionMetadata): string =>
@@ -66,6 +70,7 @@ const usage = (value: SessionUsage): string =>
 
 export const renderSessionList = (sessions: ReadonlyArray<SessionMetadata>): string => {
   if (sessions.length === 0) return "no sessions";
+
   return sessions
     .map(
       (session) =>
@@ -88,12 +93,17 @@ export const renderSession = (session: SessionMetadata): string => {
     `parent\t${parentLabel(session)}`,
     `usage\t${usage(session.usage)}`,
   ];
+
   if (session.parent !== undefined) lines.push(`parent-path\t${session.parent.path}`);
+
   for (const child of session.children) lines.push(`child\t${reference(child)}`);
+
   for (const change of session.modelChanges)
     lines.push(`model\t${change.at}\t${change.provider}/${change.model}`);
+
   for (const change of session.thinkingChanges)
     lines.push(`thinking\t${change.at}\t${change.level}`);
+
   return lines.join("\n");
 };
 

@@ -776,3 +776,8 @@ results.
 - Astra Medium independently verified the implementation and specialist restrictions with no remaining findings. Updated core-resource inventory assertions for the two new docs factories.
 - Verification: repository checks and all 701 core tests passed in the development standalone build. Standalone smoke passed with checkout reads denied. An additional compiled-binary probe verified all three required skills and six canonical reference files outside the checkout. A production-path, no-provider session called both docs tools and verified identity, skill metadata disclosure, and relative-reference readability.
 - Live model-driven skill selection remains untested because the test Profile has no provider authentication. The standalone artifact is a development proof build; the installed user binary was not replaced.
+
+## Require readable spacing Oxlint rule
+
+- Added the pinned anti-slop `require-readable-spacing` policy to Ziggy's local Oxlint plugin as an enabled error. Ported only the required ESLint-Stylistic padding helper to `.mjs`, retaining its MIT license and upstream provenance record; no full ESLint dependency was added.
+- Applied the rule's whitespace-only fixes across the existing `src`, `test`, `extensions`, and `tooling` lint scope. Added a focused CLI regression for diagnostics, exact fixes, grouped locals/overloads, and repeated-fix stability. No commit made.

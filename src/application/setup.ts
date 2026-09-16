@@ -87,6 +87,7 @@ export const makeSetup = (
       const initialized = yield* profiles.initProfile(target, {
         createStarterDirectories: !options.minimal,
       });
+
       yield* profiles.registerProfile(registryPath, target.path);
 
       if (options.minimal) {
@@ -101,10 +102,12 @@ export const makeSetup = (
       const current = yield* models.status(target);
       const providers = yield* auth.status(target);
       let providerId = options.providerId ?? current.providerId;
+
       if (providerId === undefined) {
         if (!options.interactive) {
           return yield* incomplete(target.path, "provider selection is missing");
         }
+
         providerId = yield* choose(
           target,
           interaction,
@@ -114,23 +117,29 @@ export const makeSetup = (
       }
 
       const provider = providers.find((candidate) => candidate.id === providerId);
+
       if (provider === undefined) {
         return yield* incomplete(target.path, `unknown provider ${providerId}`);
       }
+
       if (provider.configured === undefined) {
         if (!options.interactive) {
           return yield* incomplete(target.path, `provider ${providerId} is not authenticated`);
         }
+
         yield* auth.login(target, providerId, undefined, interaction.auth);
       }
 
       let modelId =
         options.modelId ?? (current.providerId === providerId ? current.modelId : undefined);
+
       const knownModels = yield* models.list(target, providerId);
+
       if (modelId === undefined) {
         if (!options.interactive) {
           return yield* incomplete(target.path, "model selection is missing");
         }
+
         modelId = yield* choose(
           target,
           interaction,
@@ -140,16 +149,19 @@ export const makeSetup = (
       }
 
       const selectedModel = knownModels.find((candidate) => candidate.modelId === modelId);
+
       if (selectedModel === undefined) {
         return yield* incomplete(target.path, `unknown model ${providerId}/${modelId}`);
       }
 
       let thinking = options.thinking;
+
       const changesModel =
         current.providerId !== providerId ||
         current.modelId !== modelId ||
         options.modelId !== undefined ||
         options.providerId !== undefined;
+
       if (
         thinking === undefined &&
         options.interactive &&
@@ -163,12 +175,14 @@ export const makeSetup = (
           selectedModel.thinkingLevels.map((level) => ({ id: level, label: level })),
         );
       }
+
       if (changesModel || thinking !== undefined) {
         yield* models.set(target, providerId, modelId, thinking);
       }
 
       const modelStatus = yield* models.status(target);
       const report = yield* doctor.check(target, repositoryRoot);
+
       return {
         profilePath: target.path,
         soulCreated: initialized.created,

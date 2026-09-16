@@ -29,6 +29,7 @@ export default {
       MemberExpression(node) {
         if (!isIdentifier(node.object, "Effect")) return;
         const property = getPropertyName(node.property);
+
         if (!unsupported.has(property)) return;
         context.report({ node, message: message(property) });
       },

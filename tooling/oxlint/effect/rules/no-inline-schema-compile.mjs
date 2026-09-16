@@ -36,19 +36,25 @@ const COMPILER_METHODS = new Set([
 
 const getSchemaCompilerMethod = (callee) => {
   const expression = unwrapExpression(callee);
+
   if (expression?.type !== "MemberExpression") return undefined;
   const object = unwrapExpression(expression.object);
+
   if (!isIdentifier(object, "Schema")) return undefined;
   const method = getPropertyName(expression.property);
+
   return method && COMPILER_METHODS.has(method) ? method : undefined;
 };
 
 const isNestedSchemaCall = (node) => {
   const expression = unwrapExpression(node);
+
   if (expression?.type !== "CallExpression") return false;
   const callee = unwrapExpression(expression.callee);
+
   if (callee?.type !== "MemberExpression") return false;
   const object = unwrapExpression(callee.object);
+
   return isIdentifier(object, "Schema");
 };
 
@@ -72,6 +78,7 @@ export default {
     const enterFunction = () => {
       functionDepth++;
     };
+
     const exitFunction = () => {
       functionDepth--;
     };
@@ -87,6 +94,7 @@ export default {
       CallExpression(node) {
         if (functionDepth === 0) return;
         const method = getSchemaCompilerMethod(node.callee);
+
         if (!method) return;
         const firstArg = node.arguments[0];
         const high = firstArg && isNestedSchemaCall(firstArg);

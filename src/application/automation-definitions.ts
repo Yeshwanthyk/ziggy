@@ -111,6 +111,7 @@ const catalog = (target: ProfileTarget) =>
   Effect.gen(function* () {
     const sources = yield* discoverAutomationSources(target);
     const rows: Array<AutomationDefinitionProjection> = [];
+
     for (const source of sources) {
       if (source.lifecycle === "conflict") {
         rows.push({
@@ -122,7 +123,9 @@ const catalog = (target: ProfileTarget) =>
         });
         continue;
       }
+
       const sourceText = source.source;
+
       if (sourceText === null) {
         rows.push({
           id: source.idSource,
@@ -133,10 +136,13 @@ const catalog = (target: ProfileTarget) =>
         });
         continue;
       }
+
       const parsed = yield* Effect.gen(function* () {
         const id = yield* validateAutomationId(source.idSource);
+
         return yield* parseAutomationFile(id, source.path, sourceText);
       }).pipe(Effect.result);
+
       rows.push(
         Result.isSuccess(parsed)
           ? validProjection(target.path, source.path, parsed.success, source.lifecycle)
@@ -149,6 +155,7 @@ const catalog = (target: ProfileTarget) =>
             },
       );
     }
+
     return rows;
   });
 
@@ -160,12 +167,14 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
       const path = join(target.path, "automations", `${id}.md`);
       const automation = yield* parseAutomationFile(id, path, source);
       const created = yield* createAutomationDefinition(target, id);
+
       return validProjection(target.path, created.path, automation, created.lifecycle);
     }),
   show: (target, idSource) =>
     Effect.gen(function* () {
       const id = yield* validateAutomationId(idSource);
       const document = yield* automationFileStore.readDefinition(target, id, true);
+
       return {
         id,
         path: relative(target.path, document.path),
@@ -179,6 +188,7 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
       const current = yield* automationFileStore.readDefinition(target, id, true);
       yield* parseAutomationFile(id, current.path, source);
       const saved = yield* replaceAutomationDefinition(target, id, expectedSource, source);
+
       return {
         id,
         path: relative(target.path, saved.path),
@@ -190,6 +200,7 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
     Effect.gen(function* () {
       const id = yield* validateAutomationId(idSource);
       const transitioned = yield* pauseAutomationDefinition(target, id);
+
       return {
         id,
         path: relative(target.path, transitioned.path),
@@ -200,6 +211,7 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
     Effect.gen(function* () {
       const id = yield* validateAutomationId(idSource);
       const transitioned = yield* resumeAutomationDefinition(target, id);
+
       return {
         id,
         path: relative(target.path, transitioned.path),
@@ -211,8 +223,10 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
     Effect.gen(function* () {
       const id = idSource === undefined ? undefined : yield* validateAutomationId(idSource);
       const rows = yield* catalog(target);
+
       if (id === undefined) return rows;
       const selected = rows.filter((row) => row.id === id);
+
       if (selected.length === 0) {
         return yield* new AutomationNotFound({
           id,
@@ -220,6 +234,7 @@ export const makeAutomationDefinitions = (): AutomationDefinitionsApi => ({
           message: `no automation ${id} in ${target.path}`,
         });
       }
+
       return selected;
     }),
 });

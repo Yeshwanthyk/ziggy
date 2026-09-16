@@ -14,6 +14,7 @@ import {
 import { validateAutomationId } from "ziggy/domain/automation";
 
 const paths: Array<string> = [];
+
 const source = Buffer.from(
   "---\r\nversion: 1\r\ncron: 0 9 * * *\r\ntimezone: UTC\r\nbroadcast: none\r\n---\r\n\r\nExact bytes: π\r\n",
 );
@@ -23,6 +24,7 @@ const profile = async () => {
   paths.push(path);
   await mkdir(join(path, "automations"));
   await writeFile(join(path, "SOUL.md"), "# Test\n");
+
   return { path, name: "Test" };
 };
 
@@ -35,12 +37,14 @@ afterEach(async () =>
 describe("automation filename lifecycle adapter", () => {
   test("installs an extension-owned definition exclusively without rewriting a collision", async () => {
     const target = await profile();
+
     const owned =
       "---\nversion: 1\nowner: extension:self-improvement\ncron: 0 3 * * *\ntimezone: UTC\ngate: test -f .runtime/self-improvement/curator-ready\nbroadcast: none\n---\n\nCurate durable learnings.\n";
 
     const installed = await Effect.runPromise(
       installAutomationDefinition(target, await id(), owned),
     );
+
     expect(installed).toEqual({
       path: join(target.path, "automations", "daily.md"),
       source: owned,
@@ -51,12 +55,14 @@ describe("automation filename lifecycle adapter", () => {
     const duplicate = await Effect.runPromiseExit(
       installAutomationDefinition(target, await id(), "replacement\n"),
     );
+
     expect(Exit.isFailure(duplicate)).toBeTrue();
     expect(await readFile(installed.path, "utf8")).toBe(owned);
   });
 
   test("removes an exact active definition and leaves no paused form behind", async () => {
     const target = await profile();
+
     const installed = await Effect.runPromise(
       installAutomationDefinition(target, await id(), source.toString("utf8")),
     );
@@ -80,6 +86,7 @@ describe("automation filename lifecycle adapter", () => {
     const changedResult = await Effect.runPromise(
       removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
     );
+
     expect(changedResult).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "AutomationEditConflict", id: "daily", path: active },
@@ -88,9 +95,11 @@ describe("automation filename lifecycle adapter", () => {
 
     const unrelated = Buffer.from("unrelated definition\n");
     await writeFile(active, unrelated);
+
     const unrelatedResult = await Effect.runPromise(
       removeAutomationDefinition(target, await id(), changed.toString("utf8")).pipe(Effect.result),
     );
+
     expect(unrelatedResult).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "AutomationEditConflict", id: "daily", path: active },
@@ -111,6 +120,7 @@ describe("automation filename lifecycle adapter", () => {
     const symlinkResult = await Effect.runPromise(
       removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
     );
+
     expect(symlinkResult).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "AutomationFileSystemError", path: active },
@@ -120,9 +130,11 @@ describe("automation filename lifecycle adapter", () => {
 
     await rm(active);
     await writeFile(paused, source);
+
     const pausedResult = await Effect.runPromise(
       removeAutomationDefinition(target, await id(), source.toString("utf8")).pipe(Effect.result),
     );
+
     expect(pausedResult).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "AutomationNotFound", id: "daily", path: active },
@@ -175,6 +187,7 @@ describe("automation filename lifecycle adapter", () => {
         removeSource: () => Effect.fail("simulated unlink failure"),
       }),
     );
+
     expect(Exit.isFailure(exit)).toBeTrue();
     expect(Buffer.from(await readFile(active))).toEqual(source);
     expect(Buffer.from(await readFile(paused))).toEqual(source);

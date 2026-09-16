@@ -27,6 +27,7 @@ const makeProfile = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-profile-preflight-"));
   roots.push(root);
   await writeFile(join(root, "SOUL.md"), "# Preflight profile\n");
+
   return root;
 };
 
@@ -49,6 +50,7 @@ const writePackage = async (
       2,
     )}\n`,
   );
+
   const source = options.brokenImport
     ? 'import "./missing-module";\nexport default function () {}\n'
     : options.brokenFactory
@@ -61,6 +63,7 @@ const writePackage = async (
             "}",
             "",
           ].join("\n");
+
   await writeFile(join(packagePath, "index.ts"), source);
   const skillPath = join(packagePath, "skills", id);
   await mkdir(skillPath, { recursive: true });
@@ -74,6 +77,7 @@ const writePackage = async (
 
 const stageRequiredPackages = async (profilePath: string): Promise<void> => {
   const repositoryRoot = join(import.meta.dir, "../../..");
+
   for (const id of ["extension-authoring", "pi-packages", "ziggy-operations"]) {
     await cp(join(repositoryRoot, "extensions", id), join(profilePath, "extensions", id), {
       recursive: true,
@@ -107,10 +111,12 @@ test("preflight uses the production resource-loader shape for arbitrary packages
   await stageRequiredPackages(profilePath);
   const snapshots: CreateAgentSessionServicesOptions[] = [];
   const servicesSnapshots: Array<Awaited<ReturnType<typeof createAgentSessionServices>>> = [];
+
   const createServices = async (options: CreateAgentSessionServicesOptions) => {
     snapshots.push(options);
     const services = await createAgentSessionServices(options);
     servicesSnapshots.push(services);
+
     return services;
   };
 
@@ -229,14 +235,17 @@ test("preflight rejects a package command that conflicts with a Ziggy core regis
 test("preflight bounds aggregated extension, skill, and service diagnostics", async () => {
   const profilePath = await makeProfile();
   const selected = Array.from({ length: 20 }, (_, index) => `broken-${index}`);
+
   for (const id of selected) {
     await writePackage(profilePath, id, { brokenImport: true });
   }
+
   await stageRequiredPackages(profilePath);
 
   const failure = await failureFor(profilePath, selected);
 
   expect(failure._tag).toBe("ProfileExtensionPreflightFailed");
+
   if (failure._tag !== "ProfileExtensionPreflightFailed") return;
   expect(failure.diagnostics).toHaveLength(12);
   expect(
@@ -258,6 +267,7 @@ test("preflight aggregates a service error without creating an AgentSession or p
   const selectionBytes = '{"extensions":["alpha"]}\n';
   await writeFile(join(profilePath, "extensions.json"), selectionBytes);
   let serviceOptions: CreateAgentSessionServicesOptions | undefined;
+
   const createServices = async (options: CreateAgentSessionServicesOptions) => {
     serviceCalls += 1;
     serviceOptions = options;
@@ -266,6 +276,7 @@ test("preflight aggregates a service error without creating an AgentSession or p
       type: "error",
       message: "synthetic service diagnostic",
     });
+
     return services;
   };
 

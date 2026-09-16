@@ -2,28 +2,36 @@ function parameterAnnotation(parameter) {
   if (parameter.type === "TSParameterProperty") {
     return parameterAnnotation(parameter.parameter);
   }
+
   if (parameter.type === "RestElement") {
     return parameter.typeAnnotation ?? parameterAnnotation(parameter.argument);
   }
+
   if (parameter.type === "AssignmentPattern") {
     return parameter.typeAnnotation ?? parameter.left.typeAnnotation;
   }
+
   return parameter.typeAnnotation;
 }
+
 function parameterName(parameter, sourceText) {
   if (parameter.type === "TSParameterProperty") {
     return parameterName(parameter.parameter, sourceText);
   }
+
   if (parameter.type === "AssignmentPattern") {
     return parameterName(parameter.left, sourceText);
   }
+
   if (parameter.type === "RestElement") {
     return parameterName(parameter.argument, sourceText);
   }
+
   return parameter.type === "Identifier"
     ? parameter.name
     : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
 }
+
 export default {
   meta: {
     type: "problem",
@@ -40,8 +48,10 @@ export default {
     const checkParameters = (node) => {
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
+
         if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;
         const name = parameterName(parameter, context.sourceCode.getText(parameter));
+
         if (name === "cause") continue;
         context.report({
           node: annotation.typeAnnotation,
@@ -50,6 +60,7 @@ export default {
         });
       }
     };
+
     return {
       ArrowFunctionExpression: checkParameters,
       FunctionDeclaration: checkParameters,

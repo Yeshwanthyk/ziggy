@@ -11,20 +11,26 @@ const message =
 
 // Standalone extension executables own their own process/HTTP boundaries; this core rule checks src only.
 const checkedPrefixes = ["src/"];
+
 const approvedRawFetchAdapters = new Set(["src/adapters/telegram/api.ts"]);
 
 const shouldCheck = (filename) => {
   const normalized = toRepoRelative(filename);
+
   if (isDeclarationFile(filename)) return false;
+
   if (approvedRawFetchAdapters.has(normalized)) return false;
+
   return checkedPrefixes.some((prefix) => normalized.startsWith(prefix));
 };
 
 const isGlobalFetchMember = (node) => {
   const expression = unwrapExpression(node);
+
   if (expression?.type !== "MemberExpression") return false;
   const object = unwrapExpression(expression.object);
   const property = getPropertyName(expression.property);
+
   return (
     property === "fetch" &&
     (isIdentifier(object, "globalThis") ||
@@ -53,6 +59,7 @@ export default {
       },
       MemberExpression(node) {
         if (node.parent?.type === "CallExpression" && node.parent.callee === node) return;
+
         if (isGlobalFetchMember(node)) {
           context.report({ node, message });
         }

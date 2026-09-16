@@ -43,6 +43,7 @@ const installFailure = (
 
 const safeArchiveEntry = (entry: string): boolean => {
   const normalized = entry.replaceAll("\\", "/");
+
   return (
     normalized.length > 0 &&
     !normalized.startsWith("/") &&
@@ -54,12 +55,15 @@ const runTar = (args: ReadonlyArray<string>) =>
   Effect.tryPromise({
     try: async () => {
       const child = Bun.spawn(["tar", ...args], { stdout: "pipe", stderr: "pipe" });
+
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited,
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
       ]);
+
       if (exitCode !== 0) throw new Error(stderr.trim() || `tar exited ${exitCode}`);
+
       return stdout;
     },
     catch: (cause) => cause,
@@ -76,14 +80,19 @@ export const systemTarExtractor: ExtensionArchiveExtractor = {
           message,
           cause,
         });
+
       const verbose = yield* runTar(["-tvzf", archivePath]).pipe(
         Effect.mapError((cause) => failure("could not inspect extension archive", cause)),
       );
+
       const rows = verbose.split(/\r?\n/u).filter((row) => row.length > 0);
+
       const listing = yield* runTar(["-tzf", archivePath]).pipe(
         Effect.mapError((cause) => failure("could not inspect extension archive", cause)),
       );
+
       const names = listing.split(/\r?\n/u).filter((name) => name.length > 0);
+
       if (
         names.length === 0 ||
         names.some((name) => !safeArchiveEntry(name)) ||
@@ -91,6 +100,7 @@ export const systemTarExtractor: ExtensionArchiveExtractor = {
       ) {
         return yield* Effect.fail(failure("extension archive contains an unsafe entry", undefined));
       }
+
       yield* runTar([
         "-xzf",
         archivePath,
@@ -119,6 +129,7 @@ const inspectTree = (
         installFailure(entry, root, "filesystem", "could not inspect extension source", cause),
       ),
     );
+
     if (status.isSymbolicLink() || (!status.isDirectory() && !status.isFile())) {
       return yield* Effect.fail(
         installFailure(
@@ -130,7 +141,9 @@ const inspectTree = (
         ),
       );
     }
+
     if (!status.isDirectory()) return;
+
     const children = yield* Effect.tryPromise({
       try: () => readdir(root),
       catch: (cause) => cause,
@@ -139,6 +152,7 @@ const inspectTree = (
         installFailure(entry, root, "filesystem", "could not inspect extension source", cause),
       ),
     );
+
     yield* Effect.forEach(children, (child) => inspectTree(entry, path.join(root, child)), {
       discard: true,
     });
@@ -193,6 +207,7 @@ const stageEmbeddedFiles = (
     (file) =>
       Effect.gen(function* () {
         const embedded = bundledFilePath(file);
+
         if (embedded === undefined) {
           return yield* Effect.fail(
             installFailure(
@@ -204,7 +219,9 @@ const stageEmbeddedFiles = (
             ),
           );
         }
+
         const relative = path.posix.relative(sourcePath, file);
+
         if (relative === "" || relative.startsWith("..")) {
           return yield* Effect.fail(
             installFailure(
@@ -216,6 +233,7 @@ const stageEmbeddedFiles = (
             ),
           );
         }
+
         const target = path.join(stagedPackage, ...relative.split("/"));
         yield* Effect.tryPromise({
           try: () => mkdir(path.dirname(target), { recursive: true }),
@@ -231,6 +249,7 @@ const stageEmbeddedFiles = (
             ),
           ),
         );
+
         const bytes = yield* Effect.tryPromise({
           try: () => readFile(embedded),
           catch: (cause) => cause,
@@ -245,6 +264,7 @@ const stageEmbeddedFiles = (
             ),
           ),
         );
+
         const status = yield* Effect.tryPromise({
           try: () => stat(embedded),
           catch: (cause) => cause,
@@ -259,6 +279,7 @@ const stageEmbeddedFiles = (
             ),
           ),
         );
+
         yield* Effect.tryPromise({
           try: () => writeFile(target, bytes, { mode: status.mode }),
           catch: (cause) => cause,
@@ -285,8 +306,10 @@ const publishEmbeddedTree = (
 ): Effect.Effect<string, ExtensionCatalogInstallFailed> => {
   const extensionRoot = path.join(profilePath, "extensions");
   const destinationPath = path.join(extensionRoot, entry.id);
+
   return Effect.gen(function* () {
     if (!(yield* destinationAvailable(entry, destinationPath))) return destinationPath;
+
     const temporaryRoot = yield* Effect.tryPromise({
       try: () => mkdtemp(path.join(profilePath, ".ziggy-extension-")),
       catch: (cause) => cause,
@@ -301,6 +324,7 @@ const publishEmbeddedTree = (
         ),
       ),
     );
+
     return yield* Effect.acquireUseRelease(
       Effect.succeed(temporaryRoot),
       (stagingRoot) =>
@@ -362,6 +386,7 @@ const publishEmbeddedTree = (
               ),
             ),
           );
+
           return destinationPath;
         }),
       cleanup,
@@ -376,8 +401,10 @@ const publishSource = (
 ): Effect.Effect<string, ExtensionCatalogInstallFailed> => {
   const extensionRoot = path.join(profilePath, "extensions");
   const destinationPath = path.join(extensionRoot, entry.id);
+
   return Effect.gen(function* () {
     if (!(yield* destinationAvailable(entry, destinationPath))) return destinationPath;
+
     const temporaryRoot = yield* Effect.tryPromise({
       try: () => mkdtemp(path.join(profilePath, ".ziggy-extension-")),
       catch: (cause) => cause,
@@ -392,6 +419,7 @@ const publishSource = (
         ),
       ),
     );
+
     return yield* Effect.acquireUseRelease(
       Effect.succeed(temporaryRoot),
       (stagingRoot) =>
@@ -454,6 +482,7 @@ const publishSource = (
               ),
             ),
           );
+
           return destinationPath;
         }),
       cleanup,
@@ -467,6 +496,7 @@ export const makeExtensionInstaller = (
 ) => ({
   installBundled: (profilePath: string, entry: BundledExtensionCatalogEntry) => {
     const metadata = bundledPackageMetadata(entry.id);
+
     if (metadata === undefined) {
       return Effect.fail(
         installFailure(
@@ -478,6 +508,7 @@ export const makeExtensionInstaller = (
         ),
       );
     }
+
     return publishEmbeddedTree(profilePath, entry, metadata.sourcePath, metadata.packageFiles);
   },
   installGitHub: (profilePath: string, entry: GitHubExtensionCatalogEntry) =>
@@ -496,6 +527,7 @@ export const makeExtensionInstaller = (
           ),
         ),
       );
+
       return yield* Effect.acquireUseRelease(
         Effect.succeed(temporaryRoot),
         (downloadRoot) =>
@@ -516,6 +548,7 @@ export const makeExtensionInstaller = (
                 ),
               ),
             );
+
             const archive = yield* client
               .download(entry)
               .pipe(
@@ -523,6 +556,7 @@ export const makeExtensionInstaller = (
                   installFailure(entry, archivePath, "download", cause.message, cause),
                 ),
               );
+
             if (createHash("sha256").update(archive).digest("hex") !== entry.archiveSha256) {
               return yield* Effect.fail(
                 installFailure(
@@ -534,6 +568,7 @@ export const makeExtensionInstaller = (
                 ),
               );
             }
+
             yield* Effect.tryPromise({
               try: () => writeFile(archivePath, archive),
               catch: (cause) => cause,
@@ -551,6 +586,7 @@ export const makeExtensionInstaller = (
             yield* extractor.extract(archivePath, checkoutPath);
             const sourcePath = path.resolve(checkoutPath, entry.path);
             const relative = path.relative(checkoutPath, sourcePath);
+
             if (
               relative === ".." ||
               relative.startsWith(`..${path.sep}`) ||
@@ -566,6 +602,7 @@ export const makeExtensionInstaller = (
                 ),
               );
             }
+
             return yield* publishSource(profilePath, entry, sourcePath);
           }),
         cleanup,

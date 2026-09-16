@@ -23,16 +23,21 @@ import {
 } from "ziggy/adapters/bun/systemd-service";
 
 const profilePath = "/Users/Test Person/Profiles/work & fun $100%";
+
 const identity = deriveResidentServiceIdentity(profilePath);
+
 const launchVector: ResidentLaunchVector = [
   "/Applications/Bun & Tools/bun",
   "/opt/ziggy/main $source%.ts",
   "serve",
   profilePath,
 ];
+
 const launchdEnvironmentValue = (content: string, key: string): string => {
   const match = new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`, "u").exec(content);
+
   if (match?.[1] === undefined) throw new Error(`missing launchd environment key ${key}`);
+
   return match[1];
 };
 
@@ -45,6 +50,7 @@ describe("resident service renderers", () => {
       home: "/Users/Test Person",
       ziggyHome: "/Users/Test Person/.ziggy",
     };
+
     const first = renderLaunchdService(options);
     const second = renderLaunchdService(options);
 
@@ -111,12 +117,14 @@ describe("resident service renderers", () => {
     const fixtureName = "ziggy-managed-fixture";
     const fixtureDirectory = join(home, ".local", "bin");
     const fixturePath = join(fixtureDirectory, fixtureName);
+
     try {
       await mkdir(fixtureDirectory, { recursive: true });
       await writeFile(fixturePath, "#!/bin/sh\nexit 0\n");
       await chmod(fixturePath, 0o755);
 
       const profile = join(home, "Profile");
+
       const definition = renderLaunchdService({
         identity: deriveResidentServiceIdentity(profile),
         profilePath: profile,
@@ -124,11 +132,13 @@ describe("resident service renderers", () => {
         home,
         ziggyHome: join(home, ".ziggy"),
       });
+
       const environment = {
         HOME: launchdEnvironmentValue(definition.content, "HOME"),
         ZIGGY_HOME: launchdEnvironmentValue(definition.content, "ZIGGY_HOME"),
         PATH: launchdEnvironmentValue(definition.content, "PATH"),
       };
+
       expect(environment.PATH).toBe(
         `${fixtureDirectory}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,
       );
@@ -138,6 +148,7 @@ describe("resident service renderers", () => {
         stdout: "pipe",
         stderr: "ignore",
       });
+
       const stdout = await new Response(child.stdout).text();
       expect(await child.exited).toBe(0);
       expect(stdout.trim()).toBe(fixturePath);

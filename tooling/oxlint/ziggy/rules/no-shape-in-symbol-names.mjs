@@ -1,7 +1,9 @@
 const FORBIDDEN_SYMBOL_NAME = "shape";
+
 function containsForbiddenSymbolName(name) {
   return name.toLowerCase().includes(FORBIDDEN_SYMBOL_NAME);
 }
+
 export default {
   meta: {
     type: "problem",
@@ -23,6 +25,7 @@ export default {
         data: { name: node.name },
       });
     };
+
     return {
       Identifier: reportForbiddenSymbolName,
       PrivateIdentifier: reportForbiddenSymbolName,

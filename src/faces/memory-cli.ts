@@ -9,7 +9,9 @@ const MemoryListItemJson = Schema.Struct({
   codePoints: Schema.Finite,
   cap: Schema.Finite,
 });
+
 export const MemoryListJson = Schema.Array(MemoryListItemJson);
+
 export type MemoryListJson = typeof MemoryListJson.Type;
 
 const MemoryShowJson = Schema.Struct({
@@ -20,9 +22,11 @@ const MemoryShowJson = Schema.Struct({
   codePoints: Schema.Finite,
   cap: Schema.Finite,
 });
+
 export type MemoryShowJson = typeof MemoryShowJson.Type;
 
 const encodeList = Schema.encodeSync(MemoryListJson);
+
 const encodeShow = Schema.encodeSync(MemoryShowJson);
 
 const jsonItem = (item: MemoryDocumentView): MemoryListJson[number] => ({
@@ -64,7 +68,9 @@ export const renderMemoryShow = (item: MemoryDocumentView): string => {
     `entries\t${item.entries.length}`,
     `code points\t${item.codePoints}/${item.cap}`,
   ];
+
   for (const [index, entry] of item.entries.entries()) lines.push(`${index + 1}\t${entry}`);
+
   return lines.join("\n");
 };
 

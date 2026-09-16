@@ -81,15 +81,18 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const completed = yield* Deferred.make<void>();
         let connectionStateRead = false;
+
         const socket: DiscordSocket = {
           next: Effect.never,
           nextConnectionState: Effect.suspend(() => {
             if (connectionStateRead) return Effect.never;
             connectionStateRead = true;
+
             return Effect.succeed({ state: "connected", guildIds: ["guild-2", "guild-1"] });
           }),
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -102,6 +105,7 @@ describe("Discord gateway boundary", () => {
               reconciliations.push({ token, guildIds });
             }).pipe(Effect.andThen(Deferred.succeed(completed, undefined))),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -137,6 +141,7 @@ describe("Discord gateway boundary", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const completed = yield* Deferred.make<void>();
+
         const interactions: ReadonlyArray<DiscordInboundInteraction> = [
           {
             id: "status-interaction",
@@ -159,17 +164,21 @@ describe("Discord gateway boundary", () => {
             commandName: "stop",
           },
         ];
+
         let nextInteraction = 0;
+
         const socket: DiscordSocket = {
           next: Effect.never,
           nextInteraction: Effect.suspend(() => {
             const interaction = interactions[nextInteraction];
             nextInteraction += 1;
+
             return interaction === undefined ? Effect.never : Effect.succeed(interaction);
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -180,6 +189,7 @@ describe("Discord gateway boundary", () => {
           respondToInteraction: (id, _token, text) =>
             Effect.sync(() => {
               responses.push({ id, text });
+
               return responses.length;
             }).pipe(
               Effect.flatMap((responseCount) =>
@@ -189,6 +199,7 @@ describe("Discord gateway boundary", () => {
               ),
             ),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -202,12 +213,14 @@ describe("Discord gateway boundary", () => {
           openChat: () =>
             Effect.sync(() => {
               openChatCalls += 1;
+
               return makeChatHandle({
                 prompt: () => Effect.succeed("unused"),
                 dispose: Effect.void,
               });
             }),
         };
+
         const gateway = makeDiscordGateway(agent, transport);
 
         yield* Effect.raceFirst(
@@ -254,9 +267,12 @@ describe("Discord gateway boundary", () => {
       }),
       "123",
     );
+
     expect(admitted).toBeDefined();
+
     if (admitted === undefined) return;
     const resolvedIds: Array<string> = [];
+
     const prepared = await Effect.runPromise(
       prepareDiscordAttachmentPrompt(
         {
@@ -267,6 +283,7 @@ describe("Discord gateway boundary", () => {
         (attachment) =>
           Effect.sync(() => {
             resolvedIds.push(attachment.id);
+
             return { type: "image", data: "AQID", mimeType: "image/png" } as const;
           }),
       ),
@@ -282,6 +299,7 @@ describe("Discord gateway boundary", () => {
 
   test("hands a downloaded Discord image to the typed Pi prompt", async () => {
     let promptText = "";
+
     let promptImages: ReadonlyArray<{
       readonly type: "image";
       readonly data: string;
@@ -292,9 +310,11 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const completed = yield* Deferred.make<void>();
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             return nextCall === 1
               ? Effect.succeed(
                   message({
@@ -315,6 +335,7 @@ describe("Discord gateway boundary", () => {
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -325,6 +346,7 @@ describe("Discord gateway boundary", () => {
           downloadAttachment: () =>
             Effect.succeed({ type: "image", data: "AQID", mimeType: "image/png" }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -342,12 +364,14 @@ describe("Discord gateway boundary", () => {
                   Effect.sync(() => {
                     promptText = text;
                     promptImages = options?.images ?? [];
+
                     return "image received";
                   }),
                 dispose: Effect.void,
               }),
             ),
         };
+
         const gateway = makeDiscordGateway(agent, transport, {
           now: () => 100,
           waitForHeartbeat: Effect.never,
@@ -374,6 +398,7 @@ describe("Discord gateway boundary", () => {
   test("keeps thread sessions distinct while sharing parent-channel group memory", () => {
     const admitted = normalizeDiscordMessage(message({ guildId: "789" }), "123");
     expect(admitted).toBeDefined();
+
     if (admitted === undefined) return;
     expect(discordThreadConversation(admitted, "thread-1", "456")).toEqual({
       messageId: "m1",
@@ -401,24 +426,30 @@ describe("Discord gateway boundary", () => {
         message: "accepted request response lost",
         cause: { message: "connection closed" },
       });
+
     let updateAttempts = 0;
     const delays: Array<number> = [];
+
     const update = await Effect.runPromise(
       retryDiscordDelivery(
         "idempotent",
         () => {
           updateAttempts += 1;
+
           return Effect.fail(failure("updateMessage"));
         },
         (seconds) => Effect.sync(() => delays.push(seconds)),
       ).pipe(Effect.result),
     );
+
     let postAttempts = 0;
+
     const post = await Effect.runPromise(
       retryDiscordDelivery(
         "post",
         () => {
           postAttempts += 1;
+
           return Effect.fail(failure("createMessage"));
         },
         () => Effect.void,
@@ -442,21 +473,25 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const diagnosticSent = yield* Deferred.make<void>();
         let delivered = false;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             if (delivered) return Effect.never;
             delivered = true;
+
             return Effect.succeed(message({ guildId: "guild", channelId: "root" }));
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
           getChannel: () => Effect.succeed({ id: "root", type: 0 }),
           startThreadFromMessage: () => {
             threadAttempts += 1;
+
             return Effect.fail(
               new DiscordApiError({
                 operation: "startThreadFromMessage",
@@ -471,6 +506,7 @@ describe("Discord gateway boundary", () => {
             Deferred.succeed(diagnosticSent, undefined).pipe(Effect.as({ id: "diagnostic" })),
           updateMessage: () => Effect.void,
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -483,6 +519,7 @@ describe("Discord gateway boundary", () => {
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
             openChatCalls += 1;
+
             return Effect.succeed(
               makeChatHandle({ prompt: () => Effect.succeed("reply"), dispose: Effect.void }),
             );
@@ -517,10 +554,12 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const replied = yield* Deferred.make<void>();
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
             events.push("next");
+
             return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
           }),
           nextConnectionState: Effect.never,
@@ -528,11 +567,13 @@ describe("Discord gateway boundary", () => {
             events.push("close");
           }),
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: (token, intents) =>
             Effect.sync(() => {
               events.push(`openSocket:${token}:${intents}`);
+
               return socket;
             }),
           getChannel: () => unexpectedDiscordApiCall("getChannel"),
@@ -540,6 +581,7 @@ describe("Discord gateway boundary", () => {
           createMessage: (token, channelId, text) =>
             Effect.sync(() => {
               events.push(`createMessage:${token}:${channelId}:${text}`);
+
               return { id: "placeholder" };
             }),
           updateMessage: (token, channelId, messageId, text) =>
@@ -547,6 +589,7 @@ describe("Discord gateway boundary", () => {
               events.push(`updateMessage:${token}:${channelId}:${messageId}:${text}`);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -560,10 +603,12 @@ describe("Discord gateway boundary", () => {
           openChat: (target, context, sessionDirectory) =>
             Effect.sync(() => {
               events.push(`openChat:${target.name}:${JSON.stringify(context)}:${sessionDirectory}`);
+
               return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     events.push(`prompt:${text}`);
+
                     return "hello back";
                   }),
                 dispose: Effect.sync(() => {
@@ -572,12 +617,14 @@ describe("Discord gateway boundary", () => {
               });
             }),
         };
+
         const gateway = makeDiscordGateway(agent, transport, {
           now: () => 100,
           waitForHeartbeat: Effect.never,
           write: (_profilePath, snapshot) =>
             snapshot.completedTurnCount === 1 ? Deferred.succeed(replied, undefined) : Effect.void,
         });
+
         const target = { path: "/tmp/ziggy-discord-test", name: "Test" };
         const config = { botToken: "token", ownerUserId: "123" };
 
@@ -606,14 +653,17 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const replied = yield* Deferred.make<void>();
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -622,6 +672,7 @@ describe("Discord gateway boundary", () => {
           createMessage: (_token, _channelId, text) =>
             Effect.sync(() => {
               posts.push(text);
+
               return { id: `msg-${posts.length}` };
             }),
           updateMessage: (_token, _channelId, _messageId, text) =>
@@ -629,6 +680,7 @@ describe("Discord gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -653,12 +705,14 @@ describe("Discord gateway boundary", () => {
                     agentId: "beta",
                     text: "second look",
                   });
+
                   return Effect.succeed("parent wrap");
                 },
                 dispose: Effect.void,
               }),
             ),
         };
+
         const gateway = makeDiscordGateway(agent, transport, {
           now: () => 100,
           waitForHeartbeat: Effect.never,
@@ -695,9 +749,11 @@ describe("Discord gateway boundary", () => {
         const terminalReaction = yield* Deferred.make<void>();
         let terminalReactionAttempts = 0;
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             return nextCall === 1
               ? Effect.succeed(message({ guildId: "789", content: "thread request" }))
               : Effect.never;
@@ -705,6 +761,7 @@ describe("Discord gateway boundary", () => {
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           openSocket: () => Effect.succeed(socket),
           getChannel: () =>
@@ -720,8 +777,10 @@ describe("Discord gateway boundary", () => {
           addReaction: (token, channelId, messageId, emoji) =>
             Effect.gen(function* () {
               feedback.push(`add:${token}:${channelId}:${messageId}:${emoji}`);
+
               if (emoji === "✅") {
                 terminalReactionAttempts += 1;
+
                 if (terminalReactionAttempts === 1) {
                   return yield* new DiscordApiError({
                     operation: "addReaction",
@@ -732,6 +791,7 @@ describe("Discord gateway boundary", () => {
                     cause: { fixture: true },
                   });
                 }
+
                 yield* Deferred.succeed(terminalReaction, undefined);
               }
             }),
@@ -740,6 +800,7 @@ describe("Discord gateway boundary", () => {
               feedback.push(`remove:${token}:${channelId}:${messageId}:${emoji}`);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -788,20 +849,25 @@ describe("Discord gateway boundary", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const complete = yield* Deferred.make<void>();
+
         const inbound = [
           message({ id: "m1", channelId: "456", guildId: "789", content: "first root" }),
           message({ id: "m2", channelId: "456", guildId: "789", content: "second root" }),
           message({ id: "m3", channelId: "m1", guildId: "789", content: "follow up" }),
         ];
+
         let placeholder = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             const next = inbound.shift();
+
             return next === undefined ? Effect.never : Effect.succeed(next);
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -814,6 +880,7 @@ describe("Discord gateway boundary", () => {
           startThreadFromMessage: (_token, channelId, messageId) =>
             Effect.sync(() => {
               startedThreads.push(`${channelId}:${messageId}`);
+
               return { id: messageId, type: 11, guild_id: "789", parent_id: channelId };
             }),
           createMessage: (_token, channelId) =>
@@ -822,10 +889,12 @@ describe("Discord gateway boundary", () => {
             Effect.gen(function* () {
               if (text.startsWith("reply:")) {
                 delivered.push(`${channelId}:${text}`);
+
                 if (delivered.length === 3) yield* Deferred.succeed(complete, undefined);
               }
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -839,10 +908,12 @@ describe("Discord gateway boundary", () => {
           openChat: (_target, _context, sessionDirectory) =>
             Effect.sync(() => {
               opened.push(sessionDirectory);
+
               return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     prompted.push(`${sessionDirectory}:${text}`);
+
                     return `reply:${text}`;
                   }),
                 dispose: Effect.void,
@@ -881,6 +952,7 @@ describe("Discord gateway boundary", () => {
   test("cancels active and queued work, settles health, and fences late completion", async () => {
     const visible: Array<string> = [];
     let aborted = 0;
+
     let finalHealth:
       | {
           readonly activeTurnCount: number;
@@ -895,25 +967,31 @@ describe("Discord gateway boundary", () => {
         const queuedVisible = yield* Deferred.make<void>();
         const healthSettled = yield* Deferred.make<void>();
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             if (nextCall === 1) return Effect.succeed(message({ content: "long request" }));
+
             if (nextCall === 2) {
               return Deferred.await(promptStarted).pipe(
                 Effect.as(message({ id: "m2", content: "queued request" })),
               );
             }
+
             if (nextCall === 3) {
               return Deferred.await(queuedVisible).pipe(
                 Effect.as(message({ id: "m3", content: "stop" })),
               );
             }
+
             return Effect.never;
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -922,9 +1000,11 @@ describe("Discord gateway boundary", () => {
           createMessage: (_token, _channelId, text) =>
             Effect.gen(function* () {
               visible.push(text);
+
               if (text === "Queued behind an earlier request…") {
                 yield* Deferred.succeed(queuedVisible, undefined);
               }
+
               return { id: `p${visible.length}` };
             }),
           updateMessage: (_token, _channelId, _messageId, text) =>
@@ -940,6 +1020,7 @@ describe("Discord gateway boundary", () => {
               visible.push(`reaction:remove:${emoji}`);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1017,20 +1098,25 @@ describe("Discord gateway boundary", () => {
         let nextCall = 0;
         let finalCount = 0;
         let placeholderCount = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             if (nextCall === 1) return Effect.succeed(message({ content: "first" }));
+
             if (nextCall === 2) {
               return Deferred.await(firstStarted).pipe(
                 Effect.as(message({ id: "m2", content: "second" })),
               );
             }
+
             return Effect.never;
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -1039,21 +1125,27 @@ describe("Discord gateway boundary", () => {
           createMessage: (_token, _channelId, text) =>
             Effect.gen(function* () {
               visible.push(`create:${text}`);
+
               if (text === "Queued behind an earlier request…") {
                 yield* Deferred.succeed(releaseFirst, undefined);
               }
+
               placeholderCount += 1;
+
               return { id: `p${placeholderCount}` };
             }),
           updateMessage: (_token, _channelId, messageId, text) =>
             Effect.gen(function* () {
               visible.push(`update:${messageId}:${text}`);
+
               if (text.startsWith("reply:")) {
                 finalCount += 1;
+
                 if (finalCount === 2) yield* Deferred.succeed(complete, undefined);
               }
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1070,10 +1162,12 @@ describe("Discord gateway boundary", () => {
                 prompt: (text: string) =>
                   Effect.gen(function* () {
                     prompts.push(text);
+
                     if (text === "first") {
                       yield* Deferred.succeed(firstStarted, undefined);
                       yield* Deferred.await(releaseFirst);
                     }
+
                     return `reply:${text}`;
                   }),
                 dispose: Effect.void,
@@ -1109,14 +1203,17 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const finished = yield* Deferred.make<void>();
         let nextCall = 0;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             nextCall += 1;
+
             return nextCall <= 2 ? Effect.succeed(message()) : Effect.never;
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -1125,6 +1222,7 @@ describe("Discord gateway boundary", () => {
           createMessage: () => Effect.succeed({ id: "placeholder" }),
           updateMessage: () => Effect.void,
         };
+
         const ingress: DiscordIngressRuntime = {
           initialize: () => Effect.void,
           recover: () => Effect.void,
@@ -1132,8 +1230,10 @@ describe("Discord gateway boundary", () => {
           admit: (_profilePath, payload) =>
             Effect.sync(() => {
               admissions.push(payload.messageId);
+
               if (admitted) return "duplicate" as const;
               admitted = true;
+
               return "accepted" as const;
             }),
           start: () => Effect.succeed(true),
@@ -1143,6 +1243,7 @@ describe("Discord gateway boundary", () => {
               finishedState = state;
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1159,6 +1260,7 @@ describe("Discord gateway boundary", () => {
                 prompt: (text) =>
                   Effect.sync(() => {
                     prompted.push(text);
+
                     return "reply";
                   }),
                 dispose: Effect.void,
@@ -1190,15 +1292,18 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const finished = yield* Deferred.make<void>();
         let delivered = false;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             if (delivered) return Effect.never;
             delivered = true;
+
             return Effect.succeed(message());
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const responseLost = new DiscordApiError({
           operation: "createMessage",
           reason: "network",
@@ -1206,6 +1311,7 @@ describe("Discord gateway boundary", () => {
           message: "accepted request response lost",
           cause: { message: "connection closed after write" },
         });
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -1217,6 +1323,7 @@ describe("Discord gateway boundary", () => {
             }).pipe(Effect.andThen(Effect.fail(responseLost))),
           updateMessage: () => Effect.void,
         };
+
         const ingress: DiscordIngressRuntime = {
           initialize: () => Effect.void,
           recover: () => Effect.void,
@@ -1229,6 +1336,7 @@ describe("Discord gateway boundary", () => {
               finishedState = state;
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1241,6 +1349,7 @@ describe("Discord gateway boundary", () => {
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
             promptCalls += 1;
+
             return Effect.succeed(
               makeChatHandle({ prompt: () => Effect.succeed("reply"), dispose: Effect.void }),
             );
@@ -1270,15 +1379,18 @@ describe("Discord gateway boundary", () => {
       Effect.gen(function* () {
         const promptStarted = yield* Deferred.make<void>();
         let delivered = false;
+
         const socket: DiscordSocket = {
           next: Effect.suspend(() => {
             if (delivered) return Effect.never;
             delivered = true;
+
             return Effect.succeed(message());
           }),
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -1287,6 +1399,7 @@ describe("Discord gateway boundary", () => {
           createMessage: () => Effect.succeed({ id: "placeholder" }),
           updateMessage: () => Effect.void,
         };
+
         const ingress: DiscordIngressRuntime = {
           initialize: () => Effect.void,
           recover: () => Effect.void,
@@ -1302,6 +1415,7 @@ describe("Discord gateway boundary", () => {
               finishedStates.push(state);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1328,6 +1442,7 @@ describe("Discord gateway boundary", () => {
             { botToken: "token", ownerUserId: "123" },
           )
           .pipe(Effect.forkChild);
+
         yield* Deferred.await(promptStarted);
         yield* Fiber.interrupt(resident);
       }),
@@ -1339,6 +1454,7 @@ describe("Discord gateway boundary", () => {
 
   test("replays accepted Discord ingress before waiting for new socket messages", async () => {
     const lifecycle: Array<string> = [];
+
     const replay: DiscordIngressPayload = {
       messageId: "replay-1",
       sourceChannelId: "456",
@@ -1352,11 +1468,13 @@ describe("Discord gateway boundary", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const finished = yield* Deferred.make<void>();
+
         const socket: DiscordSocket = {
           next: Effect.never,
           nextConnectionState: Effect.never,
           close: Effect.void,
         };
+
         const transport: DiscordTransport = {
           ...silentDiscordFeedback,
           openSocket: () => Effect.succeed(socket),
@@ -1365,22 +1483,26 @@ describe("Discord gateway boundary", () => {
           createMessage: () => Effect.succeed({ id: "placeholder" }),
           updateMessage: () => Effect.void,
         };
+
         const ingress: DiscordIngressRuntime = {
           initialize: () => Effect.sync(() => lifecycle.push("initialize")),
           recover: () => Effect.sync(() => lifecycle.push("recover")),
           readReplayable: () =>
             Effect.sync(() => {
               lifecycle.push("read");
+
               return [replay];
             }),
           admit: () =>
             Effect.sync(() => {
               lifecycle.push("unexpected-admit");
+
               return "duplicate" as const;
             }),
           start: (_profilePath, payload) =>
             Effect.sync(() => {
               lifecycle.push(`start:${payload.messageId}`);
+
               return true;
             }),
           requeue: () => Effect.void,
@@ -1389,6 +1511,7 @@ describe("Discord gateway boundary", () => {
               lifecycle.push(`finish:${payload.messageId}:${state}`);
             }).pipe(Effect.andThen(Deferred.succeed(finished, undefined))),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1405,6 +1528,7 @@ describe("Discord gateway boundary", () => {
                 prompt: (text) =>
                   Effect.sync(() => {
                     lifecycle.push(`prompt:${text}`);
+
                     return "recovered";
                   }),
                 dispose: Effect.void,

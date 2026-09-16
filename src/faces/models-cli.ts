@@ -10,6 +10,7 @@ export const renderModelStatus = (status: ModelStatus): string =>
 
 export const renderModels = (models: ReadonlyArray<KnownModel>): string => {
   if (models.length === 0) return "no models";
+
   return models
     .map(
       (model) =>

@@ -21,6 +21,7 @@ import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { Models, type ModelsError, type ModelsApi } from "./models";
 
 const decodeAgentId = Schema.decodeUnknownEffect(ProfileAgentId);
+
 const blockedTools = new Set(["memory_write", "agent_run", "agent_discuss"]);
 
 export interface ProfileAgentProjection {
@@ -137,22 +138,30 @@ const runtimePolicyError = (
 ): string | undefined => {
   const providerId = agent.provider ?? defaults.providerId;
   const modelId = agent.model ?? defaults.modelId;
+
   if (providerId === undefined || modelId === undefined) {
     return `Profile agent ${agent.id} has no effective provider/model`;
   }
+
   const model = models.find(
     (candidate) => candidate.providerId === providerId && candidate.modelId === modelId,
   );
+
   if (model === undefined) return `unknown model ${providerId}/${modelId}`;
   const thinking = agent.thinking ?? defaults.thinking;
+
   if (!model.thinkingLevels.includes(thinking)) {
     return `thinking level ${thinking} is not supported by ${providerId}/${modelId}`;
   }
+
   const blocked = (agent.tools ?? []).find((tool) => blockedTools.has(tool));
+
   if (blocked !== undefined) return `tool is unavailable to Profile agent ${agent.id}: ${blocked}`;
+
   if (agent.provider === undefined && !defaults.authConfigured) {
     return `provider auth is not configured for the inherited model ${providerId}/${modelId}`;
   }
+
   return undefined;
 };
 
@@ -164,6 +173,7 @@ export const makeProfileAgents = (
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);
       const created = yield* createProfileAgentFile(target.path, id);
+
       return projection(target.path, created.agent);
     }),
   list: (target) =>
@@ -174,28 +184,33 @@ export const makeProfileAgents = (
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);
       const loaded = yield* readProfileAgent(target.path, id);
+
       return projection(target.path, loaded.agent);
     }),
   document: (target, idSource) =>
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);
       const loaded = yield* readProfileAgent(target.path, id);
+
       return { id, source: loaded.source };
     }),
   save: (target, idSource, expectedSource, source) =>
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);
       const saved = yield* replaceProfileAgentFile(target.path, id, expectedSource, source);
+
       return { id, source: saved.source };
     }),
   validate: (target, selectedId) =>
     Effect.gen(function* () {
       const id = selectedId === undefined ? undefined : yield* validAgentId(selectedId);
       const observations = yield* inspectProfileAgentFiles(target.path);
+
       const selected =
         id === undefined
           ? observations
           : observations.filter((observation) => observation.id === id);
+
       if (id !== undefined && selected.length === 0) {
         return yield* new ProfileAgentInvalid({
           path: join(target.path, "agents", `${id}.md`),
@@ -203,19 +218,26 @@ export const makeProfileAgents = (
           cause: undefined,
         });
       }
+
       const parsed = selected.filter(
         (observation): observation is typeof observation & { readonly agent: ProfileAgent } =>
           observation.agent !== undefined,
       );
+
       const defaults =
         parsed.length === 0 ? undefined : yield* modelsRuntime.readOnlyStatus(target);
+
       const models = parsed.length === 0 ? [] : yield* modelsRuntime.list(target);
+
       return selected.map((observation): ProfileAgentValidation => {
         const path = relative(target.path, observation.path);
+
         if (observation.error !== undefined) {
           return { id: observation.id, path, valid: false, message: observation.error.message };
         }
+
         const loaded = observation.agent;
+
         if (loaded === undefined || defaults === undefined) {
           return {
             id: observation.id,
@@ -224,7 +246,9 @@ export const makeProfileAgents = (
             message: `Profile agent ${observation.id} could not be validated`,
           };
         }
+
         const policyError = runtimePolicyError(loaded, models, defaults);
+
         return policyError === undefined
           ? { id: observation.id, path, valid: true }
           : { id: observation.id, path, valid: false, message: policyError };
@@ -233,6 +257,7 @@ export const makeProfileAgents = (
   run: (target, idSource, prompt) =>
     Effect.gen(function* () {
       const id = yield* validAgentId(idSource);
+
       return yield* agentRuntime.runSpecialist(target, id, prompt, {
         sessionDirectory: join(target.path, "sessions", "agents", id, randomUUID()),
       });
@@ -244,6 +269,7 @@ export const ProfileAgentsLive = Layer.effect(
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
     const models = yield* Models;
+
     return makeProfileAgents(agent, models);
   }),
 );

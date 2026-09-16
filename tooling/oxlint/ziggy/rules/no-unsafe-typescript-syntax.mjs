@@ -17,6 +17,7 @@ export default {
       },
       TSAsExpression(node) {
         const annotation = node.typeAnnotation;
+
         const isConstAssertion =
           annotation.type === "TSTypeReference" &&
           annotation.typeName.type === "Identifier" &&

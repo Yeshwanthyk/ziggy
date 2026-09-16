@@ -35,10 +35,13 @@ import { Automations, type AutomationsApi } from "./automations";
 
 // oxfmt-ignore
 export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+
 // oxfmt-ignore
 export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerApi>()("ziggy/AutomationScheduler") {}
+
 // oxfmt-ignore
 interface ValidObservation { readonly id: AutomationId; readonly automation: Automation; readonly fingerprint: string }
+
 type Observation =
   | { readonly kind: "valid"; readonly idSource: string; readonly valid: ValidObservation }
   | { readonly kind: "paused"; readonly idSource: string }
@@ -48,11 +51,13 @@ const discover = (target: ProfileTarget) =>
   Effect.gen(function* () {
     const sources = yield* discoverAutomationSources(target);
     const observations: Array<Observation> = [];
+
     for (const source of sources) {
       if (source.lifecycle === "paused") {
         observations.push({ kind: "paused", idSource: source.idSource });
         continue;
       }
+
       if (source.source === null) {
         observations.push({
           kind: "invalid",
@@ -61,16 +66,20 @@ const discover = (target: ProfileTarget) =>
         });
         continue;
       }
+
       const sourceText = source.source;
+
       const parsed = yield* Effect.gen(function* () {
         const id = yield* validateAutomationId(source.idSource);
         const automation = yield* parseAutomationFile(id, source.path, sourceText);
+
         return {
           id,
           automation,
           fingerprint: automationScheduleFingerprint(automation),
         } satisfies ValidObservation;
       }).pipe(Effect.result);
+
       observations.push(
         Result.isSuccess(parsed)
           ? { kind: "valid", idSource: source.idSource, valid: parsed.success }
@@ -81,6 +90,7 @@ const discover = (target: ProfileTarget) =>
             },
       );
     }
+
     return observations;
   });
 
@@ -95,14 +105,19 @@ const validMutation = (previous: AutomationScheduleRecord | undefined, observati
   const { automation, fingerprint, id } = observation;
   const base = { automationId: id, definitionState: "valid" as const, scheduleFingerprint: fingerprint, definitionObservedAtMs: observedAtMs, definitionError: null };
   const reset = previous === undefined || previous.definitionState === "deleted" || previous.scheduleFingerprint !== fingerprint || previous.nextScheduledAtMs === null;
+
   if (reset) return { expected: previous ?? null, next: { ...base, nextScheduledAtMs: cronMs.next(automation, observedAtMs) } };
   const cursor = previous.nextScheduledAtMs;
+
   if (cursor > observedAtMs) return { expected: previous, next: { ...base, nextScheduledAtMs: cursor } };
   const second = cronMs.next(automation, cursor);
+
   if (startup || previous.definitionState === "invalid" || second <= observedAtMs) {
     const last = cronMs.previous(automation, observedAtMs);
+
     return { expected: previous, next: { ...base, nextScheduledAtMs: cronMs.next(automation, observedAtMs) }, occurrence: { kind: "missed", runId: missedRunId(id, fingerprint, cursor, last), scheduledForMs: cursor, missedThroughMs: last, scheduleFingerprint: fingerprint } };
   }
+
   return { expected: previous, next: { ...base, nextScheduledAtMs: second }, occurrence: { kind: "due", runId: scheduledRunId(id, cursor), scheduledForMs: cursor, missedThroughMs: null, scheduleFingerprint: fingerprint } };
 };
 
@@ -130,6 +145,7 @@ const proposals = (
   const previous = new Map(current.map((row) => [row.automationId, row]));
   const seen = new Set<string>();
   const mutations: Array<ScheduleMutation> = [];
+
   for (const observation of observations) {
     seen.add(observation.idSource);
     const before = previous.get(observation.idSource);
@@ -147,12 +163,14 @@ const proposals = (
             },
     );
   }
+
   for (const before of current)
     if (!seen.has(before.automationId) && before.definitionState !== "deleted")
       mutations.push({
         expected: before,
         next: deletedSchedule(before, before.automationId, observedAtMs),
       });
+
   // oxfmt-ignore
   return mutations.sort((left, right) => (left.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) - (right.occurrence?.scheduledForMs ?? Number.MAX_SAFE_INTEGER) || left.next.automationId.localeCompare(right.next.automationId));
 };
@@ -169,6 +187,7 @@ type ScanResult =
   | { readonly kind: "definitions-unreadable"; readonly retryAtMs: number };
 
 type ScheduleClaim = ScheduleCommitResult["claimed"][number];
+
 export interface AutomationSchedulerRuntime {
   readonly afterScheduleCommit: (result: ScheduleCommitResult) => Effect.Effect<void>;
   readonly afterWorkerRegistered: (claim: ScheduleClaim) => Effect.Effect<void>;
@@ -180,6 +199,7 @@ const liveSchedulerRuntime: AutomationSchedulerRuntime = {
 };
 
 type RestoreInterruptibility = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+
 type RegisterClaims = (
   result: ScheduleCommitResult,
   restore: RestoreInterruptibility,
@@ -196,14 +216,18 @@ const scan = (
   Effect.gen(function* () {
     yield* recoverManualAutomationRuns(target.path, atMs);
     const observations = yield* discover(target).pipe(Effect.result);
+
     if (Result.isFailure(observations)) {
       yield* recordDefinitionTickFailure(target.path, atMs);
+
       return {
         kind: "definitions-unreadable",
         retryAtMs: atMs + 60_000,
       } satisfies ScanResult;
     }
+
     const current = yield* readScheduleRecords(target.path);
+
     const result = yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const committed = yield* commitScheduleTick(
@@ -213,11 +237,14 @@ const scan = (
           owner.ownerId,
           owner.pid,
         );
+
         yield* runtime.afterScheduleCommit(committed);
         yield* registerClaims(committed, restore);
+
         return committed;
       }),
     );
+
     return { kind: "committed", result } satisfies ScanResult;
   });
 
@@ -235,6 +262,7 @@ export const makeAutomationScheduler = (
         yield* initializeAutomationDatabase(target.path, owner);
         yield* recoverResidentAutomationRuns(target.path, owner.ownerId, startupAt);
         const fatal = yield* Deferred.make<never, AutomationDatabaseError>();
+
         const registerClaims: RegisterClaims = (result, restore) =>
           Effect.gen(function* () {
             for (const claim of result.claimed) {
@@ -251,11 +279,14 @@ export const makeAutomationScheduler = (
                   ),
                   Effect.catch(() => Effect.void),
                 );
+
               yield* restore(worker).pipe(Effect.forkScoped);
               yield* runtime.afterWorkerRegistered(claim);
             }
           });
+
         let initial = yield* scan(target, startupAt, true, runtime, registerClaims, owner);
+
         while (initial.kind === "committed" && initial.result.stale)
           initial = yield* scan(
             target,
@@ -270,6 +301,7 @@ export const makeAutomationScheduler = (
         const cycle = Effect.gen(function* () {
           const schedules = yield* readScheduleRecords(target.path);
           const now = yield* Clock.currentTimeMillis;
+
           const earliest = schedules
             .flatMap((row) =>
               row.definitionState === "valid" && row.nextScheduledAtMs !== null
@@ -277,6 +309,7 @@ export const makeAutomationScheduler = (
                 : [],
             )
             .sort((left, right) => left - right)[0];
+
           yield* Effect.sleep(
             Duration.millis(
               retryAtMs === null
@@ -286,6 +319,7 @@ export const makeAutomationScheduler = (
                 : Math.max(0, retryAtMs - now),
             ),
           );
+
           let scanResult = yield* scan(
             target,
             yield* Clock.currentTimeMillis,
@@ -294,6 +328,7 @@ export const makeAutomationScheduler = (
             registerClaims,
             owner,
           );
+
           while (scanResult.kind === "committed" && scanResult.result.stale)
             scanResult = yield* scan(
               target,
@@ -305,6 +340,7 @@ export const makeAutomationScheduler = (
             );
           retryAtMs = scanResult.kind === "definitions-unreadable" ? scanResult.retryAtMs : null;
         });
+
         return yield* Effect.raceFirst(Effect.forever(cycle), Deferred.await(fatal));
       }).pipe(Effect.mapError((cause) => schedulerFailure("run", cause))),
     );
@@ -314,11 +350,13 @@ export const makeAutomationScheduler = (
     status: (target) =>
       Effect.gen(function* () {
         yield* validateAutomationProjectionProfile(target);
+
         return yield* readAutomationStatus(target.path, yield* Clock.currentTimeMillis);
       }),
     runs: (target, automationId) =>
       Effect.gen(function* () {
         yield* validateAutomationProjectionProfile(target);
+
         return yield* readAutomationRuns(target.path, automationId);
       }),
   };
@@ -328,6 +366,7 @@ export const AutomationSchedulerLive = Layer.effect(
   AutomationScheduler,
   Effect.gen(function* () {
     const automations = yield* Automations;
+
     return makeAutomationScheduler(automations);
   }),
 );

@@ -94,18 +94,22 @@ const createPiModelsSessionWith = async (
         }),
     modelsPath: join(profilePath, "models.json"),
   });
+
   const settings = SettingsManager.create(profilePath, profilePath);
 
   return {
     status: async () => {
       const providerId = settings.getDefaultProvider();
       const modelId = settings.getDefaultModel();
+
       const model =
         providerId === undefined || modelId === undefined
           ? undefined
           : runtime.getModel(providerId, modelId);
+
       const authConfigured =
         model === undefined ? false : (await runtime.checkAuth(model.provider)) !== undefined;
+
       return {
         providerId: model?.provider,
         modelId: model?.id,
@@ -118,17 +122,23 @@ const createPiModelsSessionWith = async (
     list: (providerId) => runtime.getModels(providerId).map(toKnownModel),
     select: (providerId, modelId, thinking) => {
       const model = runtime.getModel(providerId, modelId);
+
       if (model === undefined) return undefined;
       let selectedThinking;
+
       if (thinking !== undefined) {
         const supported = getSupportedThinkingLevels(model);
         selectedThinking = supported.find((candidate) => candidate === thinking);
+
         if (selectedThinking === undefined) {
           return { providerId, modelId, thinking: undefined };
         }
       }
+
       settings.setDefaultModelAndProvider(providerId, modelId);
+
       if (selectedThinking !== undefined) settings.setDefaultThinkingLevel(selectedThinking);
+
       return { providerId, modelId, thinking: selectedThinking };
     },
     flush: () => settings.flush(),
@@ -138,6 +148,7 @@ const createPiModelsSessionWith = async (
 
 const createPiModelsSession: PiModelsSessionFactory = (profilePath) =>
   createPiModelsSessionWith(profilePath, false);
+
 const createPiReadOnlyModelsSession: PiModelsSessionFactory = (profilePath) =>
   createPiModelsSessionWith(profilePath, true);
 
@@ -193,6 +204,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
       ),
       Effect.flatMap((session) => {
         const cause = session.drainSettingsError();
+
         return cause === undefined
           ? Effect.succeed(session)
           : Effect.fail(
@@ -211,6 +223,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
   ): Effect.Effect<ModelStatus, ProfileNotInitialized | ModelOperationFailed> =>
     Effect.gen(function* () {
       const session = yield* open(profilePath, "load model status");
+
       return yield* Effect.tryPromise({
         try: () => session.status(),
         catch: (cause) =>
@@ -232,6 +245,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
   > =>
     Effect.gen(function* () {
       const session = yield* open(profilePath, "list models");
+
       if (providerId !== undefined && !session.hasProvider(providerId)) {
         return yield* new ModelProviderUnknown({
           profilePath,
@@ -239,6 +253,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           message: `unknown model provider ${providerId}`,
         });
       }
+
       return [...session.list(providerId)].sort(
         (left, right) =>
           left.providerId.localeCompare(right.providerId) ||
@@ -252,6 +267,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
   ): Effect.Effect<ReadonlyArray<KnownModel>, ProfileNotInitialized | ModelOperationFailed> =>
     Effect.gen(function* () {
       const session = yield* open(profilePath, "list available models");
+
       const models = yield* Effect.tryPromise({
         try: () => session.available(),
         catch: (cause) =>
@@ -262,6 +278,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
             cause,
           }),
       });
+
       return [...models].sort(
         (left, right) =>
           left.providerId.localeCompare(right.providerId) ||
@@ -285,6 +302,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
   > =>
     Effect.gen(function* () {
       const session = yield* open(profilePath, "select model");
+
       if (!session.hasProvider(providerId)) {
         return yield* new ModelProviderUnknown({
           profilePath,
@@ -292,7 +310,9 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           message: `unknown model provider ${providerId}`,
         });
       }
+
       const known = session.list(providerId).find((model) => model.modelId === modelId);
+
       if (known === undefined) {
         return yield* new ModelUnknown({
           profilePath,
@@ -301,6 +321,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           message: `unknown model ${providerId}/${modelId}`,
         });
       }
+
       if (thinking !== undefined && !known.thinkingLevels.includes(thinking)) {
         return yield* new ModelThinkingUnsupported({
           providerId,
@@ -310,6 +331,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           message: `model ${providerId}/${modelId} does not support thinking level ${thinking}; supported: ${known.thinkingLevels.join(", ")}`,
         });
       }
+
       const selection = yield* Effect.try({
         try: () => session.select(providerId, modelId, thinking),
         catch: (cause) =>
@@ -319,6 +341,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
             cause,
           }),
       });
+
       if (selection === undefined) {
         return yield* new ModelUnknown({
           profilePath,
@@ -327,6 +350,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           message: `unknown model ${providerId}/${modelId}`,
         });
       }
+
       yield* Effect.tryPromise({
         try: () => session.flush(),
         catch: (cause) =>
@@ -337,6 +361,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           }),
       });
       const settingsCause = session.drainSettingsError();
+
       if (settingsCause !== undefined) {
         return yield* new ModelSettingsWriteFailed({
           profilePath,
@@ -344,6 +369,7 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
           cause: settingsCause,
         });
       }
+
       return selection;
     });
 
@@ -351,10 +377,17 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
 };
 
 const piModels = makePiModels();
+
 const piReadOnlyModels = makePiModels(createPiReadOnlyModelsSession);
+
 export const getModelStatus = piModels.status;
+
 export const getModelStatusReadOnly = piReadOnlyModels.status;
+
 export const listModels = piModels.list;
+
 export const listModelsReadOnly = piReadOnlyModels.list;
+
 export const listAvailableModels = piReadOnlyModels.listAvailable;
+
 export const setModel = piModels.set;

@@ -112,18 +112,23 @@ const makeModel = (
     contextWindow: 1000,
     maxTokens: 100,
   };
+
   if (thinkingLevelMap !== undefined) {
     model.thinkingLevelMap = thinkingLevelMap;
   }
+
   return model;
 };
 
 const failureOf = <E>(exit: Exit.Exit<unknown, E>): E => {
   expect(Exit.isFailure(exit)).toBe(true);
+
   if (!Exit.isFailure(exit)) throw new Error("expected a failure");
   const failure = Cause.findError(exit.cause);
   expect(Result.isSuccess(failure)).toBe(true);
+
   if (!Result.isSuccess(failure)) throw new Error("expected a typed failure");
+
   return failure.success;
 };
 
@@ -138,6 +143,7 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
       sourceInfo: { path: "", source: "", scope: "user", origin: "top-level" },
     }),
   );
+
   const parent: SpecialistSelectionParent = {
     session: {
       model: parentModel,
@@ -154,22 +160,27 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
       },
     },
   };
+
   const options: Pick<MakeSpecialistRunnerOptions, "profilePath" | "agents"> = {
     profilePath: "/profile",
     agents: [agent],
   };
+
   return { options, parent };
 };
 
 describe("agent_run TUI tool", () => {
   test("passes strict input to a fake runner and returns exact metadata", async () => {
     const calls: Array<unknown> = [];
+
     const runner: SpecialistRunner = {
       run: (input) => {
         calls.push(input);
+
         return Effect.succeed(result);
       },
     };
+
     const tool = createAgentRunTool(runner);
 
     const response = await invoke(tool, {
@@ -192,14 +203,17 @@ describe("agent_run TUI tool", () => {
 
   test("rejects extra fields before invoking the runner", async () => {
     let calls = 0;
+
     const runner: SpecialistRunner = {
       run: () => {
         calls += 1;
+
         return Effect.succeed(result);
       },
     };
 
     const tool = createAgentRunTool(runner);
+
     const response = await tool.execute("call-1", {
       agent: "research-helper",
       prompt: "Find the answer",
@@ -239,6 +253,7 @@ describe("agent_run TUI tool", () => {
 
   test("emits one voice on success", async () => {
     const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+
     const runner: SpecialistRunner = {
       run: () => Effect.succeed(result),
     };
@@ -256,6 +271,7 @@ describe("agent_run TUI tool", () => {
 
   test("emits no voice on runner error", async () => {
     const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+
     const runner: SpecialistRunner = {
       run: () =>
         Effect.fail(
@@ -312,6 +328,7 @@ describe("agent_run TUI tool", () => {
 
   test("inherits omitted Profile policy and keeps omitted tools empty", async () => {
     const parentModel = makeModel("parent", "parent-model", false);
+
     const { options, parent } = makeSelectionHarness(
       {
         id: "research-helper",
@@ -326,6 +343,7 @@ describe("agent_run TUI tool", () => {
     const selected = await Effect.runPromise(
       selectSpecialist(options, { agent: "research-helper", prompt: "Find" }, parent),
     );
+
     expect(selected).toMatchObject({
       agent: { id: "research-helper" },
       model: { provider: "parent", id: "parent-model" },
@@ -337,6 +355,7 @@ describe("agent_run TUI tool", () => {
   test("uses authoritative provider, model, thinking, and tool policy from the Profile file", async () => {
     const parentModel = makeModel("parent", "parent-model", false);
     const specialistModel = makeModel("specialist", "specialist-model", true);
+
     const { options, parent } = makeSelectionHarness(
       {
         id: "research-helper",
@@ -355,6 +374,7 @@ describe("agent_run TUI tool", () => {
     const selected = await Effect.runPromise(
       selectSpecialist(options, { agent: "research-helper", prompt: "Find" }, parent),
     );
+
     expect(selected).toMatchObject({
       model: { provider: "specialist", id: "specialist-model" },
       thinking: "high",
@@ -364,6 +384,7 @@ describe("agent_run TUI tool", () => {
 
   test("lets internal callers disable all tools but never expand the Profile allowlist", async () => {
     const model = makeModel("parent", "parent-model", false);
+
     const { options, parent } = makeSelectionHarness(
       {
         id: "research-helper",
@@ -383,6 +404,7 @@ describe("agent_run TUI tool", () => {
         parent,
       ),
     );
+
     expect(narrowed.tools).toEqual([]);
 
     const expanded = await Effect.runPromiseExit(
@@ -392,6 +414,7 @@ describe("agent_run TUI tool", () => {
         parent,
       ),
     );
+
     expect(failureOf(expanded)).toMatchObject({
       _tag: "SpecialistToolUnsupported",
       toolName: "write",
@@ -400,6 +423,7 @@ describe("agent_run TUI tool", () => {
 
   test("fails every blocked or unavailable declared tool instead of dropping it", async () => {
     const model = makeModel("parent", "parent-model", false);
+
     for (const toolName of ["memory_write", "agent_run", "discussion_start", "missing"]) {
       const { options, parent } = makeSelectionHarness(
         {
@@ -412,15 +436,18 @@ describe("agent_run TUI tool", () => {
         model,
         model,
       );
+
       const selected = await Effect.runPromiseExit(
         selectSpecialist(options, { agent: "research-helper", prompt: "Find" }, parent),
       );
+
       expect(failureOf(selected)).toMatchObject({ _tag: "SpecialistToolUnsupported", toolName });
     }
   });
 
   test("validates thinking with Pi's supported-level API", async () => {
     const model = makeModel("parent", "parent-model", false);
+
     const { options, parent } = makeSelectionHarness(
       {
         id: "research-helper",
@@ -432,9 +459,11 @@ describe("agent_run TUI tool", () => {
       model,
       model,
     );
+
     const selected = await Effect.runPromiseExit(
       selectSpecialist(options, { agent: "research-helper", prompt: "Find" }, parent),
     );
+
     expect(failureOf(selected)).toMatchObject({
       _tag: "SpecialistThinkingUnsupported",
       thinking: "high",
@@ -444,6 +473,7 @@ describe("agent_run TUI tool", () => {
   test("interruption disposes the child runtime through the runner lifecycle", async () => {
     let disposals = 0;
     const model = makeModel("parent", "parent-model", false);
+
     const runtime: SpecialistChildRuntime = {
       reference: childSession,
       session: {
@@ -460,6 +490,7 @@ describe("agent_run TUI tool", () => {
         disposals += 1;
       },
     };
+
     const fiber = Effect.runFork(
       useSpecialistChild(
         "/profile",
@@ -476,6 +507,7 @@ describe("agent_run TUI tool", () => {
         () => Effect.never,
       ),
     );
+
     await Effect.runPromise(Effect.yieldNow);
     await Effect.runPromise(Fiber.interrupt(fiber));
     expect(disposals).toBe(1);
@@ -490,6 +522,7 @@ describe("agent_run TUI tool", () => {
       totalTokens: 14,
       cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
     };
+
     const toolUsage = {
       input: 6,
       output: 7,
@@ -500,6 +533,7 @@ describe("agent_run TUI tool", () => {
       totalTokens: 30,
       cost: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, total: 26 },
     };
+
     const assistantMessage: AssistantMessage = {
       role: "assistant",
       content: [],
@@ -510,6 +544,7 @@ describe("agent_run TUI tool", () => {
       stopReason: "stop",
       timestamp: 0,
     };
+
     const toolResultMessage: ToolResultMessage = {
       role: "toolResult",
       toolCallId: "call",
@@ -519,6 +554,7 @@ describe("agent_run TUI tool", () => {
       isError: false,
       timestamp: 0,
     };
+
     expect(usageFromMessages([assistantMessage, toolResultMessage])).toEqual({
       input: 8,
       output: 10,
@@ -542,12 +578,15 @@ test("specialists register only the read-only Ziggy reference extensions", () =>
 describe("agent_discuss TUI tool", () => {
   test("publishes a strict bounded schema and rejects duplicates", async () => {
     const calls: unknown[] = [];
+
     const runner: SpecialistRunner = {
       run: (request) => {
         calls.push(request);
+
         return Effect.succeed(discussionChildResult(request.agent, "answer", 1));
       },
     };
+
     expect(
       Value.Check(discussionParameters, {
         topic: "topic",
@@ -556,10 +595,12 @@ describe("agent_discuss TUI tool", () => {
         extra: true,
       }),
     ).toBe(false);
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: "topic",
       agents: ["one", "one"],
     });
+
     expect(calls).toHaveLength(0);
     expect(response).toEqual({
       content: [{ type: "text", text: "ERROR: agent_discuss requires unique Profile agent ids" }],
@@ -570,16 +611,20 @@ describe("agent_discuss TUI tool", () => {
   test("runs sorted participants in one round with no child tools", async () => {
     const calls: Array<{ agent: string; prompt: string; allowedTools?: ReadonlyArray<string> }> =
       [];
+
     const runner: SpecialistRunner = {
       run: (request) => {
         calls.push(request);
+
         return Effect.succeed(discussionChildResult(request.agent, `${request.agent} says yes`, 2));
       },
     };
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: "Should we choose tea?",
       agents: ["zeta", "alpha"],
     });
+
     expect(calls.map((call) => call.agent)).toEqual(["alpha", "zeta"]);
     expect(calls.every((call) => call.allowedTools?.length === 0)).toBe(true);
     expect(
@@ -601,6 +646,7 @@ describe("agent_discuss TUI tool", () => {
 
   test("emits a voice after each participant in sorted order", async () => {
     const voices: Array<{ readonly agentId: string; readonly text: string }> = [];
+
     const runner: SpecialistRunner = {
       run: (request) =>
         Effect.succeed(discussionChildResult(request.agent, `${request.agent} says yes`, 2)),
@@ -623,18 +669,23 @@ describe("agent_discuss TUI tool", () => {
   test("runs two bounded rounds and wires the same bounded prior transcript to every second turn", async () => {
     const calls: Array<{ agent: string; prompt: string; allowedTools?: ReadonlyArray<string> }> =
       [];
+
     const longAnswer = "🙂".repeat(DISCUSSION_ANSWER_MAX_CODE_POINTS + 100);
+
     const runner: SpecialistRunner = {
       run: (request) => {
         calls.push(request);
+
         return Effect.succeed(discussionChildResult(request.agent, longAnswer, 1));
       },
     };
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: "x".repeat(5_000),
       agents: ["beta", "alpha"],
       rounds: 2,
     });
+
     expect(calls.map((call) => call.agent)).toEqual(["alpha", "beta", "alpha", "beta"]);
     expect(
       calls.every((call) => Array.from(call.prompt).length <= DISCUSSION_PROMPT_MAX_CODE_POINTS),
@@ -645,9 +696,11 @@ describe("agent_discuss TUI tool", () => {
       calls[3]?.prompt.split("Bounded first-round answers from the group:\n")[1],
     );
     expect(Value.Check(discussionToolDetailsSchema, response.details)).toBe(true);
+
     if (!Value.Check(discussionToolDetailsSchema, response.details)) {
       throw new Error("expected discussion details");
     }
+
     expect(response.details.result?.rounds).toHaveLength(2);
     expect(
       response.details.result?.rounds
@@ -666,9 +719,11 @@ describe("agent_discuss TUI tool", () => {
 
   test("stops on the first typed runner failure", async () => {
     let calls = 0;
+
     const runner: SpecialistRunner = {
       run: (request) => {
         calls += 1;
+
         return request.agent === "alpha"
           ? Effect.fail(
               new SpecialistModelUnsupported({
@@ -681,11 +736,13 @@ describe("agent_discuss TUI tool", () => {
           : Effect.succeed(discussionChildResult(request.agent, "answer", 1));
       },
     };
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: "topic",
       agents: ["alpha", "beta"],
       rounds: 2,
     });
+
     expect(calls).toBe(1);
     expect(response).toEqual({
       content: [{ type: "text", text: "ERROR: model failed" }],
@@ -715,10 +772,12 @@ describe("agent_discuss TUI tool", () => {
             )
           : Effect.succeed(discussionChildResult(request.agent, "answer", 3)),
     };
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: "topic",
       agents: ["alpha", "beta"],
     });
+
     expect(response).toEqual({
       content: [{ type: "text", text: "ERROR: later model failed" }],
       details: { error: "later model failed" },
@@ -728,16 +787,20 @@ describe("agent_discuss TUI tool", () => {
 
   test("rejects a whitespace-only topic before invoking a child", async () => {
     let calls = 0;
+
     const runner: SpecialistRunner = {
       run: () => {
         calls += 1;
+
         return Effect.succeed(discussionChildResult("alpha", "answer", 1));
       },
     };
+
     const response = await createAgentDiscussTool(runner).execute("call", {
       topic: " \t\n ",
       agents: ["alpha", "beta"],
     });
+
     expect(calls).toBe(0);
     expect(response).toEqual({
       content: [
@@ -750,17 +813,21 @@ describe("agent_discuss TUI tool", () => {
   test("propagates cancellation to every child runner", async () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | undefined;
+
     const runner: SpecialistRunner = {
       run: (_request, signal) => {
         receivedSignal = signal;
+
         return Effect.never;
       },
     };
+
     const promise = createAgentDiscussTool(runner).execute(
       "call",
       { topic: "topic", agents: ["alpha", "beta"] },
       controller.signal,
     );
+
     controller.abort();
     await expect(promise).rejects.toBeDefined();
     expect(receivedSignal).toBe(controller.signal);
@@ -779,6 +846,7 @@ describe("agent_discuss TUI tool", () => {
         usage: discussionUsage(2),
       },
     };
+
     expect(renderAgentDiscussCall({ topic: "topic", agents: ["beta", "alpha"] })).toContain(
       "alpha, beta",
     );

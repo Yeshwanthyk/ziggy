@@ -21,6 +21,7 @@ afterEach(() => {
 const tempRoot = () => {
   const root = mkdtempSync(path.join(tmpdir(), "ziggy-standalone-helper-"));
   roots.push(root);
+
   return root;
 };
 
@@ -112,6 +113,7 @@ test("build report decode requires catalog and Pi docs fingerprints", () => {
     piVersion: "0.84.1",
     piDocsCount: 31,
   };
+
   expect(decodeStandaloneBuildReport(`${JSON.stringify(report)}\n`)).toEqual(report);
   const { piDocsFingerprint: _omitted, ...missingFingerprint } = report;
   expect(() => decodeStandaloneBuildReport(`${JSON.stringify(missingFingerprint)}\n`)).toThrow();

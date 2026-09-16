@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect";
 
 const ProcessSignalError = Schema.Struct({ code: Schema.String });
+
 const decodeProcessSignalError = Schema.decodeUnknownOption(ProcessSignalError);
 
 type SignalProcess = (pid: number, signal: 0) => boolean;
@@ -10,6 +11,7 @@ export const makeLocalProcessAlive =
   (pid) => {
     try {
       signal(pid, 0);
+
       return true;
     } catch (cause) {
       return Option.match(decodeProcessSignalError(cause), {

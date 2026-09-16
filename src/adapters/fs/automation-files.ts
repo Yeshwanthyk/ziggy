@@ -30,11 +30,14 @@ export interface AutomationSourceRuntime {
 }
 
 const missing = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "ENOENT";
+
 const exists = (cause: unknown): boolean => fileSystemCauseDetails(cause).code === "EEXIST";
+
 const liveAutomationSourceRuntime: AutomationSourceRuntime = { afterRead: () => Effect.void };
 
 const physicalDirectory = async (path: string): Promise<void> => {
   const status = await lstat(path);
+
   if (status.isSymbolicLink() || !status.isDirectory()) {
     throw new Error(`${path} must be a physical directory`);
   }
@@ -42,6 +45,7 @@ const physicalDirectory = async (path: string): Promise<void> => {
 
 const readPhysicalFileBytesPromise = async (path: string, signal?: AbortSignal) => {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+
   try {
     return await handle.readFile({ signal });
   } finally {
@@ -51,6 +55,7 @@ const readPhysicalFileBytesPromise = async (path: string, signal?: AbortSignal) 
 
 const readPhysicalFilePromise = async (path: string, signal?: AbortSignal): Promise<string> => {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+
   try {
     return await handle.readFile({ encoding: "utf8", signal });
   } finally {
@@ -62,10 +67,12 @@ interface PhysicalReadError {
   readonly _tag: "PhysicalReadError";
   readonly cause: unknown;
 }
+
 const physicalReadError = (cause: unknown): PhysicalReadError => ({
   _tag: "PhysicalReadError",
   cause,
 });
+
 const readPhysicalFile = (path: string) =>
   Effect.tryPromise({
     try: (signal) => readPhysicalFilePromise(path, signal),
@@ -78,6 +85,7 @@ const sourceName = (
   if (name.endsWith(".paused.md")) {
     return { idSource: name.slice(0, -10), lifecycle: "paused" };
   }
+
   return name.endsWith(".md") ? { idSource: name.slice(0, -3), lifecycle: "active" } : undefined;
 };
 
@@ -86,10 +94,12 @@ export const discoverAutomationSources = (
   runtime: AutomationSourceRuntime = liveAutomationSourceRuntime,
 ): Effect.Effect<ReadonlyArray<AutomationSourceObservation>, AutomationProjectionError> => {
   const directory = join(target.path, "automations");
+
   return Effect.tryPromise({
     try: async () => {
       await physicalDirectory(target.path);
       await physicalDirectory(directory);
+
       return readdir(directory, { withFileTypes: true });
     },
     catch: (cause) =>
@@ -105,22 +115,27 @@ export const discoverAutomationSources = (
       items
         .flatMap((entry) => {
           const parsed = sourceName(entry.name);
+
           return parsed === undefined ? [] : [{ entry, ...parsed }];
         })
         .sort((left, right) => left.entry.name.localeCompare(right.entry.name)),
     ),
     Effect.flatMap((items) => {
       const grouped = new Map<string, typeof items>();
+
       for (const item of items)
         grouped.set(item.idSource, [...(grouped.get(item.idSource) ?? []), item]);
+
       return Effect.forEach(
         [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)),
         ([idSource, forms]) => {
           const active = forms.find((form) => form.lifecycle === "active");
           const paused = forms.find((form) => form.lifecycle === "paused");
+
           if (active !== undefined && paused !== undefined) {
             const activePath = join(directory, active.entry.name);
             const pausedPath = join(directory, paused.entry.name);
+
             return Effect.succeed({
               idSource,
               lifecycle: "conflict" as const,
@@ -129,7 +144,9 @@ export const discoverAutomationSources = (
               error: `automation ${idSource} has conflicting active and paused definitions at ${activePath} and ${pausedPath}; remove exactly one form after verifying their bytes`,
             });
           }
+
           const form = forms[0];
+
           if (form === undefined) {
             return Effect.fail(
               new AutomationProjectionError({
@@ -140,7 +157,9 @@ export const discoverAutomationSources = (
               }),
             );
           }
+
           const path = join(directory, form.entry.name);
+
           if (form.entry.isSymbolicLink() || !form.entry.isFile()) {
             return Effect.succeed({
               idSource,
@@ -150,6 +169,7 @@ export const discoverAutomationSources = (
               error: `automation ${idSource} is not a physical file at ${path}`,
             });
           }
+
           return readPhysicalFile(path).pipe(
             Effect.match({
               onFailure: (): AutomationSourceObservation => ({
@@ -200,18 +220,22 @@ export const installAutomationDefinition = (
   const directory = join(target.path, "automations");
   const path = join(directory, `${id}.md`);
   const pausedPath = join(directory, `${id}.paused.md`);
+
   return Effect.tryPromise({
     try: async () => {
       await physicalDirectory(target.path);
       await mkdir(directory, { recursive: true });
       await physicalDirectory(directory);
+
       try {
         await lstat(pausedPath);
         throw new Error(`paused automation ${id} already exists at ${pausedPath}`);
       } catch (cause) {
         if (!missing(cause)) throw cause;
       }
+
       await writeFile(path, source, { encoding: "utf8", flag: "wx" });
+
       return { path, source, lifecycle: "active" as const };
     },
     catch: (cause) =>
@@ -231,11 +255,13 @@ export const removeAutomationDefinition = (
 ): Effect.Effect<void, AutomationEditConflict | AutomationFileSystemError | AutomationNotFound> => {
   const directory = join(target.path, "automations");
   const activePath = join(directory, `${id}.md`);
+
   return Effect.tryPromise({
     try: async () => {
       await physicalDirectory(target.path);
       await physicalDirectory(directory);
       let status;
+
       try {
         status = await lstat(activePath);
       } catch (cause) {
@@ -246,12 +272,16 @@ export const removeAutomationDefinition = (
             message: `no active automation ${id} at ${activePath}`,
           });
         }
+
         throw cause;
       }
+
       if (status.isSymbolicLink() || !status.isFile()) {
         throw new Error(`${activePath} must be a physical file`);
       }
+
       const actualSource = await readPhysicalFileBytesPromise(activePath);
+
       if (!actualSource.equals(Buffer.from(expectedSource, "utf8"))) {
         throw new AutomationEditConflict({
           id,
@@ -259,11 +289,13 @@ export const removeAutomationDefinition = (
           message: `automation ${id} changed after installation; refusing to remove it`,
         });
       }
+
       await unlink(activePath);
     },
     catch: (cause) => {
       if (cause instanceof AutomationEditConflict || cause instanceof AutomationNotFound)
         return cause;
+
       return new AutomationFileSystemError({
         path: activePath,
         message: `could not safely remove automation ${id} at ${activePath}; only the exact active definition may be removed`,
@@ -281,6 +313,7 @@ export interface AutomationDefinitionTransition {
 export interface AutomationTransitionRuntime {
   readonly removeSource: (path: string) => Effect.Effect<void, unknown>;
 }
+
 const liveAutomationTransitionRuntime: AutomationTransitionRuntime = {
   removeSource: (path) =>
     Effect.tryPromise({
@@ -304,6 +337,7 @@ const transition = (
   const sourcePath = from === "active" ? activePath : pausedPath;
   const destinationPath = from === "active" ? pausedPath : activePath;
   const destinationLifecycle = from === "active" ? "paused" : "active";
+
   const transitionFailure = (cause: unknown) => {
     if (missing(cause)) {
       return from === "active"
@@ -318,6 +352,7 @@ const transition = (
             message: `automation ${id} is not paused at ${sourcePath}`,
           });
     }
+
     return new AutomationFileSystemError({
       path: destinationPath,
       message: exists(cause)
@@ -326,20 +361,25 @@ const transition = (
       cause,
     });
   };
+
   return Effect.gen(function* () {
     yield* Effect.tryPromise({
       try: async () => {
         await physicalDirectory(target.path);
         await physicalDirectory(directory);
         const sourceStatus = await lstat(sourcePath);
+
         if (sourceStatus.isSymbolicLink() || !sourceStatus.isFile()) {
           throw new Error(`${sourcePath} must be a physical file`);
         }
+
         await link(sourcePath, destinationPath);
+
         const [stillSource, destination] = await Promise.all([
           lstat(sourcePath),
           lstat(destinationPath),
         ]);
+
         if (
           stillSource.isSymbolicLink() ||
           !stillSource.isFile() ||
@@ -365,6 +405,7 @@ const transition = (
           }),
       ),
     );
+
     return { path: destinationPath, lifecycle: destinationLifecycle };
   });
 };
@@ -374,6 +415,7 @@ export const pauseAutomationDefinition = (
   id: AutomationId,
   runtime: AutomationTransitionRuntime = liveAutomationTransitionRuntime,
 ) => transition(target, id, "active", runtime);
+
 export const resumeAutomationDefinition = (
   target: ProfileTarget,
   id: AutomationId,
@@ -398,10 +440,12 @@ export const automationFileStore: AutomationFileStore = {
   readDefinition: (target, id, allowPaused = false) => {
     const activePath = join(target.path, "automations", `${id}.md`);
     const pausedPath = join(target.path, "automations", `${id}.paused.md`);
+
     return Effect.tryPromise({
       try: async () => {
         await physicalDirectory(target.path);
         await physicalDirectory(join(target.path, "automations"));
+
         const inspectOptional = async (path: string) => {
           try {
             return await lstat(path);
@@ -410,10 +454,12 @@ export const automationFileStore: AutomationFileStore = {
             throw cause;
           }
         };
+
         const [active, paused] = await Promise.all([
           inspectOptional(activePath),
           inspectOptional(pausedPath),
         ]);
+
         if (active !== undefined && paused !== undefined) {
           throw new AutomationInvalid({
             path: activePath,
@@ -421,8 +467,10 @@ export const automationFileStore: AutomationFileStore = {
             cause: "active-paused-conflict",
           });
         }
+
         const selected = active ?? (allowPaused ? paused : undefined);
         const path = active !== undefined ? activePath : pausedPath;
+
         if (selected === undefined) {
           if (paused !== undefined) {
             throw new AutomationPaused({
@@ -431,15 +479,18 @@ export const automationFileStore: AutomationFileStore = {
               message: `automation ${id} is paused at ${pausedPath}`,
             });
           }
+
           throw new AutomationNotFound({
             id,
             path: activePath,
             message: `no automation ${id} at ${activePath}`,
           });
         }
+
         if (selected.isSymbolicLink() || !selected.isFile())
           throw new Error(`${path} must be a physical file`);
         const source = await readPhysicalFilePromise(path);
+
         return {
           path,
           source,
@@ -453,6 +504,7 @@ export const automationFileStore: AutomationFileStore = {
           cause instanceof AutomationNotFound
         )
           return cause;
+
         return new AutomationFileSystemError({
           path: activePath,
           message: `could not safely read automation ${id}`,
@@ -463,6 +515,7 @@ export const automationFileStore: AutomationFileStore = {
   },
   readBroadcasts: (target) => {
     const path = join(target.path, "broadcasts.json");
+
     return readPhysicalFile(path).pipe(
       Effect.catch((failure) =>
         missing(failure.cause)
@@ -494,6 +547,7 @@ export const replaceAutomationDefinition = (
 > =>
   Effect.gen(function* () {
     const current = yield* automationFileStore.readDefinition(target, id, true);
+
     if (current.source !== expectedSource) {
       return yield* new AutomationEditConflict({
         id,
@@ -501,17 +555,21 @@ export const replaceAutomationDefinition = (
         message: `automation ${id} changed after the editor opened; reopen it before saving`,
       });
     }
+
     if (source === current.source) return current;
 
     const temporaryPath = `${current.path}.ziggy-edit-${randomUUID()}.tmp`;
     yield* Effect.tryPromise({
       try: async () => {
         let replaced = false;
+
         try {
           const status = await lstat(current.path);
+
           if (status.isSymbolicLink() || !status.isFile()) {
             throw new Error(`${current.path} must remain a physical file`);
           }
+
           await writeFile(temporaryPath, source, {
             encoding: "utf8",
             flag: "wx",
@@ -530,5 +588,6 @@ export const replaceAutomationDefinition = (
           cause,
         }),
     });
+
     return { ...current, source };
   });

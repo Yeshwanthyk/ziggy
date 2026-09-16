@@ -151,6 +151,7 @@ describe("Slack gateway boundary", () => {
       "U123",
       "always",
     );
+
     const followUp = normalizeSlackMessage(
       message({ channelType: "channel", ts: "124.000", threadTs: "123.456" }),
       "UBOT",
@@ -199,6 +200,7 @@ describe("Slack gateway boundary", () => {
       channelType: "channel",
       threadTs: "123.456",
     });
+
     expect(
       normalizeSlackMessage(
         thread,
@@ -278,7 +280,9 @@ describe("Slack gateway boundary", () => {
       "UBOT",
       "U123",
     );
+
     expect(fileOnly).toBeDefined();
+
     const resolved =
       fileOnly === undefined
         ? { text: "", images: [] }
@@ -300,6 +304,7 @@ describe("Slack gateway boundary", () => {
   test("interrupts attachment resolution before Pi receives a cancelled turn", async () => {
     const started = await Effect.runPromise(Deferred.make<void>());
     let interrupted = 0;
+
     const item = normalizeSlackMessage(
       message({
         text: "inspect this",
@@ -316,7 +321,9 @@ describe("Slack gateway boundary", () => {
       "UBOT",
       "U123",
     );
+
     expect(item).toBeDefined();
+
     if (item === undefined) return;
 
     const fiber = Effect.runFork(
@@ -331,6 +338,7 @@ describe("Slack gateway boundary", () => {
         ),
       ),
     );
+
     await Effect.runPromise(Deferred.await(started));
 
     await Effect.runPromise(Fiber.interrupt(fiber));
@@ -345,7 +353,9 @@ describe("Slack gateway boundary", () => {
       "U123",
       "mention",
     );
+
     expect(item).toBeDefined();
+
     if (item === undefined) return;
 
     const prompt = await Effect.runPromise(prepareSlackAttachmentPrompt(item));
@@ -441,24 +451,30 @@ describe("Slack gateway boundary", () => {
         message: "test failure",
         cause: new Error("test failure"),
       });
+
     let updateAttempts = 0;
     const delays: Array<number> = [];
+
     const update = await Effect.runPromise(
       retrySlackDelivery(
         "update",
         () => {
           updateAttempts += 1;
+
           return Effect.fail(failure("updateMessage"));
         },
         (seconds) => Effect.sync(() => delays.push(seconds)),
       ).pipe(Effect.result),
     );
+
     let postAttempts = 0;
+
     const post = await Effect.runPromise(
       retrySlackDelivery(
         "post",
         () => {
           postAttempts += 1;
+
           return Effect.fail(failure("postMessage"));
         },
         () => Effect.void,
@@ -510,6 +526,7 @@ describe("Slack gateway boundary", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const emitted = yield* Deferred.make<void>();
+
         const heartbeat = slackHeartbeat(
           (status) =>
             Effect.gen(function* () {
@@ -518,9 +535,11 @@ describe("Slack gateway boundary", () => {
             }),
           () => {
             waits += 1;
+
             return waits === 1 ? Effect.void : Effect.never;
           },
         );
+
         yield* Effect.raceFirst(heartbeat, Deferred.await(emitted));
       }),
     );
@@ -540,6 +559,7 @@ describe("Slack gateway boundary", () => {
         const releaseFirst = yield* Deferred.make<void>();
         const bothFinished = yield* Deferred.make<void>();
         let clearedStatuses = 0;
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -548,8 +568,11 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 if (nextCall === 1) return Effect.succeed(message({ ts: "1.0" }));
+
                 if (nextCall === 2) return Effect.succeed(message({ ts: "2.0" }));
+
                 return Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -559,13 +582,16 @@ describe("Slack gateway boundary", () => {
             Effect.gen(function* () {
               if (status === "") {
                 clearedStatuses += 1;
+
                 if (clearedStatuses === 2) yield* Deferred.succeed(bothFinished, undefined);
               }
             }),
           postMessage: (_token, _channel, text) =>
             Effect.gen(function* () {
               posts.push(text);
+
               if (posts.length === 2) yield* Deferred.succeed(bothAdmitted, undefined);
+
               return { ts: `${posts.length}.1` };
             }),
           removeReaction: () => Effect.void,
@@ -574,6 +600,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -589,6 +616,7 @@ describe("Slack gateway boundary", () => {
               makeChatHandle({
                 prompt: () => {
                   promptCall += 1;
+
                   return promptCall === 1
                     ? Deferred.await(releaseFirst).pipe(Effect.as("first reply"))
                     : Effect.succeed("second reply");
@@ -626,12 +654,14 @@ describe("Slack gateway boundary", () => {
         const stopStarted = yield* Deferred.make<void>();
         const bothPlaceholders = yield* Deferred.make<void>();
         const allSettled = yield* Deferred.make<void>();
+
         const inbound = [
           message({ ts: "1.0", text: "first" }),
           message({ ts: "2.0", text: "second" }),
           message({ ts: "3.0", text: "stop" }),
           message({ ts: "4.0", text: "fresh" }),
         ];
+
         const prompts: Array<string> = [];
         const posts: Array<string> = [];
         const reactions: Array<string> = [];
@@ -651,15 +681,18 @@ describe("Slack gateway boundary", () => {
           admit: (_path, item) =>
             Effect.sync(() => {
               journal.set(item.payload.sourceTs, "received");
+
               return "accepted" as const;
             }),
           start: (_path, payload) =>
             Effect.gen(function* () {
               if (journal.get(payload.sourceTs) !== "received") return false;
               journal.set(payload.sourceTs, "running");
+
               if (payload.sourceTs === "3.0") {
                 yield* Deferred.succeed(stopStarted, undefined);
               }
+
               return true;
             }),
           finish: (_path, payload, _ownerId, state) =>
@@ -667,9 +700,11 @@ describe("Slack gateway boundary", () => {
               expect(journal.get(payload.sourceTs)).toBe("running");
               journal.set(payload.sourceTs, state);
               terminal.set(payload.sourceTs, state);
+
               if (terminal.size === 4) yield* Deferred.succeed(allSettled, undefined);
             }),
         };
+
         const feedbackFailure = new SlackApiError({
           operation: "postMessage",
           reason: "server",
@@ -677,10 +712,12 @@ describe("Slack gateway boundary", () => {
           message: "stop feedback failed",
           cause: "fixture",
         });
+
         const transport: SlackTransport = {
           addReaction: (_token, _channel, ts, name) =>
             Effect.gen(function* () {
               reactions.push(`add:${ts}:${name}`);
+
               if (ts === "3.0") return yield* feedbackFailure;
             }),
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -690,7 +727,9 @@ describe("Slack gateway boundary", () => {
               next: Effect.suspend(() => {
                 const item = inbound[nextCall];
                 nextCall += 1;
+
                 if (item === undefined || admitInbound === undefined) return Effect.never;
+
                 const wait =
                   item.ts === "3.0"
                     ? Effect.all(
@@ -703,6 +742,7 @@ describe("Slack gateway boundary", () => {
                         { discard: true },
                       )
                     : Effect.void;
+
                 return wait.pipe(
                   Effect.andThen(admitInbound(item, `event-${item.ts}`)),
                   Effect.flatMap((decision) =>
@@ -725,13 +765,16 @@ describe("Slack gateway boundary", () => {
           postMessage: (_token, _channel, text) =>
             Effect.gen(function* () {
               posts.push(text);
+
               if (text.startsWith("Stopped ")) return yield* feedbackFailure;
+
               if (
                 posts.includes("Working on that…") &&
                 posts.includes("Queued behind an earlier request…")
               ) {
                 yield* Deferred.succeed(bothPlaceholders, undefined);
               }
+
               return { ts: `placeholder-${posts.length}` };
             }),
           removeReaction: (_token, _channel, ts, name) =>
@@ -739,11 +782,13 @@ describe("Slack gateway boundary", () => {
           updateMessage: (_token, _channel, _ts, text) =>
             Effect.gen(function* () {
               updates.push(text);
+
               if (text.includes("first progress")) {
                 yield* Deferred.succeed(progressPublished, undefined);
               }
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -759,6 +804,7 @@ describe("Slack gateway boundary", () => {
               makeChatHandle({
                 prompt: (text, options) => {
                   prompts.push(text);
+
                   if (text === "first") {
                     now = 2_000;
                     options?.onProgress?.({
@@ -766,6 +812,7 @@ describe("Slack gateway boundary", () => {
                       delta: "first progress ",
                       snapshot: `first progress <!channel> ${"a".repeat(80)}`,
                     });
+
                     return Effect.yieldNow.pipe(
                       Effect.andThen(
                         Effect.sync(() =>
@@ -793,6 +840,7 @@ describe("Slack gateway boundary", () => {
                       ),
                     );
                   }
+
                   return Effect.succeed(`${text} reply`);
                 },
                 dispose: Effect.void,
@@ -848,9 +896,11 @@ describe("Slack gateway boundary", () => {
         const staleStatusIndex = statuses.findIndex(({ status }) => status === "Reading a file…");
         expect(staleStatusIndex).toBeGreaterThan(-1);
         expect(statuses[staleStatusIndex + 1]).toEqual({ status: "", threadTs: "1.0" });
+
         const freshThinkingIndex = statuses
           .map(({ status }) => status)
           .lastIndexOf("is thinking...");
+
         expect(freshThinkingIndex).toBeGreaterThan(-1);
         expect(statuses.slice(freshThinkingIndex)).toEqual([
           { status: "is thinking...", threadTs: "4.0" },
@@ -866,6 +916,7 @@ describe("Slack gateway boundary", () => {
         const stopSettled = yield* Deferred.make<void>();
         const releaseOther = yield* Deferred.make<void>();
         const allSettled = yield* Deferred.make<void>();
+
         const inbound = [
           message({
             channelType: "channel",
@@ -886,17 +937,21 @@ describe("Slack gateway boundary", () => {
             text: "<@UBOT> /stop",
           }),
         ];
+
         const started = new Set<string>();
+
         const prompted: Array<{
           readonly context: string | undefined;
           readonly images: unknown;
           readonly text: string;
         }> = [];
+
         const historyRequests: Array<{
           readonly channel: string;
           readonly latestTs: string;
           readonly threadTs: string;
         }> = [];
+
         const terminal = new Map<string, string>();
         const journal = new Map<string, "received" | "running" | string>();
         let nextCall = 0;
@@ -911,30 +966,36 @@ describe("Slack gateway boundary", () => {
           admit: (_path, item) =>
             Effect.sync(() => {
               journal.set(item.payload.sourceTs, "received");
+
               return "accepted" as const;
             }),
           start: (_path, payload) =>
             Effect.sync(() => {
               if (journal.get(payload.sourceTs) !== "received") return false;
               journal.set(payload.sourceTs, "running");
+
               return true;
             }),
           finish: (_path, payload, _ownerId, state) =>
             Effect.gen(function* () {
               journal.set(payload.sourceTs, state);
               terminal.set(payload.sourceTs, state);
+
               if (payload.sourceTs === "102.000001") {
                 yield* Deferred.succeed(stopSettled, undefined);
               }
+
               if (terminal.size === 3) yield* Deferred.succeed(allSettled, undefined);
             }),
         };
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
           getThreadReplies: (_token, channel, threadTs, latestTs) =>
             Effect.sync(() => {
               historyRequests.push({ channel, threadTs, latestTs });
+
               return {
                 messages: [
                   { ts: threadTs, userId: "U123", text: `parent ${threadTs}` },
@@ -944,6 +1005,7 @@ describe("Slack gateway boundary", () => {
                       userId: "U999",
                       text: "prior reply",
                     };
+
                     if (threadTs === "100.000001") {
                       return {
                         ...reply,
@@ -956,6 +1018,7 @@ describe("Slack gateway boundary", () => {
                         })),
                       };
                     }
+
                     return reply;
                   })(),
                 ],
@@ -967,10 +1030,13 @@ describe("Slack gateway boundary", () => {
               next: Effect.suspend(() => {
                 const item = inbound[nextCall];
                 nextCall += 1;
+
                 if (item === undefined || admitInbound === undefined) return Effect.never;
+
                 const wait = item.text.includes("/stop")
                   ? Deferred.await(bothStarted)
                   : Effect.void;
+
                 return wait.pipe(
                   Effect.andThen(admitInbound(item, `event-${item.ts}`)),
                   Effect.flatMap((decision) =>
@@ -988,6 +1054,7 @@ describe("Slack gateway boundary", () => {
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1008,8 +1075,10 @@ describe("Slack gateway boundary", () => {
                     images: options?.images,
                   });
                   started.add(text);
+
                   const signal =
                     started.size === 2 ? Deferred.succeed(bothStarted, undefined) : Effect.void;
+
                   return signal.pipe(
                     Effect.andThen(
                       text === "other thread"
@@ -1034,6 +1103,7 @@ describe("Slack gateway boundary", () => {
               }),
             ),
         };
+
         const gateway = makeSlackGateway(agent, transport, undefined, ingressRuntime).runLoop(
           { path: "/tmp/ziggy-slack-stop-isolation-test", name: "Test" },
           {
@@ -1084,6 +1154,7 @@ describe("Slack gateway boundary", () => {
         const fourStarted = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const allSettled = yield* Deferred.make<void>();
+
         const workRecords: ReadonlyArray<SlackIngressRecord> = Array.from(
           { length: 5 },
           (_, index) => ({
@@ -1098,6 +1169,7 @@ describe("Slack gateway boundary", () => {
             },
           }),
         );
+
         const records: ReadonlyArray<SlackIngressRecord> = [
           ...workRecords,
           {
@@ -1112,6 +1184,7 @@ describe("Slack gateway boundary", () => {
             },
           },
         ];
+
         const registered: Array<string> = [];
         const prompted: Array<string> = [];
         const posts: Array<{ readonly channel: string; readonly text: string }> = [];
@@ -1128,15 +1201,18 @@ describe("Slack gateway boundary", () => {
           start: (_path, payload) =>
             Effect.sync(() => {
               registered.push(payload.text);
+
               return true;
             }),
           finish: (_path, payload, _ownerId, state) =>
             Effect.gen(function* () {
               expect(state).toBe(payload.text === "replay 0" ? "cancelled" : "completed");
               settled += 1;
+
               if (settled === records.length) yield* Deferred.succeed(allSettled, undefined);
             }),
         };
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -1152,11 +1228,13 @@ describe("Slack gateway boundary", () => {
           postMessage: (_token, channel, text, threadTs) =>
             Effect.sync(() => {
               posts.push({ channel, text });
+
               return { ts: threadTs ?? "placeholder" };
             }),
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1175,7 +1253,9 @@ describe("Slack gateway boundary", () => {
                     prompted.push(text);
                     active += 1;
                     maxActive = Math.max(maxActive, active);
+
                     if (active === 4) yield* Deferred.succeed(fourStarted, undefined);
+
                     return yield* Deferred.await(release).pipe(Effect.as(`${text} reply`));
                   }).pipe(
                     Effect.ensuring(
@@ -1218,24 +1298,29 @@ describe("Slack gateway boundary", () => {
       readonly context: unknown;
       readonly sessionDirectory: string;
     }> = [];
+
     const prompts: Array<string> = [];
     let promptImages: unknown;
+
     const posts: Array<{
       readonly token: string;
       readonly channel: string;
       readonly text: string;
       readonly threadTs: string | undefined;
     }> = [];
+
     const updates: Array<{
       readonly channel: string;
       readonly text: string;
       readonly ts: string;
     }> = [];
+
     const statuses: Array<{
       readonly channel: string;
       readonly status: string;
       readonly threadTs: string;
     }> = [];
+
     const reactions: Array<string> = [];
     let nextCall = 0;
     let socketClosed = false;
@@ -1254,6 +1339,7 @@ describe("Slack gateway boundary", () => {
         const progressApplied = yield* Deferred.make<void>();
         const toolSettled = yield* Deferred.make<void>();
         const blockedProgressStarted = yield* Deferred.make<void>();
+
         const inbound = Effect.succeed(
           message({
             threadTs: "0.9",
@@ -1268,12 +1354,15 @@ describe("Slack gateway boundary", () => {
             ],
           }),
         );
+
         const pending: Effect.Effect<SlackInboundMessage> = Effect.never;
+
         const transport: SlackTransport = {
           addReaction: (_token, channel, ts, name) =>
             Effect.sync(() => reactions.push(`add:${channel}:${ts}:${name}`)),
           authTest: (token) => {
             expect(token).toBe("bot-token");
+
             return Effect.succeed({ userId: "UBOT" });
           },
           getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
@@ -1282,10 +1371,13 @@ describe("Slack gateway boundary", () => {
           openSocket: (appToken, admitInbound) =>
             Effect.sync(() => {
               expect(appToken).toBe("app-token");
+
               return {
                 next: Effect.suspend(() => {
                   nextCall += 1;
+
                   if (nextCall !== 1 || admitInbound === undefined) return pending;
+
                   return inbound.pipe(
                     Effect.flatMap((item) =>
                       admitInbound(item, "event-1").pipe(
@@ -1305,7 +1397,9 @@ describe("Slack gateway boundary", () => {
           setStatus: (_token, channel, threadTs, status) =>
             Effect.gen(function* () {
               statuses.push({ channel, threadTs, status });
+
               if (status === "Reading a file…") sawToolStatus = true;
+
               if (sawToolStatus && status === "is thinking...") {
                 yield* Deferred.succeed(toolSettled, undefined);
               }
@@ -1313,6 +1407,7 @@ describe("Slack gateway boundary", () => {
           postMessage: (token, channel, text, threadTs) =>
             Effect.sync(() => {
               posts.push({ token, channel, text, threadTs });
+
               return { ts: "2.0" };
             }),
           removeReaction: (_token, channel, ts, name) =>
@@ -1328,17 +1423,21 @@ describe("Slack gateway boundary", () => {
                 ),
               );
             }
+
             return Effect.gen(function* () {
               if (text === "hello back") {
                 finalObservedAfterProgressInterrupt = blockedProgressInterrupted;
               }
+
               updates.push({ channel, ts, text });
+
               if (updates.filter((update) => update.text.startsWith("progress ")).length === 2) {
                 yield* Deferred.succeed(progressApplied, undefined);
               }
             });
           },
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1352,6 +1451,7 @@ describe("Slack gateway boundary", () => {
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
+
               return makeChatHandle({
                 prompt: (text: string, options) =>
                   Effect.gen(function* () {
@@ -1407,6 +1507,7 @@ describe("Slack gateway boundary", () => {
                       toolName: "bash",
                       failed: false,
                     });
+
                     for (let index = 0; index < 100; index += 1) {
                       options?.onProgress?.({
                         kind: "assistant-text",
@@ -1414,6 +1515,7 @@ describe("Slack gateway boundary", () => {
                         snapshot: `progress flood ${index} ${"d".repeat(240)}`,
                       });
                     }
+
                     yield* Effect.yieldNow;
                     options?.onProgress?.({
                       kind: "tool",
@@ -1430,6 +1532,7 @@ describe("Slack gateway boundary", () => {
                       snapshot: `blocked progress ${"e".repeat(240)}`,
                     });
                     yield* Deferred.await(blockedProgressStarted);
+
                     return "hello back";
                   }),
                 dispose: Effect.sync(() => {
@@ -1438,6 +1541,7 @@ describe("Slack gateway boundary", () => {
               });
             }),
         };
+
         const ingressRuntime: SlackIngressRuntime = {
           initialize: () => Effect.sync(() => ingressOperations.push("initialize")),
           recover: (_path, ownerId) =>
@@ -1448,18 +1552,21 @@ describe("Slack gateway boundary", () => {
           replayable: () =>
             Effect.sync(() => {
               ingressOperations.push("replayable");
+
               return [];
             }),
           admit: (_path, item) =>
             Effect.sync(() => {
               expect(item.eventId).toBe("event-1");
               ingressOperations.push("admit");
+
               return "accepted" as const;
             }),
           start: (_path, _payload, ownerId) =>
             Effect.sync(() => {
               expect(ownerId).toBe(ingressOwnerId);
               ingressOperations.push("start");
+
               return true;
             }),
           finish: (_path, _payload, ownerId, state) =>
@@ -1469,6 +1576,7 @@ describe("Slack gateway boundary", () => {
               yield* Deferred.succeed(settled, undefined);
             }),
         };
+
         const gateway = makeSlackGateway(
           agent,
           transport,
@@ -1560,6 +1668,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -1568,6 +1677,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1 ? Effect.succeed(message({ threadTs: "0.9" })) : Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -1576,6 +1686,7 @@ describe("Slack gateway boundary", () => {
           setStatus: (_token, _channel, _threadTs, status) =>
             Effect.gen(function* () {
               statuses.push(status);
+
               if (status === "") yield* Deferred.succeed(settled, undefined);
             }),
           startStream: (_token, channel, threadTs, options) =>
@@ -1584,6 +1695,7 @@ describe("Slack gateway boundary", () => {
                 method: "startStream",
                 body: { channel, threadTs, options },
               });
+
               return { ts: "stream-1" };
             }),
           appendStream: (_token, channel, ts, chunks) =>
@@ -1601,6 +1713,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1634,6 +1747,7 @@ describe("Slack gateway boundary", () => {
                       detail: "bun test",
                     });
                     yield* Effect.yieldNow;
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -1710,6 +1824,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -1718,6 +1833,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1 ? Effect.succeed(message({ threadTs: "0.9" })) : Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -1733,6 +1849,7 @@ describe("Slack gateway boundary", () => {
                 method: "startStream",
                 body: { channel, threadTs, options },
               });
+
               return { ts: "stream-1" };
             }),
           appendStream: (_token, channel, ts, chunks) =>
@@ -1747,6 +1864,7 @@ describe("Slack gateway boundary", () => {
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1780,6 +1898,7 @@ describe("Slack gateway boundary", () => {
                       detail: "SOUL.md",
                     });
                     yield* Effect.yieldNow;
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -1849,6 +1968,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -1857,6 +1977,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1 ? Effect.succeed(message({ threadTs: "0.9" })) : Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -1868,6 +1989,7 @@ describe("Slack gateway boundary", () => {
             }),
           startStream: () => {
             streams.push("startStream");
+
             return Effect.fail(
               new SlackApiError({
                 operation: "startStream",
@@ -1893,6 +2015,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -1922,6 +2045,7 @@ describe("Slack gateway boundary", () => {
                       toolName: "bash",
                       failed: false,
                     });
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -1952,6 +2076,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -1960,6 +2085,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1
                   ? Effect.succeed(
                       message({
@@ -1983,6 +2109,7 @@ describe("Slack gateway boundary", () => {
                 method: "startStream",
                 body: { channel, threadTs, options },
               });
+
               return { ts: "stream-1" };
             }),
           appendStream: (_token, channel, ts, chunks) =>
@@ -2000,6 +2127,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2031,6 +2159,7 @@ describe("Slack gateway boundary", () => {
                       failed: false,
                     });
                     yield* Effect.yieldNow;
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -2101,6 +2230,7 @@ describe("Slack gateway boundary", () => {
       Effect.gen(function* () {
         const streamStarted = yield* Deferred.make<void>();
         const streamStopped = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -2109,6 +2239,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 if (nextCall === 1) {
                   return Effect.succeed(
                     message({
@@ -2119,6 +2250,7 @@ describe("Slack gateway boundary", () => {
                     }),
                   );
                 }
+
                 if (nextCall === 2) {
                   return Deferred.await(streamStarted).pipe(
                     Effect.as(
@@ -2132,6 +2264,7 @@ describe("Slack gateway boundary", () => {
                     ),
                   );
                 }
+
                 return Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -2142,6 +2275,7 @@ describe("Slack gateway boundary", () => {
             Effect.gen(function* () {
               streams.push("startStream");
               yield* Deferred.succeed(streamStarted, undefined);
+
               return { ts: "stream-1" };
             }),
           appendStream: () =>
@@ -2157,6 +2291,7 @@ describe("Slack gateway boundary", () => {
           removeReaction: () => Effect.void,
           updateMessage: () => Effect.void,
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2180,6 +2315,7 @@ describe("Slack gateway boundary", () => {
                       failed: false,
                     });
                     yield* Effect.yieldNow;
+
                     return yield* Effect.never;
                   }),
                 dispose: Effect.void,
@@ -2209,6 +2345,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -2217,6 +2354,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1
                   ? Effect.succeed(
                       message({
@@ -2236,6 +2374,7 @@ describe("Slack gateway boundary", () => {
           startStream: () =>
             Effect.sync(() => {
               streams.push("startStream");
+
               return { ts: "stream-1" };
             }),
           appendStream: () =>
@@ -2253,6 +2392,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2282,6 +2422,7 @@ describe("Slack gateway boundary", () => {
                       toolName: "bash",
                       failed: false,
                     });
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -2312,6 +2453,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -2320,6 +2462,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1
                   ? Effect.succeed(
                       message({
@@ -2339,6 +2482,7 @@ describe("Slack gateway boundary", () => {
             }),
           startStream: () => {
             streams.push("startStream");
+
             return Effect.fail(
               new SlackApiError({
                 operation: "startStream",
@@ -2364,6 +2508,7 @@ describe("Slack gateway boundary", () => {
               updates.push(text);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2395,6 +2540,7 @@ describe("Slack gateway boundary", () => {
                       failed: false,
                     });
                     yield* Effect.yieldNow;
+
                     return "hello back";
                   }),
                 dispose: Effect.void,
@@ -2425,6 +2571,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const cleared = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: (_token, _channel, _ts, name) =>
             Effect.sync(() => reactions.push(`add:${name}`)),
@@ -2434,6 +2581,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -2442,6 +2590,7 @@ describe("Slack gateway boundary", () => {
           setStatus: (_token, _channel, _threadTs, status) =>
             Effect.gen(function* () {
               statuses.push(status);
+
               if (status === "") {
                 yield* Deferred.succeed(cleared, undefined);
               }
@@ -2454,6 +2603,7 @@ describe("Slack gateway boundary", () => {
               expect(text).toBe("I couldn't complete that request.");
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2503,6 +2653,7 @@ describe("Slack gateway boundary", () => {
     return Effect.runPromise(
       Effect.gen(function* () {
         const finished = yield* Deferred.make<void>();
+
         const transport: SlackTransport = {
           addReaction: () => Effect.void,
           authTest: () => Effect.succeed({ userId: "UBOT" }),
@@ -2511,6 +2662,7 @@ describe("Slack gateway boundary", () => {
             Effect.succeed({
               next: Effect.suspend(() => {
                 nextCall += 1;
+
                 return nextCall === 1 ? Effect.succeed(message()) : Effect.never;
               }),
               nextConnectionState: Effect.never,
@@ -2520,15 +2672,18 @@ describe("Slack gateway boundary", () => {
           postMessage: (_token, _channel, text) =>
             Effect.sync(() => {
               posts.push(text);
+
               return { ts: `${posts.length}.1` };
             }),
           removeReaction: () => Effect.void,
           updateMessage: (_token, _channel, _ts, text) =>
             Effect.gen(function* () {
               updates.push(text);
+
               if (text === "parent wrap") yield* Deferred.succeed(finished, undefined);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -2553,6 +2708,7 @@ describe("Slack gateway boundary", () => {
                     agentId: "beta",
                     text: "second look",
                   });
+
                   return Effect.succeed("parent wrap");
                 },
                 dispose: Effect.void,

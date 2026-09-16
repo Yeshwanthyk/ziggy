@@ -43,6 +43,7 @@ const writeTranscript = async (profilePath: string, records: ReadonlyArray<Schem
   await mkdir(sessionsPath, { recursive: true });
   const file = join(sessionsPath, "root.jsonl");
   await writeFile(file, records.map((record) => JSON.stringify(record)).join("\n") + "\n", "utf8");
+
   return file;
 };
 
@@ -50,6 +51,7 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
   const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-"));
   const profilePath = join(root, "profile");
   await mkdir(profilePath, { recursive: true });
+
   try {
     const records: Array<Schema.Json> = [
       {
@@ -83,6 +85,7 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
       },
       message("assistant-1", "2026-01-01T01:00:02.000Z", "assistant", "answer"),
     ];
+
     const file = await writeTranscript(profilePath, records);
 
     const page = await Effect.runPromise(readSessionHistory(profilePath, "root.jsonl"));
@@ -112,6 +115,7 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
     const older = await Effect.runPromise(
       readSessionHistory(profilePath, "root.jsonl", page.nextCursor),
     );
+
     expect(older.entries).toHaveLength(8);
     expect(older.entries[0]).toEqual({
       kind: "user",
@@ -127,9 +131,11 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
       `${source}${JSON.stringify(message("new", "2026-01-02T00:00:00.000Z", "user", "new"))}\n`,
       "utf8",
     );
+
     const stale = await Effect.runPromise(
       readSessionHistory(profilePath, "root.jsonl", page.nextCursor).pipe(Effect.result),
     );
+
     expect(
       Result.match(stale, {
         onFailure: (error) => Predicate.isTagged(error, "SessionHistoryCursorInvalid"),
@@ -145,6 +151,7 @@ test("history rejects malformed cursors with a typed failure", async () => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-cursor-"));
   const profilePath = join(root, "profile");
   await mkdir(profilePath, { recursive: true });
+
   try {
     await writeTranscript(profilePath, [
       {
@@ -155,9 +162,11 @@ test("history rejects malformed cursors with a typed failure", async () => {
       },
       message("assistant-1", "2026-01-01T00:00:01.000Z", "assistant", "answer"),
     ]);
+
     const result = await Effect.runPromise(
       readSessionHistory(profilePath, "root.jsonl", "not-a-cursor").pipe(Effect.result),
     );
+
     expect(
       Result.match(result, {
         onFailure: (error) => Predicate.isTagged(error, "SessionHistoryCursorInvalid"),

@@ -9,6 +9,7 @@ export const SlackHealthState = Schema.Literals([
   "failed",
   "stopped",
 ]);
+
 export type SlackHealthState = typeof SlackHealthState.Type;
 
 export const SlackHealthFailure = Schema.Literals([
@@ -18,6 +19,7 @@ export const SlackHealthFailure = Schema.Literals([
   "socket",
   "turn",
 ]);
+
 export type SlackHealthFailure = typeof SlackHealthFailure.Type;
 
 export const SlackHealthSnapshot = Schema.Struct({
@@ -36,6 +38,7 @@ export const SlackHealthSnapshot = Schema.Struct({
   failedTurnCount: NonNegativeInteger,
   lastFailure: Schema.NullOr(SlackHealthFailure),
 });
+
 export type SlackHealthSnapshot = typeof SlackHealthSnapshot.Type;
 
 export type SlackHealthProjection =
@@ -85,6 +88,7 @@ export const evolveSlackHealth = (
   event: SlackHealthEvent,
 ): SlackHealthSnapshot => {
   const base = { ...current, updatedAtMs: event.atMs };
+
   switch (event._tag) {
     case "heartbeat":
       return base;

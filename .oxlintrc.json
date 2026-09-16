@@ -46,6 +46,7 @@
     "ziggy/no-unsafe-dictionary-type": "error",
     "ziggy/no-unsafe-typescript-syntax": "error",
     "ziggy/no-widen-then-assert": "error",
+    "ziggy/require-readable-spacing": "error",
     "ziggy/require-safety-comment-for-type-assertion": "error"
   }
 }

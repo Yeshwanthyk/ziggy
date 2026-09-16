@@ -12,14 +12,18 @@ const resultText = async (params: { readonly topic?: (typeof ziggyHelpTopics)[nu
     undefined,
     Object.create(null),
   );
+
   const block = result.content[0];
+
   if (block?.type !== "text") throw new Error("expected text help result");
+
   return block.text;
 };
 
 describe("ziggy_help", () => {
   test("returns the same general and topic help as the CLI authority", async () => {
     expect(await resultText({})).toBe(renderHelp());
+
     for (const topic of ziggyHelpTopics) {
       expect(await resultText({ topic })).toBe(renderHelp(topic));
     }

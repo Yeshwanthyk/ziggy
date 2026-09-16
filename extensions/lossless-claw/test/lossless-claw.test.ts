@@ -14,6 +14,7 @@ const temporaryProfiles: string[] = [];
 const createProfile = (): string => {
   const profile = mkdtempSync(join(tmpdir(), "lossless-claw-test-"));
   temporaryProfiles.push(profile);
+
   return profile;
 };
 
@@ -25,6 +26,7 @@ const writeSession = (
   const path = join(profile, "sessions", relativePath);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+
   return path;
 };
 
@@ -57,6 +59,7 @@ afterEach(() => {
 describe("Lossless Claw session projection", () => {
   test("discovers recursively, uses header identity, retains summaries, and marks the final branch", () => {
     const profile = createProfile();
+
     const sessionPath = writeSession(profile, "archive/deep/not-the-session-id.jsonl", [
       header("header-session-id"),
       userMessage("root", null, "2026-07-01T00:01:00.000Z", "shared root evidence"),
@@ -124,6 +127,7 @@ describe("Lossless Claw session projection", () => {
       query: "retained compact",
       session: "header-session-id",
     });
+
     expect(compaction).toHaveLength(2);
     expect(compaction[0]).toMatchObject({
       entryId: "compact",
@@ -137,6 +141,7 @@ describe("Lossless Claw session projection", () => {
       query: "abandoned",
       activeOnly: true,
     });
+
     expect(abandoned).toEqual([]);
   });
 
@@ -156,6 +161,7 @@ describe("Lossless Claw session projection", () => {
 
   test("transactionally replaces changed files and removes deleted projections", () => {
     const profile = createProfile();
+
     const sessionPath = writeSession(profile, "current.jsonl", [
       header("refresh-session"),
       userMessage("old", null, "2026-07-02T00:01:00.000Z", "obsolete orchid"),
@@ -236,6 +242,7 @@ describe("Lossless Claw session projection", () => {
       query: "release_build moon",
       session: "tool-session",
     });
+
     expect(toolCallMatches[0]).toMatchObject({
       entryId: "tool-call",
       role: "assistant",
@@ -248,6 +255,7 @@ describe("Lossless Claw session projection", () => {
       limit: 1,
       context: 1,
     });
+
     expect(expanded).toHaveLength(1);
     expect(expanded[0]?.match).toMatchObject({
       entryId: "tool-result",

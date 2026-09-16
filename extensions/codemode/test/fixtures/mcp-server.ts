@@ -2,7 +2,9 @@
 export {};
 
 const decoder = new TextDecoder();
+
 const marker = process.env.MCP_MARKER;
+
 const mode = process.env.MCP_MODE;
 
 const mark = async (event: string) => {
@@ -37,6 +39,7 @@ if (mode === "ignore-term" || mode === "descendant-ignore-term") {
 }
 
 const send = (message: unknown) => Bun.write(Bun.stdout, `${JSON.stringify(message)}\n`);
+
 const tools = [
   {
     name: "echo",
@@ -53,20 +56,26 @@ const tools = [
 ];
 
 let buffered = "";
+
 for await (const chunk of Bun.stdin.stream()) {
   buffered += decoder.decode(chunk, { stream: true });
+
   while (true) {
     const newline = buffered.indexOf("\n");
+
     if (newline < 0) break;
     const line = buffered.slice(0, newline).trim();
     buffered = buffered.slice(newline + 1);
+
     if (line.length === 0) continue;
     const message = JSON.parse(line);
+
     if (message.method === "initialize") {
       if (process.env.MCP_MODE === "malformed") {
         await Bun.write(Bun.stdout, "not-json\n");
         continue;
       }
+
       await send({
         jsonrpc: "2.0",
         id: message.id,
@@ -78,6 +87,7 @@ for await (const chunk of Bun.stdin.stream()) {
       });
       continue;
     }
+
     if (message.method === "tools/list") {
       if (process.env.MCP_MODE === "repeat-cursor") {
         await send({ jsonrpc: "2.0", id: message.id, result: { tools: [], nextCursor: "same" } });
@@ -86,10 +96,13 @@ for await (const chunk of Bun.stdin.stream()) {
       } else {
         await send({ jsonrpc: "2.0", id: message.id, result: { tools } });
       }
+
       continue;
     }
+
     if (message.method === "tools/call") {
       const name = message.params?.name;
+
       if (name === "slow") {
         setTimeout(() => {
           void send({ jsonrpc: "2.0", id: message.id, result: { content: [] } });
@@ -116,8 +129,10 @@ for await (const chunk of Bun.stdin.stream()) {
           result: { content: [], structuredContent: message.params?.arguments ?? null },
         });
       }
+
       continue;
     }
+
     if (message.method === "notifications/cancelled") await mark("cancelled");
   }
 }

@@ -64,6 +64,7 @@ export const SessionHistoryTerminalState = Schema.Literals([
   "failed",
   "incomplete",
 ]);
+
 export type SessionHistoryTerminalState = typeof SessionHistoryTerminalState.Type;
 
 export type SessionHistoryEntry =

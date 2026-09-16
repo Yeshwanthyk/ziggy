@@ -7,6 +7,7 @@ export const ProfileId = Schema.String.check(
     expected: "an opaque Profile id",
   }),
 );
+
 export type ProfileId = typeof ProfileId.Type;
 
 export interface ProfileDirectoryRow {

@@ -2,6 +2,7 @@ import { isAdapterFile } from "../utils.mjs";
 
 const tryCatchMessage =
   "Do not use try/catch blocks in Effect domain code. Model failures with Effect instead; at true adapter boundaries use a narrow suppression with a boundary reason. Skill: effect-typed-errors.";
+
 const throwMessage =
   "Do not throw errors in Effect domain code. Model failures with Effect.fail or typed error values instead; at true adapter boundaries use a narrow suppression with a boundary reason. Skill: effect-typed-errors.";
 

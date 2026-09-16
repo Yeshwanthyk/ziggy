@@ -49,7 +49,9 @@ import {
   dispatchSettings,
 } from "./ui-gateway/management";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types";
+
 export type { UiGatewayDependencies } from "./ui-gateway/types";
+
 import {
   badParams,
   boundedText,
@@ -60,56 +62,78 @@ import {
 } from "./ui-gateway/errors";
 
 const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty: "error" });
+
 const decodeScoped = Schema.decodeUnknownEffect(UiProfileScopedParams, {
   onExcessProperty: "error",
 });
+
 const decodeOpen = Schema.decodeUnknownEffect(UiSessionOpenParams, { onExcessProperty: "error" });
+
 const decodeRef = Schema.decodeUnknownEffect(UiSessionRefParams, { onExcessProperty: "error" });
+
 const decodeText = Schema.decodeUnknownEffect(UiSessionTextParams, { onExcessProperty: "error" });
+
 const decodeHistory = Schema.decodeUnknownEffect(UiSessionHistoryParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentList = Schema.decodeUnknownEffect(UiAgentListParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentShow = Schema.decodeUnknownEffect(UiAgentShowParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentDocument = Schema.decodeUnknownEffect(UiAgentDocumentParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentSave = Schema.decodeUnknownEffect(UiAgentSaveParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentValidate = Schema.decodeUnknownEffect(UiAgentValidateParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentCreate = Schema.decodeUnknownEffect(UiAgentCreateParams, {
   onExcessProperty: "error",
 });
+
 const decodeAgentRun = Schema.decodeUnknownEffect(UiAgentRunParams, { onExcessProperty: "error" });
+
 const UiCommandProbe = Schema.Struct({
   profileId: Schema.optionalKey(ProfileIdSchema),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 const decodeCommandProbe = Schema.decodeUnknownOption(UiCommandProbe, {
   onExcessProperty: "ignore",
 });
+
 const isKnownMethod = Schema.is(Schema.Literals(UI_METHODS));
+
 const decodeSessionKey = Schema.decodeUnknownEffect(UiSessionKey);
+
 const decodeEventFrame = Schema.decodeUnknownSync(UiEventFrame);
+
 const CrossProfileGroupMember = Schema.Union([
   Schema.String.check(Schema.isPattern(/^prf_[a-f0-9]{24}(?::|\/)/u)),
   Schema.Struct({ profileId: ProfileIdSchema, agentId: Schema.String }),
 ]);
+
 const CrossProfileGroupProbe = Schema.Struct({
   context: Schema.Struct({
     kind: Schema.Literal("group"),
     memberAgentIds: Schema.Array(CrossProfileGroupMember).check(Schema.isMinLength(1)),
   }),
 });
+
 const decodeCrossProfileGroupProbe = Schema.decodeUnknownOption(CrossProfileGroupProbe);
+
 const encodeResponse = Schema.encodeSync(Schema.fromJsonString(UiResponseFrame));
+
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(UiEventFrame));
 
 export interface UiGatewayConnection {
@@ -140,6 +164,7 @@ export interface SharedUiGatewayDependencies extends Omit<
 export class UiGateway extends Context.Service<UiGateway, UiGatewayApi>()("ziggy/UiGateway") {}
 
 const MAX_CACHE = 512;
+
 interface CachedCommand {
   readonly fingerprint: string;
   readonly pending?: Deferred.Deferred<UiResponseFrame, never>;
@@ -161,13 +186,19 @@ const liveSessionProjection = (profileId: ProfileId, entry: ChatRegistryListEntr
     kind: entry.kind,
     idle: entry.idle,
   };
+
   if (entry.context !== undefined && entry.agentId !== undefined)
     return { ...base, context: entry.context, agentId: entry.agentId };
+
   if (entry.context !== undefined) return { ...base, context: entry.context };
+
   if (entry.agentId !== undefined) return { ...base, agentId: entry.agentId };
+
   return base;
 };
+
 const isProfileAgentThinking = Schema.is(ProfileAgentThinking);
+
 interface ProfileAgentWireProjection {
   id: string;
   description: string;
@@ -176,11 +207,13 @@ interface ProfileAgentWireProjection {
   thinking?: ProfileAgentThinkingValue;
   tools: ReadonlyArray<string>;
 }
+
 interface ProfileAgentValidationWireProjection {
   id: string;
   valid: boolean;
   message?: string;
 }
+
 const profileAgentProjection = <
   Agent extends {
     readonly id: string;
@@ -198,13 +231,18 @@ const profileAgentProjection = <
     description: boundedText(agent.description, 512, "Specialist agent"),
     tools: agent.tools.slice(0, 8).map((tool) => boundedText(tool, 128, "tool")),
   };
+
   if (agent.provider !== undefined)
     projection.provider = boundedText(agent.provider, 128, "provider");
+
   if (agent.model !== undefined) projection.model = boundedText(agent.model, 256, "model");
+
   if (agent.thinking !== undefined && isProfileAgentThinking(agent.thinking))
     projection.thinking = agent.thinking;
+
   return projection;
 };
+
 const profileAgentValidationProjection = (validation: {
   readonly id: string;
   readonly valid: boolean;
@@ -214,9 +252,12 @@ const profileAgentValidationProjection = (validation: {
     id: validation.id,
     valid: validation.valid,
   };
+
   if (validation.message !== undefined) projection.message = boundedText(validation.message);
+
   return projection;
 };
+
 const validSessionKey = (key: string): Effect.Effect<UiSessionKey, UiGatewayError> =>
   decodeSessionKey(key).pipe(Effect.mapError((cause) => badParams("session", cause)));
 
@@ -224,23 +265,34 @@ const groupConversationId = (groupId: string): UiSessionKey =>
   `ui/group-${createHash("sha256").update(groupId).digest("hex").slice(0, 32)}`;
 
 const GROUP_DISCUSSION_MAX_AGENTS = 4;
+
 const GROUP_DISCUSSION_ANSWER_MAX_CODE_POINTS = 2_000;
+
 const GROUP_DISCUSSION_CONTEXT_MAX_CODE_POINTS = 8_000;
+
 const ASSISTANT_DELTA_MAX_BYTES = 2_000;
+
 const ASSISTANT_SNAPSHOT_MAX_BYTES = 8_000;
+
 const THINKING_DELTA_MAX_BYTES = 8_000;
+
 const TOOL_DETAIL_MAX_CODE_POINTS = 4_096;
+
 const wireText = (value: string, maximum: number): string => [...value].slice(0, maximum).join("");
+
 const wireTextBytes = (value: string, maximum: number): string => {
   const encoder = new TextEncoder();
   const result: string[] = [];
   let size = 0;
+
   for (const point of value) {
     const nextSize = size + encoder.encode(point).byteLength;
+
     if (nextSize > maximum) break;
     result.push(point);
     size = nextSize;
   }
+
   return result.join("");
 };
 
@@ -252,7 +304,9 @@ const normalizedGroupContext = (
     groupId: context.groupId,
     defaultRecipient: context.defaultRecipient ?? { kind: "host" as const },
   };
+
   if (context.memberAgentIds === undefined) return normalized;
+
   return { ...normalized, memberAgentIds: [...new Set(context.memberAgentIds)] };
 };
 
@@ -281,10 +335,13 @@ const eventFrame = (
     seq: event.seq,
     eventId: event.eventId,
   };
+
   const withCorrelation = <A extends object>(value: A): A => {
     if (correlationId === undefined) return value;
+
     return { ...value, correlationId };
   };
+
   switch (event.event.kind) {
     case "assistant-text":
       return decodeEventFrame(
@@ -322,6 +379,7 @@ const eventFrame = (
           }),
         );
       }
+
       return decodeEventFrame(
         withCorrelation({
           ...base,
@@ -362,6 +420,7 @@ const eventFrame = (
 const mapHealthMessage = (message: string): string => {
   if (message.includes("/") || message.includes("\\") || message.includes(" at "))
     return "check completed";
+
   return boundedText(message);
 };
 
@@ -370,6 +429,7 @@ const resultFrame = (id: UiRequestId, result: UiGatewayResult): UiResponseFrame 
   ok: true,
   result,
 });
+
 const failureFrame = (id: UiRequestId, error: UiGatewayError): UiResponseFrame => ({
   id,
   ok: false,
@@ -401,18 +461,22 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
   const pins = config.pins ?? makeUiPinStore();
   const groups = config.groups ?? makeUiGroupStore();
   const commands = new Map<string, CachedCommand>();
+
   const profileBranches = new Map<ProfileId, UiGatewayBranch>([
     [config.defaultProfile.profileId, config.defaultProfile],
   ]);
 
   const branchFor = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> => {
     const existing = profileBranches.get(profileId);
+
     if (existing !== undefined) return Effect.succeed(existing);
+
     if (config.runtimeDirectory !== undefined) {
       return config.runtimeDirectory
         .branch(profileId)
         .pipe(Effect.mapError((cause) => toGatewayError("profile.resolve", cause)));
     }
+
     if (config.profileDirectory !== undefined) {
       return config.profileDirectory.resolve(profileId).pipe(
         Effect.flatMap((resolved) =>
@@ -428,6 +492,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
         Effect.mapError((cause) => toGatewayError("profile.resolve", cause)),
       );
     }
+
     return Effect.fail(
       protocolFailure("unknown_profile", "the requested Profile is not registered"),
     );
@@ -454,7 +519,9 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
       ) {
         return yield* protocolFailure("bad_params", "group memberAgentIds must be unique");
       }
+
       const normalized = normalizedGroupContext(context);
+
       if (
         normalized.defaultRecipient !== undefined &&
         normalized.defaultRecipient.kind === "agent" &&
@@ -465,14 +532,19 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           "group defaultRecipient must name a member agent",
         );
       }
+
       const state = yield* groups
         .read(branch.target.path)
         .pipe(Effect.mapError((cause) => toGatewayError("session.open", cause)));
+
       const existing = state.groups.find((candidate) => candidate.groupId === normalized.groupId);
+
       if (existing !== undefined && existing.hostProfileId !== branch.profileId) {
         return yield* protocolFailure("cross_profile_group", "group is owned by another Profile");
       }
+
       const conversationId = existing?.conversationId ?? groupConversationId(normalized.groupId);
+
       const requested: UiGroupRecordValue = {
         groupId: normalized.groupId,
         conversationId,
@@ -481,6 +553,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
         defaultRecipient: normalized.defaultRecipient ?? { kind: "host" },
         revision: existing?.revision ?? 0,
       };
+
       if (existing !== undefined && sameGroupConfiguration(existing, requested)) {
         return {
           context: {
@@ -491,20 +564,26 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           record: existing,
         };
       }
+
       if (existing !== undefined && context.expectedRevision === undefined) {
         return yield* protocolFailure(
           "conflict",
           "group exists; expectedRevision is required to change it",
         );
       }
+
       const expectedRevision = context.expectedRevision ?? existing?.revision ?? 0;
       const effectiveCommandId = commandId ?? `group:${normalized.groupId}:${expectedRevision}`;
+
       const saved = yield* groups
         .upsert(branch.target.path, requested, expectedRevision, effectiveCommandId)
         .pipe(Effect.mapError((cause) => toGatewayError("session.open", cause)));
+
       const record = saved.groups.find((candidate) => candidate.groupId === normalized.groupId);
+
       if (record === undefined)
         return yield* protocolFailure("internal", "group record was not persisted");
+
       return {
         context: {
           ...normalized,
@@ -525,13 +604,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
   ): Effect.Effect<() => void, UiGatewayError> => {
     if (ref.kind !== "live")
       return Effect.fail(protocolFailure("watch_only", "stored sessions cannot be watched"));
+
     if (epoch !== undefined && epoch !== serverEpoch)
       return Effect.fail(
         protocolFailure("replay_gap", "server epoch changed; reload session history"),
       );
+
     const onEvent = (event: ChatRegistryEvent) => {
       send(encodeEvent(eventFrame(branch.profileId, ref, event, serverEpoch, correlationId)));
     };
+
     return branch.registry.subscribeSequenced(ref.key, onEvent, afterSeq);
   };
 
@@ -542,6 +624,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
   ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
     const route = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
       branchFor(profileId);
+
     switch (isKnownMethod(request.method) ? request.method : undefined) {
       case "ping":
         return decodeEmpty(request.params).pipe(
@@ -612,7 +695,9 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeScoped(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.doctor === undefined) {
             return {
               profileId: branch.profileId,
@@ -626,9 +711,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               hasErrors: false,
             };
           }
+
           const report = yield* config.doctor
             .check(branch.target, config.repositoryRoot)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             checks: report.checks.slice(0, 16).map((check) => ({
@@ -644,10 +731,13 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeScoped(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           const state = yield* groups
             .read(branch.target.path)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             groups: state.groups
@@ -661,11 +751,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeScoped(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
           const live = yield* branch.registry.list;
+
           const stored = yield* config.sessions
             .list(branch.target)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             live: live.slice(0, 16).map((entry) => liveSessionProjection(branch.profileId, entry)),
@@ -682,11 +775,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.ref.profileId);
+
           if (params.ref.kind === "live") {
             const entry = yield* branch.registry
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
             return {
               profileId: branch.profileId,
               ref: params.ref,
@@ -694,9 +790,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               live: liveSessionProjection(branch.profileId, entry),
             };
           }
+
           const session = yield* config.sessions
             .show(branch.target, params.ref.id)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             ref: params.ref,
@@ -711,28 +809,35 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeHistory(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.ref.profileId);
+
           if (config.sessions.history === undefined) return yield* noService(request.method);
           let reference: string;
+
           if (params.ref.kind === "stored") {
             reference = params.ref.id;
           } else {
             const entry = yield* branch.registry
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
             if (entry.handle.currentSession === undefined) {
               return yield* protocolFailure(
                 "unknown_session",
                 "live session history is unavailable",
               );
             }
+
             const current = yield* entry.handle.currentSession.pipe(
               Effect.mapError((cause) => toGatewayError(request.method, cause)),
             );
+
             if (current === undefined) {
               if (params.before !== undefined) {
                 return yield* protocolFailure("stale_cursor", "session history cursor is stale");
               }
+
               return {
                 profileId: branch.profileId,
                 ref: params.ref,
@@ -742,11 +847,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                 hasMore: false,
               };
             }
+
             reference = current.id;
           }
+
           const page = yield* config.sessions
             .history(branch.target, reference, params.before)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return { profileId: branch.profileId, ref: params.ref, ...page };
         });
       case "session.open":
@@ -757,21 +865,27 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               "group members must belong to the host Profile",
             );
           }
+
           const params = yield* decodeOpen(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.agentId !== undefined && params.context.kind !== "local") {
             return yield* protocolFailure(
               "bad_params",
               "specialist conversations require local context",
             );
           }
+
           const branch = yield* route(params.profileId);
+
           const group =
             params.context.kind === "group"
               ? yield* ensureGroup(branch, params.context, params.commandId)
               : undefined;
+
           const context: UiConversationContext = group?.context ?? params.context;
+
           const key = yield* validSessionKey(
             group !== undefined
               ? group.record.conversationId
@@ -781,6 +895,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                   ? `local/agents/${params.agentId}`
                   : "local/main",
           );
+
           const sessionDirectory =
             group === undefined
               ? params.name === undefined
@@ -792,15 +907,19 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                   "groups",
                   group.record.conversationId.slice("ui/group-".length),
                 );
+
           const open =
             params.agentId === undefined
               ? config.agent.openChat(branch.target, context, sessionDirectory, "continue")
               : config.agent.openSpecialistChat(branch.target, params.agentId);
+
           const metadata =
             params.agentId === undefined ? { context } : { context, agentId: params.agentId };
+
           yield* branch.registry.getOrOpenUi(key, open, metadata);
           const ref = sessionRef(branch.profileId, key);
           const subscriptionKey = `${branch.profileId}:${key}`;
+
           const unsubscribe = yield* subscribe(
             send,
             branch,
@@ -809,8 +928,10 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             undefined,
             params.commandId,
           );
+
           subscriptions.get(subscriptionKey)?.();
           subscriptions.set(subscriptionKey, unsubscribe);
+
           return { ref };
         });
       case "session.watch":
@@ -818,11 +939,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.ref.kind === "stored") {
             return yield* protocolFailure("watch_only", "stored sessions cannot be watched");
           }
+
           const branch = yield* route(params.ref.profileId);
           const subscriptionKey = `${params.ref.profileId}:${params.ref.key}`;
+
           const unsubscribe = yield* subscribe(
             send,
             branch,
@@ -831,8 +955,10 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             params.epoch,
             params.commandId,
           );
+
           subscriptions.get(subscriptionKey)?.();
           subscriptions.set(subscriptionKey, unsubscribe);
+
           return { acknowledged: true as const };
         });
       case "session.unwatch":
@@ -840,10 +966,12 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.ref.kind === "live") {
             subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
             subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
           }
+
           return { acknowledged: true as const };
         });
       case "session.close":
@@ -851,13 +979,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.ref.kind === "stored") {
             return yield* protocolFailure("bad_params", "stored sessions cannot be closed");
           }
+
           const branch = yield* route(params.ref.profileId);
           subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
           subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
           yield* branch.registry.closeUi(params.ref.key);
+
           return { acknowledged: true as const };
         });
       case "prompt.submit":
@@ -867,22 +998,29 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeText(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.ref.kind === "stored") {
             return yield* protocolFailure("watch_only", "stored sessions are read-only");
           }
+
           const branch = yield* route(params.ref.profileId);
+
           if (request.method === "prompt.submit") {
             const live = yield* branch.registry
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
             const group = live.context?.kind === "group" ? live.context : undefined;
+
             if (params.recipient !== undefined && group === undefined) {
               return yield* protocolFailure(
                 "bad_params",
                 "an addressed turn requires a group conversation",
               );
             }
+
             const effectiveRecipient = params.recipient ?? group?.defaultRecipient;
+
             if (
               effectiveRecipient?.kind === "agent" &&
               !group?.memberAgentIds?.includes(effectiveRecipient.agentId)
@@ -892,6 +1030,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                 "the addressed specialist is not a member of this group",
               );
             }
+
             if (
               group !== undefined &&
               group.memberAgentIds !== undefined &&
@@ -901,12 +1040,15 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                 effectiveRecipient?.kind === "agent"
                   ? [effectiveRecipient.agentId]
                   : group.memberAgentIds;
+
               const memberAgentIds = [...new Set(requestedMembers)].slice(
                 0,
                 GROUP_DISCUSSION_MAX_AGENTS,
               );
+
               const answers: Array<{ readonly agentId: string; readonly answer: string }> = [];
               const conversation = groupConversationId(group.groupId);
+
               for (const agentId of memberAgentIds) {
                 const childDirectory = join(
                   branch.target.path,
@@ -916,6 +1058,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                   "agents",
                   agentId,
                 );
+
                 const child = yield* config.agent
                   .runSpecialist(branch.target, agentId, params.text, {
                     sessionDirectory: childDirectory,
@@ -936,6 +1079,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                       }),
                     ),
                   );
+
                 answers.push(child);
                 yield* branch.registry.publish(params.ref.key, {
                   kind: "voice",
@@ -943,6 +1087,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                   text: child.answer,
                 });
               }
+
               const synthesisContext = boundedText(
                 [
                   "Bounded Profile specialist discussion. Synthesize the member answers below; do not claim to have contacted external channels.",
@@ -951,8 +1096,10 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
                 GROUP_DISCUSSION_CONTEXT_MAX_CODE_POINTS,
                 "",
               );
+
               const options: ChatPromptOptions =
                 synthesisContext.length === 0 ? {} : { ephemeralContext: synthesisContext };
+
               yield* branch.registry.submit(params.ref.key, params.text, options);
             } else {
               yield* branch.registry.submit(params.ref.key, params.text);
@@ -960,6 +1107,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           } else if (request.method === "session.steer")
             yield* branch.registry.steer(params.ref.key, params.text);
           else yield* branch.registry.followUp(params.ref.key, params.text);
+
           return { acknowledged: true as const };
         });
       case "session.abort":
@@ -967,11 +1115,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           if (params.ref.kind === "stored") {
             return yield* protocolFailure("watch_only", "stored sessions are read-only");
           }
+
           const branch = yield* route(params.ref.profileId);
           yield* branch.registry.abort(params.ref.key);
+
           return { acknowledged: true as const };
         });
       case "agent.list":
@@ -997,13 +1148,18 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentShow(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const agent = yield* config.profileAgents
             .show(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           const { path: _path, ...withoutPath } = agent;
+
           return { profileId: branch.profileId, agent: profileAgentProjection(withoutPath) };
         });
       case "agent.document":
@@ -1011,12 +1167,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentDocument(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const document = yield* config.profileAgents
             .document(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return { profileId: branch.profileId, ...document };
         });
       case "agent.save":
@@ -1024,12 +1184,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentSave(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const document = yield* config.profileAgents
             .save(branch.target, params.agentId, params.expectedSource, params.source)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return { profileId: branch.profileId, ...document };
         });
       case "agent.create":
@@ -1037,13 +1201,18 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentCreate(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const agent = yield* config.profileAgents
             .create(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           const { path: _path, ...withoutPath } = agent;
+
           return { profileId: branch.profileId, agent: profileAgentProjection(withoutPath) };
         });
       case "agent.validate":
@@ -1051,12 +1220,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentValidate(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const validations = yield* config.profileAgents
             .validate(branch.target, params.agentId)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             validations: validations
@@ -1071,12 +1244,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
           const params = yield* decodeAgentRun(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
+
           const branch = yield* route(params.profileId);
+
           if (config.profileAgents === undefined)
             return yield* Effect.fail(noService(request.method));
+
           const result = yield* config.profileAgents
             .run(branch.target, params.agentId, params.task)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
           return {
             profileId: branch.profileId,
             agentId: params.agentId,
@@ -1125,16 +1302,19 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
     (request: UiRequestEnvelope): Effect.Effect<void> => {
       const commandProbe = decodeCommandProbe(request.params);
       const commandId = Option.isSome(commandProbe) ? commandProbe.value.commandId : undefined;
+
       const profileId =
         Option.isSome(commandProbe) && commandProbe.value.profileId !== undefined
           ? commandProbe.value.profileId
           : config.defaultProfile.profileId;
+
       const run = dispatch(request, send, subscriptions).pipe(
         Effect.map((result) => resultFrame(request.id, result)),
         Effect.catch((cause) =>
           Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
         ),
       );
+
       return commandId === undefined
         ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
         : runCommand(
@@ -1154,6 +1334,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
   return {
     connect: (send) => {
       const subscriptions = new Map<string, () => void>();
+
       return {
         request: requestFor(send, subscriptions),
         close: Effect.sync(() => {
@@ -1176,20 +1357,26 @@ const runCommand = (
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       const existing = cache.get(key);
+
       if (existing !== undefined) {
         if (existing.fingerprint !== fingerprint)
           return yield* Effect.fail(
             protocolFailure("conflict", "command id was already used for a different request"),
           );
+
         if (existing.result !== undefined) return existing.result;
+
         if (existing.pending !== undefined) return yield* restore(Deferred.await(existing.pending));
       }
+
       const pending = yield* Deferred.make<UiResponseFrame, never>();
       cache.set(key, { fingerprint, pending });
+
       while (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value ?? key);
       const result = yield* run;
       cache.set(key, { fingerprint, result });
       yield* Deferred.succeed(pending, result);
+
       return result;
     }),
   );
@@ -1201,7 +1388,9 @@ export const makeSharedUiGateway = (config: SharedUiGatewayDependencies): UiGate
   )
     ? config.branches
     : [config.defaultProfile, ...config.branches];
+
   const runtimeDirectory = makeProfileRuntimeDirectory(config.profileDirectory, branches);
+
   return makeUiGateway({
     ...config,
     runtimeDirectory,

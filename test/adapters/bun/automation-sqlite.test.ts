@@ -23,21 +23,28 @@ import { discoverAutomationSources } from "ziggy/adapters/fs/automation-files";
 import { isLocalProcessAlive, makeLocalProcessAlive } from "ziggy/adapters/bun/process";
 
 const paths: Array<string> = [];
+
 const profile = async () => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-scheduler-db-"));
   paths.push(path);
   await Effect.runPromise(initializeAutomationDatabase(path));
+
   return path;
 };
+
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+
 const fingerprint = "a".repeat(64);
+
 const defaultResidentOwnerId = "00000000-0000-4000-8000-000000000001";
+
 const commitScheduleTick = (
   profilePath: string,
   atMs: number,
   mutations: Parameters<typeof commitScheduleTickOwned>[2],
   ownerPid: number = process.pid,
 ) => commitScheduleTickOwned(profilePath, atMs, mutations, defaultResidentOwnerId, ownerPid);
+
 const schedule = (id: string, next: number, observed = 100): AutomationScheduleRecord => ({
   automationId: id,
   definitionState: "valid",
@@ -50,21 +57,28 @@ const schedule = (id: string, next: number, observed = 100): AutomationScheduleR
 const corruptPersistedRows = (path: string, statement: string): void => {
   const databasePath = automationDatabasePath(path);
   const db = new Database(databasePath, { readonly: true });
+
   const rows = db
     .query<{ name: string; sql: string }, []>(
       "SELECT name,sql FROM sqlite_master WHERE name IN ('automation_run','automation_schedule','automation_target_outcome','scheduler_state') ORDER BY name",
     )
     .all();
+
   const version = db
     .query<{ schema_version: number }, []>("PRAGMA schema_version")
     .get()?.schema_version;
+
   db.close(false);
+
   if (version === undefined) throw new Error("missing schema version");
   const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+
   const execute = (sql: string): void => {
     const result = Bun.spawnSync(["sqlite3", databasePath], { stdin: Buffer.from(sql) });
+
     if (result.exitCode !== 0) throw new Error(result.stderr.toString());
   };
+
   execute(`.dbconfig defensive off
 PRAGMA writable_schema=ON;
 ${rows.map((row) => `UPDATE sqlite_schema SET sql=${quote(row.sql.replace(/ STRICT$/u, ""))} WHERE name=${quote(row.name)};`).join("\n")}
@@ -87,6 +101,7 @@ describe("automation SQLite", () => {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     expect(isLocalProcessAlive(child.pid)).toBe(true);
     child.kill();
     await child.exited;
@@ -96,6 +111,7 @@ describe("automation SQLite", () => {
       makeLocalProcessAlive(() => {
         throw Object.assign(new Error(code), { code });
       });
+
     expect(throwingProbe("ESRCH")(123)).toBe(false);
     expect(throwingProbe("EPERM")(123)).toBe(true);
     expect(
@@ -112,12 +128,14 @@ describe("automation SQLite", () => {
     await writeFile(join(path, "automations", "b.md"), "b");
     const firstRead = await Effect.runPromise(Deferred.make<void>());
     let reads = 0;
+
     const fiber = Effect.runFork(
       discoverAutomationSources(
         { path, name: "Test" },
         {
           afterRead: () => {
             reads += 1;
+
             return reads === 1
               ? Deferred.succeed(firstRead, undefined).pipe(Effect.andThen(Effect.never))
               : Effect.void;
@@ -125,6 +143,7 @@ describe("automation SQLite", () => {
         },
       ),
     );
+
     await Effect.runPromise(Deferred.await(firstRead));
 
     await Effect.runPromise(Fiber.interrupt(fiber));
@@ -135,11 +154,13 @@ describe("automation SQLite", () => {
   test("initializes exactly schema version two with fenced ownership and six named indexes", async () => {
     const path = await profile();
     await run(initializeAutomationDatabase(path));
+
     const db = new Database(automationDatabasePath(path), {
       readonly: true,
       create: false,
       strict: true,
     });
+
     try {
       expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
       expect(
@@ -174,6 +195,7 @@ describe("automation SQLite", () => {
     const v1 = new Database(databasePath);
     const terminalId = "manual:00000000-0000-4000-8000-000000000090";
     const activeId = "manual:00000000-0000-4000-8000-000000000091";
+
     try {
       v1.exec(automationSchemaV1TestOnly);
       v1.query(
@@ -189,6 +211,7 @@ describe("automation SQLite", () => {
     const blocked = await run(
       initializeAutomationDatabase(path, undefined, (pid) => pid === 777).pipe(Effect.result),
     );
+
     expect(Result.isFailure(blocked) && blocked.failure.operation).toBe("migrate live v1 owner");
     const stillV1 = new Database(databasePath, { readonly: true });
     expect(stillV1.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
@@ -196,6 +219,7 @@ describe("automation SQLite", () => {
 
     await run(initializeAutomationDatabase(path, undefined, () => false));
     const migrated = new Database(databasePath, { readonly: true });
+
     try {
       expect(migrated.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
       expect(
@@ -251,6 +275,7 @@ describe("automation SQLite", () => {
       claimed: [],
     });
     const advanced = schedule("daily", 2_000, 1_000);
+
     const mutation = {
       expected: first,
       next: advanced,
@@ -262,10 +287,12 @@ describe("automation SQLite", () => {
         scheduleFingerprint: fingerprint,
       },
     };
+
     const [left, right] = await Promise.all([
       run(commitScheduleTick(path, 1_000, [mutation])),
       run(commitScheduleTick(path, 1_000, [mutation])),
     ]);
+
     expect([left, right].sort((a, b) => Number(a.stale) - Number(b.stale))).toEqual([
       {
         stale: false,
@@ -296,6 +323,7 @@ describe("automation SQLite", () => {
         { expected: null, next: weekly },
       ]),
     );
+
     const due = (row: AutomationScheduleRecord) => ({
       expected: row,
       next: { ...row, nextScheduledAtMs: 3_000, definitionObservedAtMs: 2_000 },
@@ -307,6 +335,7 @@ describe("automation SQLite", () => {
         scheduleFingerprint: fingerprint,
       },
     });
+
     const claimed = await run(commitScheduleTick(path, 2_000, [due(daily), due(weekly)]));
     expect(claimed.claimed.map((item) => item.automationId)).toEqual(["daily", "weekly"]);
     expect(
@@ -334,6 +363,7 @@ describe("automation SQLite", () => {
     const liveSchedulerA = makeAutomationRunStore(201);
     const liveSchedulerB = makeAutomationRunStore(202);
     const dead = makeAutomationRunStore(301);
+
     const terminal = {
       state: "completed" as const,
       atMs: 900,
@@ -341,9 +371,11 @@ describe("automation SQLite", () => {
       failureCategory: null,
       gateExitCode: null,
     };
+
     const claimScheduled = async (id: string, atMs: number, ownerPid: number) => {
       const before = schedule(id, atMs, atMs - 100);
       await run(commitScheduleTick(path, atMs - 100, [{ expected: null, next: before }], ownerPid));
+
       const occurrence = {
         kind: "due" as const,
         runId: `scheduled:${id}:${new Date(atMs).toISOString()}`,
@@ -351,6 +383,7 @@ describe("automation SQLite", () => {
         missedThroughMs: null,
         scheduleFingerprint: fingerprint,
       };
+
       await run(
         commitScheduleTick(
           path,
@@ -365,6 +398,7 @@ describe("automation SQLite", () => {
           ownerPid,
         ),
       );
+
       return occurrence.runId;
     };
 
@@ -396,9 +430,11 @@ describe("automation SQLite", () => {
     await run(liveSchedulerB.start(path, schedulerBId, 820, fingerprint, resident));
     await run(liveSchedulerB.finish(path, schedulerBId, terminal, [], resident));
     const deadIds = new Set([deadManualId, deadScheduledId]);
+
     const firstRecovery = (await run(readAutomationRuns(path))).filter((item) =>
       deadIds.has(item.runId),
     );
+
     await run(recoverAutomationRuns(path, 1_000, () => false));
     expect((await run(readAutomationRuns(path))).filter((item) => deadIds.has(item.runId))).toEqual(
       firstRecovery,
@@ -440,6 +476,7 @@ describe("automation SQLite", () => {
     );
 
     const store = makeAutomationRunStore(4242);
+
     const wrongStart = await run(
       store
         .start(path, "scheduled:daily:1970-01-01T00:00:01.000Z", 1_050, fingerprint, {
@@ -448,6 +485,7 @@ describe("automation SQLite", () => {
         })
         .pipe(Effect.result),
     );
+
     expect(Result.isFailure(wrongStart) && wrongStart.failure.operation).toBe("start claimed run");
     await run(recoverResidentAutomationRuns(path, "00000000-0000-4000-8000-000000000010", 1_100));
     expect((await run(readAutomationRuns(path)))[0]?.state).toBe("claimed");
@@ -480,6 +518,7 @@ describe("automation SQLite", () => {
         [],
       ]).pipe(Effect.result),
     );
+
     const malformedOccurrence = await run(
       // oxlint-disable-next-line ziggy/no-reflect-apply -- commitScheduleTick rejects malformed mutations at schema decode; test must bypass the typed contract
       Reflect.apply(commitScheduleTick, undefined, [
@@ -585,6 +624,7 @@ describe("automation SQLite", () => {
     const admittedLatestId = "manual:00000000-0000-4000-8000-000000000001";
     const finishedTieLowId = "manual:00000000-0000-4000-8000-000000000002";
     const finishedTieHighId = "manual:00000000-0000-4000-8000-000000000003";
+
     const rows = [
       {
         runId: admittedLatestId,
@@ -605,6 +645,7 @@ describe("automation SQLite", () => {
         finishedAtMs: 500,
       },
     ];
+
     for (const row of rows) {
       await run(
         automationRunStore.admitManual(path, row.automationId, row.runId, row.recordedAtMs),
@@ -655,6 +696,7 @@ describe("automation SQLite", () => {
       "UPDATE automation_run SET local_completed=0,failure_category='AutomationInvalid'",
       "UPDATE automation_run SET failure_category='all-empty'",
     ];
+
     for (const statement of fixtures) {
       const path = await profile();
       const runId = `manual:00000000-0000-4000-8000-${String(paths.length).padStart(12, "0")}`;
@@ -733,6 +775,7 @@ describe("automation SQLite", () => {
     const path = await profile();
     await run(initializeAutomationDatabase(path));
     const db = new Database(automationDatabasePath(path));
+
     try {
       db.exec(
         "DROP INDEX automation_run_recent; CREATE INDEX automation_run_recent ON automation_run(run_id)",
@@ -740,6 +783,7 @@ describe("automation SQLite", () => {
     } finally {
       db.close(false);
     }
+
     expect(
       await run(
         readAutomationStatus(path, 100).pipe(

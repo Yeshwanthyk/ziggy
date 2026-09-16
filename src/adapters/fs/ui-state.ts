@@ -21,13 +21,18 @@ import type { UiCommandId, UiGroupRecord, UiPin, UiPinId } from "../../domain/ui
 
 /** Profile-local machine state; deliberately separate from the resident runtime tree. */
 const STATE_DIRECTORY = ".ziggy";
+
 const PIN_FILE = "ui-pins.json";
+
 const GROUP_FILE = "ui-groups.json";
+
 const decodePinStateJson = Schema.decodeUnknownSync(Schema.fromJsonString(UiPinState));
+
 const decodeGroupStateJson = Schema.decodeUnknownSync(Schema.fromJsonString(UiGroupState));
 
 export const uiPinStatePath = (profilePath: string): string =>
   path.join(profilePath, STATE_DIRECTORY, PIN_FILE);
+
 export const uiGroupStatePath = (profilePath: string): string =>
   path.join(profilePath, STATE_DIRECTORY, GROUP_FILE);
 
@@ -65,11 +70,13 @@ const readState = <A>(
 
 const ensureStateDirectory = (profilePath: string): Effect.Effect<string, UiStateWriteError> => {
   const runtime = path.join(profilePath, STATE_DIRECTORY);
+
   return Effect.tryPromise({
     try: async () => {
       await physicalDirectoryPromise(profilePath);
       await mkdir(runtime, { recursive: true });
       await physicalDirectoryPromise(runtime);
+
       return runtime;
     },
     catch: (cause) =>
@@ -83,6 +90,7 @@ const ensureStateDirectory = (profilePath: string): Effect.Effect<string, UiStat
 
 const physicalDirectoryPromise = async (directory: string): Promise<void> => {
   const status = await lstat(directory);
+
   if (!status.isDirectory() || status.isSymbolicLink())
     throw new Error(`${directory} is not physical`);
 };
@@ -103,6 +111,7 @@ const writeState = <A>(
           constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
           0o600,
         );
+
         try {
           await handle.writeFile(source, "utf8");
           await handle.sync();
@@ -129,14 +138,18 @@ const writeState = <A>(
   });
 
 const emptyPins: UiPinStateValue = { version: 1, revision: 0, pins: [], commands: [] };
+
 const mutationPermits = new Map<string, Semaphore.Semaphore>();
+
 const emptyGroups: UiGroupStateValue = { version: 1, groups: [], commands: [] };
 
 const permitFor = (file: string): Semaphore.Semaphore => {
   const existing = mutationPermits.get(file);
+
   if (existing !== undefined) return existing;
   const created = Semaphore.makeUnsafe(1);
   mutationPermits.set(file, created);
+
   return created;
 };
 
@@ -152,6 +165,7 @@ const rememberPinCommand = (
     { commandId, fingerprint, revision },
   ].slice(-128),
 });
+
 const rememberGroupCommand = (
   state: UiGroupStateValue,
   commandId: UiCommandId,
@@ -191,6 +205,7 @@ export interface UiPinStore {
 export const makeUiPinStore = (): UiPinStore => {
   const read = (profilePath: string) =>
     readState(uiPinStatePath(profilePath), decodePinStateJson, emptyPins);
+
   const mutate = (
     profilePath: string,
     commandId: UiCommandId,
@@ -202,14 +217,17 @@ export const makeUiPinStore = (): UiPinStore => {
       Effect.gen(function* () {
         const current = yield* read(profilePath);
         const previous = current.commands.find((entry) => entry.commandId === commandId);
+
         if (previous !== undefined) {
           if (previous.fingerprint !== fingerprint)
             return yield* new UiStateCommandConflict({
               commandId,
               message: "command id was already used for a different UI pin mutation",
             });
+
           return current;
         }
+
         if (current.revision !== expectedRevision)
           return yield* new UiStateConflict({
             expectedRevision,
@@ -219,9 +237,11 @@ export const makeUiPinStore = (): UiPinStore => {
         const next = change({ ...current, revision: current.revision + 1 });
         const persisted = rememberPinCommand(next, commandId, fingerprint, next.revision);
         yield* writeState(profilePath, uiPinStatePath(profilePath), persisted);
+
         return persisted;
       }),
     );
+
   return {
     read,
     set: (profilePath, pin, expectedRevision, commandId) =>
@@ -277,6 +297,7 @@ export interface UiGroupStore {
 export const makeUiGroupStore = (): UiGroupStore => {
   const read = (profilePath: string) =>
     readState(uiGroupStatePath(profilePath), decodeGroupStateJson, emptyGroups);
+
   const mutate = (
     profilePath: string,
     commandId: UiCommandId,
@@ -289,16 +310,20 @@ export const makeUiGroupStore = (): UiGroupStore => {
       Effect.gen(function* () {
         const current = yield* read(profilePath);
         const previousCommand = current.commands.find((entry) => entry.commandId === commandId);
+
         if (previousCommand !== undefined) {
           if (previousCommand.fingerprint !== fingerprint)
             return yield* new UiStateCommandConflict({
               commandId,
               message: "command id was already used for a different group mutation",
             });
+
           return current;
         }
+
         const existing = current.groups.find((candidate) => candidate.groupId === groupId);
         const actualRevision = existing?.revision ?? 0;
+
         if (actualRevision !== expectedRevision)
           return yield* new UiStateConflict({
             expectedRevision,
@@ -310,9 +335,11 @@ export const makeUiGroupStore = (): UiGroupStore => {
         const revision = changedGroup?.revision ?? actualRevision;
         const remembered = rememberGroupCommand(next, commandId, fingerprint, groupId, revision);
         yield* writeState(profilePath, uiGroupStatePath(profilePath), remembered);
+
         return remembered;
       }),
     );
+
   return {
     read,
     upsert: (profilePath, group, expectedRevision, commandId) =>
@@ -348,4 +375,5 @@ export const makeUiGroupStore = (): UiGroupStore => {
 };
 
 export const uiPinStore = makeUiPinStore();
+
 export const uiGroupStore = makeUiGroupStore();

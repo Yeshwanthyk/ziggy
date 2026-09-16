@@ -34,6 +34,7 @@ export interface BundledSkill {
 
 const bundledSkillEntries = (): ReadonlyArray<BundledSkill> => {
   const byId = new Map<string, BundledSkill>();
+
   for (const pkg of BUILTIN_PACKAGE_METADATA) {
     for (const skill of pkg.skills) {
       if (byId.has(skill.name)) continue;
@@ -45,6 +46,7 @@ const bundledSkillEntries = (): ReadonlyArray<BundledSkill> => {
       });
     }
   }
+
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 };
 

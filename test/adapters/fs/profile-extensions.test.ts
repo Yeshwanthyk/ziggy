@@ -17,6 +17,7 @@ const makeProfile = async (): Promise<string> => {
   const profilePath = join(root, "profile");
   await mkdir(profilePath);
   await writeFile(join(profilePath, "SOUL.md"), "# Human-owned profile\n");
+
   return profilePath;
 };
 
@@ -71,6 +72,7 @@ test("fails closed on malformed selection input without creating rollback files"
   const result = await Effect.runPromise(
     snapshotExtensionSelection(profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(result, {
       onFailure: (failure) =>
@@ -99,9 +101,11 @@ test("rejects symlinked and wrong-type selections without touching external file
   const symlinkSnapshot = await Effect.runPromise(
     snapshotExtensionSelection(profilePath).pipe(Effect.result),
   );
+
   const symlinkRestore = await Effect.runPromise(
     restoreExtensionSelection(profilePath, snapshot).pipe(Effect.result),
   );
+
   expect(
     Result.match(symlinkSnapshot, {
       onFailure: (failure) => Predicate.isTagged(failure, "ProfileExtensionInvalid"),
@@ -120,9 +124,11 @@ test("rejects symlinked and wrong-type selections without touching external file
 
   await rm(path);
   await mkdir(path);
+
   const wrongType = await Effect.runPromise(
     snapshotExtensionSelection(profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(wrongType, {
       onFailure: (failure) => Predicate.isTagged(failure, "ProfileExtensionInvalid"),

@@ -9,7 +9,9 @@ import { Type, type Static } from "typebox";
 const executable = join(import.meta.dirname, "bin", "agent-browser-wrapper.mjs");
 
 const TIMEOUT_MS = 120_000;
+
 const TERMINATION_GRACE_MS = 1_000;
+
 const OUTPUT_LIMIT = 24 * 1024;
 
 const Parameters = Type.Object(
@@ -61,6 +63,7 @@ const Parameters = Type.Object(
 const appendBounded = (current: string, chunk: string): string => {
   if (Buffer.byteLength(current) >= OUTPUT_LIMIT) return current;
   const available = OUTPUT_LIMIT - Buffer.byteLength(current);
+
   return current + Buffer.from(chunk).subarray(0, available).toString();
 };
 
@@ -69,14 +72,17 @@ const display = (value: string): string =>
 
 const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
   if (child.pid === undefined) return;
+
   if (process.platform !== "win32") {
     try {
       process.kill(-child.pid, signal);
+
       return;
     } catch {
       // Fall back to the direct child if its process group has already changed or exited.
     }
   }
+
   child.kill(signal);
 };
 
@@ -92,6 +98,7 @@ const execute = (
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -99,11 +106,14 @@ const execute = (
     let settled = false;
     let terminationStarted = false;
     let escalation: ReturnType<typeof setTimeout> | undefined;
+
     const cleanup = (): void => {
       clearTimeout(timeout);
+
       if (escalation !== undefined) clearTimeout(escalation);
       signal?.removeEventListener("abort", cancel);
     };
+
     const terminate = (): void => {
       if (terminationStarted) return;
       terminationStarted = true;
@@ -111,14 +121,17 @@ const execute = (
       escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
       escalation.unref();
     };
+
     const timeout = setTimeout(() => {
       timedOut = true;
       terminate();
     }, TIMEOUT_MS);
+
     const cancel = () => {
       cancelled = true;
       terminate();
     };
+
     if (signal?.aborted) cancel();
     else signal?.addEventListener("abort", cancel, { once: true });
     child.stdout.setEncoding("utf8");
@@ -140,9 +153,12 @@ const execute = (
       settled = true;
       cleanup();
       const streams = `stdout:\n${display(stdout) || "(empty)"}\nstderr:\n${display(stderr) || "(empty)"}`;
+
       if (cancelled) return reject(new Error(`agent_browser was cancelled.\n${streams}`));
+
       if (timedOut)
         return reject(new Error(`agent_browser timed out after ${TIMEOUT_MS}ms.\n${streams}`));
+
       if (code !== 0)
         return reject(
           new Error(`agent_browser exited with code ${code ?? "unknown"}.\n${streams}`),
@@ -162,9 +178,11 @@ export default function agentBrowser(pi: Pick<ExtensionAPI, "registerTool">): vo
     executionMode: "sequential",
     async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
       const result = await execute(parameters, ctx.cwd, signal);
+
       const text = result.stderr
         ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
         : result.stdout;
+
       return { content: [{ type: "text", text }], details: result };
     },
   });

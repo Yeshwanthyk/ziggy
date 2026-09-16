@@ -2,7 +2,9 @@ import * as path from "node:path";
 import { Schema } from "effect";
 
 export const SHARED_MEMORY_CAP = 2_200;
+
 export const CONTEXT_MEMORY_CAP = 1_375;
+
 export const MEMORY_ENTRY_DELIMITER = "\n§\n";
 
 export type ChatContext =
@@ -21,6 +23,7 @@ export const MemoryScopeReference = Schema.String.check(
     { expected: "shared, user:<id>, or group:<id>" },
   ),
 );
+
 export type MemoryScopeReference = typeof MemoryScopeReference.Type;
 
 export type MemoryScopeSelection =
@@ -118,6 +121,7 @@ export const codePointLength = (value: string): number => [...value].length;
 
 export const memoryEntries = (content: string): ReadonlyArray<string> => {
   const normalized = content.trim();
+
   return normalized.length === 0 ? [] : normalized.split(MEMORY_ENTRY_DELIMITER);
 };
 
@@ -152,9 +156,11 @@ const validateText = (
   value: string,
 ): { readonly ok: true; readonly value: string } | MemoryOperationsFailure => {
   const trimmed = value.trim();
+
   if (trimmed.length === 0) {
     return invalidOperation(operation, action, `${field} must be non-empty after trimming`);
   }
+
   if (field === "content" && trimmed.includes(MEMORY_ENTRY_DELIMITER)) {
     return invalidOperation(
       operation,
@@ -162,6 +168,7 @@ const validateText = (
       "content must not contain the memory entry delimiter",
     );
   }
+
   return { ok: true, value: trimmed };
 };
 
@@ -193,27 +200,34 @@ export const applyMemoryOperations = (
 
     if (operation.action === "add") {
       const content = validateText(operationNumber, operation.action, "content", operation.content);
+
       if (!content.ok) {
         return content;
       }
+
       if (!entries.includes(content.value)) {
         entries.push(content.value);
       }
+
       continue;
     }
 
     const oldText = validateText(operationNumber, operation.action, "oldText", operation.oldText);
+
     if (!oldText.ok) {
       return oldText;
     }
+
     const matchingIndexes = entries.flatMap((entry, entryIndex) =>
       entry.includes(oldText.value) ? [entryIndex] : [],
     );
+
     if (matchingIndexes.length !== 1) {
       return invalidMatch(operationNumber, operation.action, oldText.value, matchingIndexes.length);
     }
 
     const matchingIndex = matchingIndexes[0];
+
     if (matchingIndex === undefined) {
       return invalidMatch(operationNumber, operation.action, oldText.value, 0);
     }
@@ -224,14 +238,17 @@ export const applyMemoryOperations = (
     }
 
     const content = validateText(operationNumber, operation.action, "content", operation.content);
+
     if (!content.ok) {
       return content;
     }
+
     entries[matchingIndex] = content.value;
   }
 
   const content = serializeMemoryEntries(entries);
   const used = codePointLength(content);
+
   if (used > cap) {
     return memoryOperationFailure(
       new MemoryFull({
@@ -255,6 +272,7 @@ export const sanitizeMemoryId = (
   | { readonly ok: true; readonly id: string }
   | { readonly ok: false; readonly error: MemoryIdInvalid } => {
   const sanitized = id.toLowerCase();
+
   if (validMemoryId.test(sanitized)) {
     return { ok: true, id: sanitized };
   }
@@ -291,9 +309,12 @@ export const memoryDocumentFromRelativePath = (
   }
 
   const match = /^(?:memory[\\/])(users|groups)[\\/]([^\\/]+)\.md$/u.exec(relativePath);
+
   if (match === null) return undefined;
   const [, directory, id] = match;
+
   if (directory === undefined || id === undefined || !validMemoryId.test(id)) return undefined;
+
   return directory === "users"
     ? memoryDocument(profilePath, "person", relativePath, "## Memory (this person)")
     : memoryDocument(profilePath, "group", relativePath, "## Memory (this group)");
@@ -306,6 +327,7 @@ export const parseMemoryScopeReference = (
   const separator = reference.indexOf(":");
   const kind = reference.slice(0, separator);
   const id = reference.slice(separator + 1).toLowerCase();
+
   return kind === "user" ? { scope: "person", id } : { scope: "group", id };
 };
 
@@ -321,9 +343,12 @@ export const memoryDocumentForScope = (
       document: memoryDocument(profilePath, "shared", "MEMORY.md", "## Memory (shared)"),
     };
   }
+
   const sanitized = sanitizeMemoryId(selection.scope === "person" ? "user" : "group", selection.id);
+
   if (!sanitized.ok) return sanitized;
   const directory = selection.scope === "person" ? "users" : "groups";
+
   return {
     ok: true,
     document: memoryDocument(
@@ -359,6 +384,7 @@ export const memoryFilePaths = (
   const kind = context.kind === "user" ? "user" : "group";
   const id = context.kind === "user" ? context.userId : context.groupId;
   const sanitized = sanitizeMemoryId(kind, id);
+
   if (!sanitized.ok) {
     return sanitized;
   }

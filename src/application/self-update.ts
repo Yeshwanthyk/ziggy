@@ -40,8 +40,10 @@ export const makeSelfUpdate = (
           }),
         );
       }
+
       const release = yield* client.downloadLatest();
       yield* installer(runtime.executablePath, release.executable, release.sha256);
+
       return { path: runtime.executablePath, version: release.version };
     }),
 });

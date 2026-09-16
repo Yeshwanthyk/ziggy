@@ -30,6 +30,7 @@ const systemdString = (value: string, escapeDollar = false): string => {
     .replaceAll("\r", "\\r")
     .replaceAll("\t", "\\t")
     .replaceAll("%", "%%");
+
   return `"${escapeDollar ? escaped.replaceAll("$", () => "$$") : escaped}"`;
 };
 
@@ -41,15 +42,19 @@ export const renderSystemdService = (
 ): ResidentServiceDefinition => {
   const restartSeconds = boundedSeconds(options.restartSeconds, 10);
   const stopTimeoutSeconds = boundedSeconds(options.stopTimeoutSeconds, 30);
+
   const pathEnvironment =
     options.pathEnvironment ??
     `${join(options.home, ".local", "bin")}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`;
+
   const path = systemdDefinitionPath(options.home, options.identity);
+
   const environment = {
     HOME: options.home,
     ZIGGY_HOME: options.ziggyHome,
     PATH: pathEnvironment,
   };
+
   const fingerprint = residentServiceFingerprint(
     JSON.stringify({
       manager: "systemd",
@@ -61,7 +66,9 @@ export const renderSystemdService = (
       stopTimeoutSeconds,
     }),
   );
+
   const execStart = options.launchVector.map((argument) => systemdString(argument, true)).join(" ");
+
   const content = `# ${systemdManagedMarker}
 # Ziggy-Service-Identity: ${options.identity.key}
 # Ziggy-Profile-Path: ${options.profilePath.replaceAll("\n", "\\n").replaceAll("\r", "\\r")}
@@ -86,6 +93,7 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 `;
+
   return {
     manager: "systemd",
     identity: options.identity,
@@ -101,6 +109,7 @@ export const systemdCommand = (
   verb: "daemon-reload" | "enable" | "disable" | "start" | "stop" | "restart" | "is-active",
   unit?: string,
 ): ResidentLaunchVector => ["systemctl", "--user", verb, ...(unit === undefined ? [] : [unit])];
+
 export const systemdMainPidCommand = (unit: string): ResidentLaunchVector => [
   "systemctl",
   "--user",
@@ -109,6 +118,7 @@ export const systemdMainPidCommand = (unit: string): ResidentLaunchVector => [
   "--value",
   unit,
 ];
+
 export const systemdLogsCommand = (unit: string, follow: boolean): ResidentLaunchVector => [
   "journalctl",
   "--user",
@@ -117,6 +127,7 @@ export const systemdLogsCommand = (unit: string, follow: boolean): ResidentLaunc
   "--no-pager",
   ...(follow ? ["-f"] : []),
 ];
+
 export const systemdLingerCommand = (user: string): ResidentLaunchVector => [
   "loginctl",
   "show-user",

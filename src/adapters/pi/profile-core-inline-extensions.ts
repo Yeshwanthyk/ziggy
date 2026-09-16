@@ -31,10 +31,13 @@ const inspectMemoryFile = async (
 ): Promise<LoadedMemoryDocument | undefined> => {
   try {
     const status = await lstat(document.absolutePath);
+
     if (status.isSymbolicLink() || !status.isFile()) {
       throw new Error(`${document.absolutePath} must be a regular non-symlink memory file`);
     }
+
     const file = await open(document.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+
     try {
       return { content: (await file.readFile()).toString("utf8") };
     } finally {
@@ -80,9 +83,11 @@ const buildMemoryPrompt = (
       const sections = loaded.flatMap(({ document, content }) =>
         content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
       );
+
       sections.push(
         "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
       );
+
       return sections.join("\n\n");
     }),
   );
@@ -110,6 +115,7 @@ export const refreshProfileMemory = (
       }),
     }),
   );
+
   // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning before_agent_start callback; this is the single adapter bridge.
   return Effect.runPromise(program);
 };
@@ -140,6 +146,7 @@ export const createEphemeralPromptContextExtension = (
   factory: (pi) => {
     pi.on("before_agent_start", (event) => {
       const context = current();
+
       return context === undefined ? undefined : appendEphemeralPromptContext(event, context);
     });
   },

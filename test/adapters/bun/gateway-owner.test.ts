@@ -13,13 +13,17 @@ import {
 } from "ziggy/adapters/bun/gateway-owner";
 
 const paths: Array<string> = [];
+
 const target = async (prefix = "ziggy-owner-"): Promise<ProfileTarget> => {
   const path = await mkdtemp(join(tmpdir(), prefix));
   paths.push(path);
+
   return { path, name: "Test" };
 };
+
 const runtime = (pidIsAlive: (pid: number) => boolean = () => true): GatewayOwnerRuntime => {
   let id = 0;
+
   return {
     pid: 4242,
     makeOwnerId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`,
@@ -27,6 +31,7 @@ const runtime = (pidIsAlive: (pid: number) => boolean = () => true): GatewayOwne
     pidIsAlive,
   };
 };
+
 const record = (ownerId: string, pid = 4242) =>
   `${JSON.stringify({ version: 1, ownerId, pid, acquiredAt: "2026-01-01T00:00:00.000Z" })}\n`;
 
@@ -95,6 +100,7 @@ describe("gateway owner inspection", () => {
     const malformed = await Effect.runPromise(
       inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
     );
+
     expect(Result.isFailure(malformed) && malformed.failure.reason).toBe("unreadable");
     expect(await readFile(lockPath, "utf8")).toBe("not-json\n");
 
@@ -102,9 +108,11 @@ describe("gateway owner inspection", () => {
     const external = join(profile.path, "external-owner");
     await writeFile(external, record("00000000-0000-4000-8000-999999999999"));
     await symlink(external, lockPath);
+
     const linked = await Effect.runPromise(
       inspectGatewayOwner(profile, runtime()).pipe(Effect.result),
     );
+
     expect(Result.isFailure(linked) && linked.failure.reason).toBe("unreadable");
     expect(await readFile(external, "utf8")).toBe(record("00000000-0000-4000-8000-999999999999"));
   });
@@ -122,6 +130,7 @@ describe("gateway owner", () => {
             Array.from({ length: 24 }, () => acquireGatewayOwner(first, host).pipe(Effect.result)),
             { concurrency: "unbounded" },
           );
+
           expect(attempts.filter(Result.isSuccess)).toHaveLength(1);
           const failures = attempts.filter(Result.isFailure).map(({ failure }) => failure);
           expect(failures.every((failure) => failure.reason === "held")).toBe(true);
@@ -137,6 +146,7 @@ describe("gateway owner", () => {
     const profile = await target();
     const host = runtime();
     const entered = await Effect.runPromise(Deferred.make<void>());
+
     const owner = Effect.runFork(
       Effect.scoped(
         acquireGatewayOwner(profile, host).pipe(
@@ -145,6 +155,7 @@ describe("gateway owner", () => {
         ),
       ),
     );
+
     await Effect.runPromise(Deferred.await(entered));
     await Effect.runPromise(Fiber.interrupt(owner));
     await Effect.runPromise(Effect.scoped(acquireGatewayOwner(profile, host)));
@@ -212,9 +223,11 @@ describe("gateway owner", () => {
     const lockPath = gatewayOwnerPath(profile);
     await mkdir(join(profile.path, ".runtime"));
     await writeFile(lockPath, "not-json\n");
+
     const malformed = await Effect.runPromise(
       Effect.scoped(acquireGatewayOwner(profile, runtime()).pipe(Effect.result)),
     );
+
     expect(Result.isFailure(malformed) && malformed.failure.message).toBe(
       `gateway ownership at ${lockPath} is unreadable`,
     );

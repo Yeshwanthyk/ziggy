@@ -57,6 +57,7 @@ const changesBetween = (
 ): ExtensionManagerChanges => {
   const currentSet = new Set(current);
   const nextSet = new Set(next);
+
   return {
     added: next.filter((id) => !currentSet.has(id)),
     removed: current.filter((id) => !nextSet.has(id)),
@@ -71,33 +72,41 @@ export const manageExtensions = (
 ) =>
   Effect.gen(function* () {
     let profile = options.target;
+
     if (profile === undefined) {
       const availableProfiles = yield* profiles.listProfiles(
         options.profilesDirectory,
         options.registryPath,
       );
+
       if (availableProfiles.length === 0) return { status: "empty" } as const;
       const choice = yield* interaction.selectProfile(availableProfiles);
       profile = choice === undefined ? undefined : asTarget(choice);
     }
+
     if (profile === undefined) return { status: "cancelled" } as const;
 
     const listing = yield* extensions.listForProfile(profile.path, options.repositoryRoot);
     const requested = yield* interaction.selectExtensions(profile, listing);
+
     if (requested === undefined) return { status: "cancelled" } as const;
 
     const changes = changesBetween(listing.selected, requested);
+
     if (changes.added.length === 0 && changes.removed.length === 0) {
       return { status: "unchanged", profile, selected: listing.selected } as const;
     }
 
     const confirmed = yield* interaction.confirmChanges(profile, changes);
+
     if (confirmed !== true) return { status: "cancelled" } as const;
 
     const result = yield* extensions.setSelected(profile, options.repositoryRoot, requested);
+
     if (!result.changed) {
       return { status: "unchanged", profile, selected: result.selected } as const;
     }
+
     return {
       status: "changed",
       profile,

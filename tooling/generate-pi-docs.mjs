@@ -6,9 +6,13 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PINNED_VERSION = "0.84.1";
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
 const outputPath = join(repositoryRoot, "src/adapters/pi/generated/pi-docs.ts");
+
 const packageRoot = join(repositoryRoot, "node_modules/@earendil-works/pi-coding-agent");
+
 const generatedDir = dirname(outputPath);
 
 const fail = (message) => {
@@ -29,9 +33,11 @@ const importAlias = (logical) =>
 const quote = (value) => JSON.stringify(value);
 
 const packageManifest = await Bun.file(join(packageRoot, "package.json")).json();
+
 if (packageManifest.name !== "@earendil-works/pi-coding-agent") {
   fail("pi-docs generator requires @earendil-works/pi-coding-agent");
 }
+
 if (packageManifest.version !== PINNED_VERSION) {
   fail(
     `pi-docs generator requires @earendil-works/pi-coding-agent@${PINNED_VERSION}, found ${packageManifest.version}`,
@@ -40,8 +46,11 @@ if (packageManifest.version !== PINNED_VERSION) {
 
 const collectMarkdown = (absolutePath, logical) => {
   const status = lstatSync(absolutePath);
+
   if (status.isSymbolicLink()) fail(`pi-docs generator rejected symlink: ${absolutePath}`);
+
   if (!status.isFile()) fail(`pi-docs generator expected a file: ${absolutePath}`);
+
   return {
     logical,
     absolutePath,
@@ -51,8 +60,11 @@ const collectMarkdown = (absolutePath, logical) => {
 };
 
 const readme = collectMarkdown(join(packageRoot, "README.md"), "README.md");
+
 const docsRoot = join(packageRoot, "docs");
+
 const docsStatus = lstatSync(docsRoot);
+
 if (docsStatus.isSymbolicLink() || !docsStatus.isDirectory()) {
   fail("pi-docs generator expected a physical docs directory");
 }
@@ -63,7 +75,9 @@ const docs = readdirSync(docsRoot)
   .map((name) => collectMarkdown(join(docsRoot, name), `docs/${name}`));
 
 const files = [readme, ...docs];
+
 if (files.length < 2) fail("pi-docs generator found no pinned markdown");
+
 if (new Set(files.map((file) => file.logical)).size !== files.length) {
   fail("pi-docs generator found duplicate logical names");
 }
@@ -92,12 +106,15 @@ ${files.map((file) => `  [${quote(file.logical)}, ${importAlias(file.logical)}],
 
 if (process.argv.includes("--check")) {
   const current = Bun.file(outputPath);
+
   if (!(await current.exists()) || (await current.text()) !== source) {
     fail(`generated pi docs are stale: ${outputPath}`);
   }
+
   console.log(`pi docs fingerprint ${fingerprint}`);
   process.exit(0);
 }
 
 await Bun.write(outputPath, source);
+
 console.log(`wrote pi docs fingerprint ${fingerprint}`);

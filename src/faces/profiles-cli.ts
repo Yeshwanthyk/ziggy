@@ -15,10 +15,13 @@ export const ProfileListingJson = Schema.Struct({
   name: Schema.String,
   path: Schema.String,
 });
+
 export type ProfileListingJson = typeof ProfileListingJson.Type;
 
 export const ProfilesJson = Schema.Array(ProfileListingJson);
+
 export type ProfilesJson = typeof ProfilesJson.Type;
+
 const encodeProfiles = Schema.encodeSync(ProfilesJson);
 
 export interface ProfilesRenderOptions extends TerminalRenderOptions {
@@ -36,6 +39,7 @@ const suspiciousProfileName = (name: string): boolean => name.startsWith("-");
 
 const profileMonogram = (name: string): string => {
   const words = name.match(/[A-Za-z0-9]+/g) ?? [];
+
   if (words.length > 1) {
     return words
       .slice(0, 2)
@@ -43,6 +47,7 @@ const profileMonogram = (name: string): string => {
       .join("")
       .toUpperCase();
   }
+
   return (words[0] ?? "??").slice(0, 2).toUpperCase().padEnd(2, "·");
 };
 
@@ -62,6 +67,7 @@ export const renderProfiles = (
   const innerWidth = width - 4;
   const count = `${profiles.length} profile${profiles.length === 1 ? "" : "s"}`;
   const badge = ziggyBadge(color);
+
   const lines = [
     panelRule(color, "╭", "─", "╮", width),
     panelLine(
@@ -84,16 +90,20 @@ export const renderProfiles = (
       panelLine(color, "", width),
       panelRule(color, "╰", "─", "╯", width),
     );
+
     return lines.join("\n");
   }
 
   const pathWidth = innerWidth - 5;
+
   for (const profile of profiles) {
     const suspicious = suspiciousProfileName(profile.name);
     const warning = suspicious ? color.yellow("invalid name") : "";
+
     const tile = suspicious
       ? color.bgYellow(color.black(color.bold(" !! ")))
       : color.bgMagenta(color.black(color.bold(` ${profileMonogram(profile.name)} `)));
+
     const rowPrefix = `${tile} `;
     const warningWidth = suspicious ? Bun.stringWidth("invalid name") + 2 : 0;
     const nameWidth = innerWidth - Bun.stringWidth(rowPrefix) - warningWidth;
@@ -132,6 +142,7 @@ export const renderProfiles = (
       ),
     );
   }
+
   lines.push(panelRule(color, "╰", "─", "╯", width));
 
   return lines.join("\n");

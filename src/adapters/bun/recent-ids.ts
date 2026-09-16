@@ -14,12 +14,15 @@ export const makeRecentIds = (capacity: number): RecentIds => {
       }
 
       ids.add(id);
+
       if (ids.size > capacity) {
         const oldest = ids.values().next().value;
+
         if (oldest !== undefined) {
           ids.delete(oldest);
         }
       }
+
       return true;
     },
   };

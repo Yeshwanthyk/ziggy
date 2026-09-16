@@ -29,10 +29,13 @@ class FakeDiscordConnection implements DiscordSocketConnection {
   };
   close = () => {
     if (this.closeThrows) throw new Error("close failed");
+
     if (!this.closeCompletes) {
       return;
     }
+
     this.state = 3;
+
     for (const listener of this.closeListeners) {
       listener(1000);
     }
@@ -42,6 +45,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
     this.add(this.messageListeners, listener);
   onError = (listener: () => void) => {
     if (this.errorRegistrationThrows) throw new Error("listener registration failed");
+
     return this.add(this.errorListeners, listener);
   };
   onClose = (listener: (code: number) => void) => this.add(this.closeListeners, listener);
@@ -58,6 +62,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
 
   emitClose(code: number) {
     this.state = 3;
+
     for (const listener of this.closeListeners) {
       listener(code);
     }
@@ -65,6 +70,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
 
   private add<A>(listeners: Set<A>, listener: A): () => void {
     listeners.add(listener);
+
     return () => {
       if (listeners.delete(listener)) {
         this.removedListeners += 1;
@@ -84,6 +90,7 @@ const apiFailure = (reason: DiscordApiError["reason"]): DiscordApiError =>
 
 const dependencies = (overrides: Partial<DiscordSocketDependencies> = {}) => {
   const connections: Array<FakeDiscordConnection> = [];
+
   return {
     connections,
     value: {
@@ -91,6 +98,7 @@ const dependencies = (overrides: Partial<DiscordSocketDependencies> = {}) => {
       connect: () => {
         const connection = new FakeDiscordConnection();
         connections.push(connection);
+
         return connection;
       },
       schedule: () => () => undefined,
@@ -115,6 +123,7 @@ const ready = JSON.stringify({
     guilds: [{ id: "guild-1" }],
   },
 });
+
 const message = (id: string) =>
   JSON.stringify({
     op: 0,
@@ -149,6 +158,7 @@ describe("Discord socket Effect boundary", () => {
           const connected = yield* socket.nextConnectionState;
           fixture.connections[0]?.emitClose(1001);
           const reconnecting = yield* socket.nextConnectionState;
+
           return [connected, reconnecting];
         }),
       ),
@@ -169,6 +179,7 @@ describe("Discord socket Effect boundary", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("invalid-token", 0, fixture.value);
+
           return yield* socket.next.pipe(Effect.result);
         }),
       ),
@@ -188,12 +199,14 @@ describe("Discord socket Effect boundary", () => {
 
   test("fails malformed gateway JSON through the receive channel", async () => {
     const fixture = dependencies();
+
     const result = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
           fixture.connections[0]?.emitMessage("{");
+
           return yield* socket.next.pipe(Effect.result);
         }),
       ),
@@ -204,6 +217,7 @@ describe("Discord socket Effect boundary", () => {
 
   test("decodes bounded Discord attachment metadata for file-only messages", async () => {
     const fixture = dependencies();
+
     const received = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -237,6 +251,7 @@ describe("Discord socket Effect boundary", () => {
               },
             }),
           );
+
           return yield* socket.next;
         }),
       ),
@@ -262,12 +277,14 @@ describe("Discord socket Effect boundary", () => {
 
   test("decodes and deduplicates owner slash-command interactions", async () => {
     const fixture = dependencies();
+
     const received = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
           fixture.connections[0]?.emitMessage(ready);
+
           const interaction = JSON.stringify({
             op: 0,
             s: 44,
@@ -283,11 +300,13 @@ describe("Discord socket Effect boundary", () => {
               data: { type: 1, name: "status" },
             },
           });
+
           fixture.connections[0]?.emitMessage(interaction);
           fixture.connections[0]?.emitMessage(interaction);
           fixture.connections[0]?.emitMessage(
             interaction.replace('"interaction-1"', '"interaction-2"').replace('"status"', '"stop"'),
           );
+
           const nextInteraction =
             socket.nextInteraction ??
             Effect.fail(
@@ -299,8 +318,10 @@ describe("Discord socket Effect boundary", () => {
                 cause: new Error("missing interaction queue"),
               }),
             );
+
           const first = yield* nextInteraction;
           const second = yield* nextInteraction;
+
           return { first, second };
         }),
       ),
@@ -322,19 +343,23 @@ describe("Discord socket Effect boundary", () => {
   test("resumes after a retryable close without bootstrapping again", async () => {
     let bootstraps = 0;
     const urls: Array<string> = [];
+
     const fixture = dependencies({
       getGatewayBot: () => {
         bootstraps += 1;
+
         return Effect.succeed({ url: "wss://gateway.discord.test" });
       },
       connect: (url) => {
         urls.push(url);
         const connection = new FakeDiscordConnection();
         fixture.connections.push(connection);
+
         return connection;
       },
       schedule: (_delay, task) => {
         task();
+
         return () => undefined;
       },
     });
@@ -360,6 +385,7 @@ describe("Discord socket Effect boundary", () => {
 
   test("interrupting one pending receive does not consume the next message", async () => {
     const fixture = dependencies();
+
     const received = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -369,6 +395,7 @@ describe("Discord socket Effect boundary", () => {
           yield* Fiber.interrupt(pending);
           fixture.connections[0]?.emitMessage(ready);
           fixture.connections[0]?.emitMessage(message("m1"));
+
           return yield* socket.next;
         }),
       ),
@@ -379,6 +406,7 @@ describe("Discord socket Effect boundary", () => {
 
   test("fails fast when the bounded inbound queue overflows", async () => {
     const fixture = dependencies({ inboundCapacity: 1 });
+
     const result = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -388,6 +416,7 @@ describe("Discord socket Effect boundary", () => {
           fixture.connections[0]?.emitMessage(message("m1"));
           fixture.connections[0]?.emitMessage(message("m2"));
           yield* yieldToSupervisor;
+
           return yield* socket.next.pipe(Effect.result);
         }),
       ),
@@ -402,6 +431,7 @@ describe("Discord socket Effect boundary", () => {
         const connection = new FakeDiscordConnection();
         connection.errorRegistrationThrows = true;
         fixture.connections.push(connection);
+
         return connection;
       },
     });
@@ -421,6 +451,7 @@ describe("Discord socket Effect boundary", () => {
 
   test("reconnect close failures are reported after listeners detach", async () => {
     const cleanupFailures: Array<string> = [];
+
     const fixture = dependencies({
       reportCleanupFailure: (failure) => cleanupFailures.push(failure.reason),
     });
@@ -431,6 +462,7 @@ describe("Discord socket Effect boundary", () => {
           yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
           const connection = fixture.connections[0];
+
           if (connection === undefined) return;
           connection.closeThrows = true;
           connection.emitError();
@@ -446,15 +478,18 @@ describe("Discord socket Effect boundary", () => {
 
   test("close is bounded and scope cleanup removes listeners", async () => {
     const fixture = dependencies();
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         const socket = yield* openDiscordSocket("token", 0, fixture.value);
         yield* yieldToSupervisor;
         const connection = fixture.connections[0];
         expect(connection).toBeDefined();
+
         if (connection === undefined) {
           return;
         }
+
         connection.closeCompletes = false;
         const closeFiber = yield* socket.close.pipe(Effect.result, Effect.forkChild);
         yield* TestClock.adjust("1 second");

@@ -6,12 +6,15 @@ import { join, resolve } from "node:path";
 import { createAgentSessionServices } from "@earendil-works/pi-coding-agent";
 
 const [profileArgument, extensionArgument, codeArgument] = process.argv.slice(2);
+
 if (profileArgument === undefined || extensionArgument === undefined) {
   throw new Error("usage: profile-smoke.ts <profile-path> <installed-codemode-path> [code]");
 }
 
 const profilePath = resolve(profileArgument);
+
 const extensionPath = resolve(extensionArgument);
+
 const services = await createAgentSessionServices({
   cwd: profilePath,
   agentDir: profilePath,
@@ -25,12 +28,17 @@ const services = await createAgentSessionServices({
     additionalExtensionPaths: [extensionPath],
   },
 });
+
 const loaded = services.resourceLoader.getExtensions();
+
 const extension = loaded.extensions.find((item) => item.tools.has("codemode_execute"));
+
 const tool = extension?.tools.get("codemode_execute")?.definition;
+
 if (tool === undefined) throw new Error("installed extension did not register codemode_execute");
 
 const context = { cwd: profilePath } as never;
+
 try {
   const response = await tool.execute(
     "profile-smoke",
@@ -39,6 +47,7 @@ try {
     undefined,
     context,
   );
+
   console.log(JSON.stringify(response.details));
 } finally {
   for (const handler of extension?.handlers.get("session_shutdown") ?? []) {

@@ -53,29 +53,38 @@ import {
 import { makeBrowserJobBridge } from "./src/browser-job-bridge.ts";
 
 const OUTPUT_LIMIT = 32 * 1024;
+
 const NonEmptyText = Type.String({ minLength: 1, maxLength: 1_024 });
+
 const EmptyParameters = Type.Object({}, { additionalProperties: false });
+
 const RecordStartParameters = Type.Object(
   { name: NonEmptyText, goal: NonEmptyText },
   { additionalProperties: false },
 );
+
 const DraftParameters = Type.Object({ draftId: WorkflowIdSchema }, { additionalProperties: false });
+
 const PreparePublishParameters = Type.Object(
   { draftId: WorkflowIdSchema, workflow: WorkflowDefinitionSchema },
   { additionalProperties: false },
 );
+
 const PublishParameters = Type.Object(
   { approvalId: WorkflowIdSchema },
   { additionalProperties: false },
 );
+
 const WorkflowParameters = Type.Object(
   { workflowId: WorkflowIdSchema },
   { additionalProperties: false },
 );
+
 const SaveBrowserWorkflowParameters = Type.Object(
   { workflow: BrowserJobDefinitionSchema },
   { additionalProperties: false },
 );
+
 const FinishRunParameters = Type.Object(
   { runId: WorkflowIdSchema },
   { additionalProperties: false },
@@ -93,9 +102,11 @@ const result = (payload: unknown) => ({
 
 const strictResult = (payload: unknown) => {
   const text = JSON.stringify(payload, null, 2);
+
   if (text.length > 256 * 1024) {
     throw new Error("Browser workflow result exceeded the output cap and was not truncated.");
   }
+
   return { content: [{ type: "text" as const, text }], details: payload };
 };
 
@@ -115,11 +126,13 @@ const userInputRevision = (ctx: Pick<ExtensionContext, "sessionManager">): numbe
 export default function computerWorkflows(pi: ExtensionAPI): void {
   const active = new Map<string, ActiveRecording>();
   const activeRuns = new Map<string, ActiveWorkflowRun>();
+
   const clearProfileRecording = (profilePath: string): void => {
     for (const key of active.keys()) {
       if (key.startsWith(`${profilePath}\0`)) active.delete(key);
     }
   };
+
   const clearProfileRuns = (profilePath: string): void => {
     for (const key of activeRuns.keys()) {
       if (key.startsWith(`${profilePath}\0`)) activeRuns.delete(key);
@@ -128,14 +141,18 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
 
   pi.on("tool_call", (event, ctx) => {
     const recording = active.get(sessionKey(ctx));
+
     if (recording !== undefined) observeToolCall(recording, event);
     const run = activeRuns.get(sessionKey(ctx));
+
     if (run !== undefined) observeRunToolCall(run, event);
   });
   pi.on("tool_result", (event, ctx) => {
     const recording = active.get(sessionKey(ctx));
+
     if (recording !== undefined) observeToolResult(recording, event);
     const run = activeRuns.get(sessionKey(ctx));
+
     if (run !== undefined) {
       observeRunToolResult(run, {
         toolCallId: event.toolCallId,
@@ -174,6 +191,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         const workflow = validateBrowserJobDefinition(parameters.workflow);
         const saved = makeSavedBrowserJob(workflow);
         const paths = await saveBrowserJob(ctx.cwd, saved);
+
         return result({
           ok: true,
           status: "saved",
@@ -197,6 +215,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
       try {
         const workflows = await listBrowserJobs(ctx.cwd);
+
         return result({
           workflows: workflows.map((entry) => ({
             id: entry.workflow.id,
@@ -239,6 +258,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
       try {
         const saved = await readBrowserJob(ctx.cwd, parameters.workflowId);
         const runSignal = signal ?? new AbortController().signal;
+
         const completed = await withBrowserJobLock(
           ctx.cwd,
           saved.workflow.id,
@@ -256,6 +276,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
               signal: runSignal,
             }),
         );
+
         return strictResult(completed);
       } catch (cause) {
         throw boundedFailure(cause);
@@ -272,14 +293,18 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       const key = sessionKey(ctx);
+
       if (active.has(key))
         throw new Error("This session already has an active workflow recording.");
+
       const recording = startRecording(
         parameters.name,
         parameters.goal,
         ctx.sessionManager.getSessionId(),
       );
+
       active.set(key, recording);
+
       return result({ ok: true, recordingId: recording.id, status: "recording" });
     },
   });
@@ -294,12 +319,15 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
       const key = sessionKey(ctx);
       const recording = active.get(key);
+
       if (recording === undefined)
         throw new Error("This session has no active workflow recording.");
       active.delete(key);
+
       try {
         const draft = finishRecording(recording);
         const path = await writeDraft(ctx.cwd, draft);
+
         return result({
           ok: true,
           status: draft.status,
@@ -322,7 +350,9 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     executionMode: "sequential",
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
       const cancelled = active.delete(sessionKey(ctx));
+
       if (!cancelled) throw new Error("This session has no active workflow recording.");
+
       return result({ ok: true, status: "cancelled", persisted: false });
     },
   });
@@ -353,6 +383,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
       try {
         const draft = await readDraft(ctx.cwd, parameters.draftId);
         const workflow = validateWorkflowDefinition(parameters.workflow);
+
         const approval = makePublishApproval({
           workflow,
           sourceDraftId: draft.id,
@@ -360,7 +391,9 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
           cwd: ctx.cwd,
           preparedAtUserInput: userInputRevision(ctx),
         });
+
         const approvalPath = await writePublishApproval(ctx.cwd, approval);
+
         return result({
           ok: true,
           status: "awaiting-user-approval",
@@ -395,6 +428,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         });
         const published = makePublishedWorkflow(approval.workflow, approval.sourceDraftId);
         const paths = await publishWorkflow(ctx.cwd, published);
+
         return result({
           ok: true,
           status: "saved",
@@ -417,6 +451,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
       try {
         const workflows = await listWorkflows(ctx.cwd);
+
         return result({
           workflows: workflows.map((entry) => ({
             id: entry.workflow.id,
@@ -457,11 +492,14 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
         const key = sessionKey(ctx);
+
         if (activeRuns.has(key)) {
           throw new Error("This session already has an active workflow run; finish it first.");
         }
+
         const published = await readWorkflow(ctx.cwd, parameters.workflowId);
         const compiled = compileExecutionPlan(published.workflow);
+
         const run: RunRecord = {
           format: "ziggy-computer-workflow-run",
           formatVersion: 1,
@@ -474,8 +512,10 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
           plannedSegmentCount: compiled.segments.length,
           manualStepCount: compiled.manual.length,
         };
+
         const runPath = await writeRunRecord(ctx.cwd, run);
         activeRuns.set(key, startActiveRun(run, compiled));
+
         return result({
           runId: run.id,
           run,
@@ -506,12 +546,15 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
       try {
         const key = sessionKey(ctx);
         const run = activeRuns.get(key);
+
         if (run === undefined || run.record.id !== parameters.runId) {
           throw new Error("No matching active workflow run exists in this session.");
         }
+
         const summary = finishActiveRun(run);
         const summaryPath = await writeRunSummary(ctx.cwd, summary);
         activeRuns.delete(key);
+
         return result({ summary, summaryPath });
       } catch (cause) {
         throw boundedFailure(cause);

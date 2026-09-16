@@ -79,6 +79,7 @@ const temporaryPaths: Array<string> = [];
 const temporaryProfile = async (): Promise<string> => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-pi-agent-"));
   temporaryPaths.push(profilePath);
+
   return profilePath;
 };
 
@@ -93,6 +94,7 @@ const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {
         cause: undefined,
       }),
     );
+
   return {
     list: unused,
     show: unused,
@@ -128,6 +130,7 @@ test("current Pi session reference is empty until materialized and follows sessi
   const sessionDirectory = join(profilePath, "sessions", "ui", "main");
   const manager = SessionManager.create(profilePath, sessionDirectory, { id: "initial-session" });
   const initialFile = manager.getSessionFile();
+
   if (initialFile === undefined) throw new Error("persistent session did not allocate a file");
 
   expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toBeUndefined();
@@ -173,14 +176,17 @@ const invokeMemoryHandler = async (
   context: ChatContext,
 ): Promise<(systemPrompt: string) => Promise<BeforeAgentStartEventResult | undefined>> => {
   const paths = memoryFilePaths(profilePath, context);
+
   if (!paths.ok) {
     throw paths.error;
   }
 
   const extension = createProfileMemoryExtension(profilePath, paths.documents);
+
   if (!("hidden" in extension)) {
     throw new Error("expected named inline extension");
   }
+
   expect(extension.hidden).toBe(true);
 
   return (systemPrompt) => refreshProfileMemory(profilePath, paths.documents, { systemPrompt });
@@ -198,10 +204,12 @@ describe("Pi provider failure classification", () => {
   test("finished tool events keep the start command detail", async () => {
     let listener: AgentSessionEventListener | undefined;
     const progress: Array<ChatProgressEvent> = [];
+
     const session: Parameters<typeof promptForAssistantText>[1] = {
       isIdle: false,
       subscribe: (next) => {
         listener = next;
+
         return () => {
           listener = undefined;
         };
@@ -209,11 +217,13 @@ describe("Pi provider failure classification", () => {
       prompt: () => new Promise(() => undefined),
       abort: () => Promise.resolve(),
     };
+
     const fiber = Effect.runFork(
       promptForAssistantText("/profile", session, "hello", {
         onProgress: (event) => progress.push(event),
       }),
     );
+
     await Effect.runPromise(Effect.yieldNow);
     listener?.({
       type: "tool_execution_start",
@@ -254,10 +264,12 @@ describe("Pi provider failure classification", () => {
     let listener: AgentSessionEventListener | undefined;
     let aborted = 0;
     const progress: Array<ChatProgressEvent> = [];
+
     const session: Parameters<typeof promptForAssistantText>[1] = {
       isIdle: false,
       subscribe: (next) => {
         listener = next;
+
         return () => {
           listener = undefined;
         };
@@ -267,11 +279,13 @@ describe("Pi provider failure classification", () => {
         aborted += 1;
       },
     };
+
     const fiber = Effect.runFork(
       promptForAssistantText("/profile", session, "hello", {
         onProgress: (event) => progress.push(event),
       }),
     );
+
     await Effect.runPromise(Effect.yieldNow);
     const thinking = assistantMessage("");
     listener?.({
@@ -321,6 +335,7 @@ describe("Pi provider failure classification", () => {
     let releaseAbort: (() => void) | undefined;
     const listeners = new Set<AgentSessionEventListener>();
     const events: Array<ChatEvent> = [];
+
     const handle = makeSessionChatHandle(
       "/profile",
       {
@@ -330,6 +345,7 @@ describe("Pi provider failure classification", () => {
         prompt: () => Promise.resolve(),
         abort: () => {
           aborted += 1;
+
           return new Promise<void>((resolve) => {
             releaseAbort = resolve;
           });
@@ -338,6 +354,7 @@ describe("Pi provider failure classification", () => {
         followUp: () => Promise.resolve(),
         subscribe: (listener) => {
           listeners.add(listener);
+
           return () => {
             listeners.delete(listener);
           };
@@ -348,6 +365,7 @@ describe("Pi provider failure classification", () => {
         dispose: Effect.void,
       },
     );
+
     const unsubscribe = handle.subscribe((event) => events.push(event));
 
     expect(await Effect.runPromiseExit(handle.steer("nudge"))).toEqual(
@@ -381,6 +399,7 @@ describe("Pi provider failure classification", () => {
     for (const listener of listeners) {
       listener({ type: "agent_settled" });
     }
+
     expect(events).toEqual([{ kind: "settled" }]);
     unsubscribe();
     await Effect.runPromise(handle.dispose);
@@ -440,10 +459,12 @@ describe("Pi ephemeral prompt context", () => {
 
   test("uses context for one real provider turn without persisting or replaying it", async () => {
     const requestBodies: Array<string> = [];
+
     const server = Bun.serve({
       port: 0,
       fetch: async (request) => {
         requestBodies.push(JSON.stringify(await request.json()));
+
         return new Response(
           [
             'data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},"finish_reason":null}]}',
@@ -455,6 +476,7 @@ describe("Pi ephemeral prompt context", () => {
         );
       },
     });
+
     try {
       const profilePath = await temporaryProfile();
       const sessionDirectory = join(profilePath, "sessions", "slack-thread");
@@ -488,6 +510,7 @@ describe("Pi ephemeral prompt context", () => {
           "fresh",
         ),
       );
+
       try {
         await Effect.runPromise(
           handle.prompt("first current message", {
@@ -502,9 +525,11 @@ describe("Pi ephemeral prompt context", () => {
       expect(requestBodies).toHaveLength(2);
       expect(requestBodies[0]).toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
       expect(requestBodies[1]).not.toContain("SLACK_THREAD_CONTEXT_ONLY_90210");
+
       const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
         path.endsWith(".jsonl"),
       );
+
       expect(files).toHaveLength(1);
       const transcript = await readFile(join(sessionDirectory, files[0] ?? ""), "utf8");
       expect(transcript).toContain("first current message");
@@ -520,11 +545,13 @@ describe("Profile-authoritative model selection", () => {
   test("a resumed session uses the Profile model instead of its historical model", async () => {
     const oldRequests: Array<string> = [];
     const newRequests: Array<string> = [];
+
     const serveModel = (requests: Array<string>, model: string) =>
       Bun.serve({
         port: 0,
         fetch: async (request) => {
           requests.push(JSON.stringify(await request.json()));
+
           return new Response(
             [
               `data: {"id":"fixture","object":"chat.completion.chunk","created":1,"model":"${model}","choices":[{"index":0,"delta":{"role":"assistant","content":"answer"},"finish_reason":null}]}`,
@@ -536,6 +563,7 @@ describe("Profile-authoritative model selection", () => {
           );
         },
       });
+
     const oldServer = serveModel(oldRequests, "old-model");
     const newServer = serveModel(newRequests, "new-model");
 
@@ -589,6 +617,7 @@ describe("Profile-authoritative model selection", () => {
       });
       historical.appendModelChange("old", "old-model");
       const sessionFile = historical.getSessionFile();
+
       if (sessionFile === undefined) throw new Error("expected a persisted historical session");
 
       await writeFile(
@@ -610,6 +639,7 @@ describe("Profile-authoritative model selection", () => {
           "continue",
         ),
       );
+
       try {
         expect(await Effect.runPromise(handle.prompt("current request"))).toBe("answer");
       } finally {
@@ -638,10 +668,12 @@ describe("Pi prompt cancellation", () => {
     let promptOptions: Parameters<Parameters<typeof promptForAssistantText>[1]["prompt"]>[1];
     let unsubscribes = 0;
     let aborts = 0;
+
     const session: Parameters<typeof promptForAssistantText>[1] = {
       isIdle: false,
       subscribe: (next) => {
         listener = next;
+
         return () => {
           listener = undefined;
           unsubscribes += 1;
@@ -650,13 +682,16 @@ describe("Pi prompt cancellation", () => {
       prompt: (_text, options) => {
         promptStarted = true;
         promptOptions = options;
+
         return new Promise(() => undefined);
       },
       abort: () => {
         aborts += 1;
+
         return Promise.resolve();
       },
     };
+
     const images = [{ type: "image" as const, data: "AQID", mimeType: "image/png" }];
     const fiber = Effect.runFork(promptForAssistantText("/profile", session, "hello", { images }));
     await Effect.runPromise(Effect.yieldNow);
@@ -682,20 +717,24 @@ describe("Pi prompt cancellation", () => {
     let listener: AgentSessionEventListener | undefined;
     let promptOptions: Parameters<Parameters<typeof promptForAssistantText>[1]["prompt"]>[1];
     const progress: Array<ChatProgressEvent> = [];
+
     const session: Parameters<typeof promptForAssistantText>[1] = {
       isIdle: false,
       subscribe: (next) => {
         listener = next;
+
         return () => {
           listener = undefined;
         };
       },
       prompt: (_text, options) => {
         promptOptions = options;
+
         return new Promise(() => undefined);
       },
       abort: () => Promise.resolve(),
     };
+
     const assistant: AssistantMessage = {
       role: "assistant",
       content: [{ type: "text", text: "a".repeat(4_200) }],
@@ -713,12 +752,14 @@ describe("Pi prompt cancellation", () => {
       stopReason: "stop",
       timestamp: 0,
     };
+
     const fiber = Effect.runFork(
       promptForAssistantText("/profile", session, "hello", {
         images: [{ type: "image", data: "AQID", mimeType: "image/png" }],
         onProgress: (event) => progress.push(event),
       }),
     );
+
     await Effect.runPromise(Effect.yieldNow);
     const emit = (event: Parameters<AgentSessionEventListener>[0]) => listener?.(event);
 
@@ -839,9 +880,11 @@ describe("Profile memory refresh", () => {
     await writeFile(join(profilePath, "memory", "groups", "team.md"), "team-group\n", "utf8");
 
     const local = await (await invokeMemoryHandler(profilePath, { kind: "local" }))("SOUL");
+
     const user = await (
       await invokeMemoryHandler(profilePath, { kind: "user", userId: "alice" })
     )("SOUL");
+
     const group = await (
       await invokeMemoryHandler(profilePath, { kind: "group", groupId: "team" })
     )("SOUL");
@@ -875,6 +918,7 @@ describe("Profile runtime activation rollback", () => {
   test("disposes the actual runtime once before activation failure escapes", async () => {
     const profilePath = await temporaryProfile();
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+
     const activationFailure = new ProfileExtensionPreflightFailed({
       profilePath,
       stage: "services",
@@ -882,9 +926,12 @@ describe("Profile runtime activation rollback", () => {
       diagnostics: [],
       cause: "injected",
     });
+
     const events: Array<string> = [];
+
     const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
       Effect.fail(activationFailure);
+
     const profileExtensions: ProfileExtensionsApi = {
       list: unused,
       show: unused,
@@ -900,12 +947,15 @@ describe("Profile runtime activation rollback", () => {
         }),
       activateRuntime: () => {
         events.push("activate");
+
         return Effect.fail(activationFailure);
       },
     };
+
     let constructedRuntime: AgentSessionRuntime | undefined;
     let disposedRuntime: AgentSessionRuntime | undefined;
     let disposeCalls = 0;
+
     const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
       const runtime = await createAgentSessionRuntime(createRuntime, options);
       constructedRuntime = runtime;
@@ -915,8 +965,10 @@ describe("Profile runtime activation rollback", () => {
         disposeCalls += 1;
         disposedRuntime = runtime;
         events.push("dispose");
+
         return dispose();
       };
+
       return runtime;
     };
 
@@ -950,6 +1002,7 @@ describe("Profile runtime activation rollback", () => {
   test("propagates a typed rollback failure when runtime disposal also fails", async () => {
     const profilePath = await temporaryProfile();
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+
     const activationFailure = new ProfileExtensionPreflightFailed({
       profilePath,
       stage: "services",
@@ -957,10 +1010,13 @@ describe("Profile runtime activation rollback", () => {
       diagnostics: [],
       cause: "injected",
     });
+
     const disposalFailure = new Error("injected disposal failure");
     const events: Array<string> = [];
+
     const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
       Effect.fail(activationFailure);
+
     const profileExtensions: ProfileExtensionsApi = {
       list: unused,
       show: unused,
@@ -976,10 +1032,13 @@ describe("Profile runtime activation rollback", () => {
         }),
       activateRuntime: () => {
         events.push("activate");
+
         return Effect.fail(activationFailure);
       },
     };
+
     let disposeCalls = 0;
+
     const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
       const runtime = await createAgentSessionRuntime(createRuntime, options);
       events.push("constructed");
@@ -988,6 +1047,7 @@ describe("Profile runtime activation rollback", () => {
         events.push("dispose");
         throw disposalFailure;
       };
+
       return runtime;
     };
 
@@ -1005,14 +1065,18 @@ describe("Profile runtime activation rollback", () => {
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
+
     if (!Exit.isFailure(exit)) throw new Error("expected activation rollback to fail");
     const failureResult = Cause.findError(exit.cause);
     expect(Result.isSuccess(failureResult)).toBe(true);
+
     if (!Result.isSuccess(failureResult)) throw new Error("expected a typed rollback failure");
     expect(failureResult.success).toBeInstanceOf(ProfileExtensionRollbackFailed);
+
     if (!(failureResult.success instanceof ProfileExtensionRollbackFailed)) {
       throw new Error("expected ProfileExtensionRollbackFailed");
     }
+
     expect({
       operation: failureResult.success.operation,
       message: failureResult.success.message,
@@ -1053,9 +1117,11 @@ describe("Profile extension tool admission", () => {
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
     const profileExtensions = makeProfileExtensionsForRuntime();
     let parentRuntime: AgentSessionRuntime | undefined;
+
     const runtimeFactory: typeof createAgentSessionRuntime = async (createRuntime, options) => {
       const runtime = await createAgentSessionRuntime(createRuntime, options);
       parentRuntime = runtime;
+
       return runtime;
     };
 
@@ -1074,6 +1140,7 @@ describe("Profile extension tool admission", () => {
 
     if (Exit.isSuccess(parentExit)) await Effect.runPromise(parentExit.value.dispose);
     expect(parentRuntime).toBeDefined();
+
     if (parentRuntime === undefined) throw new Error("expected parent runtime");
     expect(parentRuntime.session.getAllTools().map((tool) => tool.name)).toContain(
       "profile_extensions",
@@ -1084,11 +1151,13 @@ describe("Profile extension tool admission", () => {
       skillPaths: [],
       extensionFactories: [],
     };
+
     const services = await createAgentSessionServices({
       cwd: profilePath,
       agentDir: profilePath,
       resourceLoaderOptions: profileResourceLoaderOptions("Profile", resources, []),
     });
+
     const child = await Effect.runPromise(
       specialistRuntime(
         profilePath,
@@ -1109,6 +1178,7 @@ describe("Profile extension tool admission", () => {
         SessionManager.inMemory(profilePath),
       ),
     );
+
     try {
       expect(child.session.getAllTools().map((tool) => tool.name)).not.toContain(
         "profile_extensions",
@@ -1126,6 +1196,7 @@ describe("Profile specialist runtime integration", () => {
     const file = manager.getSessionFile();
     expect(manager.isPersisted()).toBe(true);
     expect(file).toBeDefined();
+
     if (file === undefined) throw new Error("expected a persistent target path");
     expect(await Bun.file(file).exists()).toBe(false);
 
@@ -1177,6 +1248,7 @@ describe("Profile specialist runtime integration", () => {
           { headers: { "content-type": "text/event-stream" } },
         ),
     });
+
     try {
       const profilePath = await temporaryProfile();
       const sessionDirectory = join(profilePath, "sessions", "direct");
@@ -1211,9 +1283,11 @@ describe("Profile specialist runtime integration", () => {
           process.cwd(),
         ),
       );
+
       const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
         path.endsWith(".jsonl"),
       );
+
       expect(result.answer).toBe("saved root answer");
       expect(files).toHaveLength(1);
       expect(result.session.file).toBe(join(sessionDirectory, files[0] ?? ""));
@@ -1254,6 +1328,7 @@ describe("Profile specialist runtime integration", () => {
       timestamp: Date.now(),
     });
     const child = createProfileAgentChildSession(profilePath, parent);
+
     if (child === undefined) throw new Error("expected persistent child session");
     child.manager.appendMessage({
       role: "user",
@@ -1303,6 +1378,7 @@ describe("Profile agent admission across faces", () => {
     );
 
     const target = { path: profilePath, name: "Profile" };
+
     const results = await Promise.all([
       Effect.runPromise(openTui(target, { kind: "local" }, process.cwd()).pipe(Effect.result)),
       Effect.runPromise(
@@ -1403,6 +1479,7 @@ describe("specialist chat rails", () => {
           { headers: { "content-type": "text/event-stream" } },
         ),
     });
+
     try {
       const profilePath = await temporaryProfile();
       await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
@@ -1429,6 +1506,7 @@ describe("specialist chat rails", () => {
 
       const target = { path: profilePath, name: "Profile" };
       const handle = await Effect.runPromise(openSpecialistChat(target, "reviewer", process.cwd()));
+
       try {
         await Effect.runPromise(handle.prompt("first rail turn"));
         await Effect.runPromise(handle.prompt("second rail turn"));
@@ -1437,9 +1515,11 @@ describe("specialist chat rails", () => {
       }
 
       const sessionDirectory = localSpecialistSessionDirectory(profilePath, "reviewer");
+
       const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
         path.endsWith(".jsonl"),
       );
+
       expect(files).toHaveLength(1);
       const transcript = await readFile(join(sessionDirectory, files[0] ?? ""), "utf8");
       expect(transcript).toContain("first rail turn");

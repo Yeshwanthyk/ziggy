@@ -28,16 +28,22 @@ import {
 } from "./standalone-executable.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
+
 const { development, outputPath } = parseStandaloneBuildArguments(
   process.argv.slice(2),
   repositoryRoot,
 );
+
 const normalizedOutput = assertSafeStandaloneOutputPath(outputPath, repositoryRoot);
+
 const reportPath = `${normalizedOutput}.build.json`;
+
 const temporaryOutput = `${normalizedOutput}.tmp-${process.pid}`;
+
 const temporaryReport = `${reportPath}.tmp-${process.pid}`;
 
 const text = (bytes) => new TextDecoder().decode(bytes);
+
 const run = (command, label) => {
   const result = Bun.spawnSync({
     cmd: command,
@@ -46,33 +52,41 @@ const run = (command, label) => {
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const stdout = text(result.stdout);
   const stderr = text(result.stderr);
+
   if (result.exitCode !== 0) {
     throw new Error(`${label} failed with exit ${result.exitCode}\n${stdout}${stderr}`);
   }
+
   return stdout.trim();
 };
 
 const sha256File = (filePath) => createHash("sha256").update(readFileSync(filePath)).digest("hex");
+
 const buildArguments = compileArguments();
 
 try {
   if (Bun.version !== PINNED_BUN_VERSION) {
     throw new Error(`Bun ${PINNED_BUN_VERSION} is required; found ${Bun.version}`);
   }
+
   if (process.platform !== "darwin" || process.arch !== "arm64") {
     throw new Error(
       `first release target requires darwin-arm64; found ${process.platform}-${process.arch}`,
     );
   }
+
   const sourceCommit = run(["git", "rev-parse", "HEAD"], "read source commit");
+
   const dirtyEntries = run(
     ["git", "status", "--porcelain=v1", "--untracked-files=all"],
     "inspect worktree",
   )
     .split("\n")
     .filter((line) => line.length > 0);
+
   assertStandaloneWorktreePolicy(development, dirtyEntries);
 
   run([process.execPath, "run", "check"], "bun run check");
@@ -83,6 +97,7 @@ try {
   rmSync(temporaryReport, { force: true });
   run([process.execPath, ...buildArguments, `--outfile=${temporaryOutput}`], "standalone compile");
   chmodSync(temporaryOutput, 0o755);
+
   const report = {
     formatVersion: 1,
     artifact: path.relative(repositoryRoot, normalizedOutput) || normalizedOutput,
@@ -102,6 +117,7 @@ try {
     piVersion: PI_DOCS_VERSION,
     piDocsCount: PI_DOC_FILES.size,
   };
+
   writeFileSync(temporaryReport, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o644 });
   renameSync(temporaryOutput, normalizedOutput);
   renameSync(temporaryReport, reportPath);

@@ -56,9 +56,11 @@ const login = (
 ): Effect.Effect<ProviderLoginResult, AuthError> =>
   Effect.gen(function* () {
     let selectedType = type;
+
     if (selectedType === undefined) {
       const providers = yield* status(target);
       const provider = providers.find((candidate) => candidate.id === providerId);
+
       if (provider === undefined) {
         return yield* new AuthProviderUnknown({
           profilePath: target.path,
@@ -66,6 +68,7 @@ const login = (
           message: `unknown auth provider ${providerId}`,
         });
       }
+
       selectedType = defaultAuthType(provider);
     }
 

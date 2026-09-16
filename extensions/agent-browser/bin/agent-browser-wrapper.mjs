@@ -8,6 +8,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const OUTPUT_LIMIT = 64 * 1024;
+
 const TERMINATION_GRACE_MS = 500;
 
 function readStdin() {
@@ -37,11 +38,13 @@ function asString(value, fallback = "") {
 
 function asStringArray(value) {
   if (!Array.isArray(value)) return [];
+
   return value.map((item) => String(item)).filter((item) => item.length > 0);
 }
 
 function normalizeRef(ref) {
   if (!ref) return "";
+
   return ref.startsWith("@") ? ref : `@${ref.replace(/^@+/, "")}`;
 }
 
@@ -52,11 +55,13 @@ function target(input) {
 function sessionName(input) {
   const raw = asString(input.session, "desktop-main");
   const clean = raw.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+
   return clean || "desktop-main";
 }
 
 function commandFor(input, screenshotDir) {
   const action = asString(input.action, "status");
+
   switch (action) {
     case "status":
       return ["session", "list"];
@@ -75,32 +80,45 @@ function commandFor(input, screenshotDir) {
     case "get": {
       const what = asString(input.what, "text");
       const args = ["get", what];
+
       if (target(input)) args.push(target(input));
+
       if (what === "attr" && asString(input.attr)) args.push(asString(input.attr));
+
       return args;
     }
+
     case "click":
     case "dblclick":
     case "focus":
     case "hover": {
       const selected = target(input);
+
       if (!selected) fail(`${action} requires selector or ref`);
+
       return [action, selected];
     }
+
     case "fill": {
       const selected = target(input);
+
       if (!selected) fail("fill requires selector or ref");
+
       return ["fill", selected, String(input.text ?? "")];
     }
+
     case "type":
       return target(input)
         ? ["type", target(input), String(input.text ?? "")]
         : ["type", String(input.text ?? "")];
     case "press": {
       const key = asString(input.key);
+
       if (!key) fail("press requires key");
+
       return ["press", key];
     }
+
     case "scroll":
       return [
         "scroll",
@@ -109,9 +127,12 @@ function commandFor(input, screenshotDir) {
       ];
     case "eval": {
       const code = asString(input.code) || asString(input.text);
+
       if (!code) fail("eval requires code or text");
+
       return ["eval", code];
     }
+
     case "back":
       return ["back"];
     case "tab":
@@ -122,9 +143,12 @@ function commandFor(input, screenshotDir) {
       return ["skills", "get", asString(input.name, "core"), ...(input.full ? ["--full"] : [])];
     case "raw": {
       const args = asStringArray(input.args);
+
       if (args.length === 0) fail("raw requires non-empty args");
+
       return args;
     }
+
     default:
       fail(`unsupported action: ${action}`);
   }
@@ -132,7 +156,9 @@ function commandFor(input, screenshotDir) {
 
 function parseOutput(output) {
   const trimmed = output.trim();
+
   if (!trimmed) return {};
+
   try {
     return { data: JSON.parse(trimmed) };
   } catch {
@@ -143,11 +169,14 @@ function parseOutput(output) {
 function appendBounded(current, chunk) {
   if (Buffer.byteLength(current) >= OUTPUT_LIMIT) return current;
   const remaining = OUTPUT_LIMIT - Buffer.byteLength(current);
+
   return current + Buffer.from(chunk).subarray(0, remaining).toString();
 }
 
 const raw = await readStdin().catch((error) => fail(String(error?.message ?? error)));
+
 let input = {};
+
 try {
   input = raw ? JSON.parse(raw) : {};
 } catch (error) {
@@ -155,13 +184,19 @@ try {
 }
 
 const profilePath = asString(process.env.ZIGGY_PROFILE_PATH, process.cwd());
+
 const packageRuntime = path.join(profilePath, ".runtime", "agent-browser");
+
 const browserProfile = path.join(packageRuntime, "browser-profile");
+
 const screenshotDir = path.join(packageRuntime, "screenshots");
+
 fs.mkdirSync(browserProfile, { recursive: true });
+
 fs.mkdirSync(screenshotDir, { recursive: true });
 
 const session = sessionName(input);
+
 const args = [
   "--session",
   session,
@@ -171,6 +206,7 @@ const args = [
   ...(input.headed ? ["--headed"] : []),
   ...commandFor(input, screenshotDir),
 ];
+
 const child = spawn("agent-browser", args, {
   cwd: profilePath,
   env: {
@@ -182,19 +218,25 @@ const child = spawn("agent-browser", args, {
 });
 
 let terminationStarted = false;
+
 let escalation;
+
 function signalChildTree(signal) {
   if (child.pid === undefined) return;
+
   if (process.platform !== "win32") {
     try {
       process.kill(-child.pid, signal);
+
       return;
     } catch {
       // Fall back to the direct child if its process group has already changed or exited.
     }
   }
+
   child.kill(signal);
 }
+
 function terminateChild() {
   if (terminationStarted) return;
   terminationStarted = true;
@@ -202,21 +244,27 @@ function terminateChild() {
   escalation = setTimeout(() => signalChildTree("SIGKILL"), TERMINATION_GRACE_MS);
   escalation.unref();
 }
+
 function cleanupTermination() {
   if (escalation !== undefined) clearTimeout(escalation);
 }
+
 for (const event of ["SIGINT", "SIGTERM"]) {
   process.once(event, terminateChild);
 }
 
 let stdout = "";
+
 let stderr = "";
+
 child.stdout.on("data", (chunk) => {
   stdout = appendBounded(stdout, chunk);
 });
+
 child.stderr.on("data", (chunk) => {
   stderr = appendBounded(stderr, chunk);
 });
+
 child.on("error", (error) => {
   cleanupTermination();
   process.stdout.write(
@@ -230,8 +278,10 @@ child.on("error", (error) => {
   );
   process.exit(1);
 });
+
 child.on("exit", (code) => {
   cleanupTermination();
+
   const result = {
     success: code === 0,
     action: input.action ?? "status",
@@ -239,10 +289,13 @@ child.on("exit", (code) => {
     session,
     ...parseOutput(stdout),
   };
+
   const trimmedStderr = stderr.trim();
+
   if (trimmedStderr) {
     result.stderr = trimmedStderr;
   }
+
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(code ?? 1);
 });

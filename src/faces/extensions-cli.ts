@@ -24,8 +24,11 @@ type ProfileExtensionFailure =
   | ProfileExtensionRollbackFailed;
 
 const MAX_DIAGNOSTIC_SOURCE = 160;
+
 const MAX_DIAGNOSTIC_REASON = 360;
+
 const MAX_ROLLBACK_OPERATION = 96;
+
 const MAX_ROLLBACK_PATH = 240;
 
 const bounded = (value: string, maximum: number): string =>
@@ -45,6 +48,7 @@ export const renderProfileExtensionFailure = (failure: ProfileExtensionFailure):
   switch (failure._tag) {
     case "ProfileExtensionPreflightFailed": {
       const diagnostic = failure.diagnostics[0];
+
       return [
         `Profile extension preflight failed: ${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`,
         `stage=${failure.stage}`,
@@ -53,10 +57,12 @@ export const renderProfileExtensionFailure = (failure: ProfileExtensionFailure):
           : `diagnostic source=${safeText(diagnostic.source, MAX_DIAGNOSTIC_SOURCE)}; reason=${safeText(diagnostic.message, MAX_DIAGNOSTIC_REASON)}`,
       ].join("; ");
     }
+
     case "ProfileExtensionLockFailed":
       return `Profile extension lock failed: operation=${failure.operation}; reason=${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`;
     case "ProfileExtensionRollbackFailed": {
       const rollbackFailure = failure.rollbackFailures[0];
+
       return [
         `Profile extension rollback failed: operation=${failure.operation}; reason=${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`,
         rollbackFailure === undefined
@@ -84,11 +90,15 @@ export const ExtensionCatalogListingJson = Schema.Struct({
   skills: Schema.optional(Schema.Array(ExtensionSkillJson)),
   extensionPaths: Schema.optional(Schema.Array(Schema.String)),
 });
+
 export type ExtensionCatalogListingJson = typeof ExtensionCatalogListingJson.Type;
 
 export const ExtensionsJson = Schema.Array(ExtensionCatalogListingJson);
+
 export type ExtensionsJson = typeof ExtensionsJson.Type;
+
 const encodeExtensions = Schema.encodeSync(ExtensionsJson);
+
 const encodeExtension = Schema.encodeSync(ExtensionCatalogListingJson);
 
 export const renderExtensionsJson = (
@@ -104,17 +114,20 @@ const kindBadge = (
 ): string => {
   const label =
     kind === "skill" ? "SK" : kind === "code" ? "CD" : kind === "skill+code" ? "SC" : "RM";
+
   return color.bgMagenta(color.black(color.bold(` ${label} `)));
 };
 
 const alignBoundedRight = (left: string, right: string, width: number): string => {
   const rightWidth = Math.max(1, width - Bun.stringWidth(left) - 2);
+
   return alignEdges(left, truncateEnd(right, rightWidth), width);
 };
 
 const alignBoundedLeft = (left: string, right: string, width: number): string => {
   const boundedRight = truncateEnd(right, Math.max(1, width - 3));
   const leftWidth = Math.max(1, width - Bun.stringWidth(boundedRight) - 2);
+
   return alignEdges(truncateEnd(left, leftWidth), boundedRight, width);
 };
 
@@ -139,6 +152,7 @@ export const renderExtensions = (
   const width = terminalPanelWidth(options.columns);
   const innerWidth = width - 4;
   const count = `${extensions.length} available`;
+
   const lines = [
     panelRule(color, "╭", "─", "╮", width),
     panelLine(
@@ -157,6 +171,7 @@ export const renderExtensions = (
       const status = `${extension.source} · ${extension.required ? "required" : "optional"}`;
       const badgeWidth = Bun.stringWidth(badge);
       const combinedWidth = badgeWidth + 1 + 1 + 2 + Bun.stringWidth(status);
+
       if (combinedWidth <= innerWidth) {
         const nameWidth = innerWidth - badgeWidth - Bun.stringWidth(status) - 4;
         lines.push(
@@ -176,6 +191,7 @@ export const renderExtensions = (
           panelLine(color, alignEdges("", color.dim(status), innerWidth), width),
         );
       }
+
       lines.push(
         panelLine(
           color,
@@ -191,6 +207,7 @@ export const renderExtensions = (
   const hint = "choose extensions";
   const fullHintWidth = Bun.stringWidth(action) + 1 + command.length + 2 + hint.length;
   lines.push(panelRule(color, "├", "─", "┤", width));
+
   if (fullHintWidth <= innerWidth) {
     lines.push(
       panelLine(
@@ -205,7 +222,9 @@ export const renderExtensions = (
       panelLine(color, alignEdges(color.bold("<profile>"), color.dim(hint), innerWidth), width),
     );
   }
+
   lines.push(panelRule(color, "╰", "─", "╯", width));
+
   return lines.join("\n");
 };
 
@@ -232,6 +251,7 @@ export const renderExtension = (
   const color = createTerminalColors(options.colors);
   const width = terminalPanelWidth(options.columns);
   const innerWidth = width - 4;
+
   const lines = [
     panelRule(color, "╭", "─", "╮", width),
     panelLine(
@@ -269,13 +289,16 @@ export const renderExtension = (
       width,
     ),
   ];
+
   if (extension.packagePath !== undefined) {
     lines.push(
       panelLine(color, alignBoundedRight("path", extension.packagePath, innerWidth), width),
     );
   }
+
   if ((extension.skills?.length ?? 0) > 0 || (extension.extensionPaths?.length ?? 0) > 0) {
     lines.push(panelRule(color, "├", "─", "┤", width));
+
     for (const skill of extension.skills ?? []) {
       lines.push(
         panelLine(
@@ -286,6 +309,7 @@ export const renderExtension = (
         panelLine(color, color.dim(truncateEnd(skill.description, innerWidth)), width),
       );
     }
+
     for (const extensionPath of extension.extensionPaths ?? []) {
       lines.push(
         panelLine(
@@ -296,7 +320,9 @@ export const renderExtension = (
       );
     }
   }
+
   lines.push(panelRule(color, "╰", "─", "╯", width));
+
   return lines.join("\n");
 };
 
@@ -306,16 +332,20 @@ export const renderExtensionManagerResult = (
 ): string => {
   if (!options.pretty) {
     if (result.status === "empty") return "no profiles yet — try: ziggy init <name>";
+
     if (result.status === "cancelled") return "cancelled; no extension changes made";
+
     if (result.status === "unchanged") {
       return `extensions unchanged for ${result.profile.path}`;
     }
+
     return `updated extensions for ${result.profile.path}: +${result.added.join(",")} -${result.removed.join(",")}`;
   }
 
   const color = createTerminalColors(options.colors);
   const width = terminalPanelWidth(options.columns);
   const innerWidth = width - 4;
+
   const label =
     result.status === "changed"
       ? "DONE"
@@ -324,11 +354,13 @@ export const renderExtensionManagerResult = (
         : result.status === "empty"
           ? "START"
           : "CANCEL";
+
   const lines = [
     panelRule(color, "╭", "─", "╮", width),
     panelLine(color, `${actionBadge(color, label)} ${color.bold("extensions")}`, width),
     panelRule(color, "├", "─", "┤", width),
   ];
+
   if (result.status === "empty") {
     lines.push(
       panelLine(color, "No profiles yet.", width),
@@ -365,7 +397,9 @@ export const renderExtensionManagerResult = (
       panelLine(color, color.dim("Reopen the Profile to apply the change."), width),
     );
   }
+
   lines.push(panelRule(color, "╰", "─", "╯", width));
+
   return lines.join("\n");
 };
 
@@ -377,6 +411,7 @@ export const renderExtensionMutation = (
     if (!result.changed) {
       return `${result.id} is ${result.selected ? "already selected" : "not selected"} for ${result.profilePath}`;
     }
+
     return `${result.selected ? "selected" : "unselected"} ${result.id} for ${result.profilePath}\nreopen the Profile or restart its Ziggy process to apply the change`;
   }
 
@@ -384,6 +419,7 @@ export const renderExtensionMutation = (
   const width = terminalPanelWidth(options.columns);
   const innerWidth = width - 4;
   const state = result.selected ? "selected" : "removed";
+
   const lines = [
     panelRule(color, "╭", "─", "╮", width),
     panelLine(
@@ -395,13 +431,16 @@ export const renderExtensionMutation = (
     panelLine(color, alignBoundedLeft(result.id, state, innerWidth), width),
     panelLine(color, color.dim(truncateEnd(result.profilePath, innerWidth)), width),
   ];
+
   if (result.changed) {
     lines.push(
       panelLine(color, "", width),
       panelLine(color, color.dim("Reopen the Profile to apply the change."), width),
     );
   }
+
   lines.push(panelRule(color, "╰", "─", "╯", width));
+
   return lines.join("\n");
 };
 

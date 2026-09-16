@@ -22,6 +22,7 @@ export const GatewayOwnerStatus = Schema.Union([
     acquiredAt: Schema.String,
   }),
 ]);
+
 export type GatewayOwnerStatus = typeof GatewayOwnerStatus.Type;
 
 export class GatewayOwnerError extends Schema.TaggedErrorClass<GatewayOwnerError>()(

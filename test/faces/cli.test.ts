@@ -158,6 +158,7 @@ describe("CLI decoding", () => {
       target: "buddy",
       follow: true,
     });
+
     for (const [verb, tag] of [
       ["start", "ServeStart"],
       ["stop", "ServeStop"],
@@ -169,6 +170,7 @@ describe("CLI decoding", () => {
         target: "buddy",
       });
     }
+
     await expect(decode(["gateway", "buddy"])).resolves.toEqual({
       _tag: "Gateway",
       target: "buddy",
@@ -229,6 +231,7 @@ describe("CLI decoding", () => {
         json: false,
       },
     );
+
     for (const args of [
       ["run", "buddy", "prompt", "--session"],
       ["run", "--session", "--json", "buddy", "prompt"],
@@ -278,6 +281,7 @@ describe("CLI decoding", () => {
       modelId: "claude",
       thinking: "high",
     });
+
     for (const args of [
       ["init", "buddy", "--minimal", "--model", "claude"],
       ["init", "buddy", "--provider"],

@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 const repositoryRoot = join(import.meta.dir, "../..");
+
 const installScript = join(repositoryRoot, "scripts/install.sh");
+
 const fixture = "#!/bin/sh\necho ziggy-fixture\n";
+
 const fixtureSha = createHash("sha256").update(fixture).digest("hex");
 
 const runInstall = async (
@@ -19,11 +22,13 @@ const runInstall = async (
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
+
   return { exitCode: exitCode ?? 1, stdout, stderr };
 };
 
@@ -42,16 +47,21 @@ describe("scripts/install.sh", () => {
   test("uses the canonical ~/.local/bin/ziggy destination by default", async () => {
     const home = await mkdtemp(join(tmpdir(), "ziggy-install-home-"));
     roots.push(home);
+
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname;
+
         if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+
         if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+
         return new Response("missing", { status: 404 });
       },
     });
+
     try {
       const result = await runInstall({
         HOME: home,
@@ -60,6 +70,7 @@ describe("scripts/install.sh", () => {
         ZIGGY_OS: "Darwin",
         ZIGGY_ARCH: "arm64",
       });
+
       const destination = join(home, ".local", "bin", "ziggy");
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`installed ${destination}`);
@@ -73,16 +84,21 @@ describe("scripts/install.sh", () => {
   test("installs a checksum-pinned darwin-arm64 binary", async () => {
     const binDir = await mkdtemp(join(tmpdir(), "ziggy-install-bin-"));
     roots.push(binDir);
+
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname;
+
         if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+
         if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+
         return new Response("missing", { status: 404 });
       },
     });
+
     try {
       const result = await runInstall({
         ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
@@ -90,6 +106,7 @@ describe("scripts/install.sh", () => {
         ZIGGY_OS: "Darwin",
         ZIGGY_ARCH: "arm64",
       });
+
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`installed ${join(binDir, "ziggy")}`);
       expect(await readFile(join(binDir, "ziggy"), "utf8")).toBe(fixture);
@@ -105,16 +122,21 @@ describe("scripts/install.sh", () => {
     const destination = join(binDir, "ziggy");
     const existing = "existing ziggy\n";
     await writeFile(destination, existing, { mode: 0o755 });
+
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname;
+
         if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+
         if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${"0".repeat(64)}\n`);
+
         return new Response("missing", { status: 404 });
       },
     });
+
     try {
       const result = await runInstall({
         ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
@@ -122,6 +144,7 @@ describe("scripts/install.sh", () => {
         ZIGGY_OS: "Darwin",
         ZIGGY_ARCH: "arm64",
       });
+
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("checksum mismatch");
       expect(await readFile(destination, "utf8")).toBe(existing);
@@ -136,16 +159,21 @@ describe("scripts/install.sh", () => {
     await mkdir(join(binDir, "elsewhere"), { recursive: true });
     await writeFile(join(binDir, "elsewhere", "ziggy"), fixture, { mode: 0o755 });
     await symlink(join(binDir, "elsewhere", "ziggy"), join(binDir, "ziggy"));
+
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname;
+
         if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+
         if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+
         return new Response("missing", { status: 404 });
       },
     });
+
     try {
       const result = await runInstall({
         ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
@@ -153,6 +181,7 @@ describe("scripts/install.sh", () => {
         ZIGGY_OS: "Darwin",
         ZIGGY_ARCH: "arm64",
       });
+
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("refusing to overwrite symlink");
     } finally {
@@ -165,16 +194,21 @@ describe("scripts/install.sh", () => {
     roots.push(binDir);
     const destination = join(binDir, "ziggy");
     await mkdir(destination);
+
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname;
+
         if (path === "/ziggy-darwin-arm64") return new Response(fixture);
+
         if (path === "/ziggy-darwin-arm64.sha256") return new Response(`${fixtureSha}\n`);
+
         return new Response("missing", { status: 404 });
       },
     });
+
     try {
       const result = await runInstall({
         ZIGGY_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
@@ -182,6 +216,7 @@ describe("scripts/install.sh", () => {
         ZIGGY_OS: "Darwin",
         ZIGGY_ARCH: "arm64",
       });
+
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain(`refusing to overwrite ${destination}`);
       expect((await stat(destination)).isDirectory()).toBe(true);
@@ -196,6 +231,7 @@ describe("scripts/install.sh", () => {
       ZIGGY_ARCH: "x64",
       ZIGGY_BIN_DIR: tmpdir(),
     });
+
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("darwin-arm64");
   });

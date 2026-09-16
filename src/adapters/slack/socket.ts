@@ -47,6 +47,7 @@ export interface SlackSocket {
 }
 
 export type SlackSocketInboundDecision = "deliver" | "acknowledge";
+
 export type SlackSocketInboundAdmit = (
   message: SlackInboundMessage,
   eventId: string | undefined,
@@ -101,13 +102,17 @@ const SocketEnvelopeSchema = Schema.Struct({
   envelope_id: Schema.optional(Schema.String),
   payload: Schema.optional(Schema.Unknown),
 });
+
 const EventsPayloadSchema = Schema.Struct({
   event_id: Schema.optional(Schema.String),
   team_id: Schema.optional(Schema.String),
   event: Schema.optional(Schema.Unknown),
 });
+
 const BoundedFileText = Schema.String.check(Schema.isMaxLength(4_096));
+
 const BoundedFileName = Schema.String.check(Schema.isMaxLength(512));
+
 const SlackMessageFileSchema = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
   name: Schema.optional(BoundedFileName),
@@ -117,6 +122,7 @@ const SlackMessageFileSchema = Schema.Struct({
   url_private: Schema.optional(BoundedFileText),
   url_private_download: Schema.optional(BoundedFileText),
 });
+
 const MessageSchema = Schema.Struct({
   type: Schema.Literal("message"),
   subtype: Schema.optional(Schema.String),
@@ -131,8 +137,11 @@ const MessageSchema = Schema.Struct({
 });
 
 const decodeEnvelopeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(SocketEnvelopeSchema));
+
 const decodeEventsPayload = Schema.decodeUnknownEffect(EventsPayloadSchema);
+
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
+
 const decodeMessageFile = Schema.decodeUnknownEffect(SlackMessageFileSchema);
 
 const websocketMessageText = (data: SlackWebSocketMessageData): string =>
@@ -146,21 +155,30 @@ const normalizeWebSocketMessageData = (
       ? data
       : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   }
+
   if (data instanceof ArrayBuffer) {
     return new Uint8Array(data);
   }
+
   if (data instanceof Blob) {
     return undefined;
   }
+
   return data;
 };
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
+
 const MAX_EVENT_IDS = 1_000;
+
 const MAX_FILES_PER_TURN = 4;
+
 const MAX_FILES_TO_DECODE = 20;
+
 const SOCKET_OPEN = 1;
+
 const SOCKET_CLOSING = 2;
+
 const SOCKET_CLOSED = 3;
 
 const error = (
@@ -182,30 +200,37 @@ const error = (
 
 const liveConnection = (url: string): SlackSocketConnection => {
   const socket = new WebSocket(url);
+
   return {
     readyState: () => socket.readyState,
     send: (data) => socket.send(data),
     close: (code) => socket.close(code),
     onOpen: (listener) => {
       socket.addEventListener("open", listener);
+
       return () => socket.removeEventListener("open", listener);
     },
     onMessage: (listener) => {
       const handle = (event: MessageEvent) => {
         const data = normalizeWebSocketMessageData(event.data);
+
         if (data !== undefined) {
           listener(data);
         }
       };
+
       socket.addEventListener("message", handle);
+
       return () => socket.removeEventListener("message", handle);
     },
     onError: (listener) => {
       socket.addEventListener("error", listener);
+
       return () => socket.removeEventListener("error", listener);
     },
     onClose: (listener) => {
       socket.addEventListener("close", listener);
+
       return () => socket.removeEventListener("close", listener);
     },
   };
@@ -216,6 +241,7 @@ const liveDependencies: SlackSocketDependencies = {
   connect: liveConnection,
   schedule: (delayMs, task) => {
     const timer = setTimeout(task, delayMs);
+
     return () => clearTimeout(timer);
   },
   inboundCapacity: 256,
@@ -237,6 +263,7 @@ export const openSlackSocket = (
     const inbound = yield* Queue.dropping<SlackInboundMessage, SlackSocketError>(
       dependencies.inboundCapacity,
     );
+
     const connectionStates = yield* Queue.sliding<SlackSocketConnectionState>(16);
     const commands = yield* Queue.dropping<Command>(dependencies.commandCapacity);
     const eventIds = makeRecentIds(MAX_EVENT_IDS);
@@ -257,6 +284,7 @@ export const openSlackSocket = (
 
     const detach = (attached: AttachedSocket) => {
       attached.removeListeners();
+
       if (current === attached) {
         current = undefined;
       }
@@ -264,6 +292,7 @@ export const openSlackSocket = (
 
     const closeWithoutWaiting = (attached: AttachedSocket) => {
       detach(attached);
+
       if (attached.connection.readyState() < SOCKET_CLOSING) {
         try {
           attached.connection.close();
@@ -278,6 +307,7 @@ export const openSlackSocket = (
         if (stopped || failed) {
           return;
         }
+
         failed = true;
         reportState({
           state: "reconnecting",
@@ -285,9 +315,11 @@ export const openSlackSocket = (
         });
         clearReconnect();
         const attached = current;
+
         if (attached !== undefined) {
           closeWithoutWaiting(attached);
         }
+
         yield* Queue.clear(inbound);
         yield* Queue.fail(inbound, failure);
       });
@@ -301,10 +333,12 @@ export const openSlackSocket = (
             false,
             new Error("Slack command queue capacity exceeded"),
           );
+
           failed = true;
           reportState({ state: "reconnecting", failure: "queue-overflow" });
           Queue.failCauseUnsafe(inbound, Cause.fail(failure));
           const attached = current;
+
           if (attached !== undefined) {
             closeWithoutWaiting(attached);
           }
@@ -316,6 +350,7 @@ export const openSlackSocket = (
       if (stopped || failed) {
         return;
       }
+
       clearReconnect();
       cancelReconnect = dependencies.schedule(delayMs, () => {
         cancelReconnect = undefined;
@@ -325,10 +360,13 @@ export const openSlackSocket = (
 
     const abandon = (connection: SlackSocketConnection): boolean => {
       const attached = current;
+
       if (attached === undefined || attached.connection !== connection) {
         return false;
       }
+
       closeWithoutWaiting(attached);
+
       return true;
     };
 
@@ -336,6 +374,7 @@ export const openSlackSocket = (
       if (!abandon(connection)) {
         return;
       }
+
       reportState({ state: "reconnecting", failure: "connection" });
       const delay = reconnectDelayMs;
       reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
@@ -350,6 +389,7 @@ export const openSlackSocket = (
       ) {
         return;
       }
+
       try {
         connection.send(JSON.stringify({ envelope_id: envelopeId }));
       } catch {
@@ -364,7 +404,9 @@ export const openSlackSocket = (
             try: () => dependencies.connect(url),
             catch: (cause) => error("connect", "connection", true, cause),
           });
+
           const removers: Array<() => void> = [];
+
           const attached = yield* Effect.try({
             try: () => {
               removers.push(
@@ -384,6 +426,7 @@ export const openSlackSocket = (
               removers.push(
                 connection.onClose(() => offerCommand({ _tag: "SocketClosed", connection })),
               );
+
               return {
                 connection,
                 removeListeners: () => {
@@ -402,6 +445,7 @@ export const openSlackSocket = (
                     dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
+
                 if (connection.readyState() < SOCKET_CLOSING) {
                   try {
                     connection.close();
@@ -412,6 +456,7 @@ export const openSlackSocket = (
               }),
             ),
           );
+
           current = attached;
         }),
       );
@@ -422,42 +467,57 @@ export const openSlackSocket = (
     ): Effect.Effect<void, SlackSocketError> =>
       Effect.gen(function* () {
         const decodedEnvelope = yield* decodeEnvelopeJson(text).pipe(Effect.result);
+
         if (Result.isFailure(decodedEnvelope) || current?.connection !== connection) {
           // Slack redelivers malformed, unacknowledged envelopes.
           return;
         }
+
         const envelope = decodedEnvelope.success;
+
         if (envelope.type === "hello") {
           reconnectDelayMs = 1_000;
+
           return;
         }
 
         if (envelope.type === "disconnect") {
           acknowledge(connection, envelope.envelope_id);
+
           if (abandon(connection)) {
             reportState({ state: "reconnecting", failure: "connection" });
             scheduleReconnect(0);
           }
+
           return;
         }
+
         if (envelope.type !== "events_api") {
           acknowledge(connection, envelope.envelope_id);
+
           return;
         }
 
         const decodedPayload = yield* decodeEventsPayload(envelope.payload).pipe(Effect.option);
+
         if (Option.isNone(decodedPayload)) {
           acknowledge(connection, envelope.envelope_id);
+
           return;
         }
+
         const eventId = decodedPayload.value.event_id;
+
         if (eventId !== undefined && eventIds.has(eventId)) {
           acknowledge(connection, envelope.envelope_id);
+
           return;
         }
+
         const decodedMessage = yield* decodeMessagePayload(decodedPayload.value.event).pipe(
           Effect.option,
         );
+
         if (
           Option.isNone(decodedMessage) ||
           (decodedMessage.value.subtype !== undefined &&
@@ -467,20 +527,27 @@ export const openSlackSocket = (
           if (eventId !== undefined) {
             eventIds.remember(eventId);
           }
+
           acknowledge(connection, envelope.envelope_id);
+
           return;
         }
+
         const payload = decodedMessage.value;
         const teamId = decodedPayload.value.team_id;
         const rawFiles = payload.files ?? [];
         const decodedFiles: Array<typeof SlackMessageFileSchema.Type> = [];
+
         for (const rawFile of rawFiles.slice(0, MAX_FILES_TO_DECODE)) {
           const decodedFile = yield* decodeMessageFile(rawFile).pipe(Effect.option);
+
           if (Option.isSome(decodedFile)) decodedFiles.push(decodedFile.value);
         }
+
         const files = decodedFiles.slice(0, MAX_FILES_PER_TURN).map((file): SlackInboundFile => {
           const name = file.name ?? file.title;
           const urlPrivate = file.url_private_download ?? file.url_private;
+
           return {
             id: file.id,
             ...(name !== undefined ? { name } : undefined),
@@ -489,6 +556,7 @@ export const openSlackSocket = (
             ...(urlPrivate !== undefined ? { urlPrivate } : undefined),
           };
         });
+
         const message: SlackInboundMessage = {
           channel: payload.channel,
           channelType: payload.channel_type,
@@ -502,18 +570,24 @@ export const openSlackSocket = (
             ? { omittedFileCount: rawFiles.length - files.length }
             : undefined),
         };
+
         const decision = yield* admitInbound(message, eventId);
+
         if (decision === "acknowledge") {
           if (eventId !== undefined) {
             eventIds.remember(eventId);
           }
+
           acknowledge(connection, envelope.envelope_id);
+
           return;
         }
+
         if (yield* Queue.offer(inbound, message)) {
           if (eventId !== undefined) {
             eventIds.remember(eventId);
           }
+
           acknowledge(connection, envelope.envelope_id);
         } else {
           yield* terminalFailure(
@@ -532,7 +606,9 @@ export const openSlackSocket = (
         if (stopped || failed || current !== undefined) {
           return;
         }
+
         const bootstrap = yield* dependencies.connectionsOpen(appToken).pipe(Effect.result);
+
         if (Result.isFailure(bootstrap)) {
           if (bootstrap.failure.reason === "authentication") {
             yield* terminalFailure(error("connect", "authentication", false, bootstrap.failure));
@@ -545,13 +621,16 @@ export const openSlackSocket = (
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             scheduleReconnect(delay);
           }
+
           return;
         }
+
         yield* attachSocket(bootstrap.success.url).pipe(
           Effect.catch((failure) => {
             dependencies.reportConnectionFailure(failure);
             const delay = reconnectDelayMs;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+
             return Effect.sync(() => scheduleReconnect(delay));
           }),
         );
@@ -575,11 +654,14 @@ export const openSlackSocket = (
             if (current?.connection !== command.connection) {
               return;
             }
+
             const attached = current;
             detach(attached);
+
             if (stopped) {
               return;
             }
+
             dependencies.reportConnectionFailure(
               error("receive", "closed", true, new Error("Slack socket closed unexpectedly")),
             );
@@ -596,6 +678,7 @@ export const openSlackSocket = (
       Effect.forever,
       Effect.catch((failure) => terminalFailure(failure)),
     );
+
     yield* supervisor.pipe(Effect.forkScoped);
     yield* Queue.offer(commands, { _tag: "Connect" });
 
@@ -603,13 +686,16 @@ export const openSlackSocket = (
       if (stopped) {
         return Effect.void;
       }
+
       stopped = true;
       clearReconnect();
       const attached = current;
+
       if (attached === undefined || attached.connection.readyState() === SOCKET_CLOSED) {
         if (attached !== undefined) {
           detach(attached);
         }
+
         return Queue.clear(inbound).pipe(
           Effect.orElseSucceed(() => []),
           Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
@@ -622,6 +708,7 @@ export const openSlackSocket = (
       const waitForClose = Effect.callback<void, SlackSocketError>((resume) => {
         const finish = () => resume(Effect.void);
         const removeClose = attached.connection.onClose(finish);
+
         const removeOpen = attached.connection.onOpen(() => {
           try {
             attached.connection.close(1000);
@@ -629,6 +716,7 @@ export const openSlackSocket = (
             resume(Effect.fail(error("close", "connection", false, cause)));
           }
         });
+
         try {
           attached.connection.close(1000);
         } catch (cause) {
@@ -638,6 +726,7 @@ export const openSlackSocket = (
             resume(Effect.fail(error("close", "connection", false, cause)));
           }
         }
+
         return Effect.sync(() => {
           removeClose();
           removeOpen();

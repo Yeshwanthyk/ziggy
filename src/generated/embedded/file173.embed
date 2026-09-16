@@ -6,8 +6,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const TIMEOUT_MS = 30_000;
+
 const OUTPUT_LIMIT = 24 * 1024;
+
 const executable = join(import.meta.dirname, "bin", "web-search.ts");
+
 const Parameters = Type.Object(
   { args: Type.Array(Type.String(), { description: "Query words and optional --n <count>." }) },
   { additionalProperties: false },
@@ -15,6 +18,7 @@ const Parameters = Type.Object(
 
 const display = (value: string): string => {
   if (Buffer.byteLength(value) <= OUTPUT_LIMIT) return value;
+
   return `${Buffer.from(value).subarray(0, OUTPUT_LIMIT).toString()}\n[output truncated]`;
 };
 
@@ -28,18 +32,23 @@ export const runWebSearch = async (
     cwd,
     timeout: TIMEOUT_MS,
   };
+
   if (signal) {
     execOptions.signal = signal;
   }
+
   const result = await pi.exec(process.execPath, [executable, ...args], execOptions);
   const stdout = display(result.stdout);
   const stderr = display(result.stderr);
   const streams = `stdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;
+
   if (result.killed) {
     const reason = signal?.aborted ? "was cancelled" : `timed out after ${TIMEOUT_MS}ms`;
     throw new Error(`web_search ${reason}.\n${streams}`);
   }
+
   if (result.code !== 0) throw new Error(`web_search exited with code ${result.code}.\n${streams}`);
+
   return { stdout, stderr, code: result.code };
 };
 
@@ -53,9 +62,11 @@ export default function webSearch(pi: Pick<ExtensionAPI, "exec" | "registerTool"
     executionMode: "parallel",
     async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
       const result = await runWebSearch(pi, args, ctx.cwd, signal);
+
       const text = result.stderr
         ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
         : result.stdout;
+
       return {
         content: [{ type: "text", text }],
         details: result,

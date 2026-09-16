@@ -12,6 +12,7 @@ import type { DoctorReport } from "ziggy/domain/doctor";
 import { ProfileFileSystemError } from "ziggy/domain/profile";
 
 const target = { path: "/profile", name: "Profile" };
+
 const report: DoctorReport = {
   profilePath: target.path,
   checks: [{ id: "profile", severity: "ok", message: "valid" }],
@@ -21,6 +22,7 @@ const report: DoctorReport = {
 const profiles = (events: string[], registerFails = false): ProfilesApi => ({
   initProfile: (_target, options) => {
     events.push(`init:${options?.createStarterDirectories === true}`);
+
     return Effect.succeed({
       path: target.path,
       created: false,
@@ -29,6 +31,7 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
   },
   registerProfile: () => {
     events.push("register");
+
     return registerFails
       ? Effect.fail(
           new ProfileFileSystemError({
@@ -47,6 +50,7 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
 const auth = (events: string[], configured = true): AuthApi => ({
   status: () => {
     events.push("auth-status");
+
     return Effect.succeed([
       {
         id: "anthropic",
@@ -60,6 +64,7 @@ const auth = (events: string[], configured = true): AuthApi => ({
   },
   readOnlyStatus: () => {
     events.push("auth-read-only-status");
+
     return Effect.succeed([
       {
         id: "anthropic",
@@ -73,6 +78,7 @@ const auth = (events: string[], configured = true): AuthApi => ({
   },
   login: () => {
     events.push("login");
+
     return Effect.succeed({ providerId: "anthropic", type: "api_key", source: undefined });
   },
 });
@@ -83,14 +89,17 @@ const models = (
 ): ModelsApi => ({
   status: () => {
     events.push("model-status");
+
     return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
   },
   readOnlyStatus: () => {
     events.push("model-read-only-status");
+
     return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
   },
   list: (_target, providerId) => {
     events.push(`models-list:${providerId ?? "all"}`);
+
     return Effect.succeed([
       {
         providerId: "anthropic",
@@ -114,6 +123,7 @@ const models = (
     current.providerId = providerId;
     current.modelId = modelId;
     current.thinking = thinking ?? current.thinking;
+
     return Effect.succeed({ providerId, modelId, thinking });
   },
 });
@@ -121,6 +131,7 @@ const models = (
 const doctor = (events: string[]): DoctorApi => ({
   check: () => {
     events.push("doctor");
+
     return Effect.succeed(report);
   },
 });
@@ -128,11 +139,13 @@ const doctor = (events: string[]): DoctorApi => ({
 const interaction = (events: string[]): SetupInteraction => ({
   select: () => {
     events.push("prompt");
+
     return Effect.die("unexpected prompt");
   },
   auth: {
     prompt: async () => {
       events.push("auth-prompt");
+
       return "secret-never-printed";
     },
     notify: () => undefined,
@@ -141,11 +154,13 @@ const interaction = (events: string[]): SetupInteraction => ({
 
 test("existing guided setup resumes configured auth and model without resetting or prompting", async () => {
   const events: string[] = [];
+
   const current = {
     providerId: "anthropic",
     modelId: "claude",
     thinking: "high",
   } satisfies Parameters<typeof models>[1];
+
   const setup = makeSetup(profiles(events), auth(events), models(events, current), doctor(events));
 
   const result = await Effect.runPromise(
@@ -176,11 +191,13 @@ test("existing guided setup resumes configured auth and model without resetting 
 
 test("explicit non-interactive setup selects through Models without prompting", async () => {
   const events: string[] = [];
+
   const current = {
     providerId: undefined,
     modelId: undefined,
     thinking: "medium",
   } satisfies Parameters<typeof models>[1];
+
   const setup = makeSetup(profiles(events), auth(events), models(events, current), doctor(events));
 
   await Effect.runPromise(
@@ -206,17 +223,20 @@ test("explicit non-interactive setup selects through Models without prompting", 
 
 test("non-interactive setup fails rather than prompting and registry failures remain visible", async () => {
   const missingEvents: string[] = [];
+
   const current = {
     providerId: undefined,
     modelId: undefined,
     thinking: "medium",
   } satisfies Parameters<typeof models>[1];
+
   const missing = makeSetup(
     profiles(missingEvents),
     auth(missingEvents),
     models(missingEvents, current),
     doctor(missingEvents),
   );
+
   const missingExit = await Effect.runPromiseExit(
     missing.initialize(
       target,
@@ -226,16 +246,19 @@ test("non-interactive setup fails rather than prompting and registry failures re
       interaction(missingEvents),
     ),
   );
+
   expect(Exit.isFailure(missingExit)).toBeTrue();
   expect(missingEvents).not.toContain("prompt");
 
   const registryEvents: string[] = [];
+
   const registry = makeSetup(
     profiles(registryEvents, true),
     auth(registryEvents),
     models(registryEvents, current),
     doctor(registryEvents),
   );
+
   const registryExit = await Effect.runPromiseExit(
     registry.initialize(
       target,
@@ -245,6 +268,7 @@ test("non-interactive setup fails rather than prompting and registry failures re
       interaction(registryEvents),
     ),
   );
+
   expect(Exit.isFailure(registryExit)).toBeTrue();
   expect(registryEvents).toEqual(["init:false", "register"]);
 });

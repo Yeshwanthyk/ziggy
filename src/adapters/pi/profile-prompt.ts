@@ -5,6 +5,7 @@ import { ProviderConfigError } from "../../domain/agent";
 import agentsMarkdown from "./AGENTS.md" with { type: "file" };
 
 export const PROFILE_AGENTS_NAME_TOKEN = "{{profile}}";
+
 export const profileAgentsPath: string = `${agentsMarkdown}`;
 
 export const fillProfileAgentsPrompt = (template: string, profileName: string): string =>
@@ -16,6 +17,7 @@ export const composeProfileSystemPrompt = (agentsPrompt: string, soul: string): 
 const readUtf8 = (path: string, profilePath: string, operation: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+
     return yield* fs.readFileString(path).pipe(
       Effect.mapError(
         (cause) =>
@@ -50,6 +52,7 @@ export const loadProfileSystemPrompt = (
     Effect.gen(function* () {
       const agentsPrompt = yield* readAgentsPrompt(profilePath);
       const soul = yield* readUtf8(soulPath, profilePath, "read system prompt");
+
       return composeProfileSystemPrompt(agentsPrompt, soul);
     }),
   );

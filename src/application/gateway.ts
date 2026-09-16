@@ -15,9 +15,13 @@ import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
+
 const TELEGRAM_STARTUP_OFFSET = -1;
+
 const TELEGRAM_STARTUP_TIMEOUT_SECONDS = 0;
+
 const TELEGRAM_MESSAGE_LIMIT = 4_096;
+
 const MAX_RETRY_SECONDS = 30;
 
 export type GatewayError = TelegramApiError;
@@ -61,6 +65,7 @@ export const loadGatewayConfig = loadTelegramConfigFile;
 
 export const isTelegramStopCommand = (text: string): boolean => {
   const normalized = text.trim().toLocaleLowerCase();
+
   return normalized === "stop" || normalized === "/stop";
 };
 
@@ -69,6 +74,7 @@ export const normalizeTelegramUpdate = (
   ownerUserId: number,
 ): InboundMessage | undefined => {
   const message = update.message;
+
   if (message?.from?.id !== ownerUserId || message.text === undefined) {
     return undefined;
   }
@@ -85,6 +91,7 @@ export const normalizeTelegramUpdate = (
   if (message.chat.type === "group" || message.chat.type === "supergroup") {
     // Telegram group IDs are negative; the "tg" prefix makes a stable filesystem-safe memory ID.
     const groupId = `tg${Math.abs(message.chat.id)}`;
+
     return {
       chatKey: `group-${groupId}`,
       chatId: message.chat.id,
@@ -99,9 +106,11 @@ export const normalizeTelegramUpdate = (
 export const telegramMessageChunks = (text: string): ReadonlyArray<string> => {
   const characters = [...text];
   const chunks: Array<string> = [];
+
   for (let offset = 0; offset < characters.length; offset += TELEGRAM_MESSAGE_LIMIT) {
     chunks.push(characters.slice(offset, offset + TELEGRAM_MESSAGE_LIMIT).join(""));
   }
+
   return chunks;
 };
 
@@ -113,23 +122,28 @@ const retryTelegram = <A>(
 ): Effect.Effect<A, TelegramApiError> =>
   Effect.gen(function* () {
     let attempt = 0;
+
     while (true) {
       const result = yield* operation().pipe(
         Effect.map((value) => ({ ok: true as const, value })),
         Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
       );
+
       if (result.ok) {
         return result.value;
       }
+
       if (!result.error.retriable) {
         return yield* result.error;
       }
 
       const exponentialDelay = 2 ** Math.min(attempt, 5);
+
       const retryDelay = Math.min(
         MAX_RETRY_SECONDS,
         Math.max(1, result.error.retryAfterSeconds ?? exponentialDelay),
       );
+
       console.error(
         `[gateway] Telegram ${result.error.operation} failed; retrying in ${retryDelay}s`,
       );
@@ -178,10 +192,12 @@ export const makeTelegramGateway = (
 
         const processMessage = (message: InboundMessage) => {
           let state = chats.get(message.chatKey);
+
           if (state === undefined) {
             state = { semaphore: Semaphore.makeUnsafe(1) };
             chats.set(message.chatKey, state);
           }
+
           const chatState = state;
 
           return chatState.semaphore.withPermit(
@@ -192,6 +208,7 @@ export const makeTelegramGateway = (
                   message.context,
                   join(target.path, "sessions", "telegram", message.chatKey),
                 );
+
                 if (registry !== undefined) {
                   yield* registry
                     .registerAlias(`telegram/${message.chatKey}`, "telegram", chatState.handle)
@@ -205,6 +222,7 @@ export const makeTelegramGateway = (
                     );
                 }
               }
+
               const handle = chatState.handle;
 
               const reply = yield* Effect.scoped(
@@ -213,10 +231,12 @@ export const makeTelegramGateway = (
                     | { readonly kind: "voice"; readonly agentId: string; readonly text: string }
                     | { readonly kind: "done" }
                   >();
+
                   const voicesDrained = yield* Deferred.make<void>();
                   yield* Effect.gen(function* () {
                     while (true) {
                       const signal = yield* Queue.take(voiceSignals);
+
                       if (signal.kind === "done") break;
                       yield* retryTelegram(() =>
                         transport.sendMessage(
@@ -234,23 +254,29 @@ export const makeTelegramGateway = (
                         ),
                       );
                     }
+
                     yield* Deferred.succeed(voicesDrained, undefined);
                   }).pipe(Effect.forkScoped);
+
                   const reply = yield* handle.prompt(message.text, {
                     onProgress: (event) => {
                       if (event.kind === "voice") Queue.offerUnsafe(voiceSignals, event);
                     },
                   });
+
                   yield* Queue.offer(voiceSignals, { kind: "done" });
                   yield* Deferred.await(voicesDrained);
+
                   return reply;
                 }),
               );
+
               for (const chunk of telegramMessageChunks(reply)) {
                 yield* retryTelegram(() =>
                   transport.sendMessage(config.botToken, message.chatId, chunk),
                 );
               }
+
               console.log(
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
@@ -268,6 +294,7 @@ export const makeTelegramGateway = (
           Effect.gen(function* () {
             const handle = chats.get(message.chatKey)?.handle;
             const running = handle !== undefined && !handle.isIdle;
+
             if (handle !== undefined && running) {
               yield* handle.abort.pipe(
                 Effect.catch((failure) =>
@@ -277,6 +304,7 @@ export const makeTelegramGateway = (
                 ),
               );
             }
+
             const acknowledgement = running ? "Stopped." : "Nothing was running.";
             yield* retryTelegram(() =>
               transport.sendMessage(config.botToken, message.chatId, acknowledgement),
@@ -298,6 +326,7 @@ export const makeTelegramGateway = (
             TELEGRAM_STARTUP_TIMEOUT_SECONDS,
           ),
         );
+
         let offset = nextTelegramOffset(startupUpdates);
         console.log("[gateway] pending Telegram backlog discarded");
 
@@ -305,11 +334,15 @@ export const makeTelegramGateway = (
           const updates = yield* retryTelegram(() =>
             transport.getUpdates(config.botToken, offset, TELEGRAM_LONG_POLL_SECONDS),
           );
+
           offset = nextTelegramOffset(updates, offset);
+
           const messages = updates.flatMap((update) => {
             const message = normalizeTelegramUpdate(update, config.ownerUserId);
+
             return message === undefined ? [] : [message];
           });
+
           yield* Effect.forEach(
             messages,
             (message) =>
@@ -330,6 +363,7 @@ export const GatewayLive = Layer.effect(
   Gateway,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
+
     return makeTelegramGateway(agent);
   }),
 );

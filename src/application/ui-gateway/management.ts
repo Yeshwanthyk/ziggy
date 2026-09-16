@@ -56,73 +56,101 @@ import {
 const decodeModelStatus = Schema.decodeUnknownEffect(UiModelStatusParams, {
   onExcessProperty: "error",
 });
+
 const decodeModelList = Schema.decodeUnknownEffect(UiModelListParams, {
   onExcessProperty: "error",
 });
+
 const decodeModelAvailable = Schema.decodeUnknownEffect(UiModelAvailableParams, {
   onExcessProperty: "error",
 });
+
 const decodeModelSet = Schema.decodeUnknownEffect(UiModelSetParams, { onExcessProperty: "error" });
+
 const decodeAuthStatus = Schema.decodeUnknownEffect(UiAuthStatusParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationList = Schema.decodeUnknownEffect(UiAutomationListParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationShow = Schema.decodeUnknownEffect(UiAutomationShowParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationCreate = Schema.decodeUnknownEffect(UiAutomationCreateParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationSave = Schema.decodeUnknownEffect(UiAutomationSaveParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationValidate = Schema.decodeUnknownEffect(UiAutomationValidateParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationPause = Schema.decodeUnknownEffect(UiAutomationPauseParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationResume = Schema.decodeUnknownEffect(UiAutomationResumeParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationRun = Schema.decodeUnknownEffect(UiAutomationRunParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationStatus = Schema.decodeUnknownEffect(UiAutomationStatusParams, {
   onExcessProperty: "error",
 });
+
 const decodeAutomationRuns = Schema.decodeUnknownEffect(UiAutomationRunsParams, {
   onExcessProperty: "error",
 });
+
 const decodeUiAutomationId = Schema.decodeUnknownEffect(UiAutomationId);
+
 const decodeMemoryList = Schema.decodeUnknownEffect(UiMemoryListParams, {
   onExcessProperty: "error",
 });
+
 const decodeMemoryShow = Schema.decodeUnknownEffect(UiMemoryShowParams, {
   onExcessProperty: "error",
 });
+
 const decodeUiMemoryPath = Schema.decodeUnknownEffect(UiMemoryPath);
+
 const decodeExtensionList = Schema.decodeUnknownEffect(UiExtensionListForProfileParams, {
   onExcessProperty: "error",
 });
+
 const decodeExtensionAdd = Schema.decodeUnknownEffect(UiExtensionAddParams, {
   onExcessProperty: "error",
 });
+
 const decodeExtensionRemove = Schema.decodeUnknownEffect(UiExtensionRemoveParams, {
   onExcessProperty: "error",
 });
+
 const decodeExtensionValidate = Schema.decodeUnknownEffect(UiExtensionValidateParams, {
   onExcessProperty: "error",
 });
+
 const decodePinList = Schema.decodeUnknownEffect(UiPinListParams, { onExcessProperty: "error" });
+
 const decodePinSet = Schema.decodeUnknownEffect(UiPinSetParams, { onExcessProperty: "error" });
+
 const decodePinRemove = Schema.decodeUnknownEffect(UiPinRemoveParams, {
   onExcessProperty: "error",
 });
+
 const decodeExtensionListResult = Schema.decodeUnknownEffect(UiExtensionListForProfileResult);
+
 const decodeExtensionValidationResult = Schema.decodeUnknownEffect(UiExtensionValidationResult);
+
 const isKnownMethod = Schema.is(Schema.Literals(UI_METHODS));
 
 const mapModel = (model: KnownModel) => ({
@@ -136,37 +164,48 @@ const MODEL_RESULT_BUDGET_BYTES = 48 * 1_024;
 
 const fairModelOrder = (models: ReadonlyArray<KnownModel>): ReadonlyArray<KnownModel> => {
   const byProvider = new Map<string, KnownModel[]>();
+
   for (const model of models) {
     const group = byProvider.get(model.providerId);
+
     if (group === undefined) byProvider.set(model.providerId, [model]);
     else group.push(model);
   }
+
   const providers = [...byProvider.keys()].sort((left, right) => left.localeCompare(right));
   const ordered: KnownModel[] = [];
+
   for (let index = 0; ; index += 1) {
     let added = false;
+
     for (const provider of providers) {
       const model = byProvider.get(provider)?.[index];
+
       if (model === undefined) continue;
       ordered.push(model);
       added = true;
     }
+
     if (!added) return ordered;
   }
 };
 
 const projectModels = (profileId: ProfileId, models: ReadonlyArray<KnownModel>) => {
   const projected: ReturnType<typeof mapModel>[] = [];
+
   for (const model of fairModelOrder(models)) {
     if (projected.length >= 256) break;
     const mapped = mapModel(model);
     const candidate = [...projected, mapped];
+
     const bytes = new TextEncoder().encode(
       JSON.stringify({ profileId, models: candidate, truncated: true }),
     ).byteLength;
+
     if (bytes > MODEL_RESULT_BUDGET_BYTES) break;
     projected.push(mapped);
   }
+
   return { profileId, models: projected, truncated: projected.length < models.length };
 };
 
@@ -178,7 +217,9 @@ const mapAuth = (provider: ProviderAuthStatus) => {
     supportsApiKeyLogin: provider.supportsApiKeyLogin,
     supportsOauth: provider.supportsOauth,
   };
+
   if (provider.configured === undefined) return result;
+
   return { ...result, type: provider.configured.type };
 };
 
@@ -191,8 +232,10 @@ const authProviderOrder = (
   [...providers].sort((left, right) => {
     const configured =
       Number(right.configured !== undefined) - Number(left.configured !== undefined);
+
     if (configured !== 0) return configured;
     const byName = compareText(left.name, right.name);
+
     return byName !== 0 ? byName : compareText(left.id, right.id);
   });
 
@@ -222,6 +265,7 @@ const extensionFailure = (
   requestedId?: string,
 ): UiExtensionFailureValue => {
   const tag = cause._tag;
+
   const stage: UiExtensionFailureStage =
     tag === "ExtensionCatalogInstallFailed"
       ? cause.reason
@@ -236,6 +280,7 @@ const extensionFailure = (
               : tag === "ProfileFileSystemError" || tag === "ProfileExtensionInvalid"
                 ? "filesystem"
                 : "response";
+
   const code =
     tag === "ExtensionCatalogInstallFailed"
       ? "catalog_install_failed"
@@ -246,6 +291,7 @@ const extensionFailure = (
           : tag === "ProfileExtensionRollbackFailed"
             ? "rollback_failed"
             : tag.toLowerCase();
+
   const result = {
     operation,
     stage,
@@ -253,7 +299,9 @@ const extensionFailure = (
     message: safeFailureMessage(cause, "Profile extension operation failed"),
     selectionChanged: tag === "ProfileExtensionRollbackFailed",
   };
+
   if (requestedId === undefined) return result;
+
   return { ...result, id: boundedText(requestedId, 128, "extension") };
 };
 
@@ -287,11 +335,15 @@ export const dispatchSettings = (
         const params = yield* decodeModelList(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.models === undefined) return yield* Effect.fail(noService(request.method));
+
         const models = yield* config.models
           .list(branch.target, params.providerId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return projectModels(branch.profileId, models);
       });
     case "model.available":
@@ -312,11 +364,15 @@ export const dispatchSettings = (
         const params = yield* decodeModelSet(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.models === undefined) return yield* Effect.fail(noService(request.method));
+
         const selection = yield* config.models
           .set(branch.target, params.providerId, params.modelId, params.thinking)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           providerId: selection.providerId,
@@ -358,12 +414,16 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationList(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const automations = yield* config.automationDefinitions
           .list(branch.target)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           automations: automations.slice(0, 8).map(({ path: _path, ...automation }) => automation),
@@ -374,13 +434,18 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationShow(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const automation = yield* config.automationDefinitions
           .show(branch.target, params.automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         const { path: _path, ...withoutPath } = automation;
+
         return { profileId: branch.profileId, ...withoutPath };
       });
     case "automation.create":
@@ -388,13 +453,18 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationCreate(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const automation = yield* config.automationDefinitions
           .create(branch.target, params.automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         const { path: _path, ...withoutPath } = automation;
+
         return { profileId: branch.profileId, ...withoutPath };
       });
     case "automation.save":
@@ -402,13 +472,18 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationSave(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const automation = yield* config.automationDefinitions
           .save(branch.target, params.automationId, params.expectedSource, params.source)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         const { path: _path, ...withoutPath } = automation;
+
         return { profileId: branch.profileId, ...withoutPath };
       });
     case "automation.validate":
@@ -416,12 +491,16 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationValidate(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const validations = yield* config.automationDefinitions
           .validate(branch.target, params.automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           validations: validations.slice(0, 8).map(({ path: _path, ...validation }) => validation),
@@ -432,12 +511,16 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationPause(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const transition = yield* config.automationDefinitions
           .pause(branch.target, params.automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           id: transition.id,
@@ -449,12 +532,16 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationResume(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationDefinitions === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const transition = yield* config.automationDefinitions
           .resume(branch.target, params.automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           id: transition.id,
@@ -466,11 +553,15 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationRun(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automations === undefined) return yield* Effect.fail(noService(request.method));
+
         const outcome = yield* config.automations
           .run(branch.target, params.automationId, { kind: "manual-force" })
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return {
           profileId: branch.profileId,
           automationId: params.automationId,
@@ -532,18 +623,23 @@ export const dispatchAutomation = (
         const params = yield* decodeAutomationRuns(request.params).pipe(
           Effect.mapError((cause) => badParams(request.method, cause)),
         );
+
         const branch = yield* route(params.profileId);
+
         if (config.automationScheduler === undefined)
           return yield* Effect.fail(noService(request.method));
+
         const automationId =
           params.automationId === undefined
             ? undefined
             : yield* validateAutomationId(params.automationId).pipe(
                 Effect.mapError((cause) => badParams(request.method, cause)),
               );
+
         const runs = yield* config.automationScheduler
           .runs(branch.target, automationId)
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
         return { profileId: branch.profileId, runs: runs.slice(0, 3).map(mapAutomationRun) };
       });
     default:
@@ -591,6 +687,7 @@ export const dispatchMemory = (
           route(params.profileId).pipe(
             Effect.flatMap((branch) => {
               const document = memoryDocumentFromRelativePath(branch.target.path, params.path);
+
               return document === undefined
                 ? Effect.fail(badParams(request.method, "unknown logical memory path"))
                 : config.memory === undefined
@@ -652,6 +749,7 @@ export const dispatchExtensions = (
         : request.method === "extension.validate"
           ? "validate"
           : "list";
+
   switch (isKnownMethod(request.method) ? request.method : undefined) {
     case "extension.list-for-profile":
       return decodeExtensionList(request.params).pipe(

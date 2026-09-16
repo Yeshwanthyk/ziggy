@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
+
 const BoundedText = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const SlackIngressFileReference = Schema.Struct({
@@ -11,6 +13,7 @@ export const SlackIngressFileReference = Schema.Struct({
   size: Schema.optional(NonNegativeInteger),
   urlPrivate: Schema.optional(BoundedText(4_096)),
 });
+
 export type SlackIngressFileReference = typeof SlackIngressFileReference.Type;
 
 const SlackIngressFiles = Schema.Array(SlackIngressFileReference).check(
@@ -40,12 +43,14 @@ export const SlackIngressPayload = Schema.Struct({
     { expected: "Slack text or attachment metadata" },
   ),
 );
+
 export type SlackIngressPayload = typeof SlackIngressPayload.Type;
 
 export const SlackIngressRecord = Schema.Struct({
   eventId: Schema.optional(NonEmpty),
   payload: SlackIngressPayload,
 });
+
 export type SlackIngressRecord = typeof SlackIngressRecord.Type;
 
 export const SlackIngressTerminalState = Schema.Literals([
@@ -54,6 +59,7 @@ export const SlackIngressTerminalState = Schema.Literals([
   "cancelled",
   "unknown",
 ]);
+
 export type SlackIngressTerminalState = typeof SlackIngressTerminalState.Type;
 
 export class SlackIngressDatabaseError extends Schema.TaggedErrorClass<SlackIngressDatabaseError>()(

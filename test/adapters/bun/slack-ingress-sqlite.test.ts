@@ -17,6 +17,7 @@ import {
 } from "ziggy/adapters/bun/slack-ingress-sqlite";
 
 const profile = () => mkdtemp(join(tmpdir(), "ziggy-slack-ingress-"));
+
 const record = (sourceTs: string, eventId = `event-${sourceTs}`): SlackIngressRecord => ({
   eventId,
   payload: {
@@ -28,7 +29,9 @@ const record = (sourceTs: string, eventId = `event-${sourceTs}`): SlackIngressRe
     text: `prompt ${sourceTs}`,
   },
 });
+
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+
 const SCHEMA_V1_FIXTURE = `
 CREATE TABLE slack_ingress (
   channel TEXT NOT NULL,
@@ -77,6 +80,7 @@ describe("Slack durable ingress SQLite boundary", () => {
 
   test("fences running and terminal transitions to the claiming resident owner", async () => {
     const path = await profile();
+
     const item: SlackIngressRecord = {
       ...record("1.0"),
       payload: {
@@ -93,14 +97,17 @@ describe("Slack durable ingress SQLite boundary", () => {
         ],
       },
     };
+
     await run(initializeSlackIngressDatabase(path));
     await run(admitSlackIngress(path, item, 10));
 
     expect(await run(startSlackIngress(path, item.payload, "owner-a", 20))).toBe(true);
     expect(await run(startSlackIngress(path, item.payload, "owner-b", 21))).toBe(false);
+
     const stale = await run(
       finishSlackIngress(path, item.payload, "owner-b", "completed", 30).pipe(Effect.result),
     );
+
     expect(Result.isFailure(stale) && stale.failure.operation).toBe("finish owned row");
     await run(finishSlackIngress(path, item.payload, "owner-a", "completed", 31));
     expect(await run(readReplayableSlackIngress(path))).toEqual([]);
@@ -125,9 +132,11 @@ describe("Slack durable ingress SQLite boundary", () => {
     const current = record("2.0");
     const terminal = record("3.0");
     await run(initializeSlackIngressDatabase(path));
+
     for (const [index, item] of [foreign, current, terminal].entries()) {
       await run(admitSlackIngress(path, item, index));
     }
+
     await run(startSlackIngress(path, foreign.payload, "old-owner", 10));
     await run(startSlackIngress(path, current.payload, "new-owner", 11));
     await run(startSlackIngress(path, terminal.payload, "old-owner", 12));
@@ -178,11 +187,13 @@ describe("Slack durable ingress SQLite boundary", () => {
     await run(initializeSlackIngressDatabase(path));
     const dbPath = slackIngressDatabasePath(path);
     const db = new Database(dbPath);
+
     const insert = db.query(
       `INSERT INTO slack_ingress
        (channel,source_ts,event_id,state,owner_id,chat_key,context_kind,context_id,status_thread_ts,text,files_json,thread_ts,received_at_ms,started_at_ms,finished_at_ms)
        VALUES ('D1',?,NULL,'completed',NULL,'user-U1','user','owner',?,'','{"files":[],"omittedFileCount":0}',NULL,?,?,?)`,
     );
+
     db.transaction(() => {
       for (let index = 0; index < 1_001; index += 1) {
         const ts = String(index);

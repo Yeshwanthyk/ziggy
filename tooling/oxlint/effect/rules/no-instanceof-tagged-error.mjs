@@ -20,6 +20,7 @@ export default {
       BinaryExpression(node) {
         if (node.operator !== "instanceof") return;
         const rightName = nodeName(node.right);
+
         if (isIdentifier(node.right) && looksLikeTaggedErrorName(rightName)) {
           context.report({ node, message });
         }

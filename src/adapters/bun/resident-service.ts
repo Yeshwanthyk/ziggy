@@ -40,8 +40,10 @@ const resolveRegularFile = (
   Effect.tryPromise({
     try: async () => {
       const resolved = await runtime.realpath(path);
+
       if (!(await runtime.stat(resolved)).isFile())
         throw new Error(`${resolved} is not a regular file`);
+
       return resolved;
     },
     catch: (cause) =>
@@ -75,11 +77,14 @@ export const resolveResidentLaunch = (
       "resolve executable",
       runtime,
     );
+
     const profilePath = yield* Effect.tryPromise({
       try: async () => {
         const resolved = await runtime.realpath(input.profilePath);
+
         if (!(await runtime.stat(resolved)).isDirectory())
           throw new Error(`${resolved} is not a directory`);
+
         return resolved;
       },
       catch: (cause) =>
@@ -91,11 +96,13 @@ export const resolveResidentLaunch = (
           cause,
         ),
     });
+
     const main = yield* resolveRegularFile(
       input.mainPath,
       "resolve source entrypoint",
       runtime,
     ).pipe(Effect.option);
+
     return {
       profilePath,
       launchVector:
@@ -124,7 +131,9 @@ export const detectResidentServiceManager = (
   platform: NodeJS.Platform = process.platform,
 ): Effect.Effect<ResidentServiceManager, ResidentServiceError> => {
   if (platform === "darwin") return Effect.succeed("launchd");
+
   if (platform === "linux") return Effect.succeed("systemd");
+
   return Effect.fail(
     serviceError(
       "detect service manager",
@@ -150,6 +159,7 @@ const installedFingerprint = (content: string): string | undefined => {
     /Ziggy(?:DefinitionFingerprint|-(?:Definition-)?Fingerprint)(?:<\/key>\s*<string>|:\s*)([a-f0-9]{64})/u.exec(
       content,
     );
+
   return match?.[1];
 };
 
@@ -159,14 +169,17 @@ const observeDefinition = (
   Effect.tryPromise({
     try: async () => {
       let status;
+
       try {
         status = await lstat(definition.path);
       } catch (cause) {
         if (fileSystemCauseDetails(cause).code === "ENOENT") {
           return { state: { _tag: "not-installed" as const, path: definition.path } };
         }
+
         throw cause;
       }
+
       if (status.isSymbolicLink()) {
         return {
           state: { _tag: "refused" as const, path: definition.path, reason: "symlink" as const },
@@ -174,6 +187,7 @@ const observeDefinition = (
           inode: status.ino,
         };
       }
+
       if (!status.isFile()) {
         return {
           state: {
@@ -185,13 +199,16 @@ const observeDefinition = (
           inode: status.ino,
         };
       }
+
       const handle = await open(definition.path, constants.O_RDONLY | constants.O_NOFOLLOW);
       let content: string;
+
       try {
         content = await handle.readFile("utf8");
       } finally {
         await handle.close();
       }
+
       if (!content.includes(managedMarker(definition))) {
         return {
           state: { _tag: "refused" as const, path: definition.path, reason: "unmanaged" as const },
@@ -200,6 +217,7 @@ const observeDefinition = (
           inode: status.ino,
         };
       }
+
       if (content === definition.content) {
         return {
           state: {
@@ -212,6 +230,7 @@ const observeDefinition = (
           inode: status.ino,
         };
       }
+
       return {
         state: {
           _tag: "drifted" as const,
@@ -244,9 +263,12 @@ export const removeManagedDefinition = (
 ): Effect.Effect<boolean, ResidentServiceError> =>
   Effect.gen(function* () {
     const initial = yield* observeDefinition(definition);
+
     if (initial.state._tag === "not-installed") return false;
+
     if (initial.state._tag === "refused") return yield* policyFailure(initial.state);
     const current = yield* observeDefinition(definition);
+
     if (!sameObservation(initial, current)) {
       return yield* serviceError(
         "remove definition",
@@ -255,6 +277,7 @@ export const removeManagedDefinition = (
         `resident service definition changed before removal at ${definition.path}`,
       );
     }
+
     yield* Effect.tryPromise({
       try: () => rm(definition.path),
       catch: (cause) =>
@@ -266,6 +289,7 @@ export const removeManagedDefinition = (
           cause,
         ),
     });
+
     return true;
   });
 
@@ -284,6 +308,7 @@ const policyFailure = (state: ResidentServiceDefinitionState): ResidentServiceEr
       `managed resident service definition has drifted at ${state.path}; use --force to replace it`,
     );
   }
+
   if (state._tag === "refused" && state.reason === "unmanaged") {
     return serviceError(
       "write definition",
@@ -292,6 +317,7 @@ const policyFailure = (state: ResidentServiceDefinitionState): ResidentServiceEr
       `refused to overwrite an unmanaged service definition at ${state.path}`,
     );
   }
+
   return serviceError(
     "write definition",
     "unsafe-definition",
@@ -306,7 +332,9 @@ export const writeManagedDefinition = (
 ): Effect.Effect<ResidentServiceWriteResult, ResidentServiceError> =>
   Effect.gen(function* () {
     const initial = yield* observeDefinition(definition);
+
     if (initial.state._tag === "current") return "unchanged";
+
     if (initial.state._tag === "refused" || (initial.state._tag === "drifted" && !options.force)) {
       return yield* policyFailure(initial.state);
     }
@@ -355,6 +383,7 @@ export const writeManagedDefinition = (
               ),
           });
           const current = yield* observeDefinition(definition);
+
           if (!sameObservation(initial, current)) {
             return yield* serviceError(
               "write definition",
@@ -363,10 +392,12 @@ export const writeManagedDefinition = (
               `resident service definition changed while preparing replacement at ${definition.path}`,
             );
           }
+
           yield* Effect.tryPromise({
             try: async () => {
               await rename(temporaryPath, definition.path);
               const directoryHandle = await open(directory, "r");
+
               try {
                 await directoryHandle.sync();
               } finally {
@@ -382,6 +413,7 @@ export const writeManagedDefinition = (
                 cause,
               ),
           });
+
           return initial.state._tag === "not-installed" ? "created" : "replaced";
         }),
       (handle) =>
@@ -432,11 +464,13 @@ export const liveResidentPlatformCommandRunner: ResidentPlatformCommandRunner = 
     stderr: "pipe",
     signal,
   });
+
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
+
   return { exitCode, stdout, stderr };
 };
 
@@ -458,6 +492,7 @@ export const makeResidentPlatformCommands = (runner: ResidentPlatformCommandRunn
 });
 
 export type ResidentPlatformCommands = ReturnType<typeof makeResidentPlatformCommands>;
+
 export const residentPlatformCommands = makeResidentPlatformCommands(
   liveResidentPlatformCommandRunner,
 );

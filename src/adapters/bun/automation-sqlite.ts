@@ -25,6 +25,7 @@ import type { ProfileTarget } from "../../domain/profile";
 import { isLocalProcessAlive } from "./process";
 
 const DATABASE_NAME = "automation-scheduler.sqlite";
+
 const SCHEMA_V1 = `
 CREATE TABLE scheduler_state (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1), heartbeat_at_ms INTEGER CHECK (heartbeat_at_ms >= 0),
@@ -95,59 +96,83 @@ const SCHEMA_V2 = SCHEMA_V1.replace(
   .replace("PRAGMA user_version = 1;", "PRAGMA user_version = 2;");
 
 const NonNegativeInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+
 const PositiveInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
+
 const Integer = Schema.Finite.check(Schema.isInt());
+
 const SqlBoolean = Schema.Literals([0, 1]);
+
 const ScheduleRow = AutomationScheduleRecord;
+
 // oxfmt-ignore
 const StateRow = Schema.Struct({ heartbeatAtMs: Schema.NullOr(NonNegativeInteger), lastTickAtMs: Schema.NullOr(NonNegativeInteger), lastTickStatus: Schema.NullOr(Schema.Literals(["ok", "error"])), lastTickError: Schema.NullOr(Schema.Literal("definitions-unreadable")) }).check(Schema.makeFilter((value) => (value.lastTickStatus === null && value.lastTickAtMs === null && value.lastTickError === null) || (value.lastTickStatus === "ok" && value.lastTickAtMs !== null && value.lastTickError === null) || (value.lastTickStatus === "error" && value.lastTickAtMs !== null && value.lastTickError === "definitions-unreadable"), { expected: "a structurally consistent scheduler state" }));
+
 // oxfmt-ignore
 const RunRow = Schema.Struct({ runId: Schema.String, automationId: Schema.String, trigger: Schema.Literals(["manual-force", "scheduled"]), state: Schema.Literals(["claimed", "running", "completed", "failed", "skipped-gate", "skipped-busy", "missed", "unknown"]), ownerPid: Schema.NullOr(PositiveInteger), ownerId: Schema.NullOr(Schema.String), ownerKind: Schema.NullOr(Schema.Literals(["resident", "manual"])), scheduleFingerprint: Schema.NullOr(Schema.String), scheduledForMs: Schema.NullOr(NonNegativeInteger), missedThroughMs: Schema.NullOr(NonNegativeInteger), recordedAtMs: NonNegativeInteger, startedAtMs: Schema.NullOr(NonNegativeInteger), finishedAtMs: Schema.NullOr(NonNegativeInteger), localCompleted: SqlBoolean, failureCategory: Schema.NullOr(Schema.String), gateExitCode: Schema.NullOr(Integer) }).check(Schema.makeFilter((value) => (value.state === "claimed" ? value.startedAtMs === null && value.finishedAtMs === null : value.state === "running" ? value.startedAtMs !== null && value.finishedAtMs === null : value.finishedAtMs !== null) && ((value.state === "claimed" || value.state === "running") ? value.ownerPid !== null && value.ownerId !== null && value.ownerKind !== null : value.ownerPid === null && value.ownerId === null && value.ownerKind === null), { expected: "a run lifecycle with consistent fenced process ownership" }));
+
 // oxfmt-ignore
 const TargetRow = Schema.Struct({ runId: Schema.String, ordinal: NonNegativeInteger, target: Schema.String, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(Schema.String), retriable: Schema.NullOr(SqlBoolean) });
+
 const VersionRow = Schema.Struct({ user_version: NonNegativeInteger });
+
 const MasterRow = Schema.Struct({ name: Schema.String, type: Schema.String, sql: Schema.String });
+
 const OwnerRow = Schema.Struct({ ownerPid: PositiveInteger });
+
 const ResidentOwnerRow = Schema.Struct({ ownerId: Schema.String });
+
 const decodeSchedules = Schema.decodeUnknownSync(Schema.Array(ScheduleRow), {
   onExcessProperty: "error",
 });
+
 const decodeState = Schema.decodeUnknownSync(Schema.NullOr(StateRow), {
   onExcessProperty: "error",
 });
+
 const decodeRuns = Schema.decodeUnknownSync(Schema.Array(RunRow), {
   onExcessProperty: "error",
 });
+
 const decodeTargets = Schema.decodeUnknownSync(Schema.Array(TargetRow), {
   onExcessProperty: "error",
 });
+
 const decodeOwners = Schema.decodeUnknownSync(Schema.Array(OwnerRow), {
   onExcessProperty: "error",
 });
+
 const decodeResidentOwners = Schema.decodeUnknownSync(Schema.Array(ResidentOwnerRow), {
   onExcessProperty: "error",
 });
+
 const decodeRunProjection = Schema.decodeUnknownSync(AutomationRunProjection, {
   onExcessProperty: "error",
 });
+
 const decodeCount = Schema.decodeUnknownSync(Schema.Struct({ count: NonNegativeInteger }), {
   onExcessProperty: "error",
 });
+
 const decodeVersion = Schema.decodeUnknownSync(Schema.NullOr(VersionRow), {
   onExcessProperty: "error",
 });
+
 const decodeMaster = Schema.decodeUnknownSync(Schema.Array(MasterRow), {
   onExcessProperty: "error",
 });
+
 const decodeScheduleMutations = Schema.decodeUnknownSync(Schema.Array(AutomationScheduleMutation), {
   onExcessProperty: "error",
 });
+
 const decodeRunCompletion = Schema.decodeUnknownSync(AutomationRunCompletion, {
   onExcessProperty: "error",
 });
 
 export const automationDatabasePath = (profilePath: string): string =>
   join(profilePath, ".runtime", DATABASE_NAME);
+
 const dbError = (operation: string, path: string, cause: unknown) =>
   new AutomationDatabaseError({
     operation,
@@ -169,7 +194,9 @@ const expectedObjects = [
   "automation_target_outcome",
   "scheduler_state",
 ];
+
 const V1_FINGERPRINT = "8a434e79ca29e3e9f9bdd075602ceaa025879da471e00b3cfe3bcb53fe8dc19e";
+
 const schemaObjects = (db: Database) =>
   decodeMaster(
     db
@@ -178,22 +205,29 @@ const schemaObjects = (db: Database) =>
       )
       .all(),
   );
+
 const schemaFingerprint = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
   createHash("sha256").update(JSON.stringify(objects)).digest("hex");
+
 const expectedV2Fingerprint = (() => {
   const db = new Database(":memory:", { strict: true });
+
   try {
     db.exec(SCHEMA_V2);
+
     return schemaFingerprint(schemaObjects(db));
   } finally {
     db.close(false);
   }
 })();
+
 const schemaVersion = (db: Database): number =>
   decodeVersion(db.query("PRAGMA user_version").get())?.user_version ?? -1;
+
 const validateFingerprint = (db: Database, path: string, version: 1 | 2): void => {
   const objects = schemaObjects(db);
   const expectedFingerprint = version === 1 ? V1_FINGERPRINT : expectedV2Fingerprint;
+
   if (
     schemaVersion(db) !== version ||
     objects.map((row) => row.name).join("|") !== expectedObjects.join("|") ||
@@ -201,11 +235,14 @@ const validateFingerprint = (db: Database, path: string, version: 1 | 2): void =
   )
     throw dbError("validate schema", path, { version: schemaVersion(db), objects });
 };
+
 const validateSchema = (db: Database, path: string): void => validateFingerprint(db, path, 2);
 
 const statementFor = (schema: string, prefix: string): string => {
   const statement = schema.split(";").find((part) => part.trimStart().startsWith(prefix));
+
   if (statement === undefined) throw new Error(`missing schema statement ${prefix}`);
+
   return `${statement};`;
 };
 
@@ -220,12 +257,15 @@ const migrateV1ToV2 = (db: Database, path: string, isAlive: (pid: number) => boo
         )
         .all(),
     );
+
     const live = owners.find(({ ownerPid }) => isAlive(ownerPid));
+
     if (live !== undefined)
       throw dbError("migrate live v1 owner", path, { ownerPid: live.ownerPid });
     db.query(
       "UPDATE automation_run SET state='unknown',finished_at_ms=recorded_at_ms,failure_category='process-start',owner_pid=NULL WHERE state IN ('claimed','running')",
     ).run();
+
     for (const name of [
       "automation_run_active_automation",
       "automation_run_by_automation_recent",
@@ -242,6 +282,7 @@ const migrateV1ToV2 = (db: Database, path: string, isAlive: (pid: number) => boo
     db.exec("INSERT INTO automation_target_outcome SELECT * FROM automation_target_outcome_v1");
     db.exec("DROP TABLE automation_target_outcome_v1");
     db.exec("DROP TABLE automation_run_v1");
+
     for (const prefix of [
       "CREATE UNIQUE INDEX automation_run_scheduled_occurrence",
       "CREATE UNIQUE INDEX automation_run_active_automation",
@@ -261,6 +302,7 @@ const withWritable = <A>(
   use: (db: Database) => A,
 ): Effect.Effect<A, AutomationDatabaseError> => {
   const path = automationDatabasePath(profilePath);
+
   return Effect.tryPromise({
     try: () => mkdir(join(profilePath, ".runtime"), { recursive: true }),
     catch: (cause) => dbError("create runtime directory", path, cause),
@@ -270,11 +312,13 @@ const withWritable = <A>(
         Effect.try({
           try: () => {
             const db = new Database(path, { create: true, readwrite: true, strict: true });
+
             try {
               db.exec(
                 "PRAGMA busy_timeout = 1000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
               );
               validateSchema(db, path);
+
               return db;
             } catch (cause) {
               db.close(false);
@@ -300,6 +344,7 @@ const scheduleQuery = `SELECT automation_id automationId, definition_state defin
  schedule_fingerprint scheduleFingerprint, next_scheduled_at_ms nextScheduledAtMs,
  definition_observed_at_ms definitionObservedAtMs, definition_error definitionError
  FROM automation_schedule ORDER BY automation_id`;
+
 const runColumns = `run_id runId, automation_id automationId, trigger, state, owner_pid ownerPid, owner_id ownerId, owner_kind ownerKind,
  schedule_fingerprint scheduleFingerprint, scheduled_for_ms scheduledForMs, missed_through_ms missedThroughMs, recorded_at_ms recordedAtMs,
  started_at_ms startedAtMs, finished_at_ms finishedAtMs, local_completed localCompleted,
@@ -311,6 +356,7 @@ export const initializeAutomationDatabase = (
   isAlive: (pid: number) => boolean = isLocalProcessAlive,
 ): Effect.Effect<void, AutomationDatabaseError> => {
   const path = automationDatabasePath(profilePath);
+
   if (authority === undefined)
     return Effect.scoped(
       Effect.gen(function* () {
@@ -325,8 +371,10 @@ export const initializeAutomationDatabase = (
             : dbError("acquire initialization authority", path, cause),
       ),
     );
+
   if (!isGatewayOwnerAuthority(profilePath, authority))
     return Effect.fail(dbError("initialize without resident authority", path, authority));
+
   return Effect.tryPromise({
     try: () => mkdir(join(profilePath, ".runtime"), { recursive: true }),
     catch: (cause) => dbError("create runtime directory", path, cause),
@@ -339,6 +387,7 @@ export const initializeAutomationDatabase = (
             db.exec(
               "PRAGMA busy_timeout = 1000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
             );
+
             return db;
           },
           catch: (cause) => dbError("open", path, cause),
@@ -348,6 +397,7 @@ export const initializeAutomationDatabase = (
             try: () => {
               const version = schemaVersion(db);
               const objects = schemaObjects(db);
+
               if (version === 0 && objects.length === 0)
                 db.transaction(() => db.exec(SCHEMA_V2)).immediate();
               else if (version === 1) migrateV1ToV2(db, path, isAlive);
@@ -361,10 +411,12 @@ export const initializeAutomationDatabase = (
     ),
   );
 };
+
 export const readScheduleRecords = (profilePath: string) =>
   withWritable(profilePath, "read schedules", (db) =>
     decodeSchedules(db.query(scheduleQuery).all()),
   );
+
 export const recoverManualAutomationRuns = (
   profilePath: string,
   atMs: number,
@@ -378,7 +430,9 @@ export const recoverManualAutomationRuns = (
         )
         .all(),
     );
+
     const deadOwners = owners.filter(({ ownerPid }) => !isAlive(ownerPid));
+
     return db
       .transaction(() => {
         for (const { ownerPid } of deadOwners)
@@ -404,6 +458,7 @@ export const recoverResidentAutomationRuns = (
         )
         .all(residentOwnerId),
     );
+
     return db
       .transaction(() => {
         for (const { ownerId } of owners)
@@ -420,6 +475,7 @@ export const recoverResidentAutomationRuns = (
 export const recoverAutomationRuns = recoverManualAutomationRuns;
 
 export type ScheduleMutation = AutomationScheduleMutation;
+
 // oxfmt-ignore
 export interface ScheduleCommitResult { readonly stale: boolean; readonly claimed: ReadonlyArray<{ readonly automationId: string; readonly runId: string; readonly scheduledForMs: number; readonly scheduleFingerprint: string }> }
 
@@ -445,11 +501,13 @@ export const commitScheduleTick = (
 ) => {
   return withWritable(profilePath, "commit tick", (db): ScheduleCommitResult => {
     const validatedMutations = decodeScheduleMutations(mutations);
+
     return db
       .transaction(() => {
         const current = new Map(
           decodeSchedules(db.query(scheduleQuery).all()).map((row) => [row.automationId, row]),
         );
+
         if (
           validatedMutations.some((mutation) =>
             mutation.expected === null
@@ -459,12 +517,14 @@ export const commitScheduleTick = (
         ) {
           return { stale: true, claimed: [] };
         }
+
         const claimed: Array<{
           automationId: string;
           runId: string;
           scheduledForMs: number;
           scheduleFingerprint: string;
         }> = [];
+
         for (const mutation of validatedMutations) {
           const row = mutation.next;
           db.query(`INSERT INTO automation_schedule VALUES (?,?,?,?,?,?) ON CONFLICT(automation_id) DO UPDATE SET
@@ -479,7 +539,9 @@ export const commitScheduleTick = (
             row.definitionError,
           );
           const occurrence = mutation.occurrence;
+
           if (occurrence === undefined) continue;
+
           if (occurrence.kind === "missed") {
             db.query(`INSERT INTO automation_run
                 (run_id,automation_id,trigger,state,owner_pid,owner_id,owner_kind,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
@@ -497,12 +559,14 @@ export const commitScheduleTick = (
             );
             continue;
           }
+
           const busy =
             db
               .query(
                 "SELECT 1 FROM automation_run WHERE automation_id=? AND state IN ('claimed','running') LIMIT 1",
               )
               .get(row.automationId) !== null;
+
           const state = busy ? "skipped-busy" : "claimed";
           db.query(`INSERT INTO automation_run
               (run_id,automation_id,trigger,state,owner_pid,owner_id,owner_kind,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
@@ -519,6 +583,7 @@ export const commitScheduleTick = (
             atMs,
             busy ? atMs : null,
           );
+
           if (!busy)
             claimed.push({
               automationId: row.automationId,
@@ -527,12 +592,14 @@ export const commitScheduleTick = (
               scheduleFingerprint: occurrence.scheduleFingerprint,
             });
         }
+
         db.query(`INSERT INTO scheduler_state(singleton,heartbeat_at_ms,last_tick_at_ms,last_tick_status,last_tick_error)
       VALUES(1,?,?, 'ok',NULL) ON CONFLICT(singleton) DO UPDATE SET heartbeat_at_ms=excluded.heartbeat_at_ms,
       last_tick_at_ms=excluded.last_tick_at_ms,last_tick_status='ok',last_tick_error=NULL`).run(
           atMs,
           atMs,
         );
+
         return { stale: false, claimed };
       })
       .immediate();
@@ -557,17 +624,21 @@ export interface RunOwner {
   readonly kind: "resident" | "manual";
   readonly id: string;
 }
+
 // oxfmt-ignore
 export interface AutomationRunStore { readonly recover: (profilePath: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError> }
+
 export type RunTerminal = AutomationRunTerminal;
 
 const ensureManualDatabase = (
   profilePath: string,
 ): Effect.Effect<void, AutomationDatabaseError> => {
   const path = automationDatabasePath(profilePath);
+
   const alreadyV2 = Effect.try({
     try: () => {
       const db = new Database(path, { readonly: true, create: false, strict: true });
+
       try {
         validateFingerprint(db, path, 2);
       } finally {
@@ -576,6 +647,7 @@ const ensureManualDatabase = (
     },
     catch: () => undefined,
   }).pipe(Effect.option);
+
   return Effect.flatMap(alreadyV2, (ready) =>
     ready._tag === "Some"
       ? Effect.void
@@ -594,6 +666,7 @@ export const makeAutomationRunStore = (
 ): AutomationRunStore => {
   const manualOwner: RunOwner = { kind: "manual", id: manualOwnerId };
   const ownership = (owner?: RunOwner) => owner ?? manualOwner;
+
   return {
     recover: (profilePath, atMs) =>
       ensureManualDatabase(profilePath).pipe(
@@ -609,6 +682,7 @@ export const makeAutomationRunStore = (
                   "SELECT 1 FROM automation_run WHERE automation_id=? AND state IN ('claimed','running') LIMIT 1",
                 )
                 .get(automationId) !== null;
+
             db.query(`INSERT INTO automation_run
           (run_id,automation_id,trigger,state,owner_pid,owner_id,owner_kind,schedule_fingerprint,scheduled_for_ms,missed_through_ms,recorded_at_ms,started_at_ms,finished_at_ms,local_completed,failure_category,gate_exit_code)
           VALUES (?,?,'manual-force',?,?,?,?,NULL,NULL,NULL,?,NULL,?,0,NULL,NULL)`).run(
@@ -621,6 +695,7 @@ export const makeAutomationRunStore = (
               atMs,
               busy ? atMs : null,
             );
+
             return busy ? ("skipped-busy" as const) : ("claimed" as const);
           })
           .immediate(),
@@ -630,11 +705,13 @@ export const makeAutomationRunStore = (
         db
           .transaction(() => {
             const owner = ownership(suppliedOwner);
+
             const result = db
               .query(
                 "UPDATE automation_run SET state='running', started_at_ms=? WHERE run_id=? AND state='claimed' AND schedule_fingerprint IS ? AND owner_pid=? AND owner_id=? AND owner_kind=?",
               )
               .run(atMs, runId, fingerprint, ownerPid, owner.id, owner.kind);
+
             if (result.changes !== 1)
               throw dbError("start claimed run", automationDatabasePath(profilePath), runId);
           })
@@ -644,6 +721,7 @@ export const makeAutomationRunStore = (
       withWritable(profilePath, "finish run", (db) => {
         const completion = decodeRunCompletion({ terminal, targets });
         const owner = ownership(suppliedOwner);
+
         return db
           .transaction(() => {
             for (const [ordinal, target] of completion.targets.entries())
@@ -655,6 +733,7 @@ export const makeAutomationRunStore = (
                 target.status === "failed" ? target.category : null,
                 target.status === "failed" ? Number(target.retriable) : null,
               );
+
             const result = db
               .query(`UPDATE automation_run SET state=?,finished_at_ms=?,local_completed=?,failure_category=?,gate_exit_code=?,owner_pid=NULL,owner_id=NULL,owner_kind=NULL
             WHERE run_id=? AND state='running' AND owner_pid=? AND owner_id=? AND owner_kind=?`)
@@ -669,6 +748,7 @@ export const makeAutomationRunStore = (
                 owner.id,
                 owner.kind,
               );
+
             if (result.changes !== 1)
               throw dbError("finish running run", automationDatabasePath(profilePath), runId);
           })
@@ -687,11 +767,14 @@ const missing = (cause: unknown): boolean => fileSystemCauseDetails(cause).code 
 const openReadonlyIfPresent = <A>(profilePath: string, operation: string, absent: A, use: (db: Database) => A): Effect.Effect<A, AutomationProjectionError> => {
   const path = automationDatabasePath(profilePath);
   const inspectError = (cause: unknown) => ({ cause, absent: missing(cause) });
+
   return Effect.tryPromise({ try: () => lstat(path), catch: inspectError }).pipe(Effect.matchEffect({
     onFailure: (failure) => failure.absent ? Effect.succeed(absent) : Effect.fail(new AutomationProjectionError({ operation, path, message: `could not inspect automation database at ${path}`, cause: failure.cause })),
     onSuccess: () => Effect.acquireUseRelease(
       Effect.try({ try: () => new Database(path, { readonly: true, create: false, strict: true }), catch: (cause) => new AutomationProjectionError({ operation, path, message: `could not open automation database at ${path}`, cause }) }),
-      (db) => Effect.try({ try: () => { validateSchema(db, path); return use(db); }, catch: (cause) => new AutomationProjectionError({ operation, path, message: `could not read automation database at ${path}`, cause }) }),
+      (db) => Effect.try({ try: () => { validateSchema(db, path);
+
+ return use(db); }, catch: (cause) => new AutomationProjectionError({ operation, path, message: `could not read automation database at ${path}`, cause }) }),
       (db) => Effect.sync(() => db.close(false)),
     ),
   }));
@@ -708,18 +791,22 @@ const readRunRows = (
 ): ReadonlyArray<AutomationRunProjection> => {
   const orderBy =
     order === "recorded" ? "recorded_at_ms DESC, run_id DESC" : "finished_at_ms DESC, run_id DESC";
+
   const rows = decodeRuns(
     db
       .query(`SELECT ${runColumns} FROM automation_run ${where} ORDER BY ${orderBy} LIMIT ${limit}`)
       .all(...bindings),
   );
+
   if (rows.length === 0) return [];
+
   const targets = decodeTargets(
     db
       .query(`SELECT run_id runId,ordinal,target,status,failure_category failureCategory,retriable
     FROM automation_target_outcome WHERE run_id IN (${rows.map(() => "?").join(",")}) ORDER BY ordinal,target`)
       .all(...rows.map((row) => row.runId)),
   );
+
   return rows.map(
     ({ ownerPid: _ownerPid, ownerId: _ownerId, ownerKind: _ownerKind, localCompleted, ...row }) =>
       decodeRunProjection({
@@ -747,6 +834,7 @@ const emptyStatus = (profilePath: string, observedAtMs: number): AutomationStatu
   latestRun: null,
   latestErrorRun: null,
 });
+
 export const readAutomationStatus = (profilePath: string, observedAtMs: number) =>
   openReadonlyIfPresent(profilePath, "status", emptyStatus(profilePath, observedAtMs), (db) =>
     db.transaction(() => {
@@ -757,16 +845,21 @@ export const readAutomationStatus = (profilePath: string, observedAtMs: number) 
           )
           .get(),
       );
+
       const schedules = decodeSchedules(db.query(scheduleQuery).all());
+
       const active = decodeCount(
         db
           .query("SELECT count(*) count FROM automation_run WHERE state IN ('claimed','running')")
           .get(),
       );
+
       const latestRun = readRunRows(db, "", [], 1)[0] ?? null;
+
       const latestErrorRun =
         readRunRows(db, "WHERE state IN ('failed','missed','unknown')", [], 1, "finished")[0] ??
         null;
+
       return {
         ...emptyStatus(profilePath, observedAtMs),
         ...state,
@@ -777,6 +870,7 @@ export const readAutomationStatus = (profilePath: string, observedAtMs: number) 
       };
     })(),
   );
+
 export const readAutomationRuns = (profilePath: string, automationId?: string) =>
   openReadonlyIfPresent(profilePath, "runs", [], (db) =>
     db.transaction(() =>
@@ -793,6 +887,7 @@ export const validateAutomationProjectionProfile = (
   target: ProfileTarget,
 ): Effect.Effect<void, AutomationProjectionError> => {
   const soulPath = join(target.path, "SOUL.md");
+
   return Effect.tryPromise({
     try: () => lstat(soulPath),
     catch: (cause) =>

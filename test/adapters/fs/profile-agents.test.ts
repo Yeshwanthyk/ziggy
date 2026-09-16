@@ -15,6 +15,7 @@ const temporaryPaths: Array<string> = [];
 const profile = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-profile-agents-"));
   temporaryPaths.push(root);
+
   return join(root, "profile");
 };
 
@@ -95,6 +96,7 @@ test("rejects symlinked agents roots and files", async () => {
   const rootResult = await Effect.runPromise(
     discoverProfileAgents(profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(rootResult, {
       onFailure: (error) =>
@@ -114,6 +116,7 @@ test("rejects symlinked agents roots and files", async () => {
   const fileResult = await Effect.runPromise(
     discoverProfileAgents(profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(fileResult, {
       onFailure: (error) =>
@@ -136,6 +139,7 @@ test("reads and atomically replaces an exact physical agent source", async () =>
     source: original,
     agent: { id: "researcher", description: "Researcher", body: "Research first." },
   });
+
   const saved = await Effect.runPromise(
     replaceProfileAgentFile(profilePath, "researcher", original, edited),
   );
@@ -233,5 +237,6 @@ test("rejects document reads and saves through symlinked agent paths", async () 
       failure: { _tag: "ProfileAgentInvalid", path: linkedPath },
     });
   }
+
   expect(await readFile(externalPath, "utf8")).toBe(source);
 });

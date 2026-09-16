@@ -1,16 +1,21 @@
 import { lexicalTypeParameterNames } from "../lexical-type-parameters.mjs";
+
 function parameterAnnotation(parameter) {
   if (parameter.type === "TSParameterProperty") {
     return parameterAnnotation(parameter.parameter);
   }
+
   if (parameter.type === "RestElement") {
     return parameter.typeAnnotation ?? parameterAnnotation(parameter.argument);
   }
+
   if (parameter.type === "AssignmentPattern") {
     return parameter.typeAnnotation ?? parameter.left.typeAnnotation;
   }
+
   return parameter.typeAnnotation;
 }
+
 function parameterName(parameter, sourceCode) {
   return parameter.type === "Identifier"
     ? parameter.name
@@ -31,13 +36,17 @@ export default {
   },
   create(context) {
     const aliases = new Map();
+
     const resolvesToObject = (type, shadowedAliases, visited = new Set()) => {
       if (type.type === "TSObjectKeyword") return true;
+
       if (type.type === "TSParenthesizedType")
         return resolvesToObject(type.typeAnnotation, shadowedAliases, visited);
+
       if (type.type === "TSUnionType") {
         return type.types.some((member) => resolvesToObject(member, shadowedAliases, visited));
       }
+
       if (
         type.type !== "TSTypeReference" ||
         type.typeName.type !== "Identifier" ||
@@ -49,17 +58,24 @@ export default {
       ) {
         return false;
       }
+
       const alias = aliases.get(type.typeName.name);
+
       if (alias === undefined) return false;
       const nextVisited = new Set(visited);
       nextVisited.add(type.typeName.name);
+
       return resolvesToObject(alias, shadowedAliases, nextVisited);
     };
+
     const checkParameters = (node) => {
       const shadowedAliases = lexicalTypeParameterNames(node, context.sourceCode.visitorKeys);
+
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
+
         if (annotation === null || annotation === undefined) continue;
+
         if (!resolvesToObject(annotation.typeAnnotation, shadowedAliases)) continue;
         context.report({
           node: annotation.typeAnnotation,
@@ -68,11 +84,13 @@ export default {
         });
       }
     };
+
     return {
       Program(node) {
         for (const statement of node.body) {
           const declaration =
             statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+
           if (
             declaration?.type === "TSTypeAliasDeclaration" &&
             (declaration.typeParameters === null || declaration.typeParameters === undefined)

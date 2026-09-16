@@ -11,15 +11,18 @@ const clientFrom = (response: () => Response): HttpClient.HttpClient =>
 describe("Slack HTTP adapter", () => {
   test("adds and removes source-message progress reactions", async () => {
     const requests: Array<{ readonly body: string; readonly url: string }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({
         url: request.url,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
       });
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(request, new Response('{"ok":true}', { status: 200 })),
       );
     });
+
     const api = makeSlackApi(client);
 
     await Effect.runPromise(
@@ -43,14 +46,17 @@ describe("Slack HTTP adapter", () => {
 
   test("sets and clears Slack's native assistant thread status", async () => {
     const requestBodies: Array<string> = [];
+
     const client = HttpClient.make((request) => {
       if (request.body._tag === "Uint8Array") {
         requestBodies.push(new TextDecoder().decode(request.body.body));
       }
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(request, new Response('{"ok":true}', { status: 200 })),
       );
     });
+
     const api = makeSlackApi(client);
 
     await Effect.runPromise(
@@ -72,11 +78,13 @@ describe("Slack HTTP adapter", () => {
 
   test("starts, appends, and stops a DM plan stream with bounded task_update chunks", async () => {
     const requests: Array<{ readonly body: string; readonly url: string }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({
         url: request.url,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
       });
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -84,6 +92,7 @@ describe("Slack HTTP adapter", () => {
         ),
       );
     });
+
     const api = makeSlackApi(client);
     const longId = `call-${"x".repeat(300)}`;
     const longTitle = `bash ${"y".repeat(300)}`;
@@ -103,6 +112,7 @@ describe("Slack HTTP adapter", () => {
         ],
       }),
     );
+
     await Effect.runPromise(
       api.appendStream("bot-secret", "D123", started.ts, [
         { type: "task_update", id: "tool-1", title: "read", status: "complete" },
@@ -147,11 +157,13 @@ describe("Slack HTTP adapter", () => {
 
   test("includes recipient identity on channel stream starts", async () => {
     const requests: Array<{ readonly body: string; readonly url: string }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({
         url: request.url,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
       });
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -159,6 +171,7 @@ describe("Slack HTTP adapter", () => {
         ),
       );
     });
+
     const api = makeSlackApi(client);
 
     await Effect.runPromise(
@@ -186,6 +199,7 @@ describe("Slack HTTP adapter", () => {
 
   test("classifies a native stream API failure without leaking the token", async () => {
     const secret = "bot-stream-secret";
+
     const api = makeSlackApi(
       clientFrom(() => new Response('{"ok":false,"error":"invalid_chunks"}', { status: 200 })),
     );
@@ -193,6 +207,7 @@ describe("Slack HTTP adapter", () => {
     const result = await Effect.runPromise(
       api.startStream(secret, "D123", "1.0").pipe(Effect.result),
     );
+
     const serialized = JSON.stringify(result);
 
     expect(result).toMatchObject({
@@ -204,9 +219,11 @@ describe("Slack HTTP adapter", () => {
 
   test("retrieves all prior thread replies with cursor pagination", async () => {
     const requests: Array<{ readonly method: string; readonly url: string }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({ method: request.method, url: request.url });
       const cursor = new URL(request.url).searchParams.get("cursor");
+
       const response =
         cursor === null
           ? {
@@ -235,6 +252,7 @@ describe("Slack HTTP adapter", () => {
               messages: [{ ts: "1.1", user: "U2", text: "second" }],
               response_metadata: { next_cursor: "" },
             };
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -282,10 +300,12 @@ describe("Slack HTTP adapter", () => {
 
   test("sends agent output as standard Markdown instead of Slack mrkdwn", async () => {
     let requestBody = "";
+
     const client = HttpClient.make((request) => {
       if (request.body._tag === "Uint8Array") {
         requestBody = new TextDecoder().decode(request.body.body);
       }
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -310,10 +330,12 @@ describe("Slack HTTP adapter", () => {
 
   test("replaces a visible working message with the final Markdown answer", async () => {
     let requestBody = "";
+
     const client = HttpClient.make((request) => {
       if (request.body._tag === "Uint8Array") {
         requestBody = new TextDecoder().decode(request.body.body);
       }
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -338,11 +360,13 @@ describe("Slack HTTP adapter", () => {
   test("decodes connections.open and sends the app token through the adapter", async () => {
     const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
       [];
+
     const client = HttpClient.make((request) => {
       requests.push({
         url: request.url,
         authorization: request.headers.authorization,
       });
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -364,6 +388,7 @@ describe("Slack HTTP adapter", () => {
 
   test("classifies HTTP authentication and rate-limit responses", async () => {
     const unauthorized = makeSlackApi(clientFrom(() => new Response("", { status: 401 })));
+
     const limited = makeSlackApi(
       clientFrom(() => new Response("", { status: 429, headers: { "retry-after": "7" } })),
     );
@@ -408,8 +433,10 @@ describe("Slack HTTP adapter", () => {
       readonly authorization: string | undefined;
       readonly url: string;
     }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({ url: request.url, authorization: request.headers.authorization });
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -420,6 +447,7 @@ describe("Slack HTTP adapter", () => {
         ),
       );
     });
+
     const api = makeSlackApi(client);
 
     const result = await Effect.runPromise(
@@ -467,6 +495,7 @@ describe("Slack HTTP adapter", () => {
           .pipe(Effect.result),
       ]),
     );
+
     expect(guarded.map((item) => item._tag)).toEqual(["Failure", "Failure", "Failure"]);
     expect(requests).toHaveLength(1);
   });
@@ -481,6 +510,7 @@ describe("Slack HTTP adapter", () => {
         .downloadFile(token, { id: "F1", mimeType: "image/png", size: 3, urlPrivate: url })
         .pipe(Effect.result),
     );
+
     const serialized = JSON.stringify(result);
 
     expect(result).toMatchObject({
@@ -499,6 +529,7 @@ describe("Slack HTTP adapter", () => {
       size: 3,
       urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
     };
+
     const mismatch = makeSlackApi(
       clientFrom(
         () =>
@@ -508,6 +539,7 @@ describe("Slack HTTP adapter", () => {
           }),
       ),
     );
+
     const oversized = makeSlackApi(
       clientFrom(
         () =>
@@ -536,6 +568,7 @@ describe("Slack HTTP adapter", () => {
 
   test("bounds a streamed file body when Content-Length is absent", async () => {
     const chunk = new Uint8Array(3 * 1024 * 1024);
+
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(chunk);
@@ -543,6 +576,7 @@ describe("Slack HTTP adapter", () => {
         controller.close();
       },
     });
+
     const api = makeSlackApi(
       clientFrom(
         () =>

@@ -83,13 +83,17 @@ export default function selfImprovement(pi: ExtensionAPI): void {
           decision: parameters.decision,
           detail: parameters.detail,
         };
+
         if (parameters.evidence !== undefined) {
           logInput.evidence = parameters.evidence;
         }
+
         if (parameters.clearReady !== undefined) {
           logInput.clearReady = parameters.clearReady;
         }
+
         const result = await appendReviewLog(ctx.cwd, logInput);
+
         return jsonResult({ ok: true, ...result });
       } catch (cause) {
         return errorResult(cause);
@@ -110,12 +114,15 @@ export default function selfImprovement(pi: ExtensionAPI): void {
           id: parameters.id,
           body: parameters.body,
         };
+
         if (parameters.replace !== undefined) {
           writeInput.replace = parameters.replace;
         }
+
         if (parameters.expectedOldSha256 !== undefined) {
           writeInput.expectedOldSha256 = parameters.expectedOldSha256;
         }
+
         return jsonResult(await writeCuratorExtension(ctx.cwd, writeInput));
       } catch (cause) {
         return errorResult(cause);

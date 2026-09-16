@@ -14,7 +14,9 @@ import {
 } from "ziggy/adapters/pi/tui-themes";
 
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
+
 const originalOffline = process.env.PI_OFFLINE;
+
 const originalVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 
 const env = (name: "PI_PACKAGE_DIR" | "PI_OFFLINE" | "PI_SKIP_VERSION_CHECK"): string | undefined =>
@@ -23,8 +25,10 @@ const env = (name: "PI_PACKAGE_DIR" | "PI_OFFLINE" | "PI_SKIP_VERSION_CHECK"): s
 afterEach(() => {
   if (originalPiPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
   else process.env.PI_PACKAGE_DIR = originalPiPackageDir;
+
   if (originalOffline === undefined) delete process.env.PI_OFFLINE;
   else process.env.PI_OFFLINE = originalOffline;
+
   if (originalVersionCheck === undefined) delete process.env.PI_SKIP_VERSION_CHECK;
   else process.env.PI_SKIP_VERSION_CHECK = originalVersionCheck;
 });
@@ -36,6 +40,7 @@ const decodeThemeName = Schema.decodeUnknownSync(
 describe("compiled Pi TUI package layout", () => {
   test("writes Pi 0.84.1 compiled sidecar files under the package root", async () => {
     const destRoot = await mkdtemp(join(tmpdir(), "ziggy-pi-tui-assets-"));
+
     try {
       expect(await materializeCompiledPiTuiPackageDir(destRoot)).toBe(destRoot);
       expect([...compiledPiTuiPackageLayout]).toEqual([
@@ -98,9 +103,11 @@ describe("leaseCompiledPiTuiAssets", () => {
     delete process.env.PI_SKIP_VERSION_CHECK;
     const lease = await leaseCompiledPiTuiAssets(true);
     const packageDirectory = lease.packageDirectory;
+
     if (packageDirectory === undefined) {
       throw new Error("compiled lease did not materialize a package directory");
     }
+
     expect(env("PI_PACKAGE_DIR")).toBe(packageDirectory);
     expect(env("PI_OFFLINE")).toBe("1");
     expect(env("PI_SKIP_VERSION_CHECK")).toBe("1");

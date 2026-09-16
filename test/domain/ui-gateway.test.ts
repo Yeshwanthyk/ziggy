@@ -18,14 +18,23 @@ import {
 } from "ziggy/domain/ui-gateway";
 
 const profileId = `prf_${"a".repeat(24)}`;
+
 const liveRef = { profileId, kind: "live" as const, key: "ui/main" };
+
 const decodeRequest = Schema.decodeUnknownSync(UiRequestEnvelope);
+
 const decodeOpen = Schema.decodeUnknownSync(UiSessionOpenParams);
+
 const decodeText = Schema.decodeUnknownSync(UiSessionTextParams);
+
 const decodeName = Schema.decodeUnknownSync(UiSessionName);
+
 const decodeKey = Schema.decodeUnknownSync(UiSessionKey);
+
 const decodeEvent = Schema.decodeUnknownSync(UiEventFrame);
+
 const decodeResponseResult = Schema.decodeUnknownResult(UiResponseFrame);
+
 const decodeResponse = Schema.decodeUnknownSync(UiResponseFrame);
 
 test("response decoding preserves automation lifecycle alongside agent documents", () => {
@@ -35,20 +44,29 @@ test("response decoding preserves automation lifecycle alongside agent documents
       ok: true as const,
       result: { profileId, id: "morning-weather", lifecycle, source: "definition" },
     };
+
     expect(decodeResponse(frame)).toEqual(frame);
   }
+
   const agent = {
     id: "agent-document",
     ok: true as const,
     result: { profileId, id: "ada", source: "instructions" },
   };
+
   expect(decodeResponse(agent)).toEqual(agent);
 });
+
 const decodeExtensionAdd = Schema.decodeUnknownSync(UiExtensionAddParams);
+
 const decodeExtensionFailure = Schema.decodeUnknownSync(UiExtensionFailure);
+
 const decodeExtensionList = Schema.decodeUnknownSync(UiExtensionListForProfileResult);
+
 const decodeExtensionValidate = Schema.decodeUnknownSync(UiExtensionValidateParams);
+
 const decodeExtensionValidation = Schema.decodeUnknownSync(UiExtensionValidationResult);
+
 const decodeExtensionMutation = Schema.decodeUnknownSync(UiExtensionMutationResult);
 
 test("UI protocol decodes explicit Profile-scoped request params", () => {
@@ -77,9 +95,11 @@ test("UI protocol decodes explicit Profile-scoped request params", () => {
 
 test("UI names and live keys reject traversal, separators, uppercase aliases, and overlong values", () => {
   expect(decodeName("chat_1.test")).toBe("chat_1.test");
+
   for (const value of ["", ".", "..", "Main", "../x", "x/y", "%2e%2e", " white"]) {
     expect(() => decodeName(value)).toThrow();
   }
+
   expect(decodeKey("discord/group-dc1-thread-2")).toBe("discord/group-dc1-thread-2");
   expect(() => decodeKey("automation/job")).toThrow();
   expect(() => decodeKey(`ui/${"x".repeat(241)}`)).toThrow();
@@ -242,6 +262,7 @@ test("UI success responses enforce the complete WebSocket frame budget", () => {
       sessionId: "child-session",
     },
   } as const;
+
   const oversized = {
     ...legal,
     id: "r-frame-oversized",
@@ -264,11 +285,13 @@ test("maximum list projections remain valid inside the complete frame budget", (
     thinking: "high" as const,
     tools: Array.from({ length: 8 }, () => "\0".repeat(128)),
   }));
+
   const maximum = {
     id: "r-list-maximum",
     ok: true,
     result: { profileId, agents },
   } as const;
+
   const overCount = {
     ...maximum,
     id: "r-list-over-count",

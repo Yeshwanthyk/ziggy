@@ -17,6 +17,7 @@ const makeProfile = async (): Promise<{ readonly root: string; readonly profileP
   roots.push(root);
   const profilePath = join(root, "profile");
   await mkdir(profilePath);
+
   return { root, profilePath };
 };
 
@@ -24,6 +25,7 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise
 
 const expectLockFailure = <A, E>(result: Result.Result<A, E>): E => {
   if (Result.isSuccess(result)) throw new Error("expected the Profile extension lock to fail");
+
   return result.failure;
 };
 
@@ -96,6 +98,7 @@ describe("Profile extension mutation lock", () => {
         .withLock(sidecarFixture.profilePath, Effect.succeed("must not run"))
         .pipe(Effect.result),
     );
+
     expect(expectLockFailure(sidecarResult)).toMatchObject({
       _tag: "ProfileExtensionLockFailed",
       operation: "acquire",
@@ -111,6 +114,7 @@ describe("Profile extension mutation lock", () => {
         .withLock(databaseFixture.profilePath, Effect.succeed("must not run"))
         .pipe(Effect.result),
     );
+
     expect(expectLockFailure(databaseResult)).toMatchObject({
       _tag: "ProfileExtensionLockFailed",
       operation: "acquire",
@@ -127,6 +131,7 @@ describe("Profile extension mutation lock", () => {
         .withLock(linkedProfilePath, Effect.succeed("must not run"))
         .pipe(Effect.result),
     );
+
     expect(expectLockFailure(profileResult)).toMatchObject({
       _tag: "ProfileExtensionLockFailed",
       operation: "prepare",
@@ -142,6 +147,7 @@ describe("Profile extension mutation lock", () => {
         .withLock(profilePath, Effect.succeed("must not run"))
         .pipe(Effect.result),
     );
+
     expect(expectLockFailure(runtimeResult)).toMatchObject({
       _tag: "ProfileExtensionLockFailed",
       operation: "prepare",
@@ -177,10 +183,13 @@ describe("Profile extension mutation lock", () => {
       Effect.gen(function* () {
         active += 1;
         maximumActive = Math.max(maximumActive, active);
+
         if (name === "second") secondStarted = true;
         yield* Deferred.succeed(entered, undefined);
+
         if (release === undefined) yield* Effect.sleep("20 millis");
         else yield* Deferred.await(release);
+
         return name;
       }).pipe(Effect.ensuring(Effect.sync(() => void (active -= 1))));
 
@@ -190,10 +199,13 @@ describe("Profile extension mutation lock", () => {
         critical("first", firstEntered, releaseFirst),
       ),
     );
+
     await run(Deferred.await(firstEntered));
+
     const secondPromise = run(
       makeProfileExtensionMutationLock().withLock(profilePath, critical("second", secondEntered)),
     );
+
     await run(Effect.sleep("100 millis"));
     expect(secondStarted).toBe(false);
 
@@ -213,11 +225,14 @@ describe("Profile extension mutation lock", () => {
       readwrite: true,
       strict: true,
     });
+
     holder.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
+
     try {
       const result = await run(
         lock.withLock(profilePath, Effect.succeed("must time out")).pipe(Effect.result),
       );
+
       const failure = expectLockFailure(result);
       expect(failure).toMatchObject({
         _tag: "ProfileExtensionLockFailed",
@@ -236,11 +251,13 @@ describe("Profile extension mutation lock", () => {
     const { profilePath } = await makeProfile();
     const lock = makeProfileExtensionMutationLock();
     await run(lock.withLock(profilePath, Effect.void));
+
     const holder = new Database(profileExtensionLockPath(profilePath), {
       create: false,
       readwrite: true,
       strict: true,
     });
+
     holder.exec("PRAGMA busy_timeout = 0; BEGIN IMMEDIATE");
 
     try {
@@ -262,12 +279,14 @@ describe("Profile extension mutation lock", () => {
     const failure = await run(
       lock.withLock(profilePath, Effect.fail("mutation failed")).pipe(Effect.result),
     );
+
     expect(expectLockFailure(failure)).toBe("mutation failed");
     expect(await run(lock.withLock(profilePath, Effect.succeed("after failure")))).toBe(
       "after failure",
     );
 
     const entered = await run(Deferred.make<void>());
+
     const interruptedFiber = Effect.runFork(
       lock.withLock(
         profilePath,
@@ -277,6 +296,7 @@ describe("Profile extension mutation lock", () => {
         }),
       ),
     );
+
     await run(Deferred.await(entered));
     await run(Fiber.interrupt(interruptedFiber));
 

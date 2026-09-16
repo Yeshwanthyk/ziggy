@@ -15,6 +15,7 @@ const profile = async () => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-agent-cli-"));
   paths.push(path);
   await writeFile(join(path, "SOUL.md"), "# Test\n");
+
   return { path, name: "Test" };
 };
 
@@ -30,6 +31,7 @@ const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
   runSpecialist: (_target, agentId, task, context) =>
     Effect.sync(() => {
       sessionDirectories.push(context.sessionDirectory);
+
       return {
         answer: `${agentId}: ${task}`,
         session: { id: "root", file: join(context.sessionDirectory, "root.jsonl") },
@@ -129,6 +131,7 @@ describe("Profile agent application commands", () => {
     const validation = await Effect.runPromise(
       makeProfileAgents(agentRuntime([]), models).validate(target),
     );
+
     expect(validation.map(({ id, valid }) => ({ id, valid }))).toEqual([
       { id: "blocked", valid: false },
       { id: "broken", valid: false },
@@ -141,6 +144,7 @@ describe("Profile agent application commands", () => {
   test("direct run delegates to the persistent root specialist operation", async () => {
     const target = await profile();
     const directories: Array<string> = [];
+
     const result = await Effect.runPromise(
       makeProfileAgents(agentRuntime(directories), models).run(target, "reviewer", "check this"),
     );

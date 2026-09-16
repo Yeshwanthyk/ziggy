@@ -32,10 +32,12 @@ export default {
               namespaces.add(specifier.local.name);
             }
           }
+
           return;
         }
 
         if (node.source.value !== "effect/Effect") return;
+
         for (const specifier of node.specifiers ?? []) {
           if (specifier.type === "ImportNamespaceSpecifier" && specifier.local?.name) {
             namespaces.add(specifier.local.name);
@@ -46,13 +48,17 @@ export default {
       },
       CallExpression(node) {
         const callee = unwrapExpression(node.callee);
+
         if (isIdentifier(callee) && directImports.has(callee.name)) {
           context.report({ node: callee, message });
+
           return;
         }
+
         if (callee?.type !== "MemberExpression") return;
         const object = unwrapExpression(callee.object);
         const property = getPropertyName(callee.property);
+
         if (isIdentifier(object) && namespaces.has(object.name) && executionMethods.has(property)) {
           context.report({ node: callee, message });
         }

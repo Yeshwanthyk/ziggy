@@ -23,6 +23,7 @@ describe("automation definition CLI", () => {
     timezone: "UTC",
     gateState: "manual-only" as const,
   };
+
   const definitions = [
     validDefinition,
     {
@@ -210,6 +211,7 @@ describe("automation CLI projections", () => {
         },
       ],
     };
+
     expect(renderAutomationRuns([run], 2_000)).toBe(
       [
         "scheduled:daily:1970-01-01T00:00:01.000Z daily failed scheduled scheduled 1970-01-01T00:00:01.000Z through - recorded 1970-01-01T00:00:01.000Z started 1970-01-01T00:00:01.100Z duration 150 reason rate-limited local completed",

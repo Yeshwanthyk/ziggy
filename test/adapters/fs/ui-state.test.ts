@@ -22,6 +22,7 @@ const profile = async (): Promise<{ readonly root: string; readonly path: string
   const root = await mkdtemp(join(tmpdir(), "ziggy-ui-state-"));
   const path = join(root, "profile");
   await mkdir(path, { recursive: true });
+
   return { root, path };
 };
 
@@ -34,6 +35,7 @@ const pinFor = (profileId: ProfileId): UiPinValue => ({
 
 test("pins persist in Profile-local machine state with revision and command idempotency", async () => {
   const fixture = await profile();
+
   try {
     const profileId = stableProfileId(fixture.path);
     const pins = makeUiPinStore();
@@ -56,9 +58,11 @@ test("pins persist in Profile-local machine state with revision and command idem
     expect(replay.pins).toEqual(first.pins);
 
     const changedPin: UiPinValue = { ...pin, label: "Changed" };
+
     const commandConflict = await Effect.runPromise(
       pins.set(fixture.path, changedPin, 0, "pin-command").pipe(Effect.result),
     );
+
     expect(
       Result.match(commandConflict, {
         onFailure: (error) => Predicate.isTagged(error, "UiStateCommandConflict"),
@@ -69,6 +73,7 @@ test("pins persist in Profile-local machine state with revision and command idem
     const revisionConflict = await Effect.runPromise(
       pins.set(fixture.path, changedPin, 0, "new-command").pipe(Effect.result),
     );
+
     expect(
       Result.match(revisionConflict, {
         onFailure: (error) =>
@@ -85,9 +90,11 @@ test("pins persist in Profile-local machine state with revision and command idem
 
 test("groups persist the host Profile and reject stale revisions", async () => {
   const fixture = await profile();
+
   try {
     const profileId = stableProfileId(fixture.path);
     const groups = makeUiGroupStore();
+
     const group: UiGroupRecordValue = {
       groupId: "research",
       conversationId: "ui/group-research",
@@ -96,6 +103,7 @@ test("groups persist the host Profile and reject stale revisions", async () => {
       defaultRecipient: { kind: "host" },
       revision: 0,
     };
+
     const first = await Effect.runPromise(groups.upsert(fixture.path, group, 0, "group-command"));
     expect(first.groups).toEqual([{ ...group, revision: 1 }]);
     expect(await readFile(uiGroupStatePath(fixture.path), "utf8")).toContain(
@@ -110,6 +118,7 @@ test("groups persist the host Profile and reject stale revisions", async () => {
         .upsert(fixture.path, { ...group, memberAgentIds: ["writer"] }, 0, "new-group-command")
         .pipe(Effect.result),
     );
+
     expect(
       Result.match(stale, {
         onFailure: (error) =>
@@ -126,12 +135,15 @@ test("groups persist the host Profile and reject stale revisions", async () => {
 
 test("pin and group writers retain schema-decodable item bounds", async () => {
   const fixture = await profile();
+
   try {
     const profileId = stableProfileId(fixture.path);
     const pins = makeUiPinStore();
     let pinRevision = 0;
+
     for (let index = 0; index <= UI_PIN_LIMIT; index += 1) {
       const id = `pin-${index.toString().padStart(3, "0")}`;
+
       const result = await Effect.runPromise(
         pins.set(
           fixture.path,
@@ -140,11 +152,14 @@ test("pin and group writers retain schema-decodable item bounds", async () => {
           `set-${id}`,
         ),
       );
+
       pinRevision = result.revision;
     }
+
     expect((await Effect.runPromise(pins.read(fixture.path))).pins).toHaveLength(UI_PIN_LIMIT);
 
     const groups = makeUiGroupStore();
+
     for (let index = 0; index <= UI_GROUP_LIMIT; index += 1) {
       const groupId = `group-${index.toString().padStart(3, "0")}`;
       await Effect.runPromise(
@@ -163,6 +178,7 @@ test("pin and group writers retain schema-decodable item bounds", async () => {
         ),
       );
     }
+
     expect((await Effect.runPromise(groups.read(fixture.path))).groups).toHaveLength(
       UI_GROUP_LIMIT,
     );

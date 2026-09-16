@@ -9,6 +9,7 @@ export function toRepoRelative(filename) {
 
 export function isTestLike(filename) {
   const normalized = toRepoRelative(filename);
+
   return (
     /(\.|\/)(test|spec|e2e|node\.test)\.tsx?$/.test(normalized) ||
     normalized === "test" ||
@@ -23,11 +24,13 @@ export function isDeclarationFile(filename) {
 
 export function isAdapterFile(filename) {
   const normalized = toRepoRelative(filename);
+
   return normalized.startsWith("src/adapters/") || normalized.startsWith("test/adapters/");
 }
 
 export function unwrapExpression(node) {
   let current = node;
+
   while (
     current?.type === "ChainExpression" ||
     current?.type === "ParenthesizedExpression" ||
@@ -37,22 +40,31 @@ export function unwrapExpression(node) {
   ) {
     current = current.expression;
   }
+
   return current;
 }
 
 export function getPropertyName(node) {
   if (!node) return undefined;
+
   if (node.type === "Identifier") return node.name;
+
   if (node.type === "PrivateIdentifier") return node.name;
+
   if (node.type === "Literal" && node.value === String(node.value)) return node.value;
+
   if (node.type === "StringLiteral") return node.value;
+
   return undefined;
 }
 
 export function getCallName(node) {
   const expression = unwrapExpression(node);
+
   if (expression?.type === "Identifier") return expression.name;
+
   if (expression?.type === "MemberExpression") return getPropertyName(expression.property);
+
   return undefined;
 }
 
@@ -69,11 +81,14 @@ function isStringLiteral(node) {
 
 function typeName(node) {
   if (node?.type === "Identifier") return node.name;
+
   if (node?.type === "TSQualifiedName") {
     const left = typeName(node.left);
     const right = typeName(node.right);
+
     return left && right ? `${left}.${right}` : undefined;
   }
+
   return undefined;
 }
 
@@ -83,7 +98,10 @@ export function typeReferenceName(node) {
 
 export function nodeName(node) {
   if (isIdentifier(node)) return node.name;
+
   if (node?.type === "PrivateIdentifier") return node.name;
+
   if (isStringLiteral(node)) return node.value;
+
   return undefined;
 }

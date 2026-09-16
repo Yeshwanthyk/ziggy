@@ -13,6 +13,7 @@ const theme: ExtensionMultiSelectTheme = {
 test("the extension checklist toggles entries and returns one complete set", () => {
   let result: ExtensionMultiSelectResult;
   let changes = 0;
+
   const component = new ExtensionMultiSelect(
     [
       { id: "alpha", description: "Alpha extension", kind: "skill", source: "bundled" },

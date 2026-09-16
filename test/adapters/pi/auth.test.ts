@@ -31,6 +31,7 @@ const profile = async (): Promise<string> => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-auth-"));
   temporaryPaths.push(path);
   await writeFile(join(path, "SOUL.md"), "# Soul\n", "utf8");
+
   return path;
 };
 
@@ -68,8 +69,10 @@ describe("Pi auth Effect boundary", () => {
     const path = await mkdtemp(join(tmpdir(), "ziggy-auth-missing-"));
     temporaryPaths.push(path);
     let createCalls = 0;
+
     const auth = makePiAuth(() => {
       createCalls += 1;
+
       return Promise.resolve(runtime());
     });
 
@@ -88,6 +91,7 @@ describe("Pi auth Effect boundary", () => {
 
   test("returns the exact unknown-provider failure", async () => {
     const path = await profile();
+
     const auth = makePiAuth(() =>
       Promise.resolve(runtime({ providers: [provider("known", { apiKey: { login: true } })] })),
     );
@@ -109,6 +113,7 @@ describe("Pi auth Effect boundary", () => {
 
   test("returns the exact unsupported-type failure", async () => {
     const path = await profile();
+
     const auth = makePiAuth(() =>
       Promise.resolve(runtime({ providers: [provider("ambient", { apiKey: {} })] })),
     );
@@ -151,6 +156,7 @@ describe("Pi auth Effect boundary", () => {
   test("preserves provider-check rejection as the provider configuration cause", async () => {
     const path = await profile();
     const cause = { reason: "credential store unavailable" };
+
     const auth = makePiAuth(() =>
       Promise.resolve(
         runtime({
@@ -177,6 +183,7 @@ describe("Pi auth Effect boundary", () => {
   test("preserves login rejection as the authentication failure cause", async () => {
     const path = await profile();
     const cause = { reason: "credential refused" };
+
     const auth = makePiAuth(() =>
       Promise.resolve(
         runtime({
@@ -204,10 +211,13 @@ describe("Pi auth Effect boundary", () => {
   test("interrupting login aborts the signal supplied to Pi", async () => {
     const path = await profile();
     let started: ((signal: AbortSignal) => void) | undefined;
+
     const loginStarted = new Promise<AbortSignal>((resolve) => {
       started = resolve;
     });
+
     let aborts = 0;
+
     const auth = makePiAuth(() =>
       Promise.resolve(
         runtime({
@@ -215,10 +225,13 @@ describe("Pi auth Effect boundary", () => {
           login: (_providerId, _type: ProviderAuthType, loginInteraction) =>
             new Promise((_resolve, reject) => {
               const signal = loginInteraction.signal;
+
               if (signal === undefined) {
                 reject(new Error("missing login signal"));
+
                 return;
               }
+
               started?.(signal);
               signal.addEventListener(
                 "abort",
@@ -232,6 +245,7 @@ describe("Pi auth Effect boundary", () => {
         }),
       ),
     );
+
     const fiber = Effect.runFork(auth.loginProvider(path, "provider", "api_key", interaction));
     const signal = await loginStarted;
 

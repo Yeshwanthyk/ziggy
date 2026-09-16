@@ -39,6 +39,7 @@ import type {
 } from "ziggy/domain/profile-extension";
 
 const roots: string[] = [];
+
 const preflightCounts = {
   extensionPathCount: 0,
   skillPathCount: 0,
@@ -70,6 +71,7 @@ const makeProfile = async () => {
   const profilePath = join(root, "profile");
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "SOUL.md"), "# Test profile\n");
+
   return {
     root,
     profilePath,
@@ -81,17 +83,20 @@ const makeProfile = async () => {
 const writeSelection = async (profilePath: string, ids: ReadonlyArray<string>): Promise<string> => {
   const bytes = `${JSON.stringify({ extensions: [...ids].sort() }, null, 2)}\n`;
   await writeFile(join(profilePath, "extensions.json"), bytes);
+
   return bytes;
 };
 
 const profileTree = async (root: string): Promise<ReadonlyArray<string>> => {
   const entries: string[] = [];
+
   const visit = async (directory: string): Promise<void> => {
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
       left.name.localeCompare(right.name),
     )) {
       const absolute = join(directory, entry.name);
       const name = relative(root, absolute);
+
       if (entry.isDirectory()) {
         entries.push(`${name}/`);
         await visit(absolute);
@@ -100,7 +105,9 @@ const profileTree = async (root: string): Promise<ReadonlyArray<string>> => {
       }
     }
   };
+
   await visit(root);
+
   return entries;
 };
 
@@ -118,6 +125,7 @@ const writeShelfPackage = async (
   await mkdir(packagePath, { recursive: true });
   const extensions: string[] = [];
   const skills: string[] = [];
+
   if (options.skill === true) {
     skills.push("./skills");
     await mkdir(join(packagePath, "skills", id), { recursive: true });
@@ -126,10 +134,12 @@ const writeShelfPackage = async (
       `---\nname: ${id}\ndescription: ${id} test skill\n---\n\n# ${id}\n`,
     );
   }
+
   if (options.code === true) {
     extensions.push("./index.ts");
     await writeFile(join(packagePath, "index.ts"), "export default function () {}\n");
   }
+
   await writeFile(
     join(packagePath, "package.json"),
     `${JSON.stringify(
@@ -143,6 +153,7 @@ const writeShelfPackage = async (
       2,
     )}\n`,
   );
+
   return packagePath;
 };
 
@@ -158,9 +169,11 @@ const writeAutomationPackage = async (
     skill: true,
     automation: { id: automationId, path: `./automations/${automationId}.md` },
   });
+
   const automationPath = join(packagePath, "automations", `${automationId}.md`);
   await mkdir(join(packagePath, "automations"), { recursive: true });
   await writeFile(automationPath, automationSource(`extension:${id}`));
+
   return packagePath;
 };
 
@@ -219,9 +232,11 @@ test("lists catalog metadata and Profile-owned shelf choices through one service
 
   await writeShelfPackage(fixture.profilePath, "local");
   await writeSelection(fixture.profilePath, []);
+
   const profileListing = await Effect.runPromise(
     service.listForProfile(fixture.profilePath, fixture.repositoryRoot),
   );
+
   expect(profileListing.available).toContainEqual({
     id: "local",
     description: "local test package",
@@ -242,6 +257,7 @@ test("invalid manifests preserve exact selection bytes and remain inactive", asy
   const result = await Effect.runPromise(
     service.add(fixture.target, fixture.repositoryRoot, "broken-manifest").pipe(Effect.result),
   );
+
   expect(result).toMatchObject({
     _tag: "Failure",
     failure: { _tag: "ExtensionCatalogInstallFailed" },
@@ -259,16 +275,19 @@ test("automation conflicts preserve selection and human-owned bytes", async () =
   const bytes = await writeSelection(fixture.profilePath, []);
   const automationPath = join(fixture.profilePath, "automations", "self-improvement-curator.md");
   await mkdir(join(fixture.profilePath, "automations"), { recursive: true });
+
   const bundledAutomation = await readFile(
     join(import.meta.dir, "../../extensions/self-improvement/automations/curator.md"),
     "utf8",
   );
+
   const humanBytes = bundledAutomation.replace("owner: extension:self-improvement", "owner: human");
   await writeFile(automationPath, humanBytes);
 
   const result = await Effect.runPromise(
     service.add(fixture.target, fixture.repositoryRoot, "self-improvement").pipe(Effect.result),
   );
+
   expect(result).toMatchObject({
     _tag: "Failure",
     failure: { _tag: "ExtensionCatalogInstallFailed" },
@@ -288,13 +307,16 @@ test("automation conflicts preserve selection and human-owned bytes", async () =
 test("bundled and existing shelf adds select atomically; repeated add is a strict no-op", async () => {
   const fixture = await makeProfile();
   let preflightCalls = 0;
+
   const service = makeService({
     preflight: () =>
       Effect.sync(() => {
         preflightCalls += 1;
+
         return preflightCounts;
       }),
   });
+
   await writeShelfPackage(fixture.profilePath, "local");
   await writeSelection(fixture.profilePath, []);
 
@@ -321,15 +343,18 @@ test("bundled and existing shelf adds select atomically; repeated add is a stric
 
 test("owned automation is inactive during preflight, activates after selection, and removal pauses it", async () => {
   let activeDuringPreflight = true;
+
   const preflight: ProfileExtensionPreflightApi = {
     preflight: (profilePath) =>
       Effect.sync(() => {
         activeDuringPreflight = existsSync(
           join(profilePath, "automations", "self-improvement-curator.md"),
         );
+
         return preflightCounts;
       }),
   };
+
   const fixture = await makeProfile();
   const service = makeService(preflight);
   await writeSelection(fixture.profilePath, []);
@@ -353,6 +378,7 @@ test("owned automation is inactive during preflight, activates after selection, 
   const noOp = await Effect.runPromise(
     service.remove(fixture.target, fixture.repositoryRoot, "self-improvement"),
   );
+
   expect(noOp).toEqual({
     id: "self-improvement",
     profilePath: fixture.profilePath,
@@ -383,6 +409,7 @@ test("remove rejects a malformed absent ID before returning a no-op", async () =
   });
   expect(await readFile(join(fixture.profilePath, "extensions.json"))).toEqual(bytes);
 });
+
 test("remove valid unselected ID is a byte-preserving no-op", async () => {
   const fixture = await makeProfile();
   await writeAutomationPackage(fixture.profilePath, "unselected", "unselected-job");
@@ -412,10 +439,12 @@ test("remove valid unselected ID is a byte-preserving no-op", async () => {
 
 test("Pi factory failures are typed, preserve selection bytes, and leave the package inactive", async () => {
   const fixture = await makeProfile();
+
   const packagePath = await writeShelfPackage(fixture.profilePath, "broken-import", {
     code: true,
     skill: false,
   });
+
   await writeFile(join(packagePath, "index.ts"), 'throw new Error("factory exploded");\n');
   const bytes = await writeSelection(fixture.profilePath, []);
   const service = makeService(makeProfileExtensionPreflight());
@@ -423,6 +452,7 @@ test("Pi factory failures are typed, preserve selection bytes, and leave the pac
   const result = await Effect.runPromise(
     service.add(fixture.target, fixture.repositoryRoot, "broken-import").pipe(Effect.result),
   );
+
   expect(result).toMatchObject({
     _tag: "Failure",
     failure: { _tag: "ProfileExtensionPreflightFailed", stage: "extensions" },
@@ -451,6 +481,7 @@ test("actual Pi diagnostics fail before runtime automation activation", async ()
   await writeSelection(fixture.profilePath, ["diagnostic-runtime"]);
   const snapshot = await Effect.runPromise(snapshotExtensionSelection(fixture.profilePath));
   let activationCalls = 0;
+
   const service: ProfileExtensionsApi = {
     ...makeService(noPreflight, noLock),
     prepareRuntime: () =>
@@ -491,24 +522,29 @@ test("runtime activation rejects exact selection-byte drift before activating ow
   const original = await writeSelection(fixture.profilePath, ["runtime-owned"]);
   const preparedSnapshot = await Effect.runPromise(snapshotExtensionSelection(fixture.profilePath));
   const activationCalls = { install: 0, resume: 0 };
+
   const automation: ProfileExtensionAutomationOperations = {
     files: automationFileStore,
     install: (target, id, source) => {
       activationCalls.install += 1;
+
       return installAutomationDefinition(target, id, source);
     },
     remove: removeAutomationDefinition,
     pause: pauseAutomationDefinition,
     resume: (target, id) => {
       activationCalls.resume += 1;
+
       return resumeAutomationDefinition(target, id);
     },
   };
+
   const service = makeService(noPreflight, noLock, automation);
 
   const preparation = await Effect.runPromise(
     service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
   );
+
   expect(preparation).toEqual({
     selected: ["runtime-owned"],
     generation: extensionSelectionGeneration(preparedSnapshot),
@@ -526,6 +562,7 @@ test("runtime activation rejects exact selection-byte drift before activating ow
       .activateRuntime(fixture.profilePath, fixture.repositoryRoot, preparation)
       .pipe(Effect.result),
   );
+
   expect(result).toMatchObject({
     _tag: "Failure",
     failure: {
@@ -546,6 +583,7 @@ test("post-selection automation provisioning rolls selection back", async () => 
   const automationId = "post-selection";
   await writeAutomationPackage(fixture.profilePath, "post-selection", automationId);
   const bytes = await writeSelection(fixture.profilePath, []);
+
   const preflight: ProfileExtensionPreflightApi = {
     preflight: (profilePath) =>
       Effect.tryPromise({
@@ -555,6 +593,7 @@ test("post-selection automation provisioning rolls selection back", async () => 
           const source = automationSource("extension:post-selection");
           await writeFile(join(directory, `${automationId}.md`), source);
           await writeFile(join(directory, `${automationId}.paused.md`), source);
+
           return preflightCounts;
         },
         catch: (cause) =>
@@ -567,11 +606,13 @@ test("post-selection automation provisioning rolls selection back", async () => 
           }),
       }),
   };
+
   const service = makeService(preflight);
 
   const result = await Effect.runPromise(
     service.add(fixture.target, fixture.repositoryRoot, "post-selection").pipe(Effect.result),
   );
+
   expect(result).toMatchObject({
     _tag: "Failure",
     failure: { _tag: "ExtensionCatalogInstallFailed" },
@@ -604,6 +645,7 @@ test("multi-package activation failure cleans every earlier activation and resto
   expect(existsSync(join(fixture.profilePath, "automations", "beta-job.md"))).toBe(false);
   expect(existsSync(join(fixture.profilePath, "automations", "beta-job.paused.md"))).toBe(false);
 });
+
 test("multi-package activation rollback returns a pre-existing paused automation to paused", async () => {
   const fixture = await makeProfile();
   await writeAutomationPackage(fixture.profilePath, "alpha", "alpha-job");
@@ -644,8 +686,10 @@ test("rollback failure is a bounded typed error that preserves the uncertain sta
   );
 
   expect(result._tag).toBe("Failure");
+
   if (result._tag !== "Failure") return;
   expect(result.failure).toBeInstanceOf(ProfileExtensionRollbackFailed);
+
   if (result.failure._tag !== "ProfileExtensionRollbackFailed") return;
   expect(result.failure.originalFailure).toMatchObject({ _tag: "ExtensionCatalogInstallFailed" });
   expect(result.failure.rollbackFailures).toHaveLength(1);
@@ -722,9 +766,11 @@ test("independent lock users serialize full read-validate-commit operations with
   await writeShelfPackage(fixture.profilePath, "alpha");
   await writeShelfPackage(fixture.profilePath, "beta");
   await writeSelection(fixture.profilePath, []);
+
   const delayedPreflight: ProfileExtensionPreflightApi = {
     preflight: () => Effect.sleep("80 millis").pipe(Effect.as(preflightCounts)),
   };
+
   const first = makeService(delayedPreflight, makeProfileExtensionMutationLock());
   const second = makeService(delayedPreflight, makeProfileExtensionMutationLock());
 

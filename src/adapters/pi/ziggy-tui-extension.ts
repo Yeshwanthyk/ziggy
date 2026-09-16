@@ -99,7 +99,9 @@ interface ZiggyTuiCommandContext {
 interface ZiggyInputContext extends ZiggyTuiCommandContext {}
 
 type ZiggyTuiEvent = SessionStartEvent | SessionInfoChangedEvent;
+
 type ZiggyTuiHandler = (event: ZiggyTuiEvent, context: ZiggyTuiContext) => void;
+
 type InputEventResult =
   | { readonly action: "continue" }
   | { readonly action: "transform"; readonly text: string }
@@ -166,27 +168,37 @@ const editAutomation = async (
   context: ZiggyTuiCommandContext,
 ): Promise<void> => {
   const loaded = await dispatch({ kind: "document", id: definition.id });
+
   if (loaded.kind === "failure") {
     notifyAutomationFailure(context, loaded);
+
     return;
   }
+
   if (loaded.kind !== "document") {
     context.ui.notify("automation editor received an unexpected response", "error");
+
     return;
   }
 
   let draft = loaded.source;
+
   while (true) {
     const edited = await context.ui.editor(`Edit ${loaded.id} · ${loaded.path}`, draft);
+
     if (edited === undefined) return;
+
     if (edited === loaded.source) {
       context.ui.notify(`No changes to ${loaded.id}.`);
+
       return;
     }
+
     const confirmed = await context.ui.confirm(
       `Save ${loaded.id}?`,
       `Validate and replace ${loaded.path}?`,
     );
+
     if (!confirmed) return;
 
     const saved = await dispatch({
@@ -195,15 +207,21 @@ const editAutomation = async (
       expectedSource: loaded.source,
       source: edited,
     });
+
     if (saved.kind === "saved") {
       context.ui.notify(`Saved ${saved.id} at ${saved.path}.`);
+
       return;
     }
+
     if (saved.kind !== "failure") {
       context.ui.notify("automation editor received an unexpected response", "error");
+
       return;
     }
+
     notifyAutomationFailure(context, saved);
+
     if (saved.category !== "invalid") return;
     draft = edited;
   }
@@ -221,6 +239,7 @@ const manageAutomation = async (
         : definition.lifecycle === "paused"
           ? "Resume automation"
           : undefined;
+
     const action = await context.ui.select(`Automation · ${definition.id}`, [
       "View details",
       "Edit Markdown",
@@ -228,39 +247,49 @@ const manageAutomation = async (
       ...(lifecycleAction === undefined ? [] : [lifecycleAction]),
       "Back",
     ]);
+
     if (action === undefined || action === "Back") return;
 
     if (action === "View details") {
       context.ui.notify(renderAutomationDetails(definition));
       continue;
     }
+
     if (action === "Edit Markdown") {
       await editAutomation(definition, dispatch, context);
+
       return;
     }
+
     if (action === "Run history") {
       const runs = await dispatch({ kind: "runs", id: definition.id });
+
       if (runs.kind === "failure") notifyAutomationFailure(context, runs);
       else if (runs.kind === "runs") context.ui.notify(runs.text);
       else context.ui.notify("automation history received an unexpected response", "error");
       continue;
     }
+
     if (action === lifecycleAction) {
       const verb = definition.lifecycle === "active" ? "pause" : "resume";
+
       const confirmed = await context.ui.confirm(
         `${verb === "pause" ? "Pause" : "Resume"} ${definition.id}?`,
         verb === "pause"
           ? "Future scheduler admission will stop; an already running occurrence may finish."
           : "Scheduling restarts from the next future occurrence.",
       );
+
       if (!confirmed) continue;
       const transitioned = await dispatch({ kind: verb, id: definition.id });
+
       if (transitioned.kind === "failure") notifyAutomationFailure(context, transitioned);
       else if (transitioned.kind === "transitioned")
         context.ui.notify(
           `${transitioned.lifecycle === "paused" ? "Paused" : "Resumed"} ${transitioned.id} at ${transitioned.path}.`,
         );
       else context.ui.notify("automation lifecycle received an unexpected response", "error");
+
       return;
     }
   }
@@ -272,40 +301,55 @@ const openAutomations = async (
   context: ZiggyTuiCommandContext,
 ): Promise<void> => {
   let selectId = requestedId.trim();
+
   while (true) {
     const overview = await dispatch({ kind: "overview" });
+
     if (overview.kind === "failure") {
       notifyAutomationFailure(context, overview);
+
       return;
     }
+
     if (overview.kind !== "overview") {
       context.ui.notify("automation manager received an unexpected response", "error");
+
       return;
     }
 
     let selected: AutomationTuiDefinition | undefined;
+
     if (selectId.length > 0) {
       selected = overview.definitions.find((definition) => definition.id === selectId);
+
       if (selected === undefined) {
         context.ui.notify(`No automation named ${selectId}.`, "error");
+
         return;
       }
+
       selectId = "";
     } else {
       const statusOption = "Scheduler overview";
+
       const labels = new Map(
         overview.definitions.map((definition) => [automationLabel(definition), definition]),
       );
+
       const choice = await context.ui.select("Profile automations", [
         statusOption,
         ...labels.keys(),
       ]);
+
       if (choice === undefined) return;
+
       if (choice === statusOption) {
         context.ui.notify(overview.statusText);
         continue;
       }
+
       selected = labels.get(choice);
+
       if (selected === undefined) {
         context.ui.notify("automation selection is no longer available", "error");
         continue;
@@ -339,8 +383,10 @@ const createAgentAutocomplete = (
     const line = lines[cursorLine] ?? "";
     const beforeCursor = line.slice(0, cursorCol);
     const match = /^(@[a-z0-9-]*)$/.exec(beforeCursor);
+
     if (match === null) return base;
     const prefix = match[1] ?? "@";
+
     return {
       prefix,
       items: agents
@@ -357,6 +403,7 @@ const createAgentAutocomplete = (
     const line = nextLines[cursorLine] ?? "";
     const start = cursorCol - prefix.length;
     nextLines[cursorLine] = `${line.slice(0, start)}${item.value}${line.slice(cursorCol)}`;
+
     return { lines: nextLines, cursorLine, cursorCol: start + item.value.length };
   },
 });
@@ -373,10 +420,15 @@ export const createProfileAgentGuidanceExtension = (agents: ReadonlyArray<Profil
   }) satisfies InlineExtension;
 
 const PROFILE_EXTENSION_OPERATION_MAX = 96;
+
 const PROFILE_EXTENSION_STAGE_MAX = 64;
+
 const PROFILE_EXTENSION_CODE_MAX = 64;
+
 const PROFILE_EXTENSION_REASON_MAX = 360;
+
 const PROFILE_EXTENSION_ID_MAX = 96;
+
 const PROFILE_EXTENSION_SOURCE_MAX = 240;
 
 const ProfileExtensionOperationFailureSchema = Schema.Struct({
@@ -394,6 +446,7 @@ const ProfileExtensionOperationFailureSchema = Schema.Struct({
     expected: "a Profile extension operation failure with a reason",
   }),
 );
+
 export type ProfileExtensionOperationFailure = typeof ProfileExtensionOperationFailureSchema.Type;
 
 const decodeProfileExtensionOperationFailure = Schema.decodeUnknownOption(
@@ -442,6 +495,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ProfileExtensionLockFailed) {
     return {
       operation,
@@ -451,6 +505,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ProfileExtensionRollbackFailed) {
     return {
       operation,
@@ -460,6 +515,7 @@ const knownExtensionFailure = (
       selectionChanged: true,
     };
   }
+
   if (cause instanceof ProfileExtensionInvalid) {
     return {
       operation,
@@ -469,6 +525,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ProfileFileSystemError) {
     return {
       operation,
@@ -478,6 +535,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ExtensionCatalogInstallFailed) {
     return {
       operation,
@@ -489,6 +547,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ExtensionCatalogInvalid) {
     return {
       operation,
@@ -499,6 +558,7 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   if (cause instanceof ExtensionCatalogUnavailable) {
     return {
       operation,
@@ -508,11 +568,13 @@ const knownExtensionFailure = (
       selectionChanged: false,
     };
   }
+
   return undefined;
 };
 
 const extensionSelectionError = (operation: string, cause: unknown): string => {
   const structured = Option.getOrUndefined(decodeProfileExtensionOperationFailure(cause));
+
   return renderProfileExtensionOperationFailure(
     structured ??
       knownExtensionFailure(operation, cause) ?? {
@@ -535,6 +597,7 @@ export const createZiggyTuiExtension = (
     hidden: true,
     factory: (pi: ZiggyTuiApi) => {
       const profileName = basename(profilePath);
+
       const setTitle = (context: ZiggyTuiContext) => {
         // Pi restores its built-in title after session lifecycle handlers return.
         setTimeout(() => context.ui.setTitle(`Ziggy — ${profileName}`), 0);
@@ -547,9 +610,11 @@ export const createZiggyTuiExtension = (
 
         context.ui.setHeader(() => textComponent(`Ziggy · ${profileName}`));
         context.ui.setFooter(() => textComponent(`Profile · ${profilePath}`));
+
         if (agents.length > 0) {
           context.ui.addAutocompleteProvider((current) => createAgentAutocomplete(agents, current));
         }
+
         setTitle(context);
       });
 
@@ -563,14 +628,18 @@ export const createZiggyTuiExtension = (
         if (context.mode !== "tui" || event.source !== "interactive") {
           return { action: "continue" };
         }
+
         const prepared = prepareProfileAgentPrompt(event.text, agents);
+
         if (!prepared.ok) {
           context.ui.notify(
             `Invalid Profile agent mention: ${prepared.message}. Use /agents to see available agents.`,
             "error",
           );
+
           return { action: "handled" };
         }
+
         return prepared.text === event.text
           ? { action: "continue" }
           : { action: "transform", text: prepared.text };
@@ -603,9 +672,12 @@ export const createZiggyTuiExtension = (
             if (context.mode !== "tui" || context.ui.custom === undefined) {
               return;
             }
+
             let operation = "list";
+
             try {
               const listing = await extensionSelection.list();
+
               const selected = await context.ui.custom<ReadonlyArray<string> | undefined>(
                 (tui, theme, _keybindings, done) =>
                   new ExtensionMultiSelect(
@@ -616,16 +688,20 @@ export const createZiggyTuiExtension = (
                     done,
                   ),
               );
+
               if (selected === undefined) {
                 return;
               }
 
               operation = "set-selected";
               const result = await extensionSelection.setSelected(selected);
+
               if (!result.changed) {
                 context.ui.notify("Extension selection is already up to date", "info");
+
                 return;
               }
+
               context.ui.notify(
                 result.selected.length === 0
                   ? "Removed all optional extensions. Reopen this Profile to apply the change."

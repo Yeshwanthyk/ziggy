@@ -28,10 +28,13 @@ export interface PiResources {
 }
 
 const embeddedBundledSkillPaths = new Set<string>();
+
 for (const packageInfo of BUILTIN_PACKAGE_METADATA) {
   if (!packageInfo.required) continue;
+
   for (const skill of packageInfo.skills) {
     const embeddedPath = bundledFilePath(skill.logicalPath);
+
     if (embeddedPath !== undefined) embeddedBundledSkillPaths.add(embeddedPath);
   }
 }
@@ -45,6 +48,7 @@ const inspectPath = (targetPath: string) =>
     try: () => stat(targetPath),
     catch: (cause) => {
       const details = fileSystemCauseDetails(cause);
+
       return new ProfileFileSystemError({
         operation: "inspect",
         path: targetPath,
@@ -89,6 +93,7 @@ export const composePiResources = (
       existingDirectory(join(profilePath, "extensions", id)).pipe(
         Effect.flatMap((directory) => {
           if (directory !== undefined) return readExtensionPackage(profilePath, id);
+
           return approvedRepositoryIds.has(id)
             ? Effect.fail(missingSelected(profilePath, id))
             : Effect.fail(
@@ -101,6 +106,7 @@ export const composePiResources = (
         }),
       ),
     );
+
     const required = yield* Effect.forEach([...REQUIRED_BUNDLED_EXTENSION_IDS], (id) =>
       readRequiredPackage(profilePath, id).pipe(
         Effect.flatMap((onDisk) =>
@@ -108,6 +114,7 @@ export const composePiResources = (
         ),
       ),
     );
+
     return {
       extensionPaths: selected.flatMap((item) =>
         item.extensionPaths.length > 0 ? [item.packagePath] : [],

@@ -8,11 +8,17 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 const PROFILE_PATTERN = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
+
 const IDLE_TIMEOUT_PATTERN = "^(?:0|[1-9][0-9]{0,8}(?:ms|s|m|h)?)$";
+
 const MAX_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+
 const EXECUTE_TIMEOUT_MS = 120_000;
+
 const MAINTENANCE_TIMEOUT_MS = 15_000;
+
 const TERMINATION_GRACE_MS = 500;
+
 const OUTPUT_LIMIT = 24 * 1024;
 
 const ExecuteParameters = Type.Object(
@@ -51,10 +57,12 @@ const BrowsersParameters = Type.Object(
   { action: Type.Literal("browsers") },
   { additionalProperties: false },
 );
+
 const StatusParameters = Type.Object(
   { action: Type.Literal("status") },
   { additionalProperties: false },
 );
+
 const StopParameters = Type.Object(
   {
     action: Type.Literal("stop"),
@@ -74,6 +82,7 @@ export const Parameters = Type.Union([
 ]);
 
 type Parameters = Static<typeof Parameters>;
+
 type ExecuteInput = Static<typeof ExecuteParameters>;
 
 interface CapturedOutput {
@@ -93,14 +102,19 @@ interface OutputCollector {
 
 const durationMilliseconds = (duration: string): number => {
   const match = /^(0|[1-9][0-9]{0,8})(ms|s|m|h)?$/.exec(duration);
+
   if (match === null) throw new Error(`Invalid idleTimeout: ${duration}`);
   const value = Number(match[1]);
+
   const multiplier =
     match[2] === "h" ? 3_600_000 : match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
+
   const milliseconds = value * multiplier;
+
   if (milliseconds > MAX_IDLE_TIMEOUT_MS) {
     throw new Error(`idleTimeout must be at most 24h; received ${duration}`);
   }
+
   return milliseconds;
 };
 
@@ -111,6 +125,7 @@ export const managedBrowserName = (cwd: string, logicalProfile: string): string 
     .update(logicalProfile)
     .digest("hex")
     .slice(0, 20);
+
   return `ziggy-${logicalProfile}-${namespace}`;
 };
 
@@ -118,14 +133,17 @@ const binary = (): string => process.env.ZIGGY_DEV_BROWSER_BIN?.trim() || "dev-b
 
 const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
   if (child.pid === undefined) return;
+
   if (process.platform !== "win32") {
     try {
       process.kill(-child.pid, signal);
+
       return;
     } catch {
       // Fall back if the process group has already changed or exited.
     }
   }
+
   child.kill(signal);
 };
 
@@ -133,17 +151,22 @@ const createCollector = (): OutputCollector => {
   const chunks: Buffer[] = [];
   let size = 0;
   let truncated = false;
+
   return {
     append(chunk) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const available = OUTPUT_LIMIT - size;
+
       if (available <= 0) {
         truncated = true;
+
         return;
       }
+
       const selected = buffer.subarray(0, available);
       chunks.push(selected);
       size += selected.byteLength;
+
       if (selected.byteLength < buffer.byteLength) truncated = true;
     },
     value: () => ({ text: Buffer.concat(chunks).toString("utf8"), truncated }),
@@ -170,6 +193,7 @@ const runCli = (
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+
     const stdout = createCollector();
     const stderr = createCollector();
     let settled = false;
@@ -180,9 +204,11 @@ const runCli = (
 
     const cleanup = (): void => {
       clearTimeout(timeout);
+
       if (escalation !== undefined) clearTimeout(escalation);
       signal?.removeEventListener("abort", cancel);
     };
+
     const terminate = (): void => {
       if (terminating) return;
       terminating = true;
@@ -190,11 +216,14 @@ const runCli = (
       escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
       escalation.unref();
     };
+
     const timeout = setTimeout(() => {
       timedOut = true;
       terminate();
     }, timeoutMs);
+
     timeout.unref();
+
     const cancel = (): void => {
       cancelled = true;
       terminate();
@@ -216,9 +245,12 @@ const runCli = (
       cleanup();
       const result = { stdout: stdout.value(), stderr: stderr.value() };
       const streams = streamSummary(result);
+
       if (cancelled) return reject(new Error(`dev_browser was cancelled.\n${streams}`));
+
       if (timedOut)
         return reject(new Error(`dev_browser timed out after ${timeoutMs}ms.\n${streams}`));
+
       if (code !== 0)
         return reject(new Error(`dev_browser exited with code ${code ?? "unknown"}.\n${streams}`));
       resolvePromise(result);
@@ -232,32 +264,41 @@ const runCli = (
 const executeArgs = (input: ExecuteInput, cwd: string): string[] => {
   if (input.idleTimeout !== undefined) durationMilliseconds(input.idleTimeout);
   const args = ["--browser", managedBrowserName(cwd, input.profile)];
+
   if (input.headless === true) args.push("--headless");
+
   if (input.connect === true) args.push("--connect");
+
   if (input.idleTimeout !== undefined) args.push("--idle-timeout", input.idleTimeout);
+
   return args;
 };
 
 const resultText = (result: CliResult): string => {
   const stdout = display(result.stdout);
   const stderr = display(result.stderr);
+
   return stderr ? `${stdout}\n\nstderr:\n${stderr}`.trim() : stdout || "dev-browser completed.";
 };
 
 export const executeDevBrowser = async (input: Parameters, cwd: string, signal?: AbortSignal) => {
   if (input.action === "execute") {
     let result: CliResult;
+
     try {
       result = await runCli(executeArgs(input, cwd), input.script, cwd, signal, EXECUTE_TIMEOUT_MS);
     } catch (cause) {
       const message = String(cause);
+
       if (input.idleTimeout !== undefined && message.includes("--idle-timeout")) {
         throw new Error(
           "This installed dev-browser does not support idleTimeout. Upgrade dev-browser to 0.2.9 or newer, or omit idleTimeout; persistent profile reuse still works without idle cleanup.",
         );
       }
+
       throw cause;
     }
+
     return {
       content: [{ type: "text" as const, text: resultText(result) }],
       details: {
@@ -274,11 +315,14 @@ export const executeDevBrowser = async (input: Parameters, cwd: string, signal?:
       "dev_browser stop requires confirmed:true because it stops the daemon and all managed browsers globally.",
     );
   }
+
   const result = await runCli([input.action], "", cwd, signal, MAINTENANCE_TIMEOUT_MS);
+
   const prefix =
     input.action === "stop"
       ? "Stopped the dev-browser daemon and all managed browser connections. Persistent browser profile directories were preserved.\n\n"
       : "";
+
   return {
     content: [{ type: "text" as const, text: `${prefix}${resultText(result)}`.trim() }],
     details: {

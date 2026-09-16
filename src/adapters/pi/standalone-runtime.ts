@@ -20,9 +20,12 @@ const readFileWithOptions = (
   options: ReadFileOptions,
 ): Buffer | string => {
   if (options === undefined || options === null) return readFileSync(file, options);
+
   if (Predicate.isString(options)) return readFileSync(file, options);
   const encoding = options.encoding;
+
   if (encoding === undefined || encoding === null) return readFileSync(file, options);
+
   return readFileSync(file, { ...options, encoding });
 };
 
@@ -32,6 +35,7 @@ export const installCompiledPhotonWasmFallback = (
   wasmPath: string = piBuiltinPhotonWasmPath,
 ): void => {
   const originalReadFileSync = fileSystem.readFileSync.bind(fileSystem);
+
   const patchedReadFileSync = (
     file: PathOrFileDescriptor,
     options?: ReadFileOptions,
@@ -45,9 +49,11 @@ export const installCompiledPhotonWasmFallback = (
       ) {
         throw cause;
       }
+
       return readFileWithOptions(originalReadFileSync, wasmPath, options);
     }
   };
+
   Object.defineProperty(fileSystem, "readFileSync", {
     configurable: true,
     value: patchedReadFileSync,

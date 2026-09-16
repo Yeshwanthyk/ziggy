@@ -5,6 +5,7 @@ const commentOwnerKinds = new Set([
   "ThrowStatement",
   "VariableDeclaration",
 ]);
+
 function isConstAssertion(node) {
   return (
     node.typeAnnotation.type === "TSTypeReference" &&
@@ -12,8 +13,10 @@ function isConstAssertion(node) {
     node.typeAnnotation.typeName.name === "const"
   );
 }
+
 function hasSafetyComment(sourceCode, node) {
   let current = node;
+
   while (true) {
     if (
       sourceCode
@@ -22,10 +25,12 @@ function hasSafetyComment(sourceCode, node) {
     ) {
       return true;
     }
+
     if (commentOwnerKinds.has(current.type) || current.parent.type === "Program") return false;
     current = current.parent;
   }
 }
+
 export default {
   meta: {
     type: "problem",
@@ -43,6 +48,7 @@ export default {
       if (isConstAssertion(node) || hasSafetyComment(context.sourceCode, node)) return;
       context.report({ node, messageId: "missingSafetyComment" });
     };
+
     return {
       TSAsExpression: checkAssertion,
       TSTypeAssertion: checkAssertion,

@@ -70,6 +70,7 @@ test("leading Profile agent preparation is shared and rejects malformed or unkno
       body: "Use primary sources.",
     },
   ];
+
   expect(prepareProfileAgentPrompt("plain prompt", agents)).toEqual({
     ok: true,
     text: "plain prompt",

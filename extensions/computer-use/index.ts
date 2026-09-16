@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { executeSegment, type SegmentBridge } from "./segment.ts";
 
 type ExtensionFactory = (pi: ExtensionAPI) => void;
+
 type SegmentBridgeModule = {
   readonly COMPUTER_USE_BROWSER_BRIDGE_CHANNEL: string;
   readonly handleBrowserBridgeRequest: (data: unknown) => void;
@@ -20,11 +21,13 @@ type SegmentBridgeModule = {
 const isExtensionModule = (value: unknown): value is { readonly default: ExtensionFactory } => {
   if (value !== Object(value)) return false;
   const descriptor = Object.getOwnPropertyDescriptor(value, "default");
+
   return typeof descriptor?.value === "function";
 };
 
 const isSegmentBridgeModule = (value: unknown): value is SegmentBridgeModule => {
   if (value !== Object(value)) return false;
+
   return (
     typeof Object.getOwnPropertyDescriptor(value, "COMPUTER_USE_BROWSER_BRIDGE_CHANNEL")?.value ===
       "string" &&
@@ -48,6 +51,7 @@ if (!isExtensionModule(upstreamModule)) {
 }
 
 const bridgeModule: unknown = await import(new URL("./dist/src/bridge.mjs", import.meta.url).href);
+
 if (!isSegmentBridgeModule(bridgeModule)) {
   throw new Error("The pinned computer-use runtime has no compatible semantic bridge executors.");
 }
@@ -60,6 +64,7 @@ const Target = Type.Object(
   },
   { additionalProperties: false, minProperties: 1 },
 );
+
 const Condition = Type.Object(
   {
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
@@ -69,6 +74,7 @@ const Condition = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const RootQuery = Type.Object(
   {
     text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
@@ -87,6 +93,7 @@ const RootQuery = Type.Object(
   },
   { additionalProperties: false, minProperties: 1 },
 );
+
 const SegmentAction = Type.Union([
   Type.Object(
     {
@@ -117,6 +124,7 @@ const SegmentAction = Type.Union([
     { additionalProperties: false },
   ),
 ]);
+
 const ActionStep = Type.Object(
   {
     target: Target,
@@ -125,6 +133,7 @@ const ActionStep = Type.Object(
   },
   { additionalProperties: false },
 );
+
 const AssertionStep = Type.Object({ assert: Condition }, { additionalProperties: false });
 
 export default ((pi: ExtensionAPI): void => {

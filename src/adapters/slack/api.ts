@@ -4,18 +4,22 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import type { SlackIngressFileReference } from "../../domain/slack-ingress";
 
 export const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
+
 export const SLACK_IMAGE_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/gif",
 ] as const;
+
 export type SlackImageMimeType = (typeof SLACK_IMAGE_MIME_TYPES)[number];
+
 export interface SlackImageContent {
   readonly type: "image";
   readonly data: string;
   readonly mimeType: SlackImageMimeType;
 }
+
 interface SlackDownloadAccumulator {
   readonly chunks: Array<Uint8Array>;
   readonly size: number;
@@ -26,35 +30,46 @@ const HttpStatus = Schema.Finite.check(
   Schema.isGreaterThanOrEqualTo(100),
   Schema.isLessThanOrEqualTo(599),
 );
+
 const RetryAfterSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+
 const AuthTestSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   user_id: Schema.String,
 });
+
 const PostMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   ts: Schema.String,
 });
+
 const UpdateMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   ts: Schema.String,
 });
+
 const SetStatusSuccess = Schema.Struct({
   ok: Schema.Literal(true),
 });
+
 const StreamMessageSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   ts: Schema.String,
 });
+
 const ReactionSuccess = Schema.Struct({
   ok: Schema.Literal(true),
 });
+
 const ConnectionsOpenSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   url: Schema.String,
 });
+
 const BoundedThreadFileText = Schema.String.check(Schema.isMaxLength(4_096));
+
 const BoundedThreadFileName = Schema.String.check(Schema.isMaxLength(512));
+
 const ThreadReplyFile = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
   name: Schema.optional(BoundedThreadFileName),
@@ -64,6 +79,7 @@ const ThreadReplyFile = Schema.Struct({
   url_private: Schema.optional(BoundedThreadFileText),
   url_private_download: Schema.optional(BoundedThreadFileText),
 });
+
 const ThreadReply = Schema.Struct({
   ts: Schema.String,
   text: Schema.optional(Schema.String),
@@ -71,6 +87,7 @@ const ThreadReply = Schema.Struct({
   bot_id: Schema.optional(Schema.String),
   files: Schema.optional(Schema.Array(Schema.Unknown)),
 });
+
 const ThreadRepliesSuccess = Schema.Struct({
   ok: Schema.Literal(true),
   messages: Schema.Array(ThreadReply),
@@ -81,6 +98,7 @@ const ThreadRepliesSuccess = Schema.Struct({
     }),
   ),
 });
+
 const SlackFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
@@ -89,32 +107,43 @@ const SlackFailure = Schema.Struct({
 const decodeAuthTestResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([AuthTestSuccess, SlackFailure])),
 );
+
 const decodePostMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([PostMessageSuccess, SlackFailure])),
 );
+
 const decodeUpdateMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([UpdateMessageSuccess, SlackFailure])),
 );
+
 const decodeSetStatusResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([SetStatusSuccess, SlackFailure])),
 );
+
 const decodeStreamMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([StreamMessageSuccess, SlackFailure])),
 );
+
 const decodeReactionResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ReactionSuccess, SlackFailure])),
 );
+
 const decodeConnectionsOpenResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ConnectionsOpenSuccess, SlackFailure])),
 );
+
 const decodeThreadRepliesResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ThreadRepliesSuccess, SlackFailure])),
 );
+
 const decodeThreadReplyFile = Schema.decodeUnknownEffect(ThreadReplyFile);
 
 const MAX_SLACK_THREAD_MESSAGES = 200;
+
 const SLACK_THREAD_PAGE_SIZE = 100;
+
 const MAX_SLACK_THREAD_FILES_PER_MESSAGE = 4;
+
 const MAX_SLACK_THREAD_FILES_TO_DECODE = 20;
 
 export interface SlackThreadMessage {
@@ -155,7 +184,9 @@ export interface SlackStartStreamOptions {
 }
 
 const SLACK_STREAM_ID_LIMIT = 32;
+
 const SLACK_STREAM_TITLE_LIMIT = 80;
+
 const SLACK_STREAM_DETAILS_LIMIT = 120;
 
 const boundedStreamText = (value: string, maximum: number): string =>
@@ -191,6 +222,7 @@ export type SlackApiOperation =
   | "downloadFile"
   | "connectionsOpen"
   | "socket";
+
 export type SlackApiErrorReason =
   | "network"
   | "server"
@@ -253,6 +285,7 @@ const redact = (value: string, token: string): string =>
 
 const safeCause = (cause: unknown, token: string): Error => {
   const message = cause instanceof Error ? cause.message : String(cause);
+
   return new Error(redact(message, token));
 };
 
@@ -292,7 +325,9 @@ const retryAfterHeader = (value: string | undefined): number | undefined => {
   if (value === undefined) {
     return undefined;
   }
+
   const seconds = Number(value);
+
   return Number.isInteger(seconds) && seconds >= 0 ? seconds : undefined;
 };
 
@@ -313,18 +348,22 @@ const classifyHttpFailure = (
       },
     );
   }
+
   if (response.status === 429) {
     const retryAfterSeconds = retryAfterHeader(response.retryAfterHeader);
+
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status: response.status,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
+
   if (response.status >= 500) {
     return apiError(operation, "server", true, new Error(`HTTP ${response.status}`), token, {
       status: response.status,
     });
   }
+
   return apiError(operation, "api", false, new Error(`HTTP ${response.status}`), token, {
     status: response.status,
   });
@@ -360,7 +399,9 @@ const request = (
 };
 
 type SlackPostMessageBody = { channel: string; markdown_text: string; thread_ts?: string };
+
 type SlackEncodedStreamChunk = ReturnType<typeof encodeStreamChunk>;
+
 type SlackStartStreamBody = {
   channel: string;
   thread_ts: string;
@@ -369,11 +410,13 @@ type SlackStartStreamBody = {
   recipient_user_id?: string;
   recipient_team_id?: string;
 };
+
 type SlackAppendStreamBody = {
   channel: string;
   ts: string;
   chunks: ReadonlyArray<SlackEncodedStreamChunk>;
 };
+
 type SlackStopStreamBody = { channel: string; ts: string };
 
 type SlackJsonRequestBody =
@@ -406,6 +449,7 @@ const queryRequest = (
   parameters: ReadonlyArray<readonly [string, string]>,
 ): Effect.Effect<RawResponse, SlackApiError> => {
   const url = new URL(`https://slack.com/api/${method}`);
+
   for (const [key, value] of parameters) url.searchParams.set(key, value);
   const outgoing = HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.bearerToken(token));
 
@@ -446,9 +490,11 @@ const slackFailure = (
         : undefined),
     });
   }
+
   if (error === "ratelimited") {
     return apiError(operation, "rate-limited", true, new Error(error), token, { status });
   }
+
   return apiError(operation, "api", false, new Error(error), token, {
     status,
     message: `Slack ${operation} failed: ${error}`,
@@ -461,6 +507,7 @@ const slackImageMimeType = (value: string | undefined): SlackImageMimeType | und
 export const isSlackPrivateFileUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
+
     return (
       url.protocol === "https:" &&
       url.hostname === "files.slack.com" &&
@@ -513,6 +560,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
             ...(cursor === undefined ? [] : [["cursor", cursor] as const]),
           ],
         ).pipe(Effect.flatMap((raw) => ensureHttpSuccess(token, "getThreadReplies", raw)));
+
         const envelope = yield* decodeThreadRepliesResponse(response.body).pipe(
           Effect.mapError((cause) =>
             apiError("getThreadReplies", "decode", false, cause, token, {
@@ -520,28 +568,35 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
             }),
           ),
         );
+
         if (!envelope.ok) {
           return yield* slackFailure(token, "getThreadReplies", envelope.error, response.status);
         }
 
         for (const message of envelope.messages) {
           if (seenMessageTimestamps.has(message.ts)) continue;
+
           if (messages.length >= MAX_SLACK_THREAD_MESSAGES) {
             truncated = true;
             break;
           }
+
           seenMessageTimestamps.add(message.ts);
           const rawFiles = message.files ?? [];
           const decodedFiles: Array<typeof ThreadReplyFile.Type> = [];
+
           for (const rawFile of rawFiles.slice(0, MAX_SLACK_THREAD_FILES_TO_DECODE)) {
             const decodedFile = yield* decodeThreadReplyFile(rawFile).pipe(Effect.option);
+
             if (Option.isSome(decodedFile)) decodedFiles.push(decodedFile.value);
           }
+
           const files = decodedFiles
             .slice(0, MAX_SLACK_THREAD_FILES_PER_MESSAGE)
             .map((file): SlackIngressFileReference => {
               const name = file.name ?? file.title;
               const urlPrivate = file.url_private_download ?? file.url_private;
+
               return {
                 id: file.id,
                 ...(name !== undefined ? { name } : undefined),
@@ -550,6 +605,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
                 ...(urlPrivate !== undefined ? { urlPrivate } : undefined),
               };
             });
+
           messages.push({
             ts: message.ts,
             text: message.text ?? "",
@@ -563,18 +619,22 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         }
 
         const nextCursor = envelope.response_metadata?.next_cursor?.trim();
+
         if (nextCursor === undefined || nextCursor.length === 0) {
           truncated ||= envelope.has_more === true;
           break;
         }
+
         if (seenCursors.has(nextCursor)) {
           truncated = true;
           break;
         }
+
         if (messages.length >= MAX_SLACK_THREAD_MESSAGES) {
           truncated = true;
           break;
         }
+
         seenCursors.add(nextCursor);
         cursor = nextCursor;
       }
@@ -767,6 +827,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     ),
   downloadFile: (token: string, file: SlackIngressFileReference) => {
     const mimeType = slackImageMimeType(file.mimeType);
+
     if (mimeType === undefined) {
       return Effect.fail(
         apiError("downloadFile", "api", false, new Error("unsupported image type"), token, {
@@ -774,6 +835,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         }),
       );
     }
+
     if (file.size === undefined) {
       return Effect.fail(
         apiError("downloadFile", "api", false, new Error("missing file size"), token, {
@@ -781,6 +843,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         }),
       );
     }
+
     if (file.size > MAX_SLACK_IMAGE_BYTES) {
       return Effect.fail(
         apiError("downloadFile", "api", false, new Error("file too large"), token, {
@@ -788,6 +851,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         }),
       );
     }
+
     if (file.urlPrivate === undefined || !isSlackPrivateFileUrl(file.urlPrivate)) {
       return Effect.fail(
         apiError("downloadFile", "api", false, new Error("invalid private file URL"), token, {
@@ -799,6 +863,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     const outgoing = HttpClientRequest.get(file.urlPrivate).pipe(
       HttpClientRequest.bearerToken(token),
     );
+
     return client.execute(outgoing).pipe(
       Effect.mapError(() =>
         apiError("downloadFile", "network", true, new Error("private file request failed"), token),
@@ -813,6 +878,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
       Effect.flatMap((response) =>
         Effect.gen(function* () {
           const contentLength = Number(response.headers["content-length"]);
+
           if (Number.isFinite(contentLength) && contentLength > MAX_SLACK_IMAGE_BYTES) {
             return yield* apiError(
               "downloadFile",
@@ -823,10 +889,12 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
               { message: "Slack attachment download exceeds the 5 MiB limit" },
             );
           }
+
           const responseMimeType = response.headers["content-type"]
             ?.split(";", 1)[0]
             ?.trim()
             .toLowerCase();
+
           if (responseMimeType !== mimeType) {
             return yield* apiError(
               "downloadFile",
@@ -837,11 +905,13 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
               { message: "Slack attachment response type does not match its metadata" },
             );
           }
+
           return yield* response.stream.pipe(
             Stream.runFoldEffect(
               (): SlackDownloadAccumulator => ({ chunks: [], size: 0 }),
               (accumulator, chunk) => {
                 const size = accumulator.size + chunk.byteLength;
+
                 if (size > MAX_SLACK_IMAGE_BYTES) {
                   return Effect.fail(
                     apiError("downloadFile", "api", false, new Error("download too large"), token, {
@@ -849,7 +919,9 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
                     }),
                   );
                 }
+
                 accumulator.chunks.push(chunk);
+
                 return Effect.succeed({ chunks: accumulator.chunks, size });
               },
             ),
@@ -909,6 +981,7 @@ export type SlackApi = ReturnType<typeof makeSlackApi>;
 const withLiveClient = <A, E>(use: (api: SlackApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
+
     return yield* use(makeSlackApi(client));
   }).pipe(Effect.provide(FetchHttpClient.layer));
 

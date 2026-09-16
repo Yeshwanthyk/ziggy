@@ -7,6 +7,7 @@ describe("GitHub command boundary", () => {
   test("executes gh in the Profile cwd with cancellation and timeout", async () => {
     const controller = new AbortController();
     let cwd: string | undefined;
+
     const exec: ExtensionAPI["exec"] = async (_command, _args, options) => {
       cwd = options?.cwd;
       expect(options).toEqual({
@@ -14,6 +15,7 @@ describe("GitHub command boundary", () => {
         signal: controller.signal,
         timeout: 30_000,
       });
+
       return { stdout: "[]\n", stderr: "", code: 0, killed: false };
     };
 

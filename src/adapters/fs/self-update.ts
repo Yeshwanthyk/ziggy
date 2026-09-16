@@ -21,6 +21,7 @@ export const installSelfUpdate: SelfUpdateInstaller = (targetPath, executable, s
           new ZiggyUpdateUnavailable({ message: "could not inspect Ziggy executable", cause }),
       ),
     );
+
     if (!status.isFile() || status.isSymbolicLink()) {
       return yield* Effect.fail(
         new ZiggyUpdateUnavailable({
@@ -29,11 +30,13 @@ export const installSelfUpdate: SelfUpdateInstaller = (targetPath, executable, s
         }),
       );
     }
+
     if (createHash("sha256").update(executable).digest("hex") !== sha256) {
       return yield* Effect.fail(
         new ZiggyUpdateUnavailable({ message: "Ziggy update checksum mismatch", cause: undefined }),
       );
     }
+
     const stagingRoot = yield* Effect.tryPromise({
       try: () => mkdtemp(path.join(path.dirname(targetPath), ".ziggy-update-")),
       catch: (cause) => cause,
@@ -46,6 +49,7 @@ export const installSelfUpdate: SelfUpdateInstaller = (targetPath, executable, s
           }),
       ),
     );
+
     const stagingPath = path.join(stagingRoot, path.basename(targetPath));
     yield* Effect.tryPromise({
       try: async () => {

@@ -27,20 +27,25 @@ import {
 } from "./schema.ts";
 
 const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
+
 const runtimeRoot = (profilePath: string): string =>
   join(profilePath, ".runtime", "computer-workflows");
+
 const browserJobsRoot = (profilePath: string): string => join(profilePath, "browser-workflows");
+
 const browserJobRuntimeRoot = (profilePath: string, workflowId: string): string =>
   join(runtimeRoot(profilePath), "jobs", workflowId);
 
 const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+
   return typeof cause.code === "string" ? cause.code : undefined;
 };
 
 const assertDirectory = async (path: string): Promise<void> => {
   try {
     const stat = await lstat(path);
+
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error(`Refusing non-directory workflow path: ${path}`);
     }
@@ -48,6 +53,7 @@ const assertDirectory = async (path: string): Promise<void> => {
     if (errorCode(cause) !== "ENOENT") throw cause;
     await mkdir(path, { recursive: true });
     const stat = await lstat(path);
+
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error(`Refusing non-directory workflow path: ${path}`);
     }
@@ -56,6 +62,7 @@ const assertDirectory = async (path: string): Promise<void> => {
 
 const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
   const handle = await open(path, "wx", 0o600);
+
   try {
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
     await handle.sync();
@@ -80,6 +87,7 @@ export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Pro
   await assertDirectory(root);
   const path = join(root, `${draft.id}.json`);
   await writeExclusiveJson(path, draft);
+
   return path;
 };
 
@@ -100,6 +108,7 @@ export const publishWorkflow = async (
   await writeExclusiveJson(revisionPath, published);
   const manifestPath = join(workflowRoot, "workflow.json");
   await replaceJsonAtomically(manifestPath, published);
+
   return { manifestPath, revisionPath };
 };
 
@@ -112,13 +121,16 @@ export const readWorkflow = async (
 export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
   const root = durableRoot(profilePath);
   let entries: string[];
+
   try {
     entries = await readdir(root);
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return [];
     throw cause;
   }
+
   const workflows: PublishedWorkflow[] = [];
+
   for (const entry of entries.slice(0, 500)) {
     try {
       workflows.push(await readWorkflow(profilePath, entry));
@@ -126,6 +138,7 @@ export const listWorkflows = async (profilePath: string): Promise<PublishedWorkf
       // Malformed entries are excluded from the index; workflow_show reports their exact failure.
     }
   }
+
   return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
 };
 
@@ -134,6 +147,7 @@ export const writeRunRecord = async (profilePath: string, run: RunRecord): Promi
   await assertDirectory(root);
   const path = join(root, `${run.id}.json`);
   await writeExclusiveJson(path, Parse(RunRecordSchema, run));
+
   return path;
 };
 
@@ -145,6 +159,7 @@ export const writeRunSummary = async (
   await assertDirectory(root);
   const path = join(root, `${summary.id}.json`);
   await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
+
   return path;
 };
 
@@ -156,6 +171,7 @@ export const writePublishApproval = async (
   await assertDirectory(root);
   const path = join(root, `${approval.id}.json`);
   await writeExclusiveJson(path, approval);
+
   return path;
 };
 
@@ -185,6 +201,7 @@ export const saveBrowserJob = async (
   await writeExclusiveJson(revisionPath, Parse(SavedBrowserJobSchema, saved));
   const manifestPath = join(workflowRoot, "workflow.json");
   await replaceJsonAtomically(manifestPath, saved);
+
   return { manifestPath, revisionPath };
 };
 
@@ -199,13 +216,16 @@ export const readBrowserJob = async (
 
 export const listBrowserJobs = async (profilePath: string): Promise<SavedBrowserJob[]> => {
   let entries: string[];
+
   try {
     entries = await readdir(browserJobsRoot(profilePath));
   } catch (cause) {
     if (errorCode(cause) === "ENOENT") return [];
     throw cause;
   }
+
   const jobs: SavedBrowserJob[] = [];
+
   for (const entry of entries.slice(0, 500)) {
     try {
       jobs.push(await readBrowserJob(profilePath, entry));
@@ -213,6 +233,7 @@ export const listBrowserJobs = async (profilePath: string): Promise<SavedBrowser
       // Malformed entries are excluded from the index; browser_workflow_show reports the failure.
     }
   }
+
   return jobs.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
 };
 
@@ -251,6 +272,7 @@ export const writeBrowserJobRunReport = async (
   await assertDirectory(root);
   const path = join(root, `${report.id}.json`);
   await writeExclusiveJson(path, Parse(BrowserJobRunReportSchema, report));
+
   return path;
 };
 
@@ -264,14 +286,17 @@ export const withBrowserJobLock = async <Result>(
   await assertDirectory(root);
   const lockPath = join(root, "run.lock");
   signal.throwIfAborted();
+
   try {
     await mkdir(lockPath, { mode: 0o700 });
   } catch (cause) {
     if (errorCode(cause) === "EEXIST") {
       throw new Error(`Browser workflow '${workflowId}' already has an active run.`);
     }
+
     throw cause;
   }
+
   try {
     return await run();
   } finally {

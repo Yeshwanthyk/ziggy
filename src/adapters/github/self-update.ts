@@ -49,22 +49,27 @@ export const makeZiggyReleaseClient = (
 ): ZiggyReleaseClientApi => {
   const target = `${platform}-${arch}`;
   const base = `https://github.com/Yeshwanthyk/ziggy/releases/latest/download/ziggy-${target}`;
+
   return {
     downloadLatest: () =>
       Effect.gen(function* () {
         const executable = yield* requestBytes(client, base, "download Ziggy update");
+
         const checksumBytes = yield* requestBytes(
           client,
           `${base}.sha256`,
           "download Ziggy checksum",
         );
+
         const checksum = new TextDecoder().decode(checksumBytes).trim().split(/\s+/u)[0];
+
         if (checksum === undefined || !/^[a-f0-9]{64}$/u.test(checksum)) {
           return yield* new ZiggyUpdateUnavailable({
             message: "Ziggy update checksum is invalid",
             cause: undefined,
           });
         }
+
         return { version: "latest", executable, sha256: checksum };
       }),
   };

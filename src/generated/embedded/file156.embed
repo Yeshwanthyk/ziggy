@@ -4,8 +4,11 @@ import { isAbsolute, join, relative } from "node:path";
 import { Option, Predicate, Schema } from "effect";
 
 const INDEX_RELATIVE_PATH = join(".runtime", "lossless-claw", "index.sqlite");
+
 const DEFAULT_LIMIT = 20;
+
 const MAX_LIMIT = 100;
+
 const MAX_SNIPPET_CHARS = 600;
 
 const ContentItemSchema = Schema.Struct({
@@ -212,11 +215,13 @@ const boundedInteger = (value: number | undefined, fallback: number, maximum: nu
   if (value === undefined || !Number.isFinite(value)) {
     return fallback;
   }
+
   return Math.max(1, Math.min(maximum, Math.floor(value)));
 };
 
 const boundedText = (value: string, maximum: number = MAX_SNIPPET_CHARS): string => {
   const compact = value.replaceAll(/\s+/g, " ").trim();
+
   return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 1)}…`;
 };
 
@@ -227,9 +232,11 @@ const discoverSessionFiles = (profile: string): ReadonlyArray<DiscoveredFile> =>
   const visit = (directory: string): void => {
     for (const child of readdirSync(directory, { withFileTypes: true })) {
       const childPath = join(directory, child.name);
+
       if (child.isSymbolicLink()) {
         continue;
       }
+
       if (child.isDirectory()) {
         visit(childPath);
       } else if (child.isFile() && child.name.endsWith(".jsonl")) {
@@ -241,11 +248,13 @@ const discoverSessionFiles = (profile: string): ReadonlyArray<DiscoveredFile> =>
   if (!existsSync(sessionsRoot) || lstatSync(sessionsRoot).isSymbolicLink()) {
     return [];
   }
+
   visit(sessionsRoot);
   paths.sort((left, right) => left.localeCompare(right));
 
   return paths.map((absolutePath) => {
     const metadata = statSync(absolutePath);
+
     return {
       absolutePath,
       sourcePath: relative(profile, absolutePath),
@@ -260,7 +269,9 @@ const stringifyArguments = (value: unknown): string => {
   if (value === undefined) {
     return "";
   }
+
   const encoded = JSON.stringify(value);
+
   return encoded === undefined ? "" : encoded;
 };
 
@@ -269,10 +280,12 @@ const messageText = (
 ): { readonly role: string; readonly text: string } | undefined => {
   if (Predicate.isString(message.content)) {
     const text = message.content.trim();
+
     return text.length === 0 ? undefined : { role: message.role, text };
   }
 
   const parts: string[] = [];
+
   for (const item of message.content) {
     if (item.type === "text" && item.text !== undefined) {
       parts.push(item.text);
@@ -287,6 +300,7 @@ const messageText = (
   }
 
   const text = parts.join("\n").trim();
+
   return text.length === 0 ? undefined : { role: message.role, text };
 };
 
@@ -294,11 +308,13 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
   const contents = readFileSync(file.absolutePath, "utf8");
   const lines = contents.split(/\r?\n/);
   const headerLine = lines.find((line) => line.trim().length > 0);
+
   if (headerLine === undefined) {
     return undefined;
   }
 
   const decodedHeader = decodeJsonLine(headerLine);
+
   if (Option.isNone(decodedHeader)) {
     return undefined;
   }
@@ -306,9 +322,11 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
   const header = decodedHeader.value;
   const sessionId = header.id;
   const headerTimestamp = header.timestamp;
+
   if (header.type !== "session" || sessionId === undefined || headerTimestamp === undefined) {
     return undefined;
   }
+
   const decodedEntries: Array<{
     readonly ordinal: number;
     readonly type: string;
@@ -318,6 +336,7 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
     readonly message: Schema.Schema.Type<typeof MessageSchema> | undefined;
     readonly summary: string | undefined;
   }> = [];
+
   const parentById = new Map<string, string | null>();
   let leafId: string | null = null;
 
@@ -325,7 +344,9 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
     if (line.trim().length === 0 || line === headerLine) {
       continue;
     }
+
     const decoded = decodeJsonLine(line);
+
     if (Option.isNone(decoded)) {
       continue;
     }
@@ -333,9 +354,11 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
     const entry = decoded.value;
     const entryId = entry.id;
     const parentId = entry.parentId;
+
     if (entry.type === "session" || entryId === undefined || parentId === undefined) {
       continue;
     }
+
     decodedEntries.push({
       ordinal: lineIndex,
       type: entry.type,
@@ -351,15 +374,18 @@ const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
 
   const activeIds = new Set<string>();
   let cursor: string | null | undefined = leafId;
+
   while (cursor !== undefined && cursor !== null && !activeIds.has(cursor)) {
     activeIds.add(cursor);
     cursor = parentById.get(cursor);
   }
 
   const projectedEntries: ProjectedEntry[] = [];
+
   for (const entry of decodedEntries) {
     if (entry.type === "message" && entry.message !== undefined) {
       const extracted = messageText(entry.message);
+
       if (extracted !== undefined) {
         projectedEntries.push({
           ordinal: entry.ordinal,
@@ -446,6 +472,7 @@ const openIndex = (profile: string): Database => {
     CREATE VIRTUAL TABLE IF NOT EXISTS entry_search
       USING fts5(text, tokenize = 'unicode61');
   `);
+
   return database;
 };
 
@@ -488,6 +515,7 @@ const insertProjection = (database: Database, projection: FileProjection): void 
       source_path, ordinal, session_id, entry_id, parent_id, timestamp, kind, role, text, active
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+
   const insertSearch = database.query<unknown, [number | bigint, string]>(
     "INSERT INTO entry_search(rowid, text) VALUES (?, ?)",
   );
@@ -505,38 +533,47 @@ const insertProjection = (database: Database, projection: FileProjection): void 
       entry.text,
       entry.active ? 1 : 0,
     );
+
     insertSearch.run(inserted.lastInsertRowid, entry.text);
   }
 };
 
 const refreshDatabase = (profile: string, database: Database): RefreshResult => {
   const discovered = discoverSessionFiles(profile);
+
   const existingRows = database
     .query<FileStateRow, []>("SELECT source_path, size, mtime_ms FROM source_files")
     .all();
+
   const existing = new Map(existingRows.map((row) => [row.source_path, row]));
   const currentPaths = new Set(discovered.map((file) => file.sourcePath));
   const deletedPaths = [...existing.keys()].filter((sourcePath) => !currentPaths.has(sourcePath));
+
   const changedFiles = discovered.filter((file) => {
     const previous = existing.get(file.sourcePath);
+
     return (
       previous === undefined || previous.size !== file.size || previous.mtime_ms !== file.mtimeMs
     );
   });
+
   const projections = changedFiles.map(projectFile);
 
   const replace = database.transaction(() => {
     for (const sourcePath of deletedPaths) {
       removeProjection(database, sourcePath);
     }
+
     for (const [index, file] of changedFiles.entries()) {
       removeProjection(database, file.sourcePath);
       const projection = projections[index];
+
       if (projection !== undefined) {
         insertProjection(database, projection);
       }
     }
   });
+
   replace.immediate();
 
   return {
@@ -550,6 +587,7 @@ const refreshDatabase = (profile: string, database: Database): RefreshResult => 
 const withFreshIndex = <Result>(profile: string, use: (database: Database) => Result): Result => {
   using database = openIndex(profile);
   refreshDatabase(profile, database);
+
   return use(database);
 };
 
@@ -559,10 +597,12 @@ export const listProfileSessions = (
 ): ReadonlyArray<SessionSummary> =>
   withFreshIndex(profile, (database) => {
     const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
+
     const bindings = {
       since: input.since ?? null,
       limit,
     } satisfies Record<string, string | number | null>;
+
     const rows = database
       .query<SessionDatabaseRow, Record<string, string | number | null>>(
         `SELECT
@@ -612,6 +652,7 @@ export const describeProfileSession = (
 ): SessionDescription | undefined =>
   withFreshIndex(profile, (database) => {
     const selectorPath = sessionSelectorPath(profile, selector);
+
     const row = database
       .query<SessionDatabaseRow, [string, string]>(
         `SELECT
@@ -636,6 +677,7 @@ export const describeProfileSession = (
         LIMIT 1`,
       )
       .get(selector, selectorPath);
+
     if (row === null) {
       return undefined;
     }
@@ -649,6 +691,7 @@ export const describeProfileSession = (
         ORDER BY role`,
       )
       .all(row.source_path);
+
     const activeBranch = database
       .query<ActiveEntryRow, [string]>(
         `SELECT entry_id, parent_id, kind, role, timestamp
@@ -684,6 +727,7 @@ export const describeProfileSession = (
 const searchTerms = (query: string): ReadonlyArray<string> => {
   const matches = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
   const unique = new Map(matches.map((term) => [term.toLocaleLowerCase(), term]));
+
   return [...unique.values()].map((term) => `"${term}"`);
 };
 
@@ -693,11 +737,13 @@ const runSearch = (
   input: SearchInput,
 ): ReadonlyArray<SearchResult> => {
   const terms = searchTerms(input.query);
+
   if (terms.length === 0) {
     return [];
   }
 
   const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
+
   const bindingsBase = {
     session: input.session ?? null,
     role: input.role ?? null,
@@ -706,6 +752,7 @@ const runSearch = (
     active_only: input.activeOnly === true ? 1 : 0,
     limit,
   } satisfies Record<string, string | number | null>;
+
   const statement = database.query<SearchDatabaseRow, Record<string, string | number | null>>(
     `SELECT
       e.rowid AS row_id,
@@ -730,6 +777,7 @@ const runSearch = (
     ORDER BY rank ASC, e.timestamp DESC, e.rowid ASC
     LIMIT $limit`,
   );
+
   const selected = new Map<number, SearchResult>();
 
   const collect = (match: "and" | "or", expression: string): void => {
@@ -737,6 +785,7 @@ const runSearch = (
       ...bindingsBase,
       match: expression,
     } satisfies Record<string, string | number | null>;
+
     for (const row of statement.all(bindings)) {
       if (!selected.has(row.row_id) && selected.size < limit) {
         selected.set(row.row_id, {
@@ -757,6 +806,7 @@ const runSearch = (
   };
 
   collect("and", terms.join(" AND "));
+
   if (selected.size < limit && terms.length > 1) {
     collect("or", terms.join(" OR "));
   }
@@ -776,10 +826,12 @@ export const expandProfileQuery = (
 ): ReadonlyArray<ExpandedMatch> =>
   withFreshIndex(profile, (database) => {
     const context = boundedInteger(input.context, 2, 10);
+
     const matches = runSearch(profile, database, {
       ...input,
       limit: boundedInteger(input.limit, 5, 20),
     });
+
     const neighborStatement = database.query<
       NeighborDatabaseRow,
       [number, number, number, number, number]
@@ -796,6 +848,7 @@ export const expandProfileQuery = (
         )
       ORDER BY ordinal`,
     );
+
     const rowIdStatement = database.query<{ readonly row_id: number }, [string, string]>(
       "SELECT rowid AS row_id FROM entries WHERE source_path = ? AND entry_id = ? LIMIT 1",
     );
@@ -803,6 +856,7 @@ export const expandProfileQuery = (
     return matches.map((match) => {
       const sourcePath = sessionSelectorPath(profile, match.path);
       const rowId = rowIdStatement.get(sourcePath, match.entryId);
+
       const evidence =
         rowId === null
           ? []
@@ -817,6 +871,7 @@ export const expandProfileQuery = (
                 active: entry.active === 1,
                 text: boundedText(entry.text, 900),
               }));
+
       return { match, evidence };
     });
   });

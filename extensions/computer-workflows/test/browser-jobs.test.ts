@@ -24,9 +24,11 @@ import {
 import type { BrowserJobDefinition } from "../src/schema.ts";
 
 const roots: string[] = [];
+
 const makeProfile = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-browser-jobs-"));
   roots.push(root);
+
   return root;
 };
 
@@ -86,11 +88,14 @@ const fakeBridge = (
   const calls: string[] = [];
   let page = 0;
   let waits = 0;
+
   return {
     calls,
     acquire: async ({ profile }) => {
       calls.push(`acquire:${profile}`);
+
       if (options.busy) throw new Error("browser-busy");
+
       return { token: "lease-1" };
     },
     navigate: async ({ url }) => {
@@ -100,13 +105,16 @@ const fakeBridge = (
     wait: async ({ text }) => {
       waits += 1;
       calls.push(`wait:${text ?? ""}`);
+
       if (waits === options.failWaitAt) return { found: false, timedOut: true };
+
       return { found: true };
     },
     evaluate: async ({ expression }) => {
       calls.push("evaluate");
       expect(expression).toContain("document.querySelectorAll");
       expect(expression).not.toContain("jobs.example.test");
+
       return { value: { overflow: false, items: pages[page] ?? [] } };
     },
     release: async ({ token }) => {
@@ -185,6 +193,7 @@ describe("saved browser jobs", () => {
       titleSelector: ".title",
       linkSelector: "a",
     });
+
     expect(expression).toContain('"itemSelector":"[data-value=\\"${globalThis.pwned}\\"]"');
     expect(expression).not.toContain("const config = [data-value");
     expect(expression).toContain("nodes.slice(0, config.maxItems)");
@@ -293,6 +302,7 @@ describe("saved browser jobs", () => {
     const seed = { id: "seed", title: "Seed", link: "https://jobs.example.test/seed" };
     await run(profile, workflow, fakeBridge([[seed], [seed]]));
     const before = await readBrowserJobBaseline(profile, workflow.id);
+
     const many = Array.from({ length: 2_000 }, (_, index) => ({
       id: `job-${index}`,
       title: `Title ${index}`,

@@ -14,6 +14,7 @@ import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
 
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+
 const isTooLargeTranscriptCause = Schema.is(Schema.Struct({ kind: Schema.Literal("too-large") }));
 
 const UsageCost = Schema.Struct({
@@ -63,10 +64,13 @@ const SessionEntry = Schema.Struct({
 });
 
 const decodeHeaderLine = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionHeader));
+
 const decodeEntryLine = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionEntry));
 
 type Header = typeof SessionHeader.Type;
+
 type Entry = typeof SessionEntry.Type;
+
 type PiUsage = typeof Usage.Type;
 
 interface ParsedSession {
@@ -117,9 +121,11 @@ const addUsage = (total: SessionUsage, next: PiUsage): SessionUsage => {
     totalTokens: total.totalTokens + next.totalTokens,
     cost: total.cost + next.cost.total,
   };
+
   if (total.reasoning !== undefined || next.reasoning !== undefined) {
     return { ...combined, reasoning: (total.reasoning ?? 0) + (next.reasoning ?? 0) };
   }
+
   return combined;
 };
 
@@ -141,7 +147,9 @@ const inspectRegularPath = (
           ),
         );
       }
+
       const valid = kind === "directory" ? status.isDirectory() : status.isFile();
+
       return valid
         ? Effect.void
         : Effect.fail(
@@ -158,10 +166,13 @@ const inspectRegularPath = (
 const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, SessionReadFailed> =>
   Effect.gen(function* () {
     const status = yield* io(root, "inspect-root", () => lstat(root)).pipe(Effect.result);
+
     if (status._tag === "Failure") {
       if (missingPath(status.failure.cause)) return [];
+
       return yield* status.failure;
     }
+
     if (status.success.isSymbolicLink() || !status.success.isDirectory()) {
       return yield* failure(
         root,
@@ -175,15 +186,21 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
 
     const files: Array<string> = [];
     const pending = [root];
+
     while (pending.length > 0) {
       const directory = pending.pop();
+
       if (directory === undefined) break;
+
       const children = yield* io(directory, "walk", () =>
         readdir(directory, { withFileTypes: true }),
       );
+
       children.sort((left, right) => left.name.localeCompare(right.name));
+
       for (const child of children) {
         const childPath = path.join(directory, child.name);
+
         if (child.isSymbolicLink()) {
           return yield* failure(
             childPath,
@@ -192,6 +209,7 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
             { kind: "symlink" },
           );
         }
+
         if (child.isDirectory()) pending.push(childPath);
         else if (child.name.endsWith(".jsonl")) {
           yield* inspectRegularPath(childPath, "file");
@@ -199,6 +217,7 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
         }
       }
     }
+
     return files.sort((left, right) => left.localeCompare(right));
   });
 
@@ -228,9 +247,13 @@ const readRegularFile = (file: string): Effect.Effect<string, SessionReadFailed>
 const terminalState = (entries: ReadonlyArray<Entry>): SessionTerminalState => {
   const lastMessage = entries.findLast((entry) => entry.type === "message");
   const message = lastMessage?.message;
+
   if (message?.role !== "assistant") return "incomplete";
+
   if (message.stopReason === "aborted") return "aborted";
+
   if (message.stopReason === "error") return "failed";
+
   return message.stopReason === "stop" || message.stopReason === "length"
     ? "completed"
     : "incomplete";
@@ -244,20 +267,26 @@ const parseSession = (
     const text = yield* readRegularFile(file);
     const lines = text.split("\n").filter((line) => line.trim().length > 0);
     const headerLine = lines[0];
+
     if (headerLine === undefined) return yield* decodeFailure(file, { kind: "empty" });
+
     const header = yield* decodeHeaderLine(headerLine).pipe(
       Effect.mapError((cause) => decodeFailure(file, cause)),
     );
+
     if (header.id.length === 0 || !Number.isFinite(Date.parse(header.timestamp)))
       return yield* decodeFailure(file, { kind: "invalid-header-metadata" });
+
     const entries = yield* Effect.forEach(
       lines.slice(1),
       (line) => decodeEntryLine(line).pipe(Effect.mapError((cause) => decodeFailure(file, cause))),
       { concurrency: 1 },
     );
+
     if (entries.some((entry) => entry.type === "session")) {
       return yield* decodeFailure(file, { kind: "duplicate-header" });
     }
+
     if (
       entries.some(
         (entry) =>
@@ -271,6 +300,7 @@ const parseSession = (
     const modelChanges: Array<SessionModelChange> = [];
     const thinkingChanges: Array<SessionThinkingChange> = [];
     let usage = zeroUsage();
+
     for (const entry of entries) {
       if (entry.type === "model_change") {
         if (entry.provider === undefined || entry.modelId === undefined)
@@ -285,6 +315,7 @@ const parseSession = (
       if (entry.type === "message" && entry.message === undefined)
         return yield* decodeFailure(file, { kind: "invalid-message", entryId: entry.id });
       const message = entry.message;
+
       if (entry.type === "message" && message?.role === "assistant") {
         if (
           message.provider === undefined ||
@@ -322,22 +353,28 @@ const projectSessions = (
   Effect.gen(function* () {
     const byFile = new Map<string, ParsedSession>();
     const byId = new Map<string, ParsedSession>();
+
     for (const session of parsed) {
       const normalizedFile = path.resolve(session.file);
+
       if (byFile.has(normalizedFile) || byId.has(session.header.id)) {
         return yield* failure(session.file, "resolve", "duplicate Pi session path or ID", {
           id: session.header.id,
         });
       }
+
       byFile.set(normalizedFile, session);
       byId.set(session.header.id, session);
     }
 
     const children = new Map<string, Array<SessionReferenceMetadata>>();
+
     for (const session of parsed) {
       const parentPath = session.header.parentSession;
+
       if (parentPath === undefined) continue;
       const parent = byFile.get(path.resolve(parentPath));
+
       if (parent === undefined) continue;
       const references = children.get(parent.header.id) ?? [];
       references.push({ id: session.header.id, path: session.relativePath });
@@ -348,6 +385,7 @@ const projectSessions = (
       .map((session): SessionMetadata => {
         const parentPath = session.header.parentSession;
         const parent = parentPath === undefined ? undefined : byFile.get(path.resolve(parentPath));
+
         return {
           path: session.relativePath,
           id: session.header.id,
@@ -378,6 +416,7 @@ export const listProfileSessions = (
   Effect.gen(function* () {
     const root = path.join(profilePath, "sessions");
     const files = yield* discoverFiles(root);
+
     const parsed = yield* Effect.forEach(
       files,
       (file) =>
@@ -390,6 +429,7 @@ export const listProfileSessions = (
         ),
       { concurrency: 1 },
     );
+
     return yield* projectSessions(
       parsed.filter((session): session is ParsedSession => session !== undefined),
     );
@@ -402,6 +442,7 @@ export const showProfileSession = (
   Effect.gen(function* () {
     const sessions = yield* listProfileSessions(profilePath);
     const byId = sessions.find((session) => session.id === reference);
+
     if (byId !== undefined) return byId;
 
     if (path.isAbsolute(reference)) {
@@ -410,15 +451,20 @@ export const showProfileSession = (
         message: "session path must be relative to the Profile sessions directory",
       });
     }
+
     const normalized = path.normalize(reference);
+
     if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
       return yield* new SessionNotFound({
         reference,
         message: "session path must stay inside the Profile sessions directory",
       });
     }
+
     const byPath = sessions.find((session) => path.normalize(session.path) === normalized);
+
     if (byPath !== undefined) return byPath;
+
     return yield* new SessionNotFound({
       reference,
       message: `session not found: ${reference}`,

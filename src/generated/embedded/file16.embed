@@ -4,14 +4,18 @@ import { open } from "node:fs/promises";
 import { Effect, Schema } from "effect";
 
 const SERVER_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+
 const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+
 const boundedString = (maximum: number, expected: string) =>
   Schema.String.check(
     Schema.makeFilter((value) => value.length >= 1 && value.length <= maximum, { expected }),
   );
+
 const ToolName = Schema.String.check(
   Schema.makeFilter((value) => TOOL_NAME.test(value), { expected: "a safe MCP tool name" }),
 );
+
 const boundedInteger = (minimum: number, maximum: number, expected: string) =>
   Schema.Number.check(
     Schema.makeFilter(
@@ -83,6 +87,7 @@ export const CodeModeConfig = Schema.Struct({
 });
 
 export type CodeModeConfig = typeof CodeModeConfig.Type;
+
 export type McpServerConfig = typeof McpServer.Type;
 
 export interface ResolvedLimits {
@@ -116,14 +121,17 @@ const decodeConfigJson = Schema.decodeUnknownEffect(Schema.fromJsonString(CodeMo
 
 export const loadConfig = (profilePath: string) => {
   const path = join(profilePath, "codemode.json");
+
   return Effect.gen(function* () {
     const noFollow = constants.O_NOFOLLOW;
+
     if (!Number.isSafeInteger(noFollow) || noFollow <= 0) {
       return yield* new CodeModeConfigError({
         path,
         reason: "This platform cannot guarantee no-follow opening for codemode.json.",
       });
     }
+
     const text = yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         try: () => open(path, constants.O_RDONLY | noFollow),
@@ -141,12 +149,14 @@ export const loadConfig = (profilePath: string) => {
             catch: (cause) =>
               new CodeModeConfigError({ path, reason: "Could not inspect codemode.json.", cause }),
           });
+
           if (!metadata.isFile()) {
             return yield* new CodeModeConfigError({
               path,
               reason: "codemode.json must be a physical regular file.",
             });
           }
+
           return yield* Effect.tryPromise({
             try: () => handle.readFile("utf8"),
             catch: (cause) =>
@@ -160,6 +170,7 @@ export const loadConfig = (profilePath: string) => {
             new CodeModeConfigError({ path, reason: "Could not close codemode.json.", cause }),
         }),
     );
+
     return yield* decodeConfigJson(text).pipe(
       Effect.mapError(
         (cause) => new CodeModeConfigError({ path, reason: "codemode.json is invalid.", cause }),

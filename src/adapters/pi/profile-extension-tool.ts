@@ -13,10 +13,15 @@ import type {
 import type { ProfileTarget } from "../../domain/profile";
 
 export const PROFILE_EXTENSIONS_MAX_ID_CODE_POINTS = 96;
+
 export const PROFILE_EXTENSIONS_MAX_MESSAGE_CODE_POINTS = 360;
+
 export const PROFILE_EXTENSIONS_MAX_CODE_CODE_POINTS = 64;
+
 export const PROFILE_EXTENSIONS_MAX_LIST_ITEMS = 64;
+
 export const PROFILE_EXTENSIONS_MAX_DESCRIPTION_CODE_POINTS = 240;
+
 export const PROFILE_EXTENSIONS_MAX_OUTPUT_CODE_POINTS = 20_000;
 
 const extensionId = Type.String({
@@ -26,6 +31,7 @@ const extensionId = Type.String({
 });
 
 const extensionSource = Type.Union([Type.Literal("shelf"), Type.Literal("catalog")]);
+
 const toolSource = Type.String({ minLength: 1, maxLength: 240 });
 
 export const PROFILE_EXTENSIONS_MAX_SOURCE_CODE_POINTS = 240;
@@ -71,6 +77,7 @@ export const profileExtensionsParameters = Type.Unsafe<
 });
 
 export type ProfileExtensionsAction = Static<typeof profileExtensionsParameters>;
+
 export type ProfileExtensionToolSource = Static<typeof extensionSource>;
 
 const toolOperation = Type.Union([
@@ -224,7 +231,9 @@ export interface ProfileExtensionToolOptions {
 export type ProfileExtensionToolData = Static<typeof toolResultData>;
 
 type ToolOperation = ProfileExtensionToolDetails["operation"];
+
 type ToolStage = ProfileExtensionToolDetails["stage"];
+
 type ToolSource = Static<typeof toolSource>;
 
 interface BoundedIds {
@@ -291,7 +300,9 @@ const boundedText = (value: string, maximum: number, fallback: string): string =
     .replace(/\p{Cc}+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+
   const bounded = [...normalized].slice(0, maximum).join("");
+
   return bounded.length === 0 ? fallback : bounded;
 };
 
@@ -301,11 +312,13 @@ const boundedId = (value: string): string => {
     PROFILE_EXTENSIONS_MAX_ID_CODE_POINTS,
     "invalid-extension-id",
   );
+
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(candidate) ? candidate : "invalid-extension-id";
 };
 
 const boundedCode = (value: string, fallback: string): string => {
   const safe = value.replace(/[^A-Za-z0-9_.-]+/gu, "_");
+
   return boundedText(safe, PROFILE_EXTENSIONS_MAX_CODE_CODE_POINTS, fallback);
 };
 
@@ -321,6 +334,7 @@ const inputMetadata = (params: ProfileExtensionsAction): InputMetadata => {
   if (params.action !== "add" && params.action !== "remove") {
     return { id: undefined, source: undefined };
   }
+
   return { id: params.id, source: params.source };
 };
 
@@ -329,7 +343,9 @@ const withInputMetadata = (
   metadata: ToolMetadata,
 ): ToolDetailFields => {
   const result: MutableToolDetailFields = { ...fields };
+
   if (metadata.id !== undefined) result.id = boundedId(metadata.id);
+
   if (metadata.source !== undefined) {
     result.source = boundedText(
       metadata.source,
@@ -337,6 +353,7 @@ const withInputMetadata = (
       "unavailable",
     );
   }
+
   return result;
 };
 
@@ -438,7 +455,9 @@ const projectListing = (listing: ProfileExtensionListing): ProjectedListing => {
     kind: choice.kind,
     source: choice.source,
   }));
+
   const selected = boundedIds(listing.selected);
+
   return {
     availableCount: listing.available.length,
     result: {
@@ -459,6 +478,7 @@ const projectValidation = (
   validation: ProfileExtensionValidation,
 ): Static<typeof validationResult> => {
   const selected = boundedIds(validation.selected);
+
   return {
     selected: [...selected.values],
     preflight: {
@@ -475,6 +495,7 @@ const actionEffect = (
   params: ProfileExtensionsAction,
 ): Effect.Effect<ProfileExtensionActionResult, ProfileExtensionError> => {
   const target = profileTarget(options.profilePath);
+
   switch (params.action) {
     case "list":
       return options.profileExtensions
@@ -512,9 +533,11 @@ const successFor = (
   result: ProfileExtensionActionResult,
 ): ProfileExtensionToolDetails => {
   const metadata = inputMetadata(params);
+
   switch (result.action) {
     case "list": {
       const projected = projectListing(result.value);
+
       return successDetails(
         "list",
         metadata,
@@ -524,8 +547,10 @@ const successFor = (
         projected.result,
       );
     }
+
     case "add": {
       const mutation = result.value;
+
       return successDetails(
         "add",
         metadata,
@@ -537,8 +562,10 @@ const successFor = (
         projectMutation(mutation),
       );
     }
+
     case "remove": {
       const mutation = result.value;
+
       return successDetails(
         "remove",
         metadata,
@@ -550,8 +577,10 @@ const successFor = (
         projectMutation(mutation),
       );
     }
+
     case "validate": {
       const validation = result.value;
+
       return successDetails(
         "validate",
         metadata,
@@ -568,18 +597,23 @@ const contentFor = (details: ProfileExtensionToolDetails): string => {
   if (!details.ok) {
     return `ERROR: ${details.operation} failed [stage=${details.stage}; code=${details.code}]: ${details.message}`;
   }
+
   if (details.operation === "list" && "available" in details.result) {
     const available = details.result.available
       .map((extension) => `${extension.id} (${extension.source})`)
       .join(", ");
+
     const selected = details.result.selected.join(", ");
+
     return boundedText(
       `profile_extensions list: available=${available || "(none)"}; selected=${selected || "(none)"}${details.result.truncated ? "; result truncated" : ""}`,
       PROFILE_EXTENSIONS_MAX_OUTPUT_CODE_POINTS,
       "profile extension list unavailable",
     );
   }
+
   const encoded = JSON.stringify(details);
+
   return boundedText(
     encoded,
     PROFILE_EXTENSIONS_MAX_OUTPUT_CODE_POINTS,
@@ -640,10 +674,12 @@ export const createProfileExtensionTool = (
           onFailure: (failure) => {
             const metadata = inputMetadata(params);
             const projection = failureProjection(failure);
+
             const failureMetadata: ToolMetadata = {
               id: projection.id ?? metadata.id,
               source: projection.source ?? metadata.source,
             };
+
             return toolResult(
               failureDetails(
                 params.action,
@@ -666,5 +702,7 @@ export const createProfileExtensionTool = (
 };
 
 export const createProfileExtensionsTool = createProfileExtensionTool;
+
 export const profileExtensionsToolParameters = profileExtensionsParameters;
+
 export const profileExtensionsToolDetailsSchema = profileExtensionToolDetailsSchema;

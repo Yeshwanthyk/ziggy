@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 const repositoryRoot = join(import.meta.dir, "../..");
+
 const oxlint = join(repositoryRoot, "node_modules/.bin/oxlint");
+
 const temporaryRoots: Array<string> = [];
 
 const config = `{
@@ -25,12 +27,16 @@ const diagnostic = (rule: string, message: string): string => `${rule}|${message
 
 const parseDiagnostics = (output: string): Array<string> => {
   const diagnostics: Array<string> = [];
+
   for (const line of output.split("\n")) {
     const trimmed = line.trim();
+
     if (trimmed === "") continue;
+
     if (/^\d+ problems?$/u.test(trimmed)) continue;
     const match = trimmed.match(/^.+:\d+:\d+: (.+) \[(Error|Warning)\/(.+)\]$/u);
     expect(match).not.toBeNull();
+
     if (match === null) continue;
     const message = match[1] ?? "";
     const rawRule = match[3] ?? "";
@@ -39,6 +45,7 @@ const parseDiagnostics = (output: string): Array<string> => {
     const rule = rawRule.replace(/^ziggy\((.+)\)$/u, "ziggy/$1");
     diagnostics.push(diagnostic(rule, message));
   }
+
   return diagnostics.sort();
 };
 
@@ -57,12 +64,14 @@ const lintFixture = (source: string): Array<string> => {
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const stdout = new TextDecoder().decode(result.stdout);
   const stderr = new TextDecoder().decode(result.stderr);
   expect(stderr).toBe("");
 
   const diagnostics = parseDiagnostics(stdout);
   expect(result.exitCode).toBe(diagnostics.length === 0 ? 0 : 1);
+
   return diagnostics;
 };
 

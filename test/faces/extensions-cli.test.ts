@@ -75,7 +75,9 @@ test("bounds long extension detail and result values in a narrow terminal", () =
     colors: false,
     columns: 36,
   };
+
   const longValue = "extension-value-".repeat(12);
+
   const detail = renderExtension(
     {
       ...extension,
@@ -87,6 +89,7 @@ test("bounds long extension detail and result values in a narrow terminal", () =
     },
     options,
   );
+
   const managerResult = renderExtensionManagerResult(
     {
       status: "changed",
@@ -97,6 +100,7 @@ test("bounds long extension detail and result values in a narrow terminal", () =
     },
     options,
   );
+
   const mutation = renderExtensionMutation(
     {
       id: longValue,
@@ -129,6 +133,7 @@ test("preserves extension metadata in the pretty detail view", () => {
 test("projects bounded preflight diagnostics without exposing the cause", () => {
   const source = `${"s".repeat(160)}-source-secret`;
   const reason = `${"r".repeat(360)}-reason-secret`;
+
   const rendered = renderProfileExtensionFailure(
     new ProfileExtensionPreflightFailed({
       profilePath: "/private/profile",
@@ -149,6 +154,7 @@ test("projects bounded preflight diagnostics without exposing the cause", () => 
 
 test("projects lock operation and bounded reason without exposing the cause", () => {
   const reason = `${"l".repeat(360)}-lock-secret`;
+
   const rendered = renderProfileExtensionFailure(
     new ProfileExtensionLockFailed({
       profilePath: "/private/profile",
@@ -167,6 +173,7 @@ test("projects lock operation and bounded reason without exposing the cause", ()
 test("projects rollback operation, bounded path, and reason without raw failures", () => {
   const rollbackPath = "p".repeat(240);
   const rollbackReason = "b".repeat(360);
+
   const rendered = renderProfileExtensionFailure(
     new ProfileExtensionRollbackFailed({
       profilePath: "/private/profile",

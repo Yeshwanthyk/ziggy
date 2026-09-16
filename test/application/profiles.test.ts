@@ -10,12 +10,14 @@ import { Profiles, ProfilesLive, type ProfilesApi } from "ziggy/application/prof
 
 const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
   const snapshot: string[] = [];
+
   const visit = async (directory: string) => {
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
       left.name.localeCompare(right.name),
     )) {
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(root, absolute);
+
       if (entry.isDirectory()) {
         snapshot.push(`${relative}/`);
         await visit(absolute);
@@ -24,7 +26,9 @@ const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
       }
     }
   };
+
   await visit(root);
+
   return snapshot;
 };
 
@@ -41,10 +45,12 @@ test("init creates safe starter folders idempotently without changing human-owne
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-init-test-"));
   const profilePath = path.join(root, "profile");
   const target = { path: profilePath, name: "Profile" };
+
   try {
     const first = await useProfiles((profiles) =>
       profiles.initProfile(target, { createStarterDirectories: true }),
     );
+
     const soul = await readFile(path.join(profilePath, "SOUL.md"));
     await writeFile(path.join(profilePath, "agents", "human.md"), "human agent bytes\n");
     await writeFile(path.join(profilePath, "automations", "human.md"), "human automation bytes\n");
@@ -75,6 +81,7 @@ test("init creates safe starter folders idempotently without changing human-owne
 
 test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOUL.md", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-minimal-init-test-"));
+
   try {
     const minimalPath = path.join(root, "minimal");
     await useProfiles((profiles) => profiles.initProfile({ path: minimalPath, name: "Minimal" }));
@@ -124,6 +131,7 @@ test("listing admits only physical Profiles with a regular SOUL.md", async () =>
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-profile-list-test-"));
   const profilesDirectory = path.join(root, "profiles");
   const registryPath = path.join(root, "profiles.list");
+
   try {
     await mkdir(profilesDirectory);
     const validProfile = path.join(root, "valid");
@@ -160,6 +168,7 @@ test("non-minimal init scaffolds private memory files and preserves them on reru
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-memory-scaffold-test-"));
   const profilePath = path.join(root, "profile");
   const target = { path: profilePath, name: "Profile" };
+
   try {
     await useProfiles((profiles) =>
       profiles.initProfile(target, { createStarterDirectories: true }),
@@ -169,6 +178,7 @@ test("non-minimal init scaffolds private memory files and preserves them on reru
     const paths = [sharedMemoryPath, memoryReadmePath];
     expect(await readFile(sharedMemoryPath, "utf8")).toBe("");
     expect(await readFile(memoryReadmePath, "utf8")).toContain("docs/operations/memory.md");
+
     for (const directory of [
       path.join(profilePath, "memory"),
       path.join(profilePath, "memory", "users"),
@@ -176,14 +186,17 @@ test("non-minimal init scaffolds private memory files and preserves them on reru
     ]) {
       expect((await stat(directory)).mode & 0o777).toBe(0o700);
     }
+
     for (const file of paths) expect((await stat(file)).mode & 0o777).toBe(0o600);
 
     await writeFile(sharedMemoryPath, "human memory\n");
     await writeFile(memoryReadmePath, "human README\n");
     const before = await snapshotTree(profilePath);
+
     const rerun = await useProfiles((profiles) =>
       profiles.initProfile(target, { createStarterDirectories: true }),
     );
+
     expect(rerun).toEqual({ path: profilePath, created: false, createdDirectories: [] });
     expect(await snapshotTree(profilePath)).toEqual(before);
   } finally {

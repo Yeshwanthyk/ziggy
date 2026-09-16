@@ -56,6 +56,7 @@ const makeProfileFixture = async (): Promise<{
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "SOUL.md"), "# Test profile\n", "utf8");
   await writeFile(join(profilePath, "extensions.json"), '{\n  "extensions": []\n}\n', "utf8");
+
   return {
     root,
     profilePath,
@@ -91,24 +92,29 @@ const makeStub = (calls: Array<ReadonlyArray<unknown>>): ProfileExtensionsApi =>
     ],
     selected: ["alpha"],
   };
+
   return {
     list: unused,
     show: unused,
     listForProfile: (profilePath, repositoryRoot) => {
       calls.push(["list", profilePath, repositoryRoot]);
+
       return Effect.succeed(listing);
     },
     add: (target, repositoryRoot, id) => {
       calls.push(["add", target, repositoryRoot, id]);
+
       return Effect.succeed({ id, profilePath: target.path, changed: true, selected: true });
     },
     remove: (target, repositoryRoot, id) => {
       calls.push(["remove", target, repositoryRoot, id]);
+
       return Effect.succeed({ id, profilePath: target.path, changed: true, selected: false });
     },
     setSelected: unused,
     validate: (target, repositoryRoot) => {
       calls.push(["validate", target, repositoryRoot]);
+
       return Effect.succeed({
         selected: ["alpha"],
         preflight: { extensionPathCount: 1, skillPathCount: 2, extensionFactoryCount: 0 },
@@ -237,10 +243,12 @@ describe("profile_extensions input and result contract", () => {
       diagnostics: [],
       cause: new Error("private cause"),
     });
+
     const profileExtensions: ProfileExtensionsApi = {
       ...makeStub([]),
       add: () => Effect.fail(failure),
     };
+
     const tool = createProfileExtensionTool(
       "/trusted/profile",
       "/trusted/repository",
@@ -262,6 +270,7 @@ describe("profile_extensions input and result contract", () => {
       source: "shelf",
       selectionChanged: false,
     });
+
     if (response.details.ok) throw new Error("expected a structured tool failure");
     expect(response.details.message.length).toBeLessThanOrEqual(360);
     expect(response.details.message).not.toContain("\n");
@@ -274,11 +283,13 @@ describe("profile_extensions real service boundary", () => {
   test("adds an existing shelf package with an empty PATH and no process-spawn seam", async () => {
     const fixture = await makeProfileFixture();
     await writeShelfPackage(fixture.profilePath, "local");
+
     const service = makeProfileExtensions(
       noDownload,
       makeProfileExtensionPreflight(),
       makeProfileExtensionMutationLock(),
     );
+
     const tool = createProfileExtensionTool(fixture.profilePath, fixture.repositoryRoot, service);
 
     const previousPath = process.env.PATH;
@@ -290,11 +301,13 @@ describe("profile_extensions real service boundary", () => {
       void args;
       throw new Error("process spawning is forbidden in profile_extensions");
     };
+
     Bun.spawnSync = (...args) => {
       spawnCalls += 1;
       void args;
       throw new Error("process spawning is forbidden in profile_extensions");
     };
+
     process.env.PATH = "";
 
     try {
@@ -315,6 +328,7 @@ describe("profile_extensions real service boundary", () => {
     } finally {
       Bun.spawn = originalSpawn;
       Bun.spawnSync = originalSpawnSync;
+
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
     }

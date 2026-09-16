@@ -10,17 +10,21 @@ import type { ChatEvent, ChatHandle, ChatPromptOptions } from "./agent";
 export const MAX_UI_SESSIONS = 32;
 
 export type ChatRegistryKind = "telegram" | "discord" | "slack" | "ui";
+
 export type ChatRegistryListener = (event: ChatEvent) => void;
+
 export interface ChatRegistryEvent {
   readonly seq: number;
   readonly eventId: string;
   readonly event: ChatEvent;
 }
+
 export interface ChatRegistryReplay {
   readonly events: ReadonlyArray<ChatRegistryEvent>;
   readonly oldestSeq: number;
   readonly latestSeq: number;
 }
+
 export const CHAT_REPLAY_LIMIT = 256;
 
 type PromptPhase =
@@ -144,14 +148,19 @@ const emit = (entry: LiveEntry, event: ChatEvent): void => {
   if (entry.phase._tag === "Prompting" && event.kind === "error") {
     entry.phase.errorSeen = true;
   }
+
   const sequenced = {
     seq: entry.nextSeq++,
     eventId: randomUUID(),
     event,
   } satisfies ChatRegistryEvent;
+
   entry.replay.push(sequenced);
+
   if (entry.replay.length > CHAT_REPLAY_LIMIT) entry.replay.shift();
+
   for (const listener of Array.from(entry.listeners)) listener(event);
+
   for (const listener of Array.from(entry.sequencedListeners)) listener(sequenced);
 };
 
@@ -167,6 +176,7 @@ const makeLiveEntry = (
       const listeners = new Set<ChatRegistryListener>();
       const sequencedListeners = new Set<(event: ChatRegistryEvent) => void>();
       let unsubscribe: () => void = () => undefined;
+
       const entry: LiveEntry = {
         _tag: "Live" as const,
         key,
@@ -182,7 +192,9 @@ const makeLiveEntry = (
         agentId: metadata.agentId,
         nextSeq: 1,
       };
+
       unsubscribe = handle.subscribe((event) => emit(entry, event));
+
       return entry;
     },
     catch: (cause) => internalFailure(`could not subscribe to live session ${key}`, cause),
@@ -195,8 +207,11 @@ const liveView = (entry: LiveEntry): ChatRegistryLiveEntry => {
     handle: entry.handle,
     idle: entry.phase._tag === "Idle" && entry.handle.isIdle,
   };
+
   if (entry.context !== undefined) view.context = entry.context;
+
   if (entry.agentId !== undefined) view.agentId = entry.agentId;
+
   return view;
 };
 
@@ -206,8 +221,11 @@ const listView = (entry: LiveEntry): ChatRegistryListEntry => {
     kind: entry.kind,
     idle: entry.phase._tag === "Idle" && entry.handle.isIdle,
   };
+
   if (entry.context !== undefined) view.context = entry.context;
+
   if (entry.agentId !== undefined) view.agentId = entry.agentId;
+
   return view;
 };
 
@@ -224,6 +242,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
           Effect.sync(() => {
             const current = [...entries.values()];
             entries.clear();
+
             return current;
           }),
         )
@@ -238,7 +257,9 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                     failure("internal", "UI gateway stopped while opening a session"),
                   ).pipe(Effect.asVoid);
                 }
+
                 entry.unsubscribeHandle();
+
                 return entry.ownership === "registry"
                   ? entry.handle.dispose.pipe(
                       Effect.catch((cause) =>
@@ -258,7 +279,9 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
       statePermit.withPermit(
         Effect.gen(function* () {
           const entry = entries.get(key);
+
           if (entry === undefined || entry._tag !== "Live") return yield* unknownSession(key);
+
           return entry;
         }),
       );
@@ -276,24 +299,30 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
       registerAlias: (key, kind, handle) =>
         Effect.gen(function* () {
           const replacement = yield* makeLiveEntry(key, kind, "channel", handle);
+
           const previous = yield* statePermit
             .withPermit(
               Effect.gen(function* () {
                 const current = entries.get(key);
+
                 if (current?._tag === "Opening" || current?.kind === "ui") {
                   return yield* failure("internal", `cannot replace registry-owned session ${key}`);
                 }
+
                 entries.set(key, replacement);
+
                 return current;
               }),
             )
             .pipe(Effect.tapError(() => Effect.sync(() => replacement.unsubscribeHandle())));
+
           if (previous?._tag === "Live") previous.unsubscribeHandle();
         }),
       unregisterAlias: (key, handle) =>
         statePermit.withPermit(
           Effect.sync(() => {
             const current = entries.get(key);
+
             if (current?._tag === "Live" && current.handle === handle) {
               entries.delete(key);
               current.unsubscribeHandle();
@@ -314,38 +343,50 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             const decision = yield* statePermit.withPermit(
               Effect.gen(function* () {
                 const existing = entries.get(key);
+
                 if (existing?._tag === "Live") {
                   if (existing.kind !== "ui")
                     return yield* failure("watch_only", `${key} is watch-only`);
+
                   return { _tag: "Live" as const, handle: existing.handle };
                 }
+
                 if (existing?._tag === "Opening") {
                   return { _tag: "Wait" as const, result: existing.result };
                 }
+
                 const uiCount = [...entries.values()].filter(
                   (entry) => entry._tag === "Opening" || entry.kind === "ui",
                 ).length;
+
                 if (uiCount >= MAX_UI_SESSIONS) {
                   return yield* failure(
                     "capacity_exceeded",
                     `UI session capacity of ${MAX_UI_SESSIONS} reached`,
                   );
                 }
+
                 const result = yield* Deferred.make<ChatHandle, UiGatewayError>();
+
                 const opening: OpeningEntry = {
                   _tag: "Opening",
                   key,
                   token: randomUUID(),
                   result,
                 };
+
                 entries.set(key, opening);
+
                 return { _tag: "Open" as const, opening };
               }),
             );
+
             if (decision._tag === "Live") return decision.handle;
+
             if (decision._tag === "Wait") return yield* restore(Deferred.await(decision.result));
 
             const opening = decision.opening;
+
             const openWork = open.pipe(
               Effect.mapError((cause) =>
                 internalFailure(`could not open UI session ${key}`, cause),
@@ -356,14 +397,17 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                     statePermit.withPermit(
                       Effect.gen(function* () {
                         const current = entries.get(key);
+
                         if (current?._tag !== "Opening" || current.token !== opening.token) {
                           live.unsubscribeHandle();
                           yield* handle.dispose.pipe(Effect.catch(() => Effect.void));
+
                           return yield* failure(
                             "internal",
                             `UI session opening for ${key} became stale`,
                           );
                         }
+
                         entries.set(key, live);
                         yield* Deferred.succeed(opening.result, handle);
                       }),
@@ -375,15 +419,19 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                 statePermit.withPermit(
                   Effect.gen(function* () {
                     const current = entries.get(key);
+
                     if (current?._tag === "Opening" && current.token === opening.token) {
                       entries.delete(key);
                     }
+
                     yield* Deferred.fail(opening.result, openFailure);
                   }),
                 ),
               ),
             );
+
             yield* FiberMap.run(work, `open:${key}`, openWork, { onlyIfMissing: true });
+
             return yield* restore(Deferred.await(opening.result));
           }),
         ),
@@ -391,6 +439,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
         requireLive(key).pipe(
           Effect.map((entry) => {
             entry.listeners.add(listener);
+
             return () => entry.listeners.delete(listener);
           }),
         ),
@@ -398,6 +447,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
         statePermit.withPermit(
           Effect.gen(function* () {
             const candidate = entries.get(key);
+
             if (candidate === undefined || candidate._tag !== "Live")
               return yield* unknownSession(key);
             const entry = candidate;
@@ -406,16 +456,20 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             // Fresh subscriptions bootstrap from retained activity; only a supplied cursor
             // promises continuity. Durable conversation history belongs to the session store.
             const replayAfter = afterSeq ?? oldestSeq - 1;
+
             if (replayAfter > latestSeq || replayAfter < oldestSeq - 1) {
               return yield* failure(
                 "replay_gap",
                 `replay window for ${key} does not contain sequence ${afterSeq}`,
               );
             }
+
             for (const event of entry.replay) {
               if (event.seq > replayAfter) listener(event);
             }
+
             entry.sequencedListeners.add(listener);
+
             return () => entry.sequencedListeners.delete(listener);
           }),
         ),
@@ -424,6 +478,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
           Effect.flatMap((entry) => {
             const oldestSeq = entry.replay[0]?.seq ?? entry.nextSeq;
             const latestSeq = entry.nextSeq - 1;
+
             if (afterSeq > latestSeq || afterSeq < oldestSeq - 1) {
               return Effect.fail(
                 failure(
@@ -432,6 +487,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                 ),
               );
             }
+
             return Effect.succeed({
               events: entry.replay.filter((event) => event.seq > afterSeq),
               oldestSeq,
@@ -450,21 +506,28 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
             const reserved = yield* statePermit.withPermit(
               Effect.gen(function* () {
                 const entry = entries.get(key);
+
                 if (entry === undefined || entry._tag !== "Live") return yield* unknownSession(key);
+
                 if (entry.kind !== "ui")
                   return yield* failure("watch_only", `${key} is watch-only`);
+
                 if (entry.phase._tag === "Prompting") {
                   return yield* failure("session_busy", `${key} already has an active prompt`);
                 }
+
                 const phase: PromptPhase = {
                   _tag: "Prompting",
                   token: randomUUID(),
                   errorSeen: false,
                 };
+
                 entry.phase = phase;
+
                 return { entry, phase };
               }),
             );
+
             const promptWork = reserved.entry.handle.prompt(text, options).pipe(
               Effect.asVoid,
               Effect.catch((cause) =>
@@ -489,6 +552,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                 ),
               ),
             );
+
             yield* FiberMap.run(work, `prompt:${key}`, promptWork, { onlyIfMissing: true });
           }),
         ),
@@ -542,6 +606,7 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
               .withPermit(
                 Effect.sync(() => {
                   const current = entries.get(key);
+
                   if (current?._tag === "Live" && current === entry) entries.delete(key);
                 }),
               )
@@ -556,5 +621,6 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
           ),
         ),
     };
+
     return api;
   });

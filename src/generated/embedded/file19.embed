@@ -16,26 +16,32 @@ const RpcResponse = Schema.Struct({
     }),
   ),
 });
+
 const RpcNotification = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
   method: Schema.String,
   params: Schema.optionalKey(Schema.Unknown),
 });
+
 const RpcRequest = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
   id: Schema.Union([Schema.Number, Schema.String]),
   method: Schema.String,
   params: Schema.optionalKey(Schema.Unknown),
 });
+
 const Inbound = Schema.Union([RpcResponse, RpcNotification, RpcRequest]);
+
 const decodeInbound = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Union([Inbound, Schema.Array(Inbound)])),
 );
+
 const InitializeResult = Schema.Struct({
   protocolVersion: Schema.String,
   capabilities: Schema.Unknown,
   serverInfo: Schema.Struct({ name: Schema.String, version: Schema.String }),
 });
+
 const decodeInitializeResult = Schema.decodeUnknownOption(InitializeResult);
 
 const Tool = Schema.Struct({
@@ -43,17 +49,22 @@ const Tool = Schema.Struct({
   description: Schema.optionalKey(Schema.String),
   inputSchema: Schema.optionalKey(Schema.Unknown),
 });
+
 const ToolsPage = Schema.Struct({
   tools: Schema.Array(Tool),
   nextCursor: Schema.optionalKey(Schema.String),
 });
+
 const decodeToolsPage = Schema.decodeUnknownOption(ToolsPage);
+
 const CallToolResult = Schema.Struct({
   content: Schema.Array(Schema.Json),
   structuredContent: Schema.optionalKey(Schema.Json),
   isError: Schema.optionalKey(Schema.Boolean),
 });
+
 const decodeToolResult = Schema.decodeUnknownOption(CallToolResult);
+
 const SAFE_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export type McpTool = typeof Tool.Type;
@@ -72,6 +83,7 @@ type Pending = {
 };
 
 const encoder = new TextEncoder();
+
 const decoder = new TextDecoder();
 
 export class McpStdioClient {
@@ -116,6 +128,7 @@ export class McpStdioClient {
     maxMessageBytes: number,
   ): Effect.Effect<McpStdioClient, McpClientError> {
     let client: McpStdioClient | undefined;
+
     return Effect.gen(function* () {
       client = yield* Effect.try({
         try: () => new McpStdioClient(server, config, profilePath, maxMessageBytes),
@@ -127,11 +140,13 @@ export class McpStdioClient {
             cause,
           }),
       });
+
       const initialized = yield* client.#request("initialize", {
         protocolVersion: "2025-03-26",
         capabilities: {},
         clientInfo: { name: "ziggy-codemode", version: "0.1.0" },
       });
+
       if (Option.isNone(decodeInitializeResult(initialized))) {
         return yield* new McpClientError({
           server,
@@ -139,7 +154,9 @@ export class McpStdioClient {
           reason: "MCP server returned an invalid initialize result.",
         });
       }
+
       yield* client.#notify("notifications/initialized", {});
+
       return client;
     }).pipe(
       Effect.onError(() => (client === undefined ? Effect.void : client.close())),
@@ -150,14 +167,17 @@ export class McpStdioClient {
   listTools(maximum: number): Effect.Effect<ReadonlyArray<McpTool>, McpClientError> {
     if (this.#tools !== undefined) return Effect.succeed(this.#tools.slice(0, maximum));
     const self = this;
+
     return Effect.gen(function* () {
       const tools: McpTool[] = [];
       const names = new Set<string>();
       const cursors = new Set<string>();
       let cursor: string | undefined;
+
       do {
         const raw = yield* self.#request("tools/list", cursor === undefined ? {} : { cursor });
         const decoded = decodeToolsPage(raw);
+
         if (Option.isNone(decoded)) {
           return yield* new McpClientError({
             server: self.#server,
@@ -165,6 +185,7 @@ export class McpStdioClient {
             reason: "MCP server returned an invalid tools/list result.",
           });
         }
+
         for (const tool of decoded.value.tools) {
           if (!SAFE_TOOL_NAME.test(tool.name) || names.has(tool.name)) {
             return yield* new McpClientError({
@@ -173,11 +194,15 @@ export class McpStdioClient {
               reason: "MCP server returned a duplicate or unsafe tool name.",
             });
           }
+
           names.add(tool.name);
           tools.push(tool);
+
           if (tools.length >= maximum) break;
         }
+
         const nextCursor = decoded.value.nextCursor;
+
         if (nextCursor !== undefined && cursors.has(nextCursor)) {
           return yield* new McpClientError({
             server: self.#server,
@@ -185,10 +210,13 @@ export class McpStdioClient {
             reason: "MCP server repeated a tools/list cursor.",
           });
         }
+
         if (nextCursor !== undefined) cursors.add(nextCursor);
         cursor = nextCursor;
       } while (cursor !== undefined && tools.length < maximum && cursors.size <= maximum);
+
       self.#tools = tools;
+
       return tools.slice(0, maximum);
     });
   }
@@ -197,6 +225,7 @@ export class McpStdioClient {
     return this.#request("tools/call", { name, arguments: input }).pipe(
       Effect.flatMap((raw) => {
         const decoded = decodeToolResult(raw);
+
         if (Option.isNone(decoded)) {
           return Effect.fail(
             new McpClientError({
@@ -206,6 +235,7 @@ export class McpStdioClient {
             }),
           );
         }
+
         if (decoded.value.isError === true) {
           return Effect.fail(
             new McpClientError({
@@ -215,6 +245,7 @@ export class McpStdioClient {
             }),
           );
         }
+
         return Effect.succeed(
           decoded.value.structuredContent === undefined
             ? { content: decoded.value.content }
@@ -243,8 +274,10 @@ export class McpStdioClient {
             }),
           ),
         );
+
         return;
       }
+
       const id = this.#nextId++;
       this.#pending.set(id, {
         operation: method,
@@ -264,6 +297,7 @@ export class McpStdioClient {
           ),
         );
       });
+
       const cancel = () => {
         if (!this.#pending.delete(id)) return;
         void this.#write({
@@ -272,7 +306,9 @@ export class McpStdioClient {
           params: { requestId: id, reason: "Code Mode execution cancelled" },
         }).catch(() => undefined);
       };
+
       signal.addEventListener("abort", cancel, { once: true });
+
       return Effect.sync(() => {
         cancel();
         signal.removeEventListener("abort", cancel);
@@ -296,9 +332,11 @@ export class McpStdioClient {
   async #write(message: Schema.Json): Promise<void> {
     const body = JSON.stringify(message);
     const bytes = encoder.encode(`${body}\n`);
+
     if (bytes.byteLength > this.#maxMessageBytes) {
       throw new Error("MCP request exceeds the configured message limit.");
     }
+
     await this.#writer.write(bytes);
     await this.#writer.flush();
   }
@@ -306,26 +344,35 @@ export class McpStdioClient {
   async #readLoop(): Promise<void> {
     const reader = this.#process.stdout.getReader();
     let buffered = "";
+
     try {
       while (!this.#closed) {
         const next = await reader.read();
+
         if (next.done) break;
         buffered += decoder.decode(next.value, { stream: true });
+
         while (true) {
           const newline = buffered.indexOf("\n");
+
           if (newline < 0) break;
           const line = buffered.slice(0, newline).trim();
           buffered = buffered.slice(newline + 1);
+
           if (line.length > 0) {
             if (encoder.encode(line).byteLength > this.#maxMessageBytes) {
               this.#protocolFailure("MCP response exceeds the configured message limit.");
+
               return;
             }
+
             this.#accept(line);
           }
         }
+
         if (encoder.encode(buffered).byteLength > this.#maxMessageBytes) {
           this.#protocolFailure("MCP response exceeds the configured message limit.");
+
           return;
         }
       }
@@ -336,26 +383,36 @@ export class McpStdioClient {
 
   #accept(line: string): void {
     const decoded = decodeInbound(line);
+
     if (Option.isNone(decoded)) {
       this.#protocolFailure("MCP server emitted malformed JSON-RPC.");
+
       return;
     }
+
     const messages = Array.isArray(decoded.value) ? decoded.value : [decoded.value];
+
     for (const message of messages) this.#acceptMessage(message);
   }
 
   #acceptMessage(message: typeof Inbound.Type): void {
     if ("method" in message) {
       if ("id" in message) this.#protocolFailure("MCP server requests are not enabled.");
+
       return;
     }
+
     if ((message.result === undefined) === (message.error === undefined)) {
       this.#protocolFailure("MCP response must contain exactly one result or error.");
+
       return;
     }
+
     const pending = this.#pending.get(message.id);
+
     if (pending === undefined) return;
     this.#pending.delete(message.id);
+
     if (message.error !== undefined) {
       pending.reject(
         new McpClientError({
@@ -364,8 +421,10 @@ export class McpStdioClient {
           reason: `MCP error ${message.error.code}: ${message.error.message}`,
         }),
       );
+
       return;
     }
+
     pending.resolve(message.result);
   }
 
@@ -380,6 +439,7 @@ export class McpStdioClient {
     this.#failAll("MCP client closed.");
     void Promise.resolve(this.#writer.end()).catch(() => undefined);
     this.#termination = this.#shutdownProcess();
+
     return this.#termination;
   }
 
@@ -388,22 +448,27 @@ export class McpStdioClient {
       if (process.platform !== "win32") {
         try {
           process.kill(-this.#process.pid, name);
+
           return;
         } catch {
           // Fall back to the direct child when its detached process group already exited.
         }
       }
+
       try {
         this.#process.kill(name);
       } catch {
         // The direct child can exit between the process-group and fallback signals.
       }
     };
+
     signal("SIGTERM");
+
     const exitedDuringGrace = await Promise.race([
       this.#process.exited.then(() => true),
       Bun.sleep(150).then(() => false),
     ]);
+
     if (process.platform !== "win32" || !exitedDuringGrace) signal("SIGKILL");
     await this.#process.exited;
   }
@@ -419,6 +484,7 @@ export class McpStdioClient {
         }),
       );
     }
+
     this.#pending.clear();
   }
 }

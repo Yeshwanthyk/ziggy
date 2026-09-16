@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
+
 const BoundedText = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const DiscordIngressAttachmentReference = Schema.Struct({
@@ -11,6 +13,7 @@ export const DiscordIngressAttachmentReference = Schema.Struct({
   size: Schema.optional(NonNegativeInteger),
   url: Schema.optional(BoundedText(4_096)),
 });
+
 export type DiscordIngressAttachmentReference = typeof DiscordIngressAttachmentReference.Type;
 
 const DiscordIngressAttachments = Schema.Array(DiscordIngressAttachmentReference).check(
@@ -42,6 +45,7 @@ export const DiscordIngressPayload = Schema.Struct({
     { expected: "Discord text or attachment metadata" },
   ),
 );
+
 export type DiscordIngressPayload = typeof DiscordIngressPayload.Type;
 
 export const DiscordIngressTerminalState = Schema.Literals([
@@ -50,6 +54,7 @@ export const DiscordIngressTerminalState = Schema.Literals([
   "cancelled",
   "unknown",
 ]);
+
 export type DiscordIngressTerminalState = typeof DiscordIngressTerminalState.Type;
 
 export class DiscordIngressDatabaseError extends Schema.TaggedErrorClass<DiscordIngressDatabaseError>()(

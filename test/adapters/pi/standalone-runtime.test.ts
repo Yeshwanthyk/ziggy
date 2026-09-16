@@ -30,6 +30,7 @@ test("compiled Photon reads fall back to the embedded WASM only on ENOENT", asyn
   const embeddedWasm = join(root, "embedded.wasm");
   const fileSystem = process.getBuiltinModule("fs");
   const originalReadFileSync = fileSystem.readFileSync;
+
   try {
     await writeFile(embeddedWasm, "embedded-photon");
     installCompiledPhotonWasmFallback(fileSystem, embeddedWasm);

@@ -7,10 +7,13 @@ const message =
 
 const isEffectEscapeHatch = (node) => {
   const expression = unwrapExpression(node);
+
   if (expression?.type !== "MemberExpression") return false;
   const object = unwrapExpression(expression.object);
+
   if (object?.type !== "Identifier" || object.name !== "Effect") return false;
   const property = getPropertyName(expression.property);
+
   return escapeHatches.has(property);
 };
 

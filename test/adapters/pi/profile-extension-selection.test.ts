@@ -24,8 +24,10 @@ test("the TUI selection runner delegates one full-set operation to ProfileExtens
   const root = await mkdtemp(join(tmpdir(), "ziggy-extension-runner-"));
   const repositoryRoot = join(root, "repository");
   const profilePath = join(root, "profile");
+
   try {
     await mkdir(profilePath, { recursive: true });
+
     const listing: ProfileExtensionListing = {
       available: [
         { id: "alpha", description: "Profile-owned Alpha", kind: "skill", source: "profile" },
@@ -40,23 +42,28 @@ test("the TUI selection runner delegates one full-set operation to ProfileExtens
       ],
       selected: ["alpha"],
     };
+
     const selectedCalls: Array<{
       readonly profilePath: string;
       readonly repositoryRoot: string;
       readonly ids: ReadonlyArray<string>;
     }> = [];
+
     let listCalls = 0;
+
     const profileExtensions: ProfileExtensionsApi = {
       list: unused,
       show: unused,
       listForProfile: (_profilePath, _repositoryRoot) => {
         listCalls += 1;
+
         return Effect.succeed(listing);
       },
       add: unused,
       remove: unused,
       setSelected: (target, repository, ids): Effect.Effect<ProfileExtensionSetResult, never> => {
         selectedCalls.push({ profilePath: target.path, repositoryRoot: repository, ids: [...ids] });
+
         return Effect.succeed({ changed: true, selected: [...ids].sort() });
       },
       validate: unused,

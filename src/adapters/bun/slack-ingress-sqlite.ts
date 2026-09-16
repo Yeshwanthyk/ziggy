@@ -12,8 +12,11 @@ import {
 } from "../../domain/slack-ingress";
 
 const DATABASE_NAME = "slack-ingress.sqlite";
+
 const MAX_TERMINAL_ROWS = 1_000;
+
 const EMPTY_FILES_JSON = '{"files":[],"omittedFileCount":0}';
+
 const SCHEMA_V1 = `
 CREATE TABLE slack_ingress (
   channel TEXT NOT NULL,
@@ -45,6 +48,7 @@ CREATE INDEX slack_ingress_replay ON slack_ingress(received_at_ms, channel, sour
 CREATE INDEX slack_ingress_terminal ON slack_ingress(finished_at_ms DESC, channel, source_ts)
   WHERE state IN ('completed', 'failed', 'cancelled', 'unknown');
 PRAGMA user_version = 1;`;
+
 const SCHEMA_V2 = `
 CREATE TABLE "slack_ingress" (
   channel TEXT NOT NULL,
@@ -134,7 +138,9 @@ CREATE INDEX slack_ingress_terminal ON slack_ingress(finished_at_ms DESC, channe
 PRAGMA user_version = 2;`;
 
 const VersionRow = Schema.Struct({ userVersion: Schema.Int });
+
 const MasterRow = Schema.Struct({ name: Schema.String, type: Schema.String, sql: Schema.String });
+
 const ReplayRow = Schema.Struct({
   channel: Schema.String,
   sourceTs: Schema.String,
@@ -147,19 +153,24 @@ const ReplayRow = Schema.Struct({
   filesJson: Schema.String,
   threadTs: Schema.NullOr(Schema.String),
 });
+
 const StoredFiles = Schema.Struct({
   files: Schema.Array(SlackIngressFileReference).check(
     Schema.makeFilter((files) => files.length <= 4, { expected: "at most four Slack files" }),
   ),
   omittedFileCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
+
 const decodeVersion = Schema.decodeUnknownSync(VersionRow, { onExcessProperty: "error" });
+
 const decodeMaster = Schema.decodeUnknownSync(Schema.Array(MasterRow), {
   onExcessProperty: "error",
 });
+
 const decodeReplayRows = Schema.decodeUnknownSync(Schema.Array(ReplayRow), {
   onExcessProperty: "error",
 });
+
 const decodeStoredFilesJson = Schema.decodeUnknownSync(Schema.fromJsonString(StoredFiles));
 
 export const slackIngressDatabasePath = (profilePath: string): string =>
@@ -181,26 +192,35 @@ const schemaObjects = (db: Database) =>
       )
       .all(),
   );
+
 const schemaFingerprint = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
   createHash("sha256").update(JSON.stringify(objects)).digest("hex");
+
 const expectedObjects = ["slack_ingress", "slack_ingress_replay", "slack_ingress_terminal"];
+
 const expectedFingerprint = (schema: string) => {
   const db = new Database(":memory:", { strict: true });
+
   try {
     db.exec(schema);
+
     return schemaFingerprint(schemaObjects(db));
   } finally {
     db.close(false);
   }
 };
+
 const expectedFingerprintV1 = expectedFingerprint(SCHEMA_V1);
+
 const expectedFingerprintV2 = expectedFingerprint(SCHEMA_V2);
 
 const validateSchemaVersion = (db: Database, path: string, expectedVersion: 1 | 2): void => {
   const actualVersion = decodeVersion(
     db.query("SELECT user_version userVersion FROM pragma_user_version").get(),
   ).userVersion;
+
   const objects = schemaObjects(db);
+
   if (
     actualVersion !== expectedVersion ||
     objects.map((row) => row.name).join("|") !== expectedObjects.join("|") ||
@@ -223,6 +243,7 @@ export const initializeSlackIngressDatabase = (
   profilePath: string,
 ): Effect.Effect<void, SlackIngressDatabaseError> => {
   const path = slackIngressDatabasePath(profilePath);
+
   return Effect.tryPromise({
     try: () => mkdir(join(profilePath, ".runtime"), { recursive: true }),
     catch: (cause) => databaseError("create runtime directory", path, cause),
@@ -232,8 +253,10 @@ export const initializeSlackIngressDatabase = (
         Effect.try({
           try: () => {
             const db = new Database(path, { create: true, readwrite: true, strict: true });
+
             try {
               configure(db);
+
               return db;
             } catch (cause) {
               db.close(false);
@@ -248,7 +271,9 @@ export const initializeSlackIngressDatabase = (
               const version = decodeVersion(
                 db.query("SELECT user_version userVersion FROM pragma_user_version").get(),
               ).userVersion;
+
               const objects = schemaObjects(db);
+
               if (version === 0 && objects.length === 0) {
                 db.transaction(() => db.exec(SCHEMA_V2)).immediate();
               } else if (version === 1) {
@@ -276,13 +301,16 @@ const withDatabase = <A>(
   use: (db: Database) => A,
 ): Effect.Effect<A, SlackIngressDatabaseError> => {
   const path = slackIngressDatabasePath(profilePath);
+
   return Effect.acquireUseRelease(
     Effect.try({
       try: () => {
         const db = new Database(path, { create: false, readwrite: true, strict: true });
+
         try {
           configure(db);
           validateSchema(db, path);
+
           return db;
         } catch (cause) {
           db.close(false);
@@ -330,8 +358,10 @@ export const admitSlackIngress = (
     db
       .transaction(() => {
         const { payload } = record;
+
         const contextId =
           payload.context.kind === "user" ? payload.context.userId : payload.context.groupId;
+
         const duplicate =
           db
             .query(
@@ -344,6 +374,7 @@ export const admitSlackIngress = (
               record.eventId ?? null,
               record.eventId ?? null,
             ) !== null;
+
         if (duplicate) return "duplicate";
         db.query(
           `INSERT INTO slack_ingress
@@ -363,6 +394,7 @@ export const admitSlackIngress = (
           atMs,
         );
         pruneTerminalRows(db);
+
         return "accepted";
       })
       .immediate(),
@@ -397,6 +429,7 @@ export const readReplayableSlackIngress = (
         .all(),
     ).map((row): SlackIngressRecord => {
       const storedFiles = decodeStoredFilesJson(row.filesJson);
+
       const payload: SlackIngressPayload = {
         chatKey: row.chatKey,
         channel: row.channel,
@@ -417,6 +450,7 @@ export const readReplayableSlackIngress = (
           ].flatMap((entry) => (entry === undefined ? [] : [entry])),
         ),
       };
+
       return {
         payload,
         ...Object.fromEntries(row.eventId === null ? [] : ([["eventId", row.eventId]] as const)),
@@ -460,12 +494,14 @@ export const finishSlackIngress = (
              WHERE channel=? AND source_ts=? AND state='running' AND owner_id=?`,
           )
           .run(state, EMPTY_FILES_JSON, atMs, payload.channel, payload.sourceTs, ownerId).changes;
+
         if (changed !== 1) {
           throw databaseError("finish owned row", slackIngressDatabasePath(profilePath), {
             channel: payload.channel,
             sourceTs: payload.sourceTs,
           });
         }
+
         pruneTerminalRows(db);
       })
       .immediate(),

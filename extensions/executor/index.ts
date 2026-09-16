@@ -27,15 +27,20 @@ type RunOptions = {
 const truncate = (text: string): string => {
   if (text.length <= OUTPUT_LIMIT) return text;
   const omitted = text.length - OUTPUT_LIMIT;
+
   return `${text.slice(0, OUTPUT_LIMIT)}\n… ${omitted} characters omitted`;
 };
 
 const formatSuccess = (result: ExecResult): string => {
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
+
   if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
+
   if (stdout.length > 0) return stdout;
+
   if (stderr.length > 0) return `stderr:\n${stderr}`;
+
   return "Command completed successfully.";
 };
 
@@ -44,21 +49,25 @@ export const runExecutorCommand = async (exec: ExtensionAPI["exec"], options: Ru
     cwd: options.cwd,
     timeout: options.timeout,
   };
+
   if (options.signal !== undefined) {
     execOptions.signal = options.signal;
   }
+
   const result = await exec(options.command, [...options.args], execOptions);
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
 
   if (result.code !== 0) {
     const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
+
     const output = [
       stderr.length > 0 ? `stderr:\n${stderr}` : "",
       stdout.length > 0 ? `stdout:\n${stdout}` : "",
     ]
       .filter((part) => part.length > 0)
       .join("\n\n");
+
     throw new Error(`executor ${reason}${output.length > 0 ? `\n${output}` : ""}`);
   }
 

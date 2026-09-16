@@ -16,6 +16,7 @@ const fixtures: string[] = [];
 const processExists = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch {
     return false;
@@ -27,6 +28,7 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>): Promise<voi
     if (await predicate()) return;
     await Bun.sleep(25);
   }
+
   throw new Error("timed out waiting for process fixture");
 };
 
@@ -54,6 +56,7 @@ afterEach(async () => {
 
 test("registers the native agent_browser tool", () => {
   const names: string[] = [];
+
   const registerTool: ExtensionAPI["registerTool"] = (tool) => {
     names.push(tool.name);
   };
@@ -97,6 +100,7 @@ await new Promise(() => {});
       stderr: "pipe",
     },
   );
+
   await waitFor(() => Bun.file(marker).exists());
   const descendantPid = Number((await readFile(marker, "utf8")).trim());
 
@@ -138,11 +142,13 @@ process.stdout.write(JSON.stringify({
       stderr: "pipe",
     },
   );
+
   const [exitCode, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
   const parsed: unknown = JSON.parse(stdout);
 
   expect(exitCode).toBe(0);
   expect(Check(Output, parsed)).toBe(true);
+
   if (!Check(Output, parsed)) throw new Error("wrapper returned an invalid response");
   const processCwd = await realpath(profile);
   const browserProfile = join(profile, ".runtime", "agent-browser", "browser-profile");

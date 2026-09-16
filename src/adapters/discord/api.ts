@@ -4,18 +4,22 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
 
 export const MAX_DISCORD_IMAGE_BYTES = 5 * 1024 * 1024;
+
 export const DISCORD_IMAGE_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/gif",
 ] as const;
+
 export type DiscordImageMimeType = (typeof DISCORD_IMAGE_MIME_TYPES)[number];
+
 export interface DiscordImageContent {
   readonly type: "image";
   readonly data: string;
   readonly mimeType: DiscordImageMimeType;
 }
+
 interface DiscordDownloadAccumulator {
   readonly chunks: Array<Uint8Array>;
   readonly size: number;
@@ -26,10 +30,15 @@ const HttpStatus = Schema.Finite.check(
   Schema.isGreaterThanOrEqualTo(100),
   Schema.isLessThanOrEqualTo(599),
 );
+
 const RetryAfterSeconds = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
 const GatewayBotSuccess = Schema.Struct({ url: Schema.String });
+
 const CreateMessageSuccess = Schema.Struct({ id: Schema.String });
+
 const CurrentApplicationSuccess = Schema.Struct({ id: Schema.String });
+
 const ApplicationCommandSuccess = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -38,12 +47,14 @@ const ApplicationCommandSuccess = Schema.Struct({
   integration_types: Schema.optional(Schema.Array(Schema.Finite.check(Schema.isInt()))),
   contexts: Schema.optional(Schema.Array(Schema.Finite.check(Schema.isInt()))),
 });
+
 const DiscordChannelSuccess = Schema.Struct({
   id: Schema.String,
   type: Schema.Finite.check(Schema.isInt()),
   guild_id: Schema.optional(Schema.String),
   parent_id: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
 const RateLimitFailure = Schema.Struct({
   retry_after: Schema.optional(RetryAfterSeconds),
 });
@@ -51,21 +62,27 @@ const RateLimitFailure = Schema.Struct({
 const decodeGatewayBotResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(GatewayBotSuccess),
 );
+
 const decodeCurrentApplicationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(CurrentApplicationSuccess),
 );
+
 const decodeApplicationCommandsResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(ApplicationCommandSuccess)),
 );
+
 const decodeApplicationCommandResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ApplicationCommandSuccess),
 );
+
 const decodeCreateMessageResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(CreateMessageSuccess),
 );
+
 const decodeDiscordChannelResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DiscordChannelSuccess),
 );
+
 const decodeRateLimitResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(RateLimitFailure));
 
 export type DiscordApiOperation =
@@ -81,6 +98,7 @@ export type DiscordApiOperation =
   | "respondToInteraction"
   | "startThreadFromMessage"
   | "gateway";
+
 export type DiscordApiErrorReason =
   | "network"
   | "server"
@@ -165,6 +183,7 @@ const redact = (value: string, token: string): string =>
 
 const safeCause = (cause: unknown, token: string): Error => {
   const message = cause instanceof Error ? cause.message : String(cause);
+
   return new Error(redact(message, token));
 };
 
@@ -200,7 +219,9 @@ const retryAfterHeader = (value: string | undefined): number | undefined => {
   if (value === undefined) {
     return undefined;
   }
+
   const seconds = Number(value);
+
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
 };
 
@@ -215,15 +236,18 @@ const classifyFailure = (
       status,
     });
   }
+
   if (status === 429) {
     return apiError(operation, "rate-limited", true, new Error("HTTP 429"), token, {
       status,
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : undefined),
     });
   }
+
   if (status >= 500) {
     return apiError(operation, "server", true, new Error(`HTTP ${status}`), token, { status });
   }
+
   return apiError(operation, "rejected", false, new Error(`HTTP ${status}`), token, { status });
 };
 
@@ -233,6 +257,7 @@ export const discordImageMimeType = (value: string | undefined): DiscordImageMim
 export const isDiscordAttachmentUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
+
     return (
       url.protocol === "https:" &&
       (url.hostname === "cdn.discordapp.com" || url.hostname === "media.discordapp.net") &&
@@ -255,9 +280,11 @@ const request = (
   },
 ): Effect.Effect<RawResponse, DiscordApiError> => {
   let outgoing = HttpClientRequest.make(options?.method ?? "GET")(url);
+
   if (options?.omitAuthorization !== true) {
     outgoing = outgoing.pipe(HttpClientRequest.setHeader("Authorization", `Bot ${token}`));
   }
+
   if (options?.body !== undefined) {
     outgoing = outgoing.pipe(HttpClientRequest.bodyText(options.body, "application/json"));
   }
@@ -290,6 +317,7 @@ const ensureSuccess = (
   if (response.status >= 200 && response.status < 300) {
     return Effect.succeed(response);
   }
+
   if (response.status === 429) {
     return retryAfter(response).pipe(
       Effect.flatMap((seconds) =>
@@ -297,6 +325,7 @@ const ensureSuccess = (
       ),
     );
   }
+
   return Effect.fail(classifyFailure(operation, response.status, token));
 };
 
@@ -332,6 +361,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
         "ensureCommands",
         "https://discord.com/api/v10/oauth2/applications/@me",
       ).pipe(Effect.flatMap((response) => ensureSuccess(token, "ensureCommands", response)));
+
       const application = yield* decodeCurrentApplicationResponse(applicationResponse.body).pipe(
         Effect.mapError((cause) =>
           apiError("ensureCommands", "invalid-response", false, cause, token, {
@@ -339,11 +369,14 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
           }),
         ),
       );
+
       const applicationUrl = `https://discord.com/api/v10/applications/${encodeURIComponent(application.id)}`;
       const commandsUrl = `${applicationUrl}/commands`;
+
       const commandsResponse = yield* request(client, token, "ensureCommands", commandsUrl).pipe(
         Effect.flatMap((response) => ensureSuccess(token, "ensureCommands", response)),
       );
+
       const existing = yield* decodeApplicationCommandsResponse(commandsResponse.body).pipe(
         Effect.mapError((cause) =>
           apiError("ensureCommands", "invalid-response", false, cause, token, {
@@ -351,6 +384,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
           }),
         ),
       );
+
       const removeLegacyCommands = (
         commandCollectionUrl: string,
         commands: ReadonlyArray<typeof ApplicationCommandSuccess.Type>,
@@ -372,14 +406,17 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
         );
 
       yield* removeLegacyCommands(commandsUrl, existing);
+
       for (const guildId of new Set(guildIds)) {
         const guildCommandsUrl = `${applicationUrl}/guilds/${encodeURIComponent(guildId)}/commands`;
+
         const guildCommandsResponse = yield* request(
           client,
           token,
           "ensureCommands",
           guildCommandsUrl,
         ).pipe(Effect.flatMap((response) => ensureSuccess(token, "ensureCommands", response)));
+
         const guildCommands = yield* decodeApplicationCommandsResponse(
           guildCommandsResponse.body,
         ).pipe(
@@ -389,6 +426,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
             }),
           ),
         );
+
         yield* removeLegacyCommands(guildCommandsUrl, guildCommands);
       }
 
@@ -396,13 +434,16 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
         const current = existing.find(
           (command) => command.name === expected.name && command.type === expected.type,
         );
+
         if (current !== undefined && commandMatches(current, expected)) {
           continue;
         }
+
         const response = yield* request(client, token, "ensureCommands", commandsUrl, {
           method: "POST",
           body: JSON.stringify(expected),
         }).pipe(Effect.flatMap((raw) => ensureSuccess(token, "ensureCommands", raw)));
+
         yield* decodeApplicationCommandResponse(response.body).pipe(
           Effect.mapError((cause) =>
             apiError("ensureCommands", "invalid-response", false, cause, token, {
@@ -530,6 +571,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
     ),
   downloadAttachment: (file: DiscordIngressAttachmentReference) => {
     const mimeType = discordImageMimeType(file.mimeType);
+
     if (mimeType === undefined || file.size === undefined || file.size > MAX_DISCORD_IMAGE_BYTES) {
       return Effect.fail(
         apiError(
@@ -541,11 +583,13 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
         ),
       );
     }
+
     if (file.url === undefined || !isDiscordAttachmentUrl(file.url)) {
       return Effect.fail(
         apiError("downloadAttachment", "rejected", false, new Error("invalid attachment URL"), ""),
       );
     }
+
     return client.execute(HttpClientRequest.get(file.url)).pipe(
       Effect.mapError(() =>
         apiError("downloadAttachment", "network", true, new Error("attachment request failed"), ""),
@@ -558,6 +602,7 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
       Effect.flatMap((response) =>
         Effect.gen(function* () {
           const contentLength = Number(response.headers["content-length"]);
+
           if (Number.isFinite(contentLength) && contentLength > MAX_DISCORD_IMAGE_BYTES) {
             return yield* apiError(
               "downloadAttachment",
@@ -567,10 +612,12 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
               "",
             );
           }
+
           const responseMimeType = response.headers["content-type"]
             ?.split(";", 1)[0]
             ?.trim()
             .toLowerCase();
+
           if (responseMimeType !== mimeType) {
             return yield* apiError(
               "downloadAttachment",
@@ -580,11 +627,13 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
               "",
             );
           }
+
           return yield* response.stream.pipe(
             Stream.runFoldEffect(
               (): DiscordDownloadAccumulator => ({ chunks: [], size: 0 }),
               (accumulator, chunk) => {
                 const size = accumulator.size + chunk.byteLength;
+
                 if (size > MAX_DISCORD_IMAGE_BYTES) {
                   return Effect.fail(
                     apiError(
@@ -596,7 +645,9 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
                     ),
                   );
                 }
+
                 accumulator.chunks.push(chunk);
+
                 return Effect.succeed({ chunks: accumulator.chunks, size });
               },
             ),
@@ -655,6 +706,7 @@ export type DiscordApi = ReturnType<typeof makeDiscordApi>;
 const withLiveClient = <A, E>(use: (api: DiscordApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
+
     return yield* use(makeDiscordApi(client));
   }).pipe(Effect.provide(FetchHttpClient.layer));
 

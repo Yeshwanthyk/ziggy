@@ -12,6 +12,7 @@ const jsonField = (input: Schema.Json, key: string): Schema.Json | undefined =>
 
 const catalogEntry = (server: string, tool: McpTool): Schema.Json => {
   const inputSchema = decodeJson(tool.inputSchema);
+
   return {
     path: `${server}.${tool.name}`,
     description: tool.description ?? "",
@@ -36,29 +37,37 @@ export class McpHost {
     const namespace = typeof namespaceValue === "string" ? namespaceValue : undefined;
     const requestedLimit = typeof limitValue === "number" ? Math.floor(limitValue) : 20;
     const limit = Math.max(1, Math.min(this.limits.maxCatalogTools, requestedLimit));
+
     const serverNames = Object.keys(this.config.mcpServers)
       .filter((name) => namespace === undefined || name === namespace)
       .sort();
+
     const self = this;
+
     return Effect.gen(function* () {
       const entries: Schema.Json[] = [];
       let acquired = 0;
+
       for (const server of serverNames) {
         const remaining = self.limits.maxCatalogTools - acquired;
+
         if (remaining <= 0) break;
         const client = yield* self.#client(server);
         const tools = yield* client.listTools(remaining);
         acquired += tools.length;
         const allowed = new Set(self.config.mcpServers[server]?.allowTools ?? []);
+
         for (const tool of tools) {
           if (!allowed.has(tool.name)) continue;
           const entry = catalogEntry(server, tool);
           const haystack = `${server}.${tool.name} ${tool.description ?? ""}`.toLowerCase();
+
           if (query.length === 0 || query.split(/\s+/).every((term) => haystack.includes(term))) {
             entries.push(entry);
           }
         }
       }
+
       return entries.slice(0, limit);
     });
   }
@@ -69,8 +78,10 @@ export class McpHost {
     input: Schema.Json,
   ): Effect.Effect<Schema.Json, McpClientError> {
     const self = this;
+
     return Effect.gen(function* () {
       const allowed = self.config.mcpServers[server]?.allowTools;
+
       if (allowed === undefined || !allowed.includes(toolName)) {
         return yield* new McpClientError({
           server,
@@ -78,8 +89,10 @@ export class McpHost {
           reason: `MCP tool '${toolName}' is not allowed by Profile policy.`,
         });
       }
+
       const client = yield* self.#client(server);
       const tools = yield* client.listTools(self.limits.maxCatalogTools);
+
       if (!tools.some((tool) => tool.name === toolName)) {
         return yield* new McpClientError({
           server,
@@ -87,6 +100,7 @@ export class McpHost {
           reason: `Unknown MCP tool '${toolName}'.`,
         });
       }
+
       if (!allowed.includes(toolName)) {
         return yield* new McpClientError({
           server,
@@ -94,6 +108,7 @@ export class McpHost {
           reason: `MCP tool '${toolName}' is not allowed by Profile policy.`,
         });
       }
+
       return yield* client.callTool(toolName, input);
     });
   }
@@ -105,6 +120,7 @@ export class McpHost {
   revokeAll(): Effect.Effect<void> {
     const clients = [...this.#clients.values()];
     this.#clients.clear();
+
     return Effect.forEach(clients, (client) => client.close(), {
       concurrency: "unbounded",
       discard: true,
@@ -113,8 +129,10 @@ export class McpHost {
 
   #client(server: string): Effect.Effect<McpStdioClient, McpClientError> {
     const existing = this.#clients.get(server);
+
     if (existing !== undefined) return Effect.succeed(existing);
     const config = this.config.mcpServers[server];
+
     if (config === undefined) {
       return Effect.fail(
         new McpClientError({
@@ -124,6 +142,7 @@ export class McpHost {
         }),
       );
     }
+
     return McpStdioClient.connect(
       server,
       config,

@@ -1,8 +1,11 @@
 import { Schema } from "effect";
 
 const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
+
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
+
 const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+
 const Commit = Schema.String.check(Schema.isPattern(/^[a-f0-9]{7,64}$/));
 
 const CatalogEntryFields = {
@@ -45,8 +48,11 @@ export const ExtensionCatalog = Schema.Struct({
 );
 
 export type ExtensionCatalogEntry = typeof ExtensionCatalogEntry.Type;
+
 export type BundledExtensionCatalogEntry = typeof BundledExtensionCatalogEntry.Type;
+
 export type GitHubExtensionCatalogEntry = typeof GitHubExtensionCatalogEntry.Type;
+
 export type ExtensionCatalog = typeof ExtensionCatalog.Type;
 
 export class ExtensionCatalogInvalid extends Schema.TaggedErrorClass<ExtensionCatalogInvalid>()(

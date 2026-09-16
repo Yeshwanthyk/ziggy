@@ -24,6 +24,7 @@ const profile = async (): Promise<string> => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-models-"));
   temporaryPaths.push(profilePath);
   await writeFile(join(profilePath, "SOUL.md"), "# Test\n");
+
   return profilePath;
 };
 
@@ -57,6 +58,7 @@ const fakeSession = (events: string[] = []) => ({
   available: async () => knownModels,
   select: (providerId: string, modelId: string, thinking?: string) => {
     events.push(`select:${providerId}/${modelId}:${thinking ?? "unchanged"}`);
+
     return { providerId, modelId, thinking };
   },
   flush: async () => {
@@ -114,9 +116,11 @@ describe("Pi-backed model operations", () => {
 
     const unknown = await Effect.runPromiseExit(models.set(profilePath, "anthropic", "missing"));
     expect(Exit.isFailure(unknown)).toBeTrue();
+
     const unsupported = await Effect.runPromiseExit(
       models.set(profilePath, "anthropic", "claude", "max"),
     );
+
     expect(Exit.isFailure(unsupported)).toBeTrue();
     expect(events).toEqual([]);
   });
@@ -127,10 +131,12 @@ describe("Pi-backed model operations", () => {
     const listed = await Effect.runPromise(models.list(profilePath, "anthropic"));
     const selected = listed[0];
     expect(selected).toBeDefined();
+
     if (selected === undefined) return;
 
     const thinking = selected.thinkingLevels[0];
     expect(thinking).toBeDefined();
+
     if (thinking === undefined) return;
     await Effect.runPromise(
       models.set(profilePath, selected.providerId, selected.modelId, thinking),
@@ -156,6 +162,7 @@ describe("Pi-backed model operations", () => {
     const profilePath = await profile();
     let drains = 0;
     const session = fakeSession();
+
     const models = makePiModels(async () => ({
       ...session,
       drainSettingsError: () => (++drains === 1 ? undefined : new Error("write failed")),

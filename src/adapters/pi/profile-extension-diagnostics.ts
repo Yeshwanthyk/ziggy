@@ -5,7 +5,9 @@ import {
 } from "../../domain/profile-extension";
 
 export const MAX_PI_RESOURCE_DIAGNOSTICS = 12;
+
 export const MAX_PI_DIAGNOSTIC_SOURCE = 160;
+
 export const MAX_PI_DIAGNOSTIC_MESSAGE = 360;
 
 const bounded = (value: string, maximum: number): string =>
@@ -21,9 +23,11 @@ const commandConflictDiagnostics = (
 ): ReadonlyArray<PiResourceDiagnostic> => {
   const owners = new Map<string, string>();
   const diagnostics: PiResourceDiagnostic[] = [];
+
   for (const extension of extensions) {
     for (const name of extension.commands.keys()) {
       const owner = owners.get(name);
+
       if (owner !== undefined && owner !== extension.path) {
         diagnostics.push({
           source: extension.path,
@@ -34,6 +38,7 @@ const commandConflictDiagnostics = (
       }
     }
   }
+
   return diagnostics;
 };
 
@@ -41,6 +46,7 @@ const extensionDiagnostics = (
   services: AgentSessionServices,
 ): ReadonlyArray<PiResourceDiagnostic> => {
   const extensions = services.resourceLoader.getExtensions();
+
   return [
     ...extensions.errors.map((diagnostic) => ({
       source: diagnostic.path,
@@ -55,6 +61,7 @@ export const collectPiResourceDiagnostics = (
 ): ReadonlyArray<PiResourceDiagnostic> => {
   const extensions = extensionDiagnostics(services);
   const skills = services.resourceLoader.getSkills();
+
   return [
     ...extensions,
     ...skills.diagnostics.map((diagnostic) => ({
@@ -72,7 +79,9 @@ export const collectPiResourceDiagnostics = (
 
 const stageFor = (services: AgentSessionServices): ProfileExtensionPreflightFailedType["stage"] => {
   if (extensionDiagnostics(services).length > 0) return "extensions";
+
   if (services.resourceLoader.getSkills().diagnostics.length > 0) return "skills";
+
   return "services";
 };
 
@@ -82,12 +91,14 @@ export const piResourceDiagnosticFailure = (
   diagnostics: ReadonlyArray<PiResourceDiagnostic> = collectPiResourceDiagnostics(services),
 ): ProfileExtensionPreflightFailed | undefined => {
   if (diagnostics.length === 0) return undefined;
+
   const boundedDiagnostics = diagnostics
     .slice(0, MAX_PI_RESOURCE_DIAGNOSTICS)
     .map((diagnostic) => ({
       source: bounded(diagnostic.source, MAX_PI_DIAGNOSTIC_SOURCE),
       message: bounded(diagnostic.message, MAX_PI_DIAGNOSTIC_MESSAGE),
     }));
+
   return new ProfileExtensionPreflightFailed({
     profilePath,
     stage: stageFor(services),
@@ -109,5 +120,6 @@ export const assertNoPiResourceDiagnostics = (
   services: AgentSessionServices,
 ): void => {
   const failure = piResourceDiagnosticFailure(profilePath, services);
+
   if (failure !== undefined) throw failure;
 };

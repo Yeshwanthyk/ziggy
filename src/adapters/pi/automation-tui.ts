@@ -96,6 +96,7 @@ export const makeAutomationTuiDispatch = (
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         open = false;
+
         for (const resolve of pending) resolve(closingResponse());
         pending.clear();
       }).pipe(Effect.andThen(Queue.shutdown(queue))),
@@ -118,12 +119,15 @@ export const makeAutomationTuiDispatch = (
 
     const dispatch: AutomationTuiDispatch = (request) => {
       if (!open) return Promise.resolve(closingResponse());
+
       return new Promise((resolve) => {
         pending.add(resolve);
+
         if (!Queue.offerUnsafe(queue, { request, resolve })) {
           complete(resolve, closingResponse());
         }
       });
     };
+
     return dispatch;
   });

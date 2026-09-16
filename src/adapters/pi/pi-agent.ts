@@ -179,6 +179,7 @@ const piPromise = <A>(
 
 const requireSoul = (profilePath: string) => {
   const soulPath = join(profilePath, "SOUL.md");
+
   return Effect.tryPromise({
     try: () => stat(soulPath),
     catch: (cause) =>
@@ -255,6 +256,7 @@ const AssistantTextContent = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
 });
+
 const decodeAssistantTextContent = Schema.decodeUnknownOption(AssistantTextContent);
 
 const toolResult = (text: string) => ({
@@ -305,6 +307,7 @@ const isMissingMemoryPath = (cause: unknown): boolean =>
 
 const memoryParentPaths = (document: MemoryDocument): ReadonlyArray<string> => {
   const parent = dirname(document.absolutePath);
+
   return document.scope === "shared"
     ? [parent]
     : [dirname(dirname(parent)), dirname(parent), parent];
@@ -313,6 +316,7 @@ const memoryParentPaths = (document: MemoryDocument): ReadonlyArray<string> => {
 const ensureMemoryDirectory = async (directoryPath: string): Promise<void> => {
   try {
     const status = await lstat(directoryPath);
+
     if (status.isSymbolicLink() || !status.isDirectory()) {
       throw new MemoryDocumentInvalid({
         path: directoryPath,
@@ -322,6 +326,7 @@ const ensureMemoryDirectory = async (directoryPath: string): Promise<void> => {
     }
   } catch (cause) {
     if (!isMissingMemoryPath(cause)) throw cause;
+
     try {
       await mkdir(directoryPath, { mode: 0o700 });
     } catch (createCause) {
@@ -331,6 +336,7 @@ const ensureMemoryDirectory = async (directoryPath: string): Promise<void> => {
       )
         throw createCause;
       const status = await lstat(directoryPath);
+
       if (status.isSymbolicLink() || !status.isDirectory()) {
         throw new MemoryDocumentInvalid({
           path: directoryPath,
@@ -350,6 +356,7 @@ const ensureMemoryParentDirectories = async (document: MemoryDocument): Promise<
 
 const checkMemoryDirectory = async (directoryPath: string): Promise<void> => {
   const status = await lstat(directoryPath);
+
   if (status.isSymbolicLink() || !status.isDirectory()) {
     throw new MemoryDocumentInvalid({
       path: directoryPath,
@@ -370,8 +377,10 @@ const inspectMemoryFile = async (
       throw cause;
     }
   }
+
   try {
     const status = await lstat(document.absolutePath);
+
     if (status.isSymbolicLink() || !status.isFile()) {
       throw new MemoryDocumentInvalid({
         path: document.absolutePath,
@@ -379,9 +388,12 @@ const inspectMemoryFile = async (
         cause: "invalid memory file",
       });
     }
+
     const file = await open(document.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+
     try {
       const bytes = await file.readFile();
+
       return { content: bytes.toString("utf8"), bytes };
     } finally {
       await file.close();
@@ -399,6 +411,7 @@ const memoryFileExists = (
     try: async () => {
       try {
         const status = await lstat(documentPath);
+
         if (status.isSymbolicLink() || !status.isFile()) {
           throw new MemoryDocumentInvalid({
             path: documentPath,
@@ -427,6 +440,7 @@ const backupDirectoryPath = (profilePath: string, document: MemoryDocument): str
 const ensureBackupDirectory = async (directoryPath: string): Promise<void> => {
   try {
     const status = await lstat(directoryPath);
+
     if (status.isSymbolicLink() || !status.isDirectory()) {
       throw new MemoryBackupError({
         operation: "inspect",
@@ -437,11 +451,13 @@ const ensureBackupDirectory = async (directoryPath: string): Promise<void> => {
     }
   } catch (cause) {
     if (!isMissingMemoryPath(cause)) throw cause;
+
     try {
       await mkdir(directoryPath, { mode: 0o700 });
     } catch (createCause) {
       if (fileSystemCauseDetails(createCause).code !== "EEXIST") throw createCause;
       const status = await lstat(directoryPath);
+
       if (status.isSymbolicLink() || !status.isDirectory()) {
         throw new MemoryBackupError({
           operation: "inspect",
@@ -478,9 +494,11 @@ const createMemoryBackup = async (
     temporaryFile = undefined;
 
     const base = new Date().toISOString();
+
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const timestamp = attempt === 0 ? base : `${base}-${attempt.toString().padStart(2, "0")}`;
       const candidatePath = join(directoryPath, `${timestamp}.md`);
+
       try {
         await link(temporaryPath, candidatePath);
         backupPath = candidatePath;
@@ -488,12 +506,14 @@ const createMemoryBackup = async (
       } catch (cause) {
         if (fileSystemCauseDetails(cause).code !== "EEXIST") throw cause;
         let status;
+
         try {
           status = await lstat(candidatePath);
         } catch (inspectCause) {
           if (!isMissingMemoryPath(inspectCause)) throw inspectCause;
           continue;
         }
+
         if (status.isSymbolicLink() || !status.isFile()) {
           throw new MemoryBackupError({
             operation: "inspect",
@@ -504,6 +524,7 @@ const createMemoryBackup = async (
         }
       }
     }
+
     if (backupPath === undefined) {
       throw new Error(`could not allocate a unique memory backup timestamp in ${directoryPath}`);
     }
@@ -512,6 +533,7 @@ const createMemoryBackup = async (
   }
 
   let cleanupFailure: unknown;
+
   if (temporaryFile !== undefined) {
     try {
       await temporaryFile.close();
@@ -519,6 +541,7 @@ const createMemoryBackup = async (
       cleanupFailure = cause;
     }
   }
+
   if (temporaryCreated) {
     try {
       await rm(temporaryPath);
@@ -526,6 +549,7 @@ const createMemoryBackup = async (
       if (!isMissingMemoryPath(cause) && cleanupFailure === undefined) cleanupFailure = cause;
     }
   }
+
   if (cleanupFailure !== undefined) {
     throw new MemoryBackupError({
       operation: "create",
@@ -534,7 +558,9 @@ const createMemoryBackup = async (
       cause: cleanupFailure,
     });
   }
+
   if (failure !== undefined) throw failure;
+
   if (backupPath === undefined) {
     throw new MemoryBackupError({
       operation: "create",
@@ -543,11 +569,13 @@ const createMemoryBackup = async (
       cause: "missing published backup path",
     });
   }
+
   return backupPath;
 };
 
 const pruneMemoryBackups = async (directoryPath: string): Promise<void> => {
   let entries: ReadonlyArray<Dirent>;
+
   try {
     entries = await readdir(directoryPath, { withFileTypes: true });
   } catch (cause) {
@@ -558,9 +586,12 @@ const pruneMemoryBackups = async (directoryPath: string): Promise<void> => {
       cause,
     });
   }
+
   const backups: string[] = [];
+
   for (const entry of entries) {
     const entryPath = join(directoryPath, entry.name);
+
     if (entry.isSymbolicLink() || !entry.isFile() || !entry.name.endsWith(".md")) {
       throw new MemoryBackupError({
         operation: "inspect",
@@ -569,11 +600,15 @@ const pruneMemoryBackups = async (directoryPath: string): Promise<void> => {
         cause: "invalid backup entry",
       });
     }
+
     backups.push(entry.name);
   }
+
   backups.sort((left, right) => right.localeCompare(left));
+
   for (const name of backups.slice(10)) {
     const backupPath = join(directoryPath, name);
+
     try {
       await rm(backupPath);
     } catch (cause) {
@@ -614,6 +649,7 @@ const atomicReplace = (
   content: string,
 ): Effect.Effect<void, MemoryWriteIoError | MemoryDocumentInvalid> => {
   const temporaryPath = join(dirname(document.absolutePath), `.${randomUUID()}.memory-write.tmp`);
+
   const publish = Effect.gen(function* () {
     yield* Effect.tryPromise({
       try: () => ensureMemoryParentDirectories(document),
@@ -645,6 +681,7 @@ const atomicReplace = (
       rename(temporaryPath, document.absolutePath),
     );
   });
+
   return publish.pipe(Effect.ensuring(removeTemporaryMemoryFile(temporaryPath)));
 };
 
@@ -681,6 +718,7 @@ const withMemoryLock = <A, E>(
   use: Effect.Effect<A, E>,
 ): Effect.Effect<A, E | MemoryWriteIoError | MemoryDocumentInvalid> => {
   const lockPath = memoryLockPath(profilePath, document);
+
   return Effect.tryPromise({
     try: () => ensureMemoryLockDirectories(profilePath),
     catch: (cause) =>
@@ -694,6 +732,7 @@ const withMemoryLock = <A, E>(
           try: () => {
             const database = new Database(lockPath, { create: true });
             database.exec("PRAGMA busy_timeout = 0");
+
             return database;
           },
           catch: (cause) => new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
@@ -701,18 +740,22 @@ const withMemoryLock = <A, E>(
         (database) =>
           Effect.gen(function* () {
             const deadline = (yield* Clock.currentTimeMillis) + 2_000;
+
             while (true) {
               const acquired = yield* Effect.try({
                 try: () => database.exec("BEGIN IMMEDIATE"),
                 catch: (cause) =>
                   new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
               }).pipe(Effect.result);
+
               if (Result.isSuccess(acquired)) break;
+
               if (
                 fileSystemCauseDetails(acquired.failure.cause).code?.startsWith("SQLITE_BUSY") !==
                 true
               )
                 return yield* acquired.failure;
+
               if ((yield* Clock.currentTimeMillis) >= deadline)
                 return yield* new MemoryWriteIoError({
                   operation: "lock",
@@ -721,6 +764,7 @@ const withMemoryLock = <A, E>(
                 });
               yield* Effect.sleep("50 millis");
             }
+
             return yield* use;
           }),
         (database) => releaseMemoryDatabase(database, lockPath),
@@ -737,6 +781,7 @@ const writableMemoryDocument = (
   | { readonly ok: true; readonly document: MemoryDocument }
   | { readonly ok: false; readonly message: string } => {
   const paths = memoryFilePaths(profilePath, context);
+
   if (!paths.ok) {
     return { ok: false, message: paths.error.message };
   }
@@ -750,6 +795,7 @@ const writableMemoryDocument = (
   }
 
   const document = paths.documents.find((candidate) => candidate.scope === scope);
+
   if (document === undefined) {
     return { ok: false, message: `${scope} memory is not available in this chat` };
   }
@@ -768,6 +814,7 @@ export const createMemoryWriteTool = (
   parameters: memoryWriteParameters,
   execute(_toolCallId, { scope, operations }, signal) {
     const target = writableMemoryDocument(profilePath, context, scope);
+
     if (!target.ok) return Promise.resolve(toolError(target.message));
 
     const program = withMemoryLock(
@@ -775,17 +822,23 @@ export const createMemoryWriteTool = (
       target.document,
       Effect.gen(function* () {
         const loaded = yield* readMemoryDocument(target.document);
+
         const applied = applyMemoryOperations(
           loaded?.content ?? "",
           operations,
           target.document.cap,
         );
+
         if (!applied.ok) return toolError(applied.message);
+
         if (!applied.changed) return toolResult("no change");
+
         if (loaded !== undefined) {
           yield* backupExistingMemoryDocument(profilePath, target.document, loaded.bytes);
         }
+
         yield* atomicReplace(target.document, applied.content);
+
         return toolResult(
           `applied ${operations.length} operation(s); ${codePointLength(applied.content)}/${target.document.cap} code points in ${target.document.relativePath}`,
         );
@@ -803,6 +856,7 @@ export const createMemoryWriteTool = (
         ),
       ),
     );
+
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the single adapter bridge.
     return Effect.runPromise(program, { signal });
   },
@@ -845,9 +899,11 @@ const buildMemoryPrompt = (
       const sections = loaded.flatMap(({ document, content }) =>
         content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
       );
+
       sections.push(
         "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
       );
+
       return sections.join("\n\n");
     }),
   );
@@ -874,6 +930,7 @@ export const refreshProfileMemory = (
       }),
     }),
   );
+
   // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi permits a Promise-returning before_agent_start callback; this is the single adapter bridge.
   return Effect.runPromise(program);
 };
@@ -909,6 +966,7 @@ export const createEphemeralPromptContextExtension = (
   factory: (pi) => {
     pi.on("before_agent_start", (event) => {
       const context = current();
+
       return context === undefined ? undefined : appendEphemeralPromptContext(event, context);
     });
   },
@@ -939,12 +997,16 @@ export const askOnce = (
 ): Effect.Effect<number, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
+
     const sessionManager =
       options?.sessionPath === undefined
         ? createLocalSessionManager(target.path, continueSession ? "main" : "fresh")
         : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
+
     const runtimeOptions: ProfileRuntimeOptions = {};
+
     if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
     const runtime = yield* createProfileRuntime(
       target.path,
       repositoryRoot,
@@ -953,11 +1015,14 @@ export const askOnce = (
       context,
       runtimeOptions,
     );
+
     const prepared = prepareProfileAgentPrompt(prompt, runtime.agents);
+
     if (!prepared.ok) {
       yield* piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
         Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
       );
+
       return yield* new ProfileAgentMentionInvalid({
         profilePath: target.path,
         message: prepared.message,
@@ -1006,12 +1071,14 @@ interface SpecialistVoiceHub {
 
 const createSpecialistVoiceHub = (): SpecialistVoiceHub => {
   const listeners = new Set<(agentId: string, text: string) => void>();
+
   return {
     emit: (agentId, text) => {
       for (const listener of listeners) listener(agentId, text);
     },
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => {
         listeners.delete(listener);
       };
@@ -1061,6 +1128,7 @@ const applyConfiguredSessionModel = (
 ): void => {
   const overrideProvider = override?.provider;
   const overrideModel = override?.model;
+
   if ((overrideProvider === undefined) !== (overrideModel === undefined)) {
     throw configuredSessionModelError(profilePath, "provider and model must be provided together");
   }
@@ -1068,6 +1136,7 @@ const applyConfiguredSessionModel = (
   const providerId = overrideProvider ?? services.settingsManager.getDefaultProvider();
   const modelId = overrideModel ?? services.settingsManager.getDefaultModel();
   const thinking = override?.thinking ?? services.settingsManager.getDefaultThinkingLevel();
+
   const model =
     providerId === undefined || modelId === undefined
       ? undefined
@@ -1080,12 +1149,14 @@ const applyConfiguredSessionModel = (
         `provider is not configured in the Profile model registry: ${overrideProvider}`,
       );
     }
+
     if (model === undefined) {
       throw configuredSessionModelError(
         profilePath,
         `model is not configured in the Profile model registry: ${overrideProvider}/${overrideModel}`,
       );
     }
+
     if (!services.modelRuntime.hasConfiguredAuth(overrideProvider)) {
       throw configuredSessionModelError(
         profilePath,
@@ -1100,6 +1171,7 @@ const applyConfiguredSessionModel = (
   }
 
   const overridePresent = overrideProvider !== undefined || override?.thinking !== undefined;
+
   if (
     overridePresent &&
     model !== undefined &&
@@ -1113,6 +1185,7 @@ const applyConfiguredSessionModel = (
   }
 
   if (model !== undefined) sessionOptions.model = model;
+
   if (thinking !== undefined) sessionOptions.thinkingLevel = thinking;
 };
 
@@ -1126,18 +1199,23 @@ const createProfileRuntime = (
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const paths = memoryFilePaths(profilePath, context);
+
     if (!paths.ok) {
       return yield* paths.error;
     }
+
     const agents = runtimeOptions.admittedAgents ?? (yield* discoverProfileAgents(profilePath));
+
     const preparation =
       runtimeOptions.profileExtensions === undefined
         ? undefined
         : yield* runtimeOptions.profileExtensions.prepareRuntime(profilePath, repositoryRoot);
+
     const resources =
       preparation === undefined
         ? yield* discoverPiResources(profilePath, repositoryRoot)
         : yield* composePiResources(profilePath, preparation.selected);
+
     const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
 
     const runtimeRef: AgentSessionRuntimeRef = {};
@@ -1152,6 +1230,7 @@ const createProfileRuntime = (
             repositoryRoot,
             runtimeOptions.profileExtensions,
           );
+
     const inlineExtensions = createProfileCoreInlineExtensions({
       profilePath,
       agents,
@@ -1166,6 +1245,7 @@ const createProfileRuntime = (
     });
 
     const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
+
     const runtime = yield* Effect.tryPromise({
       try: async () => {
         const runtime = await runtimeFactory(
@@ -1179,7 +1259,9 @@ const createProfileRuntime = (
                 inlineExtensions,
               ),
             });
+
             assertNoPiResourceDiagnostics(profilePath, services);
+
             const specialistRunner =
               agents.length === 0
                 ? undefined
@@ -1188,15 +1270,19 @@ const createProfileRuntime = (
                     agents,
                     parent: () => {
                       const current = runtimeRef.current;
+
                       if (current === undefined) return undefined;
+
                       const parent: SpecialistParent = {
                         session: current.session,
                         services,
                         resources,
                       };
+
                       return parent;
                     },
                   });
+
             const customTools: Array<ToolDefinition> = [
               createMemoryWriteTool(profilePath, context),
               ...(runtimeOptions.profileExtensions === undefined
@@ -1217,11 +1303,13 @@ const createProfileRuntime = (
                     createAgentDiscussTool(specialistRunner, voiceHub.emit),
                   ]),
             ];
+
             const sessionOptions: CreateAgentSessionFromServicesOptions = {
               services,
               sessionManager: runtimeSessionManager,
               customTools,
             };
+
             if (sessionStartEvent !== undefined)
               sessionOptions.sessionStartEvent = sessionStartEvent;
             applyConfiguredSessionModel(
@@ -1231,6 +1319,7 @@ const createProfileRuntime = (
               runtimeOptions.modelOverride,
             );
             const created = await createAgentSessionFromServices(sessionOptions);
+
             return {
               ...created,
               services,
@@ -1243,6 +1332,7 @@ const createProfileRuntime = (
             sessionManager,
           },
         );
+
         return runtime;
       },
       catch: (cause) =>
@@ -1250,6 +1340,7 @@ const createProfileRuntime = (
           ? cause
           : providerError(profilePath, "create agent runtime", cause),
     });
+
     // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
     // additional resource bundle; assigning `services` would throw at runtime.
     const profileRuntime: ProfileRuntime = Object.assign(runtime, {
@@ -1258,6 +1349,7 @@ const createProfileRuntime = (
       ephemeralPromptContext,
       voiceHub,
     });
+
     if (preparation !== undefined && runtimeOptions.profileExtensions !== undefined) {
       yield* runtimeOptions.profileExtensions
         .activateRuntime(profilePath, repositoryRoot, preparation)
@@ -1267,6 +1359,7 @@ const createProfileRuntime = (
               const disposed = yield* piPromise(profilePath, "dispose agent runtime", () =>
                 runtime.dispose(),
               ).pipe(Effect.result);
+
               if (Result.isFailure(disposed)) {
                 return yield* new ProfileExtensionRollbackFailed({
                   profilePath,
@@ -1284,12 +1377,15 @@ const createProfileRuntime = (
                   cause: failure,
                 });
               }
+
               return yield* failure;
             }),
           ),
         );
     }
+
     runtimeRef.current = profileRuntime;
+
     return profileRuntime;
   });
 
@@ -1303,6 +1399,7 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
         newSession: async (options) => runtime.newSession(options),
         fork: async (entryId, options) => {
           const result = await runtime.fork(entryId, options);
+
           return { cancelled: result.cancelled };
         },
         navigateTree: async (targetId, options) => {
@@ -1313,18 +1410,25 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
             options?.label === undefined
           ) {
             const result = await session.navigateTree(targetId);
+
             return { cancelled: result.cancelled };
           }
+
           const navigateOptions: NavigateTreeOptions = {};
+
           if (options?.summarize !== undefined) navigateOptions.summarize = options.summarize;
+
           if (options?.customInstructions !== undefined) {
             navigateOptions.customInstructions = options.customInstructions;
           }
+
           if (options?.replaceInstructions !== undefined) {
             navigateOptions.replaceInstructions = options.replaceInstructions;
           }
+
           if (options?.label !== undefined) navigateOptions.label = options.label;
           const result = await session.navigateTree(targetId, navigateOptions);
+
           return { cancelled: result.cancelled };
         },
         switchSession: (sessionPath, options) => runtime.switchSession(sessionPath, options),
@@ -1351,10 +1455,15 @@ type ChatSession = Pick<
 >;
 
 const MAX_PROGRESS_TEXT_CODE_POINTS = 3_800;
+
 const MAX_PROGRESS_DELTA_CODE_POINTS = 512;
+
 const MAX_PROGRESS_TOOL_NAME_CODE_POINTS = 48;
+
 const MAX_PROGRESS_TOOL_ID_CODE_POINTS = 128;
+
 const MAX_PROGRESS_TOOL_DETAIL_CODE_POINTS = 120;
+
 const ProgressToolArgs = Schema.Struct({
   command: Schema.optional(Schema.String),
   cmd: Schema.optional(Schema.String),
@@ -1365,7 +1474,9 @@ const ProgressToolArgs = Schema.Struct({
   list: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
 });
+
 const decodeProgressToolArgs = Schema.decodeUnknownOption(ProgressToolArgs);
+
 const PROGRESS_TOOL_DETAIL_KEYS = [
   "command",
   "cmd",
@@ -1385,6 +1496,7 @@ export const safeProgressToolName = (value: string): string => {
     .replace(/[^\p{L}\p{N}_.:/-]+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+
   return boundedCodePoints(
     normalized.length === 0 ? "tool" : normalized,
     MAX_PROGRESS_TOOL_NAME_CODE_POINTS,
@@ -1394,11 +1506,15 @@ export const safeProgressToolName = (value: string): string => {
 export const progressToolDetail = (args: typeof ProgressToolArgs.Type): string | undefined => {
   for (const key of PROGRESS_TOOL_DETAIL_KEYS) {
     const value = args[key];
+
     if (value === undefined) continue;
     const normalized = value.replace(/\s+/gu, " ").trim();
+
     if (normalized.length === 0) continue;
+
     return boundedCodePoints(normalized, MAX_PROGRESS_TOOL_DETAIL_CODE_POINTS);
   }
+
   return undefined;
 };
 
@@ -1424,6 +1540,7 @@ export const createChatEventProjector = (): ((
   event: AgentSessionEvent,
 ) => ReadonlyArray<ChatEvent>) => {
   const lastToolDetail = new Map<string, string>();
+
   return (event) => {
     if (event.type === "message_update" && event.message.role === "assistant") {
       if (event.assistantMessageEvent.type === "thinking_delta") {
@@ -1431,18 +1548,24 @@ export const createChatEventProjector = (): ((
           event.assistantMessageEvent.delta,
           MAX_PROGRESS_DELTA_CODE_POINTS,
         );
+
         return delta.length === 0 ? [] : [{ kind: "thinking", delta }];
       }
+
       if (event.assistantMessageEvent.type !== "text_delta") return [];
+
       const delta = boundedCodePoints(
         event.assistantMessageEvent.delta,
         MAX_PROGRESS_DELTA_CODE_POINTS,
       );
+
       const snapshot = assistantTextSnapshot(event.message.content);
+
       return snapshot.length > 0 || delta.length > 0
         ? [{ kind: "assistant-text", delta, snapshot }]
         : [];
     }
+
     if (
       event.type === "tool_execution_start" ||
       event.type === "tool_execution_update" ||
@@ -1457,9 +1580,12 @@ export const createChatEventProjector = (): ((
           onSome: progressToolDetail,
         },
       );
+
       if (fromArgs !== undefined) lastToolDetail.set(event.toolCallId, fromArgs);
       const detail = fromArgs ?? lastToolDetail.get(event.toolCallId);
+
       if (event.type === "tool_execution_end") lastToolDetail.delete(event.toolCallId);
+
       return [
         {
           kind: "tool",
@@ -1471,10 +1597,12 @@ export const createChatEventProjector = (): ((
         },
       ];
     }
+
     if (event.type === "message_end" && event.message.role === "assistant") {
       if (event.message.stopReason !== "error" && event.message.stopReason !== "aborted") {
         return [];
       }
+
       return [
         {
           kind: "error",
@@ -1482,19 +1610,23 @@ export const createChatEventProjector = (): ((
         },
       ];
     }
+
     if (event.type === "agent_settled") return [{ kind: "settled" }];
+
     return [];
   };
 };
 
 const sharePiAbort = (abort: () => Promise<void>): (() => Promise<void>) => {
   let inFlight: Promise<void> | undefined;
+
   return () => {
     if (inFlight === undefined) {
       inFlight = abort().finally(() => {
         inFlight = undefined;
       });
     }
+
     return inFlight;
   };
 };
@@ -1515,18 +1647,22 @@ export const makeSessionChatHandle = (
 ): ChatHandle => {
   const listeners = new Set<(event: ChatEvent) => void>();
   const project = createChatEventProjector();
+
   const unsubscribeSession = session.subscribe((event) => {
     for (const chatEvent of project(event)) {
       for (const listener of listeners) listener(chatEvent);
     }
   });
+
   const unsubscribeVoice =
     voiceHub === undefined
       ? () => undefined
       : voiceHub.subscribe((agentId, text) => {
           const event: ChatEvent = { kind: "voice", agentId, text };
+
           for (const listener of listeners) listener(event);
         });
+
   const currentSession =
     methods.currentSession === undefined ? {} : { currentSession: methods.currentSession };
 
@@ -1547,6 +1683,7 @@ export const makeSessionChatHandle = (
         : piPromise(profilePath, "follow up agent session", () => session.followUp(text)),
     subscribe: (listener) => {
       listeners.add(listener);
+
       return () => {
         listeners.delete(listener);
       };
@@ -1564,7 +1701,9 @@ export const currentPiSessionReference = (
 ): Effect.Effect<SessionReference | undefined, ZiggyAgentError> =>
   Effect.suspend(() => {
     const reference = sessionReference(manager);
+
     if (reference === undefined) return Effect.succeed(undefined);
+
     return Effect.tryPromise({
       try: () => stat(reference.file),
       catch: (cause) => cause,
@@ -1610,6 +1749,7 @@ export const promptForAssistantText = (
       unsubscribeVoice();
       resume(result);
     };
+
     const completeAssistant = () =>
       assistantError === undefined
         ? Effect.succeed(assistantText)
@@ -1621,6 +1761,7 @@ export const promptForAssistantText = (
           options?.onProgress?.(chatEvent);
         }
       }
+
       if (event.type === "message_end" && event.message.role === "assistant") {
         assistantText = event.message.content
           .filter((content) => content.type === "text")
@@ -1631,8 +1772,10 @@ export const promptForAssistantText = (
             ? (event.message.errorMessage ?? `Request ${event.message.stopReason}`)
             : undefined;
       }
+
       if (event.type === "agent_settled") finish(completeAssistant());
     });
+
     if (voiceHub !== undefined && options?.onProgress !== undefined) {
       const onProgress = options.onProgress;
       unsubscribeVoice = voiceHub.subscribe((agentId, text) => {
@@ -1653,6 +1796,7 @@ export const promptForAssistantText = (
       finished = true;
       unsubscribe();
       unsubscribeVoice();
+
       return true;
     }).pipe(
       Effect.flatMap((shouldAbort) =>
@@ -1680,9 +1824,13 @@ export const openChat = (
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const runtimeOptions: ProfileRuntimeOptions = {};
+
     if (modelOverride !== undefined) runtimeOptions.modelOverride = modelOverride;
+
     if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
     if (runtimeFactory !== undefined) runtimeOptions.runtimeFactory = runtimeFactory;
+
     const runtime = yield* createProfileRuntime(
       target.path,
       repositoryRoot,
@@ -1693,13 +1841,16 @@ export const openChat = (
       context,
       runtimeOptions,
     );
+
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
+
     const disposeBestEffort = dispose.pipe(
       Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
     );
 
     if (runtime.modelFallbackMessage !== undefined) {
       yield* disposeBestEffort;
+
       return yield* new ProviderConfigError({
         profilePath: target.path,
         operation: "select model",
@@ -1713,6 +1864,7 @@ export const openChat = (
     );
 
     const abortSession = sharePiAbort(() => runtime.session.abort());
+
     const promptSession: PromptSession = {
       abort: abortSession,
       prompt: (text, options) => runtime.session.prompt(text, options),
@@ -1731,12 +1883,15 @@ export const openChat = (
           Effect.suspend(() => {
             const generation = runtime.ephemeralPromptContext.generation + 1;
             runtime.ephemeralPromptContext.generation = generation;
+
             if (options?.ephemeralContext === undefined) {
               delete runtime.ephemeralPromptContext.value;
             } else {
               runtime.ephemeralPromptContext.value = options.ephemeralContext;
             }
+
             const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+
             const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
               ? promptForAssistantText(
                   target.path,
@@ -1751,6 +1906,7 @@ export const openChat = (
                     message: prepared.message,
                   }),
                 );
+
             return prompted.pipe(
               Effect.ensuring(
                 Effect.sync(() => {
@@ -1777,6 +1933,7 @@ export const openSpecialistChat = (
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const agents = yield* discoverProfileAgents(target.path);
+
     if (!agents.some((agent) => agent.id === agentId)) {
       return yield* new SpecialistAgentNotFound({
         profilePath: target.path,
@@ -1786,7 +1943,9 @@ export const openSpecialistChat = (
     }
 
     const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+
     if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
     const selectedEnvironment = yield* Effect.acquireUseRelease(
       createProfileRuntime(
         target.path,
@@ -1818,6 +1977,7 @@ export const openSpecialistChat = (
     );
 
     const { selected, environment } = selectedEnvironment;
+
     const liveRuntime = yield* specialistRuntime(
       target.path,
       environment,
@@ -1834,13 +1994,16 @@ export const openSpecialistChat = (
     const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
       liveRuntime.dispose(),
     );
+
     const disposeLiveBestEffort = disposeLive.pipe(
       Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
     );
+
     yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(liveRuntime)).pipe(
       Effect.tapError(() => disposeLiveBestEffort),
     );
     const abortSession = sharePiAbort(() => liveRuntime.session.abort());
+
     const promptSession: PromptSession = {
       abort: abortSession,
       prompt: (text, options) => liveRuntime.session.prompt(text, options),
@@ -1874,6 +2037,7 @@ export const runSpecialist = (
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
     const agents = yield* discoverProfileAgents(target.path);
+
     if (!agents.some((agent) => agent.id === agentId)) {
       return yield* new SpecialistAgentNotFound({
         profilePath: target.path,
@@ -1881,8 +2045,10 @@ export const runSpecialist = (
         message: `unknown Profile agent: ${agentId}`,
       });
     }
+
     const rootManager = SessionManager.create(target.path, context.sessionDirectory);
     const rootReference = sessionReference(rootManager);
+
     if (rootReference === undefined) {
       return yield* new ProviderConfigError({
         profilePath: target.path,
@@ -1893,7 +2059,9 @@ export const runSpecialist = (
     }
 
     const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+
     if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
     const selectedEnvironment = yield* Effect.acquireUseRelease(
       createProfileRuntime(
         target.path,
@@ -1925,6 +2093,7 @@ export const runSpecialist = (
     );
 
     const { selected, environment } = selectedEnvironment;
+
     const result = yield* useSpecialistChild(
       target.path,
       specialistRuntime(
@@ -1945,6 +2114,7 @@ export const runSpecialist = (
       selected,
       (runtime) => promptForAssistantText(target.path, runtime.session, task),
     );
+
     return { answer: result.answer, session: result.session };
   });
 
@@ -1958,22 +2128,29 @@ export const openTui = (
   Effect.scoped(
     Effect.gen(function* () {
       const soulPath = yield* requireSoul(target.path);
+
       const assets = yield* piPromise(target.path, "prepare Pi package assets", () =>
         leaseCompiledPiTuiAssets(),
       );
+
       yield* Effect.addFinalizer(() =>
         piPromise(target.path, "remove Pi package assets", assets.release).pipe(
           Effect.catch((failure) => Effect.logWarning("Pi asset cleanup failed", { failure })),
         ),
       );
       const sessionManager = createLocalSessionManager(target.path, "main");
+
       const automationDispatch =
         automationHandler === undefined
           ? undefined
           : yield* makeAutomationTuiDispatch(automationHandler);
+
       const runtimeOptions: ProfileRuntimeOptions = {};
+
       if (automationDispatch !== undefined) runtimeOptions.automationDispatch = automationDispatch;
+
       if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
       const runtime = yield* createProfileRuntime(
         target.path,
         repositoryRoot,

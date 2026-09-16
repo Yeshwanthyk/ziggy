@@ -104,6 +104,7 @@ const resolutionOptions = {
 
 const terminalRenderOptions = () => {
   const pretty = process.stdout.isTTY === true && process.env.TERM !== "dumb";
+
   return {
     pretty,
     colors: pretty && process.env.NO_COLOR === undefined,
@@ -114,6 +115,7 @@ const terminalRenderOptions = () => {
 bootstrapPiStandaloneRuntime();
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
+
 const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -123,22 +125,30 @@ const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
     ),
   ),
 );
+
 const PiAgentLive = Layer.effect(
   PiAgent,
   Effect.gen(function* () {
     return makePiAgent(repositoryRoot, yield* ProfileExtensions);
   }),
 ).pipe(Layer.provide(ProfileExtensionsProvided));
+
 const AgentLive = ZiggyAgentLive.pipe(Layer.provide(PiAgentLive));
+
 const AutomationsProvided = AutomationsLive.pipe(Layer.provide(AgentLive));
+
 const ProfileAgentsProvided = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(AgentLive, ModelsLive)),
 );
+
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
+
 const DoctorProvided = DoctorLive.pipe(
   Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
 );
+
 const MemoryProvided = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
+
 const ResidentProvided = makeResidentGatewayLive(
   repositoryRoot,
   resolveProfilesRegistry(resolutionOptions),
@@ -162,9 +172,11 @@ const ResidentProvided = makeResidentGatewayLive(
     ),
   ),
 );
+
 const ResidentServiceProvided = ResidentServiceLive.pipe(
   Layer.provide(Layer.merge(ResidentProvided, SchedulerProvided)),
 );
+
 const SelfUpdateProvided = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));
 
 const fail = (message: string) =>
@@ -187,6 +199,7 @@ const automationTuiFailure = (failure: AutomationTuiOperationFailure): Automatio
         : failure._tag === "AutomationNotFound" || failure._tag === "AutomationPaused"
           ? "not-found"
           : "unavailable";
+
   return { kind: "failure", category, message: failure.message };
 };
 
@@ -195,10 +208,13 @@ const program = Effect.gen(function* () {
 
   if (command._tag === "Help") {
     console.log(renderHelp(command.topic));
+
     return;
   }
+
   if (command._tag === "Version") {
     console.log(packageJson.version);
+
     return;
   }
 
@@ -222,6 +238,7 @@ const program = Effect.gen(function* () {
   switch (command._tag) {
     case "Init": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+
       const initOptions = {
         minimal: command.minimal,
         interactive:
@@ -236,6 +253,7 @@ const program = Effect.gen(function* () {
           ].flatMap((entry) => (entry === undefined ? [] : [entry])),
         ),
       };
+
       const result = yield* setup.initialize(
         target,
         resolveProfilesRegistry(resolutionOptions),
@@ -243,18 +261,23 @@ const program = Effect.gen(function* () {
         initOptions,
         terminalSetupInteraction(target.path),
       );
+
       console.log(
         result.soulCreated
           ? `created profile at ${result.profilePath}`
           : `profile already initialized at ${result.profilePath}`,
       );
+
       if (result.createdDirectories.length > 0) {
         console.log(`created folders: ${result.createdDirectories.join(", ")}`);
       }
+
       if (result.minimal) {
         console.log(`next: ziggy tui ${JSON.stringify(result.profilePath)}`);
+
         return;
       }
+
       if (
         result.modelStatus?.providerId !== undefined &&
         result.modelStatus.modelId !== undefined
@@ -263,37 +286,48 @@ const program = Effect.gen(function* () {
           `model: ${result.modelStatus.providerId}/${result.modelStatus.modelId} (${result.modelStatus.thinking})`,
         );
       }
+
       if (result.doctor !== undefined) {
         const rendered = renderDoctor(result.doctor);
         console.log(rendered.text);
+
         if (rendered.exitCode !== 0) {
           process.exitCode = rendered.exitCode;
           console.error(
             `setup incomplete; resume with: ziggy init ${JSON.stringify(result.profilePath)}`,
           );
+
           return;
         }
       }
+
       console.log(`ready: ziggy tui ${JSON.stringify(result.profilePath)}`);
+
       return;
     }
+
     case "Profiles": {
       const listings = yield* profiles.listProfiles(
         resolveProfilesDirectory(resolutionOptions),
         resolveProfilesRegistry(resolutionOptions),
       );
+
       if (command.json) {
         console.log(renderProfilesJson(listings));
+
         return;
       }
+
       console.log(
         renderProfiles(listings, {
           ...terminalRenderOptions(),
           homeDirectory: resolutionOptions.homedir,
         }),
       );
+
       return;
     }
+
     case "ExtensionsManage": {
       if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
         return yield* new CliInputInvalid({
@@ -301,11 +335,13 @@ const program = Effect.gen(function* () {
             "interactive extension management requires a terminal; use 'ziggy extensions add' or 'ziggy extensions remove' in scripts",
         });
       }
+
       const managerOptions = {
         profilesDirectory: resolveProfilesDirectory(resolutionOptions),
         registryPath: resolveProfilesRegistry(resolutionOptions),
         repositoryRoot,
       };
+
       const result = yield* manageExtensions(
         profiles,
         profileExtensions,
@@ -317,24 +353,35 @@ const program = Effect.gen(function* () {
               target: resolveProfileTarget(command.target, resolutionOptions),
             },
       );
+
       console.log(renderExtensionManagerResult(result, terminalRenderOptions()));
+
       return;
     }
+
     case "ExtensionsList": {
       const extensions = yield* profileExtensions.list(repositoryRoot);
+
       if (command.json) {
         console.log(renderExtensionsJson(extensions));
+
         return;
       }
+
       console.log(renderExtensions(extensions, terminalRenderOptions()));
+
       return;
     }
+
     case "ExtensionsShow": {
       const extension = yield* profileExtensions.show(repositoryRoot, command.id);
+
       if (command.json) {
         console.log(renderExtensionJson(extension));
+
         return;
       }
+
       console.log(
         renderExtension(
           {
@@ -354,46 +401,61 @@ const program = Effect.gen(function* () {
           terminalRenderOptions(),
         ),
       );
+
       return;
     }
+
     case "ExtensionsAdd":
     case "ExtensionsRemove": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+
       const result = yield* command._tag === "ExtensionsAdd"
         ? profileExtensions.add(target, repositoryRoot, command.id)
         : profileExtensions.remove(target, repositoryRoot, command.id);
+
       console.log(renderExtensionMutation(result, terminalRenderOptions()));
+
       return;
     }
+
     case "Update": {
       const updated = yield* selfUpdate.update();
       console.log(`updated Ziggy at ${updated.path} (${updated.version})`);
+
       return;
     }
+
     case "AuthStatus": {
       const statuses = yield* auth.status(resolveProfileTarget(command.target, resolutionOptions));
+
       const sorted = [...statuses].sort(
         (left, right) =>
           Number(right.configured !== undefined) - Number(left.configured !== undefined) ||
           left.id.localeCompare(right.id),
       );
+
       for (const provider of sorted) {
         const configured =
           provider.configured === undefined
             ? "not configured"
             : `configured: ${provider.configured.type}${provider.configured.source === undefined ? "" : ` via ${provider.configured.source}`}`;
+
         const loginTypes = [
           ...(provider.supportsApiKeyLogin ? ["api_key"] : []),
           ...(provider.supportsOauth ? ["oauth"] : []),
         ];
+
         const login =
           loginTypes.length === 0 && provider.ambientOnly
             ? "ambient env only"
             : loginTypes.join(", ");
+
         console.log(`${provider.id}\t${configured}\tlogin: ${login}`);
       }
+
       return;
     }
+
     case "AuthLogin": {
       const result = yield* auth.login(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -401,54 +463,74 @@ const program = Effect.gen(function* () {
         command.type,
         terminalAuthInteraction(),
       );
+
       console.log(
         `logged in to ${result.providerId} (${result.type})${result.source === undefined ? "" : ` via ${result.source}`}`,
       );
+
       return;
     }
+
     case "AgentsCreate": {
       const created = yield* profileAgents.create(
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
       );
+
       console.log(`created Profile agent ${created.id} at ${created.path}`);
+
       return;
     }
+
     case "AgentsList": {
       const listed = yield* profileAgents.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
+
       console.log(command.json ? renderProfileAgentsJson(listed) : renderProfileAgents(listed));
+
       return;
     }
+
     case "AgentsShow": {
       const shown = yield* profileAgents.show(
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
       );
+
       console.log(command.json ? renderProfileAgentJson(shown) : renderProfileAgent(shown));
+
       return;
     }
+
     case "AgentsValidate": {
       const validation = yield* profileAgents.validate(
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
       );
+
       console.log(renderProfileAgentValidation(validation));
+
       if (validation.some((item) => !item.valid)) process.exitCode = 1;
+
       return;
     }
+
     case "AgentsRun": {
       const result = yield* profileAgents.run(
         resolveProfileTarget(command.target, resolutionOptions),
         command.agentId,
         command.prompt,
       );
+
       console.log(result.answer);
+
       return;
     }
+
     case "Run": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+
       const sessionPath =
         command.sessionId === undefined
           ? undefined
@@ -457,6 +539,7 @@ const program = Effect.gen(function* () {
               "sessions",
               (yield* sessions.resolve(target, command.sessionId)).path,
             );
+
       const exitCode = yield* agent.runOnce(
         target,
         command.prompt,
@@ -466,9 +549,12 @@ const program = Effect.gen(function* () {
           ? { mode: command.json ? "json" : "text" }
           : { mode: command.json ? "json" : "text", sessionPath },
       );
+
       process.exitCode = exitCode;
+
       return;
     }
+
     case "Acp":
       return yield* runAcp(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -482,20 +568,26 @@ const program = Effect.gen(function* () {
         resolveProfileTarget(command.target, resolutionOptions),
         command.automationId,
       );
+
       console.log(renderAutomationCreated(created));
+
       return;
     }
+
     case "AutomationsList": {
       const listed = yield* automationDefinitions.list(
         resolveProfileTarget(command.target, resolutionOptions),
       );
+
       console.log(
         command.json
           ? renderAutomationDefinitionsJson(listed)
           : renderAutomationDefinitions(listed),
       );
+
       return;
     }
+
     case "AutomationsPause":
     case "AutomationsResume": {
       const definition = yield* command._tag === "AutomationsPause"
@@ -507,101 +599,135 @@ const program = Effect.gen(function* () {
             resolveProfileTarget(command.target, resolutionOptions),
             command.automationId,
           );
+
       console.log(
         renderAutomationTransition(
           command._tag === "AutomationsPause" ? "paused" : "resumed",
           definition,
         ),
       );
+
       return;
     }
+
     case "AutomationsValidate": {
       const validation = yield* automationDefinitions.validate(
         resolveProfileTarget(command.target, resolutionOptions),
         command.automationId,
       );
+
       console.log(renderAutomationValidation(validation));
+
       if (validation.some((item) => !item.valid)) process.exitCode = 1;
+
       return;
     }
+
     case "AutomationsStatus": {
       const status = yield* automationScheduler.status(
         resolveProfileTarget(command.target, resolutionOptions),
       );
+
       console.log(
         command.json ? renderAutomationStatusJson(status) : renderAutomationStatus(status),
       );
+
       return;
     }
+
     case "AutomationsRuns": {
       const automationId =
         command.automationId === undefined
           ? undefined
           : yield* validateAutomationId(command.automationId);
+
       const runs = yield* automationScheduler.runs(
         resolveProfileTarget(command.target, resolutionOptions),
         automationId,
       );
+
       console.log(
         command.json
           ? renderAutomationRunsJson(runs)
           : renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
       );
+
       return;
     }
+
     case "Wake": {
       const outcome = yield* automations.run(
         resolveProfileTarget(command.target, resolutionOptions),
         command.automationId,
         { kind: "manual-force" },
       );
+
       const rendered = renderAutomationOutcome(outcome);
+
       for (const line of rendered.stderr) console.error(line);
       process.exitCode = rendered.exitCode;
+
       return;
     }
+
     case "SessionsList": {
       const listed = yield* sessions.list(resolveProfileTarget(command.target, resolutionOptions));
       console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed));
+
       return;
     }
+
     case "SessionsShow": {
       const shown = yield* sessions.show(
         resolveProfileTarget(command.target, resolutionOptions),
         command.reference,
       );
+
       console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
+
       return;
     }
+
     case "MemoryList": {
       const listed = yield* memory.list(
         resolveProfileTarget(command.target ?? ".", resolutionOptions),
       );
+
       console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed));
+
       return;
     }
+
     case "MemoryShow": {
       const shown = yield* memory.show(
         resolveProfileTarget(command.target, resolutionOptions),
         parseMemoryScopeReference(command.scope),
       );
+
       console.log(command.json ? renderMemoryShowJson(shown) : renderMemoryShow(shown));
+
       return;
     }
+
     case "ServeInstall": {
       const result = yield* residentService.install(
         resolveProfileTarget(command.target, resolutionOptions),
         { force: command.force, start: !command.noStart },
       );
+
       console.log(renderResidentLifecycle(result));
+
       if (result.ready === false) process.exitCode = 1;
+
       return;
     }
+
     case "ServeStart":
     case "ServeStop":
     case "ServeRestart":
     case "ServeUninstall": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+
       const result =
         command._tag === "ServeStart"
           ? yield* residentService.start(target)
@@ -610,29 +736,40 @@ const program = Effect.gen(function* () {
             : command._tag === "ServeRestart"
               ? yield* residentService.restart(target)
               : yield* residentService.uninstall(target);
+
       console.log(renderResidentLifecycle(result));
+
       if (result.ready === false) process.exitCode = 1;
+
       return;
     }
+
     case "ServeStatus": {
       const status = yield* residentService.status(
         resolveProfileTarget(command.target, resolutionOptions),
       );
+
       const rendered = renderServeStatus(status);
       console.log(rendered.text);
       process.exitCode = rendered.exitCode;
+
       return;
     }
+
     case "ServeLogs": {
       const logs = yield* residentService.logs(
         resolveProfileTarget(command.target, resolutionOptions),
         command.follow,
       );
+
       const rendered = renderResidentLogs(logs);
+
       if (rendered.length > 0) console.log(rendered);
       process.exitCode = logs.exitCode;
+
       return;
     }
+
     case "Serve":
     case "Gateway":
       return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
@@ -642,6 +779,7 @@ const program = Effect.gen(function* () {
       );
     case "Tui": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+
       const automationHandler: AutomationTuiHandler = (request) =>
         Effect.gen(function* () {
           switch (request.kind) {
@@ -650,16 +788,20 @@ const program = Effect.gen(function* () {
                 [automationDefinitions.list(target), automationScheduler.status(target)],
                 { concurrency: 2 },
               );
+
               return {
                 kind: "overview",
                 definitions,
                 statusText: renderAutomationStatus(status),
               } satisfies AutomationTuiResponse;
             }
+
             case "document": {
               const document = yield* automationDefinitions.show(target, request.id);
+
               return { kind: "document", ...document } satisfies AutomationTuiResponse;
             }
+
             case "save": {
               const document = yield* automationDefinitions.save(
                 target,
@@ -667,12 +809,16 @@ const program = Effect.gen(function* () {
                 request.expectedSource,
                 request.source,
               );
+
               return { kind: "saved", ...document } satisfies AutomationTuiResponse;
             }
+
             case "runs": {
               const automationId =
                 request.id === undefined ? undefined : yield* validateAutomationId(request.id);
+
               const runs = yield* automationScheduler.runs(target, automationId);
+
               return {
                 kind: "runs",
                 text: renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
@@ -681,11 +827,13 @@ const program = Effect.gen(function* () {
                 ),
               } satisfies AutomationTuiResponse;
             }
+
             case "pause":
             case "resume": {
               const transitioned = yield* request.kind === "pause"
                 ? automationDefinitions.pause(target, request.id)
                 : automationDefinitions.resume(target, request.id);
+
               return {
                 kind: "transitioned",
                 ...transitioned,
@@ -693,32 +841,43 @@ const program = Effect.gen(function* () {
             }
           }
         }).pipe(Effect.catch((failure) => Effect.succeed(automationTuiFailure(failure))));
+
       process.exitCode = yield* agent.openTui(target, { kind: "local" }, automationHandler);
+
       return;
     }
+
     case "Doctor": {
       const report = yield* doctor.check(
         resolveProfileTarget(command.target, resolutionOptions),
         repositoryRoot,
       );
+
       const rendered = renderDoctor(report);
       console.log(rendered.text);
       process.exitCode = rendered.exitCode;
+
       return;
     }
+
     case "ModelsStatus": {
       const status = yield* models.status(resolveProfileTarget(command.target, resolutionOptions));
       console.log(renderModelStatus(status));
+
       return;
     }
+
     case "ModelsList": {
       const listed = yield* models.list(
         resolveProfileTarget(command.target, resolutionOptions),
         command.providerId,
       );
+
       console.log(renderModels(listed));
+
       return;
     }
+
     case "ModelsSet": {
       const selection = yield* models.set(
         resolveProfileTarget(command.target, resolutionOptions),
@@ -726,7 +885,9 @@ const program = Effect.gen(function* () {
         command.modelId,
         command.thinking,
       );
+
       console.log(renderModelSelection(selection));
+
       return;
     }
   }

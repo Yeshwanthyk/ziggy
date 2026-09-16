@@ -32,9 +32,11 @@ import {
 import type { RunRecord } from "../src/schema.ts";
 
 const roots: string[] = [];
+
 const makeProfile = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-computer-workflows-"));
   roots.push(root);
+
   return root;
 };
 
@@ -74,12 +76,14 @@ const definition = () =>
 describe("computer workflow recording", () => {
   test("correlates parallel results by call id and never persists typed text or transient refs", async () => {
     const profile = await makeProfile();
+
     const recording = startRecording(
       "Submit note",
       "Enter and save a note",
       "session-1",
       new Date("2026-08-23T10:00:00.000Z"),
     );
+
     observeToolCall(
       recording,
       {
@@ -182,6 +186,7 @@ describe("computer workflow recording", () => {
 describe("computer workflow publication", () => {
   test("rejects same-turn model publication and accepts a later user turn in the same session", async () => {
     const profile = await makeProfile();
+
     const approval = makePublishApproval({
       workflow: definition(),
       sourceDraftId: "draft-1",
@@ -190,6 +195,7 @@ describe("computer workflow publication", () => {
       preparedAtUserInput: 3,
       now: new Date("2026-08-23T10:30:00.000Z"),
     });
+
     await writePublishApproval(profile, approval);
     const durable = await readPublishApproval(profile, approval.id);
 
@@ -218,11 +224,13 @@ describe("computer workflow publication", () => {
 
   test("writes visible immutable revisions and a current manifest with collision-safe creation", async () => {
     const profile = await makeProfile();
+
     const published = makePublishedWorkflow(
       definition(),
       "draft-1",
       new Date("2026-08-23T11:00:00.000Z"),
     );
+
     const paths = await publishWorkflow(profile, published);
     expect(paths.manifestPath).toBe(join(profile, "workflows/submit-note/workflow.json"));
     expect(paths.revisionPath).toContain("/workflows/submit-note/revisions/");
@@ -395,6 +403,7 @@ describe("computer workflow execution planning", () => {
         },
       ],
     });
+
     expect(compileExecutionPlan(chord).segments[0]?.input.steps).toEqual([
       {
         target: { role: "textbox" },
@@ -516,6 +525,7 @@ describe("computer workflow run evidence", () => {
       toolName: "run_ui_segment",
       input: plan.segments[0]?.input ?? { steps: [] },
     });
+
     const resultEvent = {
       toolCallId: "segment-error",
       toolName: "run_ui_segment",
@@ -523,6 +533,7 @@ describe("computer workflow run evidence", () => {
       details: { cookie: "cookie-secret" },
       content: [{ type: "text", text: "private page result body" }],
     };
+
     observeRunToolResult(run, resultEvent);
     const summary = finishActiveRun(run);
     const path = await writeRunSummary(profile, summary);
@@ -554,12 +565,14 @@ describe("computer workflow run evidence", () => {
     });
 
     const manualPlan = compileExecutionPlan(definition());
+
     const manualRecord = {
       ...runRecord(),
       id: "run-manual",
       plannedSegmentCount: manualPlan.segments.length,
       manualStepCount: manualPlan.manual.length,
     };
+
     const manual = startActiveRun(manualRecord, manualPlan);
     expect(finishActiveRun(manual)).toMatchObject({
       overall: "incomplete",

@@ -24,9 +24,13 @@ const truncate = (text: string): string =>
 const successfulText = (result: ExecResult): string => {
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
+
   if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
+
   if (stdout.length > 0) return stdout;
+
   if (stderr.length > 0) return `stderr:\n${stderr}`;
+
   return "Command completed successfully.";
 };
 
@@ -40,22 +44,28 @@ export const runGithubCommand = async (
     cwd,
     timeout: 30_000,
   };
+
   if (signal !== undefined) {
     execOptions.signal = signal;
   }
+
   const result = await exec("gh", [...args], execOptions);
   const stdout = truncate(result.stdout);
   const stderr = truncate(result.stderr);
+
   if (result.code !== 0) {
     const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
+
     const output = [
       stderr.length > 0 ? `stderr:\n${stderr}` : "",
       stdout.length > 0 ? `stdout:\n${stdout}` : "",
     ]
       .filter((part) => part.length > 0)
       .join("\n\n");
+
     throw new Error(`gh ${reason}${output.length > 0 ? `\n${output}` : ""}`);
   }
+
   return {
     content: [{ type: "text" as const, text: successfulText(result) }],
     details: { code: result.code, killed: result.killed, stdout, stderr },

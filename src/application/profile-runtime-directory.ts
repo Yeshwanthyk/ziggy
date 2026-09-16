@@ -31,11 +31,14 @@ export const makeProfileRuntimeDirectory = (
   const branches = new Map<ProfileId, ResidentProfileBranch>(
     initialBranches.map((branch) => [branch.profileId, branch]),
   );
+
   const availableEntry = (entry: ProfileDirectoryEntry): ProfileDirectoryEntry => ({
     ...entry,
     available: entry.available && branches.has(entry.profileId),
   });
+
   const entries = () => directory.entries().pipe(Effect.map((rows) => rows.map(availableEntry)));
+
   return {
     entries,
     list: () =>
@@ -64,6 +67,7 @@ export const makeProfileRuntimeDirectory = (
         ),
     branch: (profileId) => {
       const branch = branches.get(profileId);
+
       return branch === undefined
         ? Effect.fail(new ProfileUnavailable({ profileId }))
         : Effect.succeed(branch);

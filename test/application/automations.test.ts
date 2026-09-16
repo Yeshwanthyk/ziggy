@@ -29,6 +29,7 @@ import { makeAutomationDefinitions } from "ziggy/application/automation-definiti
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 
 const paths: Array<string> = [];
+
 const definition = (
   broadcast: string,
   extras: ReadonlyArray<string> = [],
@@ -52,6 +53,7 @@ const profile = async (broadcast: string, extras: ReadonlyArray<string> = [], bo
   await mkdir(join(path, "automations"));
   await writeFile(join(path, "SOUL.md"), "# Test\n");
   await writeFile(join(path, "automations", "daily-note.md"), definition(broadcast, extras, body));
+
   return { path, name: "Test" } satisfies ProfileTarget;
 };
 
@@ -87,11 +89,13 @@ const harness = (
     openChat: (target, context, sessionPath, mode, model) =>
       Effect.sync(() => {
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
+
         if (model !== undefined) {
           events.push(
             `model:${model.provider ?? "-"}/${model.model ?? "-"}/${model.thinking ?? "-"}`,
           );
         }
+
         return makeChatHandle({
           prompt: (prompt) =>
             Effect.sync(() => events.push(`prompt:${prompt}`)).pipe(
@@ -108,11 +112,13 @@ const harness = (
         });
       }),
   };
+
   const capabilities: AutomationCapabilities = {
     gate: {
       run: (_path, _id, command) =>
         Effect.sync(() => {
           events.push(`gate:${command}`);
+
           return options.gateExit === undefined || options.gateExit === 0
             ? { kind: "passed" as const }
             : { kind: "declined" as const, exitCode: options.gateExit };
@@ -126,21 +132,25 @@ const harness = (
     loadTelegramConfig: () =>
       Effect.sync(() => {
         events.push("config:telegram");
+
         return { botToken: "t", ownerUserId: 1 };
       }),
     loadDiscordConfig: () =>
       Effect.sync(() => {
         events.push("config:discord");
+
         return { botToken: "d", ownerUserId: "1" };
       }),
     loadSlackConfig: () =>
       Effect.sync(() => {
         events.push("config:slack");
+
         return { botToken: "s", appToken: "a", ownerUserId: "U" };
       }),
     sendTelegram: (_token, id, text) =>
       Effect.gen(function* () {
         events.push(`send:telegram:${id}:${text}`);
+
         if (options.telegramFailure !== undefined) return yield* options.telegramFailure;
       }),
     sendDiscord: (_token, id, text) =>
@@ -152,6 +162,7 @@ const harness = (
         events.push(`send:slack:${id}:${thread ?? "-"}:${text}`);
       }),
   };
+
   return makeAutomations(agent, capabilities, {
     store: options.store ?? automationRunStore,
     now: Effect.succeed(1_000),
@@ -174,11 +185,13 @@ describe("automation run", () => {
       join(target.path, "automations", "daily-note.md"),
       join(target.path, "automations", "daily-note.paused.md"),
     );
+
     const message = await Effect.runPromise(
       harness(events)
         .run(target, "daily-note", { kind: "manual-force" })
         .pipe(Effect.catchTag("AutomationPaused", (failure) => Effect.succeed(failure.message))),
     );
+
     expect(message).toContain("is paused");
     expect(events).toEqual([]);
   });
@@ -188,6 +201,7 @@ describe("automation run", () => {
     const target = await profile("none");
     const entered = await Effect.runPromise(Deferred.make<void>());
     const release = await Effect.runPromise(Deferred.make<void>());
+
     const running = run(
       harness(events, {
         promptEffect: Deferred.succeed(entered, undefined).pipe(
@@ -197,6 +211,7 @@ describe("automation run", () => {
       }),
       target,
     );
+
     await Effect.runPromise(Deferred.await(entered));
     const paused = await Effect.runPromise(makeAutomationDefinitions().pause(target, "daily-note"));
     expect(paused.lifecycle).toBe("paused");
@@ -244,10 +259,12 @@ describe("automation run", () => {
   test("recovers a dead owner before manual admission", async () => {
     const events: Array<string> = [];
     const target = await profile("none");
+
     const child = Bun.spawn([process.execPath, "-e", ""], {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     const deadStore = makeAutomationRunStore(child.pid);
     await child.exited;
     await Effect.runPromise(deadStore.recover(target.path, 99));
@@ -263,12 +280,14 @@ describe("automation run", () => {
       kind: "executed",
       delivery: { kind: "resolved", targets: [] },
     });
+
     const persisted = Object.fromEntries(
       (await Effect.runPromise(readAutomationRuns(target.path))).map((item) => [
         item.runId,
         { state: item.state, failureCategory: item.failureCategory },
       ]),
     );
+
     expect(persisted).toMatchObject({
       [orphanId]: { state: "unknown", failureCategory: "process-start" },
       [liveId]: { state: "claimed", failureCategory: null },
@@ -281,11 +300,13 @@ describe("automation run", () => {
 
   test("a nonzero gate declines before Pi or specialist discovery", async () => {
     const events: Array<string> = [];
+
     const target = await profile(
       "none",
       ["gate: exit 7"],
       "@research-helper\nWrite the daily note.",
     );
+
     expect(await run(harness(events, { gateExit: 7 }), target)).toEqual({
       kind: "declined",
       reason: "gate-nonzero",
@@ -315,11 +336,13 @@ describe("automation run", () => {
 
   test("an untagged automation passes optional model frontmatter to the profile session", async () => {
     const events: Array<string> = [];
+
     const target = await profile("none", [
       "provider: anthropic",
       "model: claude-sonnet",
       "thinking: high",
     ]);
+
     expect(await run(harness(events), target)).toEqual({
       kind: "executed",
       delivery: { kind: "resolved", targets: [] },
@@ -335,11 +358,13 @@ describe("automation run", () => {
 
   test("a tagged automation keeps specialist routing even when model frontmatter is present", async () => {
     const events: Array<string> = [];
+
     const target = await profile(
       "none",
       ["provider: anthropic", "model: claude-sonnet", "thinking: high"],
       "@research-helper\nWrite the daily note.",
     );
+
     expect(await run(harness(events), target)).toEqual({
       kind: "executed",
       delivery: { kind: "resolved", targets: [] },
@@ -359,17 +384,20 @@ describe("automation run", () => {
   test("specialist configuration failure records a stable failed local projection", async () => {
     const events: Array<string> = [];
     const target = await profile("none", [], "@research-helper\nWrite the daily note.");
+
     const failure = new ProviderConfigError({
       profilePath: target.path,
       operation: "select model",
       message: "specialist model configuration failed",
       cause: "fixture",
     });
+
     const result = await Effect.runPromise(
       harness(events, { specialistEffect: Effect.fail(failure) })
         .run(target, "daily-note", { kind: "manual-force" })
         .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
     );
+
     expect(result).toBe(failure);
     expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
       state: "failed",
@@ -381,16 +409,19 @@ describe("automation run", () => {
   test("unknown specialist failure records a failed local run without a provider call", async () => {
     const events: Array<string> = [];
     const target = await profile("none", [], "@missing\nWrite the daily note.");
+
     const failure = new SpecialistAgentNotFound({
       profilePath: target.path,
       agentId: "missing",
       message: "unknown Profile agent: missing",
     });
+
     const result = await Effect.runPromise(
       harness(events, { specialistEffect: Effect.fail(failure) })
         .run(target, "daily-note", { kind: "manual-force" })
         .pipe(Effect.match({ onFailure: (error) => error, onSuccess: (outcome) => outcome })),
     );
+
     expect(result).toBe(failure);
     expect(events).toEqual([
       `specialist:missing:Write the daily note.:${join(
@@ -412,6 +443,7 @@ describe("automation run", () => {
     const events: Array<string> = [];
     const target = await profile("none");
     const fingerprint = "a".repeat(64);
+
     const initial = {
       automationId: "daily-note",
       definitionState: "valid" as const,
@@ -420,6 +452,7 @@ describe("automation run", () => {
       definitionObservedAtMs: 0,
       definitionError: null,
     };
+
     await Effect.runPromise(initializeAutomationDatabase(target.path));
     await Effect.runPromise(
       commitScheduleTick(
@@ -485,9 +518,11 @@ describe("automation run", () => {
 
   test("resolves origin, all, explicit targets, and first-seen deduplication", async () => {
     const events: Array<string> = [];
+
     const target = await profile("origin,all,telegram:chat:2,origin", [
       "origin: slack:channel:C0123ABCDE",
     ]);
+
     await writeFile(
       join(target.path, "broadcasts.json"),
       JSON.stringify({ targets: ["telegram:chat:2", "discord:channel:3", "telegram:chat:2"] }),
@@ -533,21 +568,25 @@ describe("automation run", () => {
   test("a truthful terminal database failure is attempted once and is not fabricated", async () => {
     const events: Array<string> = [];
     const target = await profile("discord:channel:1,telegram:chat:2");
+
     const failure = new AutomationDatabaseError({
       operation: "finish run",
       path: target.path,
       message: "injected terminal write failure",
       cause: "fixture",
     });
+
     let finishCalls = 0;
     let terminal: RunTerminal | undefined;
     let targets: ReadonlyArray<AutomationTargetOutcome> = [];
+
     const store: AutomationRunStore = {
       ...automationRunStore,
       finish: (profilePath, runId, nextTerminal, nextTargets) => {
         finishCalls += 1;
         terminal = nextTerminal;
         targets = nextTargets;
+
         return finishCalls === 1
           ? Effect.fail(failure)
           : automationRunStore.finish(profilePath, runId, nextTerminal, nextTargets);
@@ -564,6 +603,7 @@ describe("automation run", () => {
           }),
         ),
     );
+
     expect(result).toBe(failure);
     expect(finishCalls).toBe(1);
     expect(terminal).toEqual({
@@ -598,23 +638,28 @@ describe("automation run", () => {
   test("surfaces terminal database failure over the execution failure", async () => {
     const events: Array<string> = [];
     const target = await profile("none");
+
     const providerFailure = new ProviderCallError({
       profilePath: target.path,
       operation: "prompt",
       message: "injected provider failure",
       cause: "fixture",
     });
+
     const databaseFailure = new AutomationDatabaseError({
       operation: "finish run",
       path: target.path,
       message: "injected terminal write failure",
       cause: "fixture",
     });
+
     let finishCalls = 0;
+
     const store: AutomationRunStore = {
       ...automationRunStore,
       finish: () => {
         finishCalls += 1;
+
         return Effect.fail(databaseFailure);
       },
     };
@@ -629,6 +674,7 @@ describe("automation run", () => {
           }),
         ),
     );
+
     expect(result).toBe(databaseFailure);
     expect(finishCalls).toBe(1);
     expect(events).toEqual([
@@ -650,18 +696,22 @@ describe("automation run", () => {
     const entered = await Effect.runPromise(Deferred.make<void>());
     let finishCalls = 0;
     let terminal: RunTerminal | undefined;
+
     const store: AutomationRunStore = {
       ...automationRunStore,
       finish: (profilePath, runId, nextTerminal, targets) => {
         finishCalls += 1;
         terminal = nextTerminal;
+
         return automationRunStore.finish(profilePath, runId, nextTerminal, targets);
       },
     };
+
     const service = harness(events, {
       store,
       promptEffect: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
     });
+
     const fiber = Effect.runFork(service.run(target, "daily-note", { kind: "manual-force" }));
     await Effect.runPromise(Deferred.await(entered));
 
@@ -688,26 +738,32 @@ describe("automation run", () => {
     const events: Array<string> = [];
     const target = await profile("none");
     const entered = await Effect.runPromise(Deferred.make<void>());
+
     const databaseFailure = new AutomationDatabaseError({
       operation: "finish run",
       path: target.path,
       message: "injected interrupted terminal write failure",
       cause: "fixture",
     });
+
     let finishCalls = 0;
+
     const store: AutomationRunStore = {
       ...automationRunStore,
       finish: () => {
         finishCalls += 1;
+
         return Effect.fail(databaseFailure);
       },
     };
+
     const fiber = Effect.runFork(
       harness(events, {
         store,
         promptEffect: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
       }).run(target, "daily-note", { kind: "manual-force" }),
     );
+
     await Effect.runPromise(Deferred.await(entered));
 
     await Effect.runPromise(Fiber.interrupt(fiber));
@@ -726,32 +782,40 @@ describe("automation run", () => {
     const interruptionDone = await Effect.runPromise(Deferred.make<void>());
     let finishCalls = 0;
     let terminal: RunTerminal | undefined;
+
     const store: AutomationRunStore = {
       ...automationRunStore,
       finish: (profilePath, runId, nextTerminal, targets) => {
         finishCalls += 1;
         terminal = nextTerminal;
+
         return Deferred.succeed(finishEntered, undefined).pipe(
           Effect.andThen(Deferred.await(releaseFinish)),
           Effect.andThen(automationRunStore.finish(profilePath, runId, nextTerminal, targets)),
         );
       },
     };
+
     const runFiber = Effect.runFork(
       harness(events, { store }).run(target, "daily-note", { kind: "manual-force" }),
     );
+
     await Effect.runPromise(Deferred.await(finishEntered));
+
     const interruptFiber = Effect.runFork(
       Deferred.succeed(interruptionStarted, undefined).pipe(
         Effect.andThen(Fiber.interrupt(runFiber)),
         Effect.ensuring(Deferred.succeed(interruptionDone, undefined)),
       ),
     );
+
     await Effect.runPromise(Deferred.await(interruptionStarted));
     await Effect.runPromise(Effect.yieldNow);
+
     const completedBeforeRelease = Option.isSome(
       await Effect.runPromise(Deferred.poll(interruptionDone)),
     );
+
     await Effect.runPromise(Deferred.succeed(releaseFinish, undefined));
     await Effect.runPromise(Fiber.join(interruptFiber));
 
@@ -775,6 +839,7 @@ describe("automation run", () => {
   test("continues success, failure, success with complete ordered outcomes", async () => {
     const events: Array<string> = [];
     const target = await profile("discord:channel:1,telegram:chat:2,slack:channel:C0123ABCDE");
+
     const apiFailure = new TelegramApiError({
       operation: "sendMessage",
       reason: "rate-limited",
@@ -783,6 +848,7 @@ describe("automation run", () => {
       message: "failed",
       cause: "fixture",
     });
+
     expect(await run(harness(events, { telegramFailure: apiFailure }), target)).toEqual({
       kind: "executed",
       delivery: {

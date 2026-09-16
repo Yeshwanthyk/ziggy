@@ -49,6 +49,7 @@ const fileSystemError = (
   cause: unknown,
 ): ProfileFileSystemError => {
   const details = fileSystemCauseDetails(cause);
+
   return new ProfileFileSystemError({
     operation,
     path: targetPath,
@@ -69,8 +70,10 @@ const isInitializedProfile = (
 ): Effect.Effect<boolean, ProfileFileSystemError> =>
   Effect.gen(function* () {
     const profile = yield* lstatPath(profilePath);
+
     if (!profile.isDirectory() || profile.isSymbolicLink()) return false;
     const soul = yield* lstatPath(path.join(profilePath, "SOUL.md"));
+
     return soul.isFile() && !soul.isSymbolicLink();
   }).pipe(
     Effect.catchIf(
@@ -95,6 +98,7 @@ const ensureStarterDirectory = (
   name: "agents" | "automations",
 ): Effect.Effect<boolean, ProfileFileSystemError> => {
   const directoryPath = path.join(targetPath, name);
+
   return lstatPath(directoryPath).pipe(
     Effect.flatMap((status) =>
       status.isDirectory() && !status.isSymbolicLink()
@@ -154,6 +158,7 @@ const ensureMemoryDirectory = (
   relativePath: string,
 ): Effect.Effect<void, ProfileFileSystemError> => {
   const directoryPath = path.join(targetPath, relativePath);
+
   return lstatPath(directoryPath).pipe(
     Effect.flatMap(validMemoryDirectory(directoryPath)),
     Effect.catchIf(
@@ -180,6 +185,7 @@ const ensureMemoryFile = (
   content: string,
 ): Effect.Effect<void, ProfileFileSystemError> => {
   const filePath = path.join(targetPath, relativePath);
+
   return lstatPath(filePath).pipe(
     Effect.flatMap(validMemoryFile(filePath)),
     Effect.catchIf(
@@ -235,17 +241,20 @@ const initProfile = (
     }
 
     const soulPath = path.join(target.path, "SOUL.md");
+
     const soulStatus = yield* lstatPath(soulPath).pipe(
       Effect.catchIf(
         (failure) => failure.code === "ENOENT",
         () => Effect.void,
       ),
     );
+
     if (soulStatus !== undefined && (!soulStatus.isFile() || soulStatus.isSymbolicLink())) {
       return yield* new ProfileTargetNotDirectory({ path: soulPath });
     }
 
     let created = false;
+
     if (soulStatus === undefined) {
       yield* Effect.tryPromise({
         try: () => writeFile(soulPath, soulTemplate(target.name), { flag: "wx" }),
@@ -255,8 +264,10 @@ const initProfile = (
     }
 
     const createdDirectories: Array<"agents" | "automations"> = [];
+
     if (options.createStarterDirectories === true) {
       yield* ensureMemoryScaffold(target.path);
+
       for (const name of ["agents", "automations"] as const) {
         if (yield* ensureStarterDirectory(target.path, name)) createdDirectories.push(name);
       }
@@ -313,6 +324,7 @@ const listProfiles = (
     const directoryPaths = entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => path.resolve(profilesDirectory, entry.name));
+
     const profilePaths = [...new Set([...registryEntries, ...directoryPaths])];
 
     const listings = yield* Effect.forEach(profilePaths, (profilePath) =>
@@ -329,6 +341,7 @@ const listProfiles = (
     const validRegistryEntries = registryEntries.filter((registryEntry) =>
       listings.some(({ initialized, listing }) => initialized && listing?.path === registryEntry),
     );
+
     if (validRegistryEntries.length !== registryEntries.length) {
       yield* Effect.tryPromise({
         try: () =>

@@ -9,11 +9,14 @@ import { GatewayOwnerError, type GatewayOwnerStatus } from "../../domain/gateway
 import type { ProfileTarget } from "../../domain/profile";
 
 const PositivePid = Schema.Int.check(Schema.isGreaterThan(0));
+
 const OwnerId = Schema.String.check(Schema.isUUID());
+
 const IsoTimestamp = Schema.String.check(
   Schema.makeFilter(
     (value) => {
       const parsed = Date.parse(value);
+
       return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
     },
     { expected: "an ISO timestamp" },
@@ -26,13 +29,16 @@ export const GatewayOwnerRecord = Schema.Struct({
   pid: PositivePid,
   acquiredAt: IsoTimestamp,
 });
+
 export type GatewayOwnerRecord = typeof GatewayOwnerRecord.Type;
+
 export const decodeGatewayOwnerRecordJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(GatewayOwnerRecord),
   { onExcessProperty: "error" },
 );
 
 const leaseAuthority = Symbol("ziggy/GatewayLeaseAuthority");
+
 export interface GatewayOwnerHandle {
   readonly path: string;
   readonly ownerId: string;
@@ -66,6 +72,7 @@ const liveRuntime: GatewayOwnerRuntime = {
   pidIsAlive: (pid) => {
     try {
       process.kill(pid, 0);
+
       return true;
     } catch (cause) {
       return fileSystemCauseDetails(cause).code !== "ESRCH";
@@ -77,6 +84,7 @@ const liveRuntime: GatewayOwnerRuntime = {
 
 export const gatewayOwnerPath = (target: ProfileTarget): string =>
   join(target.path, ".runtime", "gateway-owner.lock");
+
 export const gatewayLeasePath = (target: ProfileTarget): string =>
   join(target.path, ".runtime", "serve-owner.sqlite");
 
@@ -95,6 +103,7 @@ const filesystemError = (path: string, cause: unknown) =>
     `could not acquire gateway ownership at ${path}: ${fileSystemCauseDetails(cause).message}`,
     cause,
   );
+
 const unreadableError = (path: string, cause: unknown) =>
   ownerError("unreadable", path, `gateway ownership at ${path} is unreadable`, cause);
 
@@ -124,30 +133,42 @@ export const inspectGatewayOwner = (
 ): Effect.Effect<GatewayOwnerStatus, GatewayOwnerError> => {
   const path = gatewayOwnerPath(target);
   const runtimePath = dirname(path);
+
   return Effect.gen(function* () {
     const runtimeStatus = yield* inspectPath(runtimePath);
+
     if (Result.isFailure(runtimeStatus)) {
       if (runtimeStatus.failure.details.code === "ENOENT") return { _tag: "stopped", path };
+
       return yield* unreadableError(path, runtimeStatus.failure.cause);
     }
+
     if (!runtimeStatus.success.isDirectory() || runtimeStatus.success.isSymbolicLink())
       return yield* unreadableError(path, `${runtimePath} must be a regular non-symlink directory`);
     const ownerStatus = yield* inspectPath(path);
+
     if (Result.isFailure(ownerStatus)) {
       if (ownerStatus.failure.details.code === "ENOENT") return { _tag: "stopped", path };
+
       return yield* unreadableError(path, ownerStatus.failure.cause);
     }
+
     if (!ownerStatus.success.isFile() || ownerStatus.success.isSymbolicLink())
       return yield* unreadableError(path, `${path} must be a regular non-symlink file`);
     const sourceResult = yield* readOwnerFile(path).pipe(Effect.result);
+
     if (Result.isFailure(sourceResult)) {
       if (sourceResult.failure.details.code === "ENOENT") return { _tag: "stopped", path };
+
       return yield* unreadableError(path, sourceResult.failure.cause);
     }
+
     const record = yield* decodeGatewayOwnerRecordJson(sourceResult.success).pipe(
       Effect.mapError((cause) => unreadableError(path, cause)),
     );
+
     const fields = { path, pid: record.pid, acquiredAt: record.acquiredAt };
+
     return runtime.pidIsAlive(record.pid)
       ? { _tag: "running", ...fields }
       : { _tag: "stale", ...fields };
@@ -163,7 +184,9 @@ const removeMatchingProjection = (handle: GatewayOwnerHandle, runtime: GatewayOw
       try: () => readFile(handle.path, "utf8"),
       catch: fileSystemCauseDetails,
     });
+
     const record = yield* decodeGatewayOwnerRecordJson(source);
+
     if (record.ownerId === handle.ownerId)
       yield* Effect.tryPromise({ try: () => unlink(handle.path), catch: fileSystemCauseDetails });
   }).pipe(
@@ -183,8 +206,10 @@ const publishProjection = (
   const acquiredAt = runtime.now().toISOString();
   const candidate = join(dirname(path), `.gateway-owner.${ownerId}.candidate`);
   const record: GatewayOwnerRecord = { version: 1, ownerId, pid: runtime.pid, acquiredAt };
+
   return Effect.gen(function* () {
     const status = yield* inspectGatewayOwner(target, runtime);
+
     if (status._tag === "running")
       return yield* ownerError(
         "held",
@@ -196,16 +221,19 @@ const publishProjection = (
     yield* Effect.tryPromise({
       try: async () => {
         const file = await open(candidate, "wx", 0o600);
+
         try {
           await file.writeFile(`${JSON.stringify(record)}\n`, "utf8");
           await file.sync();
         } finally {
           await file.close();
         }
+
         await rename(candidate, path);
       },
       catch: (cause) => filesystemError(path, cause),
     });
+
     return { path, ownerId, pid: runtime.pid, acquiredAt, [leaseAuthority]: true as const };
   }).pipe(
     Effect.ensuring(
@@ -223,11 +251,13 @@ export const acquireGatewayOwner = (
   runtime: GatewayOwnerRuntime = liveRuntime,
 ): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope> => {
   const leasePath = gatewayLeasePath(target);
+
   return Effect.gen(function* () {
     yield* Effect.tryPromise({
       try: () => mkdir(dirname(leasePath), { recursive: true }),
       catch: (cause) => filesystemError(leasePath, cause),
     });
+
     const db = yield* Effect.acquireRelease(
       Effect.try({
         try: () => {
@@ -235,6 +265,7 @@ export const acquireGatewayOwner = (
           opened.exec(
             "PRAGMA busy_timeout = 0; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
           );
+
           return opened;
         },
         catch: (cause) => filesystemError(leasePath, cause),
@@ -244,6 +275,7 @@ export const acquireGatewayOwner = (
           Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
         ),
     );
+
     yield* Effect.acquireRelease(
       Effect.try({
         try: () => db.exec("BEGIN IMMEDIATE"),
@@ -255,6 +287,7 @@ export const acquireGatewayOwner = (
           Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
         ),
     );
+
     return yield* Effect.acquireRelease(publishProjection(target, runtime), (handle) =>
       removeMatchingProjection(handle, runtime),
     );

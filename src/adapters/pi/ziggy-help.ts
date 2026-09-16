@@ -22,6 +22,7 @@ export const createZiggyHelpTool = (): ToolDefinition<typeof ziggyHelpParameters
   execute(_toolCallId, params) {
     const topic =
       params.topic === undefined || isZiggyHelpTopic(params.topic) ? params.topic : undefined;
+
     return Promise.resolve({
       content: [{ type: "text" as const, text: renderZiggyHelp(topic) }],
       details: undefined,

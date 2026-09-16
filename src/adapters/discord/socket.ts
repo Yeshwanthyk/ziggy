@@ -110,21 +110,25 @@ interface AttachedSocket {
 }
 
 const Integer = Schema.Finite.check(Schema.isInt());
+
 const GatewayFrameSchema = Schema.Struct({
   op: Integer,
   d: Schema.optional(Schema.Unknown),
   s: Schema.optional(Schema.NullOr(Integer)),
   t: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
 const ReadySchema = Schema.Struct({
   session_id: Schema.String,
   resume_gateway_url: Schema.String,
   user: Schema.Struct({ id: Schema.String }),
   guilds: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
+
 const HelloSchema = Schema.Struct({
   heartbeat_interval: Schema.Finite.check(Schema.isGreaterThan(0)),
 });
+
 const MessageSchema = Schema.Struct({
   id: Schema.String,
   channel_id: Schema.String,
@@ -136,6 +140,7 @@ const MessageSchema = Schema.Struct({
   content: Schema.optional(Schema.String),
   attachments: Schema.optional(Schema.Array(Schema.Unknown)),
 });
+
 const MessageAttachmentSchema = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
   filename: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
@@ -143,6 +148,7 @@ const MessageAttachmentSchema = Schema.Struct({
   size: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   url: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
 });
+
 const InteractionSchema = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
   token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
@@ -169,10 +175,15 @@ const InteractionSchema = Schema.Struct({
 const decodeGatewayFrameJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(GatewayFrameSchema),
 );
+
 const decodeReadyPayload = Schema.decodeUnknownEffect(ReadySchema);
+
 const decodeHelloPayload = Schema.decodeUnknownEffect(HelloSchema);
+
 const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
+
 const decodeMessageAttachment = Schema.decodeUnknownEffect(MessageAttachmentSchema);
+
 const decodeInteractionPayload = Schema.decodeUnknownEffect(InteractionSchema);
 
 const normalizeGatewayFrame = (decoded: typeof GatewayFrameSchema.Type) => ({
@@ -181,6 +192,7 @@ const normalizeGatewayFrame = (decoded: typeof GatewayFrameSchema.Type) => ({
   s: decoded.s ?? null,
   t: decoded.t ?? null,
 });
+
 type GatewayFrame = ReturnType<typeof normalizeGatewayFrame>;
 
 type DiscordGatewayOutboundPayload =
@@ -206,21 +218,30 @@ const normalizeWebSocketMessageData = (
       ? data
       : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   }
+
   if (data instanceof ArrayBuffer) {
     return new Uint8Array(data);
   }
+
   if (data instanceof Blob) {
     return undefined;
   }
+
   return data;
 };
 
 const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
+
 const GATEWAY_QUERY = "v=10&encoding=json";
+
 const MAX_RECONNECT_DELAY_MS = 30_000;
+
 const MAX_MESSAGE_IDS = 1_000;
+
 const SOCKET_OPEN = 1;
+
 const SOCKET_CLOSING = 2;
+
 const SOCKET_CLOSED = 3;
 
 const error = (
@@ -247,6 +268,7 @@ const gatewaySocketUrl = (baseUrl: string): Effect.Effect<string, DiscordSocketE
     try: () => {
       const url = new URL(baseUrl);
       url.search = GATEWAY_QUERY;
+
       return url.toString();
     },
     catch: (cause) => error("connect", "connection", true, cause),
@@ -254,31 +276,38 @@ const gatewaySocketUrl = (baseUrl: string): Effect.Effect<string, DiscordSocketE
 
 const liveConnection = (url: string): DiscordSocketConnection => {
   const socket = new WebSocket(url);
+
   return {
     readyState: () => socket.readyState,
     send: (data) => socket.send(data),
     close: (code) => socket.close(code),
     onOpen: (listener) => {
       socket.addEventListener("open", listener);
+
       return () => socket.removeEventListener("open", listener);
     },
     onMessage: (listener) => {
       const handle = (event: MessageEvent) => {
         const data = normalizeWebSocketMessageData(event.data);
+
         if (data !== undefined) {
           listener(data);
         }
       };
+
       socket.addEventListener("message", handle);
+
       return () => socket.removeEventListener("message", handle);
     },
     onError: (listener) => {
       socket.addEventListener("error", listener);
+
       return () => socket.removeEventListener("error", listener);
     },
     onClose: (listener) => {
       const handle = (event: CloseEvent) => listener(event.code);
       socket.addEventListener("close", handle);
+
       return () => socket.removeEventListener("close", handle);
     },
   };
@@ -289,6 +318,7 @@ const liveDependencies: DiscordSocketDependencies = {
   connect: liveConnection,
   schedule: (delayMs, task) => {
     const timer = setTimeout(task, delayMs);
+
     return () => clearTimeout(timer);
   },
   random: Math.random,
@@ -308,9 +338,11 @@ export const openDiscordSocket = (
     const inbound = yield* Queue.dropping<DiscordInboundMessage, DiscordSocketError>(
       dependencies.inboundCapacity,
     );
+
     const interactions = yield* Queue.dropping<DiscordInboundInteraction, DiscordSocketError>(
       dependencies.inboundCapacity,
     );
+
     const connectionStates = yield* Queue.sliding<DiscordSocketConnectionState>(16);
     const commands = yield* Queue.dropping<Command>(dependencies.commandCapacity);
     const messageIds = makeRecentIds(MAX_MESSAGE_IDS);
@@ -345,6 +377,7 @@ export const openDiscordSocket = (
 
     const detach = (attached: AttachedSocket) => {
       attached.removeListeners();
+
       if (current === attached) {
         current = undefined;
       }
@@ -352,6 +385,7 @@ export const openDiscordSocket = (
 
     const closeWithoutWaiting = (attached: AttachedSocket) => {
       detach(attached);
+
       if (attached.connection.readyState() < SOCKET_CLOSING) {
         try {
           attached.connection.close();
@@ -368,6 +402,7 @@ export const openDiscordSocket = (
         if (stopped || failed) {
           return;
         }
+
         failed = true;
         reportState({
           state: "failed",
@@ -383,9 +418,11 @@ export const openDiscordSocket = (
         clearHeartbeat();
         clearReconnect();
         const attached = current;
+
         if (attached !== undefined) {
           closeWithoutWaiting(attached);
         }
+
         yield* Queue.clear(inbound);
         yield* Queue.fail(inbound, failure);
         yield* Queue.clear(interactions);
@@ -401,10 +438,12 @@ export const openDiscordSocket = (
             false,
             new Error("Discord command queue capacity exceeded"),
           );
+
           failed = true;
           reportState({ state: "failed", reason: "queue-overflow" });
           Queue.failCauseUnsafe(inbound, Cause.fail(failure));
           const attached = current;
+
           if (attached !== undefined) {
             closeWithoutWaiting(attached);
           }
@@ -416,6 +455,7 @@ export const openDiscordSocket = (
       if (stopped || failed) {
         return;
       }
+
       clearReconnect();
       reportState({ state: "reconnecting", reason: "connection" });
       cancelReconnect = dependencies.schedule(delayMs, () => {
@@ -426,11 +466,14 @@ export const openDiscordSocket = (
 
     const abandon = (connection: DiscordSocketConnection): boolean => {
       const attached = current;
+
       if (attached === undefined || attached.connection !== connection) {
         return false;
       }
+
       clearHeartbeat();
       closeWithoutWaiting(attached);
+
       return true;
     };
 
@@ -438,6 +481,7 @@ export const openDiscordSocket = (
       if (!abandon(connection)) {
         return;
       }
+
       const delay = reconnectDelayMs;
       reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
       scheduleReconnect(delay, mode);
@@ -450,11 +494,14 @@ export const openDiscordSocket = (
       if (current?.connection !== connection || connection.readyState() !== SOCKET_OPEN) {
         return false;
       }
+
       try {
         connection.send(JSON.stringify(payload));
+
         return true;
       } catch {
         reconnect(connection);
+
         return false;
       }
     };
@@ -463,6 +510,7 @@ export const openDiscordSocket = (
       if (current?.connection !== connection) {
         return;
       }
+
       heartbeatAcknowledged = false;
       send(connection, { op: 1, d: sequence });
     };
@@ -471,13 +519,17 @@ export const openDiscordSocket = (
       clearHeartbeat();
       cancelHeartbeat = dependencies.schedule(delayMs, () => {
         cancelHeartbeat = undefined;
+
         if (current?.connection !== connection) {
           return;
         }
+
         if (!heartbeatAcknowledged) {
           reconnect(connection, "resume");
+
           return;
         }
+
         sendHeartbeat(connection);
         scheduleHeartbeat(connection, heartbeatIntervalMs);
       });
@@ -487,11 +539,14 @@ export const openDiscordSocket = (
       Effect.uninterruptible(
         Effect.gen(function* () {
           const socketUrl = yield* gatewaySocketUrl(url);
+
           const connection = yield* Effect.try({
             try: () => dependencies.connect(socketUrl),
             catch: (cause) => error("connect", "connection", true, cause),
           });
+
           const removers: Array<() => void> = [];
+
           const attached = yield* Effect.try({
             try: () => {
               removers.push(
@@ -511,6 +566,7 @@ export const openDiscordSocket = (
                   offerCommand({ _tag: "SocketClosed", connection, code }),
                 ),
               );
+
               return {
                 connection,
                 removeListeners: () => {
@@ -529,6 +585,7 @@ export const openDiscordSocket = (
                     dependencies.reportCleanupFailure(error("close", "connection", false, cause));
                   }
                 }
+
                 if (connection.readyState() < SOCKET_CLOSING) {
                   try {
                     connection.close();
@@ -539,6 +596,7 @@ export const openDiscordSocket = (
               }),
             ),
           );
+
           current = attached;
         }),
       );
@@ -551,44 +609,57 @@ export const openDiscordSocket = (
         if (frame.s !== null) {
           sequence = frame.s;
         }
+
         if (frame.t === "READY") {
           const decodedReady = yield* decodeReadyPayload(frame.d).pipe(Effect.result);
+
           if (Result.isFailure(decodedReady)) {
             yield* terminalFailure(
               error("receive", "malformed-frame", false, decodedReady.failure),
             );
+
             return;
           }
+
           const ready = {
             sessionId: decodedReady.success.session_id,
             resumeGatewayUrl: decodedReady.success.resume_gateway_url,
             userId: decodedReady.success.user.id,
             guildIds: decodedReady.success.guilds.map((guild) => guild.id),
           };
+
           sessionId = ready.sessionId;
           resumeGatewayUrl = ready.resumeGatewayUrl;
           ownUserId = ready.userId;
           guildIds = ready.guildIds;
           reconnectDelayMs = 1_000;
           reportState({ state: "connected", guildIds });
+
           return;
         }
+
         if (frame.t === "RESUMED") {
           reconnectDelayMs = 1_000;
           reportState({ state: "connected", guildIds });
+
           return;
         }
+
         if (frame.t === "MESSAGE_CREATE") {
           const decoded = yield* decodeMessagePayload(frame.d).pipe(Effect.option);
+
           if (Option.isNone(decoded)) {
             return;
           }
+
           const payload = decoded.value;
           const rawAttachments = payload.attachments ?? [];
+
           const decodedAttachments = yield* Effect.forEach(
             rawAttachments.slice(0, 4),
             (attachment) => decodeMessageAttachment(attachment).pipe(Effect.option),
           );
+
           const attachments = decodedAttachments.flatMap((decodedAttachment) =>
             Option.isSome(decodedAttachment)
               ? [
@@ -610,6 +681,7 @@ export const openDiscordSocket = (
                 ]
               : [],
           );
+
           const message: DiscordInboundMessage = {
             id: payload.id,
             channelId: payload.channel_id,
@@ -620,6 +692,7 @@ export const openDiscordSocket = (
             attachments,
             omittedAttachmentCount: Math.max(0, rawAttachments.length - attachments.length),
           };
+
           if (
             message.authorId !== ownUserId &&
             messageIds.remember(message.id) &&
@@ -634,13 +707,17 @@ export const openDiscordSocket = (
               ),
             );
           }
+
           return;
         }
+
         if (frame.t === "INTERACTION_CREATE") {
           const decoded = yield* decodeInteractionPayload(frame.d).pipe(Effect.option);
+
           if (Option.isNone(decoded)) return;
           const payload = decoded.value;
           const authorId = payload.member?.user.id ?? payload.user?.id;
+
           if (
             payload.type !== 2 ||
             payload.data?.type !== 1 ||
@@ -649,6 +726,7 @@ export const openDiscordSocket = (
           ) {
             return;
           }
+
           const interaction: DiscordInboundInteraction = {
             id: payload.id,
             token: payload.token,
@@ -659,6 +737,7 @@ export const openDiscordSocket = (
             authorId,
             commandName: payload.data.name,
           };
+
           if (!(yield* Queue.offer(interactions, interaction))) {
             yield* terminalFailure(
               error(
@@ -670,6 +749,7 @@ export const openDiscordSocket = (
             );
           }
         }
+
         void connection;
       });
 
@@ -679,23 +759,31 @@ export const openDiscordSocket = (
     ): Effect.Effect<void, DiscordSocketError> =>
       Effect.gen(function* () {
         const decoded = yield* decodeGatewayFrameJson(text).pipe(Effect.result);
+
         if (Result.isFailure(decoded)) {
           yield* terminalFailure(error("receive", "malformed-frame", false, decoded.failure));
+
           return;
         }
+
         if (failed || current?.connection !== connection) {
           return;
         }
+
         const frame = normalizeGatewayFrame(decoded.success);
+
         switch (frame.op) {
           case 0:
             yield* handleDispatch(connection, frame);
+
             return;
           case 1:
             sendHeartbeat(connection);
+
             return;
           case 7:
             reconnect(connection, "resume");
+
             return;
           case 9:
             if (frame.d === false) {
@@ -703,24 +791,30 @@ export const openDiscordSocket = (
               resumeGatewayUrl = undefined;
               sequence = null;
               ownUserId = undefined;
+
               if (abandon(connection)) {
                 scheduleReconnect(2_000, "fresh");
               }
             } else {
               reconnect(connection, "resume");
             }
+
             return;
           case 10: {
             const decodedHello = yield* decodeHelloPayload(frame.d).pipe(Effect.result);
+
             if (Result.isFailure(decodedHello)) {
               yield* terminalFailure(
                 error("receive", "malformed-frame", false, decodedHello.failure),
               );
+
               return;
             }
+
             heartbeatAcknowledged = true;
             heartbeatIntervalMs = decodedHello.success.heartbeat_interval;
             scheduleHeartbeat(connection, heartbeatIntervalMs * dependencies.random());
+
             if (sessionId !== undefined && sequence !== null) {
               send(connection, { op: 6, d: { token, session_id: sessionId, seq: sequence } });
             } else {
@@ -733,10 +827,13 @@ export const openDiscordSocket = (
                 },
               });
             }
+
             return;
           }
+
           case 11:
             heartbeatAcknowledged = true;
+
             return;
         }
       });
@@ -746,20 +843,25 @@ export const openDiscordSocket = (
         if (stopped || failed || current !== undefined) {
           return;
         }
+
         const resumeUrl = resumeGatewayUrl;
+
         const canResume =
           mode !== "fresh" &&
           sessionId !== undefined &&
           sequence !== null &&
           resumeUrl !== undefined;
+
         if (canResume) {
           yield* attachSocket(resumeUrl).pipe(
             Effect.catch(() => Effect.sync(() => scheduleReconnect(reconnectDelayMs, mode))),
           );
+
           return;
         }
 
         const bootstrap = yield* dependencies.getGatewayBot(token).pipe(Effect.result);
+
         if (Result.isFailure(bootstrap)) {
           if (bootstrap.failure.reason === "authentication") {
             yield* terminalFailure(error("connect", "authentication", false, bootstrap.failure));
@@ -768,12 +870,15 @@ export const openDiscordSocket = (
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             scheduleReconnect(delay, mode);
           }
+
           return;
         }
+
         yield* attachSocket(bootstrap.success.url).pipe(
           Effect.catch(() => {
             const delay = reconnectDelayMs;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+
             return Effect.sync(() => scheduleReconnect(delay, mode));
           }),
         );
@@ -792,12 +897,15 @@ export const openDiscordSocket = (
             if (current?.connection !== command.connection) {
               return;
             }
+
             const attached = current;
             detach(attached);
             clearHeartbeat();
+
             if (stopped) {
               return;
             }
+
             if (FATAL_CLOSE_CODES.has(command.code)) {
               yield* terminalFailure(
                 error(
@@ -808,8 +916,10 @@ export const openDiscordSocket = (
                   command.code,
                 ),
               );
+
               return;
             }
+
             const delay = reconnectDelayMs;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
             scheduleReconnect(delay);
@@ -825,15 +935,18 @@ export const openDiscordSocket = (
       if (stopped) {
         return Effect.void;
       }
+
       stopped = true;
       reportState({ state: "stopped" });
       clearHeartbeat();
       clearReconnect();
       const attached = current;
+
       if (attached === undefined || attached.connection.readyState() === SOCKET_CLOSED) {
         if (attached !== undefined) {
           detach(attached);
         }
+
         return Queue.clear(inbound).pipe(
           Effect.orElseSucceed(() => []),
           Effect.andThen(Queue.fail(inbound, error("close", "closed", false, new Error("closed")))),
@@ -849,6 +962,7 @@ export const openDiscordSocket = (
       const waitForClose = Effect.callback<void, DiscordSocketError>((resume) => {
         const finish = () => resume(Effect.void);
         const removeClose = attached.connection.onClose(finish);
+
         const removeOpen = attached.connection.onOpen(() => {
           try {
             attached.connection.close(1000);
@@ -856,6 +970,7 @@ export const openDiscordSocket = (
             resume(Effect.fail(error("close", "connection", false, cause)));
           }
         });
+
         try {
           attached.connection.close(1000);
         } catch (cause) {
@@ -865,6 +980,7 @@ export const openDiscordSocket = (
             resume(Effect.fail(error("close", "connection", false, cause)));
           }
         }
+
         return Effect.sync(() => {
           removeClose();
           removeOpen();

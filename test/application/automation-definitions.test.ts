@@ -8,30 +8,37 @@ import { Effect, Exit } from "effect";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 
 const paths: Array<string> = [];
+
 const service = makeAutomationDefinitions();
 
 const profile = async () => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-automation-definitions-"));
   paths.push(path);
   await writeFile(join(path, "SOUL.md"), "# Test\n");
+
   return { path, name: "Test" };
 };
 
 const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   const found: Array<string> = [];
+
   const walk = async (directory: string, prefix = "") => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const relative = join(prefix, entry.name);
       found.push(relative);
+
       if (entry.isDirectory()) await walk(join(directory, entry.name), relative);
     }
   };
+
   await walk(root);
+
   return found.sort();
 };
 
 const snapshot = async (root: string): Promise<ReadonlyArray<string>> => {
   const found: Array<string> = [];
+
   const walk = async (directory: string, prefix = "") => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const relative = join(prefix, entry.name);
@@ -42,10 +49,13 @@ const snapshot = async (root: string): Promise<ReadonlyArray<string>> => {
           ? `${relative}\tdirectory\t${status.mtimeMs}`
           : `${relative}\tfile\t${status.size}\t${status.mtimeMs}\t${(await readFile(path)).toString("base64")}`,
       );
+
       if (entry.isDirectory()) await walk(path, relative);
     }
   };
+
   await walk(root);
+
   return found.sort();
 };
 

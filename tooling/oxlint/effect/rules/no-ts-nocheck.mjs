@@ -1,4 +1,5 @@
 const directivePattern = new RegExp(`@ts-${"nocheck"}\\b`);
+
 const directiveName = `@ts-${"nocheck"}`;
 
 export default {

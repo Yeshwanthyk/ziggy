@@ -8,9 +8,11 @@ import {
 
 test("keeps automation application execution inside the scoped Effect worker", async () => {
   const requests: string[] = [];
+
   const handler: AutomationTuiHandler = (request) =>
     Effect.sync(() => {
       requests.push(request.kind);
+
       return {
         kind: "overview" as const,
         definitions: [],
@@ -22,6 +24,7 @@ test("keeps automation application execution inside the scoped Effect worker", a
     Effect.scoped(
       Effect.gen(function* () {
         const dispatch = yield* makeAutomationTuiDispatch(handler);
+
         return yield* Effect.tryPromise(() => dispatch({ kind: "overview" }));
       }),
     ),

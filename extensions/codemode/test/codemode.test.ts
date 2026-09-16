@@ -9,6 +9,7 @@ import { Effect } from "effect";
 import codeMode, { createCodeModeSession, executeCodeMode } from "../index.ts";
 
 const fixturePath = join(import.meta.dirname, "fixtures", "mcp-server.ts");
+
 const roots: string[] = [];
 
 const processIds = async (marker: string): Promise<ReadonlyArray<number>> => {
@@ -16,31 +17,38 @@ const processIds = async (marker: string): Promise<ReadonlyArray<number>> => {
     const contents = await Bun.file(marker)
       .text()
       .catch(() => "");
+
     const ids = contents
       .split("\n")
       .filter((line) => line.startsWith("start:"))
       .map((line) => Number(line.slice("start:".length)))
       .filter(Number.isSafeInteger);
+
     if (ids.length >= 2) return ids;
     await Bun.sleep(10);
   }
+
   return [];
 };
 
 const expectProcessesGone = async (ids: ReadonlyArray<number>): Promise<void> => {
   expect(ids.length).toBeGreaterThanOrEqual(2);
+
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const alive = ids.filter((pid) => {
       try {
         process.kill(pid, 0);
+
         return true;
       } catch {
         return false;
       }
     });
+
     if (alive.length === 0) return;
     await Bun.sleep(10);
   }
+
   for (const pid of ids) expect(() => process.kill(pid, 0)).toThrow();
 };
 
@@ -76,6 +84,7 @@ const profile = async (
       limits: options.limits,
     }),
   );
+
   return root;
 };
 
@@ -88,6 +97,7 @@ describe("codemode extension", () => {
     await writeFile(join(root, "codemode.json"), '{"mcpServers":{}}');
     const installed = join(copyRoot, "codemode");
     await cp(join(import.meta.dirname, ".."), installed, { recursive: true });
+
     const child = Bun.spawn(
       [
         process.execPath,
@@ -98,11 +108,13 @@ describe("codemode extension", () => {
       ],
       { stdout: "pipe", stderr: "pipe" },
     );
+
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
+
     expect({ exitCode, stderr, result: JSON.parse(stdout) }).toEqual({
       exitCode: 0,
       stderr: "",
@@ -119,6 +131,7 @@ describe("codemode extension", () => {
 
   test("registers one collision-resistant Pi tool and composes native MCP calls", async () => {
     const root = await profile();
+
     type CapturedTool = {
       readonly name: string;
       readonly execute: (
@@ -129,8 +142,10 @@ describe("codemode extension", () => {
         context: { readonly cwd: string },
       ) => Promise<{ readonly details: unknown }>;
     };
+
     let registered: CapturedTool | undefined;
     let shutdown: (() => Promise<void> | void) | undefined;
+
     const fakePi = {
       registerTool: (tool: unknown) => {
         registered = tool as unknown as CapturedTool;
@@ -139,10 +154,12 @@ describe("codemode extension", () => {
         if (event === "session_shutdown") shutdown = async () => void (await handler());
       },
     } as unknown as Pick<ExtensionAPI, "on" | "registerTool">;
+
     codeMode(fakePi);
 
     expect(registered?.name).toBe("codemode_execute");
     const tool = registered as CapturedTool;
+
     const response = await tool.execute(
       "call-1",
       {
@@ -157,6 +174,7 @@ describe("codemode extension", () => {
       undefined,
       { cwd: root },
     );
+
     expect(response.details).toMatchObject({
       ok: true,
       value: { match: "fixture.echo", echoed: { value: "hello" } },
@@ -182,13 +200,17 @@ describe("codemode extension", () => {
   test("keeps credentials host-only and exposes only declared MCP tools", async () => {
     const root = await profile();
     const session = createCodeModeSession();
+
     const secret = await Effect.runPromise(
       executeCodeMode(session, root, "return await tools.fixture.secretStatus({});"),
     );
+
     const ambient = await Effect.runPromise(executeCodeMode(session, root, "return process.env;"));
+
     const piTool = await Effect.runPromise(
       executeCodeMode(session, root, "return tools.read({});"),
     );
+
     expect(secret).toMatchObject({ ok: true, value: { structuredContent: { present: true } } });
     expect(ambient).toMatchObject({ ok: false, error: { kind: "UnknownIdentifier" } });
     expect(piTool).toMatchObject({ ok: false, error: { kind: "UnknownTool" } });
@@ -199,12 +221,15 @@ describe("codemode extension", () => {
   test("hides and rejects discovered tools absent from the explicit allowlist", async () => {
     const root = await profile({ allowTools: ["echo"] });
     const session = createCodeModeSession();
+
     const catalog = await Effect.runPromise(
       executeCodeMode(session, root, 'return await tools.$codemode.search({ query: "" });'),
     );
+
     const denied = await Effect.runPromise(
       executeCodeMode(session, root, "return await tools.fixture.secretStatus({});"),
     );
+
     expect(catalog).toMatchObject({
       ok: true,
       value: [{ path: "fixture.echo" }],
@@ -225,6 +250,7 @@ describe("codemode extension", () => {
       },
       { mode: "duplicate", code: "return await tools.$codemode.search({});", kind: "ToolFailure" },
     ];
+
     for (const scenario of scenarios) {
       const root = await profile(scenario.mode === undefined ? {} : { mode: scenario.mode });
       const session = createCodeModeSession();
@@ -239,7 +265,9 @@ describe("codemode extension", () => {
     const root = await profile({
       limits: { timeoutMs: 80, maxSteps: 100, maxToolCalls: 1, maxOutputBytes: 256 },
     });
+
     const session = createCodeModeSession();
+
     const calls = await Effect.runPromise(
       executeCodeMode(
         session,
@@ -247,14 +275,19 @@ describe("codemode extension", () => {
         "await tools.fixture.echo({}); return await tools.fixture.echo({});",
       ),
     );
+
     const steps = await Effect.runPromise(executeCodeMode(session, root, "while (true) {}"));
+
     const timeout = await Effect.runPromise(
       executeCodeMode(session, root, "return await tools.fixture.slow({});"),
     );
+
     const outputRoot = await profile({
       limits: { timeoutMs: 1_000, maxSteps: 5_000, maxToolCalls: 1, maxOutputBytes: 256 },
     });
+
     const outputSession = createCodeModeSession();
+
     const output = await Effect.runPromise(
       executeCodeMode(
         outputSession,
@@ -262,6 +295,7 @@ describe("codemode extension", () => {
         'let result = []; let i = 0; while (i < 100) { console.log(""); result.push("xxxxxxxx"); i = i + 1; } return result;',
       ),
     );
+
     expect(calls).toMatchObject({ ok: false, error: { kind: "ToolCallLimitExceeded" } });
     expect(steps).toMatchObject({ ok: false, error: { kind: "StepLimitExceeded" } });
     expect(timeout).toMatchObject({ ok: false, error: { kind: "TimeoutExceeded" } });
@@ -277,10 +311,12 @@ describe("codemode extension", () => {
     const session = createCodeModeSession();
     const controller = new AbortController();
     const started = performance.now();
+
     const execution = Effect.runPromise(
       executeCodeMode(session, root, "return await tools.fixture.slow({});"),
       { signal: controller.signal },
     );
+
     setTimeout(() => controller.abort(), 50);
     await expect(execution).rejects.toBeDefined();
     expect(performance.now() - started).toBeLessThan(1_000);
@@ -292,9 +328,11 @@ describe("codemode extension", () => {
     const marker = join("/tmp", `codemode-timeout-revoke-${crypto.randomUUID()}`);
     const root = await profile({ marker, mode: "ignore-term", limits: { timeoutMs: 60 } });
     const session = createCodeModeSession();
+
     const result = await Effect.runPromise(
       executeCodeMode(session, root, "return await tools.fixture.slow({});"),
     );
+
     expect(result).toMatchObject({ ok: false, error: { kind: "TimeoutExceeded" } });
     await expectProcessesGone(await processIds(marker));
     await Effect.runPromise(session.close());
@@ -302,15 +340,19 @@ describe("codemode extension", () => {
 
   test("session shutdown awaits cleanup of a TERM-ignoring MCP descendant", async () => {
     const marker = join("/tmp", `codemode-shutdown-revoke-${crypto.randomUUID()}`);
+
     const root = await profile({
       marker,
       mode: "descendant-ignore-term",
       limits: { timeoutMs: 2_000 },
     });
+
     const session = createCodeModeSession();
+
     const result = await Effect.runPromise(
       executeCodeMode(session, root, 'return await tools.$codemode.search({ query: "" });'),
     );
+
     expect(result).toMatchObject({ ok: true });
     const ids = await processIds(marker);
     await Effect.runPromise(session.close());
@@ -320,6 +362,7 @@ describe("codemode extension", () => {
   test("normalizes adversarial AST and helper defects into result envelopes", async () => {
     const root = await profile();
     const session = createCodeModeSession();
+
     const probes = [
       "return ({ constructor: 1 });",
       "return ({ __proto__: 1 });",
@@ -329,10 +372,12 @@ describe("codemode extension", () => {
       'return eval("1");',
       "return globalThis;",
     ];
+
     for (const code of probes) {
       const result = await Effect.runPromise(executeCodeMode(session, root, code));
       expect(result).toMatchObject({ ok: false, error: { kind: expect.any(String) } });
     }
+
     await Effect.runPromise(session.close());
   });
 
@@ -340,7 +385,9 @@ describe("codemode extension", () => {
     const root = await profile({
       limits: { timeoutMs: 2_000, maxToolCalls: 20, maxOutputBytes: 256 },
     });
+
     const session = createCodeModeSession();
+
     const result = await Effect.runPromise(
       executeCodeMode(
         session,
@@ -356,6 +403,7 @@ describe("codemode extension", () => {
         `,
       ),
     );
+
     expect(result).toMatchObject({
       ok: false,
       error: { kind: "ExecutionFailure" },
@@ -369,9 +417,11 @@ describe("codemode extension", () => {
     const root = await mkdtemp(join("/tmp", "ziggy-codemode-invalid-"));
     roots.push(root);
     await writeFile(join(root, "codemode.json"), '{"mcpServers":{"bad.name":{"command":7}}}');
+
     const result = await Effect.runPromise(
       executeCodeMode(createCodeModeSession(), root, "return 1;"),
     );
+
     expect(result).toMatchObject({ ok: false, error: { kind: "CodeModeConfigError" } });
   });
 
@@ -381,9 +431,11 @@ describe("codemode extension", () => {
     const target = join(root, "actual.json");
     await writeFile(target, '{"mcpServers":{}}');
     await symlink(target, join(root, "codemode.json"));
+
     const result = await Effect.runPromise(
       executeCodeMode(createCodeModeSession(), root, "return 1;"),
     );
+
     expect(result).toMatchObject({ ok: false, error: { kind: "CodeModeConfigError" } });
   });
 });

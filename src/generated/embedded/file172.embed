@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 
 const MCP_URL = "https://mcp.exa.ai/mcp";
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 const McpMessage = Type.Object(
@@ -57,12 +58,16 @@ interface SearchOutput {
 const parseArgs = (args: string[]) => {
   let count = 5;
   const words: string[] = [];
+
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
+
     if (argument === "--n") {
       const value = args[index + 1];
+
       if (value !== undefined) {
         const parsed = Number.parseInt(value, 10);
+
         if (Number.isFinite(parsed)) count = parsed;
         index += 1;
       }
@@ -70,6 +75,7 @@ const parseArgs = (args: string[]) => {
       words.push(argument);
     }
   }
+
   return { query: words.join(" ").trim(), count: Math.max(1, count) };
 };
 
@@ -87,12 +93,15 @@ const canned = (query: string, count: number): SearchOutput => ({
 
 const parseJsonResults = (text: string, count: number): SearchResult[] => {
   let value: unknown;
+
   try {
     value = JSON.parse(text);
   } catch {
     return [];
   }
+
   if (!Check(ExaResults, value)) return [];
+
   return value.results.slice(0, count).map((item) => ({
     title: item.title ?? "",
     url: item.url ?? "",
@@ -102,13 +111,16 @@ const parseJsonResults = (text: string, count: number): SearchResult[] => {
 
 const parseDigest = (text: string, count: number): SearchResult[] => {
   const results: SearchResult[] = [];
+
   for (const block of text.split("\n---\n")) {
     let title = "";
     let url = "";
     let inHighlights = false;
     const highlights: string[] = [];
+
     for (const line of block.split("\n")) {
       const value = line.trim();
+
       if (value.startsWith("Title:")) {
         title = value.slice(6).trim();
         inHighlights = false;
@@ -123,9 +135,12 @@ const parseDigest = (text: string, count: number): SearchResult[] => {
         highlights.push(value);
       }
     }
+
     if (url) results.push({ title, url, highlight: clip(highlights.join(" "), 300) });
+
     if (results.length >= count) break;
   }
+
   return results;
 };
 
@@ -147,26 +162,37 @@ const mcpCall = async (endpoint: string, query: string, count: number): Promise<
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
   const body = await response.text();
+
   if (!response.ok) {
     throw new Error(`Exa MCP status ${response.status}: ${clip(body.trim(), 200)}`);
   }
+
   let payload = "";
+
   for (const line of body.split("\n")) {
     const trimmed = line.trim();
+
     if (!trimmed.startsWith("data:")) continue;
     let value: unknown;
+
     try {
       value = JSON.parse(trimmed.slice(5).trim());
     } catch {
       continue;
     }
+
     if (!Check(McpMessage, value)) continue;
+
     if (value.error) throw new Error(value.error.message);
     const text = value.result?.content[0]?.text;
+
     if (text) payload = text;
   }
+
   if (!payload) throw new Error("no content in Exa response");
+
   return payload;
 };
 
@@ -176,10 +202,12 @@ const search = async (query: string, count: number, key: string): Promise<Search
   const text = await mcpCall(endpoint, query, count);
   const results = parseJsonResults(text, count);
   const parsed = results.length > 0 ? results : parseDigest(text, count);
+
   return { query, answer: parsed.length > 0 ? "" : text, results: parsed };
 };
 
 const { query, count } = parseArgs(process.argv.slice(2));
+
 if (!query) {
   process.stdout.write(`${JSON.stringify({ error: "empty query" }, null, 2)}\n`);
   process.exit(2);

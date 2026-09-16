@@ -34,6 +34,7 @@ export const ChatModelOverride = Schema.Struct({
     { expected: "provider and model must be provided together" },
   ),
 );
+
 export type ChatModelOverride = typeof ChatModelOverride.Type;
 
 export class ProfileNotInitialized extends Schema.TaggedErrorClass<ProfileNotInitialized>()(

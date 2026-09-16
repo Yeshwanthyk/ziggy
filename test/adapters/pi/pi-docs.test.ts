@@ -34,6 +34,7 @@ import {
 import { createProfileCoreInlineExtensions } from "ziggy/adapters/pi/profile-core-inline-extensions";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+
 const temporaryPaths: Array<string> = [];
 
 afterEach(async () => {
@@ -50,10 +51,13 @@ const resultText = async (
     undefined,
     Object.create(null),
   );
+
   const content = result.content[0];
+
   if (content?.type !== "text") {
     throw new Error("expected a text tool result");
   }
+
   return content.text;
 };
 
@@ -143,10 +147,12 @@ describe("pinned Pi docs search and read", () => {
     );
 
     const overflowLines = Array.from({ length: PI_DOCS_MAX_RESULTS + 5 }, () => "needle line");
+
     const overflow = searchPinnedPiDocs(
       [{ path: "README.md", content: overflowLines.join("\n") }],
       "needle",
     );
+
     expect(overflow).toBe(
       JSON.stringify({
         action: "search",
@@ -169,9 +175,11 @@ describe("pinned Pi docs search and read", () => {
 
   test("hidden pi_docs tool reads generated embeds", async () => {
     const extension = createPiDocsExtension();
+
     if (!("hidden" in extension)) {
       throw new Error("expected named inline extension");
     }
+
     expect(extension.name).toBe("pi_docs");
     expect(extension.hidden).toBe(true);
 
@@ -188,6 +196,7 @@ describe("pinned Pi docs search and read", () => {
       startLine: 3,
       endLine: 5,
     });
+
     expect(read).toContain("# Extensions");
 
     const unknown = await resultText({ action: "read", path: "docs/not-real.md" });
@@ -210,6 +219,7 @@ describe("pi docs generator freshness", () => {
       logical,
       content: readFileSync(embeddedPath, "utf8"),
     }));
+
     expect(
       createHash("sha256")
         .update(
@@ -227,6 +237,7 @@ describe("pi docs generator freshness", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+
     expect(check.exitCode).toBe(0);
     expect(new TextDecoder().decode(check.stdout)).toContain(PI_DOCS_FINGERPRINT);
   });
@@ -237,6 +248,7 @@ describe("pi_docs factory", () => {
     const profilePath = await mkdtemp(join(tmpdir(), "ziggy-pi-docs-"));
     temporaryPaths.push(profilePath);
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+
     const services = await createAgentSessionServices({
       cwd: profilePath,
       agentDir: profilePath,
@@ -250,15 +262,18 @@ describe("pi_docs factory", () => {
         extensionFactories: [createPiDocsExtension()],
       },
     });
+
     const loaded = services.resourceLoader.getExtensions();
     expect(loaded.errors).toEqual([]);
     expect(loaded.extensions.flatMap((extension) => [...extension.tools.keys()])).toEqual([
       "pi_docs",
     ]);
+
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager: SessionManager.inMemory(),
     });
+
     expect(session.getActiveToolNames()).toContain("pi_docs");
     session.dispose();
   });
@@ -267,12 +282,14 @@ describe("pi_docs factory", () => {
     const profilePath = await mkdtemp(join(tmpdir(), "ziggy-core-docs-"));
     temporaryPaths.push(profilePath);
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+
     const extensions = createProfileCoreInlineExtensions({
       profilePath,
       agents: [],
       memoryDocuments: [],
       ephemeralPromptContext: () => undefined,
     });
+
     const services = await createAgentSessionServices({
       cwd: profilePath,
       agentDir: profilePath,
@@ -286,15 +303,18 @@ describe("pi_docs factory", () => {
         extensionFactories: [...extensions],
       },
     });
+
     const loadedToolNames = services.resourceLoader
       .getExtensions()
       .extensions.flatMap((extension) => [...extension.tools.keys()]);
+
     expect(loadedToolNames).toEqual(["pi_docs", "ziggy_help"]);
 
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager: SessionManager.inMemory(),
     });
+
     expect(session.getActiveToolNames()).toContain("pi_docs");
     expect(session.getActiveToolNames()).toContain("ziggy_help");
     session.dispose();

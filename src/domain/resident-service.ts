@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { Schema } from "effect";
 
 export type ResidentServiceManager = "launchd" | "systemd";
+
 export type ResidentLaunchVector = readonly [string, ...ReadonlyArray<string>];
 
 export interface ResidentServiceIdentity {
@@ -67,6 +68,7 @@ const readableProfileName = (profilePath: string): string => {
     .replace(/^-+|-+$/gu, "")
     .slice(0, 32)
     .replace(/-+$/u, "");
+
   return readable.length === 0 ? "profile" : readable;
 };
 
@@ -79,6 +81,7 @@ export const deriveResidentServiceIdentity = (
   const readableName = readableProfileName(resolvedProfilePath);
   const pathDigest = residentServiceFingerprint(resolvedProfilePath).slice(0, 12);
   const key = `${readableName}-${pathDigest}`;
+
   return {
     key,
     readableName,

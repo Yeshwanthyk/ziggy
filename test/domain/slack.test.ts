@@ -31,6 +31,7 @@ describe("Slack gateway configuration", () => {
 
   test("accepts explicit busy message modes and leaves omission to the steer default", () => {
     const base = { botToken: "bot", appToken: "app", ownerUserId: "U123" };
+
     for (const busyMessageMode of ["queue", "steer"] as const) {
       const config = { ...base, busyMessageMode };
       expect(Effect.runSync(decodeSlackGatewayConfigJson(JSON.stringify(config)))).toEqual(config);
@@ -39,6 +40,7 @@ describe("Slack gateway configuration", () => {
 
   test("rejects global policy, unknown modes, invalid channel ids, and unknown fields", () => {
     const base = { botToken: "xoxb-test", appToken: "xapp-test", ownerUserId: "U123" };
+
     const invalid = [
       { ...base, busyMessageMode: "interrupt" },
       { ...base, channelMode: "mention" },

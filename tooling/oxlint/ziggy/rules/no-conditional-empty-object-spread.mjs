@@ -1,21 +1,27 @@
 function unwrapParentheses(node) {
   let current = node;
+
   while (current.type === "ParenthesizedExpression") {
     current = current.expression;
   }
+
   return current;
 }
+
 function isEmptyObjectExpression(node) {
   return node.type === "ObjectExpression" && node.properties.length === 0;
 }
+
 function isConditionalEmptyObjectSpread(node) {
   const conditional = unwrapParentheses(node);
+
   return (
     conditional.type === "ConditionalExpression" &&
     (isEmptyObjectExpression(conditional.consequent) ||
       isEmptyObjectExpression(conditional.alternate))
   );
 }
+
 export default {
   meta: {
     type: "suggestion",
@@ -32,6 +38,7 @@ export default {
     return {
       SpreadElement(node) {
         if (node.parent.type !== "ObjectExpression") return;
+
         if (isConditionalEmptyObjectSpread(node.argument)) {
           context.report({ node, messageId: "avoid" });
         }

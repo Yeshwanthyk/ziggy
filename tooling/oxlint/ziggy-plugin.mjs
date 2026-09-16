@@ -13,6 +13,7 @@ import noUnknownTypeAliases from "./ziggy/rules/no-unknown-type-aliases.mjs";
 import noUnsafeDictionaryType from "./ziggy/rules/no-unsafe-dictionary-type.mjs";
 import noUnsafeTypescriptSyntax from "./ziggy/rules/no-unsafe-typescript-syntax.mjs";
 import noWidenThenAssert from "./ziggy/rules/no-widen-then-assert.mjs";
+import requireReadableSpacing from "./ziggy/rules/require-readable-spacing.mjs";
 import requireSafetyCommentForTypeAssertion from "./ziggy/rules/require-safety-comment-for-type-assertion.mjs";
 
 export default {
@@ -33,6 +34,7 @@ export default {
     "no-unsafe-dictionary-type": noUnsafeDictionaryType,
     "no-unsafe-typescript-syntax": noUnsafeTypescriptSyntax,
     "no-widen-then-assert": noWidenThenAssert,
+    "require-readable-spacing": requireReadableSpacing,
     "require-safety-comment-for-type-assertion": requireSafetyCommentForTypeAssertion,
   },
 };

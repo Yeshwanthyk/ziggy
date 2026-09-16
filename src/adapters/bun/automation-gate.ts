@@ -30,10 +30,12 @@ export const killGateProcessGroup = (
 ): void => {
   try {
     groupKill();
+
     return;
   } catch (cause) {
     if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) report(cause);
   }
+
   killProcess(child, report);
 };
 
@@ -47,6 +49,7 @@ const liveHost: AutomationGateHost = {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     return {
       exited: child.exited,
       kill: () => killGateProcessGroup(() => process.kill(-child.pid, "SIGKILL"), child),
@@ -71,14 +74,17 @@ export const makeAutomationGate = (
             cause,
           }),
       });
+
       const exit = yield* Effect.tryPromise({
         try: (signal) => {
           const kill = () => killProcess(child);
           signal.addEventListener("abort", kill, { once: true });
+
           return child.exited.finally(() => signal.removeEventListener("abort", kill));
         },
         catch: (cause) => {
           killProcess(child);
+
           return new AutomationGateFailed({
             automationId,
             command,
@@ -88,6 +94,7 @@ export const makeAutomationGate = (
           });
         },
       }).pipe(Effect.timeoutOption(timeout));
+
       if (Option.isNone(exit)) {
         return yield* new AutomationGateFailed({
           automationId,
@@ -97,6 +104,7 @@ export const makeAutomationGate = (
           cause: `gate timed out after ${timeout}`,
         });
       }
+
       return exit.value === 0 ? { kind: "passed" } : { kind: "declined", exitCode: exit.value };
     }),
 });

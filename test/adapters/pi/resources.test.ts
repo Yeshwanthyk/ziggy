@@ -26,8 +26,10 @@ const temporaryPaths: Array<string> = [];
 
 test("packaged operations references match their public source", () => {
   const repositoryRoot = resolve(import.meta.dir, "../../..");
+
   for (const name of ["automations", "discord", "memory", "serve", "slack", "telegram"]) {
     const source = readFileSync(join(repositoryRoot, "docs", "operations", `${name}.md`), "utf8");
+
     const packaged = readFileSync(
       join(
         repositoryRoot,
@@ -40,6 +42,7 @@ test("packaged operations references match their public source", () => {
       ),
       "utf8",
     );
+
     expect(packaged).toBe(source);
   }
 });
@@ -91,13 +94,16 @@ const noDownload: ExtensionArchiveClientApi = {
       }),
     ),
 };
+
 const noPreflight: ProfileExtensionPreflightApi = {
   preflight: () =>
     Effect.succeed({ extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 }),
 };
+
 const noLock: ProfileExtensionMutationLockApi = {
   withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
 };
+
 const profileExtensions = makeProfileExtensions(noDownload, noPreflight, noLock);
 
 const resolveResources = (profilePath: string, repositoryRoot = profilePath) =>
@@ -145,6 +151,7 @@ test("a selected approved extension fails closed until it exists as a Profile fo
   const result = await Effect.runPromise(
     discoverPiResources(profilePath, profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(result, {
       onFailure: (error) =>
@@ -182,6 +189,7 @@ test("runtime rejects an unapproved ID but accepts the same Profile-local ID", a
   const rejected = await Effect.runPromise(
     discoverPiResources(profilePath, profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(rejected, {
       onFailure: (error) =>
@@ -240,6 +248,7 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
   await prepareRuntime(profilePath, "/does-not-exist");
 
   const resources = await resolveResources(profilePath);
+
   const services = await createAgentSessionServices({
     cwd: profilePath,
     agentDir: profilePath,
@@ -255,8 +264,10 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
       extensionFactories: [...resources.extensionFactories],
     },
   });
+
   const loadedSkills = services.resourceLoader.getSkills();
   const byName = new Map(loadedSkills.skills.map((skill) => [skill.name, skill]));
+
   const extensionTools = services.resourceLoader
     .getExtensions()
     .extensions.flatMap((extension) => [...extension.tools.keys()]);
@@ -327,8 +338,10 @@ test("loads an upstream package name independently from its computer-use shelf I
       extensionFactories: [...resources.extensionFactories],
     },
   });
+
   const loadedExtensions = services.resourceLoader.getExtensions();
   const loadedSkills = services.resourceLoader.getSkills();
+
   const extensionTools = loadedExtensions.extensions.flatMap((extension) => [
     ...extension.tools.keys(),
   ]);
@@ -352,6 +365,7 @@ test("rejects a blank package name", async () => {
   const result = await Effect.runPromise(
     discoverPiResources(profilePath, profilePath).pipe(Effect.result),
   );
+
   expect(
     Result.match(result, {
       onFailure: (error) =>
@@ -379,9 +393,11 @@ test("selection decoding fails closed for malformed, duplicate, reserved, and un
     '{"extensions":["unknown"]}',
   ]) {
     await writeFile(join(profilePath, "extensions.json"), content);
+
     const result = await Effect.runPromise(
       discoverPiResources(profilePath, profilePath).pipe(Effect.result),
     );
+
     expect(
       Result.match(result, {
         onFailure: Predicate.isTagged("ProfileExtensionInvalid"),
@@ -451,6 +467,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   temporaryPaths.push(profilePath);
   const extensionsRoot = join(repositoryRoot, "extensions");
   expect(existsSync(join(repositoryRoot, "skills"))).toBe(false);
+
   const expectedPackages = [
     "agent-browser",
     "apple-notes",
@@ -476,6 +493,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "web-search",
     "ziggy-operations",
   ];
+
   const expectedTools = [
     "agent_browser",
     "apple_reminders_complete",
@@ -529,6 +547,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "self_improvement_status",
     "web_search",
   ].sort((left, right) => left.localeCompare(right));
+
   const executablePackages = [
     "agent-browser",
     "apple-reminders",
@@ -542,6 +561,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "self-improvement",
     "web-search",
   ];
+
   const packageNames = (await readdir(extensionsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -575,12 +595,14 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
         extensionFactories,
       },
     });
+
   const assertCatalog = (
     services: Awaited<ReturnType<typeof loadCatalog>>,
     skillCount: number,
   ): void => {
     const loadedSkills = services.resourceLoader.getSkills();
     const loadedExtensions = services.resourceLoader.getExtensions();
+
     const toolNames = loadedExtensions.extensions
       .flatMap((extension) => [...extension.tools.keys()])
       .sort((left, right) => left.localeCompare(right));
@@ -600,16 +622,20 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   expect(
     productionResources.skillPaths.every((skillPath) => skillPath.startsWith(profilePath)),
   ).toBe(true);
+
   const productionServices = await loadCatalog(
     [...productionResources.extensionPaths],
     [...productionResources.skillPaths],
     [...productionResources.extensionFactories],
   );
+
   assertCatalog(productionServices, 21);
+
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
     sessionManager: SessionManager.inMemory(),
   });
+
   expect(session.getActiveToolNames()).toEqual(
     expect.arrayContaining(["read", "bash", "write", ...expectedTools]),
   );

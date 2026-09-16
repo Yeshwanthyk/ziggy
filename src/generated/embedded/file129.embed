@@ -51,7 +51,9 @@ interface RootQuery {
 }
 
 const PRIMARY_MODIFIERS = new Set(["CMD", "COMMAND", "CTRL", "CONTROL", "META"]);
+
 const SECONDARY_MODIFIERS = new Set(["SHIFT", "ALT", "OPTION"]);
+
 const CONTROL_KEYS = new Set([
   "ENTER",
   "RETURN",
@@ -80,19 +82,28 @@ export const normalizeSafeControlKeypress = (
   keys: readonly string[],
 ): readonly string[] | undefined => {
   const normalized = keys.map((key) => key.trim().toUpperCase());
+
   if (normalized.some((key) => key.length === 0)) return undefined;
+
   const modifiers = normalized.filter(
     (key) => PRIMARY_MODIFIERS.has(key) || SECONDARY_MODIFIERS.has(key),
   );
+
   const baseKeys = normalized.filter(
     (key) => !PRIMARY_MODIFIERS.has(key) && !SECONDARY_MODIFIERS.has(key),
   );
+
   if (baseKeys.length !== 1 || modifiers.length !== normalized.length - 1) return undefined;
   const base = baseKeys[0];
+
   if (base === undefined) return undefined;
+
   if (CONTROL_KEYS.has(base)) return normalized.length <= 4 ? normalized : undefined;
+
   if (!/^[A-Z0-9]$/.test(base)) return undefined;
+
   if (!modifiers.some((key) => PRIMARY_MODIFIERS.has(key))) return undefined;
+
   return normalized.length >= 2 && normalized.length <= 4 ? normalized : undefined;
 };
 
@@ -112,9 +123,13 @@ const segmentTarget = (target: {
   readonly capability?: string;
 }): CompatibleActionStep["target"] => {
   const projected: MutableSemanticTarget = {};
+
   if (target.text !== undefined) projected.text = target.text;
+
   if (target.role !== undefined) projected.role = target.role;
+
   if (target.capability !== undefined) projected.capability = target.capability;
+
   return projected;
 };
 
@@ -138,13 +153,19 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
 
   for (const [index, step] of workflow.steps.entries()) {
     const sourceStep = index + 1;
+
     if (step.kind === "find_roots") {
       flushSegment();
       const nextRootQuery: RootQuery = {};
+
       if (step.text !== undefined) nextRootQuery.text = step.text;
+
       if (step.app !== undefined) nextRootQuery.app = step.app;
+
       if (step.bundleId !== undefined) nextRootQuery.bundleId = step.bundleId;
+
       if (step.rootKind !== undefined) nextRootQuery.kind = step.rootKind;
+
       if (Object.keys(nextRootQuery).length === 0) {
         rootQuery = undefined;
         manual.push({
@@ -154,9 +175,12 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
       } else {
         rootQuery = nextRootQuery;
       }
+
       continue;
     }
+
     if (step.kind === "observe") continue;
+
     if (step.kind === "wait") {
       if (rootQuery === undefined) {
         manual.push({
@@ -165,10 +189,12 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         });
         continue;
       }
+
       compatible.push({ assert: step.condition });
       sourceSteps.push(sourceStep);
       continue;
     }
+
     if (step.kind === "click" && step.checkpoint !== undefined) {
       if (rootQuery === undefined) {
         manual.push({
@@ -177,7 +203,9 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         });
         continue;
       }
+
       const target = segmentTarget(step.target);
+
       if (Object.keys(target).length === 0) {
         manual.push({
           sourceStep,
@@ -186,8 +214,11 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         });
         continue;
       }
+
       const action: CompatibleSegmentAction = { action: "click" };
+
       if (step.button !== undefined) action.button = step.button;
+
       if (step.clickCount !== undefined) action.clickCount = step.clickCount;
       compatible.push({
         target,
@@ -197,6 +228,7 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
       sourceSteps.push(sourceStep);
       continue;
     }
+
     if (
       (step.kind === "keypress" || step.kind === "scroll") &&
       step.target !== undefined &&
@@ -209,7 +241,9 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         });
         continue;
       }
+
       const target = segmentTarget(step.target);
+
       if (Object.keys(target).length === 0) {
         manual.push({
           sourceStep,
@@ -218,9 +252,12 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         });
         continue;
       }
+
       let action: CompatibleSegmentAction;
+
       if (step.kind === "keypress") {
         const keys = normalizeSafeControlKeypress(step.keys);
+
         if (keys === undefined) {
           manual.push({
             sourceStep,
@@ -228,12 +265,16 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
           });
           continue;
         }
+
         action = { action: "keypress", keys };
       } else {
         action = { action: "scroll" };
+
         if (step.scrollX !== undefined) action.scrollX = step.scrollX;
+
         if (step.scrollY !== undefined) action.scrollY = step.scrollY;
       }
+
       compatible.push({
         target,
         actions: [action],
@@ -247,6 +288,7 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
       step.kind === "type"
         ? "Text and secret values are never accepted by run_ui_segment; the user must enter the value directly."
         : "This step lacks a semantic target with a mandatory postcondition or is not in the segment allowlist.";
+
     manual.push({ sourceStep, reason });
   }
 

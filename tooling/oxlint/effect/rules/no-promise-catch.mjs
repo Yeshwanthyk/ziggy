@@ -5,7 +5,9 @@ const message =
 
 const isCatchMember = (node) => {
   const expression = unwrapExpression(node);
+
   if (isIdentifier(unwrapExpression(expression?.object), "Effect")) return false;
+
   return (
     expression?.type === "MemberExpression" && getPropertyName(expression.property) === "catch"
   );

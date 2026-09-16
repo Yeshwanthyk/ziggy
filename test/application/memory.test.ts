@@ -17,6 +17,7 @@ import { decodeCliCommand } from "ziggy/faces/cli";
 
 test("memory inventory excludes README, counts Unicode code points, and distinguishes empty", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-memory-application-"));
+
   try {
     await mkdir(join(profilePath, "memory", "users"), { recursive: true });
     await mkdir(join(profilePath, "memory", "groups"), { recursive: true });
@@ -29,6 +30,7 @@ test("memory inventory excludes README, counts Unicode code points, and distingu
     const listed = await Effect.runPromise(
       makeMemory(memoryFiles).list({ path: profilePath, name: "Profile" }),
     );
+
     expect(listed.map((item) => item.document.relativePath)).toEqual([
       "MEMORY.md",
       "memory/groups/team.md",
@@ -47,6 +49,7 @@ test("memory inventory excludes README, counts Unicode code points, and distingu
         parseMemoryScopeReference("user:bob"),
       ),
     );
+
     expect(missing.state).toBe("missing");
     expect(missing.entries).toEqual([]);
     expect(await readFile(join(profilePath, "memory", "README.md"), "utf8")).toContain(
@@ -78,6 +81,7 @@ test("memory CLI decodes scope syntax once at the boundary", async () => {
 test("memory inventory rejects symlinked documents and wrong-kind roots", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-memory-unsafe-"));
   const externalPath = await mkdtemp(join(tmpdir(), "ziggy-memory-external-"));
+
   try {
     await symlink(externalPath, join(profilePath, "memory"));
     await expect(

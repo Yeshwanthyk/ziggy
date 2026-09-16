@@ -18,6 +18,7 @@ import {
 } from "ziggy/adapters/bun/discord-ingress-sqlite";
 
 const profile = () => mkdtemp(join(tmpdir(), "ziggy-discord-ingress-"));
+
 const payload = (messageId: string): DiscordIngressPayload => ({
   messageId,
   sourceChannelId: "source-1",
@@ -28,7 +29,9 @@ const payload = (messageId: string): DiscordIngressPayload => ({
   chatKey: "group-dcsource-1-thread-thread-1",
   context: { kind: "group", groupId: "dcsource-1" },
 });
+
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+
 const SCHEMA_V1_FIXTURE = `
 CREATE TABLE discord_ingress (
   message_id TEXT PRIMARY KEY,
@@ -74,6 +77,7 @@ describe("Discord durable ingress SQLite boundary", () => {
 
   test("fences running and terminal transitions to the claiming resident owner", async () => {
     const path = await profile();
+
     const item: DiscordIngressPayload = {
       ...payload("message-1"),
       text: "",
@@ -87,14 +91,17 @@ describe("Discord durable ingress SQLite boundary", () => {
         },
       ],
     };
+
     await run(initializeDiscordIngressDatabase(path));
     await run(admitDiscordIngress(path, item, 10));
 
     expect(await run(startDiscordIngress(path, item, "owner-a", 20))).toBe(true);
     expect(await run(startDiscordIngress(path, item, "owner-b", 21))).toBe(false);
+
     const stale = await run(
       finishDiscordIngress(path, item, "owner-b", "completed", 30).pipe(Effect.result),
     );
+
     expect(Result.isFailure(stale) && stale.failure.operation).toBe("finish owned row");
     await run(finishDiscordIngress(path, item, "owner-a", "completed", 31));
 
@@ -121,9 +128,11 @@ describe("Discord durable ingress SQLite boundary", () => {
     const current = payload("message-2");
     const terminal = payload("message-3");
     await run(initializeDiscordIngressDatabase(path));
+
     for (const [index, item] of [foreign, current, terminal].entries()) {
       await run(admitDiscordIngress(path, item, index));
     }
+
     await run(startDiscordIngress(path, foreign, "old-owner", 10));
     await run(startDiscordIngress(path, current, "new-owner", 11));
     await run(startDiscordIngress(path, terminal, "old-owner", 12));
@@ -201,11 +210,13 @@ describe("Discord durable ingress SQLite boundary", () => {
     await run(initializeDiscordIngressDatabase(path));
     const databasePath = discordIngressDatabasePath(path);
     const db = new Database(databasePath);
+
     const insert = db.query(
       `INSERT INTO discord_ingress
        (message_id,state,owner_id,source_channel_id,channel_id,guild_id,author_id,chat_key,context_kind,context_id,text,attachments_json,received_at_ms,started_at_ms,finished_at_ms)
        VALUES (?,'completed',NULL,'source-1','thread-1','guild-1','owner-1','chat-1','group','group-1','','{"attachments":[],"omittedAttachmentCount":0}',?,?,?)`,
     );
+
     db.transaction(() => {
       for (let index = 0; index < 1_001; index += 1) {
         insert.run(`terminal-${index}`, index, index, index);

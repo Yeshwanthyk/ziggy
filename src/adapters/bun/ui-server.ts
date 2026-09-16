@@ -12,11 +12,15 @@ import {
 import { fileSystemCauseDetails } from "../fs/cause";
 
 export const UI_SERVER_MAX_FRAME_BYTES = UI_PROTOCOL_MAX_FRAME_BYTES;
+
 export const UI_SERVER_BACKPRESSURE_BYTES = 256 * 1024;
+
 export const UI_SERVER_MAX_IN_FLIGHT = 16;
+
 export const UI_SERVER_COMMAND_CAPACITY = 256;
 
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
+
 const Token = Schema.String.check(
   Schema.makeFilter((value) => TOKEN_PATTERN.test(value), {
     expected: "a 32-byte lower-case hexadecimal token",
@@ -28,6 +32,7 @@ const Port = Schema.Int.check(
     expected: "a TCP port",
   }),
 );
+
 const decodeOutgoingId = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ id: UiRequestId })),
   { onExcessProperty: "ignore" },
@@ -38,15 +43,19 @@ export const UiServerProjection = Schema.Struct({
   port: Port,
   token: Token,
 });
+
 export type UiServerProjection = typeof UiServerProjection.Type;
 
 const decodeProjectionJson = Schema.decodeUnknownEffect(Schema.fromJsonString(UiServerProjection), {
   onExcessProperty: "error",
 });
+
 const decodeRequest = Schema.decodeUnknownOption(UiRequestEnvelope, {
   onExcessProperty: "error",
 });
+
 const decodeRecoverableRequestId = Schema.decodeUnknownOption(Schema.Struct({ id: UiRequestId }));
+
 const decodeTextFrame = Schema.decodeUnknownOption(Schema.String);
 
 export class UiServerError extends Schema.TaggedErrorClass<UiServerError>()("UiServerError", {
@@ -142,12 +151,14 @@ export const readUiServerProjection = (
 ): Effect.Effect<UiServerProjection, UiServerError> => {
   const path = uiServerProjectionPath(profilePath);
   const runtimePath = dirname(path);
+
   return Effect.gen(function* () {
     const runtime = yield* Effect.tryPromise({
       try: () => lstat(runtimePath),
       catch: (cause) =>
         serverError("read", "could not inspect UI runtime directory", cause, runtimePath),
     });
+
     if (!runtime.isDirectory() || runtime.isSymbolicLink()) {
       return yield* serverError(
         "read",
@@ -156,10 +167,12 @@ export const readUiServerProjection = (
         runtimePath,
       );
     }
+
     const status = yield* Effect.tryPromise({
       try: () => lstat(path),
       catch: (cause) => serverError("read", "could not inspect UI server projection", cause, path),
     });
+
     if (!status.isFile() || status.isSymbolicLink()) {
       return yield* serverError(
         "read",
@@ -168,11 +181,13 @@ export const readUiServerProjection = (
         path,
       );
     }
+
     const source = yield* readPhysicalFile(path).pipe(
       Effect.mapError((cause) =>
         serverError("read", "could not read UI server projection", cause, path),
       ),
     );
+
     return yield* decodeProjectionJson(source).pipe(
       Effect.mapError((cause) =>
         serverError("read", "UI server projection is invalid", cause, path),
@@ -188,20 +203,25 @@ const publishProjection = (
   const destination = uiServerProjectionPath(profilePath);
   const runtimePath = dirname(destination);
   const temporary = join(runtimePath, `.ui-server-${randomUUID()}.tmp`);
+
   return Effect.tryPromise({
     try: async () => {
       await mkdir(runtimePath, { recursive: true, mode: 0o700 });
       const runtime = await lstat(runtimePath);
+
       if (!runtime.isDirectory() || runtime.isSymbolicLink()) {
         throw new Error("unsafe UI runtime path");
       }
+
       const candidate = await open(temporary, "wx", 0o600);
+
       try {
         await candidate.writeFile(`${JSON.stringify(projection)}\n`, "utf8");
         await candidate.sync();
       } finally {
         await candidate.close();
       }
+
       await rename(temporary, destination);
     },
     catch: (cause) =>
@@ -218,20 +238,26 @@ const publishProjection = (
 const removeMatchingProjection = (profilePath: string, token: string): Effect.Effect<void> => {
   const path = uiServerProjectionPath(profilePath);
   const runtimePath = dirname(path);
+
   return Effect.gen(function* () {
     const runtime = yield* Effect.tryPromise({
       try: () => lstat(runtimePath),
       catch: (cause) => cause,
     });
+
     if (!runtime.isDirectory() || runtime.isSymbolicLink()) {
       return yield* Effect.fail(new Error("unsafe UI runtime directory during cleanup"));
     }
+
     const status = yield* Effect.tryPromise({ try: () => lstat(path), catch: (cause) => cause });
+
     if (!status.isFile() || status.isSymbolicLink()) {
       return yield* Effect.fail(new Error("unsafe UI server projection during cleanup"));
     }
+
     const source = yield* readPhysicalFile(path);
     const projection = yield* decodeProjectionJson(source);
+
     if (constantTokenEqual(projection.token, token)) {
       yield* Effect.tryPromise({ try: () => unlink(path), catch: (cause) => cause });
     }
@@ -248,6 +274,7 @@ const constantTokenEqual = (candidate: string, expected: string): boolean => {
   if (!TOKEN_PATTERN.test(candidate) || !TOKEN_PATTERN.test(expected)) return false;
   const candidateBytes = Buffer.from(candidate, "hex");
   const expectedBytes = Buffer.from(expected, "hex");
+
   return (
     candidateBytes.length === expectedBytes.length && timingSafeEqual(candidateBytes, expectedBytes)
   );
@@ -256,6 +283,7 @@ const constantTokenEqual = (candidate: string, expected: string): boolean => {
 const bearerToken = (authorization: string | null): string | undefined => {
   if (authorization === null) return undefined;
   const match = /^Bearer ([0-9a-f]{64})$/iu.exec(authorization);
+
   return match?.[1]?.toLowerCase();
 };
 
@@ -265,11 +293,16 @@ const authenticated = (request: Request, token: string): boolean => {
   const header = bearerToken(authorization);
   const queryValues = url.searchParams.getAll("token");
   const query = queryValues.length === 1 ? queryValues[0] : undefined;
+
   if (authorization !== null && header === undefined) return false;
+
   if (queryValues.length > 0 && (query === undefined || !TOKEN_PATTERN.test(query))) return false;
+
   if (header === undefined && query === undefined) return false;
+
   if (header !== undefined && query !== undefined && !constantTokenEqual(header, query))
     return false;
+
   return constantTokenEqual(header ?? query ?? "", token);
 };
 
@@ -278,15 +311,20 @@ const failureFrame = (id: string, code: "bad_params" | "internal", message: stri
 
 const trySend = (state: SocketState, text: string): boolean => {
   const socket = state.socket;
+
   if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false;
+
   try {
     if (Buffer.byteLength(text, "utf8") > UI_SERVER_MAX_FRAME_BYTES) {
       const frame = decodeOutgoingId(text);
+
       if (Option.isNone(frame)) return false;
+
       return (
         socket.send(failureFrame(frame.value.id, "internal", "response exceeded frame limit")) !== 0
       );
     }
+
     return socket.send(text) !== 0;
   } catch {
     return false;
@@ -295,6 +333,7 @@ const trySend = (state: SocketState, text: string): boolean => {
 
 const closeSocket = (state: SocketState, code: number, reason: string): void => {
   state.accepting = false;
+
   try {
     state.socket?.close(code, reason);
   } catch {
@@ -323,9 +362,11 @@ export const openUiServer = (
   Effect.gen(function* () {
     const commandCapacity = options.commandCapacity ?? UI_SERVER_COMMAND_CAPACITY;
     const maxInFlight = options.maxInFlightPerSocket ?? UI_SERVER_MAX_IN_FLIGHT;
+
     if (!Number.isSafeInteger(commandCapacity) || commandCapacity < 1) {
       return yield* serverError("start", "UI server command capacity must be a positive integer");
     }
+
     if (!Number.isSafeInteger(maxInFlight) || maxInFlight < 1) {
       return yield* serverError("start", "UI server in-flight limit must be a positive integer");
     }
@@ -365,11 +406,14 @@ export const openUiServer = (
     const handleCommand = (command: Command): Effect.Effect<void> => {
       if (command._tag === "Close") return cleanupConnection(command.state);
       const { state, request, key } = command;
+
       if (!state.accepting || state.cleaned) {
         return Effect.sync(() => releaseRequest(state, request.id, key));
       }
+
       const connection = state.connection ?? makeConnection(state);
       state.connection = connection;
+
       const requestWork = handlers.onRequest(connection, request).pipe(
         Effect.catchCause(() =>
           Effect.sync(() =>
@@ -378,6 +422,7 @@ export const openUiServer = (
         ),
         Effect.ensuring(Effect.sync(() => releaseRequest(state, request.id, key))),
       );
+
       return FiberMap.run(requestFibers, key, requestWork, { onlyIfMissing: true });
     };
 
@@ -402,10 +447,13 @@ export const openUiServer = (
           port: 0,
           fetch: (request, current) => {
             const url = new URL(request.url);
+
             if (url.pathname !== "/ws") return new Response("Not Found", { status: 404 });
+
             if (!authenticated(request, token)) {
               return new Response("Unauthorized", { status: 401 });
             }
+
             const state: SocketState = {
               id: randomUUID(),
               activeIds: new Map(),
@@ -417,7 +465,9 @@ export const openUiServer = (
               accepting: true,
               cleaned: false,
             };
+
             if (current.upgrade(request, { data: state })) return;
+
             return new Response("WebSocket upgrade required", { status: 400 });
           },
           websocket: {
@@ -432,51 +482,71 @@ export const openUiServer = (
             },
             message: (socket, message) => {
               const state = socket.data;
+
               if (!state.accepting || state.cleaned) return;
               const textFrame = decodeTextFrame(message);
+
               if (Option.isNone(textFrame)) {
                 closeSocket(state, 1003, "text frames required");
+
                 return;
               }
+
               const text = textFrame.value;
+
               if (Buffer.byteLength(text, "utf8") > UI_SERVER_MAX_FRAME_BYTES) {
                 closeSocket(state, 1009, "frame too large");
+
                 return;
               }
+
               let parsed: unknown;
+
               try {
                 parsed = JSON.parse(text);
               } catch {
                 console.warn("[ui] dropped malformed JSON request");
+
                 return;
               }
+
               const decoded = decodeRequest(parsed);
+
               if (Option.isNone(decoded)) {
                 const recoverable = decodeRecoverableRequestId(parsed);
+
                 if (Option.isSome(recoverable))
                   trySend(
                     state,
                     failureFrame(recoverable.value.id, "bad_params", "invalid request"),
                   );
                 else console.warn("[ui] dropped invalid request without a recoverable id");
+
                 return;
               }
+
               const request = decoded.value;
+
               if (state.activeIds.has(request.id)) {
                 trySend(
                   state,
                   failureFrame(request.id, "bad_params", "duplicate active request id"),
                 );
+
                 return;
               }
+
               if (state.inFlight >= maxInFlight) {
                 rejectOverflow(state);
+
                 return;
               }
+
               const key = `${state.id}:${state.sequence++}`;
               state.activeIds.set(request.id, key);
               state.requestKeys.add(key);
               state.inFlight += 1;
+
               if (!Queue.offerUnsafe(commands, { _tag: "Request", state, request, key })) {
                 releaseRequest(state, request.id, key);
                 rejectOverflow(state);
@@ -493,20 +563,25 @@ export const openUiServer = (
     });
 
     const port = server.port;
+
     if (port === undefined) {
       yield* Effect.promise(() => server.stop(true));
+
       return yield* serverError("start", "UI server did not bind a TCP port");
     }
 
     const projectionPath = uiServerProjectionPath(profilePath);
     let shutdownStarted = false;
     let projectionPublished = false;
+
     const shutdown = Effect.suspend(() => {
       if (shutdownStarted) return Effect.void;
       shutdownStarted = true;
       stopped = true;
       const current = [...connections.values()];
+
       for (const state of current) closeSocket(state, 1001, "server stopping");
+
       return Effect.forEach(current, cleanupConnection, {
         concurrency: "unbounded",
         discard: true,

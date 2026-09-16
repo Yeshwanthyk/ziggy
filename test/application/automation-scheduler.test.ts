@@ -28,20 +28,26 @@ import {
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
 
 const paths: Array<string> = [];
+
 const start = Date.parse("2026-01-01T00:00:00.000Z");
+
 const eventLoopTurn = Effect.promise<void>(() => new Promise((resolve) => setImmediate(resolve)));
+
 const awaitHeartbeat = (target: ProfileTarget, expected: number) =>
   Effect.gen(function* () {
     for (;;) {
       const heartbeat = (yield* readAutomationStatus(target.path, expected)).heartbeatAtMs;
+
       if (heartbeat === expected) return heartbeat;
       yield* eventLoopTurn;
     }
   });
+
 const awaitDispatches = (events: ReadonlyArray<string>, count: number) =>
   Effect.gen(function* () {
     while (events.length < count) yield* eventLoopTurn;
   });
+
 const runScheduler = (
   scheduler: ReturnType<typeof makeAutomationScheduler>,
   target: ProfileTarget,
@@ -49,6 +55,7 @@ const runScheduler = (
   Effect.scoped(
     Effect.gen(function* () {
       const owner = yield* acquireGatewayOwner(target);
+
       return yield* scheduler.run(target, owner);
     }),
   ).pipe(
@@ -62,6 +69,7 @@ const runScheduler = (
           }),
     ),
   );
+
 const definition = (cron: string) =>
   [
     "---",
@@ -74,6 +82,7 @@ const definition = (cron: string) =>
     "Run.",
     "",
   ].join("\n");
+
 const profile = async (
   definitions: ReadonlyArray<readonly [string, string]>,
 ): Promise<ProfileTarget> => {
@@ -81,8 +90,10 @@ const profile = async (
   paths.push(path);
   await mkdir(join(path, "automations"));
   await writeFile(join(path, "SOUL.md"), "# Test\n");
+
   for (const [id, source] of definitions)
     await writeFile(join(path, "automations", `${id}.md`), source);
+
   return { path, name: "Test" };
 };
 
@@ -94,14 +105,17 @@ describe("automation scheduler engine", () => {
   test("paused filenames clear the next occurrence on the next scan and resume from a fresh future cursor", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
     const dispatched: Array<string> = [];
+
     const scheduler = makeAutomationScheduler({
       run: (_target, id) =>
         Effect.sync(() => dispatched.push(id)).pipe(
           Effect.as({ kind: "executed", delivery: { kind: "resolved", targets: [] } } as const),
         ),
     });
+
     const active = join(target.path, "automations", "daily.md");
     const paused = join(target.path, "automations", "daily.paused.md");
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -127,6 +141,7 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(fiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
@@ -134,12 +149,14 @@ describe("automation scheduler engine", () => {
     const target = await profile([["daily", definition("* * * * *")]]);
     await writeFile(join(target.path, "automations", "daily.paused.md"), definition("* * * * *"));
     const dispatched: Array<string> = [];
+
     const scheduler = makeAutomationScheduler({
       run: (_target, id) =>
         Effect.sync(() => dispatched.push(id)).pipe(
           Effect.as({ kind: "executed", delivery: { kind: "resolved", targets: [] } } as const),
         ),
     });
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -154,6 +171,7 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(fiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
@@ -162,14 +180,18 @@ describe("automation scheduler engine", () => {
       ["first", definition("1 * * * *")],
       ["second", definition("2 * * * *")],
     ]);
+
     const dispatched: Array<string> = [];
+
     const automations: AutomationsApi = {
       run: (_target, id) =>
         Effect.sync(() => {
           dispatched.push(id);
         }).pipe(Effect.andThen(Effect.never)),
     };
+
     const scheduler = makeAutomationScheduler(automations);
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -195,17 +217,20 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(fiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("interruption after a committed claim waits for scoped worker registration", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
     const registered: Array<string> = [];
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
         const committed = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+
         const scheduler = makeAutomationScheduler(
           { run: () => Effect.never },
           {
@@ -221,6 +246,7 @@ describe("automation scheduler engine", () => {
               }),
           },
         );
+
         const schedulerFiber = yield* Effect.forkScoped(runScheduler(scheduler, target));
         yield* awaitHeartbeat(target, start);
         yield* TestClock.adjust(60_000);
@@ -237,16 +263,19 @@ describe("automation scheduler engine", () => {
         expect(registered).toEqual(["daily"]);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("startup preserves a live manual run until its truthful terminal commit", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -269,6 +298,7 @@ describe("automation scheduler engine", () => {
               }),
             ),
         };
+
         const capabilities: AutomationCapabilities = {
           gate: { run: () => Effect.succeed({ kind: "passed" }) },
           files: automationFileStore,
@@ -280,10 +310,13 @@ describe("automation scheduler engine", () => {
           sendDiscord: () => Effect.void,
           sendSlack: () => Effect.void,
         };
+
         const automations = makeAutomations(agent, capabilities);
+
         const manual = yield* Effect.forkScoped(
           automations.run(target, "daily", { kind: "manual-force" }),
         );
+
         yield* Deferred.await(entered);
         expect((yield* readAutomationRuns(target.path))[0]?.state).toBe("running");
 
@@ -301,18 +334,22 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(schedulerFiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("startup recovers an exited child owner and compacts an outage into one missed range", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
+
     const child = Bun.spawn([process.execPath, "-e", ""], {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     const deadStore = makeAutomationRunStore(child.pid);
     await child.exited;
     const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -338,22 +375,27 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(second);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("recovers a dead owner during an ordinary scheduler cycle", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
+
     const child = Bun.spawn([process.execPath, "-e", ""], {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     const deadStore = makeAutomationRunStore(child.pid);
     await child.exited;
     const dispatched: Array<string> = [];
+
     const scheduler = makeAutomationScheduler({
       run: (_target, automationId) =>
         Effect.sync(() => dispatched.push(automationId)).pipe(Effect.andThen(Effect.never)),
     });
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -381,6 +423,7 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(fiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
@@ -410,6 +453,7 @@ describe("automation scheduler engine", () => {
     await rm(join(target.path, "automations"), { recursive: true });
     await writeFile(join(target.path, "automations"), "not a directory");
     const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -450,17 +494,20 @@ describe("automation scheduler engine", () => {
         yield* Fiber.interrupt(fiber);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("fails the scheduler when a dispatched run cannot persist lifecycle state", async () => {
     const target = await profile([["daily", definition("* * * * *")]]);
+
     const databaseFailure = new AutomationDatabaseError({
       operation: "start run",
       path: target.path,
       message: "injected lifecycle write failure",
       cause: "fixture",
     });
+
     const agent: ZiggyAgentApi = {
       runOnce: () => Effect.succeed(0),
       runSpecialist: () =>
@@ -479,6 +526,7 @@ describe("automation scheduler engine", () => {
           }),
         ),
     };
+
     const capabilities: AutomationCapabilities = {
       gate: { run: () => Effect.succeed({ kind: "passed" }) },
       files: automationFileStore,
@@ -490,12 +538,15 @@ describe("automation scheduler engine", () => {
       sendDiscord: () => Effect.void,
       sendSlack: () => Effect.void,
     };
+
     const automations = makeAutomations(agent, capabilities, {
       store: { ...automationRunStore, start: () => Effect.fail(databaseFailure) },
       now: Clock.currentTimeMillis,
       makeManualRunId: () => "manual:00000000-0000-4000-8000-000000000001",
     });
+
     const scheduler = makeAutomationScheduler(automations);
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -519,12 +570,14 @@ describe("automation scheduler engine", () => {
         expect(yield* readAutomationRuns(target.path)).toEqual(before);
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 
   test("empty schedules heartbeat at sixty seconds and interruption stops later ticks", async () => {
     const target = await profile([]);
     const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
@@ -544,6 +597,7 @@ describe("automation scheduler engine", () => {
         );
       }),
     );
+
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
   });
 });

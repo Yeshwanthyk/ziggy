@@ -1,4 +1,5 @@
 import { isGlobalReflectMethodCall } from "../reflect-method.mjs";
+
 export default {
   meta: {
     type: "problem",
@@ -15,6 +16,7 @@ export default {
     return {
       CallExpression(node) {
         if (node.callee.type === "Super" || node.callee.type === "V8IntrinsicExpression") return;
+
         if (isGlobalReflectMethodCall(context.sourceCode, node.callee, "get")) {
           context.report({ node, messageId: "reflectGet" });
         }

@@ -9,6 +9,7 @@ export const DiscordHealthState = Schema.Literals([
   "failed",
   "stopped",
 ]);
+
 export type DiscordHealthState = typeof DiscordHealthState.Type;
 
 export const DiscordHealthFailure = Schema.Literals([
@@ -19,6 +20,7 @@ export const DiscordHealthFailure = Schema.Literals([
   "thread",
   "turn",
 ]);
+
 export type DiscordHealthFailure = typeof DiscordHealthFailure.Type;
 
 export const DiscordHealthSnapshot = Schema.Struct({
@@ -37,6 +39,7 @@ export const DiscordHealthSnapshot = Schema.Struct({
   failedTurnCount: NonNegativeInteger,
   lastFailure: Schema.NullOr(DiscordHealthFailure),
 });
+
 export type DiscordHealthSnapshot = typeof DiscordHealthSnapshot.Type;
 
 export type DiscordHealthProjection =
@@ -91,6 +94,7 @@ export const evolveDiscordHealth = (
   event: DiscordHealthEvent,
 ): DiscordHealthSnapshot => {
   const base = { ...current, updatedAtMs: event.atMs };
+
   switch (event._tag) {
     case "heartbeat":
       return base;

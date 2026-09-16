@@ -65,6 +65,7 @@ import {
 } from "../adapters/fs/automation-files";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
 import { parseAutomationFile, validateAutomationId } from "../domain/automation";
+
 /** File operations owned by Profile extension activation; injectable for rollback proofs. */
 export interface ProfileExtensionAutomationOperations {
   readonly files: AutomationFileStore;
@@ -102,6 +103,7 @@ const verifyInitialized = (
     try: () => lstat(path.join(profilePath, "SOUL.md")),
     catch: (cause) => {
       const details = fileSystemCauseDetails(cause);
+
       return details.code === "ENOENT"
         ? profileNotInitialized(profilePath)
         : new ProfileFileSystemError({
@@ -125,10 +127,12 @@ const packageExists = (
   id: string,
 ): Effect.Effect<boolean, ProfileFileSystemError> => {
   const packagePath = path.join(profilePath, "extensions", id);
+
   return Effect.tryPromise({
     try: () => lstat(packagePath),
     catch: (cause) => {
       const details = fileSystemCauseDetails(cause);
+
       return new ProfileFileSystemError({
         operation: "inspect",
         path: packagePath,
@@ -151,6 +155,7 @@ const bundledListing = (
   version: string,
 ): Effect.Effect<ProfileExtensionCatalogListing, ExtensionCatalogInvalid> => {
   const metadata = bundledPackageMetadata(id);
+
   if (metadata === undefined) {
     return Effect.fail(
       new ExtensionCatalogInvalid({
@@ -160,6 +165,7 @@ const bundledListing = (
       }),
     );
   }
+
   return Effect.succeed({
     id: metadata.id,
     version,
@@ -210,6 +216,7 @@ const runtimeFailure = (
   if (isProfileExtensionRuntimeError(cause)) {
     return cause;
   }
+
   return new ProfileExtensionInvalid({
     path: path.join(profilePath, "extensions.json"),
     message: `could not prepare the Profile extension runtime: ${cause.message}`,
@@ -240,11 +247,13 @@ const decodeRequestedSelection = (
     Effect.flatMap((decoded) => {
       const duplicate = new Set(decoded).size !== decoded.length;
       const reserved = decoded.find((id) => REQUIRED_BUNDLED_EXTENSION_IDS.has(id));
+
       if (duplicate) {
         return Effect.fail(
           selectionInvalid(profilePath, "extension selection contains duplicate IDs"),
         );
       }
+
       if (reserved !== undefined) {
         return Effect.fail(
           selectionInvalid(
@@ -253,6 +262,7 @@ const decodeRequestedSelection = (
           ),
         );
       }
+
       return Effect.succeed([...decoded].sort());
     }),
   );
@@ -289,9 +299,11 @@ const validateAutomationOwnership = (
   packages: ReadonlyArray<ExtensionPackage>,
 ): Effect.Effect<void, ExtensionCatalogInstallFailed> => {
   const owners = new Map<string, string>();
+
   for (const packageInfo of packages) {
     for (const declared of packageInfo.automations) {
       const previous = owners.get(declared.id);
+
       if (previous !== undefined && previous !== packageInfo.id) {
         return Effect.fail(
           installFailure(
@@ -303,9 +315,11 @@ const validateAutomationOwnership = (
           ),
         );
       }
+
       owners.set(declared.id, packageInfo.id);
     }
   }
+
   return Effect.void;
 };
 
@@ -319,12 +333,15 @@ const validatePackageAutomationDefinitions = (
     (declared) =>
       Effect.gen(function* () {
         const id = yield* validateAutomationId(declared.id);
+
         const source = yield* Effect.tryPromise({
           try: () => readFile(declared.path, "utf8"),
           catch: (cause) => cause,
         });
+
         const expected = yield* parseAutomationFile(id, declared.path, source);
         const owner = `extension:${packageInfo.id}`;
+
         if (expected.owner !== owner) {
           return yield* Effect.fail(
             installFailure(
@@ -336,10 +353,13 @@ const validatePackageAutomationDefinitions = (
             ),
           );
         }
+
         const target = { name: path.basename(profilePath), path: profilePath };
         const existing = yield* readExistingAutomation(automation, target, id);
+
         if (existing === undefined) return;
         const parsed = yield* parseAutomationFile(id, existing.path, existing.source);
+
         if (parsed.owner !== owner || existing.source !== source) {
           return yield* Effect.fail(
             installFailure(
@@ -399,6 +419,7 @@ const rollbackMutation = <E>(
       const failures = results.flatMap((result, index) => {
         if (Result.isSuccess(result)) return [];
         const action = actions[index];
+
         return action === undefined
           ? []
           : [
@@ -409,8 +430,10 @@ const rollbackMutation = <E>(
               },
             ];
       });
+
       if (failures.length === 0)
         return Effect.fail<E | ProfileExtensionRollbackFailed>(originalFailure);
+
       return Effect.fail(
         new ProfileExtensionRollbackFailed({
           profilePath,
@@ -432,15 +455,18 @@ const pauseOwnedAutomations = (
   paused: Array<PausedAutomation>,
 ): Effect.Effect<void, ExtensionCatalogInstallFailed> => {
   const target = { name: path.basename(profilePath), path: profilePath };
+
   return Effect.forEach(
     packageInfo.automations,
     (declared) =>
       Effect.gen(function* () {
         const id = yield* validateAutomationId(declared.id);
         const existing = yield* readExistingAutomation(automation, target, id);
+
         if (existing === undefined || existing.lifecycle === "paused") return;
         const owner = `extension:${packageInfo.id}`;
         const parsed = yield* parseAutomationFile(id, existing.path, existing.source);
+
         if (parsed.owner !== owner) {
           return yield* Effect.fail(
             installFailure(
@@ -452,6 +478,7 @@ const pauseOwnedAutomations = (
             ),
           );
         }
+
         yield* automation.pause(target, id);
         paused.push({ packageInfo, id });
       }).pipe(
@@ -482,21 +509,28 @@ const provisionOwnedAutomations = (
   packageInfo: ExtensionPackage,
 ): Effect.Effect<ProvisionOwnedAutomationsResult, never> => {
   const target = { name: path.basename(profilePath), path: profilePath };
+
   return Effect.gen(function* () {
     const activated: Array<ActivatedAutomation> = [];
+
     for (const declared of packageInfo.automations) {
       const operation = Effect.gen(function* () {
         const id = yield* validateAutomationId(declared.id);
+
         const source = yield* Effect.tryPromise({
           try: () => readFile(declared.path, "utf8"),
           catch: (cause) => cause,
         });
+
         const existing = yield* readExistingAutomation(automation, target, id);
+
         if (existing === undefined) {
           yield* automation.install(target, id, source);
           activated.push({ packageInfo, id, activation: "installed", source });
+
           return;
         }
+
         if (existing.lifecycle === "paused") {
           yield* automation.resume(target, id);
           activated.push({ packageInfo, id, activation: "resumed", source });
@@ -514,9 +548,12 @@ const provisionOwnedAutomations = (
               ),
         ),
       );
+
       const result = yield* operation.pipe(Effect.result);
+
       if (Result.isFailure(result)) return { activated, failure: result.failure };
     }
+
     return { activated };
   });
 };
@@ -545,6 +582,7 @@ export const makeProfileExtensions = (
     list(repositoryRoot).pipe(
       Effect.flatMap((items) => {
         const found = items.find((item) => item.id === id);
+
         return found === undefined
           ? Effect.fail(
               new ExtensionCatalogInvalid({
@@ -564,10 +602,13 @@ export const makeProfileExtensions = (
   ): Effect.Effect<ExtensionPackage, ProfileExtensionError> =>
     Effect.gen(function* () {
       const packagePath = path.join(profilePath, "extensions", id);
+
       if (yield* packageExists(profilePath, id)) {
         return yield* readInstalledPackage(profilePath, id);
       }
+
       const entry = entryFor(id);
+
       if (entry === undefined) {
         return yield* new ExtensionCatalogInvalid({
           source: id,
@@ -575,11 +616,13 @@ export const makeProfileExtensions = (
           cause: undefined,
         });
       }
+
       if (entry.source === "github") {
         yield* installer.installGitHub(profilePath, entry);
       } else {
         yield* installer.installBundled(profilePath, entry);
       }
+
       return yield* readInstalledPackage(profilePath, id).pipe(
         Effect.mapError((cause) =>
           isExtensionCatalogInstallFailed(cause)
@@ -615,6 +658,7 @@ export const makeProfileExtensions = (
           ),
         );
       }
+
       return yield* readInstalledPackage(profilePath, id);
     });
 
@@ -644,12 +688,14 @@ export const makeProfileExtensions = (
         ),
       { concurrency: 1 },
     ).pipe(Effect.tap(validateAutomationOwnership));
+
   const validateExistingPackages = (
     profilePath: string,
     repositoryRoot: string,
     selected: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionError> => {
     const selectedSet = new Set(selected);
+
     return Effect.forEach(
       materializationIds(selected),
       (id) =>
@@ -667,6 +713,7 @@ export const makeProfileExtensions = (
 
   const equalSelection = (left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean =>
     left.length === right.length && left.every((id, index) => id === right[index]);
+
   const equalSelectionSnapshot = (
     left: ExtensionSelectionSnapshot,
     right: ExtensionSelectionSnapshot,
@@ -674,6 +721,7 @@ export const makeProfileExtensions = (
     left.exists === right.exists &&
     left.bytes.length === right.bytes.length &&
     left.bytes.every((byte, index) => byte === right.bytes[index]);
+
   const materializationIds = (ids: ReadonlyArray<string>): ReadonlyArray<string> =>
     [...new Set([...REQUIRED_BUNDLED_EXTENSION_IDS, ...ids])].sort((left, right) =>
       left.localeCompare(right),
@@ -722,6 +770,7 @@ export const makeProfileExtensions = (
       for (const packageInfo of added) {
         const result = yield* provisionOwnedAutomations(automation, profilePath, packageInfo);
         activated.push(...result.activated);
+
         if (result.failure !== undefined) return yield* result.failure;
       }
     });
@@ -755,6 +804,7 @@ export const makeProfileExtensions = (
                   ],
             ),
           );
+
           for (const extension of profileOwned) {
             if (!extension.required) {
               availableById.set(extension.id, {
@@ -765,6 +815,7 @@ export const makeProfileExtensions = (
               });
             }
           }
+
           return {
             available: [...availableById.values()].sort((left, right) =>
               left.id.localeCompare(right.id),
@@ -781,6 +832,7 @@ export const makeProfileExtensions = (
           target.path,
           Effect.gen(function* () {
             const current = yield* readExtensionSelection(target.path);
+
             if (current.includes(id)) {
               return {
                 id,
@@ -789,13 +841,16 @@ export const makeProfileExtensions = (
                 selected: true,
               } satisfies ProfileExtensionMutation;
             }
+
             const snapshot = yield* snapshotExtensionSelection(target.path);
             const requested = yield* decodeRequestedSelection(target.path, [...current, id]);
+
             const packages = yield* validatePackages(
               target.path,
               repositoryRoot,
               materializationIds(requested),
             );
+
             yield* preflight.preflight(target.path, repositoryRoot, requested);
             const activated: Array<ActivatedAutomation> = [];
             const addedIds = new Set(requested.filter((candidate) => !current.includes(candidate)));
@@ -817,6 +872,7 @@ export const makeProfileExtensions = (
                 ),
               ),
             );
+
             return {
               id,
               profilePath: target.path,
@@ -836,10 +892,13 @@ export const makeProfileExtensions = (
           Effect.gen(function* () {
             const requested = yield* decodeRequestedSelection(target.path, [id]);
             const requestedId = requested[0];
+
             if (requestedId === undefined) {
               return yield* selectionInvalid(target.path, "invalid extension selection");
             }
+
             const current = yield* readExtensionSelection(target.path);
+
             if (!current.includes(requestedId)) {
               return {
                 id: requestedId,
@@ -848,21 +907,26 @@ export const makeProfileExtensions = (
                 selected: false,
               } satisfies ProfileExtensionMutation;
             }
+
             const snapshot = yield* snapshotExtensionSelection(target.path);
+
             const packageInfo = yield* readOptionalPresentPackage(
               target.path,
               repositoryRoot,
               requestedId,
             );
+
             if (packageInfo?.required === true) {
               return yield* selectionInvalid(
                 target.path,
                 `required extension '${requestedId}' cannot be added or removed`,
               );
             }
+
             if (packageInfo !== undefined) {
               yield* validatePackageAutomationDefinitions(automation, target.path, packageInfo);
             }
+
             const next = current.filter((candidate) => candidate !== requestedId);
             yield* validateExistingPackages(target.path, repositoryRoot, next);
             yield* preflight.preflight(target.path, repositoryRoot, next);
@@ -871,6 +935,7 @@ export const makeProfileExtensions = (
               if (packageInfo !== undefined) {
                 yield* pauseOwnedAutomations(automation, target.path, packageInfo, paused);
               }
+
               yield* replaceExtensionSelection(target.path, next);
             }).pipe(
               Effect.catch((failure) =>
@@ -882,6 +947,7 @@ export const makeProfileExtensions = (
                 ),
               ),
             );
+
             return {
               id: requestedId,
               profilePath: target.path,
@@ -901,19 +967,23 @@ export const makeProfileExtensions = (
           Effect.gen(function* () {
             const current = yield* readExtensionSelection(target.path);
             const next = yield* decodeRequestedSelection(target.path, ids);
+
             if (equalSelection(current, next)) {
               return { changed: false, selected: current } satisfies ProfileExtensionSetResult;
             }
+
             const snapshot = yield* snapshotExtensionSelection(target.path);
             const currentSet = new Set(current);
             const nextSet = new Set(next);
             const removed = current.filter((id) => !nextSet.has(id));
             const added = next.filter((id) => !currentSet.has(id));
+
             const removedPackages = yield* Effect.forEach(
               removed,
               (id) => readOptionalPresentPackage(target.path, repositoryRoot, id),
               { concurrency: 1 },
             );
+
             yield* Effect.forEach(
               removedPackages.filter(
                 (packageInfo): packageInfo is ExtensionPackage => packageInfo !== undefined,
@@ -922,9 +992,11 @@ export const makeProfileExtensions = (
                 validatePackageAutomationDefinitions(automation, target.path, packageInfo),
               { discard: true, concurrency: 1 },
             );
+
             const nextPackages = yield* added.length > 0
               ? validatePackages(target.path, repositoryRoot, materializationIds(next))
               : validateExistingPackages(target.path, repositoryRoot, next);
+
             yield* preflight.preflight(target.path, repositoryRoot, next);
             const paused: Array<PausedAutomation> = [];
             const activated: Array<ActivatedAutomation> = [];
@@ -935,6 +1007,7 @@ export const makeProfileExtensions = (
                   yield* pauseOwnedAutomations(automation, target.path, packageInfo, paused);
                 }
               }
+
               yield* replaceExtensionSelection(target.path, next);
               yield* provisionAdditions(
                 automation,
@@ -952,6 +1025,7 @@ export const makeProfileExtensions = (
                 ),
               ),
             );
+
             return { changed: true, selected: next } satisfies ProfileExtensionSetResult;
           }),
         ),
@@ -965,17 +1039,22 @@ export const makeProfileExtensions = (
           const before = yield* snapshotExtensionSelection(target.path);
           const selected = before.selected;
           yield* validateExistingPackages(target.path, repositoryRoot, selected);
+
           const preflightResult = yield* preflight
             .preflight(target.path, repositoryRoot, selected)
             .pipe(Effect.result);
+
           const after = yield* snapshotExtensionSelection(target.path);
+
           if (!equalSelectionSnapshot(before, after)) {
             return yield* selectionInvalid(
               target.path,
               "read-only Profile extension validation changed extensions.json",
             );
           }
+
           if (Result.isFailure(preflightResult)) return yield* preflightResult.failure;
+
           return {
             selected,
             preflight: preflightResult.success,
@@ -995,10 +1074,12 @@ export const makeProfileExtensions = (
               const selected = snapshot.selected;
               yield* validatePackages(profilePath, repositoryRoot, materializationIds(selected));
               yield* preflight.preflight(profilePath, repositoryRoot, selected);
+
               const preparation: ProfileExtensionRuntimePreparation = {
                 selected,
                 generation: extensionSelectionGeneration(snapshot),
               };
+
               return preparation;
             }),
           ),
@@ -1019,6 +1100,7 @@ export const makeProfileExtensions = (
             Effect.gen(function* () {
               const snapshot = yield* snapshotExtensionSelection(profilePath);
               const selected = yield* readExtensionSelection(profilePath);
+
               if (
                 !equalSelection(selected, preparation.selected) ||
                 extensionSelectionGeneration(snapshot) !== preparation.generation
@@ -1028,11 +1110,13 @@ export const makeProfileExtensions = (
                   "Profile extension selection changed while the Pi runtime was being constructed",
                 );
               }
+
               const packages = yield* validateExistingPackages(
                 profilePath,
                 repositoryRoot,
                 preparation.selected,
               );
+
               const activated: Array<ActivatedAutomation> = [];
               yield* provisionAdditions(automation, profilePath, packages, activated).pipe(
                 Effect.catch((failure) =>
@@ -1061,6 +1145,7 @@ export const makeProfileExtensions = (
     prepareRuntime,
     activateRuntime,
   };
+
   return api;
 };
 

@@ -39,7 +39,9 @@ export const SessionsLive = Layer.succeed(Sessions, {
     Effect.gen(function* () {
       const sessions = yield* listProfileSessions(target.path);
       const session = sessions.find((candidate) => candidate.id === id);
+
       if (session !== undefined) return session;
+
       return yield* new SessionNotFound({
         reference: id,
         message: `session not found: ${id}`,

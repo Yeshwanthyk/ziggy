@@ -46,31 +46,46 @@ import { UiResponseFrame } from "ziggy/domain/ui-gateway";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 
 const paths: Array<string> = [];
+
 const telegram = { botToken: "telegram-token", ownerUserId: 7 };
+
 const discord = { botToken: "discord-token", ownerUserId: "7" };
+
 const slack = { botToken: "xoxb-token", appToken: "xapp-token", ownerUserId: "U123" };
+
 const allConfig: ResidentGatewayConfig = { telegram, discord, slack };
+
 const profile = async (configs: ReadonlyArray<"telegram" | "discord" | "slack"> = []) => {
   const path = await mkdtemp(join(tmpdir(), "ziggy-resident-"));
   paths.push(path);
   await writeFile(join(path, "SOUL.md"), "# Test\n");
   await mkdir(join(path, "automations"));
+
   if (configs.includes("telegram"))
     await writeFile(join(path, "telegram.json"), JSON.stringify(telegram));
+
   if (configs.includes("discord"))
     await writeFile(join(path, "discord.json"), JSON.stringify(discord));
+
   if (configs.includes("slack")) await writeFile(join(path, "slack.json"), JSON.stringify(slack));
+
   return { path, name: "Test" } satisfies ProfileTarget;
 };
+
 const waitFor = (predicate: () => boolean) =>
   Effect.gen(function* () {
     while (!predicate()) yield* Effect.promise<void>(() => new Promise(setImmediate));
   });
+
 const exists = (path: string) => Bun.file(path).exists();
+
 const isGatewayConfigError = Predicate.isTagged("GatewayConfigError");
+
 const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect));
+
 const decodeUiResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
+
 const within = <Value>(promise: Promise<Value>, label: string): Promise<Value> =>
   Promise.race([
     promise,
@@ -78,14 +93,18 @@ const within = <Value>(promise: Promise<Value>, label: string): Promise<Value> =
       setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 1_000),
     ),
   ]);
+
 const waitForUiProjection = async (path: string): Promise<UiServerProjection> => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const result = await Effect.runPromise(readUiServerProjection(path).pipe(Effect.result));
+
     if (Result.isSuccess(result)) return result.success;
     await Bun.sleep(10);
   }
+
   throw new Error("timed out waiting for UI server projection");
 };
+
 const connectUi = async (port: number, token: string): Promise<WebSocket> => {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
   await within(
@@ -97,30 +116,38 @@ const connectUi = async (port: number, token: string): Promise<WebSocket> => {
     }),
     "UI socket open",
   );
+
   return socket;
 };
+
 const nextUiMessage = (socket: WebSocket): Promise<string> =>
   new Promise((resolve) =>
     socket.addEventListener("message", (event) => resolve(String(event.data)), { once: true }),
   );
+
 const closeUi = async (socket: WebSocket): Promise<void> => {
   if (socket.readyState >= WebSocket.CLOSING) return;
+
   const closed = new Promise<void>((resolve) =>
     socket.addEventListener("close", () => resolve(), { once: true }),
   );
+
   socket.close();
   await within(closed, "UI socket close");
 };
+
 const scheduler = (run: AutomationSchedulerApi["run"]): AutomationSchedulerApi => ({
   run,
   status: () => Effect.never,
   runs: () => Effect.never,
 });
+
 const loops = (run: (name: string) => Effect.Effect<never, never>) => ({
   telegram: { runLoop: () => run("telegram") } satisfies GatewayApi,
   discord: { runLoop: () => run("discord") } satisfies DiscordGatewayApi,
   slack: { runLoop: () => run("slack") } satisfies SlackGatewayApi,
 });
+
 const runtime = (config: ResidentGatewayConfig, events: Array<string>): ResidentGatewayRuntime => ({
   loadConfig: () => Effect.succeed(config),
   inspectOwner: () => Effect.succeed({ _tag: "stopped", path: "/owner" }),
@@ -128,6 +155,7 @@ const runtime = (config: ResidentGatewayConfig, events: Array<string>): Resident
     Effect.acquireRelease(
       Effect.sync(() => {
         events.push("owner:enter");
+
         return {
           path: "/owner",
           ownerId: "owner",
@@ -139,10 +167,12 @@ const runtime = (config: ResidentGatewayConfig, events: Array<string>): Resident
     ),
   logError: (message) => Effect.sync(() => events.push(message)),
 });
+
 const uiRuntime = (
   events: Array<string>,
   body: Effect.Effect<never, UiServerError> = Effect.never,
 ): ResidentUiRuntime => ({ run: () => scopedLoop(events, "ui", body) });
+
 const scopedLoop = <E = never>(
   events: Array<string>,
   name: string,
@@ -168,6 +198,7 @@ describe("resident gateway preflight", () => {
       ["slack"] as const,
       ["telegram", "discord", "slack"] as const,
     ];
+
     for (const enabled of cases) {
       const target = await profile(enabled);
       const loaded = await Effect.runPromise(loadResidentGatewayConfig(target));
@@ -186,11 +217,14 @@ describe("resident gateway preflight", () => {
       const result = await Effect.runPromise(loadResidentGatewayConfig(target).pipe(Effect.result));
       expect(Result.isFailure(result) && isGatewayConfigError(result.failure)).toBe(true);
     }
+
     const target = await profile();
     await mkdir(join(target.path, "telegram.json"));
+
     const unreadable = await Effect.runPromise(
       loadResidentGatewayConfig(target).pipe(Effect.result),
     );
+
     expect(Result.isFailure(unreadable) && isGatewayConfigError(unreadable.failure)).toBe(true);
   });
 
@@ -198,9 +232,11 @@ describe("resident gateway preflight", () => {
     const target = await profile();
     await symlink("missing-config.json", join(target.path, "telegram.json"));
     const events: Array<string> = [];
+
     const channels = loops((name) =>
       Effect.sync(() => events.push(name)).pipe(Effect.andThen(Effect.never)),
     );
+
     const host = makeResidentGateway(
       scheduler(() =>
         Effect.sync(() => events.push("scheduler")).pipe(Effect.andThen(Effect.never)),
@@ -210,6 +246,7 @@ describe("resident gateway preflight", () => {
       channels.slack,
       { ...runtime(allConfig, events), loadConfig: loadResidentGatewayConfig },
     );
+
     const result = await Effect.runPromise(host.run(target).pipe(Effect.result));
     expect(Result.isFailure(result) && isGatewayConfigError(result.failure)).toBe(true);
     expect(events).toEqual([]);
@@ -220,9 +257,11 @@ describe("resident gateway supervision", () => {
   test("automation-only enters one scheduler and no channel loops", async () => {
     const target = await profile();
     const events: Array<string> = [];
+
     const channelLoops = loops((name) =>
       Effect.sync(() => events.push(name)).pipe(Effect.andThen(Effect.never)),
     );
+
     const host = makeResidentGateway(
       scheduler(() => scopedLoop(events, "scheduler")),
       channelLoops.telegram,
@@ -230,6 +269,7 @@ describe("resident gateway supervision", () => {
       channelLoops.slack,
       runtime({ telegram: undefined, discord: undefined, slack: undefined }, events),
     );
+
     await runScoped(
       Effect.gen(function* () {
         yield* Effect.forkScoped(host.run(target));
@@ -244,6 +284,7 @@ describe("resident gateway supervision", () => {
     const events: Array<string> = [];
     const progress = await Effect.runPromise(Deferred.make<void>());
     const healthyLoops = loops((name) => scopedLoop(events, name));
+
     const channelLoops = {
       ...healthyLoops,
       discord: {
@@ -263,6 +304,7 @@ describe("resident gateway supervision", () => {
           ),
       } satisfies DiscordGatewayApi,
     };
+
     const host = makeResidentGateway(
       scheduler(() =>
         scopedLoop(
@@ -279,6 +321,7 @@ describe("resident gateway supervision", () => {
       channelLoops.slack,
       runtime(allConfig, events),
     );
+
     await runScoped(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkScoped(host.run(target));
@@ -293,6 +336,7 @@ describe("resident gateway supervision", () => {
       }),
     );
     expect(events.at(-1)).toBe("owner:exit");
+
     for (const name of ["scheduler", "telegram", "discord", "slack"])
       expect(events.filter((event) => event === `${name}:exit`)).toHaveLength(1);
   });
@@ -301,6 +345,7 @@ describe("resident gateway supervision", () => {
     const target = await profile();
     const events: Array<string> = [];
     const channelLoops = loops(() => Effect.never);
+
     const host = makeResidentGateway(
       scheduler(() => scopedLoop(events, "scheduler")),
       channelLoops.telegram,
@@ -327,6 +372,7 @@ describe("resident gateway supervision", () => {
     const events: Array<string> = [];
     const progress = await Effect.runPromise(Deferred.make<void>());
     const channelLoops = loops(() => Effect.never);
+
     const host = makeResidentGateway(
       scheduler(() =>
         scopedLoop(
@@ -370,6 +416,7 @@ describe("resident gateway supervision", () => {
   test("routes an authenticated UI extension request through shared ProfileExtensions", async () => {
     const target = await profile();
     const calls: Array<string> = [];
+
     const profileExtensions: ProfileExtensionsApi = {
       list: () => Effect.never,
       show: () => Effect.never,
@@ -380,6 +427,7 @@ describe("resident gateway supervision", () => {
       validate: (validatedTarget, repositoryRoot) =>
         Effect.sync(() => {
           calls.push(`validate:${validatedTarget.path}:${repositoryRoot}`);
+
           return {
             selected: [],
             preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
@@ -388,11 +436,13 @@ describe("resident gateway supervision", () => {
       prepareRuntime: () => Effect.never,
       activateRuntime: () => Effect.never,
     };
+
     const sessions: SessionsApi = {
       list: () => Effect.succeed([]),
       show: () => Effect.never,
       resolve: () => Effect.never,
     };
+
     const agent: ZiggyAgentApi = {
       runOnce: () => Effect.never,
       openTui: () => Effect.never,
@@ -400,7 +450,9 @@ describe("resident gateway supervision", () => {
       openSpecialistChat: () => Effect.never,
       runSpecialist: () => Effect.never,
     };
+
     const channelLoops = loops(() => Effect.never);
+
     const dependencies = Layer.mergeAll(
       Layer.succeed(
         AutomationScheduler,
@@ -463,6 +515,7 @@ describe("resident gateway supervision", () => {
     const events: Array<string> = [];
     const failScheduler = await Effect.runPromise(Deferred.make<void>());
     const channelLoops = loops((name) => scopedLoop(events, name));
+
     const host = makeResidentGateway(
       scheduler(() =>
         scopedLoop(
@@ -486,6 +539,7 @@ describe("resident gateway supervision", () => {
       channelLoops.slack,
       runtime(allConfig, events),
     );
+
     await runScoped(
       Effect.gen(function* () {
         const fiber = yield* Effect.forkScoped(host.run(target));
@@ -524,11 +578,13 @@ describe("gateway CLI", () => {
         ].join("\n"),
       );
     }
+
     for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe("usage: ziggy gateway <name|path>");
     }
+
     for (const command of ["discord", "slack"] as const) {
       const result = invoke(command, "ignored");
       expect(result.exitCode).toBe(1);
@@ -554,12 +610,15 @@ describe("gateway CLI", () => {
   test("a hard crash leaves only a stale projection and the next serve replaces it", async () => {
     const target = await profile();
     const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+
     const spawn = () =>
       Bun.spawn([process.execPath, "src/main.ts", "serve", target.path], {
         stdout: "ignore",
         stderr: "ignore",
       });
+
     const first = spawn();
+
     for (let attempt = 0; attempt < 200 && !(await exists(lockPath)); attempt += 1)
       await Bun.sleep(10);
     const firstProjection = await readFile(lockPath, "utf8");
@@ -569,11 +628,14 @@ describe("gateway CLI", () => {
 
     const second = spawn();
     let secondProjection = firstProjection;
+
     for (let attempt = 0; attempt < 200; attempt += 1) {
       secondProjection = await readFile(lockPath, "utf8");
+
       if (secondProjection !== firstProjection) break;
       await Bun.sleep(10);
     }
+
     expect(secondProjection).not.toBe(firstProjection);
     second.kill("SIGINT");
     expect(await second.exited).toBe(0);
@@ -583,15 +645,19 @@ describe("gateway CLI", () => {
   test("interrupt-only serve and gateway shutdowns exit zero and release ownership", async () => {
     for (const command of ["serve", "gateway"] as const) {
       const target = await profile();
+
       const child = Bun.spawn([process.execPath, "src/main.ts", command, target.path], {
         stdout: "ignore",
         stderr: "ignore",
       });
+
       const lockPath = join(target.path, ".runtime", "gateway-owner.lock");
+
       for (let attempt = 0; attempt < 200; attempt += 1) {
         if (await exists(lockPath)) break;
         await Bun.sleep(10);
       }
+
       expect(await exists(lockPath)).toBe(true);
       child.kill("SIGINT");
       expect(await child.exited).toBe(0);

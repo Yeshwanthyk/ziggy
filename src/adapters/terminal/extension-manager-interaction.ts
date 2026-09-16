@@ -17,6 +17,7 @@ const prompt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A | 
   }).pipe(Effect.map((value) => (isCancel(value) ? undefined : value)));
 
 const color = pc.createColors(process.env.NO_COLOR === undefined);
+
 const ziggyPrompt = (label: string): string =>
   `${color.bgMagenta(color.black(color.bold(" ZIGGY ")))} ${color.bold(label)}`;
 

@@ -9,6 +9,7 @@ const releaseClient = (onDownload: () => void): ZiggyReleaseClientApi => ({
   downloadLatest: () =>
     Effect.sync(() => {
       onDownload();
+
       return {
         version: "1.2.3",
         executable: new TextEncoder().encode("ziggy"),
@@ -20,6 +21,7 @@ const releaseClient = (onDownload: () => void): ZiggyReleaseClientApi => ({
 describe("self update orchestration", () => {
   test("source mode fails before downloading or touching Bun", async () => {
     let downloads = 0;
+
     const service = makeSelfUpdate(
       releaseClient(() => downloads++),
       {
@@ -38,6 +40,7 @@ describe("self update orchestration", () => {
   test("standalone mode delegates one checksum-pinned atomic install", async () => {
     let downloads = 0;
     let installed: ReadonlyArray<unknown> = [];
+
     const service = makeSelfUpdate(
       releaseClient(() => downloads++),
       { standalone: true, executablePath: "/tmp/ziggy" },

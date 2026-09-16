@@ -29,16 +29,19 @@ const runSummary = (run: AutomationRunProjection): string =>
 
 const schedulerLines = (status: AutomationStatusProjection): ReadonlyArray<string> => {
   const heartbeat = status.heartbeatAtMs;
+
   const scheduler =
     heartbeat === null || heartbeat > status.observedAtMs
       ? "unknown"
       : status.observedAtMs - heartbeat <= 90_000
         ? "active"
         : "stale";
+
   const tick =
     status.lastTickStatus === null || status.lastTickAtMs === null
       ? "unknown"
       : `${status.lastTickStatus} (${new Date(status.lastTickAtMs).toISOString()}${status.lastTickError === null ? "" : `; ${bounded(status.lastTickError)}`})`;
+
   const next = status.schedules
     .filter((row) => row.definitionState === "valid" && row.nextScheduledAtMs !== null)
     .sort(
@@ -46,6 +49,7 @@ const schedulerLines = (status: AutomationStatusProjection): ReadonlyArray<strin
         (left.nextScheduledAtMs ?? 0) - (right.nextScheduledAtMs ?? 0) ||
         left.automationId.localeCompare(right.automationId),
     )[0];
+
   return [
     `scheduler: ${scheduler}`,
     `tick: ${tick}`,
@@ -59,13 +63,17 @@ const slackLines = (projection: SlackHealthProjection) => {
   if (projection._tag === "not-configured") {
     return { lines: ["slack: not configured"], degraded: false };
   }
+
   if (projection._tag === "not-observed") {
     return { lines: ["slack: not observed"], degraded: true };
   }
+
   const { snapshot } = projection;
+
   const stale =
     snapshot.updatedAtMs > projection.observedAtMs ||
     projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+
   return {
     lines: [
       `slack: ${stale ? "stale" : snapshot.state}`,
@@ -81,13 +89,17 @@ const discordLines = (projection: DiscordHealthProjection) => {
   if (projection._tag === "not-configured") {
     return { lines: ["discord: not configured"], degraded: false };
   }
+
   if (projection._tag === "not-observed") {
     return { lines: ["discord: not observed"], degraded: true };
   }
+
   const { snapshot } = projection;
+
   const stale =
     snapshot.updatedAtMs > projection.observedAtMs ||
     projection.observedAtMs - snapshot.updatedAtMs > 90_000;
+
   return {
     lines: [
       `discord: ${stale ? "stale" : snapshot.state}`,
@@ -106,47 +118,62 @@ export interface RenderedServeStatus {
 
 export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeStatus => {
   let degraded = false;
+
   const managed = Result.match(status.managed, {
     onFailure: (failure) => {
       degraded = true;
+
       return `unknown (${bounded(failure.message)})`;
     },
     onSuccess: (state) => {
       if (state._tag === "current") return "installed";
+
       if (state._tag === "not-installed") return "not-installed";
+
       if (state._tag === "drifted") {
         degraded = true;
+
         return "drifted";
       }
+
       degraded = true;
+
       return `unknown (${state.reason})`;
     },
   });
+
   const supervisor = Result.match(status.supervisor, {
     onFailure: (failure) => {
       degraded = true;
+
       return `unknown (${bounded(failure.message)})`;
     },
     onSuccess: (value) => {
       if (value.state === "unknown") degraded = true;
+
       return value.state === "running" || value.reason === undefined
         ? value.state
         : `${value.state} (${bounded(value.reason)})`;
     },
   });
+
   const process = Result.match(status.process, {
     onFailure: (failure) => {
       degraded = true;
+
       return [`process: unknown (${bounded(failure.message)})`, "pid: -", "acquired at: -"];
     },
     onSuccess: (value) => {
       if (value._tag === "stale") degraded = true;
+
       return processLines(value);
     },
   });
+
   const scheduler = Result.match(status.scheduler, {
     onFailure: (failure) => {
       degraded = true;
+
       return [
         `scheduler: unknown (${bounded(failure.message)})`,
         "tick: unknown",
@@ -157,9 +184,11 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
     },
     onSuccess: schedulerLines,
   });
+
   if (scheduler[0]?.startsWith("scheduler: unknown") || scheduler[0] === "scheduler: stale") {
     degraded = true;
   }
+
   const discord = Result.match(status.discord, {
     onFailure: (failure) => ({
       lines: [`discord: unknown (${bounded(failure.message)})`],
@@ -167,7 +196,9 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
     }),
     onSuccess: discordLines,
   });
+
   if (discord.degraded) degraded = true;
+
   const slack = Result.match(status.slack, {
     onFailure: (failure) => ({
       lines: [`slack: unknown (${bounded(failure.message)})`],
@@ -175,6 +206,7 @@ export const renderServeStatus = (status: ResidentServiceStatus): RenderedServeS
     }),
     onSuccess: slackLines,
   });
+
   if (slack.degraded) degraded = true;
 
   return {
@@ -198,13 +230,19 @@ export const renderResidentLifecycle = (result: ResidentLifecycleResult): string
     `service manager: ${result.manager}`,
     `definition: ${result.definitionPath}`,
   ];
+
   if (result.write !== undefined) lines.push(`definition state: ${result.write}`);
+
   if (result.removed !== undefined)
     lines.push(`definition removed: ${result.removed ? "yes" : "no"}`);
+
   if (result.ready !== undefined)
     lines.push(`readiness: ${result.ready ? "ready" : "not-reached"}`);
+
   if (result.owner !== undefined) lines.push(...processLines(result.owner));
+
   for (const warning of result.warnings) lines.push(`warning: ${warning}`);
+
   return lines.join("\n");
 };
 

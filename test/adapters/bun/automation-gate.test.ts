@@ -32,6 +32,7 @@ describe("automation gate", () => {
   test("returns pass and decline results", async () => {
     const gate = (exitCode: number) =>
       makeAutomationGate({ spawn: () => ({ exited: Promise.resolve(exitCode), kill: () => {} }) });
+
     expect(await Effect.runPromise(gate(0).run("/p", "daily", "ok"))).toEqual({ kind: "passed" });
     expect(await Effect.runPromise(gate(7).run("/p", "daily", "no"))).toEqual({
       kind: "declined",
@@ -45,9 +46,11 @@ describe("automation gate", () => {
         throw new Error("spawn");
       },
     });
+
     const wait = await failure({
       spawn: () => ({ exited: Promise.reject(new Error("wait")), kill: () => {} }),
     });
+
     expect(spawn).toEqual({
       kind: "failure",
       reason: "spawn",
@@ -86,6 +89,7 @@ describe("automation gate", () => {
 
   test("kills the child on timeout", async () => {
     let kills = 0;
+
     const result = await failure(
       {
         spawn: () => ({
@@ -97,6 +101,7 @@ describe("automation gate", () => {
       },
       "5 millis",
     );
+
     expect(result).toEqual({
       kind: "failure",
       reason: "timeout",
@@ -110,29 +115,37 @@ describe("automation gate", () => {
   test("kills the shell process group on timeout", async () => {
     const profilePath = await mkdtemp(join(tmpdir(), "ziggy-gate-"));
     const pidPath = join(profilePath, "pids");
+
     const isRunning = (pid: number): boolean => {
       try {
         process.kill(pid, 0);
+
         return true;
       } catch {
         return false;
       }
     };
+
     const waitUntilStopped = async (pids: readonly number[]): Promise<boolean> => {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if (pids.every((pid) => !isRunning(pid))) return true;
         await Bun.sleep(10);
       }
+
       return false;
     };
+
     let pids: readonly number[] = [];
+
     try {
       const command = `sleep 30 & child=$!; printf '%s %s' "$$" "$child" > "${pidPath}"; wait`;
+
       const result = await Effect.runPromise(
         makeAutomationGate(undefined, "100 millis")
           .run(profilePath, "daily", command)
           .pipe(Effect.catchTag("AutomationGateFailed", (error) => Effect.succeed(error.reason))),
       );
+
       pids = (await readFile(pidPath, "utf8")).split(" ").map(Number);
       expect(result).toBe("timeout");
       expect(pids).toHaveLength(2);
@@ -141,12 +154,14 @@ describe("automation gate", () => {
       for (const pid of pids) {
         if (isRunning(pid)) process.kill(pid, "SIGKILL");
       }
+
       await rm(profilePath, { recursive: true, force: true });
     }
   });
 
   test("kills the child on interruption", async () => {
     let kills = 0;
+
     const effect = makeAutomationGate({
       spawn: () => ({
         exited: new Promise(() => {}),
@@ -155,6 +170,7 @@ describe("automation gate", () => {
         },
       }),
     }).run("/p", "daily", "check");
+
     const fiber = Effect.runFork(effect);
     await Effect.runPromise(Fiber.interrupt(fiber));
     expect(kills).toBe(1);

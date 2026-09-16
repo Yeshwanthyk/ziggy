@@ -34,6 +34,7 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
     remove: unused,
     setSelected: (_target, _repositoryRoot, ids) => {
       calls.push(ids);
+
       return Effect.succeed({ changed: true, selected: [...ids].sort() });
     },
     validate: unused,
@@ -50,14 +51,17 @@ const options = {
 test("reviews one complete extension selection before one transactional mutation", async () => {
   const calls: Array<ReadonlyArray<string>> = [];
   const events: Array<string> = [];
+
   const interaction: ExtensionManagerInteraction = {
     selectProfile: ([profile]) => Effect.succeed(profile),
     selectExtensions: (_profile, listing) => {
       events.push(`selected:${listing.selected.join(",")}`);
+
       return Effect.succeed(["beta"]);
     },
     confirmChanges: (_profile, changes) => {
       events.push(`review:+${changes.added.join(",")};-${changes.removed.join(",")}`);
+
       return Effect.succeed(true);
     },
   };
@@ -84,6 +88,7 @@ test("reviews one complete extension selection before one transactional mutation
 
 test("cancellation and an empty Profile shelf never mutate extension state", async () => {
   const calls: Array<ReadonlyArray<string>> = [];
+
   const interaction: ExtensionManagerInteraction = {
     selectProfile: ([profile]) => Effect.succeed(profile),
     selectExtensions: () => Effect.succeed(undefined),
@@ -98,6 +103,7 @@ test("cancellation and an empty Profile shelf never mutate extension state", asy
       options,
     ),
   );
+
   const empty = await Effect.runPromise(
     manageExtensions(profiles([]), extensionService([], calls), interaction, options),
   );

@@ -85,17 +85,21 @@ describe("Telegram gateway startup", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const replied = yield* Deferred.make<void>();
+
         const transport: TelegramTransport = {
           getUpdates: (_token, offset, timeout) =>
             Effect.gen(function* () {
               calls.push({ offset, timeout });
               poll += 1;
+
               if (poll === 1) {
                 return [update(41, "offline backlog")];
               }
+
               if (poll === 2) {
                 return [update(42, "new message")];
               }
+
               return yield* Effect.never;
             }),
           sendMessage: (_token, _chatId, text) =>
@@ -104,6 +108,7 @@ describe("Telegram gateway startup", () => {
               yield* Deferred.succeed(replied, undefined);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -117,16 +122,19 @@ describe("Telegram gateway startup", () => {
           openChat: (_target, context, sessionDirectory) =>
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
+
               return makeChatHandle({
                 prompt: (text: string) =>
                   Effect.sync(() => {
                     prompts.push(text);
+
                     return "reply";
                   }),
                 dispose: Effect.void,
               });
             }),
         };
+
         const gateway = makeTelegramGateway(agent, transport);
         const target = { path: "/tmp/ziggy-gateway-test", name: "Test" };
         const config = { botToken: "token", ownerUserId: 7 };
@@ -161,24 +169,32 @@ describe("Telegram gateway stop", () => {
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
         const stopped = yield* Deferred.make<void>();
+
         const transport: TelegramTransport = {
           getUpdates: () =>
             Effect.gen(function* () {
               poll += 1;
+
               if (poll === 1) return [];
+
               if (poll === 2) return [update(1, "long request")];
+
               if (poll === 3) {
                 yield* Deferred.await(started);
+
                 return [update(2, "stop")];
               }
+
               return yield* Effect.never;
             }),
           sendMessage: (_token, _chatId, text) =>
             Effect.gen(function* () {
               replies.push(text);
+
               if (text === "Stopped.") yield* Deferred.succeed(stopped, undefined);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -197,6 +213,7 @@ describe("Telegram gateway stop", () => {
                   Effect.gen(function* () {
                     prompts.push(text);
                     yield* Deferred.succeed(started, undefined);
+
                     return yield* Effect.never;
                   }),
                 abort: Effect.sync(() => {
@@ -232,12 +249,16 @@ describe("Telegram gateway stop", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const acknowledged = yield* Deferred.make<void>();
+
         const transport: TelegramTransport = {
           getUpdates: () =>
             Effect.gen(function* () {
               poll += 1;
+
               if (poll === 1) return [];
+
               if (poll === 2) return [update(1, "/stop")];
+
               return yield* Effect.never;
             }),
           sendMessage: (_token, _chatId, text) =>
@@ -246,6 +267,7 @@ describe("Telegram gateway stop", () => {
               yield* Deferred.succeed(acknowledged, undefined);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -259,10 +281,12 @@ describe("Telegram gateway stop", () => {
           openChat: () =>
             Effect.sync(() => {
               openChatCalls += 1;
+
               return makeChatHandle({
                 prompt: (text) =>
                   Effect.sync(() => {
                     prompts.push(text);
+
                     return "should not prompt";
                   }),
                 abort: Effect.sync(() => {
@@ -296,20 +320,26 @@ describe("Telegram gateway stop", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const replied = yield* Deferred.make<void>();
+
         const transport: TelegramTransport = {
           getUpdates: () =>
             Effect.gen(function* () {
               poll += 1;
+
               if (poll === 1) return [];
+
               if (poll === 2) return [update(1, "discuss please")];
+
               return yield* Effect.never;
             }),
           sendMessage: (_token, _chatId, text) =>
             Effect.gen(function* () {
               replies.push(text);
+
               if (text === "parent wrap") yield* Deferred.succeed(replied, undefined);
             }),
         };
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
@@ -334,6 +364,7 @@ describe("Telegram gateway stop", () => {
                     agentId: "beta",
                     text: "second look",
                   });
+
                   return Effect.succeed("parent wrap");
                 },
                 dispose: Effect.void,

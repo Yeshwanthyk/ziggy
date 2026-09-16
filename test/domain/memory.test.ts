@@ -19,6 +19,7 @@ describe("applyMemoryOperations", () => {
       [{ action: "replace", oldText: "missing", content: "replacement" }],
       100,
     );
+
     expect(result).toEqual({
       ok: false,
       message:
@@ -32,6 +33,7 @@ describe("applyMemoryOperations", () => {
       [{ action: "replace", oldText: "shared detail", content: "replacement" }],
       100,
     );
+
     expect(result).toEqual({
       ok: false,
       message:
@@ -45,6 +47,7 @@ describe("applyMemoryOperations", () => {
       [{ action: "remove", oldText: "remove" }],
       100,
     );
+
     expect(result).toEqual({
       ok: true,
       content: `keep${MEMORY_ENTRY_DELIMITER}also keep\n`,
@@ -58,6 +61,7 @@ describe("applyMemoryOperations", () => {
       [{ action: "add", content: `one${MEMORY_ENTRY_DELIMITER}two` }],
       100,
     );
+
     expect(result).toEqual({
       ok: false,
       message: "operation 1 (add) rejected: content must not contain the memory entry delimiter",
@@ -86,6 +90,7 @@ describe("applyMemoryOperations", () => {
       [{ action: "replace", oldText: "legacy", content: "current fact" }],
       100,
     );
+
     expect(result).toEqual({
       ok: true,
       content: "current fact\n",

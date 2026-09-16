@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repositoryRoot = join(import.meta.dir, "../../..");
+
 const oxlintCli = join(repositoryRoot, "node_modules/oxlint/bin/oxlint");
+
 const roots: string[] = [];
 
 const fixture = `export type ObjectAlias = object;
@@ -50,6 +52,7 @@ const expected = [
 
 const lineFor = (marker: string) => {
   const line = fixture.split("\n").findIndex((value) => value.includes(marker));
+
   return line + 1;
 };
 
@@ -80,6 +83,7 @@ test("preserves lexical mapped, infer, nested, and module-alias type ownership",
     stdout: "pipe",
     stderr: "pipe",
   });
+
   const stdout = new TextDecoder().decode(result.stdout);
   const stderr = new TextDecoder().decode(result.stderr);
   expect(result.exitCode).toBe(1);

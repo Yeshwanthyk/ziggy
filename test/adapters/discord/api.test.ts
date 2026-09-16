@@ -15,20 +15,24 @@ describe("Discord HTTP adapter", () => {
       readonly authorization: string | undefined;
       readonly body: string;
     }> = [];
+
     const client = HttpClient.make((request) => {
       const body =
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+
       requests.push({
         method: request.method,
         url: request.url,
         authorization: request.headers.authorization,
         body,
       });
+
       if (request.url.endsWith("/oauth2/applications/@me")) {
         return Effect.succeed(
           HttpClientResponse.fromWeb(request, new Response('{"id":"app-1"}', { status: 200 })),
         );
       }
+
       if (request.url.endsWith("/applications/app-1/commands") && request.method === "GET") {
         return Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -61,6 +65,7 @@ describe("Discord HTTP adapter", () => {
           ),
         );
       }
+
       if (
         request.url.endsWith("/applications/app-1/guilds/guild-1/commands") &&
         request.method === "GET"
@@ -88,6 +93,7 @@ describe("Discord HTTP adapter", () => {
           ),
         );
       }
+
       if (request.url.endsWith("/applications/app-1/commands")) {
         return Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -96,10 +102,12 @@ describe("Discord HTTP adapter", () => {
           ),
         );
       }
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })),
       );
     });
+
     const api = makeDiscordApi(client);
 
     await Effect.runPromise(api.ensureCommands("bot-secret", ["guild-1", "guild-1"]));
@@ -166,17 +174,20 @@ describe("Discord HTTP adapter", () => {
       readonly url: string;
       readonly body: string;
     }> = [];
+
     const client = HttpClient.make((request) => {
       requests.push({
         method: request.method,
         url: request.url,
         body: request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
       });
+
       const responseBody = request.url.endsWith("/threads")
         ? '{"id":"m1","type":11,"guild_id":"g1","parent_id":"c1"}'
         : request.url.endsWith("/typing") || request.url.includes("/reactions/")
           ? null
           : '{"id":"reply1"}';
+
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -184,6 +195,7 @@ describe("Discord HTTP adapter", () => {
         ),
       );
     });
+
     const api = makeDiscordApi(client);
 
     const receipt = await Effect.runPromise(
@@ -195,6 +207,7 @@ describe("Discord HTTP adapter", () => {
         yield* api.triggerTyping("secret", "m1");
         yield* api.addReaction("secret", "c1", "m1", "👀");
         yield* api.removeReaction("secret", "c1", "m1", "👀");
+
         return created;
       }),
     );
@@ -276,9 +289,11 @@ describe("Discord HTTP adapter", () => {
 
   test("downloads only bounded Discord CDN images with matching metadata", async () => {
     const urls: Array<string> = [];
+
     const api = makeDiscordApi(
       HttpClient.make((request) => {
         urls.push(request.url);
+
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -290,6 +305,7 @@ describe("Discord HTTP adapter", () => {
         );
       }),
     );
+
     const url = "https://cdn.discordapp.com/attachments/1/2/image.png?ex=signed";
 
     expect(
@@ -312,9 +328,11 @@ describe("Discord HTTP adapter", () => {
 
   test("rejects untrusted attachment URLs and response type mismatches", async () => {
     let requests = 0;
+
     const api = makeDiscordApi(
       HttpClient.make((request) => {
         requests += 1;
+
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -326,6 +344,7 @@ describe("Discord HTTP adapter", () => {
         );
       }),
     );
+
     const untrusted = await Effect.runPromise(
       api
         .downloadAttachment({
@@ -336,6 +355,7 @@ describe("Discord HTTP adapter", () => {
         })
         .pipe(Effect.result),
     );
+
     expect(Result.isFailure(untrusted) && untrusted.failure.reason).toBe("rejected");
     expect(requests).toBe(0);
 
@@ -349,16 +369,20 @@ describe("Discord HTTP adapter", () => {
         })
         .pipe(Effect.result),
     );
+
     expect(Result.isFailure(mismatch) && mismatch.failure.reason).toBe("rejected");
     expect(requests).toBe(1);
   });
 
   test("aborts the injected HttpClient request when interrupted", async () => {
     let requestSignal: AbortSignal | undefined;
+
     const client = HttpClient.make((_request, _url, signal) => {
       requestSignal = signal;
+
       return Effect.never;
     });
+
     const api = makeDiscordApi(client);
 
     await Effect.runPromise(
@@ -374,6 +398,7 @@ describe("Discord HTTP adapter", () => {
 
   test("redacts credentials from transport failures", async () => {
     const secret = "token/with-value";
+
     const client = HttpClient.make((request) =>
       Effect.fail(
         new HttpClientError.HttpClientError({
@@ -384,6 +409,7 @@ describe("Discord HTTP adapter", () => {
         }),
       ),
     );
+
     const api = makeDiscordApi(client);
 
     const result = await Effect.runPromise(api.getGatewayBot(secret).pipe(Effect.result));

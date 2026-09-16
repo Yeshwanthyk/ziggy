@@ -11,8 +11,11 @@ import {
 } from "../../domain/discord-ingress";
 
 const DATABASE_NAME = "discord-ingress.sqlite";
+
 const MAX_TERMINAL_ROWS = 1_000;
+
 const EMPTY_ATTACHMENTS_JSON = '{"attachments":[],"omittedAttachmentCount":0}';
+
 const SCHEMA_V1 = `
 CREATE TABLE discord_ingress (
   message_id TEXT PRIMARY KEY,
@@ -44,6 +47,7 @@ CREATE INDEX discord_ingress_replay ON discord_ingress(received_at_ms, message_i
 CREATE INDEX discord_ingress_terminal ON discord_ingress(finished_at_ms DESC, message_id)
   WHERE state IN ('completed', 'failed', 'cancelled', 'unknown');
 PRAGMA user_version = 1;`;
+
 const SCHEMA_V2 = `
 CREATE TABLE "discord_ingress" (
   message_id TEXT PRIMARY KEY,
@@ -84,6 +88,7 @@ CREATE INDEX discord_ingress_replay ON discord_ingress(received_at_ms, message_i
 CREATE INDEX discord_ingress_terminal ON discord_ingress(finished_at_ms DESC, message_id)
   WHERE state IN ('completed', 'failed', 'cancelled', 'unknown');
 PRAGMA user_version = 2;`;
+
 const MIGRATE_V1_TO_V2 = `
 CREATE TABLE discord_ingress_v2 (
   message_id TEXT PRIMARY KEY,
@@ -132,7 +137,9 @@ CREATE INDEX discord_ingress_terminal ON discord_ingress(finished_at_ms DESC, me
 PRAGMA user_version = 2;`;
 
 const VersionRow = Schema.Struct({ userVersion: Schema.Int });
+
 const MasterRow = Schema.Struct({ name: Schema.String, type: Schema.String, sql: Schema.String });
+
 const ReplayRow = Schema.Struct({
   messageId: Schema.String,
   sourceChannelId: Schema.String,
@@ -145,6 +152,7 @@ const ReplayRow = Schema.Struct({
   text: Schema.String,
   attachmentsJson: Schema.String,
 });
+
 const StoredAttachments = Schema.Struct({
   attachments: Schema.Array(DiscordIngressAttachmentReference).check(
     Schema.makeFilter((attachments) => attachments.length <= 4, {
@@ -153,13 +161,17 @@ const StoredAttachments = Schema.Struct({
   ),
   omittedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
+
 const decodeVersion = Schema.decodeUnknownSync(VersionRow, { onExcessProperty: "error" });
+
 const decodeMaster = Schema.decodeUnknownSync(Schema.Array(MasterRow), {
   onExcessProperty: "error",
 });
+
 const decodeReplayRows = Schema.decodeUnknownSync(Schema.Array(ReplayRow), {
   onExcessProperty: "error",
 });
+
 const decodeStoredAttachmentsJson = Schema.decodeUnknownSync(
   Schema.fromJsonString(StoredAttachments),
 );
@@ -185,26 +197,35 @@ const schemaObjects = (db: Database) =>
       )
       .all(),
   );
+
 const schemaFingerprint = (objects: ReadonlyArray<typeof MasterRow.Type>) =>
   createHash("sha256").update(JSON.stringify(objects)).digest("hex");
+
 const expectedObjects = ["discord_ingress", "discord_ingress_replay", "discord_ingress_terminal"];
+
 const expectedFingerprint = (schema: string) => {
   const db = new Database(":memory:", { strict: true });
+
   try {
     db.exec(schema);
+
     return schemaFingerprint(schemaObjects(db));
   } finally {
     db.close(false);
   }
 };
+
 const expectedFingerprintV1 = expectedFingerprint(SCHEMA_V1);
+
 const expectedFingerprintV2 = expectedFingerprint(SCHEMA_V2);
 
 const validateSchemaVersion = (db: Database, path: string, expectedVersion: 1 | 2): void => {
   const actualVersion = decodeVersion(
     db.query("SELECT user_version userVersion FROM pragma_user_version").get(),
   ).userVersion;
+
   const objects = schemaObjects(db);
+
   if (
     actualVersion !== expectedVersion ||
     objects.map((row) => row.name).join("|") !== expectedObjects.join("|") ||
@@ -214,6 +235,7 @@ const validateSchemaVersion = (db: Database, path: string, expectedVersion: 1 | 
     throw databaseError("validate schema", path, { actualVersion, objects });
   }
 };
+
 const validateSchema = (db: Database, path: string): void => validateSchemaVersion(db, path, 2);
 
 const configure = (db: Database): void => {
@@ -226,6 +248,7 @@ export const initializeDiscordIngressDatabase = (
   profilePath: string,
 ): Effect.Effect<void, DiscordIngressDatabaseError> => {
   const path = discordIngressDatabasePath(profilePath);
+
   return Effect.tryPromise({
     try: () => mkdir(join(profilePath, ".runtime"), { recursive: true }),
     catch: (cause) => databaseError("create runtime directory", path, cause),
@@ -235,8 +258,10 @@ export const initializeDiscordIngressDatabase = (
         Effect.try({
           try: () => {
             const db = new Database(path, { create: true, readwrite: true, strict: true });
+
             try {
               configure(db);
+
               return db;
             } catch (cause) {
               db.close(false);
@@ -251,13 +276,16 @@ export const initializeDiscordIngressDatabase = (
               const version = decodeVersion(
                 db.query("SELECT user_version userVersion FROM pragma_user_version").get(),
               ).userVersion;
+
               const objects = schemaObjects(db);
+
               if (version === 0 && objects.length === 0) {
                 db.transaction(() => db.exec(SCHEMA_V2)).immediate();
               } else if (version === 1) {
                 validateSchemaVersion(db, path, 1);
                 db.transaction(() => db.exec(MIGRATE_V1_TO_V2)).immediate();
               }
+
               validateSchema(db, path);
             },
             catch: (cause) =>
@@ -277,13 +305,16 @@ const withDatabase = <A>(
   use: (db: Database) => A,
 ): Effect.Effect<A, DiscordIngressDatabaseError> => {
   const path = discordIngressDatabasePath(profilePath);
+
   return Effect.acquireUseRelease(
     Effect.try({
       try: () => {
         const db = new Database(path, { create: false, readwrite: true, strict: true });
+
         try {
           configure(db);
           validateSchema(db, path);
+
           return db;
         } catch (cause) {
           db.close(false);
@@ -332,9 +363,12 @@ export const admitDiscordIngress = (
           db
             .query("SELECT 1 FROM discord_ingress WHERE message_id=? LIMIT 1")
             .get(payload.messageId) !== null;
+
         if (duplicate) return "duplicate";
+
         const contextId =
           payload.context.kind === "user" ? payload.context.userId : payload.context.groupId;
+
         db.query(
           `INSERT INTO discord_ingress
             (message_id,state,owner_id,source_channel_id,channel_id,guild_id,author_id,chat_key,context_kind,context_id,text,attachments_json,received_at_ms,started_at_ms,finished_at_ms)
@@ -353,6 +387,7 @@ export const admitDiscordIngress = (
           atMs,
         );
         pruneTerminalRows(db);
+
         return "accepted";
       })
       .immediate(),
@@ -388,6 +423,7 @@ export const readReplayableDiscordIngress = (
         .all(),
     ).map((row): DiscordIngressPayload => {
       const storedAttachments = decodeStoredAttachmentsJson(row.attachmentsJson);
+
       return {
         messageId: row.messageId,
         sourceChannelId: row.sourceChannelId,
@@ -446,6 +482,7 @@ export const requeueDiscordIngress = (
          WHERE message_id=? AND state='running' AND owner_id=?`,
       )
       .run(payload.messageId, ownerId).changes;
+
     if (changed !== 1) {
       throw databaseError("requeue owned row", discordIngressDatabasePath(profilePath), {
         messageId: payload.messageId,
@@ -469,11 +506,13 @@ export const finishDiscordIngress = (
              WHERE message_id=? AND state='running' AND owner_id=?`,
           )
           .run(state, EMPTY_ATTACHMENTS_JSON, atMs, payload.messageId, ownerId).changes;
+
         if (changed !== 1) {
           throw databaseError("finish owned row", discordIngressDatabasePath(profilePath), {
             messageId: payload.messageId,
           });
         }
+
         pruneTerminalRows(db);
       })
       .immediate(),

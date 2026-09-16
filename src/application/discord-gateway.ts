@@ -70,17 +70,29 @@ import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi 
 import type { ChatRegistryApi } from "./chat-registry";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
+
 const DISCORD_MESSAGE_LIMIT = 2_000;
+
 const MAX_RETRY_SECONDS = 30;
+
 const MAX_DELIVERY_ATTEMPTS = 4;
+
 const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
+
 const PROGRESS_UPDATE_GROWTH = 48;
+
 const TYPING_REFRESH_SECONDS = 8;
+
 const WORKING_MESSAGE = "Working on that…";
+
 const QUEUED_MESSAGE = "Queued behind an earlier request…";
+
 const FAILED_MESSAGE = "I couldn't complete that request.";
+
 const STOPPED_MESSAGE = "Stopped.";
+
 const THREAD_TYPES = new Set([10, 11, 12]);
+
 const ROOT_CHANNEL_TYPES = new Set([0, 5]);
 
 export type DiscordGatewayError = DiscordApiError | DiscordIngressDatabaseError;
@@ -209,6 +221,7 @@ export const normalizeDiscordMessage = (
   ) {
     return undefined;
   }
+
   return {
     messageId: message.id,
     channelId: message.channelId,
@@ -237,6 +250,7 @@ const threadName = (text: string): string => {
     .replace(/\p{Cc}+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+
   return [...(normalized.length === 0 ? "Squarey request" : normalized)].slice(0, 80).join("");
 };
 
@@ -246,6 +260,7 @@ export const discordThreadConversation = (
   parentChannelId: string,
 ): InboundMessage => {
   const groupId = `dc${parentChannelId}`;
+
   return {
     ...message,
     channelId: threadId,
@@ -261,7 +276,9 @@ export const shouldUpdateDiscordProgress = (
 ): boolean => {
   if (snapshot === previous.text || codePointLength(snapshot) < PROGRESS_UPDATE_GROWTH)
     return false;
+
   if (atMs - previous.atMs < PROGRESS_UPDATE_INTERVAL_MS) return false;
+
   return (
     !snapshot.startsWith(previous.text) ||
     codePointLength(snapshot) - codePointLength(previous.text) >= PROGRESS_UPDATE_GROWTH
@@ -272,9 +289,11 @@ export const discordMessageChunks = (text: string): ReadonlyArray<string> => {
   const characters = [...text];
   const chunks: Array<string> = [];
   let offset = 0;
+
   while (offset < characters.length) {
     const hardEnd = Math.min(offset + DISCORD_MESSAGE_LIMIT, characters.length);
     let end = hardEnd;
+
     if (hardEnd < characters.length) {
       for (let index = hardEnd - 1; index > offset; index -= 1) {
         if (characters[index] === "\n") {
@@ -282,6 +301,7 @@ export const discordMessageChunks = (text: string): ReadonlyArray<string> => {
           break;
         }
       }
+
       if (end === hardEnd) {
         for (let index = hardEnd - 1; index > offset; index -= 1) {
           if (/\s/u.test(characters[index] ?? "")) {
@@ -291,9 +311,11 @@ export const discordMessageChunks = (text: string): ReadonlyArray<string> => {
         }
       }
     }
+
     chunks.push(characters.slice(offset, end).join(""));
     offset = end;
   }
+
   return chunks;
 };
 
@@ -302,6 +324,7 @@ const safeDiscordAttachmentName = (value: string | undefined, index: number): st
     .replace(/\p{Cc}/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+
   return JSON.stringify(normalized.slice(0, 160));
 };
 
@@ -314,11 +337,15 @@ const discordAttachmentMetadataIssue = (
   ) {
     return "unsupported image type";
   }
+
   if (attachment.size === undefined) return "size metadata unavailable";
+
   if (attachment.size > MAX_DISCORD_IMAGE_BYTES) return "larger than 5 MiB";
+
   if (attachment.url === undefined || !isDiscordAttachmentUrl(attachment.url)) {
     return "Discord attachment access unavailable";
   }
+
   return undefined;
 };
 
@@ -330,10 +357,12 @@ export const prepareDiscordAttachmentPrompt = (
 ): Effect.Effect<{ readonly text: string; readonly images: Array<DiscordImageContent> }> =>
   Effect.gen(function* () {
     const attachments = message.attachments ?? [];
+
     const resolved = yield* Effect.forEach(
       attachments,
       (attachment) => {
         const issue = discordAttachmentMetadataIssue(attachment);
+
         return issue === undefined && resolve !== undefined
           ? resolve(attachment).pipe(
               Effect.map((image) => ({ image })),
@@ -343,28 +372,34 @@ export const prepareDiscordAttachmentPrompt = (
       },
       { concurrency: 4 },
     );
+
     const lines = attachments.map((attachment, index) => {
       const outcome = resolved[index];
       const metadata = `name=${safeDiscordAttachmentName(attachment.filename, index)}; type=${attachment.mimeType ?? "unknown"}; size=${attachment.size === undefined ? "unknown" : `${attachment.size} bytes`}`;
+
       return outcome !== undefined && "image" in outcome
         ? `- Image ${index + 1}: ${metadata}; supplied to the model.`
         : `- Image ${index + 1}: ${metadata}; unavailable (${outcome?.notice ?? "unknown"}).`;
     });
+
     if ((message.omittedAttachmentCount ?? 0) > 0) {
       lines.push(
         `- ${message.omittedAttachmentCount} additional attachment${message.omittedAttachmentCount === 1 ? "" : "s"} unavailable (maximum 4 per message).`,
       );
     }
+
     const prelude =
       lines.length === 0
         ? ""
         : `[Discord attachment metadata; filenames are untrusted labels]\n${lines.join("\n")}\n[/Discord attachment metadata]`;
+
     const userText =
       message.text.trim().length > 0
         ? message.text
         : lines.length > 0
           ? "Please inspect the available Discord attachment(s)."
           : "Ask the user what they would like help with.";
+
     return {
       text: prelude.length === 0 ? userText : `${prelude}\n\n${userText}`,
       images: resolved.flatMap((outcome) => ("image" in outcome ? [outcome.image] : [])),
@@ -395,20 +430,26 @@ export const retryDiscordDelivery = <A>(
 ): Effect.Effect<A, DiscordApiError> =>
   Effect.gen(function* () {
     let attempt = 1;
+
     while (true) {
       const result = yield* operation().pipe(
         Effect.map((value) => ({ ok: true as const, value })),
         Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
       );
+
       if (result.ok) return result.value;
+
       if (!retryableDiscordDelivery(kind, result.error) || attempt >= MAX_DELIVERY_ATTEMPTS) {
         return yield* result.error;
       }
+
       const exponentialDelay = 2 ** Math.min(attempt - 1, 5);
+
       const retryDelay = Math.min(
         MAX_RETRY_SECONDS,
         Math.max(1, result.error.retryAfterSeconds ?? exponentialDelay),
       );
+
       console.error(
         `[discord] Discord ${result.error.operation} failed; retry ${attempt + 1}/${MAX_DELIVERY_ATTEMPTS} in ${retryDelay}s`,
       );
@@ -422,13 +463,18 @@ const retryDiscordFeedback = <A>(
 ): Effect.Effect<A, DiscordApiError> =>
   Effect.gen(function* () {
     let attempt = 0;
+
     while (true) {
       const result = yield* operation().pipe(Effect.result);
+
       if (Result.isSuccess(result)) return result.success;
+
       if (!result.failure.retriable || attempt === 2) return yield* result.failure;
+
       const delayMs = Math.ceil(
         Math.min(2, Math.max(0, result.failure.retryAfterSeconds ?? 0.25)) * 1_000,
       );
+
       yield* Effect.sleep(Duration.millis(delayMs));
       attempt += 1;
     }
@@ -570,10 +616,12 @@ export const makeDiscordGateway = (
         const replayable = yield* ingressRuntime.readReplayable(target.path);
         let health = initialDiscordHealth(healthRuntime.now());
         const healthPermit = Semaphore.makeUnsafe(1);
+
         const observe = (event: DiscordHealthEvent): Effect.Effect<void> =>
           healthPermit.withPermit(
             Effect.sync(() => {
               health = evolveDiscordHealth(health, event);
+
               return health;
             }).pipe(
               Effect.flatMap((snapshot) => healthRuntime.write(target.path, snapshot)),
@@ -584,6 +632,7 @@ export const makeDiscordGateway = (
               ),
             ),
           );
+
         yield* healthRuntime.write(target.path, health).pipe(
           Effect.catch((failure) =>
             Effect.sync(() => {
@@ -594,9 +643,11 @@ export const makeDiscordGateway = (
         const chats = new Map<string, ChatState>();
         const reactionUnavailableChannels = new Set<string>();
         const typingUnavailableChannels = new Set<string>();
+
         const socket = yield* transport
           .openSocket(config.botToken, DISCORD_INTENTS)
           .pipe(Effect.mapError(socketFailure));
+
         const reconciledCommandGuildSets = new Set<string>();
         yield* Effect.addFinalizer(() =>
           socket.close.pipe(
@@ -613,6 +664,7 @@ export const makeDiscordGateway = (
               case "connected": {
                 const guildIds = [...new Set(state.guildIds)].sort();
                 const guildSet = guildIds.join("\u0000");
+
                 const reconcileCommands =
                   transport.ensureCommands === undefined || reconciledCommandGuildSets.has(guildSet)
                     ? Effect.void
@@ -635,10 +687,12 @@ export const makeDiscordGateway = (
                         Effect.forkScoped,
                         Effect.asVoid,
                       );
+
                 return observe({ _tag: "connected", atMs: healthRuntime.now() }).pipe(
                   Effect.andThen(reconcileCommands),
                 );
               }
+
               case "reconnecting":
                 return observe({
                   _tag: "reconnecting",
@@ -668,14 +722,18 @@ export const makeDiscordGateway = (
 
         const chatStateFor = (chatKey: string): ChatState => {
           const existing = chats.get(chatKey);
+
           if (existing !== undefined) return existing;
+
           const created: ChatState = {
             semaphore: Semaphore.makeUnsafe(1),
             turns: new Set(),
             generation: 0,
             pending: 0,
           };
+
           chats.set(chatKey, created);
+
           return created;
         };
 
@@ -683,13 +741,16 @@ export const makeDiscordGateway = (
           Effect.gen(function* () {
             const chatState = chatStateFor(chatKey);
             chatState.generation += 1;
+
             const turns = [...chatState.turns].filter(
               (turn) => turn.generation < chatState.generation && !turn.cancelled,
             );
+
             for (const turn of turns) turn.cancelled = true;
             yield* Effect.forEach(turns, (turn) => Deferred.succeed(turn.cancellation, undefined), {
               discard: true,
             });
+
             if (chatState.handle !== undefined) {
               yield* chatState.handle.abort.pipe(
                 Effect.catch((failure) =>
@@ -699,6 +760,7 @@ export const makeDiscordGateway = (
                 ),
               );
             }
+
             return turns.length;
           });
 
@@ -712,13 +774,16 @@ export const makeDiscordGateway = (
               context: { kind: "user", userId: "owner" },
             });
           }
+
           return Effect.gen(function* () {
             const channel = yield* retryDiscordDelivery("idempotent", () =>
               transport.getChannel(config.botToken, message.channelId),
             );
+
             if (THREAD_TYPES.has(channel.type) && channel.parent_id != null) {
               return discordThreadConversation(message, channel.id, channel.parent_id);
             }
+
             if (!ROOT_CHANNEL_TYPES.has(channel.type)) {
               return yield* new DiscordApiError({
                 operation: "getChannel",
@@ -728,6 +793,7 @@ export const makeDiscordGateway = (
                 cause: { channelType: channel.type },
               });
             }
+
             const thread = yield* retryDiscordDelivery("post", () =>
               transport.startThreadFromMessage(
                 config.botToken,
@@ -736,6 +802,7 @@ export const makeDiscordGateway = (
                 threadName(message.text),
               ),
             );
+
             return discordThreadConversation(message, thread.id, channel.id);
           });
         };
@@ -759,6 +826,7 @@ export const makeDiscordGateway = (
           emoji: string,
         ): Effect.Effect<void> => {
           if (reactionUnavailableChannels.has(message.sourceChannelId)) return Effect.void;
+
           const effect =
             operation === "add"
               ? () =>
@@ -775,12 +843,14 @@ export const makeDiscordGateway = (
                     message.messageId,
                     emoji,
                   );
+
           return retryDiscordFeedback(effect).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
                 if (!failure.retriable && operation === "add") {
                   reactionUnavailableChannels.add(message.sourceChannelId);
                 }
+
                 console.error(
                   `[discord] ${message.chatKey} ${operation} reaction failed: ${failure.message}`,
                 );
@@ -798,12 +868,14 @@ export const makeDiscordGateway = (
               if (!isFresh() || typingUnavailableChannels.has(message.channelId)) {
                 return yield* Effect.interrupt;
               }
+
               yield* transport.triggerTyping(config.botToken, message.channelId).pipe(
                 Effect.catch((failure) =>
                   Effect.sync(() => {
                     if (!failure.retriable) {
                       typingUnavailableChannels.add(message.channelId);
                     }
+
                     console.error(`[discord] ${message.chatKey} typing failed: ${failure.message}`);
                   }),
                 ),
@@ -822,10 +894,12 @@ export const makeDiscordGateway = (
           let placeholderId: string | undefined;
           let deliveryUnknown = false;
           let started = false;
+
           const observeDeliveryFailure = (failure: DiscordApiError) =>
             Effect.sync(() => {
               if (discordDeliveryOutcomeUnknown(failure)) deliveryUnknown = true;
             });
+
           return Effect.gen(function* () {
             yield* observe({ _tag: "accepted", atMs: healthRuntime.now(), queued });
             yield* reaction(message, "add", "👀");
@@ -841,15 +915,18 @@ export const makeDiscordGateway = (
                 if (!isFresh()) return yield* Effect.interrupt;
                 started = true;
                 yield* observe({ _tag: "started", atMs: healthRuntime.now(), wasQueued: queued });
+
                 if (queued && placeholderId !== undefined) {
                   yield* updateFeedback(message, placeholderId, WORKING_MESSAGE);
                 }
+
                 if (chatState.handle === undefined) {
                   chatState.handle = yield* agent.openChat(
                     target,
                     message.context,
                     join(target.path, "sessions", "discord", message.chatKey),
                   );
+
                   if (registry !== undefined) {
                     yield* registry
                       .registerAlias(`discord/${message.chatKey}`, "discord", chatState.handle)
@@ -863,12 +940,14 @@ export const makeDiscordGateway = (
                       );
                   }
                 }
+
                 const handle = chatState.handle;
 
                 const reply = yield* Effect.scoped(
                   Effect.gen(function* () {
                     yield* maintainTyping(message, isFresh).pipe(Effect.forkScoped);
                     const progress = yield* Queue.sliding<string>(1);
+
                     if (placeholderId !== undefined) {
                       const progressMessageId = placeholderId;
                       yield* Effect.gen(function* () {
@@ -876,36 +955,45 @@ export const makeDiscordGateway = (
                           atMs: Date.now(),
                           text: "",
                         };
+
                         while (true) {
                           const snapshot = yield* Queue.take(progress);
                           const atMs = Date.now();
+
                           if (
                             !isFresh() ||
                             !shouldUpdateDiscordProgress(previous, snapshot, atMs)
                           ) {
                             continue;
                           }
+
                           previous = { atMs, text: snapshot };
                           const chunk = discordMessageChunks(snapshot)[0];
+
                           if (chunk !== undefined) {
                             yield* updateFeedback(message, progressMessageId, chunk);
                           }
                         }
                       }).pipe(Effect.forkScoped);
                     }
+
                     const prompt = yield* prepareDiscordAttachmentPrompt(
                       message,
                       transport.downloadAttachment,
                     );
+
                     const voiceSignals = yield* Queue.unbounded<
                       | { readonly kind: "voice"; readonly agentId: string; readonly text: string }
                       | { readonly kind: "done" }
                     >();
+
                     const voicesDrained = yield* Deferred.make<void>();
                     yield* Effect.gen(function* () {
                       while (true) {
                         const signal = yield* Queue.take(voiceSignals);
+
                         if (signal.kind === "done") break;
+
                         if (!isFresh()) continue;
                         yield* retryDiscordDelivery("post", () =>
                           transport.createMessage(
@@ -923,15 +1011,20 @@ export const makeDiscordGateway = (
                           ),
                         );
                       }
+
                       yield* Deferred.succeed(voicesDrained, undefined);
                     }).pipe(Effect.forkScoped);
+
                     const reply = yield* handle.prompt(prompt.text, {
                       onProgress: (event) => {
                         if (!isFresh()) return;
+
                         if (event.kind === "voice") {
                           Queue.offerUnsafe(voiceSignals, event);
+
                           return;
                         }
+
                         if (event.kind === "assistant-text") {
                           Queue.offerUnsafe(progress, event.snapshot);
                         }
@@ -940,15 +1033,19 @@ export const makeDiscordGateway = (
                         prompt.images.length > 0 ? ([["images", prompt.images]] as const) : [],
                       ),
                     });
+
                     yield* Queue.offer(voiceSignals, { kind: "done" });
                     yield* Deferred.await(voicesDrained);
+
                     return reply;
                   }),
                 );
+
                 if (!isFresh()) return yield* Effect.interrupt;
                 const replyChunks = discordMessageChunks(reply);
                 const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
                 const first = chunks[0];
+
                 if (placeholderId !== undefined && first !== undefined) {
                   const firstMessageId = placeholderId;
                   yield* retryDiscordDelivery("idempotent", () =>
@@ -960,12 +1057,14 @@ export const makeDiscordGateway = (
                     ),
                   ).pipe(Effect.tapError(observeDeliveryFailure));
                 }
+
                 for (const chunk of chunks.slice(1)) {
                   if (!isFresh()) return yield* Effect.interrupt;
                   yield* retryDiscordDelivery("post", () =>
                     transport.createMessage(config.botToken, message.channelId, chunk),
                   ).pipe(Effect.tapError(observeDeliveryFailure));
                 }
+
                 console.log(
                   `[discord] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
                 );
@@ -975,8 +1074,10 @@ export const makeDiscordGateway = (
             Effect.onExit((exit) => {
               const shutdownInterrupted =
                 !turn.cancelled && Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause);
+
               if (shutdownInterrupted) {
                 turn.terminalAttempted = true;
+
                 return Effect.all(
                   [
                     reaction(message, "remove", "👀"),
@@ -985,10 +1086,13 @@ export const makeDiscordGateway = (
                   { concurrency: "unbounded", discard: true },
                 );
               }
+
               const terminalState: DiscordIngressTerminalState = turn.cancelled
                 ? "cancelled"
                 : discordIngressTerminalState(deliveryUnknown, Exit.isSuccess(exit));
+
               turn.terminalAttempted = true;
+
               return Effect.all(
                 [
                   reaction(message, "remove", "👀").pipe(
@@ -1044,10 +1148,12 @@ export const makeDiscordGateway = (
               ingressOwnerId,
               healthRuntime.now(),
             );
+
             if (!started) return;
             const chatState = chatStateFor(message.chatKey);
             const queued = chatState.pending > 0;
             const cancellation = yield* Deferred.make<void>();
+
             const turn: ScheduledDiscordTurn = {
               cancellation,
               generation: chatState.generation,
@@ -1055,6 +1161,7 @@ export const makeDiscordGateway = (
               cancelled: false,
               terminalAttempted: false,
             };
+
             chatState.turns.add(turn);
             chatState.pending += 1;
             yield* Effect.raceFirst(
@@ -1071,6 +1178,7 @@ export const makeDiscordGateway = (
                 Effect.gen(function* () {
                   if (!turn.terminalAttempted) {
                     turn.terminalAttempted = true;
+
                     const settlement = turn.cancelled
                       ? ingressRuntime.finish(
                           target.path,
@@ -1080,6 +1188,7 @@ export const makeDiscordGateway = (
                           healthRuntime.now(),
                         )
                       : ingressRuntime.requeue(target.path, message, ingressOwnerId);
+
                     yield* settlement.pipe(
                       Effect.catch((failure) =>
                         Effect.sync(() => {
@@ -1090,6 +1199,7 @@ export const makeDiscordGateway = (
                       ),
                     );
                   }
+
                   chatState.turns.delete(turn);
                   chatState.pending = Math.max(0, chatState.pending - 1);
                 }),
@@ -1106,14 +1216,17 @@ export const makeDiscordGateway = (
               ingressOwnerId,
               healthRuntime.now(),
             );
+
             if (!started) return;
             let deliveryUnknown = false;
             yield* Effect.gen(function* () {
               const stopped = yield* cancelChat(message.chatKey);
+
               const acknowledgement =
                 stopped === 0
                   ? "Nothing was running."
                   : `Stopped ${stopped} ${stopped === 1 ? "request" : "requests"}.`;
+
               yield* retryDiscordDelivery("post", () =>
                 transport.createMessage(config.botToken, message.channelId, acknowledgement),
               ).pipe(
@@ -1149,7 +1262,9 @@ export const makeDiscordGateway = (
               label: "direct message",
             });
           }
+
           if (interaction.channelId === undefined) return Effect.succeed(undefined);
+
           const resolveChannel: Effect.Effect<DiscordChannel, DiscordApiError> =
             interaction.channelType === undefined
               ? retryDiscordDelivery("idempotent", () =>
@@ -1160,9 +1275,11 @@ export const makeDiscordGateway = (
                   type: interaction.channelType,
                   parent_id: interaction.parentChannelId,
                 });
+
           return resolveChannel.pipe(
             Effect.map((channel) => {
               if (!THREAD_TYPES.has(channel.type) || channel.parent_id == null) return undefined;
+
               return {
                 chatKey: `group-dc${channel.parent_id}-thread-${channel.id}`,
                 label: "thread" as const,
@@ -1186,28 +1303,38 @@ export const makeDiscordGateway = (
           Effect.gen(function* () {
             if (interaction.authorId !== config.ownerUserId) {
               yield* respondToInteraction(interaction, "This Ziggy Profile is owner-only.");
+
               return;
             }
+
             if (interaction.commandName !== "status" && interaction.commandName !== "stop") {
               yield* respondToInteraction(interaction, "That Ziggy command is not supported.");
+
               return;
             }
+
             const resolved = yield* resolveInteractionChat(interaction).pipe(Effect.result);
+
             if (Result.isFailure(resolved)) {
               yield* respondToInteraction(
                 interaction,
                 "I couldn't resolve this Discord conversation.",
               );
+
               return;
             }
+
             const conversation = resolved.success;
+
             if (conversation === undefined) {
               yield* respondToInteraction(
                 interaction,
                 `Use /${interaction.commandName} inside a Ziggy work thread. Top-level messages create one session per thread.`,
               );
+
               return;
             }
+
             if (interaction.commandName === "stop") {
               const stopped = yield* cancelChat(conversation.chatKey);
               yield* respondToInteraction(
@@ -1216,8 +1343,10 @@ export const makeDiscordGateway = (
                   ? "Nothing was running in this conversation."
                   : `Stopped ${stopped} ${stopped === 1 ? "request" : "requests"} in this conversation.`,
               );
+
               return;
             }
+
             const chat = chats.get(conversation.chatKey);
             const pending = chat?.pending ?? 0;
             const active = pending > 0 ? 1 : 0;
@@ -1239,6 +1368,7 @@ export const makeDiscordGateway = (
         if (replayable.length > 0) {
           console.log(`[discord] replaying ${replayable.length} accepted messages`);
         }
+
         for (const message of replayable) {
           if (isDiscordStopCommand(message.text)) {
             yield* stopMessage(message);
@@ -1263,10 +1393,13 @@ export const makeDiscordGateway = (
             ),
             Effect.mapError(socketFailure),
           );
+
           yield* observe({ _tag: "inbound", atMs: healthRuntime.now() });
           const admitted = normalizeDiscordMessage(inbound, config.ownerUserId);
+
           if (admitted === undefined) continue;
           const resolved = yield* resolveConversation(admitted).pipe(Effect.result);
+
           if (Result.isFailure(resolved)) {
             yield* observe({
               _tag: "boundary-failed",
@@ -1283,10 +1416,13 @@ export const makeDiscordGateway = (
               .pipe(Effect.catch(() => Effect.void));
             continue;
           }
+
           const message = resolved.success;
           const admission = yield* ingressRuntime.admit(target.path, message, healthRuntime.now());
+
           if (admission === "duplicate") continue;
           console.log(`[discord] admitted ${message.chatKey}`);
+
           if (isDiscordStopCommand(message.text)) {
             yield* stopMessage(message);
           } else {
@@ -1301,6 +1437,7 @@ export const DiscordGatewayLive = Layer.effect(
   DiscordGateway,
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
+
     return makeDiscordGateway(
       agent,
       liveDiscordTransport,

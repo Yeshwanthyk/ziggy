@@ -143,6 +143,7 @@ export default function losslessClaw(pi: ExtensionAPI): void {
     async execute(_toolCallId, { session }, _signal, _onUpdate, ctx) {
       return runTool(() => {
         const description = describeProfileSession(ctx.cwd, session);
+
         return description ?? { error: `No indexed Pi session matches ${session}.` };
       });
     },

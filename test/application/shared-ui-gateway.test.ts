@@ -23,10 +23,15 @@ import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
 
 const alphaTarget = { path: "/private/alpha", name: "Alpha" } satisfies ProfileTarget;
+
 const betaTarget = { path: "/private/beta", name: "Beta" } satisfies ProfileTarget;
+
 const alphaId = stableProfileId(alphaTarget.path);
+
 const betaId = stableProfileId(betaTarget.path);
+
 const decodeResponse = Schema.decodeUnknownResult(Schema.fromJsonString(UiResponseFrame));
+
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(UiEventFrame));
 
 const makeDirectory = (): ProfileDirectoryApi => {
@@ -46,6 +51,7 @@ const makeDirectory = (): ProfileDirectoryApi => {
       target: betaTarget,
     },
   ] satisfies ReadonlyArray<ProfileDirectoryEntry>;
+
   return {
     entries: () => Effect.succeed(entries),
     list: () =>
@@ -60,6 +66,7 @@ const makeDirectory = (): ProfileDirectoryApi => {
     current: () => Effect.succeed({ profileId: alphaId, target: alphaTarget }),
     resolve: (profileId) => {
       const entry = entries.find((candidate) => candidate.profileId === profileId);
+
       return entry === undefined
         ? Effect.fail(new UnknownProfile({ profileId }))
         : Effect.succeed({ profileId: entry.profileId, target: entry.target });
@@ -95,38 +102,47 @@ const makeExtensions = (): ProfileExtensionsApi => ({
 const eventFrames = (frames: ReadonlyArray<string>) =>
   frames.flatMap((frame) => {
     const decoded = decodeEvent(frame);
+
     return Result.isSuccess(decoded) ? [decoded.success] : [];
   });
 
 test("shared UI gateway isolates two Profile branches and watch streams", async () => {
   const openedPaths: string[] = [];
   const handles = new Map<string, ChatHandle>();
+
   const handleFor = (label: string): ChatHandle => {
     const listeners = new Set<(event: ChatEvent) => void>();
+
     return makeChatHandle({
       prompt: (text) =>
         Effect.sync(() => {
           const snapshot = `${label}:${text}`;
+
           for (const listener of listeners)
             listener({ kind: "assistant-text", delta: snapshot, snapshot });
+
           return snapshot;
         }),
       subscribe: (listener) => {
         listeners.add(listener);
+
         return () => listeners.delete(listener);
       },
     });
   };
+
   const alphaHandle = handleFor("alpha");
   const betaHandle = handleFor("beta");
   handles.set(alphaTarget.path, alphaHandle);
   handles.set(betaTarget.path, betaHandle);
+
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
     openTui: () => Effect.succeed(0),
     openChat: (target) => {
       openedPaths.push(target.path);
       const handle = handles.get(target.path);
+
       return handle === undefined ? Effect.never : Effect.succeed(handle);
     },
     openSpecialistChat: () => Effect.succeed(alphaHandle),
@@ -138,6 +154,7 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
       Effect.gen(function* () {
         const alphaRegistry = yield* makeChatRegistry();
         const betaRegistry = yield* makeChatRegistry();
+
         const gateway = makeSharedUiGateway({
           profileDirectory: makeDirectory(),
           defaultProfile: { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
@@ -150,6 +167,7 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
           agent,
           profileExtensions: makeExtensions(),
         });
+
         const commandFrames: string[] = [];
         const command = gateway.connect((frame) => commandFrames.push(frame));
         const alphaWatchFrames: string[] = [];
@@ -209,10 +227,13 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
           method: "session.list",
           params: { profileId: betaId },
         });
+
         const responses = commandFrames.flatMap((frame) => {
           const decoded = decodeResponse(frame);
+
           return Result.isSuccess(decoded) ? [decoded.success] : [];
         });
+
         const alphaList = responses.find((response) => response.id === "list-alpha");
         const betaList = responses.find((response) => response.id === "list-beta");
         expect(alphaList).toMatchObject({
@@ -238,6 +259,7 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
           commandFrames
             .flatMap((frame) => {
               const decoded = decodeResponse(frame);
+
               return Result.isSuccess(decoded) ? [decoded.success] : [];
             })
             .at(-1),

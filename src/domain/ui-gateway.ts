@@ -5,7 +5,9 @@ import { ProfileExtensionId } from "./profile-extension";
 import { SHARED_MEMORY_CAP, codePointLength, memoryEntries } from "./memory";
 
 export const UI_PROTOCOL_MAX_FRAME_BYTES = 64 * 1_024;
+
 const UI_PROTOCOL_RESULT_BUDGET_BYTES = 56 * 1_024;
+
 const resultWithinWireBudget = Schema.makeFilter(
   <Result>(value: Result) =>
     new TextEncoder().encode(JSON.stringify(value)).byteLength <= UI_PROTOCOL_RESULT_BUDGET_BYTES,
@@ -30,6 +32,7 @@ const boundedCodePointString = (label: string, maximum: number, minimum = 1) =>
     Schema.makeFilter(
       (value) => {
         const length = [...value].length;
+
         return length >= minimum && length <= maximum;
       },
       { expected: `${label} with ${minimum}-${maximum} Unicode code points` },
@@ -44,21 +47,26 @@ const boundedUtf8String = (label: string, maximum: number) =>
   );
 
 const utf8Length = (value: string): number => new TextEncoder().encode(value).byteLength;
+
 const noDotPathSegments = (value: string): boolean =>
   value.split("/").every((segment) => segment !== "." && segment !== "..");
 
 export const UiRequestId = boundedString("request id", 128);
+
 export type UiRequestId = typeof UiRequestId.Type;
 
 export const UiCommandId = boundedString("command id", 128);
+
 export type UiCommandId = typeof UiCommandId.Type;
 
 export const UiMethod = boundedString("method", 64);
+
 export type UiMethod = typeof UiMethod.Type;
 
 export const UiServerEpoch = Schema.String.check(
   Schema.makeFilter((value) => /^[A-Za-z0-9][A-Za-z0-9._~-]{7,127}$/u.test(value)),
 );
+
 export type UiServerEpoch = typeof UiServerEpoch.Type;
 
 export const UiSessionName = Schema.String.check(
@@ -66,6 +74,7 @@ export const UiSessionName = Schema.String.check(
     expected: "a lower-case single-segment UI session name",
   }),
 );
+
 export type UiSessionName = typeof UiSessionName.Type;
 
 /** Canonical keys for live Pi-backed chats. */
@@ -79,8 +88,11 @@ export const UiSessionKey = Schema.String.check(
     { expected: "a bounded Profile-local live session key" },
   ),
 );
+
 export type UiSessionKey = typeof UiSessionKey.Type;
+
 export const UiLiveSessionKey = UiSessionKey;
+
 export type UiLiveSessionKey = UiSessionKey;
 
 /** Stored IDs are Pi IDs, not paths. The protocol never exposes JSONL paths. */
@@ -96,9 +108,11 @@ export const UiStoredSessionId = Schema.String.check(
     { expected: "a bounded opaque stored session id" },
   ),
 );
+
 export type UiStoredSessionId = typeof UiStoredSessionId.Type;
 
 export const UiPromptText = boundedCodePointString("prompt text", 60_000);
+
 export type UiPromptText = typeof UiPromptText.Type;
 
 export const UiRequestEnvelope = Schema.Struct({
@@ -106,10 +120,13 @@ export const UiRequestEnvelope = Schema.Struct({
   method: UiMethod,
   params: Schema.Json,
 });
+
 export type UiRequestEnvelope = typeof UiRequestEnvelope.Type;
 
 export const UiEmptyParams = Schema.Record(Schema.String, Schema.Never);
+
 export const UiProfileScopedParams = Schema.Struct({ profileId: ProfileId });
+
 export type UiProfileScopedParams = typeof UiProfileScopedParams.Type;
 
 export const UiRecipient = Schema.Union([
@@ -120,6 +137,7 @@ export const UiRecipient = Schema.Union([
     agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
   }),
 ]);
+
 export type UiRecipient = typeof UiRecipient.Type;
 
 export const UiConversationContext = Schema.Union([
@@ -135,12 +153,14 @@ export const UiConversationContext = Schema.Union([
     expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
 ]);
+
 export type UiConversationContext = typeof UiConversationContext.Type;
 
 export const UiSessionRef = Schema.Union([
   Schema.Struct({ profileId: ProfileId, kind: Schema.Literal("live"), key: UiSessionKey }),
   Schema.Struct({ profileId: ProfileId, kind: Schema.Literal("stored"), id: UiStoredSessionId }),
 ]);
+
 export type UiSessionRef = typeof UiSessionRef.Type;
 
 export const UiSessionOpenParams = Schema.Struct({
@@ -150,6 +170,7 @@ export const UiSessionOpenParams = Schema.Struct({
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export type UiSessionOpenParams = typeof UiSessionOpenParams.Type;
 
 export const UiSessionRefParams = Schema.Struct({
@@ -158,6 +179,7 @@ export const UiSessionRefParams = Schema.Struct({
   afterSeq: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   epoch: Schema.optionalKey(UiServerEpoch),
 });
+
 export type UiSessionRefParams = typeof UiSessionRefParams.Type;
 
 export const UiSessionTextParams = Schema.Struct({
@@ -166,6 +188,7 @@ export const UiSessionTextParams = Schema.Struct({
   recipient: Schema.optionalKey(UiRecipient),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export type UiSessionTextParams = typeof UiSessionTextParams.Type;
 
 export const UiSessionHistoryCursor = Schema.String.check(
@@ -173,31 +196,41 @@ export const UiSessionHistoryCursor = Schema.String.check(
   Schema.isMaxLength(1_024),
   Schema.isPattern(/^[A-Za-z0-9_-]+$/u),
 );
+
 export type UiSessionHistoryCursor = typeof UiSessionHistoryCursor.Type;
 
 export const UiSessionHistoryParams = Schema.Struct({
   ref: UiSessionRef,
   before: Schema.optionalKey(UiSessionHistoryCursor),
 });
+
 export type UiSessionHistoryParams = typeof UiSessionHistoryParams.Type;
 
 export const UiExtensionId = ProfileExtensionId.check(Schema.isMaxLength(128));
+
 export type UiExtensionId = typeof UiExtensionId.Type;
+
 export const UiExtensionListForProfileParams = UiProfileScopedParams;
+
 export const UiExtensionAddParams = Schema.Struct({
   profileId: ProfileId,
   id: UiExtensionId,
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiExtensionRemoveParams = UiExtensionAddParams;
+
 export const UiExtensionValidateParams = UiProfileScopedParams;
 
 export const UiAgentListParams = UiProfileScopedParams;
+
 export const UiAgentShowParams = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
 });
+
 export const UiAgentDocumentParams = UiAgentShowParams;
+
 export const UiAgentSaveParams = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
@@ -205,15 +238,18 @@ export const UiAgentSaveParams = Schema.Struct({
   source: boundedCodePointString("Profile agent source", 8_000, 0),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAgentValidateParams = Schema.Struct({
   profileId: ProfileId,
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
 });
+
 export const UiAgentCreateParams = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAgentRunParams = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
@@ -225,8 +261,11 @@ export const UiModelListParams = Schema.Struct({
   profileId: ProfileId,
   providerId: Schema.optionalKey(boundedString("provider id", 128)),
 });
+
 export const UiModelStatusParams = UiProfileScopedParams;
+
 export const UiModelAvailableParams = UiProfileScopedParams;
+
 export const UiModelSetParams = Schema.Struct({
   profileId: ProfileId,
   providerId: boundedString("provider id", 128),
@@ -234,6 +273,7 @@ export const UiModelSetParams = Schema.Struct({
   thinking: Schema.optionalKey(ProfileAgentThinking),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAuthStatusParams = UiProfileScopedParams;
 
 export const UiAutomationId = Schema.String.check(
@@ -241,18 +281,24 @@ export const UiAutomationId = Schema.String.check(
     expected: "a bounded lowercase kebab-case automation id",
   }),
 );
+
 export type UiAutomationId = typeof UiAutomationId.Type;
+
 export const UiAutomationListParams = UiProfileScopedParams;
+
 export const UiAutomationShowParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
 });
+
 export const UiAutomationValidateParams = UiAutomationShowParams;
+
 export const UiAutomationCreateParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAutomationSaveParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
@@ -260,18 +306,23 @@ export const UiAutomationSaveParams = Schema.Struct({
   source: boundedCodePointString("automation source", 8_000, 0),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAutomationPauseParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAutomationResumeParams = UiAutomationPauseParams;
+
 export const UiAutomationRunParams = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
   commandId: Schema.optionalKey(UiCommandId),
 });
+
 export const UiAutomationStatusParams = UiProfileScopedParams;
+
 export const UiAutomationRunsParams = Schema.Struct({
   profileId: ProfileId,
   automationId: Schema.optionalKey(UiAutomationId),
@@ -286,8 +337,11 @@ export const UiMemoryPath = Schema.String.check(
     },
   ),
 );
+
 export type UiMemoryPath = typeof UiMemoryPath.Type;
+
 export const UiMemoryListParams = UiProfileScopedParams;
+
 export const UiMemoryShowParams = Schema.Struct({ profileId: ProfileId, path: UiMemoryPath });
 
 export const UiRecipientId = Schema.Union([
@@ -298,9 +352,13 @@ export const UiRecipientId = Schema.Union([
     agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
   }),
 ]);
+
 export type UiRecipientId = typeof UiRecipientId.Type;
+
 export const UiGroupId = boundedString("group id", 64);
+
 export type UiGroupId = typeof UiGroupId.Type;
+
 export const UiGroupRecord = Schema.Struct({
   groupId: UiGroupId,
   conversationId: boundedString("conversation id", 256),
@@ -311,25 +369,33 @@ export const UiGroupRecord = Schema.Struct({
   defaultRecipient: UiRecipientId,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
+
 export type UiGroupRecord = typeof UiGroupRecord.Type;
+
 export const UiGroupListParams = UiProfileScopedParams;
 
 export const UiPinId = boundedString("pin id", 128);
+
 export type UiPinId = typeof UiPinId.Type;
+
 export const UiPin = Schema.Struct({
   id: UiPinId,
   ref: UiSessionRef,
   label: Schema.optionalKey(boundedString("pin label", 160)),
   order: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1_000_000)),
 });
+
 export type UiPin = typeof UiPin.Type;
+
 export const UiPinListParams = UiProfileScopedParams;
+
 export const UiPinSetParams = Schema.Struct({
   profileId: ProfileId,
   pin: UiPin,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   commandId: UiCommandId,
 });
+
 export const UiPinRemoveParams = Schema.Struct({
   profileId: ProfileId,
   pinId: UiPinId,
@@ -338,7 +404,9 @@ export const UiPinRemoveParams = Schema.Struct({
 });
 
 export const UiExtensionOperation = Schema.Literals(["list", "add", "remove", "validate"]);
+
 export type UiExtensionOperation = typeof UiExtensionOperation.Type;
+
 export const UiExtensionFailureStage = Schema.Literals([
   "catalog",
   "download",
@@ -355,15 +423,21 @@ export const UiExtensionFailureStage = Schema.Literals([
   "rollback",
   "response",
 ]);
+
 export type UiExtensionFailureStage = typeof UiExtensionFailureStage.Type;
+
 export const UiExtensionFailureCode = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(64),
   Schema.isPattern(/^[A-Za-z0-9_.-]+$/u),
 );
+
 export type UiExtensionFailureCode = typeof UiExtensionFailureCode.Type;
+
 export const UiGatewayMessage = boundedString("UI gateway error message", 360);
+
 export const UiExtensionFailureSource = boundedString("extension failure source", 240);
+
 export const UiExtensionFailure = Schema.Struct({
   operation: UiExtensionOperation,
   stage: UiExtensionFailureStage,
@@ -373,6 +447,7 @@ export const UiExtensionFailure = Schema.Struct({
   source: Schema.optionalKey(UiExtensionFailureSource),
   selectionChanged: Schema.Boolean,
 });
+
 export type UiExtensionFailure = typeof UiExtensionFailure.Type;
 
 /** The complete current method registry and parity anchor. */
@@ -426,6 +501,7 @@ export const UI_METHODS = [
   "pin.set",
   "pin.remove",
 ] as const;
+
 export type UiKnownMethod = (typeof UI_METHODS)[number];
 
 export const UiGatewayErrorCode = Schema.Literals([
@@ -448,6 +524,7 @@ export const UiGatewayErrorCode = Schema.Literals([
   "ownership",
   "internal",
 ]);
+
 export type UiGatewayErrorCode = typeof UiGatewayErrorCode.Type;
 
 export class UiGatewayError extends Schema.TaggedErrorClass<UiGatewayError>()("UiGatewayError", {
@@ -464,7 +541,9 @@ export const UiLiveSession = Schema.Struct({
   context: Schema.optionalKey(UiConversationContext),
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
 });
+
 export type UiLiveSession = typeof UiLiveSession.Type;
+
 export const UiStoredSession = Schema.Struct({
   ref: Schema.Struct({
     profileId: ProfileId,
@@ -475,10 +554,13 @@ export const UiStoredSession = Schema.Struct({
   entryCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   terminalState: Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
 });
+
 export type UiStoredSession = typeof UiStoredSession.Type;
 
 export const UiPingResult = Schema.Struct({ pong: Schema.Literal(true) });
+
 export type UiPingResult = typeof UiPingResult.Type;
+
 export const UiSystemCapabilitiesResult = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   defaultProfileId: ProfileId,
@@ -491,33 +573,43 @@ export const UiSystemCapabilitiesResult = Schema.Struct({
   }),
   serverEpoch: UiServerEpoch,
 });
+
 export type UiSystemCapabilitiesResult = typeof UiSystemCapabilitiesResult.Type;
+
 export const UiProfileSummary = Schema.Struct({
   profileId: ProfileId,
   name: boundedString("Profile name", 128),
   current: Schema.Boolean,
   available: Schema.Boolean,
 });
+
 export type UiProfileSummary = typeof UiProfileSummary.Type;
+
 export const UiProfileListResult = Schema.Struct({
   profiles: Schema.Array(UiProfileSummary).check(Schema.isMaxLength(32)),
 }).check(resultWithinWireBudget);
+
 export type UiProfileListResult = typeof UiProfileListResult.Type;
+
 export const UiProfileCurrentResult = Schema.Struct({
   profileId: ProfileId,
   name: boundedString("Profile name", 128),
 });
+
 export type UiProfileCurrentResult = typeof UiProfileCurrentResult.Type;
+
 export const UiProfileHealthCheck = Schema.Struct({
   id: boundedString("health check id", 80),
   severity: Schema.Literals(["ok", "warn", "error"]),
   message: UiGatewayMessage,
 });
+
 export const UiProfileHealthResult = Schema.Struct({
   profileId: ProfileId,
   checks: Schema.Array(UiProfileHealthCheck).check(Schema.isMaxLength(16)),
   hasErrors: Schema.Boolean,
 }).check(resultWithinWireBudget);
+
 export type UiProfileHealthResult = typeof UiProfileHealthResult.Type;
 
 export const UiSessionListResult = Schema.Struct({
@@ -525,9 +617,13 @@ export const UiSessionListResult = Schema.Struct({
   live: Schema.Array(UiLiveSession).check(Schema.isMaxLength(16)),
   stored: Schema.Array(UiStoredSession).check(Schema.isMaxLength(12)),
 }).check(resultWithinWireBudget);
+
 export type UiSessionListResult = typeof UiSessionListResult.Type;
+
 export const UiSessionOpenResult = Schema.Struct({ ref: UiSessionRef });
+
 export type UiSessionOpenResult = typeof UiSessionOpenResult.Type;
+
 export const UiSessionShowResult = Schema.Struct({
   profileId: ProfileId,
   ref: UiSessionRef,
@@ -539,7 +635,9 @@ export const UiSessionShowResult = Schema.Struct({
   ),
   live: Schema.optionalKey(UiLiveSession),
 });
+
 export type UiSessionShowResult = typeof UiSessionShowResult.Type;
+
 export const UiSessionHistoryEntry = Schema.Union([
   Schema.Struct({
     kind: Schema.Literals(["user", "assistant"]),
@@ -554,7 +652,9 @@ export const UiSessionHistoryEntry = Schema.Union([
     failed: Schema.Boolean,
   }),
 ]);
+
 export type UiSessionHistoryEntry = typeof UiSessionHistoryEntry.Type;
+
 export const UiSessionHistoryResult = Schema.Struct({
   profileId: ProfileId,
   ref: UiSessionRef,
@@ -564,8 +664,11 @@ export const UiSessionHistoryResult = Schema.Struct({
   hasMore: Schema.Boolean,
   nextCursor: Schema.optionalKey(UiSessionHistoryCursor),
 });
+
 export type UiSessionHistoryResult = typeof UiSessionHistoryResult.Type;
+
 export const UiAcknowledgedResult = Schema.Struct({ acknowledged: Schema.Literal(true) });
+
 export type UiAcknowledgedResult = typeof UiAcknowledgedResult.Type;
 
 const relativeLogicalPath = Schema.String.check(
@@ -589,45 +692,61 @@ export const UiProfileAgent = Schema.Struct({
   thinking: Schema.optionalKey(ProfileAgentThinking),
   tools: Schema.Array(boundedString("Profile agent tool", 128)).check(Schema.isMaxLength(8)),
 });
+
 export type UiProfileAgent = typeof UiProfileAgent.Type;
+
 export const UiAgentListResult = Schema.Struct({
   profileId: ProfileId,
   agents: Schema.Array(UiProfileAgent).check(Schema.isMaxLength(4)),
 }).check(resultWithinWireBudget);
+
 export type UiAgentListResult = typeof UiAgentListResult.Type;
+
 export const UiAgentShowResult = Schema.Struct({ profileId: ProfileId, agent: UiProfileAgent });
+
 export type UiAgentShowResult = typeof UiAgentShowResult.Type;
+
 export const UiAgentDocumentResult = Schema.Struct({
   profileId: ProfileId,
   id: ProfileAgentId.check(Schema.isMaxLength(80)),
   source: boundedCodePointString("Profile agent source", 8_000, 0),
 }).check(resultWithinWireBudget);
+
 export type UiAgentDocumentResult = typeof UiAgentDocumentResult.Type;
+
 export const UiAgentCreateResult = UiAgentShowResult;
+
 export type UiAgentCreateResult = typeof UiAgentCreateResult.Type;
+
 export const UiAgentValidation = Schema.Struct({
   id: ProfileAgentId.check(Schema.isMaxLength(80)),
   valid: Schema.Boolean,
   message: Schema.optionalKey(UiGatewayMessage),
 });
+
 export const UiAgentValidateResult = Schema.Struct({
   profileId: ProfileId,
   validations: Schema.Array(UiAgentValidation).check(Schema.isMaxLength(16)),
 }).check(resultWithinWireBudget);
+
 export type UiAgentValidateResult = typeof UiAgentValidateResult.Type;
+
 export const UiAgentRunResult = Schema.Struct({
   profileId: ProfileId,
   agentId: ProfileAgentId.check(Schema.isMaxLength(80)),
   answer: boundedCodePointString("agent answer", 8_000, 0),
   sessionId: UiStoredSessionId,
 });
+
 export type UiAgentRunResult = typeof UiAgentRunResult.Type;
 
 const UiMemoryCount = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThanOrEqualTo(1_000_000),
 );
+
 const UiMemoryState = Schema.Literals(["missing", "empty", "present"]);
+
 export const UiMemoryDocumentSummary = Schema.Struct({
   path: relativeLogicalPath,
   scope: Schema.Literals(["shared", "person", "group"]),
@@ -636,12 +755,16 @@ export const UiMemoryDocumentSummary = Schema.Struct({
   codePoints: UiMemoryCount,
   cap: UiMemoryCount,
 });
+
 export type UiMemoryDocumentSummary = typeof UiMemoryDocumentSummary.Type;
+
 export const UiMemoryListResult = Schema.Struct({
   profileId: ProfileId,
   documents: Schema.Array(UiMemoryDocumentSummary).check(Schema.isMaxLength(16)),
 }).check(resultWithinWireBudget);
+
 export type UiMemoryListResult = typeof UiMemoryListResult.Type;
+
 export const UiMemoryShowResult = Schema.Struct({
   profileId: ProfileId,
   path: UiMemoryPath,
@@ -660,6 +783,7 @@ export const UiMemoryShowResult = Schema.Struct({
     { expected: "an authoritative bounded memory document" },
   ),
 );
+
 export type UiMemoryShowResult = typeof UiMemoryShowResult.Type;
 
 export const UiModelStatusResult = Schema.Struct({
@@ -669,28 +793,37 @@ export const UiModelStatusResult = Schema.Struct({
   thinking: boundedString("thinking level", 32),
   authConfigured: Schema.Boolean,
 });
+
 export type UiModelStatusResult = typeof UiModelStatusResult.Type;
+
 export const UiKnownModel = Schema.Struct({
   providerId: boundedString("provider id", 128),
   modelId: boundedString("model id", 256),
   name: boundedString("model name", 256),
   thinkingLevels: Schema.Array(boundedString("thinking level", 32)).check(Schema.isMaxLength(32)),
 });
+
 export const UiModelListResult = Schema.Struct({
   profileId: ProfileId,
   models: Schema.Array(UiKnownModel).check(Schema.isMaxLength(256)),
   truncated: Schema.Boolean,
 });
+
 export type UiModelListResult = typeof UiModelListResult.Type;
+
 export const UiModelAvailableResult = UiModelListResult;
+
 export type UiModelAvailableResult = typeof UiModelAvailableResult.Type;
+
 export const UiModelSetResult = Schema.Struct({
   profileId: ProfileId,
   providerId: boundedString("provider id", 128),
   modelId: boundedString("model id", 256),
   thinking: Schema.NullOr(boundedString("thinking level", 32)),
 });
+
 export type UiModelSetResult = typeof UiModelSetResult.Type;
+
 export const UiAuthProvider = Schema.Struct({
   id: boundedString("auth provider id", 128),
   name: boundedString("auth provider name", 256),
@@ -699,10 +832,12 @@ export const UiAuthProvider = Schema.Struct({
   supportsApiKeyLogin: Schema.Boolean,
   supportsOauth: Schema.Boolean,
 });
+
 export const UiAuthStatusResult = Schema.Struct({
   profileId: ProfileId,
   providers: Schema.Array(UiAuthProvider).check(Schema.isMaxLength(16)),
 }).check(resultWithinWireBudget);
+
 export type UiAuthStatusResult = typeof UiAuthStatusResult.Type;
 
 export const UiAutomationDefinition = Schema.Struct({
@@ -714,21 +849,29 @@ export const UiAutomationDefinition = Schema.Struct({
   gateState: Schema.optionalKey(Schema.Literals(["scheduled", "manual-only"])),
   message: Schema.optionalKey(UiGatewayMessage),
 });
+
 export type UiAutomationDefinition = typeof UiAutomationDefinition.Type;
+
 export const UiAutomationListResult = Schema.Struct({
   profileId: ProfileId,
   automations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(8)),
 }).check(resultWithinWireBudget);
+
 export type UiAutomationListResult = typeof UiAutomationListResult.Type;
+
 export const UiAutomationShowResult = Schema.Struct({
   profileId: ProfileId,
   id: UiAutomationId,
   lifecycle: Schema.Literals(["active", "paused"]),
   source: boundedCodePointString("automation definition source", 8_000, 0),
 });
+
 export type UiAutomationShowResult = typeof UiAutomationShowResult.Type;
+
 export const UiAutomationSaveResult = UiAutomationShowResult;
+
 export type UiAutomationSaveResult = typeof UiAutomationSaveResult.Type;
+
 export const UiAutomationCreateResult = Schema.Struct({
   profileId: ProfileId,
   id: UiAutomationId,
@@ -739,21 +882,30 @@ export const UiAutomationCreateResult = Schema.Struct({
   gateState: Schema.optionalKey(Schema.Literals(["scheduled", "manual-only"])),
   message: Schema.optionalKey(UiGatewayMessage),
 });
+
 export type UiAutomationCreateResult = typeof UiAutomationCreateResult.Type;
+
 export const UiAutomationValidateResult = Schema.Struct({
   profileId: ProfileId,
   validations: Schema.Array(UiAutomationDefinition).check(Schema.isMaxLength(8)),
 }).check(resultWithinWireBudget);
+
 export type UiAutomationValidateResult = typeof UiAutomationValidateResult.Type;
+
 export const UiAutomationPauseResult = Schema.Struct({
   profileId: ProfileId,
   id: UiAutomationId,
   lifecycle: Schema.Literals(["active", "paused"]),
 });
+
 export type UiAutomationPauseResult = typeof UiAutomationPauseResult.Type;
+
 export const UiAutomationResumeResult = UiAutomationPauseResult;
+
 export type UiAutomationResumeResult = typeof UiAutomationResumeResult.Type;
+
 const UiMillis = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
 export const UiAutomationRun = Schema.Struct({
   runId: boundedString("automation run id", 256),
   automationId: UiAutomationId,
@@ -782,7 +934,9 @@ export const UiAutomationRun = Schema.Struct({
     }),
   ).check(Schema.isMaxLength(8)),
 }).check(resultWithinWireBudget);
+
 export type UiAutomationRun = typeof UiAutomationRun.Type;
+
 export const UiAutomationStatusResult = Schema.Struct({
   profileId: ProfileId,
   observedAtMs: UiMillis,
@@ -803,40 +957,53 @@ export const UiAutomationStatusResult = Schema.Struct({
   latestRun: Schema.NullOr(UiAutomationRun),
   latestErrorRun: Schema.NullOr(UiAutomationRun),
 }).check(resultWithinWireBudget);
+
 export type UiAutomationStatusResult = typeof UiAutomationStatusResult.Type;
+
 export const UiAutomationRunsResult = Schema.Struct({
   profileId: ProfileId,
   runs: Schema.Array(UiAutomationRun).check(Schema.isMaxLength(3)),
 }).check(resultWithinWireBudget);
+
 export type UiAutomationRunsResult = typeof UiAutomationRunsResult.Type;
+
 export const UiAutomationRunCommandResult = Schema.Struct({
   profileId: ProfileId,
   automationId: UiAutomationId,
   accepted: Schema.Boolean,
   outcome: boundedString("automation outcome", 64),
 });
+
 export type UiAutomationRunCommandResult = typeof UiAutomationRunCommandResult.Type;
 
 const UiExtensionDescription = boundedString("extension description", 512, 0);
+
 const UiExtensionChoiceKind = Schema.Literals(["skill", "code", "skill+code", "remote"]);
+
 const UiExtensionChoiceSource = Schema.Literals(["bundled", "remote-approved", "profile"]);
+
 const UiNonNegativeCount = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThanOrEqualTo(1_000_000),
 );
+
 export const UiExtensionChoice = Schema.Struct({
   id: UiExtensionId,
   description: UiExtensionDescription,
   kind: UiExtensionChoiceKind,
   source: UiExtensionChoiceSource,
 });
+
 export type UiExtensionChoice = typeof UiExtensionChoice.Type;
+
 export const UiExtensionListForProfileResult = Schema.Struct({
   profileId: ProfileId,
   available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(12)),
   selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(32)),
 }).check(resultWithinWireBudget);
+
 export type UiExtensionListForProfileResult = typeof UiExtensionListForProfileResult.Type;
+
 /** Deliberately no filesystem path: Profile identity is carried by the request/result. */
 export const UiExtensionMutationResult = Schema.Struct({
   profileId: ProfileId,
@@ -844,7 +1011,9 @@ export const UiExtensionMutationResult = Schema.Struct({
   changed: Schema.Boolean,
   selected: Schema.Boolean,
 });
+
 export type UiExtensionMutationResult = typeof UiExtensionMutationResult.Type;
+
 export const UiExtensionValidationResult = Schema.Struct({
   profileId: ProfileId,
   selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(128)),
@@ -854,12 +1023,19 @@ export const UiExtensionValidationResult = Schema.Struct({
     extensionFactoryCount: UiNonNegativeCount,
   }),
 });
+
 export type UiExtensionValidationResult = typeof UiExtensionValidationResult.Type;
+
 export const UiExtensionListing = UiExtensionListForProfileResult;
+
 export type UiExtensionListing = UiExtensionListForProfileResult;
+
 export const UiExtensionMutation = UiExtensionMutationResult;
+
 export type UiExtensionMutation = UiExtensionMutationResult;
+
 export const UiExtensionValidation = UiExtensionValidationResult;
+
 export type UiExtensionValidation = UiExtensionValidationResult;
 
 export const UiPinListResult = Schema.Struct({
@@ -867,13 +1043,18 @@ export const UiPinListResult = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   pins: Schema.Array(UiPin).check(Schema.isMaxLength(16)),
 }).check(resultWithinWireBudget);
+
 export type UiPinListResult = typeof UiPinListResult.Type;
+
 export const UiPinMutationResult = UiPinListResult;
+
 export type UiPinMutationResult = typeof UiPinMutationResult.Type;
+
 export const UiGroupListResult = Schema.Struct({
   profileId: ProfileId,
   groups: Schema.Array(UiGroupRecord).check(Schema.isMaxLength(16)),
 }).check(resultWithinWireBudget);
+
 export type UiGroupListResult = typeof UiGroupListResult.Type;
 
 export const UiGatewayResult = Schema.Union([
@@ -913,6 +1094,7 @@ export const UiGatewayResult = Schema.Union([
   // This shape is a subset of automation documents; decode richer documents first.
   UiAgentDocumentResult,
 ]);
+
 export type UiGatewayResult = typeof UiGatewayResult.Type;
 
 const UiSuccessResponse = Schema.Struct({
@@ -926,6 +1108,7 @@ const UiSuccessResponse = Schema.Struct({
     { expected: "a response within the WebSocket frame budget" },
   ),
 );
+
 const UiFailureResponse = Schema.Struct({
   id: UiRequestId,
   ok: Schema.Literal(false),
@@ -935,7 +1118,9 @@ const UiFailureResponse = Schema.Struct({
     details: Schema.optionalKey(UiExtensionFailure),
   }),
 });
+
 export const UiResponseFrame = Schema.Union([UiSuccessResponse, UiFailureResponse]);
+
 export type UiResponseFrame = typeof UiResponseFrame.Type;
 
 export const UI_EVENTS = [
@@ -947,7 +1132,9 @@ export const UI_EVENTS = [
   "error",
   "replay-gap",
 ] as const;
+
 export type UiEventName = (typeof UI_EVENTS)[number];
+
 const UiEventBase = {
   profileId: ProfileId,
   session: UiSessionRef,
@@ -956,6 +1143,7 @@ const UiEventBase = {
   eventId: boundedString("event id", 192),
   correlationId: Schema.optionalKey(UiCommandId),
 };
+
 const UiAssistantTextEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("assistant-text"),
@@ -964,11 +1152,13 @@ const UiAssistantTextEvent = Schema.Struct({
     snapshot: boundedUtf8String("assistant snapshot", 8_000),
   }),
 });
+
 const UiThinkingEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("thinking"),
   payload: Schema.Struct({ delta: boundedUtf8String("thinking delta", 8_000) }),
 });
+
 const UiToolEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("tool"),
@@ -980,6 +1170,7 @@ const UiToolEvent = Schema.Struct({
     detail: Schema.optionalKey(boundedCodePointString("tool detail", 4_096, 0)),
   }),
 });
+
 const UiVoiceEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("voice"),
@@ -988,16 +1179,19 @@ const UiVoiceEvent = Schema.Struct({
     text: boundedCodePointString("specialist voice", 4_096, 0),
   }),
 });
+
 const UiSettledEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("settled"),
   payload: Schema.Struct({}),
 });
+
 const UiErrorEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("error"),
   payload: Schema.Struct({ message: UiGatewayMessage }),
 });
+
 const UiReplayGapEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("replay-gap"),
@@ -1008,6 +1202,7 @@ const UiReplayGapEvent = Schema.Struct({
     reason: Schema.Literal("epoch"),
   }),
 });
+
 export const UiEventFrame = Schema.Union([
   UiAssistantTextEvent,
   UiThinkingEvent,
@@ -1017,4 +1212,5 @@ export const UiEventFrame = Schema.Union([
   UiErrorEvent,
   UiReplayGapEvent,
 ]);
+
 export type UiEventFrame = typeof UiEventFrame.Type;

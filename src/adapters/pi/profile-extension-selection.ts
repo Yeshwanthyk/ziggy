@@ -24,6 +24,7 @@ export const createProfileExtensionSelectionRunner = (
 ): ProfileExtensionSelectionRunner => ({
   list: () => {
     const program = profileExtensions.listForProfile(profilePath, repositoryRoot);
+
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning command callback; this is the TUI adapter bridge.
     return Effect.runPromise(program);
   },
@@ -33,6 +34,7 @@ export const createProfileExtensionSelectionRunner = (
       repositoryRoot,
       ids,
     );
+
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning command callback; this is the TUI adapter bridge.
     return Effect.runPromise(program);
   },

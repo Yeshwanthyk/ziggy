@@ -32,20 +32,24 @@ for (const scenario of [
         const posts: string[] = [];
         const finished: string[] = [];
         let next = 0;
+
         const handle = makeChatHandle({
           isIdle: scenario === "idle",
           prompt: (text) =>
             Effect.gen(function* () {
               prompts.push(text);
+
               if (prompts.length === 1) {
                 yield* Deferred.succeed(started, undefined);
                 yield* Deferred.await(release);
               }
+
               return "reply";
             }),
           steer: (text) =>
             Effect.gen(function* () {
               steers.push(text);
+
               if (scenario === "race")
                 return yield* new ChatNotStreaming({
                   profilePath: "/tmp/slack-busy",
@@ -54,6 +58,7 @@ for (const scenario of [
                 });
             }),
         });
+
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           openTui: () => Effect.succeed(0),
@@ -62,14 +67,18 @@ for (const scenario of [
           openSpecialistChat: () => Effect.succeed(handle),
           openChat: () => Effect.succeed(handle),
         };
+
         const transport: SlackTransport = {
           authTest: () => Effect.succeed({ userId: "UBOT" }),
           openSocket: () =>
             Effect.succeed({
               next: Effect.gen(function* () {
                 next += 1;
+
                 if (next > 2) return yield* Effect.never;
+
                 if (next === 2) yield* Deferred.await(started);
+
                 const inbound: SlackInboundMessage = {
                   channel: scenario === "channel" ? "C123" : "D123",
                   channelType: scenario === "channel" ? "channel" : "im",
@@ -78,6 +87,7 @@ for (const scenario of [
                   ts: `${next}.0`,
                   threadTs: scenario === "other-thread" && next === 2 ? "9.0" : "0.9",
                 };
+
                 return scenario === "attachment" && next === 2
                   ? { ...inbound, files: [{ id: "F123", name: "notes.txt" }] }
                   : inbound;
@@ -92,12 +102,15 @@ for (const scenario of [
           postMessage: (_token, _channel, text) =>
             Effect.gen(function* () {
               posts.push(text);
+
               if (text === "Queued behind an earlier request…")
                 yield* Deferred.succeed(release, undefined);
+
               return { ts: `${posts.length}.1` };
             }),
           updateMessage: () => Effect.void,
         };
+
         const ingress: SlackIngressRuntime = {
           initialize: () => Effect.void,
           recover: () => Effect.void,
@@ -107,19 +120,24 @@ for (const scenario of [
           finish: (_path, payload, _owner, state) =>
             Effect.gen(function* () {
               finished.push(`${payload.sourceTs}:${state}`);
+
               if (payload.sourceTs === "2.0") yield* Deferred.succeed(release, undefined);
+
               if (finished.length === 2) yield* Deferred.succeed(done, undefined);
             }),
         };
+
         const baseConfig = {
           botToken: "bot",
           appToken: "app",
           ownerUserId: "U123",
         };
+
         const config: SlackGatewayConfig =
           scenario === "queue" || scenario === "steer"
             ? { ...baseConfig, busyMessageMode: scenario }
             : baseConfig;
+
         yield* Effect.raceFirst(
           makeSlackGateway(agent, transport, undefined, ingress).runLoop(
             { path: "/tmp/slack-busy", name: "Test" },
@@ -127,8 +145,10 @@ for (const scenario of [
           ),
           Deferred.await(done),
         );
+
         const shouldSteer =
           scenario === "default" || scenario === "steer" || scenario === "channel";
+
         expect(steers).toEqual(shouldSteer || scenario === "race" ? ["second"] : []);
         expect(prompts.length).toBe(shouldSteer ? 1 : 2);
         expect(posts).toEqual(
