@@ -97,6 +97,8 @@ button {
 }
 
 .sidebar {
+  --row-leading-width: 36px;
+  --row-content-gap: 11px;
   background: var(--rail);
   border-right: 1px solid var(--border);
   display: flex;
@@ -180,7 +182,7 @@ button {
   justify-content: space-between;
   letter-spacing: 0.08em;
   min-height: 26px;
-  padding: 0 7px;
+  padding: 0 8px;
   text-transform: uppercase;
 }
 
@@ -210,7 +212,7 @@ button {
   color: inherit;
   cursor: pointer;
   display: flex;
-  gap: 11px;
+  gap: var(--row-content-gap);
   min-height: 50px;
   padding: 6px 8px;
   text-align: left;
@@ -263,10 +265,11 @@ button {
 .automation-row {
   align-items: center;
   border-radius: 9px;
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: var(--row-leading-width) minmax(0, 1fr) auto;
+  column-gap: var(--row-content-gap);
   min-height: 44px;
-  padding: 5px 4px 5px 9px;
+  padding: 5px 4px 5px 8px;
 }
 
 .automation-row:hover {
@@ -274,6 +277,7 @@ button {
 }
 
 .automation-status {
+  justify-self: center;
   background: var(--muted-foreground);
   border-radius: 50%;
   flex: 0 0 auto;

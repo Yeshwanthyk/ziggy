@@ -781,3 +781,9 @@ results.
 
 - Added the pinned anti-slop `require-readable-spacing` policy to Ziggy's local Oxlint plugin as an enabled error. Ported only the required ESLint-Stylistic padding helper to `.mjs`, retaining its MIT license and upstream provenance record; no full ESLint dependency was added.
 - Applied the rule's whitespace-only fixes across the existing `src`, `test`, `extensions`, and `tooling` lint scope. Added a focused CLI regression for diagnostics, exact fixes, grouped locals/overloads, and repeated-fix stability. No commit made.
+
+## Refine sidebar alignment
+
+- Aligned automation titles with conversation, agent, and group titles using a shared leading slot and gap. Centered status dots beneath avatar centers and aligned section headings to the outer gutter.
+- Rebuilt the static preview and visually verified the connected desktop sidebar. Long automation names truncate sooner; readable names and secondary controls remain the next refinement for review.
+- Verification: `bun run check` passed, including 18 SDK tests and 47 web tests; `git diff --check` passed. The existing web bundle-size warning remains.
