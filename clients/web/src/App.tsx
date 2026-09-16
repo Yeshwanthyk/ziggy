@@ -19,6 +19,7 @@ import type {
   ZiggySessionRef,
 } from "../../../packages/ui-sdk/src/index";
 import { AutomationRow } from "@/components/automation-row";
+import { groupCompletedActivity, ToolActivity } from "@/components/tool-activity";
 import { AutomationDetailDialog } from "@/components/automation-detail-dialog";
 import { AgentDefinitionDialog } from "@/components/agent-definition-dialog";
 import { Button } from "@/components/ui/button";
@@ -629,12 +630,19 @@ export function App() {
                 )}
               </div>
             ) : null}
-            {gateway.history.map((entry, index) => (
-              <HistoryEntry
-                assistantName={gateway.selectedTitle}
-                entry={entry}
-                key={historyKey(entry, index)}
-              />
+            {groupCompletedActivity(
+              gateway.history,
+              (entry) => entry.kind === "tool" && entry.phase === "end" && !entry.failed,
+            ).map((entries, groupIndex) => (
+              <ToolActivity count={entries.length} key={groupIndex}>
+                {entries.map((entry, index) => (
+                  <HistoryEntry
+                    assistantName={gateway.selectedTitle}
+                    entry={entry}
+                    key={historyKey(entry, index)}
+                  />
+                ))}
+              </ToolActivity>
             ))}
             {gateway.pendingUser === undefined ? null : (
               <article className="message user optimistic">
@@ -642,14 +650,21 @@ export function App() {
                 <div className="message-body">{gateway.pendingUser}</div>
               </article>
             )}
-            {gateway.tools.map((tool) => (
-              <div className="tool-line live" key={tool.id}>
-                <span className={tool.failed ? "tool-dot is-error" : "tool-dot"} />
-                <span>{tool.name}</span>
-                <span>
-                  {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
-                </span>
-              </div>
+            {groupCompletedActivity(
+              gateway.tools,
+              (tool) => tool.phase === "end" && !tool.failed,
+            ).map((tools, groupIndex) => (
+              <ToolActivity count={tools.length} key={groupIndex}>
+                {tools.map((tool) => (
+                  <div className="tool-line live" key={tool.id}>
+                    <span className={tool.failed ? "tool-dot is-error" : "tool-dot"} />
+                    <span>{tool.name}</span>
+                    <span>
+                      {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
+                    </span>
+                  </div>
+                ))}
+              </ToolActivity>
             ))}
             {gateway.streamText.length === 0 ? null : (
               <article className="message assistant streaming">

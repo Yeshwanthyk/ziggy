@@ -793,3 +793,8 @@ results.
 - Display readable automation names and daily schedules, preserving raw identifiers and schedules in tooltips and leaving complex cron expressions intact. Explicit Enabled and Paused labels distinguish lifecycle from the available Pause/Resume actions.
 - Show invalid definitions with a warning icon and Needs attention text. Reveal desktop actions on hover or keyboard focus; retain visible controls for touch pointers.
 - Rebuilt and inspected the live desktop preview. Full `bun run check` passed; after adding three status regression tests, web checks passed with all 50 tests. `git diff --check` passed. Existing bundle-size warning remains.
+
+## Collapse completed tool activity
+
+- Group consecutive successful completed tool calls behind a native disclosure in history and live activity. Running calls, failed calls, and messages break groups and remain visible; original rows stay available on expansion.
+- Verified the live conversation shows one collapsed row for three reads and expands to all three original entries. Full `bun run check` passed, including 52 web tests and 18 SDK tests; existing bundle-size warning remains.

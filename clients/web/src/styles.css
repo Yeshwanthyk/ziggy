@@ -879,6 +879,32 @@ button {
   background: var(--destructive);
 }
 
+.tool-activity {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  margin: 8px 0;
+}
+
+.tool-activity summary {
+  cursor: pointer;
+  padding: 6px 0;
+  width: fit-content;
+}
+
+.tool-activity summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.tool-activity-details {
+  padding: 2px 0 2px 16px;
+}
+
+.tool-activity-details .tool-line {
+  margin: 6px 0;
+}
+
 .welcome-state {
   align-items: center;
   display: flex;
