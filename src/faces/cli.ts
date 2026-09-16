@@ -1,35 +1,12 @@
 import { Effect, Predicate, Schema } from "effect";
-import { CliInputInvalid, type CliCommand, type HelpTopic } from "../domain/cli";
+import { CliInputInvalid, type CliCommand } from "../domain/cli";
+import { isZiggyHelpTopic, renderZiggyHelp, ziggyHelpTopics } from "../domain/cli-help";
 import { MemoryScopeReference } from "../domain/memory";
 
 const decodeMemoryScope = Schema.decodeUnknownEffect(MemoryScopeReference);
 
-const helpTopics = new Set<string>([
-  "help",
-  "version",
-  "update",
-  "init",
-  "profiles",
-  "extensions",
-  "auth",
-  "models",
-  "agents",
-  "doctor",
-  "run",
-  "acp",
-  "automations",
-  "wake",
-  "sessions",
-  "memory",
-  "serve",
-  "gateway",
-  "tui",
-]);
-
-const isHelpTopic = (value: string): value is HelpTopic => helpTopics.has(value);
-
 const reservedWords = new Set([
-  ...helpTopics,
+  ...ziggyHelpTopics,
   "--help",
   "-h",
   "--version",
@@ -40,15 +17,7 @@ const reservedWords = new Set([
 
 const invalid = (message: string): CliInputInvalid => new CliInputInvalid({ message });
 
-const serveHelp = `usage:
-  ziggy serve <name|path>
-  ziggy serve install <name|path> [--force] [--no-start]
-  ziggy serve start <name|path>
-  ziggy serve stop <name|path>
-  ziggy serve restart <name|path>
-  ziggy serve status <name|path>
-  ziggy serve logs <name|path> [--follow]
-  ziggy serve uninstall <name|path>`;
+const serveHelp = renderZiggyHelp("serve");
 
 const required = (value: string | undefined): value is string =>
   value !== undefined && value.length > 0;
@@ -206,7 +175,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
 
   if (word === "help" || word === "--help" || word === "-h") {
     if (rest.length === 0) return { _tag: "Help" };
-    if (rest.length === 1 && rest[0] !== undefined && isHelpTopic(rest[0])) {
+    if (rest.length === 1 && rest[0] !== undefined && isZiggyHelpTopic(rest[0])) {
       return { _tag: "Help", topic: rest[0] };
     }
     return invalid("usage: ziggy help [command]");
@@ -604,65 +573,7 @@ export const decodeCliCommand = (
   );
 };
 
-const generalHelp = `Usage:
-  ziggy [<name|path>]
-  ziggy tui [<name|path>]
-  ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...>
-  ziggy acp <name|path> [--shared] [--agent <agent-id>]
-  ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]
-  ziggy profiles [--json]
-  ziggy auth <name|path> [provider] [--type api_key|oauth]
-  ziggy models status <name|path>
-  ziggy models list <name|path> [--provider <id>]
-  ziggy models set <name|path> <provider>/<model> [--thinking <level>]
-  ziggy agents create|list|show|validate|run ... [--json on list/show]
-  ziggy doctor <name|path>
-  ziggy extensions manage|list|show|add|remove ... [--json on list/show]
-  ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
-  ziggy wake <name|path> <automation-id>
-  ziggy sessions list|show ... [--json]
-  ziggy memory list|show ... [--json]
-  ziggy serve <name|path>
-  ziggy serve install <name|path> [--force] [--no-start]
-  ziggy serve start|stop|restart <name|path>
-  ziggy serve status <name|path>
-  ziggy serve logs <name|path> [--follow]
-  ziggy serve uninstall <name|path>
-  ziggy gateway <name|path>  # compatibility alias
-  ziggy help [command]
-  ziggy version
-  ziggy update`;
-
-const topicHelp = {
-  help: "usage: ziggy help [command]",
-  version: "usage: ziggy version",
-  update: "usage: ziggy update",
-  init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
-  profiles: "usage: ziggy profiles [--json]",
-  extensions:
-    "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
-  auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
-  models:
-    "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
-  agents:
-    "usage:\n  ziggy agents create <name|path> <agent-id>\n  ziggy agents list <name|path> [--json]\n  ziggy agents show <name|path> <agent-id> [--json]\n  ziggy agents validate <name|path> [agent-id]\n  ziggy agents run <name|path> <agent-id> <prompt...>",
-  doctor: "usage: ziggy doctor <name|path>",
-  run: "usage: ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...> (JSON mode emits Pi event lines)",
-  acp: "usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]",
-  automations:
-    "usage:\n  ziggy automations create <name|path> <automation-id>\n  ziggy automations list <name|path> [--json]\n  ziggy automations pause <name|path> <automation-id>\n  ziggy automations resume <name|path> <automation-id>\n  ziggy automations validate <name|path> [automation-id]\n  ziggy automations status <name|path> [--json]\n  ziggy automations runs <name|path> [automation-id] [--json]",
-  wake: "usage: ziggy wake <name|path> <automation-id>",
-  sessions:
-    "usage:\n  ziggy sessions list <name|path> [--json]\n  ziggy sessions show <name|path> <session-id|relative-path> [--json]",
-  memory:
-    "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
-  serve: serveHelp,
-  gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
-  tui: "usage: ziggy tui [<name|path>]",
-} satisfies Record<HelpTopic, string>;
-
-export const renderHelp = (topic?: HelpTopic): string =>
-  topic === undefined ? generalHelp : topicHelp[topic];
+export const renderHelp = renderZiggyHelp;
 
 export const isForegroundResidentArguments = (args: ReadonlyArray<string>): boolean =>
   args.length === 2 && (args[0] === "serve" || args[0] === "gateway");

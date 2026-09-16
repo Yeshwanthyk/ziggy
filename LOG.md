@@ -756,9 +756,23 @@ results.
 - Updated the existing catalog-loading test for the remaining 21 skills and current saved-browser workflow tools.
 - Verification: all 11 resource-discovery/catalog tests pass; full `bun run check` passes, including format, lint, typechecking, Knip, SDK/web tests, web build, and generated catalog/docs checks. The web build retains its non-blocking chunk-size warning.
 
+## Skill loading and self-documentation audit
+
+- Used two Luna Max scouts and writing-for-agents to inspect Pi-compatible skill loading, runtime instructions, and code/docs access. Saved source-linked findings in `docs/research/skill-loading-and-agent-self-documentation.md`.
+- A no-model session probe of `dump/browser-workflows` loaded four visible skills and 27 extension tools without resource diagnostics. Skill descriptions/paths appear in the custom prompt; full bodies remain on-demand.
+- Keep Ziggy's replacement prompt. Identified incomplete self-help/API discovery, an intentionally unregistered `pi_docs` tool despite embedded-doc health checks, repository-only authoring proof instructions, missing operation routes, and divergent Slack reference copies. No runtime implementation changed; autonomous model skill use and fresh standalone relative-reference behavior remain unproven.
+
 ## Recover UI subscriptions after replay rollover
 
 - Distinguished a fresh event subscription from an explicit resume cursor: fresh opens/watches replay the retained activity window and attach live, while expired/future cursors and stale server epochs still fail. Persisted Pi session history remains the transcript authority. Rejected replacement watches preserve their existing listener.
 - The UI SDK now reattaches without the rejected cursor before reconciling history. Request and connection fences prevent late recovery responses from reviving an explicitly unwatched session; sent user commands are not retried. Cursor-free reconnects also request history reconciliation because continuity is unknown.
 - Preserved active text/tool state across web history reads, including activity replayed before a reload and events received while it is pending. A bounded opening-event buffer retains replay delivered before the selected session reference is known. Settlement clears completed activity without erasing a subsequent active turn.
 - Verification: 22 focused core registry/gateway tests, 18 SDK tests, and all 47 web tests pass. Full `bun run check` passes formatting, lint, typechecking, Knip, SDK/web tests, web build, and generated catalog/docs checks; the existing web chunk-size warning remains. Tests exercise real registry/gateway code and SDK/hook fixtures; no live resident restart, browser session, or deployment was performed.
+
+## Complete Profile self-documentation
+
+- Sol Medium implemented normal-runtime `pi_docs` and `ziggy_help`, with help derived from the CLI's shared authority. Specialist sessions retain their tool allowlists; Ziggy's identity and Pi's progressive skill disclosure remain intact.
+- Completed operations routing and Profile-local extension admission guidance. Catalog generation now synchronizes operations references from `docs/operations` and rejects drift. Refreshed the three required skill packages in `dump/browser-workflows` after checking their existing copies were unchanged.
+- Astra Medium independently verified the implementation and specialist restrictions with no remaining findings. Updated core-resource inventory assertions for the two new docs factories.
+- Verification: repository checks and all 701 core tests passed in the development standalone build. Standalone smoke passed with checkout reads denied. An additional compiled-binary probe verified all three required skills and six canonical reference files outside the checkout. A production-path, no-provider session called both docs tools and verified identity, skill metadata disclosure, and relative-reference readability.
+- Live model-driven skill selection remains untested because the test Profile has no provider authentication. The standalone artifact is a development proof build; the installed user binary was not replaced.

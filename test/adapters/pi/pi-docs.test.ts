@@ -31,6 +31,7 @@ import {
   searchPinnedPiDocs,
   type PiDocDocument,
 } from "ziggy/adapters/pi/pi-docs";
+import { createProfileCoreInlineExtensions } from "ziggy/adapters/pi/profile-core-inline-extensions";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const temporaryPaths: Array<string> = [];
@@ -262,10 +263,40 @@ describe("pi_docs factory", () => {
     session.dispose();
   });
 
-  test("Profile and specialist runtimes do not register pi_docs", () => {
-    const agent = readFileSync(join(repositoryRoot, "src/adapters/pi/pi-agent.ts"), "utf8");
-    const specialist = readFileSync(join(repositoryRoot, "src/adapters/pi/specialist.ts"), "utf8");
-    expect(agent).not.toContain("createPiDocsExtension");
-    expect(specialist).not.toContain("createPiDocsExtension");
+  test("production Profile composition activates pinned docs and Ziggy help", async () => {
+    const profilePath = await mkdtemp(join(tmpdir(), "ziggy-core-docs-"));
+    temporaryPaths.push(profilePath);
+    await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
+    const extensions = createProfileCoreInlineExtensions({
+      profilePath,
+      agents: [],
+      memoryDocuments: [],
+      ephemeralPromptContext: () => undefined,
+    });
+    const services = await createAgentSessionServices({
+      cwd: profilePath,
+      agentDir: profilePath,
+      resourceLoaderOptions: {
+        systemPrompt: join(profilePath, "SOUL.md"),
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        extensionFactories: [...extensions],
+      },
+    });
+    const loadedToolNames = services.resourceLoader
+      .getExtensions()
+      .extensions.flatMap((extension) => [...extension.tools.keys()]);
+    expect(loadedToolNames).toEqual(["pi_docs", "ziggy_help"]);
+
+    const { session } = await createAgentSessionFromServices({
+      services,
+      sessionManager: SessionManager.inMemory(),
+    });
+    expect(session.getActiveToolNames()).toContain("pi_docs");
+    expect(session.getActiveToolNames()).toContain("ziggy_help");
+    session.dispose();
   });
 });

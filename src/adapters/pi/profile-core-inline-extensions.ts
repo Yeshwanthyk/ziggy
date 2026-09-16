@@ -11,11 +11,13 @@ import type { ProfileAgent } from "../../domain/profile";
 import { renderMemoryForPrompt, type MemoryDocument } from "../../domain/memory";
 import { fileSystemCauseDetails } from "../fs/cause";
 import type { AutomationTuiDispatch } from "./automation-tui";
+import { createPiDocsExtension } from "./pi-docs";
 import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   createProfileAgentGuidanceExtension,
   createZiggyTuiExtension,
 } from "./ziggy-tui-extension";
+import { createZiggyHelpExtension } from "./ziggy-help";
 
 interface LoadedMemoryDocument {
   readonly content: string;
@@ -172,6 +174,8 @@ export const createProfileCoreInlineExtensions: ProfileCoreInlineExtensionFactor
   automationDispatch,
   ephemeralPromptContext,
 }) => [
+  createPiDocsExtension(),
+  createZiggyHelpExtension(),
   createZiggyTuiExtension(profilePath, agents, extensionSelection, automationDispatch),
   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
   createProfileMemoryExtension(profilePath, memoryDocuments),

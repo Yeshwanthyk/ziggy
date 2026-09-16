@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute resolver Effects */
 import { afterEach, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -23,6 +23,26 @@ import { bundledFilePath } from "ziggy/generated/builtin-files";
 import { REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
 
 const temporaryPaths: Array<string> = [];
+
+test("packaged operations references match their public source", () => {
+  const repositoryRoot = resolve(import.meta.dir, "../../..");
+  for (const name of ["automations", "discord", "memory", "serve", "slack", "telegram"]) {
+    const source = readFileSync(join(repositoryRoot, "docs", "operations", `${name}.md`), "utf8");
+    const packaged = readFileSync(
+      join(
+        repositoryRoot,
+        "extensions",
+        "ziggy-operations",
+        "skills",
+        "ziggy-operations",
+        "references",
+        `${name}.md`,
+      ),
+      "utf8",
+    );
+    expect(packaged).toBe(source);
+  }
+});
 
 const writeSkill = async (
   directoryPath: string,

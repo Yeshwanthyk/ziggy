@@ -121,7 +121,7 @@ test("preflight uses the production resource-loader shape for arbitrary packages
   expect(result).toEqual({
     extensionPathCount: 1,
     skillPathCount: 4,
-    extensionFactoryCount: 4,
+    extensionFactoryCount: 6,
   });
   const loaderOptions = snapshots[0]?.resourceLoaderOptions;
   expect(loaderOptions).toMatchObject({
@@ -139,6 +139,8 @@ test("preflight uses the production resource-loader shape for arbitrary packages
       "name" in factory ? factory.name : "function",
     ),
   ).toEqual([
+    "pi_docs",
+    "ziggy_help",
     "ziggy-tui",
     "ziggy-profile-agents",
     "ziggy-profile-memory",

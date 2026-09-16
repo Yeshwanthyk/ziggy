@@ -36,10 +36,12 @@ import {
   type SessionReference,
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
+import { createPiDocsExtension } from "./pi-docs";
 import { promptForAssistantText } from "./pi-agent";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
 import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";
+import { createZiggyHelpExtension } from "./ziggy-help";
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -244,6 +246,12 @@ export interface SpecialistExecutionEnvironment {
   readonly resources: PiResources;
 }
 
+/** Read-only Ziggy reference tools available to a specialist's explicit tool allowlist. */
+export const specialistReferenceExtensions = (): ReadonlyArray<InlineExtension> => [
+  createPiDocsExtension(),
+  createZiggyHelpExtension(),
+];
+
 export const specialistRuntime = (
   profilePath: string,
   environment: SpecialistExecutionEnvironment,
@@ -272,7 +280,10 @@ export const specialistRuntime = (
                     noPromptTemplates: true,
                     noThemes: true,
                     noContextFiles: true,
-                    extensionFactories: [...environment.resources.extensionFactories],
+                    extensionFactories: [
+                      ...environment.resources.extensionFactories,
+                      ...specialistReferenceExtensions(),
+                    ],
                   };
                   if (environment.resources.extensionPaths.length > 0) {
                     options.additionalExtensionPaths = [...environment.resources.extensionPaths];

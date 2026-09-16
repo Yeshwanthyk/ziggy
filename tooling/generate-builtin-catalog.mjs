@@ -23,6 +23,7 @@ const catalogJsonPath = join(repositoryRoot, "catalog.json");
 const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const REQUIRED_PACKAGE_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
 const skipNames = new Set(["node_modules", ".git", "test", "tests", "tsconfig.json"]);
+const operationsReferenceNames = ["automations", "discord", "memory", "serve", "slack", "telegram"];
 
 const fail = (message) => {
   console.error(message);
@@ -35,6 +36,27 @@ const isSorted = (values) =>
   values.every((value, index) => index === 0 || values[index - 1].localeCompare(value) <= 0);
 
 const readJson = (path) => Bun.file(path).json();
+
+const syncOperationsReferences = (check) => {
+  for (const name of operationsReferenceNames) {
+    const source = join(repositoryRoot, "docs", "operations", `${name}.md`);
+    const packaged = join(
+      repositoryRoot,
+      "extensions",
+      "ziggy-operations",
+      "skills",
+      "ziggy-operations",
+      "references",
+      `${name}.md`,
+    );
+    const sourceBytes = readFileSync(source);
+    const matches =
+      existsSync(packaged) && Buffer.compare(sourceBytes, readFileSync(packaged)) === 0;
+    if (matches) continue;
+    if (check) fail(`packaged operations reference is stale: ${packaged}`);
+    writeFileSync(packaged, sourceBytes);
+  }
+};
 
 const parseFrontmatter = (text) => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
@@ -122,6 +144,8 @@ const importAlias = (kind, id, index) =>
     .split("-")
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join("")}${index === 0 ? "" : String(index)}`;
+
+syncOperationsReferences(process.argv.includes("--check"));
 
 const catalogJson = await readJson(catalogJsonPath);
 const approvedIds = catalogJson.extensions.map((entry) => entry.id);

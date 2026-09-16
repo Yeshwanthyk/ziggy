@@ -21,6 +21,7 @@ import {
   renderAgentRunCall,
   renderAgentRunResult,
   selectSpecialist,
+  specialistReferenceExtensions,
   usageFromMessages,
   useSpecialistChild,
   type AgentRunInput,
@@ -529,6 +530,13 @@ describe("agent_run TUI tool", () => {
       cost: { input: 6, output: 8, cacheRead: 10, cacheWrite: 12, total: 36 },
     });
   });
+});
+
+test("specialists register only the read-only Ziggy reference extensions", () => {
+  expect(specialistReferenceExtensions().map((extension) => extension.name)).toEqual([
+    "pi_docs",
+    "ziggy_help",
+  ]);
 });
 
 describe("agent_discuss TUI tool", () => {
