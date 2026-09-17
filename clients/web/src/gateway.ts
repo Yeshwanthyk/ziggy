@@ -5,6 +5,7 @@ import {
   mergeSessionHistoryEntries,
   ZiggyRequestOutcomeUnknownError,
   type ZiggyAutomationDefinition,
+  type ZiggyAutomationDestination,
   type ZiggyAutomationDocument,
   type ZiggyAutomationRun,
   type ZiggyAutomationStatusResult,
@@ -47,11 +48,7 @@ export interface PinnedConversationSummary extends ConversationSummary {
   readonly pinId: string;
 }
 
-export interface AutomationDestinationOption {
-  readonly ref: ZiggySessionRef;
-  readonly title: string;
-  readonly subtitle: string;
-}
+export type AutomationDestinationOption = ZiggyAutomationDestination;
 
 export interface AgentSummary {
   readonly id: string;
@@ -143,6 +140,7 @@ export type GatewayClient = Pick<
   | "listGroups"
   | "listModels"
   | "listExtensionsForProfile"
+  | "listDestinations"
   | "listPins"
   | "listProfiles"
   | "listSessions"
@@ -156,7 +154,6 @@ export type GatewayClient = Pick<
   | "resumeAutomation"
   | "runAutomation"
   | "saveAutomation"
-  | "showSession"
   | "readAgentDocument"
   | "saveAgent"
   | "showAutomation"
@@ -176,6 +173,25 @@ export type GatewayClient = Pick<
 export type GatewayConnector = (input: ConnectInput) => GatewayClient;
 
 const defaultConnector: GatewayConnector = (input) => connectZiggy(input);
+
+const listAutomationDestinations = async (
+  client: GatewayClient,
+  profileId: ZiggyProfileSummary["profileId"],
+): Promise<ReadonlyArray<AutomationDestinationOption>> => {
+  const entries: Array<AutomationDestinationOption> = [];
+  const seenCursors = new Set<string>();
+  let after: string | undefined;
+
+  while (true) {
+    const page = await client.listDestinations(profileId, after);
+    entries.push(...page.entries);
+    if (page.nextCursor === undefined) return entries;
+    if (seenCursors.has(page.nextCursor))
+      throw new Error("Destination pagination did not advance.");
+    seenCursors.add(page.nextCursor);
+    after = page.nextCursor;
+  }
+};
 
 const RECONNECT_GRACE_PERIOD_MS = 10_000;
 const SELECTION_STORAGE_PREFIX = "ziggy:selected:v1:";
@@ -308,7 +324,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [agentDefinitionDetail, setAgentDefinitionDetail] = useState<AgentDefinitionDetail>();
   const [groups, setGroups] = useState<ReadonlyArray<GroupConversationSummary>>([]);
   const [automations, setAutomations] = useState<ReadonlyArray<AutomationSummary>>([]);
-  const [automationSessionDestinations, setAutomationSessionDestinations] = useState<
+  const [automationDestinations, setAutomationDestinations] = useState<
     ReadonlyArray<AutomationDestinationOption>
   >([]);
   const [automationDetail, setAutomationDetail] = useState<AutomationDetail>();
@@ -627,14 +643,21 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       const generation = ++sidebarGenerationRef.current;
       const restoreSelectionGeneration = selectionGenerationRef.current;
       setSidebarLoading(true);
-      const [sessionResult, pinResult, agentResult, groupResult, automationResult] =
-        await Promise.allSettled([
-          client.listSessions(selectedProfile.profileId),
-          client.listPins(selectedProfile.profileId),
-          client.listAgents(selectedProfile.profileId),
-          client.listGroups(selectedProfile.profileId),
-          client.listAutomations(selectedProfile.profileId),
-        ]);
+      const [
+        sessionResult,
+        pinResult,
+        agentResult,
+        groupResult,
+        automationResult,
+        destinationResult,
+      ] = await Promise.allSettled([
+        client.listSessions(selectedProfile.profileId),
+        client.listPins(selectedProfile.profileId),
+        client.listAgents(selectedProfile.profileId),
+        client.listGroups(selectedProfile.profileId),
+        client.listAutomations(selectedProfile.profileId),
+        listAutomationDestinations(client, selectedProfile.profileId),
+      ]);
       if (
         generation !== sidebarGenerationRef.current ||
         clientRef.current !== client ||
@@ -648,22 +671,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (nextConversations !== undefined) {
         setConversations(nextConversations);
       }
-      if (sessionResult.status === "fulfilled") {
-        setAutomationSessionDestinations([
-          ...sessionResult.value.live.map((session) => ({
-            ref: session.ref,
-            title: titleFromKey(session.ref.key, selectedProfile.name),
-            subtitle: `${displayName(session.kind)} conversation`,
-          })),
-          ...sessionResult.value.stored.map((session) => ({
-            ref: session.ref,
-            title: session.ref.id,
-            subtitle: "Past conversation",
-          })),
-        ]);
-      } else {
-        setAutomationSessionDestinations([]);
-      }
+      setAutomationDestinations(
+        destinationResult.status === "fulfilled" ? destinationResult.value : [],
+      );
       const liveGroups =
         sessionResult.status === "fulfilled"
           ? sessionResult.value.live.flatMap((session) =>
@@ -724,9 +734,14 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         );
       }
       if (
-        [sessionResult, pinResult, agentResult, groupResult, automationResult].some(
-          (result) => result.status === "rejected",
-        )
+        [
+          sessionResult,
+          pinResult,
+          agentResult,
+          groupResult,
+          automationResult,
+          destinationResult,
+        ].some((result) => result.status === "rejected")
       ) {
         setLocalError("Some sidebar data could not be refreshed.");
       }
@@ -837,7 +852,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       selectedRefRef.current = undefined;
       setSelectedRef(undefined);
       unselectedEventsRef.current = [];
-      setAutomationSessionDestinations([]);
+      setAutomationDestinations([]);
       const connectionGeneration = ++connectionGenerationRef.current;
       persistentConnectionRef.current = persistent;
       selectionGenerationRef.current += 1;
@@ -980,7 +995,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         setAgents([]);
         setGroups([]);
         setAutomations([]);
-        setAutomationSessionDestinations([]);
+        setAutomationDestinations([]);
+        setAutomationDestinations([]);
         setAutomationDetail(undefined);
         setAgentDefinitionDetail(undefined);
         setModelSettings(undefined);
@@ -1490,36 +1506,6 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     [refreshSidebarFor, requireOpenSidebarClient],
   );
 
-  const resolveAutomationDestination = useCallback(
-    async (ref: ZiggySessionRef): Promise<string> => {
-      const client = clientRef.current;
-      const selectedProfile = profileRef.current;
-      if (client === undefined || selectedProfile === undefined) {
-        throw new Error("Connect to Ziggy before selecting a delivery conversation.");
-      }
-      if (ref.profileId !== selectedProfile.profileId) {
-        throw new Error(
-          "Refresh the automation before selecting a conversation from this Profile.",
-        );
-      }
-      requireOpenSidebarClient(client);
-      const session = await client.showSession(ref);
-      if (
-        clientRef.current !== client ||
-        profileRef.current?.profileId !== selectedProfile.profileId
-      ) {
-        throw new Error("The Profile changed while resolving the delivery conversation.");
-      }
-      if (session.storedSessionId === undefined) {
-        throw new Error(
-          "This conversation does not have a resident transcript yet. Open it before selecting it.",
-        );
-      }
-      return `conversation:${session.storedSessionId}`;
-    },
-    [requireOpenSidebarClient],
-  );
-
   const updateAutomation = useCallback(
     async (automationId: string, action: "pause" | "resume" | "run"): Promise<void> => {
       const client = clientRef.current;
@@ -1695,18 +1681,6 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     [conversations, pins, profile?.name],
   );
 
-  const automationDestinations = useMemo<ReadonlyArray<AutomationDestinationOption>>(() => {
-    const destinations = new Map<string, AutomationDestinationOption>();
-    for (const destination of automationSessionDestinations) {
-      destinations.set(refKey(destination.ref), destination);
-    }
-    for (const pin of pinnedConversations) {
-      const key = refKey(pin.ref);
-      destinations.set(key, { ref: pin.ref, title: pin.title, subtitle: pin.subtitle });
-    }
-    return [...destinations.values()];
-  }, [automationSessionDestinations, pinnedConversations]);
-
   const automationSections = useMemo<AutomationSections>(
     () => ({
       active: automations.filter((automation) => automation.lifecycle === "active"),
@@ -1769,7 +1743,6 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     refreshSidebar,
     removeConversationPin,
     resumeAutomation,
-    resolveAutomationDestination,
     runAutomation,
     saveAutomationDefinition,
     saveAgentDefinition,

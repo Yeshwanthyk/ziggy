@@ -24,6 +24,7 @@ import {
   UI_EVENTS,
   UI_METHODS,
   UiCommandId,
+  UiDestinationListParams,
   type UiEventFrame as UiEventFrameValue,
   type UiGatewayResult,
   type UiRequestEnvelope,
@@ -74,6 +75,10 @@ const decodeRef = Schema.decodeUnknownEffect(UiSessionRefParams, { onExcessPrope
 const decodeText = Schema.decodeUnknownEffect(UiSessionTextParams, { onExcessProperty: "error" });
 
 const decodeHistory = Schema.decodeUnknownEffect(UiSessionHistoryParams, {
+  onExcessProperty: "error",
+});
+
+const decodeDestinationList = Schema.decodeUnknownEffect(UiDestinationListParams, {
   onExcessProperty: "error",
 });
 
@@ -782,6 +787,62 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               terminalState: session.terminalState,
             })),
           };
+        });
+      case "destination.list":
+        return Effect.gen(function* () {
+          const params = yield* decodeDestinationList(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+
+          const branch = yield* route(params.profileId);
+
+          const [stored, external] = yield* Effect.all([
+            config.sessions
+              .list(branch.target)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
+            branch.registry.destinations,
+          ]);
+
+          const destinations = new Map<
+            string,
+            {
+              readonly target: string;
+              readonly kind: "conversation" | "telegram" | "discord" | "slack";
+              readonly label?: string;
+            }
+          >();
+
+          for (const session of stored) {
+            const target = `conversation:${session.id}`;
+            destinations.set(target, { target, kind: "conversation", label: session.id });
+          }
+
+          for (const destination of external) {
+            const target = destination.target.target;
+            const kind = destination.target._tag;
+            destinations.set(
+              target,
+              destination.label === undefined
+                ? { target, kind }
+                : { target, kind, label: destination.label },
+            );
+          }
+
+          const ordered = [...destinations.values()]
+            .filter((entry) => params.after === undefined || entry.target > params.after)
+            .sort((left, right) => left.target.localeCompare(right.target));
+
+          const entries = ordered.slice(0, 32);
+          const lastEntry = entries.at(-1);
+
+          const result = {
+            profileId: branch.profileId,
+            entries,
+          };
+
+          return ordered.length > entries.length && lastEntry !== undefined
+            ? { ...result, nextCursor: lastEntry.target }
+            : result;
         });
       case "session.show":
         return Effect.gen(function* () {

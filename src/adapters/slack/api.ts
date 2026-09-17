@@ -99,6 +99,14 @@ const ThreadRepliesSuccess = Schema.Struct({
   ),
 });
 
+const ConversationInfoSuccess = Schema.Struct({
+  ok: Schema.Literal(true),
+  channel: Schema.Struct({
+    id: Schema.String,
+    name: Schema.optional(Schema.String),
+  }),
+});
+
 const SlackFailure = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.String,
@@ -134,6 +142,10 @@ const decodeConnectionsOpenResponse = Schema.decodeUnknownEffect(
 
 const decodeThreadRepliesResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Union([ThreadRepliesSuccess, SlackFailure])),
+);
+
+const decodeConversationInfoResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Union([ConversationInfoSuccess, SlackFailure])),
 );
 
 const decodeThreadReplyFile = Schema.decodeUnknownEffect(ThreadReplyFile);
@@ -210,6 +222,7 @@ const encodeStreamChunk = (chunk: SlackStreamChunk) =>
 
 export type SlackApiOperation =
   | "authTest"
+  | "getConversation"
   | "getThreadReplies"
   | "postMessage"
   | "updateMessage"
@@ -235,6 +248,7 @@ export type SlackApiErrorReason =
 export class SlackApiError extends Schema.TaggedErrorClass<SlackApiError>()("SlackApiError", {
   operation: Schema.Literals([
     "authTest",
+    "getConversation",
     "getThreadReplies",
     "postMessage",
     "updateMessage",
@@ -533,6 +547,28 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
             envelope.ok
               ? Effect.succeed({ userId: envelope.user_id })
               : Effect.fail(slackFailure(token, "authTest", envelope.error, response.status)),
+          ),
+        ),
+      ),
+    ),
+  getConversation: (token: string, channel: string) =>
+    queryRequest(client, token, "getConversation", "conversations.info", [
+      ["channel", channel],
+    ]).pipe(
+      Effect.flatMap((response) => ensureHttpSuccess(token, "getConversation", response)),
+      Effect.flatMap((response) =>
+        decodeConversationInfoResponse(response.body).pipe(
+          Effect.mapError((cause) =>
+            apiError("getConversation", "decode", false, cause, token, {
+              status: response.status,
+            }),
+          ),
+          Effect.flatMap((envelope) =>
+            envelope.ok
+              ? Effect.succeed(envelope.channel)
+              : Effect.fail(
+                  slackFailure(token, "getConversation", envelope.error, response.status),
+                ),
           ),
         ),
       ),
@@ -989,6 +1025,12 @@ export const authTest = (
   token: string,
 ): Effect.Effect<{ readonly userId: string }, SlackApiError> =>
   withLiveClient((api) => api.authTest(token));
+
+export const getConversation = (
+  token: string,
+  channel: string,
+): Effect.Effect<{ readonly id: string; readonly name?: string | undefined }, SlackApiError> =>
+  withLiveClient((api) => api.getConversation(token, channel));
 
 export const postMessage = (
   token: string,

@@ -92,7 +92,7 @@ const AutomationFileSchema = Schema.Struct({
   thinking: Schema.optionalKey(ProfileAgentThinking),
 });
 
-const targetFromSource = (source: string): AutomationTarget | undefined => {
+export const automationTargetFromString = (source: string): AutomationTarget | undefined => {
   const conversation = /^conversation:(.{1,128})$/u.exec(source);
 
   if (
@@ -130,13 +130,13 @@ const targetFromSource = (source: string): AutomationTarget | undefined => {
       };
 };
 
-const CanonicalTargetString = Schema.String.check(
-  Schema.makeFilter((value) => targetFromSource(value) !== undefined, {
+export const AutomationTargetString = Schema.String.check(
+  Schema.makeFilter((value) => automationTargetFromString(value) !== undefined, {
     expected: "a canonical automation target",
   }),
 );
 
-export const BroadcastsFile = Schema.Struct({ targets: Schema.Array(CanonicalTargetString) });
+export const BroadcastsFile = Schema.Struct({ targets: Schema.Array(AutomationTargetString) });
 
 export const decodeBroadcastsFileJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(BroadcastsFile),
@@ -234,9 +234,9 @@ export class AutomationConversationDeliveryFailed extends Schema.TaggedErrorClas
 ) {}
 
 export const AutomationTargetOutcome = Schema.Union([
-  Schema.Struct({ target: CanonicalTargetString, status: Schema.Literal("delivered") }),
+  Schema.Struct({ target: AutomationTargetString, status: Schema.Literal("delivered") }),
   Schema.Struct({
-    target: CanonicalTargetString,
+    target: AutomationTargetString,
     status: Schema.Literal("failed"),
     category: AutomationDeliveryFailureCategorySchema,
     retriable: Schema.Boolean,
@@ -304,7 +304,7 @@ export const AutomationScheduleMutation = Schema.Struct({ expected: Schema.NullO
 export type AutomationScheduleMutation = typeof AutomationScheduleMutation.Type;
 
 // oxfmt-ignore
-export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, target: CanonicalTargetString, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(AutomationDeliveryFailureCategorySchema), retriable: Schema.NullOr(Schema.Boolean) }).check(Schema.makeFilter((value) => (value.status === "delivered" && value.failureCategory === null && value.retriable === null) || (value.status === "failed" && value.failureCategory !== null && value.retriable !== null), { expected: "a structurally consistent automation target outcome" }));
+export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, target: AutomationTargetString, status: Schema.Literals(["delivered", "failed"]), failureCategory: Schema.NullOr(AutomationDeliveryFailureCategorySchema), retriable: Schema.NullOr(Schema.Boolean) }).check(Schema.makeFilter((value) => (value.status === "delivered" && value.failureCategory === null && value.retriable === null) || (value.status === "failed" && value.failureCategory !== null && value.retriable !== null), { expected: "a structurally consistent automation target outcome" }));
 
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 
@@ -508,7 +508,7 @@ export const parseAutomationTarget = (
   path: string,
   source: string,
 ): Effect.Effect<AutomationTarget, AutomationInvalid> => {
-  const target = targetFromSource(source);
+  const target = automationTargetFromString(source);
 
   return target === undefined
     ? Effect.fail(invalid(path, `invalid automation ${id}: invalid broadcast target ${source}`))

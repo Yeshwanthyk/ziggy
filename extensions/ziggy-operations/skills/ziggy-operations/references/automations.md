@@ -47,13 +47,25 @@ A leading `@agent-id` still delegates the whole task to that Profile agent. The 
 `agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
 automation's own (untagged) session.
 
-## Conversation delivery
+## Multiple delivery destinations
 
-Add `conversation:<stored-session-id>` to the comma-separated `broadcast` value to append a
-completed automation result to an existing transcript in the same Profile. The web automation
-picker resolves live, channel-backed, stored, and pinned session references through `session.show`
-and saves the durable Pi transcript ID; labels and pin state are navigation metadata and are never
-delivery identity. Existing manual and external targets remain valid.
+The comma-separated `broadcast` value can contain any mix of conversation, Telegram, Discord, and
+Slack targets. The web automation picker lists known destinations for the selected Profile and adds
+or removes each target independently. It stores the existing canonical target strings; display
+names never become delivery identity. `origin`, `all`, and targets entered through the full editor
+remain visible and removable even when they are not currently discoverable.
+
+Stored Pi sessions supply conversation targets without the sidebar's display limit. Channel
+residents contribute the actual signed Telegram chat ID, Discord channel or thread ID, and Slack
+channel or thread address they observe. Slack IDs configured in `slack.json` are also choices;
+Ziggy looks up one display name per known channel when the token permits it and otherwise shows the
+canonical ID. This discovery state is memory-only. Saved broadcast targets survive a resident
+restart, while a previously observed channel name can fall back to its ID until the channel is
+observed again.
+
+Add `conversation:<stored-session-id>` to append a completed result to an existing transcript in
+the same Profile. Selecting a Slack destination never changes the channel's `mention` or `always`
+inbound response policy in `slack.json`.
 
 Conversation delivery appends history only. It does not start, steer, or queue a model turn, and it
 does not send the result through the destination channel. A busy destination fails as retriable;
@@ -63,7 +75,8 @@ conversation. Delivery requires the resident process that owns the selected Prof
 append the destination. Gateway history and live-event projections show the first 1,024 result code
 points; the destination Pi transcript retains the complete result.
 
-The destination transcript deduplicates by automation and run ID. If the process crashes after the
+Each destination has an independent delivery outcome. The destination transcript deduplicates by
+automation and run ID. If the process crashes after the
 append but before the run ledger is finalized, the run may remain `unknown`; Ziggy does not retry it
 automatically.
 

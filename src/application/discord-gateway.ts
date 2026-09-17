@@ -69,6 +69,7 @@ import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { UiGatewayError } from "../domain/ui-gateway";
+import { automationTargetFromString } from "../domain/automation";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 
@@ -101,6 +102,7 @@ export type DiscordGatewayError = DiscordApiError | DiscordIngressDatabaseError;
 interface DiscordChannel {
   readonly id: string;
   readonly type: number;
+  readonly name?: string | undefined;
   readonly guild_id?: string | undefined;
   readonly parent_id?: string | null | undefined;
 }
@@ -259,15 +261,18 @@ export const discordThreadConversation = (
   message: AdmittedMessage,
   threadId: string,
   parentChannelId: string,
+  label?: string,
 ): InboundMessage => {
   const groupId = `dc${parentChannelId}`;
 
-  return {
+  const inbound = {
     ...message,
     channelId: threadId,
     chatKey: `group-${groupId}-thread-${threadId}`,
     context: { kind: "group", groupId },
-  };
+  } satisfies InboundMessage;
+
+  return label === undefined ? inbound : { ...inbound, label };
 };
 
 export const shouldUpdateDiscordProgress = (
@@ -781,7 +786,12 @@ export const makeDiscordGateway = (
             );
 
             if (THREAD_TYPES.has(channel.type) && channel.parent_id != null) {
-              return discordThreadConversation(message, channel.id, channel.parent_id);
+              return discordThreadConversation(
+                message,
+                channel.id,
+                channel.parent_id,
+                channel.name,
+              );
             }
 
             if (!ROOT_CHANNEL_TYPES.has(channel.type)) {
@@ -803,7 +813,12 @@ export const makeDiscordGateway = (
               ),
             );
 
-            return discordThreadConversation(message, thread.id, channel.id);
+            return discordThreadConversation(
+              message,
+              thread.id,
+              channel.id,
+              thread.name ?? channel.name,
+            );
           });
         };
 
@@ -921,6 +936,19 @@ export const makeDiscordGateway = (
                 }
 
                 if (chatState.handle === undefined) {
+                  if (registry !== undefined) {
+                    const target = automationTargetFromString(
+                      `discord:channel:${message.channelId}`,
+                    );
+
+                    if (target !== undefined) {
+                      const destination =
+                        message.label === undefined ? { target } : { target, label: message.label };
+
+                      yield* registry.rememberDestination(destination);
+                    }
+                  }
+
                   const open = agent.openChat(
                     target,
                     message.context,

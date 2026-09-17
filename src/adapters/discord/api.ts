@@ -51,6 +51,7 @@ const ApplicationCommandSuccess = Schema.Struct({
 const DiscordChannelSuccess = Schema.Struct({
   id: Schema.String,
   type: Schema.Finite.check(Schema.isInt()),
+  name: Schema.optional(Schema.String),
   guild_id: Schema.optional(Schema.String),
   parent_id: Schema.optional(Schema.NullOr(Schema.String)),
 });

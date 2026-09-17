@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { AutomationTargetString } from "./automation";
 import { ProfileAgentId, ProfileAgentThinking } from "./profile";
 import { ProfileId } from "./profile-directory";
 import { ProfileExtensionId } from "./profile-extension";
@@ -323,6 +324,13 @@ export const UiAutomationRunParams = Schema.Struct({
 
 export const UiAutomationStatusParams = UiProfileScopedParams;
 
+export const UiDestinationListParams = Schema.Struct({
+  profileId: ProfileId,
+  after: Schema.optionalKey(AutomationTargetString),
+});
+
+export type UiDestinationListParams = typeof UiDestinationListParams.Type;
+
 export const UiAutomationRunsParams = Schema.Struct({
   profileId: ProfileId,
   automationId: Schema.optionalKey(UiAutomationId),
@@ -481,6 +489,7 @@ export const UI_METHODS = [
   "model.available",
   "model.set",
   "auth.status",
+  "destination.list",
   "automation.list",
   "automation.show",
   "automation.create",
@@ -619,6 +628,22 @@ export const UiSessionListResult = Schema.Struct({
 }).check(resultWithinWireBudget);
 
 export type UiSessionListResult = typeof UiSessionListResult.Type;
+
+export const UiAutomationDestination = Schema.Struct({
+  target: AutomationTargetString,
+  kind: Schema.Literals(["conversation", "telegram", "discord", "slack"]),
+  label: Schema.optionalKey(boundedCodePointString("destination label", 160, 1)),
+});
+
+export type UiAutomationDestination = typeof UiAutomationDestination.Type;
+
+export const UiDestinationListResult = Schema.Struct({
+  profileId: ProfileId,
+  entries: Schema.Array(UiAutomationDestination).check(Schema.isMaxLength(32)),
+  nextCursor: Schema.optionalKey(AutomationTargetString),
+}).check(resultWithinWireBudget);
+
+export type UiDestinationListResult = typeof UiDestinationListResult.Type;
 
 export const UiSessionOpenResult = Schema.Struct({ ref: UiSessionRef });
 
@@ -1082,6 +1107,7 @@ export const UiGatewayResult = Schema.Union([
   UiSessionListResult,
   UiSessionShowResult,
   UiSessionHistoryResult,
+  UiDestinationListResult,
   UiSessionOpenResult,
   UiAcknowledgedResult,
   UiAgentListResult,

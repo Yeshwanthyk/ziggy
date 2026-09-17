@@ -18,6 +18,7 @@ import {
   appendStream,
   authTest,
   downloadFile,
+  getConversation,
   getThreadReplies,
   isSlackPrivateFileUrl,
   MAX_SLACK_IMAGE_BYTES,
@@ -72,6 +73,7 @@ import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { UiGatewayError } from "../domain/ui-gateway";
+import { automationTargetFromString } from "../domain/automation";
 import { slackTaskTitle, slackToolStatus } from "./slack-tool-progress";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
@@ -118,6 +120,10 @@ export type SlackGatewayError = SlackApiError | SlackIngressDatabaseError;
 
 export interface SlackTransport {
   readonly authTest: (token: string) => Effect.Effect<{ readonly userId: string }, SlackApiError>;
+  readonly getConversation?: (
+    token: string,
+    channel: string,
+  ) => Effect.Effect<{ readonly id: string; readonly name?: string | undefined }, SlackApiError>;
   readonly openSocket: (
     appToken: string,
     admitInbound?: SlackSocketInboundAdmit,
@@ -801,6 +807,7 @@ const liveSlackTransport: SlackTransport = {
   addReaction,
   authTest,
   downloadFile,
+  getConversation,
   getThreadReplies,
   openSocket: (appToken, admitInbound) => openSlackSocket(appToken, undefined, admitInbound),
   postMessage,
@@ -931,7 +938,50 @@ export const makeSlackGateway = (
         );
 
         const chats = new Map<string, ChatState>();
+        const channelLabels = new Map<string, string>();
+        const channelLookups = new Set<string>();
         let reactionsAvailable = true;
+
+        const rememberChannel = (channel: string): Effect.Effect<void> =>
+          registry === undefined
+            ? Effect.void
+            : Effect.gen(function* () {
+                const target = automationTargetFromString(`slack:channel:${channel}`);
+
+                if (target === undefined) return;
+
+                const knownLabel = channelLabels.get(channel);
+
+                const destination =
+                  knownLabel === undefined ? { target } : { target, label: knownLabel };
+
+                yield* registry.rememberDestination(destination);
+
+                if (transport.getConversation === undefined || channelLookups.has(channel)) return;
+
+                channelLookups.add(channel);
+
+                const result = yield* transport
+                  .getConversation(config.botToken, channel)
+                  .pipe(Effect.result);
+
+                if (result._tag === "Failure" || result.success.name === undefined) return;
+
+                const label = result.success.name.trim();
+
+                if (label.length === 0) return;
+
+                channelLabels.set(channel, label);
+                yield* registry.rememberDestination({
+                  target,
+                  label,
+                });
+              });
+
+        yield* Effect.forEach(Object.keys(config.channels ?? {}), rememberChannel, {
+          concurrency: 4,
+          discard: true,
+        });
 
         const admitInbound: SlackSocketInboundAdmit = (inbound, eventId) => {
           const channelMode = resolveSlackChannelMode(config, inbound.channel);
@@ -1690,6 +1740,26 @@ export const makeSlackGateway = (
 
         const registerMessage = (message: InboundMessage) =>
           Effect.gen(function* () {
+            yield* rememberChannel(message.channel);
+
+            if (registry !== undefined && message.context.kind === "group") {
+              const threadTs = message.statusThreadTs;
+              const channelLabel = channelLabels.get(message.channel);
+
+              const target = automationTargetFromString(
+                `slack:channel:${message.channel}:thread:${threadTs}`,
+              );
+
+              if (target !== undefined) {
+                const destination =
+                  channelLabel === undefined
+                    ? { target }
+                    : { target, label: `${channelLabel} · thread` };
+
+                yield* registry.rememberDestination(destination);
+              }
+            }
+
             const started = yield* ingressRuntime.start(
               target.path,
               message,

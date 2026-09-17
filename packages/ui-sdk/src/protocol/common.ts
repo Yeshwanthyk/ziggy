@@ -220,6 +220,7 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "model.available",
   "model.set",
   "auth.status",
+  "destination.list",
   "automation.list",
   "automation.show",
   "automation.create",

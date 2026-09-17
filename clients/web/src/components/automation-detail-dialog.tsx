@@ -1,9 +1,12 @@
 import { CircleCheck, CircleX, Clock3, Pencil, RefreshCw, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DefinitionEditor } from "@/components/definition-editor";
-import { addAutomationBroadcastTarget, parseDefinitionSource } from "@/lib/definition-source";
+import {
+  addAutomationBroadcastTarget,
+  parseDefinitionSource,
+  removeAutomationBroadcastTarget,
+} from "@/lib/definition-source";
 import type { AutomationDestinationOption, AutomationDetail, AutomationSummary } from "@/gateway";
-import type { ZiggySessionRef } from "../../../../packages/ui-sdk/src/index";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,7 +24,6 @@ interface AutomationDetailDialogProps {
   readonly detail?: AutomationDetail;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => void;
-  readonly onResolveDestination: (ref: ZiggySessionRef) => Promise<string>;
   readonly onSave: (source: string, expectedSource: string) => Promise<void>;
   readonly open: boolean;
 }
@@ -73,8 +75,11 @@ const taskPreview = (task: string): { readonly clipped: boolean; readonly previe
   return { clipped, preview: `${preview.trimEnd()}…` };
 };
 
-const destinationKeyFor = (ref: ZiggySessionRef): string =>
-  `${ref.kind}:${ref.kind === "live" ? ref.key : ref.id}`;
+const kindLabel = (kind: AutomationDestinationOption["kind"]): string =>
+  kind === "conversation" ? "Conversation" : `${kind[0]?.toLocaleUpperCase()}${kind.slice(1)}`;
+
+const actionLabel = (kind: AutomationDestinationOption["kind"]): string =>
+  kind === "conversation" ? "Append history" : "Send message";
 
 export function AutomationDetailDialog({
   automation,
@@ -83,7 +88,6 @@ export function AutomationDetailDialog({
   detail,
   onOpenChange,
   onRefresh,
-  onResolveDestination,
   onSave,
   open,
 }: AutomationDetailDialogProps) {
@@ -113,24 +117,45 @@ export function AutomationDetailDialog({
   const preview = task === undefined ? undefined : taskPreview(task);
   const parsedDefinition =
     detail?.definition === undefined ? undefined : parseDefinitionSource(detail.definition.source);
-  const currentDestination = parsedDefinition?.fields.broadcast.trim() || "No delivery target";
+  const selectedTargets =
+    parsedDefinition?.fields.broadcast.trim() === "none"
+      ? []
+      : (parsedDefinition?.fields.broadcast.trim().split(",").filter(Boolean) ?? []);
+  const availableDestinations = destinations.filter(
+    (destination) => !selectedTargets.includes(destination.target),
+  );
 
   const saveDestination = async (): Promise<void> => {
     if (detail?.definition === undefined || parsedDefinition === undefined) return;
-    const destination = destinations.find(
-      (option) => destinationKey === destinationKeyFor(option.ref),
-    );
+    const destination = destinations.find((option) => destinationKey === option.target);
     if (destination === undefined) return;
     setSavingDestination(true);
     setDestinationError(undefined);
     try {
-      const target = await onResolveDestination(destination.ref);
-      const source = addAutomationBroadcastTarget(detail.definition.source, target);
+      const source = addAutomationBroadcastTarget(detail.definition.source, destination.target);
       await onSave(source, detail.definition.source);
       setDestinationKey("");
     } catch (cause) {
       setDestinationError(
-        cause instanceof Error ? cause.message : "The delivery conversation could not be selected.",
+        cause instanceof Error ? cause.message : "The delivery destination could not be selected.",
+      );
+    } finally {
+      setSavingDestination(false);
+    }
+  };
+
+  const removeDestination = async (target: string): Promise<void> => {
+    if (detail?.definition === undefined) return;
+    setSavingDestination(true);
+    setDestinationError(undefined);
+    try {
+      await onSave(
+        removeAutomationBroadcastTarget(detail.definition.source, target),
+        detail.definition.source,
+      );
+    } catch (cause) {
+      setDestinationError(
+        cause instanceof Error ? cause.message : "The delivery destination could not be removed.",
       );
     } finally {
       setSavingDestination(false);
@@ -237,27 +262,59 @@ export function AutomationDetailDialog({
                 </section>
 
                 <section className="detail-section automation-destination">
-                  <h3>Deliver result</h3>
-                  <p className="detail-muted">
-                    Current target: <code>{currentDestination}</code>
-                  </p>
+                  <h3>Broadcast results to</h3>
+                  {selectedTargets.length === 0 ? (
+                    <p className="detail-muted">No delivery destinations selected.</p>
+                  ) : (
+                    <ul className="automation-destination-list">
+                      {selectedTargets.map((target) => {
+                        const destination = destinations.find((entry) => entry.target === target);
+                        return (
+                          <li key={target}>
+                            <span>
+                              <strong>
+                                {destination === undefined
+                                  ? target
+                                  : `${kindLabel(destination.kind)} · ${destination.label ?? destination.target}`}
+                              </strong>
+                              <small>
+                                {destination === undefined
+                                  ? "Saved broadcast target"
+                                  : actionLabel(destination.kind)}
+                              </small>
+                            </span>
+                            <Button
+                              aria-label={`Remove ${target}`}
+                              disabled={!available || savingDestination}
+                              onClick={() => void removeDestination(target)}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Remove
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   <div className="automation-destination-controls">
                     <label>
-                      <span>Conversation</span>
+                      <span>Destination</span>
                       <select
-                        disabled={!available || savingDestination || destinations.length === 0}
+                        disabled={
+                          !available || savingDestination || availableDestinations.length === 0
+                        }
                         onChange={(event) => setDestinationKey(event.target.value)}
                         value={destinationKey}
                       >
-                        <option value="">Select a conversation</option>
-                        {destinations.map((destination) => {
-                          const key = destinationKeyFor(destination.ref);
-                          return (
-                            <option key={key} value={key}>
-                              {destination.title} · {destination.subtitle}
-                            </option>
-                          );
-                        })}
+                        <option value="">Select a destination</option>
+                        {availableDestinations.map((destination) => (
+                          <option key={destination.target} value={destination.target}>
+                            {kindLabel(destination.kind)} ·{" "}
+                            {destination.label ?? destination.target}
+                          </option>
+                        ))}
                       </select>
                     </label>
                     <Button
@@ -269,19 +326,14 @@ export function AutomationDetailDialog({
                       {savingDestination ? "Adding…" : "Add destination"}
                     </Button>
                   </div>
-                  {destinations.length === 0 ? (
-                    <p className="detail-muted">
-                      No resident or pinned conversations are available.
-                    </p>
+                  {availableDestinations.length === 0 ? (
+                    <p className="detail-muted">No additional known destinations are available.</p>
                   ) : null}
                   {destinationError === undefined ? null : (
                     <p className="detail-error" role="alert">
                       {destinationError}
                     </p>
                   )}
-                  <p className="detail-muted">
-                    Manual and external broadcast targets remain available in Edit.
-                  </p>
                 </section>
 
                 <section className="detail-section">

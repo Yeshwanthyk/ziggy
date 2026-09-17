@@ -24,7 +24,7 @@ import { SessionNotFound } from "ziggy/domain/session";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import type { ProfileTarget } from "ziggy/domain/profile";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
-import { UiResponseFrame } from "ziggy/domain/ui-gateway";
+import { UiDestinationListResult, UiResponseFrame } from "ziggy/domain/ui-gateway";
 
 const roots: string[] = [];
 
@@ -38,6 +38,8 @@ const usage = {
 };
 
 const decodeResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
+
+const decodeDestinations = Schema.decodeUnknownSync(UiDestinationListResult);
 
 const profileExtensions: ProfileExtensionsApi = {
   list: () => Effect.never,
@@ -396,4 +398,123 @@ test("a missing destination records a terminal failure without a fallback conver
     ],
   });
   expect(fixture.prompts).toEqual(["Write the daily note."]);
+});
+
+test("destination.list pages the selected Profile's stored and external destinations", async () => {
+  const fixture = await makeFixture("none");
+  const otherTarget = await makeProfile("none");
+  const otherProfileId = stableProfileId(otherTarget.path);
+
+  const manySessions: SessionsApi = {
+    ...sessions,
+    list: (target) =>
+      target.path !== fixture.target.path
+        ? sessions.list(target)
+        : Effect.succeed(
+            Array.from({ length: 35 }, (_, index) => {
+              const id = `session-${String(index).padStart(2, "0")}`;
+
+              return {
+                path: join(target.path, "sessions", `${id}.jsonl`),
+                id,
+                kind: "root" as const,
+                createdAt: "2026-09-17T12:00:00.000Z",
+                entryCount: 1,
+                parent: undefined,
+                parentUnknown: false,
+                children: [],
+                modelChanges: [],
+                thinkingChanges: [],
+                usage: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 0,
+                  cost: 0,
+                },
+                terminalState: "completed" as const,
+              };
+            }),
+          ),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry(fixture.target.path);
+        const otherRegistry = yield* makeChatRegistry(otherTarget.path);
+        yield* registry.rememberDestination({
+          target: {
+            _tag: "telegram",
+            target: "telegram:chat:-100123",
+            chatId: -100123,
+          },
+          label: "Release room",
+        });
+        yield* otherRegistry.rememberDestination({
+          target: {
+            _tag: "discord",
+            target: "discord:channel:999999999",
+            channelId: "999999999",
+          },
+          label: "Other Profile",
+        });
+
+        const directory = makeProfileDirectory(
+          { profileId: fixture.profileId, target: fixture.target },
+          [{ profileId: otherProfileId, target: otherTarget }],
+        );
+
+        const gateway = makeSharedUiGateway({
+          defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
+          branches: [
+            { profileId: fixture.profileId, target: fixture.target, registry },
+            { profileId: otherProfileId, target: otherTarget, registry: otherRegistry },
+          ],
+          profileDirectory: directory,
+          repositoryRoot: fixture.target.path,
+          sessions: manySessions,
+          agent: fixture.agent,
+          profileExtensions,
+        });
+
+        const firstResponse = yield* request(gateway, {
+          id: "destinations-1",
+          method: "destination.list",
+          params: { profileId: fixture.profileId },
+        });
+
+        expect(firstResponse.ok).toBeTrue();
+
+        if (!firstResponse.ok) return;
+
+        const first = decodeDestinations(firstResponse.result);
+        expect(first.entries).toHaveLength(32);
+        expect(first.nextCursor).toBeDefined();
+
+        if (first.nextCursor === undefined) return;
+
+        const secondResponse = yield* request(gateway, {
+          id: "destinations-2",
+          method: "destination.list",
+          params: { profileId: fixture.profileId, after: first.nextCursor },
+        });
+
+        expect(secondResponse.ok).toBeTrue();
+
+        if (!secondResponse.ok) return;
+
+        const second = decodeDestinations(secondResponse.result);
+        const all = [...first.entries, ...second.entries];
+        expect(all).toHaveLength(36);
+        expect(all).toContainEqual({
+          target: "telegram:chat:-100123",
+          kind: "telegram",
+          label: "Release room",
+        });
+        expect(all.some((entry) => entry.label === "Other Profile")).toBe(false);
+      }),
+    ),
+  );
 });

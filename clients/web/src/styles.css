@@ -625,6 +625,39 @@ button {
   overflow-wrap: anywhere;
 }
 
+.automation-destination-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.automation-destination-list li {
+  align-items: center;
+  background: var(--muted);
+  border-radius: 9px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 7px 8px 7px 10px;
+}
+
+.automation-destination-list span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.automation-destination-list strong,
+.automation-destination-list small {
+  overflow-wrap: anywhere;
+}
+
+.automation-destination-list small {
+  color: var(--muted-foreground);
+}
+
 .automation-destination-controls {
   align-items: flex-end;
   display: flex;

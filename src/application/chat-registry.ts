@@ -8,6 +8,7 @@ import {
 import type { ChatEvent, ChatHandle, ChatPromptOptions } from "./agent";
 import {
   AutomationConversationDeliveryFailed,
+  type AutomationTarget,
   type AutomationConversationResult,
 } from "../domain/automation";
 import type { ProfileTarget } from "../domain/profile";
@@ -106,6 +107,11 @@ export interface ChatRegistryListEntry {
   readonly agentId?: string;
 }
 
+export interface AutomationDestination {
+  readonly target: AutomationTarget;
+  readonly label?: string;
+}
+
 export interface ChatRegistryApi {
   readonly registerAlias: (
     key: UiSessionKey,
@@ -124,6 +130,8 @@ export interface ChatRegistryApi {
   ) => Effect.Effect<void, ZiggyAgentError>;
   readonly get: (key: UiSessionKey) => Effect.Effect<ChatRegistryLiveEntry, UiGatewayError>;
   readonly list: Effect.Effect<ReadonlyArray<ChatRegistryListEntry>>;
+  readonly destinations: Effect.Effect<ReadonlyArray<AutomationDestination>>;
+  readonly rememberDestination: (destination: AutomationDestination) => Effect.Effect<void>;
   readonly getOrOpenUi: (
     key: UiSessionKey,
     open: Effect.Effect<ChatHandle, unknown>,
@@ -263,6 +271,7 @@ export const makeChatRegistry = (
 ): Effect.Effect<ChatRegistryApi, never, Scope.Scope> =>
   Effect.gen(function* () {
     const entries = new Map<UiSessionKey, RegistryEntry>();
+    const destinations = new Map<string, AutomationDestination>();
     const statePermit = Semaphore.makeUnsafe(1);
 
     // This finalizer is registered before the FiberMap. LIFO scope cleanup therefore interrupts
@@ -500,6 +509,25 @@ export const makeChatRegistry = (
             .sort((left, right) => left.key.localeCompare(right.key)),
         ),
       ),
+      destinations: statePermit.withPermit(
+        Effect.sync(() =>
+          [...destinations.values()].sort((left, right) =>
+            left.target.target.localeCompare(right.target.target),
+          ),
+        ),
+      ),
+      rememberDestination: (destination) =>
+        statePermit.withPermit(
+          Effect.sync(() => {
+            const current = destinations.get(destination.target.target);
+            destinations.set(
+              destination.target.target,
+              destination.label === undefined && current?.label !== undefined
+                ? current
+                : destination,
+            );
+          }),
+        ),
       getOrOpenUi: (key, open, metadata = {}) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {

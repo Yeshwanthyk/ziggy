@@ -924,7 +924,6 @@ export function App() {
           if (selectedAutomationId !== undefined)
             void gateway.loadAutomationDetail(selectedAutomationId).catch(() => undefined);
         }}
-        onResolveDestination={gateway.resolveAutomationDestination}
         onSave={async (source, expectedSource) => {
           if (selectedAutomationId === undefined) return;
           await gateway.saveAutomationDefinition(selectedAutomationId, source, expectedSource);

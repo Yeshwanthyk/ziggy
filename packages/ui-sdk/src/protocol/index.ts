@@ -33,6 +33,8 @@ import {
 } from "./agents";
 import {
   isAutomationCreateResult,
+  isAutomationTarget,
+  isDestinationListResult,
   isAutomationDocumentResult,
   isAutomationId,
   isAutomationListResult,
@@ -132,6 +134,8 @@ export const isMethodResult = <Method extends ZiggyMethod>(
       return isModelSetResult(value) && profileMatches(value.profileId, params);
     case "auth.status":
       return isAuthStatusResult(value) && profileMatches(value.profileId, params);
+    case "destination.list":
+      return isDestinationListResult(value) && profileMatches(value.profileId, params);
     case "automation.list":
       return isAutomationListResult(value) && profileMatches(value.profileId, params);
     case "automation.show":
@@ -229,6 +233,12 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "extension.validate":
     case "pin.list":
       return hasProfileIdOnly(value);
+    case "destination.list":
+      return (
+        isProfileId(value.profileId) &&
+        (value.after === undefined || isAutomationTarget(value.after)) &&
+        Object.keys(value).every((key) => ["profileId", "after"].includes(key))
+      );
     case "session.show":
       return hasRefOnly(value);
     case "session.history":

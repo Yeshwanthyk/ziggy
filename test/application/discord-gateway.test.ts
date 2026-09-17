@@ -412,6 +412,18 @@ describe("Discord gateway boundary", () => {
     });
   });
 
+  test("keeps the native thread channel and available name for discovery", () => {
+    const admitted = normalizeDiscordMessage(message({ guildId: "789" }), "123");
+    expect(admitted).toBeDefined();
+
+    if (admitted === undefined) return;
+
+    expect(discordThreadConversation(admitted, "thread-1", "456", "Release thread")).toMatchObject({
+      channelId: "thread-1",
+      label: "Release thread",
+    });
+  });
+
   test("chunks by Unicode code point at Discord's limit", () => {
     const chunks = discordMessageChunks("🦆".repeat(2_001));
     expect(chunks.map((chunk) => [...chunk].length)).toEqual([2_000, 1]);

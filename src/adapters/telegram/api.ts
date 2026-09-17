@@ -20,6 +20,10 @@ const TelegramUser = Schema.Struct({
 const TelegramChat = Schema.Struct({
   id: TelegramId,
   type: Schema.String,
+  title: Schema.optional(Schema.String),
+  username: Schema.optional(Schema.String),
+  first_name: Schema.optional(Schema.String),
+  last_name: Schema.optional(Schema.String),
 });
 
 const TelegramMessage = Schema.Struct({

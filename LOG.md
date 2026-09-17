@@ -893,3 +893,10 @@ results.
 - Registry admission now fences live UI and channel session opening, prompting, automation append, and closing. Busy conversations fail retriably; unopened stored transcripts use the existing safe Profile-local session resolver. Durable receipts deduplicate retries across the full Pi entry tree, and a write is successful only after the JSONL receipt can be reloaded.
 - Added stored session identity to session inspection plus automation-result live events and history projection. CLI runs without a scoped registry report `owner-unavailable`; delivery failures remain explicit in the automation ledger.
 - Verification: the full `bun run check` gate passed, including 21 UI SDK tests, 59 web tests, synchronized generated assets/catalog/docs, and the UI conversation picker/documentation changes. The complete core, extension, and tooling suite passed with 744 tests and 2,744 assertions. No live Profile, transcript, external message, installation, or resident restart was used.
+
+## Select multiple automation destinations from one catalog
+
+- Added one Profile-scoped, paginated destination catalog over complete stored Pi sessions and the resident's observed Telegram, Discord, and Slack addresses. Canonical automation targets remain the only delivery identity; discovery is memory-only and never gates a saved target.
+- Channel boundaries retain signed Telegram chat IDs, Discord channel/thread IDs and available names, plus Slack channel/thread addresses. Configured Slack policy IDs seed the catalog, with one best-effort `conversations.info` name lookup and ID fallback; `slack.json` policy remains unchanged.
+- Replaced the conversation-only web resolver with one SDK catalog and multi-destination add/remove rows. Mixed targets, `origin`, `all`, and saved targets missing from discovery remain editable, and removing the last target writes `none`.
+- Focused verification covers Profile isolation, more than one catalog page, configured Slack names and fallback, transport address metadata, restart-safe saved selections, SDK method parity, and mixed add/remove behavior. No live Profile, external message, installation, or resident restart was used.

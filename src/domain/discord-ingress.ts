@@ -28,6 +28,7 @@ export const DiscordIngressPayload = Schema.Struct({
   channelId: NonEmpty,
   guildId: Schema.optional(NonEmpty),
   authorId: NonEmpty,
+  label: Schema.optional(BoundedText(160)),
   text: Schema.String,
   attachments: Schema.optional(DiscordIngressAttachments),
   omittedAttachmentCount: Schema.optional(NonNegativeInteger),

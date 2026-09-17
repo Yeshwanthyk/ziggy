@@ -61,7 +61,6 @@ describe("AutomationDetailDialog", () => {
         destinations={[]}
         onOpenChange={vi.fn()}
         onRefresh={vi.fn()}
-        onResolveDestination={vi.fn()}
         onSave={vi.fn()}
         open
       />,
@@ -74,14 +73,14 @@ describe("AutomationDetailDialog", () => {
     expect(document.body.textContent).toMatch(/EDT|EST|GMT-4/);
   });
 
-  it("adds a resolved conversation while preserving an external broadcast", async () => {
+  it("adds a conversation while preserving an external broadcast", async () => {
     const onSave = vi.fn(async (_source: string, _expectedSource: string) => undefined);
     const destinationDetail: AutomationDetail = {
       ...detail,
       definition: {
         ...detail.definition!,
         source:
-          "---\ncron: 0 8 * * *\ntimezone: UTC\nbroadcast: slack:channel:C0123\n---\nPost the update.\n",
+          "---\ncron: 0 8 * * *\ntimezone: UTC\nbroadcast: slack:channel:C012345678\n---\nPost the update.\n",
       },
     };
     render(
@@ -91,30 +90,53 @@ describe("AutomationDetailDialog", () => {
         detail={destinationDetail}
         destinations={[
           {
-            ref: {
-              profileId: "prf_squarey",
-              kind: "live",
-              key: "discord/team-updates",
-            },
-            title: "Team updates",
-            subtitle: "Discord conversation",
+            target: "conversation:session-123",
+            kind: "conversation",
+            label: "Team updates",
           },
         ]}
         onOpenChange={vi.fn()}
         onRefresh={vi.fn()}
-        onResolveDestination={vi.fn(async () => "conversation:session-123")}
         onSave={onSave}
         open
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Conversation"), {
-      target: { value: "live:discord/team-updates" },
+    fireEvent.change(screen.getByLabelText("Destination"), {
+      target: { value: "conversation:session-123" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add destination" }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     const source = onSave.mock.calls[0]?.[0];
-    expect(source).toContain("broadcast: slack:channel:C0123,conversation:session-123\n");
+    expect(source).toContain("broadcast: slack:channel:C012345678,conversation:session-123\n");
+  });
+
+  it("keeps saved targets missing from discovery visible and removable", async () => {
+    const onSave = vi.fn(async (_source: string, _expectedSource: string) => undefined);
+    render(
+      <AutomationDetailDialog
+        automation={automation}
+        available
+        detail={{
+          ...detail,
+          definition: {
+            ...detail.definition!,
+            source:
+              "---\ncron: 0 8 * * *\ntimezone: UTC\nbroadcast: origin,telegram:chat:-100123\n---\nPost the update.\n",
+          },
+        }}
+        destinations={[]}
+        onOpenChange={vi.fn()}
+        onRefresh={vi.fn()}
+        onSave={onSave}
+        open
+      />,
+    );
+
+    expect(screen.getByText("telegram:chat:-100123")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove telegram:chat:-100123" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0]?.[0]).toContain("broadcast: origin\n");
   });
 });

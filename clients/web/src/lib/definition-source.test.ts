@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addAutomationBroadcastTarget,
   parseDefinitionSource,
+  removeAutomationBroadcastTarget,
   updateDefinitionSource,
 } from "./definition-source";
 
@@ -57,5 +58,25 @@ describe("automation definition source", () => {
 
     expect(twice).toContain("broadcast: slack:channel:C0123,origin,conversation:session-123\n");
     expect(twice.match(/conversation:session-123/gu)).toHaveLength(1);
+  });
+
+  it("removes one broadcast target and writes none after the final removal", () => {
+    const source = [
+      "---",
+      "version: 1",
+      "broadcast: origin,slack:channel:C012345678,conversation:session-123",
+      "---",
+      "",
+      "Post the update.",
+      "",
+    ].join("\n");
+
+    const mixed = removeAutomationBroadcastTarget(source, "slack:channel:C012345678");
+    const one = removeAutomationBroadcastTarget(mixed, "origin");
+    const none = removeAutomationBroadcastTarget(one, "conversation:session-123");
+
+    expect(mixed).toContain("broadcast: origin,conversation:session-123\n");
+    expect(one).toContain("broadcast: conversation:session-123\n");
+    expect(none).toContain("broadcast: none\n");
   });
 });

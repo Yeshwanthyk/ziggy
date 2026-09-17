@@ -10,6 +10,27 @@ import {
   makeChatRegistry,
 } from "ziggy/application/chat-registry";
 
+test("remembered destinations keep a known label when a fallback observation arrives", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const target = {
+          _tag: "slack" as const,
+          target: "slack:channel:C012345678",
+          channelId: "C012345678",
+        };
+
+        yield* registry.rememberDestination({ target, label: "engineering" });
+        yield* registry.rememberDestination({ target });
+
+        expect(yield* registry.destinations).toEqual([{ target, label: "engineering" }]);
+      }),
+    ),
+  );
+});
+
 test("fresh subscriptions bootstrap retained activity while resume cursors require continuity", async () => {
   await Effect.runPromise(
     Effect.scoped(

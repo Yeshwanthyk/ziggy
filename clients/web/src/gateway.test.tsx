@@ -126,18 +126,9 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     openMain: vi.fn(async () => mainRef),
     openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
-    showSession: vi.fn(async (ref) => ({
-      profileId: ref.profileId,
-      ref,
-      kind: ref.kind,
-      storedSessionId: ref.kind === "live" ? "live-session-1" : ref.id,
-      ...(ref.kind === "live"
-        ? { live: { ref, kind: "ui" as const, idle: true } }
-        : {
-            createdAt: "2026-09-17T12:00:00.000Z",
-            entryCount: 1,
-            terminalState: "completed" as const,
-          }),
+    listDestinations: vi.fn(async () => ({
+      profileId: profile.profileId,
+      entries: [],
     })),
     listPins: vi.fn(async () => ({ profileId: profile.profileId, pins: [], revision: 0 })),
     listAgents: vi.fn(async () => ({ profileId: profile.profileId, agents: [] })),
@@ -631,6 +622,21 @@ describe("useZiggyGateway", () => {
           { id: "broken", valid: false, lifecycle: "conflict" as const, message: "invalid" },
         ],
       })),
+      listDestinations: vi.fn(async () => ({
+        profileId: profile.profileId,
+        entries: [
+          {
+            target: "slack:channel:C012345678",
+            kind: "slack" as const,
+            label: "Team updates",
+          },
+          {
+            target: "conversation:session-archive-1",
+            kind: "conversation" as const,
+            label: "session-archive-1",
+          },
+        ],
+      })),
     });
     const hook = await connectHook(client);
 
@@ -654,8 +660,12 @@ describe("useZiggyGateway", () => {
     ]);
     expect(hook.result.current.automationDestinations).toEqual(
       expect.arrayContaining([
-        { ref: slackRef, title: "Team updates", subtitle: "Pinned conversation" },
-        { ref: storedRef, title: "session-archive-1", subtitle: "Past conversation" },
+        { target: "slack:channel:C012345678", kind: "slack", label: "Team updates" },
+        {
+          target: "conversation:session-archive-1",
+          kind: "conversation",
+          label: "session-archive-1",
+        },
       ]),
     );
     expect(hook.result.current.agents).toEqual([

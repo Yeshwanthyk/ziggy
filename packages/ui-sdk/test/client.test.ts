@@ -356,6 +356,18 @@ const methodFixtures = (): ReadonlyArray<{
       result: { profileId: PROFILE_A, providers: [provider] },
     },
     {
+      method: "destination.list",
+      params: profileScopedParams(PROFILE_A),
+      result: {
+        profileId: PROFILE_A,
+        entries: [
+          { target: "conversation:main-session", kind: "conversation", label: "Main" },
+          { target: "slack:channel:C012345678", kind: "slack", label: "engineering" },
+        ],
+        nextCursor: "slack:channel:C012345678",
+      },
+    },
+    {
       method: "automation.list",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, automations: [automation] },
