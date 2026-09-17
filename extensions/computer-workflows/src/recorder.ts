@@ -156,7 +156,7 @@ const BrowserInput = Type.Object(
     url: Type.Optional(Type.String({ maxLength: 8_192 })),
     stateId: Type.Optional(StateId),
     profile: Type.Optional(Type.String({ maxLength: 64 })),
-    mode: Type.Optional(Type.Union([Type.Literal("foreground"), Type.Literal("background")])),
+    mode: Type.Optional(Type.Union([Type.Literal("headed"), Type.Literal("background")])),
   },
   { additionalProperties: false },
 );
@@ -269,21 +269,32 @@ const SegmentResult = Type.Object(
   { additionalProperties: false },
 );
 
-const ActResult = Type.Object(
-  {
-    tool: Type.Literal("act_ui"),
-    execution: Type.Object(
-      {
-        verification: Type.Object(
-          { status: Type.Union([Type.Literal("verified"), Type.Literal("preexisting")]) },
-          { additionalProperties: true },
-        ),
-      },
-      { additionalProperties: true },
-    ),
-  },
-  { additionalProperties: true },
-);
+const ActResult = Type.Union([
+  Type.Object(
+    {
+      tool: Type.Literal("act_ui"),
+      execution: Type.Object(
+        {
+          verification: Type.Object(
+            { status: Type.Union([Type.Literal("verified"), Type.Literal("preexisting")]) },
+            { additionalProperties: true },
+          ),
+        },
+        { additionalProperties: true },
+      ),
+    },
+    { additionalProperties: true },
+  ),
+  Type.Object(
+    {
+      tool: Type.Literal("act_ui"),
+      kind: Type.Literal("browser_page"),
+      stateId: Type.String({ minLength: 1 }),
+      baseStateId: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: true },
+  ),
+]);
 
 type PendingCall = {
   readonly sequence: number;
@@ -548,8 +559,14 @@ export const observeToolCall = (
     readonly input: Record<string, unknown>;
   },
   now = new Date(),
+  allTools = false,
 ): void => {
-  if (!isComputerUseTool(event.toolName) || recording.pending.has(event.toolCallId)) return;
+  if (
+    (!isComputerUseTool(event.toolName) && !allTools) ||
+    event.toolName.startsWith("workflow_task_") ||
+    recording.pending.has(event.toolCallId)
+  )
+    return;
   const sequence = recording.nextSequence;
   recording.nextSequence += 1;
   const sanitized = sanitizeComputerUseInput(event.toolName, event.input, sequence);
@@ -569,6 +586,7 @@ export const observeToolResult = (
     readonly toolName: string;
     readonly isError: boolean;
     readonly details?: unknown;
+    readonly input?: Record<string, unknown>;
   },
   now = new Date(),
 ): void => {
@@ -576,6 +594,10 @@ export const observeToolResult = (
 
   if (pending === undefined || pending.toolName !== event.toolName) return;
   recording.pending.delete(event.toolCallId);
+  const executed =
+    event.input === undefined
+      ? { input: pending.input, issues: pending.issues }
+      : sanitizeComputerUseInput(pending.toolName, event.input, pending.sequence);
   let successful = !event.isError;
 
   try {
@@ -615,10 +637,34 @@ export const observeToolResult = (
 
   recording.completed.push({
     ...pending,
+    ...executed,
     completedAt: now.toISOString(),
     outcome: successful ? "success" : "error",
   });
 };
+
+export const snapshotRecording = (recording: ActiveRecording) =>
+  [
+    ...recording.completed.map((call) => ({
+      sequence: call.sequence,
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      startedAt: call.startedAt,
+      completedAt: call.completedAt,
+      status: call.outcome === "success" ? ("succeeded" as const) : ("failed" as const),
+      input: call.input,
+      issues: call.issues,
+    })),
+    ...[...recording.pending.values()].map((call) => ({
+      sequence: call.sequence,
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      startedAt: call.startedAt,
+      status: "pending" as const,
+      input: call.input,
+      issues: call.issues,
+    })),
+  ].toSorted((left, right) => left.sequence - right.sequence);
 
 export const finishRecording = (recording: ActiveRecording, now = new Date()): WorkflowDraft => {
   const pendingIssues = [...recording.pending.values()].map(

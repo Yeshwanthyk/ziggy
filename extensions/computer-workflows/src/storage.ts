@@ -20,6 +20,9 @@ import {
   WorkflowDraftSchema,
   WorkflowSaveCandidateSchema,
   WorkflowSaveProofSchema,
+  GeneralTaskCandidateSchema,
+  GeneralTaskRunSchema,
+  PublishedGeneralTaskSchema,
   type PublishApproval,
   type PublishedWorkflow,
   type RunRecord,
@@ -27,6 +30,9 @@ import {
   type WorkflowDraft,
   type WorkflowSaveCandidate,
   type WorkflowSaveProof,
+  type GeneralTaskCandidate,
+  type GeneralTaskRun,
+  type PublishedGeneralTask,
   type BrowserJobBaseline,
   type BrowserJobRunReport,
   type SavedBrowserJob,
@@ -41,6 +47,8 @@ const browserJobsRoot = (profilePath: string): string => join(profilePath, "brow
 
 const browserJobRuntimeRoot = (profilePath: string, workflowId: string): string =>
   join(runtimeRoot(profilePath), "jobs", workflowId);
+
+const generalTasksRoot = (profilePath: string): string => join(profilePath, "tasks");
 
 const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
@@ -99,8 +107,8 @@ const canonicalJson = (value: unknown): string => {
   return JSON.stringify(value);
 };
 
-const storedWorkflowHash = (workflow: PublishedWorkflow["workflow"]): string =>
-  createHash("sha256").update(canonicalJson(workflow)).digest("hex");
+const storedValueHash = (value: unknown): string =>
+  createHash("sha256").update(canonicalJson(value)).digest("hex");
 
 export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
   const root = join(runtimeRoot(profilePath), "drafts");
@@ -111,8 +119,213 @@ export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Pro
   return path;
 };
 
+export const writeDraftSnapshot = async (
+  profilePath: string,
+  draft: WorkflowDraft,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await replaceJsonAtomically(path, Parse(WorkflowDraftSchema, draft));
+  return path;
+};
+
 export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
   readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
+
+export const writeGeneralTaskCandidate = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-candidates");
+  await assertDirectory(root);
+  const path = join(root, `${candidate.id}.json`);
+  await writeExclusiveJson(path, Parse(GeneralTaskCandidateSchema, candidate));
+  return path;
+};
+
+export const readGeneralTaskCandidate = async (
+  profilePath: string,
+  candidateId: string,
+): Promise<GeneralTaskCandidate> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "task-candidates", `${candidateId}.json`),
+    GeneralTaskCandidateSchema,
+  );
+
+export const writeGeneralTaskRun = async (
+  profilePath: string,
+  run: GeneralTaskRun,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await replaceJsonAtomically(path, Parse(GeneralTaskRunSchema, run));
+  return path;
+};
+
+export const readGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+): Promise<GeneralTaskRun> =>
+  readDecoded(join(runtimeRoot(profilePath), "task-runs", `${runId}.json`), GeneralTaskRunSchema);
+
+export const claimGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+  sessionId: string,
+): Promise<GeneralTaskRun> => {
+  const locksRoot = join(runtimeRoot(profilePath), "task-run-claims");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, runId);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST")
+      throw new Error("Task run is being claimed by another session.");
+    throw cause;
+  }
+  try {
+    const prior = await readGeneralTaskRun(profilePath, runId);
+    if (prior.state === "active" && prior.sessionId !== sessionId) {
+      throw new Error("Task run is active in another session.");
+    }
+    if (prior.state !== "active" && prior.state !== "cancelled" && prior.state !== "incomplete") {
+      throw new Error("Only active-orphaned, cancelled, or incomplete runs can resume.");
+    }
+    const claimed = Parse(GeneralTaskRunSchema, {
+      ...prior,
+      sessionId,
+      updatedAt: new Date().toISOString(),
+      state: "active",
+      calls: prior.calls.map((call) =>
+        call.status === "pending" ? { ...call, status: "unknown" } : call,
+      ),
+    });
+    await writeGeneralTaskRun(profilePath, claimed);
+    return claimed;
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
+export const readGeneralTask = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(join(generalTasksRoot(profilePath), taskId, "task.json"), PublishedGeneralTaskSchema);
+
+export const readGeneralTaskRevision = async (
+  profilePath: string,
+  taskId: string,
+  revision: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(
+    join(generalTasksRoot(profilePath), taskId, "revisions", `${revision}.json`),
+    PublishedGeneralTaskSchema,
+  );
+
+export const readGeneralTaskIfPresent = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask | undefined> => {
+  try {
+    return await readGeneralTask(profilePath, taskId);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+export const listGeneralTasks = async (profilePath: string): Promise<PublishedGeneralTask[]> => {
+  let entries: string[];
+  try {
+    entries = await readdir(generalTasksRoot(profilePath));
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+  const tasks: PublishedGeneralTask[] = [];
+  for (const entry of entries.slice(0, 500)) {
+    try {
+      tasks.push(await readGeneralTask(profilePath, entry));
+    } catch {
+      // Invalid entries remain available through workflow_task_show for exact diagnosis.
+    }
+  }
+  return tasks.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+};
+
+export const promoteGeneralTask = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+  verification: GeneralTaskRun,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  if (
+    verification.mode !== "verification" ||
+    verification.state !== "passed" ||
+    verification.candidateId !== candidate.id ||
+    verification.revision !== candidate.candidateHash ||
+    verification.taskId !== candidate.task.id ||
+    storedValueHash(candidate.task) !== candidate.candidateHash
+  ) {
+    throw new Error("A passed verification of this exact task candidate is required.");
+  }
+  const locksRoot = join(runtimeRoot(profilePath), "task-save-locks");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, candidate.task.id);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") throw new Error("Task save is already in progress.");
+    throw cause;
+  }
+  try {
+    const current = await readGeneralTaskIfPresent(profilePath, candidate.task.id);
+    if (current?.revision === candidate.candidateHash) {
+      return {
+        manifestPath: join(generalTasksRoot(profilePath), candidate.task.id, "task.json"),
+        revisionPath: join(
+          generalTasksRoot(profilePath),
+          candidate.task.id,
+          "revisions",
+          `${candidate.candidateHash}.json`,
+        ),
+      };
+    }
+    if ((current?.revision ?? null) !== candidate.baseRevision)
+      throw new Error("The saved task changed after this candidate was prepared.");
+    const published = Parse(PublishedGeneralTaskSchema, {
+      format: "ziggy-general-task",
+      formatVersion: 1,
+      revision: candidate.candidateHash,
+      savedAt: verification.updatedAt,
+      sourceDraftId: candidate.sourceDraftId,
+      task: candidate.task,
+    });
+    const taskRoot = join(generalTasksRoot(profilePath), candidate.task.id);
+    await assertDirectory(taskRoot);
+    const revisionsRoot = join(taskRoot, "revisions");
+    await assertDirectory(revisionsRoot);
+    const revisionPath = join(revisionsRoot, `${candidate.candidateHash}.json`);
+    try {
+      const existing = await readDecoded(revisionPath, PublishedGeneralTaskSchema);
+      if (
+        existing.revision !== candidate.candidateHash ||
+        storedValueHash(existing.task) !== candidate.candidateHash
+      )
+        throw new Error("Existing task revision does not match the candidate hash.");
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      await writeExclusiveJson(revisionPath, published);
+    }
+    const manifestPath = join(taskRoot, "task.json");
+    await replaceJsonAtomically(manifestPath, published);
+    return { manifestPath, revisionPath };
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
 
 export const writeSaveCandidate = async (
   profilePath: string,
@@ -226,7 +439,7 @@ export const promoteVerifiedWorkflow = async (
       immutable = await readDecoded(revisionPath, PublishedWorkflowSchema);
       if (
         immutable.revision !== candidate.candidateHash ||
-        storedWorkflowHash(immutable.workflow) !== candidate.candidateHash
+        storedValueHash(immutable.workflow) !== candidate.candidateHash
       ) {
         throw new Error("Existing immutable revision does not match the verified candidate.");
       }

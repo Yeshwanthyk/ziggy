@@ -1,199 +1,147 @@
-# Connect a Profile to Telegram
+# Supervise `ziggy serve`
 
-This guide connects one Ziggy Profile to Telegram through the Bot API's long-polling interface. The
-existing `ziggy serve <profile>` resident owns the Telegram loop alongside the automation scheduler
-and any other configured channels.
+`ziggy serve <profile>` is the only production scheduler host. It owns the Profile's automation
+scheduler and any configured Telegram, Discord, or Slack loops. Run at most one resident per
+resolved Profile path.
 
-Keep the bot token and owner user ID out of documentation, commits, screenshots, logs, and chat
-transcripts. Treat the bot token like a password.
+Ziggy installs one user service per Profile and delegates restart policy to launchd on macOS or
+systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
+scheduler process.
 
-## What the gateway provides
+Channel setup guides:
 
-A Telegram-connected Profile uses the same SOUL, provider/model configuration, selected extension
-packages, and Pi runtime as its other faces. Telegram owns only message transport and chat-specific
-session routing.
+- [Connect a Profile to Discord](discord.md)
+- [Connect a Profile to Telegram](telegram.md)
+- [Connect a Profile to Slack](slack.md)
 
-- Only text messages authored by the configured `ownerUserId` are processed.
-- Private chats use owner memory and sessions under `sessions/telegram/user-<user-id>/`.
-- Group and supergroup chats use group memory and sessions under
-  `sessions/telegram/group-tg<absolute-chat-id>/`.
-- Each Telegram chat has one serialized Pi chat handle. Follow-up messages continue the same chat
-  session while separate chats remain isolated.
-- The exact owner-authored text `stop` or `/stop` aborts the active turn in that chat and replies
-  `Stopped.`. When no turn is active, Telegram replies `Nothing was running.`.
-- Replies are split at Telegram's 4,096 Unicode-code-point message limit. Specialist progress is
-  delivered as bounded text messages before the final reply when a specialist emits progress.
-- Messages from other users, unsupported chat types, and updates without text are ignored.
-- Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Telegram command.
-
-Telegram keeps the current update offset in process memory. On startup Ziggy performs a zero-timeout
-poll, advances past the returned updates, and logs that the pending backlog was discarded. A restart
-does not recover accepted Telegram work: pending messages can be discarded, and the offset is not a
-durable ingress journal. Telegram also has no Telegram health projection in the current
-implementation.
-
-## Prerequisites
-
-Before creating the bot:
-
-1. Initialize and configure the Profile.
-2. Confirm that its model and authentication work.
-3. Select any optional extension packages the gateway should admit.
-4. Install or run the resident owner.
-
-Useful checks:
+## Lifecycle commands
 
 ```sh
-ziggy doctor <profile>
+ziggy serve install <profile> [--force] [--no-start]
+ziggy serve start <profile>
+ziggy serve stop <profile>
+ziggy serve restart <profile>
+ziggy serve status <profile>
+ziggy serve logs <profile> [--follow]
+ziggy serve uninstall <profile>
+```
+
+`install` writes and starts the service by default. Use `--no-start` to write it without loading it
+on macOS, or to write and enable it without starting it on Linux. `start` and `restart` validate the
+Profile before asking the service manager to run it. `stop`, `status`, `logs`, and `uninstall` can
+still identify the service from the original absolute path if the Profile has moved or disappeared.
+
+`gateway <profile>` remains a foreground compatibility alias. Lifecycle subcommands exist only
+under `serve`.
+
+## Managed files and safety
+
+The resolved absolute Profile path determines a bounded readable service name plus a SHA-256 path
+digest. Equal folder names at different paths therefore receive different service identities.
+
+- macOS definition: `~/Library/LaunchAgents/works.earendil.ziggy.serve.*.plist`
+- macOS logs: `$ZIGGY_HOME/logs/serve/*.stdout.log` and `*.stderr.log`
+- Linux definition: `~/.config/systemd/user/ziggy-serve-*.service`
+- Linux logs: the user journal
+
+Definitions contain absolute argument arrays, the Profile path, a managed marker, and a deterministic
+fingerprint. They do not contain provider credentials or channel tokens. Ziggy writes definitions
+atomically and refuses unmanaged, symlinked, or non-regular destinations. It also refuses a changed
+managed definition unless `install --force` is explicit.
+
+Both service managers pin absolute `HOME` and `ZIGGY_HOME` values and render the deterministic default
+`PATH` `<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`; launchd receives those
+literal values rather than shell expressions. The first `ProgramArguments` entry is Ziggy's
+absolute executable path, so service startup does not depend on finding `ziggy` on `PATH`. Changing
+these managed fields changes the fingerprint; restage an older definition with
+`ziggy serve install <profile> --force`.
+
+`uninstall` stops the job and removes only its recognized managed definition. It retains the
+Profile, `.runtime/`, automation history, Pi sessions, and logs.
+
+## macOS privacy
+
+A LaunchAgent does not inherit Terminal's Files & Folders permission. If a Profile is inside a
+macOS-protected folder such as `Documents`, the launched Ziggy executable must already have access
+to that folder; otherwise macOS can block directory enumeration while the owner process still looks
+alive. Prefer an unprotected Profile location such as `$ZIGGY_HOME/profiles`, or grant the exact
+installed/compiled Ziggy executable the required access before installation. Verify scheduler
+freshness after every first install rather than treating process ownership as health.
+
+## Read combined status
+
+```sh
 ziggy serve status <profile>
 ```
 
-`doctor` validates a present `telegram.json` against Ziggy's strict local schema. `serve status`
-does not report a Telegram health projection; use `ziggy serve logs <profile>` and a live message
-round trip to prove Telegram connectivity.
+The output intentionally keeps these facts separate:
 
-## 1. Create a bot with BotFather
-
-In Telegram, open [@BotFather](https://t.me/BotFather):
-
-1. Send `/newbot`.
-2. Choose a display name for the Profile.
-3. Choose a unique username ending in `bot`.
-4. Store the returned token securely for the Profile configuration step.
-
-Do not put the token in a shell command, source file, issue, or operations guide. If it is exposed,
-revoke it with BotFather and issue a replacement.
-
-## 2. Copy the owner user ID
-
-The owner ID is the only Telegram account Ziggy accepts. Use a trusted Telegram user-ID bot or an
-equivalent account-information method to obtain your numeric user ID. Use the user ID, not the bot
-ID, username, chat ID, or group ID.
-
-## 3. Create the Profile configuration
-
-Create `<profile>/telegram.json` with exactly these fields:
-
-```json
-{
-  "botToken": "replace-with-the-telegram-bot-token",
-  "ownerUserId": 123456789
-}
+```text
+managed service: installed|not-installed|drifted|unknown
+service manager: launchd|systemd|unsupported
+supervisor: running|stopped|failed|unknown
+process: running|stopped|stale
+scheduler: active|stale|unknown
+tick: ok|error|unknown
+next due: ...
+active runs: ...
+latest run: ...
+discord: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
+discord observed: ...
+discord turns: active ..., queued ..., completed ..., cancelled ..., failed ...
+discord last failure: ...
+slack: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
+slack observed: ...
+slack turns: active ..., queued ..., completed ..., cancelled ..., failed ...
+slack last failure: ...
 ```
 
-`ownerUserId` is a positive safe integer JSON number. The decoder rejects unknown fields, missing
-fields, empty tokens, non-integer IDs, and IDs outside JavaScript's safe integer range. Store the file
-privately:
+A loaded supervisor without a live owner is not healthy. A live owner with a stale or unknown
+scheduler is also not healthy. A recently stopped process can temporarily have a fresh persisted
+heartbeat; the process field remains authoritative for process liveness. Any unreadable or degraded
+section makes status exit 1 while preserving the other section results. Channel projections are
+content-free and independently degraded when stale or disconnected. Status is read-only: it does
+not create `.runtime`, initialize SQLite, repair ownership, or contact a model.
+
+Use the detailed projections when needed:
 
 ```sh
-umask 077
-${EDITOR:-nano} <profile>/telegram.json
-chmod 600 <profile>/telegram.json
+ziggy automations status <profile>
+ziggy automations runs <profile> [automation-id]
+ziggy sessions list <profile> [--json]
 ```
 
-Do not commit this file. Managed service definitions contain the Profile path but no channel token.
+Telegram has no persisted health projection. For a Telegram Profile, use `ziggy doctor <profile>`
+for configuration validity, `ziggy serve logs <profile>` for long-poll and delivery failures, and
+`ziggy sessions list <profile>` for session evidence. Discord and Slack add content-free health
+projections to this status output; their detailed channel guides describe those fields.
 
-## 4. Validate and restart the resident
+## Crash and restart behavior
 
-Validate before restart:
+Resident exclusion is an OS-released SQLite lease in `.runtime/serve-owner.sqlite`. The JSON
+`gateway-owner.lock` file is only a status and legacy-compatibility projection. A normal stop removes
+the matching projection and releases the lease. SIGKILL may leave stale JSON, but closing the dead
+process releases the authoritative SQLite lock, so the service manager can start a new owner without
+manual lock deletion.
+
+Scheduled claims store the resident owner UUID and PID. On startup, a new resident marks active
+claims from an older resident UUID `unknown` with `process-start`. Their schedule cursor was already
+advanced in the claim transaction, so Ziggy never replays the crashed occurrence.
+
+## Platform notes
+
+On macOS, Ziggy uses `launchctl bootstrap`, `bootout`, `kickstart`, and `print` in the current GUI
+user domain. The generated LaunchAgent has `RunAtLoad`, `KeepAlive`, bounded restart throttling, and
+a bounded exit timeout.
+
+On Linux, Ziggy uses `systemctl --user`, writes a `Type=simple` unit with `Restart=always`, and keeps
+output in the user journal. Installation warns when user lingering is not enabled and prints the
+operator command, but never invokes `sudo` or enables lingering itself.
+
+When troubleshooting, capture all three views before changing files:
 
 ```sh
-ziggy doctor <profile>
-```
-
-Then restart the existing resident so it rereads `telegram.json`:
-
-```sh
-ziggy serve restart <profile>
+ziggy serve status <profile>
 ziggy serve logs <profile>
+ziggy automations runs <profile>
 ```
-
-For a Profile without a managed service, install and start it instead:
-
-```sh
-ziggy serve install <profile>
-```
-
-Use one `ziggy serve` process for the scheduler and every configured channel loop. The compatibility
-foreground names are `ziggy serve <profile>` and `ziggy gateway <profile>`; there is no separate
-Telegram resident command.
-
-## 5. Prove the live message path
-
-Follow the managed logs while testing:
-
-```sh
-ziggy serve logs <profile> --follow
-```
-
-Send a short message from the configured owner account to the bot. A successful private-chat turn
-has these observations:
-
-1. Telegram receives a reply from the bot.
-2. The log contains a bounded line shaped like
-   `[gateway] user-<user-id> in:<count> out:<count> chars`.
-3. `ziggy sessions list <profile>` shows the Telegram session after the first turn.
-
-Send a follow-up to prove session continuity. Then test a group or supergroup separately if the bot
-is intended to operate there. Only the configured owner can trigger a turn, but every owner-authored
-text message in an admitted group is processed; restrict the bot's group membership accordingly.
-
-Send `stop` during a long-running turn to prove scoped cancellation. Test an automation with a
-`broadcast: telegram:chat:<chat-id>` target only after the resident and its Telegram configuration
-are healthy; automation delivery loads the same `telegram.json` and reports bounded delivery status.
-
-## Troubleshooting
-
-### The resident is healthy but Telegram does not answer
-
-Check these in order:
-
-1. `<profile>/telegram.json` exists under the resolved Profile path used by `serve`.
-2. `ziggy doctor <profile>` reports the gateway configuration as valid.
-3. The resident was restarted after creating or changing `telegram.json`.
-4. `botToken` is the current token from BotFather.
-5. The sending account's numeric user ID exactly matches `ownerUserId`.
-6. The message contains text and is sent in a private chat, group, or supergroup.
-7. `ziggy serve logs <profile>` has no `[gateway] Telegram stopped:` or Telegram API failure line.
-
-The process and scheduler can remain healthy while Telegram is disconnected because Telegram has no
-separate status projection. Inspect the logs and perform a fresh message proof.
-
-### The bot ignores a message in a group
-
-Confirm the sender is exactly `ownerUserId`, the update contains text, and the chat is a group or
-supergroup. Telegram privacy settings can prevent a bot from receiving ordinary group messages;
-adjust the bot's group privacy setting with BotFather when the bot must receive them. Ziggy does not
-implement mention-only admission or a multi-user allowlist.
-
-### A message is missing after restart
-
-The current Telegram adapter keeps its offset only in memory and discards pending startup backlog.
-A restart can therefore lose messages that were waiting in Telegram or still being processed. Inspect
-logs before repeating an operator action; do not assume Telegram delivery is durable or exactly once.
-
-### A long reply is incomplete
-
-Telegram messages are split at 4,096 Unicode code points. Inspect the log's `out:<count>` value and
-confirm that all chunks arrived. A provider or Telegram API failure is logged as a bounded gateway
-failure; retry only after checking whether Telegram accepted the preceding chunk.
-
-## Token rotation and removal
-
-To rotate a Telegram bot token:
-
-1. Revoke or regenerate the token with BotFather.
-2. Replace only `botToken` in `<profile>/telegram.json` without exposing either token.
-3. Preserve file mode `600`.
-4. Run `ziggy doctor <profile>`.
-5. Restart the resident and repeat the live message proof.
-
-To disconnect Telegram without deleting sessions or memory:
-
-1. Move `telegram.json` outside the Profile or delete it deliberately.
-2. Restart `serve`.
-3. Revoke the bot token with BotFather if the integration is no longer needed.
-
-Removing the configuration does not delete `sessions/telegram/`, memory, automation history, or the
-resident service.

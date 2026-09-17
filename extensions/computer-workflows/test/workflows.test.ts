@@ -74,6 +74,32 @@ const definition = () =>
   });
 
 describe("computer workflow recording", () => {
+  test("accepts successful CDP browser action evidence without a native execution trace", () => {
+    const recording = startRecording("Browser action", "Use a browser control", "session-cdp");
+    observeToolCall(recording, {
+      toolCallId: "cdp-action",
+      toolName: "act_ui",
+      input: {
+        stateId: "state-1",
+        expect: { text: "Results", until: "present" },
+        actions: [{ action: "click", ref: "@e1" }],
+      },
+    });
+    observeToolResult(recording, {
+      toolCallId: "cdp-action",
+      toolName: "act_ui",
+      isError: false,
+      details: {
+        tool: "act_ui",
+        kind: "browser_page",
+        stateId: "state-2",
+        baseStateId: "state-1",
+        root: {},
+      },
+    });
+    expect(finishRecording(recording).calls[0]?.outcome).toBe("success");
+  });
+
   test("correlates parallel results by call id and never persists typed text or transient refs", async () => {
     const profile = await makeProfile();
 

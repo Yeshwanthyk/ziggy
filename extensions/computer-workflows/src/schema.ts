@@ -439,6 +439,183 @@ export const WorkflowSaveProofSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const TaskInputSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    default: Type.Optional(Type.String({ minLength: 1, maxLength: 8_192 })),
+  },
+  { additionalProperties: false },
+);
+
+const TaskCriterionSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    evidence: Type.Union([
+      Type.Literal("tool-result"),
+      Type.Literal("artifact"),
+      Type.Literal("agent-assessment"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    inputs: Type.Array(TaskInputSchema, { maxItems: 50 }),
+    startContext: Type.Object(
+      {
+        kind: Type.Union([Type.Literal("browser"), Type.Literal("desktop")]),
+        browserProfile: Type.Optional(ShortText),
+        urlInput: Type.Optional(Id),
+        app: Type.Optional(ShortText),
+      },
+      { additionalProperties: false },
+    ),
+    procedure: Type.Array(Text, { minItems: 1, maxItems: 100 }),
+    output: Type.Object(
+      {
+        format: Type.Union([
+          Type.Literal("text"),
+          Type.Literal("json"),
+          Type.Literal("artifact"),
+          Type.Literal("artifacts"),
+        ]),
+        description: Text,
+      },
+      { additionalProperties: false },
+    ),
+    completionCriteria: Type.Array(TaskCriterionSchema, {
+      minItems: 1,
+      maxItems: 50,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PublishedGeneralTaskSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    savedAt: Timestamp,
+    sourceDraftId: Id,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+const TaskObservedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Type.Optional(Timestamp),
+    status: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("succeeded"),
+      Type.Literal("failed"),
+      Type.Literal("unknown"),
+    ]),
+    resultDigest: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+    reconciliation: Type.Optional(
+      Type.Object(
+        {
+          assessment: Text,
+          evidenceToolCallIds: Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
+            minItems: 1,
+            maxItems: 20,
+          }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const TaskCriterionEvidenceSchema = Type.Object(
+  {
+    criterionId: Id,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed")]),
+    toolCallIds: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 256 }), { maxItems: 100 }),
+    ),
+    artifactPaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 8_192 }), { maxItems: 100 }),
+    ),
+    artifacts: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            path: Type.String({ minLength: 1, maxLength: 8_192 }),
+            size: Type.Integer({ minimum: 0 }),
+            sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+            modifiedAt: Timestamp,
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 100 },
+      ),
+    ),
+    assessment: Type.Optional(Text),
+    evidenceLabel: Type.Union([
+      Type.Literal("observed-tool-result"),
+      Type.Literal("verified-artifact"),
+      Type.Literal("agent-assessed"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskRunSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    taskId: Id,
+    candidateId: Type.Optional(Id),
+    revision: Id,
+    mode: Type.Union([Type.Literal("verification"), Type.Literal("run")]),
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    inputsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    startedAt: Timestamp,
+    updatedAt: Timestamp,
+    state: Type.Union([
+      Type.Literal("active"),
+      Type.Literal("cancelled"),
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    calls: Type.Array(TaskObservedCallSchema, { maxItems: 1_000 }),
+    criteria: Type.Array(TaskCriterionEvidenceSchema, { maxItems: 50 }),
+  },
+  { additionalProperties: false },
+);
+
 const RunCheckSchema = Type.Object(
   {
     sourceStep: Type.Integer({ minimum: 1, maximum: 200 }),
@@ -741,6 +918,10 @@ export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
 export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
 export type WorkflowSaveCandidate = Static<typeof WorkflowSaveCandidateSchema>;
 export type WorkflowSaveProof = Static<typeof WorkflowSaveProofSchema>;
+export type GeneralTaskDefinition = Static<typeof GeneralTaskDefinitionSchema>;
+export type GeneralTaskCandidate = Static<typeof GeneralTaskCandidateSchema>;
+export type PublishedGeneralTask = Static<typeof PublishedGeneralTaskSchema>;
+export type GeneralTaskRun = Static<typeof GeneralTaskRunSchema>;
 
 export type RecordedCall = Static<typeof RecordedCallSchema>;
 
