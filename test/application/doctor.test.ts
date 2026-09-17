@@ -234,7 +234,7 @@ test("doctor uses the ProfileExtensions service without publishing or activating
     expect(report.checks.find((check) => check.id === "resources")).toEqual({
       id: "resources",
       severity: "ok",
-      message: "5 bundled factories, 0 Profile extension entrypoints, and 3 skill roots selected",
+      message: "6 bundled factories, 0 Profile extension entrypoints, and 3 skill roots selected",
     });
     expect(await tree(profilePath)).toEqual(before);
   } finally {
