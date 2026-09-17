@@ -210,6 +210,44 @@ describe("Pi session metadata adapter", () => {
     );
   });
 
+  test("projects metadata from a transcript larger than the former total-file limit", async () => {
+    const root = await profile();
+    const file = join(root, "sessions", "large.jsonl");
+    const largeContent = "x".repeat(600 * 1024);
+
+    const messages = Array.from({ length: 18 }, (_, index) =>
+      entry(`large-${index}`, null, {
+        type: "message",
+        message: { role: "user", content: `${index}:${largeContent}`, timestamp: index },
+      }),
+    );
+
+    await writeJsonl(file, [
+      header("large-session"),
+      ...messages,
+      entry("final", null, {
+        type: "message",
+        message: {
+          role: "assistant",
+          provider: "openai",
+          model: "large-model",
+          stopReason: "stop",
+          usage: usage(2, 1, 0.01),
+          content: "done",
+          timestamp: 19,
+        },
+      }),
+    ]);
+
+    expect((await lstat(file)).size).toBeGreaterThan(8 * 1024 * 1024);
+    expect(await Effect.runPromise(showProfileSession(root, "large-session"))).toMatchObject({
+      id: "large-session",
+      entryCount: 19,
+      terminalState: "completed",
+      usage: { input: 2, output: 1, cost: 0.01 },
+    });
+  });
+
   test("missing sessions stay missing and relative paths cannot escape", async () => {
     const root = await profile();
     expect(await Effect.runPromise(listProfileSessions(root))).toEqual([]);
@@ -223,7 +261,7 @@ describe("Pi session metadata adapter", () => {
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
   });
 
-  test("skips an oversized transcript without hiding valid sessions", async () => {
+  test("isolates an oversized record in listings and surfaces it when addressed", async () => {
     const root = await profile();
     const file = join(root, "sessions", "oversized.jsonl");
     const valid = join(root, "sessions", "valid.jsonl");
@@ -236,11 +274,16 @@ describe("Pi session metadata adapter", () => {
     ).toEqual(["valid"]);
 
     const result = await Effect.runPromise(
-      showProfileSession(root, "oversized").pipe(Effect.result),
+      showProfileSession(root, "oversized.jsonl").pipe(Effect.result),
     );
 
     expect(result).toMatchObject({
-      failure: { _tag: "SessionNotFound", reference: "oversized" },
+      failure: {
+        _tag: "SessionReadFailed",
+        path: file,
+        operation: "read",
+        cause: { kind: "line-too-large", maximum: 8 * 1024 * 1024 },
+      },
     });
   });
 

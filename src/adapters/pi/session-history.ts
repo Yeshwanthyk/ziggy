@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { open } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Schema } from "effect";
 import type {
@@ -15,8 +12,7 @@ import {
   SessionReadFailed,
 } from "../../domain/session";
 import { showProfileSession } from "./sessions";
-
-const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
 
 export const MAX_HISTORY_ENTRIES = 8;
 
@@ -39,7 +35,7 @@ const RawJson: Schema.Decoder<RawJson, never> = Schema.suspend(() =>
 
 const RawRecord: Schema.Decoder<RawRecord, never> = Schema.Record(Schema.String, RawJson);
 
-const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(RawRecord));
+const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(RawRecord));
 
 const Cursor = Schema.Struct({
   version: Schema.Literal(1),
@@ -53,32 +49,6 @@ const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Cursor));
 
 const readFailure = (file: string, operation: "read" | "decode", message: string, cause: unknown) =>
   new SessionReadFailed({ path: file, operation, message, cause });
-
-const readPhysical = (file: string): Effect.Effect<string, SessionReadFailed> =>
-  Effect.acquireUseRelease(
-    Effect.tryPromise({
-      try: () => open(file, constants.O_RDONLY | constants.O_NOFOLLOW),
-      catch: (cause) => readFailure(file, "read", "could not open Pi session transcript", cause),
-    }),
-    (handle) =>
-      Effect.tryPromise({
-        try: async (signal) => {
-          const status = await handle.stat();
-
-          if (!status.isFile() || status.size > MAX_TRANSCRIPT_BYTES) {
-            throw new Error("Pi session transcript is not a regular bounded file");
-          }
-
-          return await handle.readFile({ encoding: "utf8", signal });
-        },
-        catch: (cause) => readFailure(file, "read", "could not read Pi session transcript", cause),
-      }),
-    (handle) =>
-      Effect.tryPromise({
-        try: () => handle.close(),
-        catch: (cause) => readFailure(file, "read", "could not close Pi session transcript", cause),
-      }),
-  );
 
 const isStringSchema = Schema.is(Schema.String);
 
@@ -131,65 +101,73 @@ const validTimestamp = (value: RawJson | undefined, fallback: string): string =>
 const boundedText = (value: string, maximum: number): string =>
   [...value].slice(0, maximum).join("");
 
-const projectRecords = (records: ReadonlyArray<RawRecord>): Array<SessionHistoryEntry> => {
-  const result: Array<SessionHistoryEntry> = [];
-  const activeTools = new Map<string, { readonly timestamp: string; readonly toolName: string }>();
+const MAX_ACTIVE_TOOL_CALLS = 1_024;
 
-  for (const record of records) {
-    const type = stringValue(record.type);
-    const timestamp = validTimestamp(record.timestamp, new Date(0).toISOString());
-    const message = recordValue(record.message);
-    const role = stringValue(message?.role);
+const projectRecord = (
+  record: RawRecord,
+  activeTools: Map<string, { readonly timestamp: string; readonly toolName: string }>,
+): SessionHistoryEntry | undefined => {
+  const type = stringValue(record.type);
+  const timestamp = validTimestamp(record.timestamp, new Date(0).toISOString());
+  const message = recordValue(record.message);
+  const role = stringValue(message?.role);
 
-    if (type === "message" && role === "user") {
-      const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
+  if (type === "message" && role === "user") {
+    const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
 
-      if (text.length > 0) result.push({ kind: "user", timestamp, text });
-      continue;
-    }
-
-    if (type === "message" && role === "assistant") {
-      const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
-
-      if (text.length > 0) result.push({ kind: "assistant", timestamp, text });
-      continue;
-    }
-
-    if (type === "message" && (role === "toolResult" || role === "tool")) {
-      const toolCallId = stringValue(record.toolCallId) ?? stringValue(message?.toolCallId);
-      const toolName = stringValue(record.toolName) ?? stringValue(message?.toolName) ?? "tool";
-
-      if (toolCallId !== undefined) {
-        const started = activeTools.get(toolCallId);
-        result.push({
-          kind: "tool",
-          timestamp,
-          phase: "end",
-          toolName: boundedText(started?.toolName ?? toolName, 48),
-          failed: Boolean(message?.isError ?? record.isError ?? false),
-        });
-        activeTools.delete(toolCallId);
-      }
-
-      continue;
-    }
-
-    if (type === "toolCall" || type === "tool_call") {
-      const toolCallId = stringValue(record.toolCallId) ?? stringValue(record.id);
-      const toolName = stringValue(record.toolName) ?? stringValue(record.name) ?? "tool";
-
-      if (toolCallId !== undefined) activeTools.set(toolCallId, { timestamp, toolName });
-      result.push({
-        kind: "tool",
-        timestamp,
-        phase: "start",
-        toolName: boundedText(toolName, 48),
-        failed: false,
-      });
-    }
+    return text.length > 0 ? { kind: "user", timestamp, text } : undefined;
   }
 
-  return result;
+  if (type === "message" && role === "assistant") {
+    const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);
+
+    return text.length > 0 ? { kind: "assistant", timestamp, text } : undefined;
+  }
+
+  if (type === "message" && (role === "toolResult" || role === "tool")) {
+    const toolCallId = stringValue(record.toolCallId) ?? stringValue(message?.toolCallId);
+    const toolName = stringValue(record.toolName) ?? stringValue(message?.toolName) ?? "tool";
+
+    if (toolCallId !== undefined) {
+      const started = activeTools.get(toolCallId);
+      activeTools.delete(toolCallId);
+
+      return {
+        kind: "tool",
+        timestamp,
+        phase: "end",
+        toolName: boundedText(started?.toolName ?? toolName, 48),
+        failed: Boolean(message?.isError ?? record.isError ?? false),
+      };
+    }
+
+    return undefined;
+  }
+
+  if (type === "toolCall" || type === "tool_call") {
+    const toolCallId = stringValue(record.toolCallId) ?? stringValue(record.id);
+    const toolName = stringValue(record.toolName) ?? stringValue(record.name) ?? "tool";
+
+    if (toolCallId !== undefined) {
+      if (activeTools.size >= MAX_ACTIVE_TOOL_CALLS) {
+        const oldest = activeTools.keys().next().value;
+
+        if (oldest !== undefined) activeTools.delete(oldest);
+      }
+
+      activeTools.set(toolCallId, { timestamp, toolName });
+    }
+
+    return {
+      kind: "tool",
+      timestamp,
+      phase: "start",
+      toolName: boundedText(toolName, 48),
+      failed: false,
+    };
+  }
+
+  return undefined;
 };
 
 const cursorError = (message: string, cause?: unknown): SessionHistoryCursorInvalid => {
@@ -235,37 +213,54 @@ export const readSessionHistory = (
   Effect.gen(function* () {
     const metadata = yield* showProfileSession(profilePath, reference);
     const file = sessionFile(profilePath, metadata);
-    const source = yield* readPhysical(file);
-    const digest = createHash("sha256").update(source).digest("hex");
-    const records: Array<RawRecord> = [];
+    const decodedCursor = before === undefined ? undefined : yield* decodeCursor(before);
 
-    for (const line of source.split("\n")) {
-      if (line.trim().length === 0) continue;
+    const activeTools = new Map<
+      string,
+      { readonly timestamp: string; readonly toolName: string }
+    >();
 
-      const record = yield* decodeRecord(line).pipe(
-        Effect.mapError((cause) =>
+    const recent: Array<SessionHistoryEntry> = [];
+    const requested: Array<SessionHistoryEntry> = [];
+    const requestedStart = Math.max(0, (decodedCursor?.index ?? 0) - MAX_HISTORY_ENTRIES);
+    let entryCount = 0;
+
+    const digest = yield* scanTranscriptLines(file, (line) => {
+      if (line.trim().length === 0) return;
+      let record: RawRecord;
+
+      try {
+        record = decodeRecord(line);
+      } catch (cause) {
+        throw new TranscriptLineRejected(
           readFailure(file, "decode", "invalid Pi session transcript", cause),
-        ),
-      );
-
-      records.push(record);
-    }
-
-    const entries = projectRecords(records);
-    let end = entries.length;
-
-    if (before !== undefined) {
-      const decoded = yield* decodeCursor(before);
-
-      if (decoded.digest !== digest || decoded.index > entries.length) {
-        return yield* cursorError("session history cursor is stale");
+        );
       }
 
-      end = decoded.index;
+      const projected = projectRecord(record, activeTools);
+
+      if (projected === undefined) return;
+
+      if (decodedCursor === undefined) {
+        recent.push(projected);
+
+        if (recent.length > MAX_HISTORY_ENTRIES) recent.shift();
+      } else if (entryCount >= requestedStart && entryCount < decodedCursor.index) {
+        requested.push(projected);
+      }
+
+      entryCount += 1;
+    });
+
+    if (decodedCursor !== undefined) {
+      if (decodedCursor.digest !== digest || decodedCursor.index > entryCount) {
+        return yield* cursorError("session history cursor is stale");
+      }
     }
 
+    const end = decodedCursor?.index ?? entryCount;
     const start = Math.max(0, end - MAX_HISTORY_ENTRIES);
-    const pageEntries = entries.slice(start, end);
+    const pageEntries = decodedCursor === undefined ? recent : requested;
     const hasMore = start > 0;
 
     const nextCursor = hasMore
@@ -275,7 +270,7 @@ export const readSessionHistory = (
     const page: SessionHistoryPage = {
       entries: pageEntries,
       terminalState: terminalState(metadata),
-      truncated: entries.length > pageEntries.length,
+      truncated: entryCount > pageEntries.length,
       hasMore,
     };
 

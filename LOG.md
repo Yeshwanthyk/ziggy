@@ -824,3 +824,10 @@ results.
 
 - Removed decorative artwork from settings and updated the design guidance. Model controls now appear after model status loads; loading is announced, failures retain their error text, and absent/failed settings expose a Retry loading settings action wired to the existing loader.
 - Visually verified the connected settings without artwork and with provider data loaded. Full checks passed; a follow-up web check covers the added retry regression. The live empty default is distinct from unavailable status. Existing bundle-size warning remains.
+
+## Read large conversations and cached model defaults
+
+- Replaced the whole-transcript 8 MiB limit with incremental JSONL scanning and bounded history-page projection. Session lookup reads sibling headers and fully parses only the requested session, so an unrelated large transcript cannot hide a valid conversation. Individual records remain bounded; direct read failures retain their typed cause.
+- Corrected the read-only model store to load and validate the existing Profile cache without creating, changing, or deleting it. Cached-only model IDs now resolve in model status and lists.
+- Verification: 19 focused model/session/history tests passed. A read-only probe against Squarey's 19.7 MB main transcript returned two eight-entry history pages with an earlier-page cursor and preserved its bytes. It resolved the saved openai-codex/gpt-6-astra / low default; Profile identity, settings, credentials, cache, and extension selection hashes were unchanged. Astra Medium independently reviewed both fixes.
+

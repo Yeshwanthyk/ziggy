@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type Api,
@@ -12,7 +12,7 @@ import {
   readStoredCredential,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import {
   ModelOperationFailed,
   ModelProviderUnknown,
@@ -75,10 +75,98 @@ const readOnlyCredentials = (profilePath: string): CredentialStore => ({
   delete: () => Promise.resolve(),
 });
 
-const readOnlyModelsStore: ModelsStore = {
-  read: () => Promise.resolve(undefined),
-  write: () => Promise.resolve(),
-  delete: () => Promise.resolve(),
+const ModelCostRates = {
+  input: Schema.Finite,
+  output: Schema.Finite,
+  cacheRead: Schema.Finite,
+  cacheWrite: Schema.Finite,
+};
+
+const CachedModel = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  api: Schema.String,
+  provider: Schema.String,
+  baseUrl: Schema.String,
+  reasoning: Schema.Boolean,
+  thinkingLevelMap: Schema.optionalKey(
+    Schema.Struct({
+      off: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      minimal: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      low: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      medium: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      high: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      xhigh: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      max: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  input: Schema.mutable(Schema.Array(Schema.Literals(["text", "image"]))),
+  cost: Schema.Struct({
+    ...ModelCostRates,
+    tiers: Schema.optionalKey(
+      Schema.mutable(
+        Schema.Array(
+          Schema.Struct({
+            inputTokensAbove: Schema.Finite,
+            ...ModelCostRates,
+          }),
+        ),
+      ),
+    ),
+  }),
+  contextWindow: Schema.Finite,
+  maxTokens: Schema.Finite,
+});
+
+const ModelsStoreFile = Schema.Record(
+  Schema.String,
+  Schema.Struct({
+    models: Schema.Array(CachedModel),
+    lastModified: Schema.optionalKey(Schema.Finite),
+    checkedAt: Schema.optionalKey(Schema.Finite),
+    etag: Schema.optionalKey(Schema.String),
+  }),
+);
+
+const decodeModelsStoreFile = Schema.decodeUnknownPromise(Schema.fromJsonString(ModelsStoreFile), {
+  onExcessProperty: "preserve",
+});
+
+const readOnlyModelsStore = (profilePath: string): ModelsStore => {
+  const storePath = join(profilePath, "models-store.json");
+  let entriesPromise: ReturnType<typeof decodeModelsStoreFile> | undefined;
+
+  const readEntries = (): ReturnType<typeof decodeModelsStoreFile> => {
+    entriesPromise ??= readFile(storePath, "utf8").then(decodeModelsStoreFile);
+
+    return entriesPromise;
+  };
+
+  return {
+    read: async (providerId, options) => {
+      options?.signal?.throwIfAborted();
+
+      try {
+        const entries = await readEntries();
+        options?.signal?.throwIfAborted();
+
+        return entries[providerId];
+      } catch (cause) {
+        if (fileSystemCauseDetails(cause).code === "ENOENT") return undefined;
+        throw cause;
+      }
+    },
+    write: (_providerId, _entry, options) => {
+      options?.signal?.throwIfAborted();
+
+      return Promise.resolve();
+    },
+    delete: (_providerId, options) => {
+      options?.signal?.throwIfAborted();
+
+      return Promise.resolve();
+    },
+  };
 };
 
 const createPiModelsSessionWith = async (
@@ -87,7 +175,10 @@ const createPiModelsSessionWith = async (
 ): Promise<PiModelsSession> => {
   const runtime = await ModelRuntime.create({
     ...(readOnly
-      ? { credentials: readOnlyCredentials(profilePath), modelsStore: readOnlyModelsStore }
+      ? {
+          credentials: readOnlyCredentials(profilePath),
+          modelsStore: readOnlyModelsStore(profilePath),
+        }
       : {
           authPath: join(profilePath, "auth.json"),
           modelsStorePath: join(profilePath, "models-store.json"),

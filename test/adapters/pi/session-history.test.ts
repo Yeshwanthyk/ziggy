@@ -177,3 +177,49 @@ test("history rejects malformed cursors with a typed failure", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("history paginates a transcript larger than the former total-file limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-large-"));
+  const profilePath = join(root, "profile");
+  await mkdir(profilePath, { recursive: true });
+
+  try {
+    const largeContent = "x".repeat(600 * 1024);
+
+    const records: Array<Schema.Json> = [
+      {
+        type: "session",
+        id: "large-session",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: profilePath,
+      },
+      ...Array.from({ length: 18 }, (_, index) =>
+        message(
+          `user-${index}`,
+          `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+          "user",
+          `question ${index}:${largeContent}`,
+        ),
+      ),
+      message("assistant", "2026-01-01T01:00:00.000Z", "assistant", "answer"),
+    ];
+
+    const file = await writeTranscript(profilePath, records);
+
+    expect((await Bun.file(file).size).valueOf()).toBeGreaterThan(8 * 1024 * 1024);
+
+    const first = await Effect.runPromise(readSessionHistory(profilePath, "large-session"));
+    expect(first.entries).toHaveLength(8);
+    expect(first.entries[0]).toMatchObject({ kind: "user", text: expect.stringContaining("11:") });
+    expect(first.nextCursor).toBeDefined();
+
+    const second = await Effect.runPromise(
+      readSessionHistory(profilePath, "large-session", first.nextCursor),
+    );
+
+    expect(second.entries).toHaveLength(8);
+    expect(second.entries[0]).toMatchObject({ kind: "user", text: expect.stringContaining("3:") });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

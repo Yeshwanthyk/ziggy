@@ -1,5 +1,4 @@
-import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Schema } from "effect";
 import type {
@@ -12,10 +11,9 @@ import type {
 } from "../../domain/session";
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
+import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
 
-const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
-
-const isTooLargeTranscriptCause = Schema.is(Schema.Struct({ kind: Schema.Literal("too-large") }));
+const isOversizedLineCause = Schema.is(Schema.Struct({ kind: Schema.Literal("line-too-large") }));
 
 const UsageCost = Schema.Struct({
   input: Schema.Finite,
@@ -63,9 +61,9 @@ const SessionEntry = Schema.Struct({
   message: Schema.optional(RawMessage),
 });
 
-const decodeHeaderLine = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionHeader));
+const decodeHeaderLine = Schema.decodeUnknownSync(Schema.fromJsonString(SessionHeader));
 
-const decodeEntryLine = Schema.decodeUnknownEffect(Schema.fromJsonString(SessionEntry));
+const decodeEntryLine = Schema.decodeUnknownSync(Schema.fromJsonString(SessionEntry));
 
 type Header = typeof SessionHeader.Type;
 
@@ -77,7 +75,7 @@ interface ParsedSession {
   readonly file: string;
   readonly relativePath: string;
   readonly header: Header;
-  readonly entries: ReadonlyArray<Entry>;
+  readonly entryCount: number;
   readonly modelChanges: ReadonlyArray<SessionModelChange>;
   readonly thinkingChanges: ReadonlyArray<SessionThinkingChange>;
   readonly usage: SessionUsage;
@@ -224,30 +222,7 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
 const decodeFailure = (file: string, cause: unknown) =>
   failure(file, "decode", `invalid Pi session metadata in ${file}`, cause);
 
-const readRegularFile = (file: string): Effect.Effect<string, SessionReadFailed> =>
-  Effect.acquireUseRelease(
-    io(file, "read", () => open(file, constants.O_RDONLY | constants.O_NOFOLLOW)),
-    (handle) =>
-      io(file, "read", () => handle.stat()).pipe(
-        Effect.flatMap((status) =>
-          status.isFile() && status.size <= MAX_TRANSCRIPT_BYTES
-            ? io(file, "read", (signal) => handle.readFile({ encoding: "utf8", signal }))
-            : Effect.fail(
-                failure(file, "read", `session file is not a regular bounded transcript: ${file}`, {
-                  kind: status.isFile() ? "too-large" : "wrong-type",
-                  size: status.size,
-                  maximum: MAX_TRANSCRIPT_BYTES,
-                }),
-              ),
-        ),
-      ),
-    (handle) => io(file, "read", () => handle.close()),
-  );
-
-const terminalState = (entries: ReadonlyArray<Entry>): SessionTerminalState => {
-  const lastMessage = entries.findLast((entry) => entry.type === "message");
-  const message = lastMessage?.message;
-
+const terminalState = (message: Entry["message"]): SessionTerminalState => {
   if (message?.role !== "assistant") return "incomplete";
 
   if (message.stopReason === "aborted") return "aborted";
@@ -264,67 +239,98 @@ const parseSession = (
   file: string,
 ): Effect.Effect<ParsedSession, SessionReadFailed> =>
   Effect.gen(function* () {
-    const text = yield* readRegularFile(file);
-    const lines = text.split("\n").filter((line) => line.trim().length > 0);
-    const headerLine = lines[0];
-
-    if (headerLine === undefined) return yield* decodeFailure(file, { kind: "empty" });
-
-    const header = yield* decodeHeaderLine(headerLine).pipe(
-      Effect.mapError((cause) => decodeFailure(file, cause)),
-    );
-
-    if (header.id.length === 0 || !Number.isFinite(Date.parse(header.timestamp)))
-      return yield* decodeFailure(file, { kind: "invalid-header-metadata" });
-
-    const entries = yield* Effect.forEach(
-      lines.slice(1),
-      (line) => decodeEntryLine(line).pipe(Effect.mapError((cause) => decodeFailure(file, cause))),
-      { concurrency: 1 },
-    );
-
-    if (entries.some((entry) => entry.type === "session")) {
-      return yield* decodeFailure(file, { kind: "duplicate-header" });
-    }
-
-    if (
-      entries.some(
-        (entry) =>
-          entry.id.length === 0 ||
-          entry.type.length === 0 ||
-          !Number.isFinite(Date.parse(entry.timestamp)),
-      )
-    )
-      return yield* decodeFailure(file, { kind: "invalid-entry-metadata" });
-
+    let header: Header | undefined;
+    let entryCount = 0;
     const modelChanges: Array<SessionModelChange> = [];
     const thinkingChanges: Array<SessionThinkingChange> = [];
     let usage = zeroUsage();
+    let lastMessage: Entry["message"];
 
-    for (const entry of entries) {
+    const reject = (cause: unknown): never => {
+      throw new TranscriptLineRejected(decodeFailure(file, cause));
+    };
+
+    const decodeLine = <A>(decode: (line: string) => A, line: string): A => {
+      try {
+        return decode(line);
+      } catch (cause) {
+        return reject(cause);
+      }
+    };
+
+    yield* scanTranscriptLines(file, (line) => {
+      if (line.trim().length === 0) return;
+
+      if (header === undefined) {
+        const decodedHeader = decodeLine(decodeHeaderLine, line);
+
+        if (
+          decodedHeader.id.length === 0 ||
+          !Number.isFinite(Date.parse(decodedHeader.timestamp))
+        ) {
+          reject({ kind: "invalid-header-metadata" });
+        }
+
+        header = decodedHeader;
+
+        return;
+      }
+
+      const entry = decodeLine(decodeEntryLine, line);
+
+      if (entry.type === "session") reject({ kind: "duplicate-header" });
+
+      if (
+        entry.id.length === 0 ||
+        entry.type.length === 0 ||
+        !Number.isFinite(Date.parse(entry.timestamp))
+      ) {
+        reject({ kind: "invalid-entry-metadata" });
+      }
+
+      entryCount += 1;
+
       if (entry.type === "model_change") {
-        if (entry.provider === undefined || entry.modelId === undefined)
-          return yield* decodeFailure(file, { kind: "invalid-model-change", entryId: entry.id });
-        modelChanges.push({ at: entry.timestamp, provider: entry.provider, model: entry.modelId });
+        const provider = entry.provider;
+        const modelId = entry.modelId;
+
+        if (provider === undefined || modelId === undefined) {
+          reject({ kind: "invalid-model-change", entryId: entry.id });
+        } else {
+          modelChanges.push({ at: entry.timestamp, provider, model: modelId });
+        }
       } else if (entry.type === "thinking_level_change") {
-        if (entry.thinkingLevel === undefined)
-          return yield* decodeFailure(file, { kind: "invalid-thinking-change", entryId: entry.id });
-        thinkingChanges.push({ at: entry.timestamp, level: entry.thinkingLevel });
+        const thinkingLevel = entry.thinkingLevel;
+
+        if (thinkingLevel === undefined) {
+          reject({ kind: "invalid-thinking-change", entryId: entry.id });
+        } else {
+          thinkingChanges.push({ at: entry.timestamp, level: thinkingLevel });
+        }
       }
 
       if (entry.type === "message" && entry.message === undefined)
-        return yield* decodeFailure(file, { kind: "invalid-message", entryId: entry.id });
+        reject({ kind: "invalid-message", entryId: entry.id });
       const message = entry.message;
 
+      if (entry.type === "message") lastMessage = message;
+
       if (entry.type === "message" && message?.role === "assistant") {
+        const provider = message.provider;
+        const model = message.model;
+        const stopReason = message.stopReason;
+        const messageUsage = message.usage;
+
         if (
-          message.provider === undefined ||
-          message.model === undefined ||
-          message.stopReason === undefined ||
-          message.usage === undefined
-        )
-          return yield* decodeFailure(file, { kind: "invalid-assistant", entryId: entry.id });
-        usage = addUsage(usage, message.usage);
+          provider === undefined ||
+          model === undefined ||
+          stopReason === undefined ||
+          messageUsage === undefined
+        ) {
+          reject({ kind: "invalid-assistant", entryId: entry.id });
+        } else {
+          usage = addUsage(usage, messageUsage);
+        }
       } else if (entry.type === "message" && message?.role === "toolResult") {
         if (message.usage !== undefined) usage = addUsage(usage, message.usage);
       } else if (
@@ -333,17 +339,63 @@ const parseSession = (
       ) {
         usage = addUsage(usage, entry.usage);
       }
-    }
+    });
+
+    const parsedHeader = header;
+
+    if (parsedHeader === undefined) return yield* decodeFailure(file, { kind: "empty" });
 
     return {
       file,
       relativePath: path.relative(root, file),
-      header,
-      entries,
+      header: parsedHeader,
+      entryCount,
       modelChanges,
       thinkingChanges,
       usage,
-      terminalState: terminalState(entries),
+      terminalState: terminalState(lastMessage),
+    };
+  });
+
+const parseSessionHeader = (
+  root: string,
+  file: string,
+): Effect.Effect<ParsedSession, SessionReadFailed> =>
+  Effect.gen(function* () {
+    let header: Header | undefined;
+
+    yield* scanTranscriptLines(file, (line) => {
+      if (line.trim().length === 0) return;
+      let decodedHeader: Header;
+
+      try {
+        decodedHeader = decodeHeaderLine(line);
+      } catch (cause) {
+        throw new TranscriptLineRejected(decodeFailure(file, cause));
+      }
+
+      if (decodedHeader.id.length === 0 || !Number.isFinite(Date.parse(decodedHeader.timestamp))) {
+        throw new TranscriptLineRejected(decodeFailure(file, { kind: "invalid-header-metadata" }));
+      }
+
+      header = decodedHeader;
+
+      return false;
+    });
+
+    const parsedHeader = header;
+
+    if (parsedHeader === undefined) return yield* decodeFailure(file, { kind: "empty" });
+
+    return {
+      file,
+      relativePath: path.relative(root, file),
+      header: parsedHeader,
+      entryCount: 0,
+      modelChanges: [],
+      thinkingChanges: [],
+      usage: zeroUsage(),
+      terminalState: "incomplete",
     };
   });
 
@@ -391,7 +443,7 @@ const projectSessions = (
           id: session.header.id,
           kind: parentPath === undefined ? "root" : "child",
           createdAt: session.header.timestamp,
-          entryCount: session.entries.length,
+          entryCount: session.entryCount,
           parent:
             parent === undefined ? undefined : { id: parent.header.id, path: parent.relativePath },
           parentUnknown: parentPath !== undefined && parent === undefined,
@@ -422,7 +474,7 @@ export const listProfileSessions = (
       (file) =>
         parseSession(root, file).pipe(
           Effect.catch((error) =>
-            error.operation === "read" && isTooLargeTranscriptCause(error.cause)
+            error.operation === "read" && isOversizedLineCause(error.cause)
               ? Effect.succeed(undefined)
               : Effect.fail(error),
           ),
@@ -440,33 +492,53 @@ export const showProfileSession = (
   reference: string,
 ): Effect.Effect<SessionMetadata, SessionReadFailed | SessionNotFound> =>
   Effect.gen(function* () {
-    const sessions = yield* listProfileSessions(profilePath);
-    const byId = sessions.find((session) => session.id === reference);
+    const root = path.join(profilePath, "sessions");
+    const files = yield* discoverFiles(root);
 
-    if (byId !== undefined) return byId;
+    const headers = yield* Effect.forEach(files, (file) => parseSessionHeader(root, file), {
+      concurrency: 1,
+    });
 
-    if (path.isAbsolute(reference)) {
+    let selected = headers.find((session) => session.header.id === reference);
+
+    if (selected === undefined) {
+      if (path.isAbsolute(reference)) {
+        return yield* new SessionNotFound({
+          reference,
+          message: "session path must be relative to the Profile sessions directory",
+        });
+      }
+
+      const normalized = path.normalize(reference);
+
+      if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+        return yield* new SessionNotFound({
+          reference,
+          message: "session path must stay inside the Profile sessions directory",
+        });
+      }
+
+      selected = headers.find((session) => path.normalize(session.relativePath) === normalized);
+    }
+
+    if (selected === undefined) {
       return yield* new SessionNotFound({
         reference,
-        message: "session path must be relative to the Profile sessions directory",
+        message: `session not found: ${reference}`,
       });
     }
 
-    const normalized = path.normalize(reference);
+    const parsed = yield* parseSession(root, selected.file);
 
-    if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
-      return yield* new SessionNotFound({
-        reference,
-        message: "session path must stay inside the Profile sessions directory",
-      });
-    }
+    const projected = yield* projectSessions(
+      headers.map((session) => (session.file === selected.file ? parsed : session)),
+    );
 
-    const byPath = sessions.find((session) => path.normalize(session.path) === normalized);
+    const metadata = projected.find((session) => session.path === parsed.relativePath);
 
-    if (byPath !== undefined) return byPath;
+    if (metadata !== undefined) return metadata;
 
-    return yield* new SessionNotFound({
-      reference,
-      message: `session not found: ${reference}`,
+    return yield* failure(selected.file, "resolve", "selected Pi session was not projected", {
+      id: selected.header.id,
     });
   });

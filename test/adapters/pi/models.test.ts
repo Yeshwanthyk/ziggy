@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -156,6 +156,70 @@ describe("Pi-backed model operations", () => {
     await Effect.runPromise(listModelsReadOnly(profilePath));
 
     expect(await readdir(profilePath)).toEqual(before);
+  });
+
+  test("read-only status and list resolve a model found only in the existing cache", async () => {
+    const profilePath = await profile();
+    const settings = SettingsManager.create(profilePath, profilePath);
+    settings.setDefaultModelAndProvider("openai-codex", "gpt-6-astra");
+    settings.setDefaultThinkingLevel("low");
+    await settings.flush();
+
+    await writeFile(
+      join(profilePath, "models-store.json"),
+      JSON.stringify({
+        "openai-codex": {
+          models: [
+            {
+              id: "gpt-6-astra",
+              name: "GPT-6 Astra",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              baseUrl: "https://chatgpt.com/backend-api",
+              reasoning: true,
+              input: ["text", "image"],
+              cost: {
+                input: 10,
+                output: 50,
+                cacheRead: 1,
+                cacheWrite: 12.5,
+              },
+              contextWindow: 272000,
+              maxTokens: 128000,
+              thinkingLevelMap: {
+                off: null,
+                minimal: "low",
+                low: "low",
+                medium: "medium",
+                high: "high",
+                xhigh: "xhigh",
+                max: "max",
+              },
+              compat: { supportsToolSearch: true },
+            },
+          ],
+          checkedAt: 1,
+          lastModified: Number.MAX_SAFE_INTEGER,
+          etag: '"cached"',
+        },
+      }),
+    );
+
+    const beforeNames = await readdir(profilePath);
+    const beforeSettings = await readFile(join(profilePath, "settings.json"));
+    const beforeModels = await readFile(join(profilePath, "models-store.json"));
+
+    await expect(Effect.runPromise(getModelStatusReadOnly(profilePath))).resolves.toMatchObject({
+      providerId: "openai-codex",
+      modelId: "gpt-6-astra",
+      thinking: "low",
+    });
+    const listed = await Effect.runPromise(listModelsReadOnly(profilePath, "openai-codex"));
+    expect(listed.some((model) => model.modelId === "gpt-6-astra")).toBeTrue();
+
+    expect(await readdir(profilePath)).toEqual(beforeNames);
+    expect(await readFile(join(profilePath, "settings.json"))).toEqual(beforeSettings);
+    expect(await readFile(join(profilePath, "models-store.json"))).toEqual(beforeModels);
   });
 
   test("fails when SettingsManager reports a queued write error after flush", async () => {
