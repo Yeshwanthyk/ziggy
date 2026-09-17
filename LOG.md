@@ -798,3 +798,8 @@ results.
 
 - Group consecutive successful completed tool calls behind a native disclosure in history and live activity. Running calls, failed calls, and messages break groups and remain visible; original rows stay available on expansion.
 - Verified the live conversation shows one collapsed row for three reads and expands to all three original entries. Full `bun run check` passed, including 52 web tests and 18 SDK tests; existing bundle-size warning remains.
+
+## Refine composer alignment and sizing
+
+- Matched the composer outer edges to the transcript content column, including narrow-screen gutters. Removed focus-triggered expansion; content now grows the textarea from 38px up to 180px.
+- Desktop browser measurements confirmed matching left edges, unchanged 38px textarea height on focus, and growth to 80px for a three-line draft. Cleared the test draft without sending. Full checks passed; rebuilt after the final narrow-gutter adjustment. Mobile layout remains source-checked only.

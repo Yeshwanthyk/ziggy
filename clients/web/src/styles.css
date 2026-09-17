@@ -978,12 +978,12 @@ button {
 
 .composer-wrap {
   background: var(--background);
-  padding: 6px 24px max(10px, env(safe-area-inset-bottom));
+  padding: 6px 32px max(10px, env(safe-area-inset-bottom));
 }
 
 .composer-panel {
   margin: 0 auto;
-  max-width: 820px;
+  max-width: 756px;
   min-width: 0;
 }
 
@@ -1033,16 +1033,11 @@ button {
   field-sizing: content;
   font-size: 15px;
   line-height: 1.5;
-  max-height: 38px;
+  max-height: 180px;
   min-height: 38px;
   min-width: 0;
   padding: 7px 0 6px;
   resize: none;
-}
-
-.composer:focus-within textarea {
-  max-height: 180px;
-  min-height: 112px;
 }
 
 .composer textarea:focus-visible {
@@ -1465,8 +1460,8 @@ button {
 
   .composer-wrap {
     padding-bottom: max(8px, env(safe-area-inset-bottom));
-    padding-left: 12px;
-    padding-right: 12px;
+    padding-left: 17px;
+    padding-right: 17px;
   }
 
   .composer-hint {
