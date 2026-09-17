@@ -186,6 +186,9 @@ import file183 from "./embedded/file183.embed" with { type: "file" };
 import file184 from "./embedded/file184.embed" with { type: "file" };
 import file185 from "./embedded/file185.embed" with { type: "file" };
 import file186 from "./embedded/file186.embed" with { type: "file" };
+import file187 from "./embedded/file187.embed" with { type: "file" };
+import file188 from "./embedded/file188.embed" with { type: "file" };
+import file189 from "./embedded/file189.embed" with { type: "file" };
 
 export const builtinFilePath = {
   "extensions/agent-browser/bin/agent-browser-wrapper.mjs": file0,
@@ -370,11 +373,14 @@ export const builtinFilePath = {
   "extensions/ziggy-operations/package.json": file179,
   "extensions/ziggy-operations/skills/ziggy-operations/references/automations.md": file180,
   "extensions/ziggy-operations/skills/ziggy-operations/references/discord.md": file181,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/memory.md": file182,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/serve.md": file183,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/slack.md": file184,
-  "extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md": file185,
-  "extensions/ziggy-operations/skills/ziggy-operations/SKILL.md": file186,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/extension-updates.md": file182,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/memory.md": file183,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/serve.md": file184,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/sessions.md": file185,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/slack.md": file186,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md": file187,
+  "extensions/ziggy-operations/skills/ziggy-operations/references/web-access.md": file188,
+  "extensions/ziggy-operations/skills/ziggy-operations/SKILL.md": file189,
 } as const;
 
 const bundledFiles = new Map<string, string>([
@@ -560,11 +566,14 @@ const bundledFiles = new Map<string, string>([
   ["extensions/ziggy-operations/package.json", file179],
   ["extensions/ziggy-operations/skills/ziggy-operations/references/automations.md", file180],
   ["extensions/ziggy-operations/skills/ziggy-operations/references/discord.md", file181],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/memory.md", file182],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/serve.md", file183],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/slack.md", file184],
-  ["extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md", file185],
-  ["extensions/ziggy-operations/skills/ziggy-operations/SKILL.md", file186],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/extension-updates.md", file182],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/memory.md", file183],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/serve.md", file184],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/sessions.md", file185],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/slack.md", file186],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/telegram.md", file187],
+  ["extensions/ziggy-operations/skills/ziggy-operations/references/web-access.md", file188],
+  ["extensions/ziggy-operations/skills/ziggy-operations/SKILL.md", file189],
 ]);
 
 export const bundledFilePath = (logicalPath: string): string | undefined =>

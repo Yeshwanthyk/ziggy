@@ -29,7 +29,17 @@ const REQUIRED_PACKAGE_IDS = new Set(["extension-authoring", "pi-packages", "zig
 
 const skipNames = new Set(["node_modules", ".git", "test", "tests", "tsconfig.json"]);
 
-const operationsReferenceNames = ["automations", "discord", "memory", "serve", "slack", "telegram"];
+const operationsReferenceNames = [
+  "automations",
+  "discord",
+  "extension-updates",
+  "memory",
+  "serve",
+  "sessions",
+  "slack",
+  "telegram",
+  "web-access",
+];
 
 const fail = (message) => {
   console.error(message);

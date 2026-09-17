@@ -27,13 +27,6 @@ ziggy version
 ziggy init my-bot
 ```
 
-Direct binary download:
-
-```sh
-curl -fL -o ziggy https://github.com/Yeshwanthyk/ziggy/releases/latest/download/ziggy-darwin-arm64
-chmod +x ziggy
-```
-
 `ziggy update` uses the same GitHub release assets. Linux and Intel Mac builds are not in 0.2.6.
 
 ## Core commands
@@ -49,31 +42,39 @@ ziggy serve <name|path>
 
 `serve` runs the resident Profile owner, including the automation scheduler and any configured channel loops. `ziggy gateway <name|path>` remains a compatibility alias.
 
-Managed `serve` definitions record Ziggy's absolute executable path and literal `HOME`, `ZIGGY_HOME`,
-and deterministic `PATH` values. The default service `PATH` is
-`<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`, so user-local and Homebrew
-commands are available without relying on interactive shell startup files. If an existing
-definition is reported as drifted after this environment hardening, restage it with
-`ziggy serve install <profile> --force`.
-
-The in-process `profile_extensions` tool manages the Profile extension lifecycle (`list`, `add`,
-`remove`, and `validate`) without Bash, a Ziggy subprocess, or `PATH` lookup. That lifecycle does
-not depend on the managed-service `PATH`; the `PATH` above is for extensions that invoke ordinary
-external commands.
-
-Session list/show output is transcript-free: it includes only paths, IDs, lineage, timestamps, entry counts, model/thinking changes, usage, and safe terminal state. It never prints prompts, replies, thinking, tool arguments, or tool output.
-
 Run `ziggy help` for the complete command surface.
+
+## Web access
+
+After `ziggy init my-bot`, configure a stable local port, install the resident, and issue a browser
+pairing link:
+
+```sh
+ziggy web configure my-bot --port 8797
+ziggy serve install my-bot
+ziggy web pair my-bot
+```
+
+Use `ziggy serve restart my-bot` instead of `install` when the resident is already installed.
+The pairing link works for 10 minutes; the resulting browser session lasts 30 days across resident
+restarts. Tailscale is an optional way to enable remote access. See
+[Web access](docs/operations/web-access.md) for remote setup, additional browsers, revocation, and
+troubleshooting.
 
 ## Operations guides
 
 - [Supervise `ziggy serve`](docs/operations/serve.md)
+- [Use Ziggy from a browser](docs/operations/web-access.md)
+- [Inspect stored sessions](docs/operations/sessions.md)
+- [Update bundled extensions](docs/operations/extension-updates.md)
 - [Connect a Profile to Telegram](docs/operations/telegram.md)
 - [Connect a Profile to Discord](docs/operations/discord.md)
 - [Connect a Profile to Slack](docs/operations/slack.md)
 - [Drive a Profile from Buzz over ACP](docs/operations/acp-buzz.md)
 - [Operate automations](docs/operations/automations.md)
 - [Operate Profile memory](docs/operations/memory.md)
+
+Architecture note: [Web access ownership](docs/architecture/web-access.md).
 
 ## Development
 

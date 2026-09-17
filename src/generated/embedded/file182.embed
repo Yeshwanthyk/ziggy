@@ -1,59 +1,51 @@
-# Operate Profile memory
+# Updating bundled extensions
 
-Profile memory is plain Markdown owned by the Profile. It is separate from Pi session
-transcripts and is admitted by chat context:
+Bundled extension code ships inside the Ziggy executable. An installed Profile copy takes
+precedence over that bundle, so updating the executable does not replace installed packages.
 
-- `MEMORY.md` is shared assistant memory and loads in local, 1:1, and group chats.
-- `memory/users/<id>.md` is person memory and loads only in that person's 1:1 chat. Local chats
-  use `memory/users/owner.md`. Person memory never loads in a group.
-- `memory/groups/<id>.md` is group memory and loads only in that group chat.
-
-Each document contains one entry per block. Separate entries with a line containing `§`:
-
-```text
-The person prefers short answers.
-§
-The project ships on Fridays.
-```
-
-The shared document is capped at 2,200 Unicode code points. Each person or group document is
-capped at 1,375 code points. A write that would exceed its cap is rejected as a whole; content is
-never silently truncated.
-
-The agent uses the `memory_write` tool with `add`, `replace`, and `remove` operations. `add` is
-idempotent. `replace` and `remove` require `oldText` to identify exactly one entry. A successful
-change is atomic under a per-document lock.
-
-You can inspect memory without opening a chat:
+Update one installed bundled package from the executable you are running:
 
 ```sh
-ziggy memory list [<profile>] [--json]
-ziggy memory show <profile> shared [--json]
-ziggy memory show <profile> user:<id> [--json]
-ziggy memory show <profile> group:<id> [--json]
+ziggy extensions update squarey computer-workflows
 ```
 
-Without a target, `memory list` inspects the current directory as the Profile target. JSON output
-contains scope, path, state, entry count, code-point count, and cap, but not raw memory content for
-`list`; `show --json` includes the bounded entries of the selected document.
+Close all sessions using the Profile and stop its resident before updating. This first version
+does not drain active work, schedule an update, download another executable, or restart Squarey.
+Runtimes with update fencing block package replacement while open. Older Ziggy processes do not
+participate in that fence: close old TUI/run/ACP sessions before the initial upgrade as well.
 
-`memory list` reports only physical regular memory documents. Empty documents are reported as
-empty and are distinct from a missing document. The `memory/README.md` format note is never
-loaded as memory and is excluded from `ziggy doctor` size checks.
+## Adopt an existing installation
 
-Hand-editing is safe when no Ziggy process is writing the same document, you preserve the `§`
-delimiter, and you stay within the cap. Run `ziggy doctor <profile>` after edits.
-
-Before an existing document is changed, Ziggy saves its exact prior bytes under:
-
-```text
-<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>.md
-```
-
-The newest ten backups for each document are retained. Backup and pruning failures block the
-memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
+Installations without an update receipt are treated as untracked. To explicitly replace an
+untracked package with the executable's bundled copy and begin tracking it:
 
 ```sh
-cp <profile>/.runtime/memory-backups/MEMORY.md/<timestamp>.md <profile>/MEMORY.md
-ziggy doctor <profile>
+ziggy extensions update squarey computer-workflows --adopt
 ```
+
+Adoption is a takeover of that package directory, not proof that its previous contents came
+from Ziggy. Inspect local changes first. The updater retains the previous package as a backup.
+Once a receipt exists, modified package contents block updates; `--adopt` does not override
+that protection.
+
+## Boundaries
+
+- Only an explicitly named, already installed bundled extension is updated.
+- Package content hashes detect changes even when the package version is unchanged.
+- The selected extension set, browser profiles, saved workflows, and human-owned Profile
+  documents are not replaced.
+- Updates that change extension-owned automation definitions are rejected in this version.
+- A recovery journal protects interrupted replacement. An unresolved update blocks runtime
+  loading until recovery succeeds. Rerun the update command for that package to recover it;
+  if recovery detects changed files, it preserves them and reports the conflict.
+- Restart the Profile after a successful update to load the new tool code and skill instructions
+  together.
+
+A successful update verifies package installation and loading. It does not prove that a saved
+workflow completes on a live website.
+
+## In-process lifecycle
+
+The `profile_extensions` tool manages `list`, `add`, `remove`, and `validate` inside the resident
+without Bash, a Ziggy subprocess, or `PATH` lookup. Extensions that invoke ordinary external
+commands still use the managed service `PATH` documented in [Supervise `ziggy serve`](serve.md).
