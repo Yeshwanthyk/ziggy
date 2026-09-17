@@ -914,6 +914,11 @@ results.
 - Bumped the CLI version, README, release notes, installer platform message, and version assertions for conversation delivery and shared multi-destination selection.
 - Build and smoke the standalone artifact before updating the installed CLI and restarting the existing Squarey resident for user testing.
 
+## Release 0.2.8 locally
+
+- Bumped the CLI and release surfaces for native conversation naming. Existing Squarey sessions will receive semantic names through Pi session-info metadata after a copied-transcript rehearsal, with original transcript backups and unchanged session identity.
+- The shared Pi pre-turn hook supplies first-message names for CLI and TUI sessions, including newly switched sessions. Semantic hints reserve room for the topic; explicit names and clears remain authoritative.
+
 ## Name stored conversations with Pi session metadata
 
 - Project the latest Pi `session_info` display name into stored session metadata and use it in the automation destination catalog, while keeping canonical session IDs unchanged and applying explicit UI pin labels last.

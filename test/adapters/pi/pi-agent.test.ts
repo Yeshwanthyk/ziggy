@@ -29,6 +29,7 @@ import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { specialistRuntime } from "ziggy/adapters/pi/specialist";
+import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   appendEphemeralPromptContext,
@@ -37,7 +38,6 @@ import {
   createLocalSessionManager,
   createProfileMemoryExtension,
   currentPiSessionReference,
-  ensurePiSessionName,
   localMainSessionDirectory,
   localSpecialistSessionDirectory,
   makeSessionChatHandle,
@@ -100,6 +100,10 @@ test("Pi session names prefer semantic identity, bound fallback text, and never 
   cleared.appendSessionInfo("");
   ensurePiSessionName(cleared, "Local · Main", "Do not restore a cleared name");
   expect(cleared.getSessionName()).toBeUndefined();
+
+  const longRoute = SessionManager.inMemory("/profile");
+  ensurePiSessionName(longRoute, "x".repeat(100), "Distinct task");
+  expect(longRoute.getSessionName()).toBe(`${"x".repeat(40)} · Distinct task`);
 });
 
 const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {

@@ -97,6 +97,7 @@ import {
 import { leaseCompiledPiTuiAssets } from "./tui-themes";
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
+import { ensurePiSessionName } from "./session-name";
 import { createProfileExtensionTool } from "./profile-extension-tool";
 import {
   AUTOMATION_RESULT_CUSTOM_TYPE,
@@ -140,35 +141,6 @@ export interface PiAgentApi {
 export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
 
 export type ChatSessionMode = "continue" | "fresh";
-
-const SESSION_NAME_MAX_CODE_POINTS = 80;
-
-const normalizedSessionName = (value: string): string =>
-  [
-    ...value
-      .replace(/\p{Cc}+/gu, " ")
-      .replace(/\s+/gu, " ")
-      .trim(),
-  ]
-    .slice(0, SESSION_NAME_MAX_CODE_POINTS)
-    .join("");
-
-export const ensurePiSessionName = (
-  sessionManager: Pick<SessionManager, "appendSessionInfo" | "getEntries">,
-  semanticName: string | undefined,
-  firstUserMessage: string,
-): void => {
-  if (sessionManager.getEntries().some((entry) => entry.type === "session_info")) return;
-
-  const semantic = semanticName === undefined ? "" : normalizedSessionName(semanticName);
-  const fallback = normalizedSessionName(firstUserMessage);
-
-  const name = normalizedSessionName(
-    semantic.length > 0 && fallback.length > 0 ? `${semantic} · ${fallback}` : semantic || fallback,
-  );
-
-  if (name.length > 0) sessionManager.appendSessionInfo(name);
-};
 
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();

@@ -18,6 +18,7 @@ import {
   createZiggyTuiExtension,
 } from "./ziggy-tui-extension";
 import { createZiggyHelpExtension } from "./ziggy-help";
+import { createSessionNamingExtension } from "./session-name";
 
 interface LoadedMemoryDocument {
   readonly content: string;
@@ -183,6 +184,7 @@ export const createProfileCoreInlineExtensions: ProfileCoreInlineExtensionFactor
 }) => [
   createPiDocsExtension(),
   createZiggyHelpExtension(),
+  createSessionNamingExtension(),
   createZiggyTuiExtension(profilePath, agents, extensionSelection, automationDispatch),
   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
   createProfileMemoryExtension(profilePath, memoryDocuments),
