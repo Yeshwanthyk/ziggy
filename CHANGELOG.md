@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-09-17
+
+### Added
+
+- Automation result delivery into durable conversations and a shared destination picker for multiple conversation, Slack, Discord, and Telegram broadcasts
+- Named channel destinations and existing conversation pin labels, with canonical ID fallbacks
+
+### Fixed
+
+- Destination pagination across mixed-case IDs, bounded display labels, and timeout fallback for optional Slack name lookups
+
 ## [0.2.6] - 2026-09-17
 
 ### Added
@@ -106,7 +117,8 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.3...v0.2.4

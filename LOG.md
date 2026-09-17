@@ -908,3 +908,8 @@ results.
 - Bounded optional Slack name lookups to two seconds so a stalled metadata request falls back to the channel ID instead of blocking gateway startup; verified with Effect's test clock.
 - The independent isolated browser check added and removed conversations, saved mixed transport targets plus `origin`/`all`, retained them after resident restart, removed an undiscovered target, and saved `none` after removing the last target. No provider run or external message was sent.
 - Final `bun run check` passed; `bun run test` passed 750 tests with 2,763 assertions. An initial full run failed the resident hard-crash test, which passed in isolation and on the full rerun; no lifecycle code was changed. Astra independently rechecked the fixes with 99 passing tests and reported no remaining blocking findings.
+
+## Release 0.2.7 locally
+
+- Bumped the CLI version, README, release notes, installer platform message, and version assertions for conversation delivery and shared multi-destination selection.
+- Build and smoke the standalone artifact before updating the installed CLI and restarting the existing Squarey resident for user testing.
