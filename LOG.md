@@ -880,3 +880,9 @@ results.
 
 - Promoted the accumulated web client, browser workflow, extension update, session history, and durable browser access work to version 0.2.6. Updated the package source of truth, release notes, installer platform message, README, and version assertions.
 - The clean release executable was built and smoke-tested before atomically replacing the user-local Ziggy binary. Squarey's running resident and Tailscale configuration were intentionally left unchanged for a separate restart and pairing step.
+
+## Document browser access and archive completed research
+
+- Added a short local browser quickstart plus complete local/Tailscale pairing, revocation, shared-gateway, state-ownership, session-inspection, and installed-package update guidance. Synchronized the `ziggy-operations` references and generated catalog resources.
+- Archived the completed anti-slop alignment, Effect-native audit, and CLI/filesystem UI-hook reports from the working tree. Their history remains in Git; current behavior belongs to source rules, focused skills, and the web operations/architecture guides.
+- Verification: the full `bun run check` gate passed before the documentation commit; packaged operations references matched their public sources and loaded in the focused resource test.
