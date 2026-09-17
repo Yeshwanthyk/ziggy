@@ -71,6 +71,7 @@ import {
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
+import type { UiGatewayError } from "../domain/ui-gateway";
 import { slackTaskTitle, slackToolStatus } from "./slack-tool-progress";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
@@ -766,10 +767,9 @@ const disposeChats = (
       state.handle === undefined
         ? Effect.void
         : (registry === undefined
-            ? Effect.void
-            : registry.unregisterAlias(`slack/${chatKey}`, state.handle)
+            ? state.handle.dispose
+            : registry.closeAlias(`slack/${chatKey}`, state.handle)
           ).pipe(
-            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[slack] ${chatKey} dispose failed: ${failure.message}`);
@@ -1361,25 +1361,17 @@ export const makeSlackGateway = (
                     let handle = chatState.handle;
 
                     if (handle === undefined) {
-                      handle = yield* agent.openChat(
+                      const open = agent.openChat(
                         target,
                         message.context,
                         join(target.path, "sessions", "slack", message.chatKey),
                       );
-                      chatState.handle = handle;
 
-                      if (registry !== undefined) {
-                        yield* registry
-                          .registerAlias(`slack/${message.chatKey}`, "slack", handle)
-                          .pipe(
-                            Effect.catch((failure) =>
-                              Effect.logWarning("Slack registry registration failed", {
-                                chatKey: message.chatKey,
-                                failure,
-                              }),
-                            ),
-                          );
-                      }
+                      handle =
+                        registry === undefined
+                          ? yield* open
+                          : yield* registry.openAlias(`slack/${message.chatKey}`, "slack", open);
+                      chatState.handle = handle;
                     }
 
                     const reply = yield* Effect.scoped(
@@ -1681,10 +1673,17 @@ export const makeSlackGateway = (
 
             yield* accepted.pipe(
               Effect.andThen(work),
-              Effect.catch((failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError) =>
-                Effect.sync(() => {
-                  console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
-                }),
+              Effect.catch(
+                (
+                  failure:
+                    | ZiggyAgentError
+                    | SlackApiError
+                    | SlackIngressDatabaseError
+                    | UiGatewayError,
+                ) =>
+                  Effect.sync(() => {
+                    console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
+                  }),
               ),
             );
           });

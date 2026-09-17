@@ -1,8 +1,9 @@
 import { CircleCheck, CircleX, Clock3, Pencil, RefreshCw, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DefinitionEditor } from "@/components/definition-editor";
-import { parseDefinitionSource } from "@/lib/definition-source";
-import type { AutomationDetail, AutomationSummary } from "@/gateway";
+import { addAutomationBroadcastTarget, parseDefinitionSource } from "@/lib/definition-source";
+import type { AutomationDestinationOption, AutomationDetail, AutomationSummary } from "@/gateway";
+import type { ZiggySessionRef } from "../../../../packages/ui-sdk/src/index";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,9 +17,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface AutomationDetailDialogProps {
   readonly automation?: AutomationSummary;
   readonly available: boolean;
+  readonly destinations: ReadonlyArray<AutomationDestinationOption>;
   readonly detail?: AutomationDetail;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => void;
+  readonly onResolveDestination: (ref: ZiggySessionRef) => Promise<string>;
   readonly onSave: (source: string, expectedSource: string) => Promise<void>;
   readonly open: boolean;
 }
@@ -70,17 +73,29 @@ const taskPreview = (task: string): { readonly clipped: boolean; readonly previe
   return { clipped, preview: `${preview.trimEnd()}…` };
 };
 
+const destinationKeyFor = (ref: ZiggySessionRef): string =>
+  `${ref.kind}:${ref.kind === "live" ? ref.key : ref.id}`;
+
 export function AutomationDetailDialog({
   automation,
   available,
+  destinations,
   detail,
   onOpenChange,
   onRefresh,
+  onResolveDestination,
   onSave,
   open,
 }: AutomationDetailDialogProps) {
   const [editing, setEditing] = useState(false);
-  useEffect(() => setEditing(false), [automation?.id, open]);
+  const [destinationKey, setDestinationKey] = useState("");
+  const [destinationError, setDestinationError] = useState<string>();
+  const [savingDestination, setSavingDestination] = useState(false);
+  useEffect(() => {
+    setEditing(false);
+    setDestinationKey("");
+    setDestinationError(undefined);
+  }, [automation?.id, open]);
   const timezone = automation?.timezone;
   const selectedSchedule = detail?.status?.schedules.find(
     (schedule) => schedule.automationId === automation?.id,
@@ -96,6 +111,31 @@ export function AutomationDetailDialog({
   const task =
     detail?.definition === undefined ? undefined : taskFromSource(detail.definition.source);
   const preview = task === undefined ? undefined : taskPreview(task);
+  const parsedDefinition =
+    detail?.definition === undefined ? undefined : parseDefinitionSource(detail.definition.source);
+  const currentDestination = parsedDefinition?.fields.broadcast.trim() || "No delivery target";
+
+  const saveDestination = async (): Promise<void> => {
+    if (detail?.definition === undefined || parsedDefinition === undefined) return;
+    const destination = destinations.find(
+      (option) => destinationKey === destinationKeyFor(option.ref),
+    );
+    if (destination === undefined) return;
+    setSavingDestination(true);
+    setDestinationError(undefined);
+    try {
+      const target = await onResolveDestination(destination.ref);
+      const source = addAutomationBroadcastTarget(detail.definition.source, target);
+      await onSave(source, detail.definition.source);
+      setDestinationKey("");
+    } catch (cause) {
+      setDestinationError(
+        cause instanceof Error ? cause.message : "The delivery conversation could not be selected.",
+      );
+    } finally {
+      setSavingDestination(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -194,6 +234,54 @@ export function AutomationDetailDialog({
                     <span>Next run</span>
                     <strong>{nextRun}</strong>
                   </div>
+                </section>
+
+                <section className="detail-section automation-destination">
+                  <h3>Deliver result</h3>
+                  <p className="detail-muted">
+                    Current target: <code>{currentDestination}</code>
+                  </p>
+                  <div className="automation-destination-controls">
+                    <label>
+                      <span>Conversation</span>
+                      <select
+                        disabled={!available || savingDestination || destinations.length === 0}
+                        onChange={(event) => setDestinationKey(event.target.value)}
+                        value={destinationKey}
+                      >
+                        <option value="">Select a conversation</option>
+                        {destinations.map((destination) => {
+                          const key = destinationKeyFor(destination.ref);
+                          return (
+                            <option key={key} value={key}>
+                              {destination.title} · {destination.subtitle}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
+                    <Button
+                      disabled={!available || destinationKey.length === 0 || savingDestination}
+                      onClick={() => void saveDestination()}
+                      size="sm"
+                      type="button"
+                    >
+                      {savingDestination ? "Adding…" : "Add destination"}
+                    </Button>
+                  </div>
+                  {destinations.length === 0 ? (
+                    <p className="detail-muted">
+                      No resident or pinned conversations are available.
+                    </p>
+                  ) : null}
+                  {destinationError === undefined ? null : (
+                    <p className="detail-error" role="alert">
+                      {destinationError}
+                    </p>
+                  )}
+                  <p className="detail-muted">
+                    Manual and external broadcast targets remain available in Edit.
+                  </p>
                 </section>
 
                 <section className="detail-section">

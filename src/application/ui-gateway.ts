@@ -404,6 +404,19 @@ const eventFrame = (
           },
         }),
       );
+    case "automation-result":
+      return decodeEventFrame(
+        withCorrelation({
+          ...base,
+          event: "automation-result",
+          payload: {
+            automationId: event.event.automationId,
+            runId: event.event.runId,
+            text: wireText(event.event.text, 1_024),
+            timestamp: event.event.timestamp,
+          },
+        }),
+      );
     case "settled":
       return decodeEventFrame(withCorrelation({ ...base, event: "settled", payload: {} }));
     case "error":
@@ -783,12 +796,21 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
-            return {
+            const current =
+              entry.handle.currentSession === undefined
+                ? undefined
+                : yield* entry.handle.currentSession.pipe(
+                    Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                  );
+
+            const shown = {
               profileId: branch.profileId,
               ref: params.ref,
               kind: "live" as const,
               live: liveSessionProjection(branch.profileId, entry),
             };
+
+            return current === undefined ? shown : { ...shown, storedSessionId: current.id };
           }
 
           const session = yield* config.sessions
@@ -802,6 +824,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             createdAt: session.createdAt,
             entryCount: session.entryCount,
             terminalState: session.terminalState,
+            storedSessionId: session.id,
           };
         });
       case "session.history":

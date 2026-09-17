@@ -184,7 +184,7 @@ const makeLiveUiRuntime = (
           (entry) =>
             entry.profileId === defaultBranch.profileId
               ? Effect.succeed(defaultBranch)
-              : makeChatRegistry().pipe(
+              : makeChatRegistry(entry.target.path).pipe(
                   Effect.map(
                     (profileRegistry): ResidentProfileBranch => ({
                       profileId: entry.profileId,
@@ -258,12 +258,12 @@ export const makeResidentGateway = (
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* runtime.acquireOwner(target);
-          const registry = yield* makeChatRegistry();
+          const registry = yield* makeChatRegistry(target.path);
 
           const branches: Array<
             Effect.Effect<never, AutomationSchedulerError | UiServerError, Scope.Scope>
           > = [
-            scheduler.run(target, owner),
+            scheduler.run(target, owner, registry),
             ui
               .run(target, registry)
               .pipe(

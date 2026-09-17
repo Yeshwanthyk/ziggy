@@ -47,6 +47,26 @@ A leading `@agent-id` still delegates the whole task to that Profile agent. The 
 `agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
 automation's own (untagged) session.
 
+## Conversation delivery
+
+Add `conversation:<stored-session-id>` to the comma-separated `broadcast` value to append a
+completed automation result to an existing transcript in the same Profile. The web automation
+picker resolves live, channel-backed, stored, and pinned session references through `session.show`
+and saves the durable Pi transcript ID; labels and pin state are navigation metadata and are never
+delivery identity. Existing manual and external targets remain valid.
+
+Conversation delivery appends history only. It does not start, steer, or queue a model turn, and it
+does not send the result through the destination channel. A busy destination fails as retriable;
+missing, deleted, invalid, or unavailable-owner destinations fail without choosing a replacement
+conversation. Delivery requires the resident process that owns the selected Profile. A standalone
+`ziggy wake` can run the automation, but reports `owner-unavailable` when no scoped resident can
+append the destination. Gateway history and live-event projections show the first 1,024 result code
+points; the destination Pi transcript retains the complete result.
+
+The destination transcript deduplicates by automation and run ID. If the process crashes after the
+append but before the run ledger is finalized, the run may remain `unknown`; Ziggy does not retry it
+automatically.
+
 ## Pause and resume
 
 ```sh

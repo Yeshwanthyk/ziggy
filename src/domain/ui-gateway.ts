@@ -634,6 +634,15 @@ export const UiSessionShowResult = Schema.Struct({
     Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
   ),
   live: Schema.optionalKey(UiLiveSession),
+  storedSessionId: Schema.optionalKey(
+    Schema.String.check(
+      Schema.makeFilter(
+        (value) =>
+          value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
+        { expected: "a canonical 1-128 character Pi session id" },
+      ),
+    ),
+  ),
 });
 
 export type UiSessionShowResult = typeof UiSessionShowResult.Type;
@@ -650,6 +659,13 @@ export const UiSessionHistoryEntry = Schema.Union([
     phase: Schema.Literals(["start", "end"]),
     toolName: boundedCodePointString("session history tool name", 48),
     failed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("automation-result"),
+    timestamp: boundedString("session history timestamp", 128),
+    automationId: UiAutomationId,
+    runId: boundedString("automation run id", 256),
+    text: boundedCodePointString("automation result text", 1_024, 0),
   }),
 ]);
 
@@ -1128,6 +1144,7 @@ export const UI_EVENTS = [
   "thinking",
   "tool",
   "voice",
+  "automation-result",
   "settled",
   "error",
   "replay-gap",
@@ -1180,6 +1197,17 @@ const UiVoiceEvent = Schema.Struct({
   }),
 });
 
+const UiAutomationResultEvent = Schema.Struct({
+  ...UiEventBase,
+  event: Schema.Literal("automation-result"),
+  payload: Schema.Struct({
+    automationId: UiAutomationId,
+    runId: boundedString("automation run id", 256),
+    text: boundedCodePointString("automation result text", 1_024, 0),
+    timestamp: boundedString("automation result timestamp", 128),
+  }),
+});
+
 const UiSettledEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("settled"),
@@ -1208,6 +1236,7 @@ export const UiEventFrame = Schema.Union([
   UiThinkingEvent,
   UiToolEvent,
   UiVoiceEvent,
+  UiAutomationResultEvent,
   UiSettledEvent,
   UiErrorEvent,
   UiReplayGapEvent,

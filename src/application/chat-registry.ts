@@ -6,6 +6,16 @@ import {
   type UiSessionKey,
 } from "../domain/ui-gateway";
 import type { ChatEvent, ChatHandle, ChatPromptOptions } from "./agent";
+import {
+  AutomationConversationDeliveryFailed,
+  type AutomationConversationResult,
+} from "../domain/automation";
+import type { ProfileTarget } from "../domain/profile";
+import type { ZiggyAgentError } from "../domain/agent";
+import {
+  appendStoredAutomationResult,
+  automationResultContent,
+} from "../adapters/pi/automation-result";
 
 export const MAX_UI_SESSIONS = 32;
 
@@ -54,6 +64,12 @@ interface OpeningEntry {
   readonly result: Deferred.Deferred<ChatHandle, UiGatewayError>;
 }
 
+interface ClosingEntry {
+  readonly _tag: "Closing";
+  readonly key: UiSessionKey;
+  readonly token: string;
+}
+
 type MutableLiveView = {
   key: UiSessionKey;
   kind: ChatRegistryKind;
@@ -71,7 +87,7 @@ type MutableListView = {
   agentId?: string;
 };
 
-type RegistryEntry = LiveEntry | OpeningEntry;
+type RegistryEntry = LiveEntry | OpeningEntry | ClosingEntry;
 
 export interface ChatRegistryLiveEntry {
   readonly key: UiSessionKey;
@@ -96,7 +112,16 @@ export interface ChatRegistryApi {
     kind: Exclude<ChatRegistryKind, "ui">,
     handle: ChatHandle,
   ) => Effect.Effect<void, UiGatewayError>;
+  readonly openAlias: (
+    key: UiSessionKey,
+    kind: Exclude<ChatRegistryKind, "ui">,
+    open: Effect.Effect<ChatHandle, unknown>,
+  ) => Effect.Effect<ChatHandle, UiGatewayError>;
   readonly unregisterAlias: (key: UiSessionKey, handle: ChatHandle) => Effect.Effect<void>;
+  readonly closeAlias: (
+    key: UiSessionKey,
+    handle: ChatHandle,
+  ) => Effect.Effect<void, ZiggyAgentError>;
   readonly get: (key: UiSessionKey) => Effect.Effect<ChatRegistryLiveEntry, UiGatewayError>;
   readonly list: Effect.Effect<ReadonlyArray<ChatRegistryListEntry>>;
   readonly getOrOpenUi: (
@@ -127,6 +152,10 @@ export interface ChatRegistryApi {
   readonly abort: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
   readonly followUp: (key: UiSessionKey, text: string) => Effect.Effect<void, UiGatewayError>;
   readonly closeUi: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
+  readonly deliverAutomationResult: (
+    target: ProfileTarget,
+    result: AutomationConversationResult,
+  ) => Effect.Effect<void, AutomationConversationDeliveryFailed>;
 }
 
 export class ChatRegistry extends Context.Service<ChatRegistry, ChatRegistryApi>()(
@@ -229,7 +258,9 @@ const listView = (entry: LiveEntry): ChatRegistryListEntry => {
   return view;
 };
 
-export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.Scope> =>
+export const makeChatRegistry = (
+  profilePath?: string,
+): Effect.Effect<ChatRegistryApi, never, Scope.Scope> =>
   Effect.gen(function* () {
     const entries = new Map<UiSessionKey, RegistryEntry>();
     const statePermit = Semaphore.makeUnsafe(1);
@@ -257,6 +288,8 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                     failure("internal", "UI gateway stopped while opening a session"),
                   ).pipe(Effect.asVoid);
                 }
+
+                if (entry._tag === "Closing") return Effect.void;
 
                 entry.unsubscribeHandle();
 
@@ -305,7 +338,11 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
               Effect.gen(function* () {
                 const current = entries.get(key);
 
-                if (current?._tag === "Opening" || current?.kind === "ui") {
+                if (
+                  current?._tag === "Opening" ||
+                  current?._tag === "Closing" ||
+                  (current?._tag === "Live" && current.kind === "ui")
+                ) {
                   return yield* failure("internal", `cannot replace registry-owned session ${key}`);
                 }
 
@@ -318,6 +355,105 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
 
           if (previous?._tag === "Live") previous.unsubscribeHandle();
         }),
+      openAlias: (key, kind, open) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const opening = yield* statePermit.withPermit(
+              Effect.gen(function* () {
+                if (entries.has(key)) {
+                  return yield* failure("conflict", `live session ${key} already has an owner`);
+                }
+
+                const result = yield* Deferred.make<ChatHandle, UiGatewayError>();
+
+                const marker: OpeningEntry = {
+                  _tag: "Opening",
+                  key,
+                  token: randomUUID(),
+                  result,
+                };
+
+                entries.set(key, marker);
+
+                return marker;
+              }),
+            );
+
+            const opened = yield* restore(open).pipe(
+              Effect.mapError((cause) =>
+                internalFailure(`could not open ${kind} session ${key}`, cause),
+              ),
+              Effect.onInterrupt(() =>
+                statePermit.withPermit(
+                  Effect.sync(() => {
+                    if (entries.get(key) === opening) entries.delete(key);
+                  }),
+                ),
+              ),
+              Effect.result,
+            );
+
+            if (opened._tag === "Failure") {
+              yield* statePermit.withPermit(
+                Effect.sync(() => {
+                  if (entries.get(key) === opening) entries.delete(key);
+                }),
+              );
+
+              return yield* opened.failure;
+            }
+
+            const liveResult = yield* makeLiveEntry(key, kind, "channel", opened.success).pipe(
+              Effect.result,
+            );
+
+            if (liveResult._tag === "Failure") {
+              const disposed = yield* opened.success.dispose.pipe(Effect.result);
+
+              if (disposed._tag === "Success") {
+                yield* statePermit.withPermit(
+                  Effect.sync(() => {
+                    if (entries.get(key) === opening) entries.delete(key);
+                  }),
+                );
+              } else {
+                yield* Effect.logWarning("channel session cleanup failed after registration", {
+                  key,
+                  cause: disposed.failure,
+                });
+              }
+
+              return yield* liveResult.failure;
+            }
+
+            const live = liveResult.success;
+
+            yield* statePermit.withPermit(
+              Effect.gen(function* () {
+                if (entries.get(key) !== opening) {
+                  live.unsubscribeHandle();
+                  const disposed = yield* opened.success.dispose.pipe(Effect.result);
+
+                  if (disposed._tag === "Failure") {
+                    yield* Effect.logWarning("stale channel session cleanup failed", {
+                      key,
+                      cause: disposed.failure,
+                    });
+                  }
+
+                  return yield* failure(
+                    "internal",
+                    `${kind} session opening for ${key} became stale`,
+                  );
+                }
+
+                entries.set(key, live);
+              }),
+            );
+
+            return opened.success;
+          }),
+        ),
       unregisterAlias: (key, handle) =>
         statePermit.withPermit(
           Effect.sync(() => {
@@ -327,6 +463,33 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
               entries.delete(key);
               current.unsubscribeHandle();
             }
+          }),
+        ),
+      closeAlias: (key, handle) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const closing = yield* statePermit.withPermit(
+              Effect.sync(() => {
+                const current = entries.get(key);
+
+                if (current?._tag !== "Live" || current.handle !== handle) return undefined;
+
+                current.unsubscribeHandle();
+                const marker: ClosingEntry = { _tag: "Closing", key, token: randomUUID() };
+                entries.set(key, marker);
+
+                return marker;
+              }),
+            );
+
+            if (closing === undefined) return;
+
+            yield* restore(handle.dispose);
+            yield* statePermit.withPermit(
+              Effect.sync(() => {
+                if (entries.get(key) === closing) entries.delete(key);
+              }),
+            );
           }),
         ),
       get: (key) => requireLive(key).pipe(Effect.map(liveView)),
@@ -355,8 +518,13 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
                   return { _tag: "Wait" as const, result: existing.result };
                 }
 
+                if (existing?._tag === "Closing") {
+                  return yield* failure("session_busy", `${key} is closing`);
+                }
+
                 const uiCount = [...entries.values()].filter(
-                  (entry) => entry._tag === "Opening" || entry.kind === "ui",
+                  (entry) =>
+                    entry._tag === "Opening" || (entry._tag === "Live" && entry.kind === "ui"),
                 ).length;
 
                 if (uiCount >= MAX_UI_SESSIONS) {
@@ -600,25 +768,106 @@ export const makeChatRegistry = (): Effect.Effect<ChatRegistryApi, never, Scope.
           ),
         ),
       closeUi: (key) =>
-        requireUi(key).pipe(
-          Effect.flatMap((entry) =>
-            statePermit
-              .withPermit(
-                Effect.sync(() => {
-                  const current = entries.get(key);
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const entry = yield* requireUi(key);
 
-                  if (current?._tag === "Live" && current === entry) entries.delete(key);
-                }),
-              )
-              .pipe(
-                Effect.andThen(FiberMap.remove(work, `prompt:${key}`)),
-                Effect.andThen(Effect.sync(() => entry.unsubscribeHandle())),
-                Effect.andThen(entry.handle.dispose),
-                Effect.mapError((cause) =>
-                  internalFailure(`could not close UI session ${key}`, cause),
-                ),
+            const closing = yield* statePermit.withPermit(
+              Effect.gen(function* () {
+                if (entries.get(key) !== entry) return yield* unknownSession(key);
+                const marker: ClosingEntry = { _tag: "Closing", key, token: randomUUID() };
+                entries.set(key, marker);
+                entry.unsubscribeHandle();
+
+                return marker;
+              }),
+            );
+
+            yield* FiberMap.remove(work, `prompt:${key}`);
+            yield* restore(entry.handle.dispose).pipe(
+              Effect.mapError((cause) =>
+                internalFailure(`could not close UI session ${key}`, cause),
               ),
-          ),
+            );
+            yield* statePermit.withPermit(
+              Effect.sync(() => {
+                if (entries.get(key) === closing) entries.delete(key);
+              }),
+            );
+          }),
+        ),
+      deliverAutomationResult: (target, result) =>
+        statePermit.withPermit(
+          Effect.gen(function* () {
+            if (profilePath === undefined || target.path !== profilePath) {
+              return yield* new AutomationConversationDeliveryFailed({
+                category: "destination-invalid",
+                retriable: false,
+                message: "conversation registry does not belong to the requested Profile",
+              });
+            }
+
+            if ([...entries.values()].some((entry) => entry._tag !== "Live")) {
+              return yield* new AutomationConversationDeliveryFailed({
+                category: "owner-unavailable",
+                retriable: true,
+                message: "a conversation owner is opening or closing; retry delivery",
+              });
+            }
+
+            let matching: LiveEntry | undefined;
+
+            for (const candidate of entries.values()) {
+              if (candidate._tag !== "Live" || candidate.handle.currentSession === undefined) {
+                continue;
+              }
+
+              const current = yield* candidate.handle.currentSession.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AutomationConversationDeliveryFailed({
+                      category: "owner-unavailable",
+                      retriable: true,
+                      message: "could not resolve a live conversation owner",
+                      cause,
+                    }),
+                ),
+              );
+
+              if (current?.id === result.targetSessionId) matching = candidate;
+            }
+
+            if (matching === undefined) {
+              return yield* appendStoredAutomationResult(target.path, result);
+            }
+
+            if (matching.handle.appendAutomationResult === undefined) {
+              return yield* new AutomationConversationDeliveryFailed({
+                category: "owner-unavailable",
+                retriable: true,
+                message: "live conversation owner cannot accept automation results",
+              });
+            }
+
+            if (matching.phase._tag !== "Idle") {
+              return yield* new AutomationConversationDeliveryFailed({
+                category: "session-busy",
+                retriable: true,
+                message: "conversation has an admitted active turn",
+              });
+            }
+
+            const appended = yield* matching.handle.appendAutomationResult(result);
+
+            if (!appended) return;
+            emit(matching, {
+              kind: "automation-result",
+              automationId: result.automationId,
+              runId: result.runId,
+              text: [...automationResultContent(result)].slice(0, 1_024).join(""),
+              timestamp: new Date().toISOString(),
+            });
+          }),
         ),
     };
 

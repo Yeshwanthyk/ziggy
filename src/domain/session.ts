@@ -79,6 +79,13 @@ export type SessionHistoryEntry =
       readonly phase: "start" | "end";
       readonly toolName: string;
       readonly failed: boolean;
+    }
+  | {
+      readonly kind: "automation-result";
+      readonly timestamp: string;
+      readonly automationId: string;
+      readonly runId: string;
+      readonly text: string;
     };
 
 export interface SessionHistoryPage {

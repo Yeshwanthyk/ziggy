@@ -335,6 +335,7 @@ describe("Pi provider failure classification", () => {
     let releaseAbort: (() => void) | undefined;
     const listeners = new Set<AgentSessionEventListener>();
     const events: Array<ChatEvent> = [];
+    const sessionManager = SessionManager.inMemory("/profile");
 
     const handle = makeSessionChatHandle(
       "/profile",
@@ -352,6 +353,8 @@ describe("Pi provider failure classification", () => {
         },
         steer: () => Promise.resolve(),
         followUp: () => Promise.resolve(),
+        sendCustomMessage: () => Promise.resolve(),
+        sessionManager,
         subscribe: (listener) => {
           listeners.add(listener);
 

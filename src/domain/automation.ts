@@ -28,7 +28,24 @@ const SlackTarget = Schema.TaggedStruct("slack", {
   threadTs: Schema.optional(Schema.String),
 });
 
-export const AutomationTarget = Schema.Union([TelegramTarget, DiscordTarget, SlackTarget]);
+const StoredSessionId = Schema.String.check(
+  Schema.makeFilter(
+    (value) => value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
+    { expected: "a canonical 1-128 character Pi session id" },
+  ),
+);
+
+const ConversationTarget = Schema.TaggedStruct("conversation", {
+  target: Schema.String,
+  sessionId: StoredSessionId,
+});
+
+export const AutomationTarget = Schema.Union([
+  TelegramTarget,
+  DiscordTarget,
+  SlackTarget,
+  ConversationTarget,
+]);
 
 export type AutomationTarget = typeof AutomationTarget.Type;
 
@@ -76,6 +93,15 @@ const AutomationFileSchema = Schema.Struct({
 });
 
 const targetFromSource = (source: string): AutomationTarget | undefined => {
+  const conversation = /^conversation:(.{1,128})$/u.exec(source);
+
+  if (
+    conversation?.[1] !== undefined &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(conversation[1])
+  ) {
+    return { _tag: "conversation", target: source, sessionId: conversation[1] };
+  }
+
   const telegram = /^telegram:chat:(-?[1-9][0-9]*)$/.exec(source);
 
   if (telegram?.[1] !== undefined) {
@@ -174,9 +200,38 @@ const AutomationDeliveryFailureCategorySchema = Schema.Literals([
   "transport",
   "remote",
   "invalid-response",
+  "owner-unavailable",
+  "session-busy",
+  "destination-invalid",
+  "destination-missing",
+  "write",
 ]);
 
 export type AutomationDeliveryFailureCategory = typeof AutomationDeliveryFailureCategorySchema.Type;
+
+export interface AutomationConversationResult {
+  readonly automationId: string;
+  readonly runId: string;
+  readonly targetSessionId: string;
+  readonly text: string;
+  readonly timestamp: string;
+}
+
+export class AutomationConversationDeliveryFailed extends Schema.TaggedErrorClass<AutomationConversationDeliveryFailed>()(
+  "AutomationConversationDeliveryFailed",
+  {
+    category: Schema.Literals([
+      "owner-unavailable",
+      "session-busy",
+      "destination-invalid",
+      "destination-missing",
+      "write",
+    ]),
+    retriable: Schema.Boolean,
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {}
 
 export const AutomationTargetOutcome = Schema.Union([
   Schema.Struct({ target: CanonicalTargetString, status: Schema.Literal("delivered") }),
@@ -263,6 +318,11 @@ const AutomationRunFailureCategory = Schema.Literals([
   "transport",
   "remote",
   "invalid-response",
+  "owner-unavailable",
+  "session-busy",
+  "destination-invalid",
+  "destination-missing",
+  "write",
   "AutomationInvalid",
   "AutomationNotFound",
   "AutomationPaused",
@@ -308,6 +368,11 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
   "transport",
   "remote",
   "invalid-response",
+  "owner-unavailable",
+  "session-busy",
+  "destination-invalid",
+  "destination-missing",
+  "write",
 ]);
 
 const executionFailureCategories: ReadonlySet<string> = new Set([

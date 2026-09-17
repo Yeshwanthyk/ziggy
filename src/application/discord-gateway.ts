@@ -68,6 +68,7 @@ import { codePointLength } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ChatRegistryApi } from "./chat-registry";
+import type { UiGatewayError } from "../domain/ui-gateway";
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 
@@ -490,10 +491,9 @@ const disposeChats = (
       state.handle === undefined
         ? Effect.void
         : (registry === undefined
-            ? Effect.void
-            : registry.unregisterAlias(`discord/${chatKey}`, state.handle)
+            ? state.handle.dispose
+            : registry.closeAlias(`discord/${chatKey}`, state.handle)
           ).pipe(
-            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[discord] ${chatKey} dispose failed: ${failure.message}`);
@@ -921,24 +921,16 @@ export const makeDiscordGateway = (
                 }
 
                 if (chatState.handle === undefined) {
-                  chatState.handle = yield* agent.openChat(
+                  const open = agent.openChat(
                     target,
                     message.context,
                     join(target.path, "sessions", "discord", message.chatKey),
                   );
 
-                  if (registry !== undefined) {
-                    yield* registry
-                      .registerAlias(`discord/${message.chatKey}`, "discord", chatState.handle)
-                      .pipe(
-                        Effect.catch((failure) =>
-                          Effect.logWarning("Discord registry registration failed", {
-                            chatKey: message.chatKey,
-                            failure,
-                          }),
-                        ),
-                      );
-                  }
+                  chatState.handle =
+                    registry === undefined
+                      ? yield* open
+                      : yield* registry.openAlias(`discord/${message.chatKey}`, "discord", open);
                 }
 
                 const handle = chatState.handle;
@@ -1169,7 +1161,13 @@ export const makeDiscordGateway = (
               Deferred.await(cancellation),
             ).pipe(
               Effect.catch(
-                (failure: ZiggyAgentError | DiscordApiError | DiscordIngressDatabaseError) =>
+                (
+                  failure:
+                    | ZiggyAgentError
+                    | DiscordApiError
+                    | DiscordIngressDatabaseError
+                    | UiGatewayError,
+                ) =>
                   Effect.sync(() => {
                     console.error(`[discord] ${message.chatKey} failed: ${failure.message}`);
                   }),

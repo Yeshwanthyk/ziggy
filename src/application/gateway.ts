@@ -13,6 +13,7 @@ import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
+import type { UiGatewayError } from "../domain/ui-gateway";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 
@@ -162,10 +163,9 @@ const disposeChats = (
       state.handle === undefined
         ? Effect.void
         : (registry === undefined
-            ? Effect.void
-            : registry.unregisterAlias(`telegram/${chatKey}`, state.handle)
+            ? state.handle.dispose
+            : registry.closeAlias(`telegram/${chatKey}`, state.handle)
           ).pipe(
-            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[gateway] ${chatKey} dispose failed: ${failure.message}`);
@@ -203,24 +203,16 @@ export const makeTelegramGateway = (
           return chatState.semaphore.withPermit(
             Effect.gen(function* () {
               if (chatState.handle === undefined) {
-                chatState.handle = yield* agent.openChat(
+                const open = agent.openChat(
                   target,
                   message.context,
                   join(target.path, "sessions", "telegram", message.chatKey),
                 );
 
-                if (registry !== undefined) {
-                  yield* registry
-                    .registerAlias(`telegram/${message.chatKey}`, "telegram", chatState.handle)
-                    .pipe(
-                      Effect.catch((failure) =>
-                        Effect.logWarning("Telegram registry registration failed", {
-                          chatKey: message.chatKey,
-                          failure,
-                        }),
-                      ),
-                    );
-                }
+                chatState.handle =
+                  registry === undefined
+                    ? yield* open
+                    : yield* registry.openAlias(`telegram/${message.chatKey}`, "telegram", open);
               }
 
               const handle = chatState.handle;
@@ -281,7 +273,7 @@ export const makeTelegramGateway = (
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((failure: ZiggyAgentError | TelegramApiError) =>
+              Effect.catch((failure: ZiggyAgentError | TelegramApiError | UiGatewayError) =>
                 Effect.sync(() => {
                   console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
                 }),

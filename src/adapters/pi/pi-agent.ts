@@ -4,6 +4,10 @@ import type { Dirent } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  AutomationConversationDeliveryFailed,
+  type AutomationConversationResult,
+} from "../../domain/automation";
+import {
   InteractiveMode,
   SessionManager,
   createAgentSessionFromServices,
@@ -94,6 +98,11 @@ import { leaseCompiledPiTuiAssets } from "./tui-themes";
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
 import { createProfileExtensionTool } from "./profile-extension-tool";
+import {
+  AUTOMATION_RESULT_CUSTOM_TYPE,
+  automationResultContent,
+  isAutomationReceipt,
+} from "./automation-result";
 
 export interface PiAgentApi {
   readonly runSpecialist: (
@@ -1464,7 +1473,14 @@ type PromptSession = Pick<
 
 type ChatSession = Pick<
   AgentSessionRuntime["session"],
-  "abort" | "followUp" | "isIdle" | "prompt" | "steer" | "subscribe"
+  | "abort"
+  | "followUp"
+  | "isIdle"
+  | "prompt"
+  | "sendCustomMessage"
+  | "sessionManager"
+  | "steer"
+  | "subscribe"
 >;
 
 const MAX_PROGRESS_TEXT_CODE_POINTS = 3_800;
@@ -1679,12 +1695,152 @@ export const makeSessionChatHandle = (
   const currentSession =
     methods.currentSession === undefined ? {} : { currentSession: methods.currentSession };
 
+  let automationAppendPoisoned = false;
+
+  const durableAutomationReceipt = (result: AutomationConversationResult): boolean => {
+    const file = session.sessionManager.getSessionFile();
+
+    if (file === undefined) return false;
+
+    const persisted = SessionManager.open(file, dirname(file), profilePath);
+
+    return persisted.getEntries().some((entry) => isAutomationReceipt(entry, result));
+  };
+
+  const deliveryFailure = (
+    category: AutomationConversationDeliveryFailed["category"],
+    retriable: boolean,
+    message: string,
+    cause?: unknown,
+  ): AutomationConversationDeliveryFailed =>
+    cause === undefined
+      ? new AutomationConversationDeliveryFailed({ category, retriable, message })
+      : new AutomationConversationDeliveryFailed({ category, retriable, message, cause });
+
   return {
     get isIdle() {
       return session.isIdle;
     },
     prompt: methods.prompt,
     ...currentSession,
+    appendAutomationResult: (result) =>
+      Effect.gen(function* () {
+        const alreadyDelivered = yield* Effect.try({
+          try: () => {
+            if (session.sessionManager.getSessionId() !== result.targetSessionId) {
+              throw deliveryFailure(
+                "destination-missing",
+                false,
+                `live session no longer owns ${result.targetSessionId}`,
+              );
+            }
+
+            if (durableAutomationReceipt(result)) return true;
+
+            if (automationAppendPoisoned) {
+              throw deliveryFailure(
+                "write",
+                true,
+                "automation result delivery previously failed; restart the session owner before retrying",
+              );
+            }
+
+            return false;
+          },
+          catch: (cause) =>
+            cause instanceof AutomationConversationDeliveryFailed
+              ? cause
+              : deliveryFailure(
+                  "write",
+                  true,
+                  "could not inspect the conversation transcript for automation delivery",
+                  cause,
+                ),
+        });
+
+        if (alreadyDelivered) return false;
+
+        yield* Effect.tryPromise({
+          try: () => {
+            if (session.sessionManager.getSessionId() !== result.targetSessionId) {
+              throw deliveryFailure(
+                "destination-missing",
+                false,
+                `live session no longer owns ${result.targetSessionId}`,
+              );
+            }
+
+            if (!session.isIdle) {
+              throw deliveryFailure("session-busy", true, "conversation has an active turn");
+            }
+
+            return session.sendCustomMessage(
+              {
+                customType: AUTOMATION_RESULT_CUSTOM_TYPE,
+                content: automationResultContent(result),
+                display: true,
+                details: {
+                  automationId: result.automationId,
+                  runId: result.runId,
+                  targetSessionId: result.targetSessionId,
+                },
+              },
+              { triggerTurn: false },
+            );
+          },
+          catch: (cause) =>
+            cause instanceof AutomationConversationDeliveryFailed
+              ? cause
+              : deliveryFailure(
+                  "write",
+                  true,
+                  "could not durably append automation result to the conversation",
+                  cause,
+                ),
+        }).pipe(
+          Effect.catch((failure) => {
+            if (failure.category !== "write") return Effect.fail(failure);
+
+            return Effect.try({
+              try: () => durableAutomationReceipt(result),
+              catch: (cause) =>
+                deliveryFailure(
+                  "write",
+                  true,
+                  "could not reconcile the automation result after append failure",
+                  cause,
+                ),
+            }).pipe(
+              Effect.flatMap((persisted) => (persisted ? Effect.void : Effect.fail(failure))),
+            );
+          }),
+          Effect.andThen(
+            Effect.try({
+              try: () => {
+                if (!durableAutomationReceipt(result)) {
+                  throw new Error("Pi transcript did not contain the appended automation receipt");
+                }
+              },
+              catch: (cause) =>
+                deliveryFailure(
+                  "write",
+                  true,
+                  "could not verify the automation result in the conversation transcript",
+                  cause,
+                ),
+            }),
+          ),
+          Effect.tapError((failure) =>
+            failure.category === "write"
+              ? Effect.sync(() => {
+                  automationAppendPoisoned = true;
+                })
+              : Effect.void,
+          ),
+        );
+
+        return true;
+      }),
     abort: piPromise(profilePath, "abort agent session", abortSession),
     steer: (text) =>
       session.isIdle

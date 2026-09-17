@@ -886,3 +886,10 @@ results.
 - Added a short local browser quickstart plus complete local/Tailscale pairing, revocation, shared-gateway, state-ownership, session-inspection, and installed-package update guidance. Synchronized the `ziggy-operations` references and generated catalog resources.
 - Archived the completed anti-slop alignment, Effect-native audit, and CLI/filesystem UI-hook reports from the working tree. Their history remains in Git; current behavior belongs to source rules, focused skills, and the web operations/architecture guides.
 - Verification: the full `bun run check` gate passed before the documentation commit; packaged operations references matched their public sources and loaded in the focused resource test.
+
+## Deliver automation results into durable conversations
+
+- Added canonical `conversation:<stored-session-id>` automation targets. Every run still executes in a fresh automation session, then the selected Profile registry appends a provenance-labeled Pi custom message to the destination transcript without triggering a model turn.
+- Registry admission now fences live UI and channel session opening, prompting, automation append, and closing. Busy conversations fail retriably; unopened stored transcripts use the existing safe Profile-local session resolver. Durable receipts deduplicate retries across the full Pi entry tree, and a write is successful only after the JSONL receipt can be reloaded.
+- Added stored session identity to session inspection plus automation-result live events and history projection. CLI runs without a scoped registry report `owner-unavailable`; delivery failures remain explicit in the automation ledger.
+- Verification: the full `bun run check` gate passed, including 21 UI SDK tests, 59 web tests, synchronized generated assets/catalog/docs, and the UI conversation picker/documentation changes. The complete core, extension, and tooling suite passed with 744 tests and 2,744 assertions. No live Profile, transcript, external message, installation, or resident restart was used.

@@ -565,6 +565,42 @@ describe("automation run", () => {
     expect(allEvents.at(-1)).toBe("reply:local reply");
   });
 
+  test("conversation delivery without a scoped registry fails truthfully and records the ledger", async () => {
+    const events: Array<string> = [];
+    const target = await profile("conversation:0199aabb-ccdd-7000-8000-001122334455");
+
+    expect(await run(harness(events), target)).toEqual({
+      kind: "executed",
+      delivery: {
+        kind: "resolved",
+        targets: [
+          {
+            target: "conversation:0199aabb-ccdd-7000-8000-001122334455",
+            status: "failed",
+            category: "owner-unavailable",
+            retriable: true,
+          },
+        ],
+      },
+    });
+    expect(events).toContain("reply:local reply");
+    expect(await Effect.runPromise(readAutomationRuns(target.path))).toMatchObject([
+      {
+        state: "failed",
+        localCompleted: true,
+        failureCategory: "owner-unavailable",
+        targets: [
+          {
+            target: "conversation:0199aabb-ccdd-7000-8000-001122334455",
+            status: "failed",
+            failureCategory: "owner-unavailable",
+            retriable: true,
+          },
+        ],
+      },
+    ]);
+  });
+
   test("a truthful terminal database failure is attempted once and is not fabricated", async () => {
     const events: Array<string> = [];
     const target = await profile("discord:channel:1,telegram:chat:2");

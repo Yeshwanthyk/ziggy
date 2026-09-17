@@ -246,6 +246,7 @@ export const ZIGGY_EVENT_NAMES: ReadonlyArray<ZiggyEventName> = [
   "thinking",
   "tool",
   "voice",
+  "automation-result",
   "settled",
   "error",
   "replay-gap",
