@@ -34,6 +34,8 @@ export interface SessionMetadata {
   readonly name?: string;
   readonly kind: "root" | "child";
   readonly createdAt: string;
+  /** Latest persisted conversation message timestamp; metadata-only entries do not advance it. */
+  readonly activityAt?: string;
   readonly entryCount: number;
   readonly parent: SessionReferenceMetadata | undefined;
   readonly parentUnknown: boolean;

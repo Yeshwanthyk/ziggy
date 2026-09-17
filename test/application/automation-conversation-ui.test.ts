@@ -421,10 +421,19 @@ test("destination.list pages the selected Profile's stored and external destinat
         : Effect.succeed(
             sessionIds.map((id) => {
               const session = {
-                path: join(target.path, "sessions", `${id}.jsonl`),
+                path:
+                  id === "a.dot"
+                    ? "local/agents/reviewer/2026-09-17.jsonl"
+                    : id === "a01"
+                      ? "agents/01a0b056-de7c-7221-9f35-0fada0094e10/2026-09-17.jsonl"
+                      : id === "a02"
+                        ? "ui/chat-restart/2026-09-17.jsonl"
+                        : `${id}.jsonl`,
                 id,
                 kind: "root" as const,
                 createdAt: "2026-09-17T12:00:00.000Z",
+                activityAt:
+                  id === "a.dot" ? "2026-09-17T15:00:00.000Z" : "2026-09-17T12:00:00.000Z",
                 entryCount: 1,
                 parent: undefined,
                 parentUnknown: false,
@@ -485,6 +494,17 @@ test("destination.list pages the selected Profile's stored and external destinat
           },
           2,
           "pin-stale-label",
+        );
+        yield* pins.set(
+          fixture.target.path,
+          {
+            id: "restart-label",
+            ref: { profileId: fixture.profileId, kind: "live", key: "ui/chat-restart" },
+            label: "Restart planning",
+            order: 3,
+          },
+          3,
+          "pin-restart-label",
         );
         yield* registry.getOrOpenUi(
           "ui/chat-live",
@@ -566,6 +586,8 @@ test("destination.list pages the selected Profile's stored and external destinat
           target: "telegram:chat:-100123",
           kind: "telegram",
           label: "🚀".repeat(160),
+          category: "telegram",
+          pinned: false,
         });
         expect(
           all.filter((entry) => entry.kind === "conversation").map((entry) => entry.target),
@@ -575,16 +597,42 @@ test("destination.list pages the selected Profile's stored and external destinat
           target: "conversation:Z-last",
           kind: "conversation",
           label: "Stored planning",
+          category: "session",
+          pinned: true,
+          activityAt: "2026-09-17T12:00:00.000Z",
         });
         expect(all).toContainEqual({
           target: "conversation:a00",
           kind: "conversation",
           label: "Live planning",
+          category: "session",
+          pinned: true,
+          activityAt: "2026-09-17T12:00:00.000Z",
         });
         expect(all).toContainEqual({
           target: "conversation:a.dot",
           kind: "conversation",
           label: "Gateway review",
+          category: "agent",
+          pinned: false,
+          activityAt: "2026-09-17T15:00:00.000Z",
+          agentId: "reviewer",
+        });
+        expect(all).toContainEqual({
+          target: "conversation:a01",
+          kind: "conversation",
+          label: "a01",
+          category: "agent",
+          pinned: false,
+          activityAt: "2026-09-17T12:00:00.000Z",
+        });
+        expect(all).toContainEqual({
+          target: "conversation:a02",
+          kind: "conversation",
+          label: "Restart planning",
+          category: "session",
+          pinned: true,
+          activityAt: "2026-09-17T12:00:00.000Z",
         });
         expect(all.some((entry) => entry.label === "Unopened conversation")).toBe(false);
         expect(all.some((entry) => entry.label === "Other Profile")).toBe(false);

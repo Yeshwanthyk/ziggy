@@ -596,6 +596,13 @@ export function App() {
               {sidebarItems.automations.map((automation) => (
                 <AutomationRow
                   automation={automation}
+                  runState={
+                    gateway.automationRuns?.[automation.id]?.state === "running"
+                      ? "running"
+                      : gateway.startingAutomation === automation.id
+                        ? "starting"
+                        : gateway.automationRuns?.[automation.id]?.state
+                  }
                   busy={
                     !connected ||
                     gateway.sidebarBusy ||

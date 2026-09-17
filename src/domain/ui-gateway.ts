@@ -633,6 +633,10 @@ export const UiAutomationDestination = Schema.Struct({
   target: AutomationTargetString,
   kind: Schema.Literals(["conversation", "telegram", "discord", "slack"]),
   label: Schema.optionalKey(boundedCodePointString("destination label", 160, 1)),
+  category: Schema.Literals(["agent", "session", "telegram", "discord", "slack"]),
+  pinned: Schema.Boolean,
+  activityAt: Schema.optionalKey(boundedString("destination activity timestamp", 128)),
+  agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
 });
 
 export type UiAutomationDestination = typeof UiAutomationDestination.Type;

@@ -57,8 +57,31 @@ describe("AutomationDetailDialog", () => {
       <AutomationDetailDialog
         automation={automation}
         available
-        detail={detail}
-        destinations={[]}
+        detail={{
+          ...detail,
+          runs: [
+            {
+              ...detail.runs[0]!,
+              targets: [
+                {
+                  target: "slack:channel:C012345678",
+                  status: "failed",
+                  failureCategory: "rate-limited",
+                  retriable: true,
+                },
+              ],
+            },
+          ],
+        }}
+        destinations={[
+          {
+            target: "slack:channel:C012345678",
+            kind: "slack",
+            label: "Team updates",
+            category: "slack",
+            pinned: false,
+          },
+        ]}
         onOpenChange={vi.fn()}
         onRefresh={vi.fn()}
         onSave={vi.fn()}
@@ -69,6 +92,8 @@ describe("AutomationDetailDialog", () => {
     expect(screen.getByText("Check today's weather.")).not.toBeNull();
     expect(screen.getAllByText("495 ms").length).toBeGreaterThan(0);
     expect(screen.getAllByText("ProviderCallError").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Team updates").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("failed · rate-limited").length).toBeGreaterThan(0);
     expect(screen.getByText("Last scheduler tick succeeded")).not.toBeNull();
     expect(document.body.textContent).toMatch(/EDT|EST|GMT-4/);
   });
@@ -93,6 +118,9 @@ describe("AutomationDetailDialog", () => {
             target: "conversation:session-123",
             kind: "conversation",
             label: "Team updates",
+            category: "session",
+            pinned: false,
+            activityAt: "2026-09-17T12:00:00.000Z",
           },
         ]}
         onOpenChange={vi.fn()}
@@ -102,9 +130,8 @@ describe("AutomationDetailDialog", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Destination"), {
-      target: { value: "conversation:session-123" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Select a destination" }));
+    fireEvent.click(screen.getByRole("button", { name: /Team updates/u }));
     fireEvent.click(screen.getByRole("button", { name: "Add destination" }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -138,5 +165,52 @@ describe("AutomationDetailDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove telegram:chat:-100123" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0]?.[0]).toContain("broadcast: origin\n");
+  });
+
+  it("features an active run above a newer skipped attempt and explains empty delivery state", () => {
+    render(
+      <AutomationDetailDialog
+        automation={automation}
+        available
+        detail={{
+          ...detail,
+          runs: [
+            {
+              ...detail.runs[0]!,
+              runId: "run-skipped",
+              state: "skipped-busy",
+              recordedAtMs: 1_757_937_601_000,
+              startedAtMs: null,
+              finishedAtMs: null,
+              failureCategory: null,
+            },
+            {
+              ...detail.runs[0]!,
+              runId: "run-active",
+              state: "running",
+              recordedAtMs: 1_757_937_600_000,
+              finishedAtMs: null,
+              failureCategory: null,
+            },
+          ],
+        }}
+        destinations={[]}
+        onOpenChange={vi.fn()}
+        onRefresh={vi.fn()}
+        onSave={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Active run" })).not.toBeNull();
+    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+    expect(screen.getByText("In progress")).not.toBeNull();
+    expect(
+      screen.getAllByText("Broadcast delivery waits for this run to finish.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("Skipped · already running")).not.toBeNull();
+    expect(
+      screen.getByText("This attempt did not start, so no broadcasts were attempted."),
+    ).not.toBeNull();
   });
 });

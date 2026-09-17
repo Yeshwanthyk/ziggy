@@ -629,11 +629,16 @@ describe("useZiggyGateway", () => {
             target: "slack:channel:C012345678",
             kind: "slack" as const,
             label: "Team updates",
+            category: "slack" as const,
+            pinned: false,
           },
           {
             target: "conversation:session-archive-1",
             kind: "conversation" as const,
             label: "session-archive-1",
+            category: "session" as const,
+            pinned: false,
+            activityAt: "2026-09-17T12:00:00.000Z",
           },
         ],
       })),
@@ -660,11 +665,20 @@ describe("useZiggyGateway", () => {
     ]);
     expect(hook.result.current.automationDestinations).toEqual(
       expect.arrayContaining([
-        { target: "slack:channel:C012345678", kind: "slack", label: "Team updates" },
+        {
+          target: "slack:channel:C012345678",
+          kind: "slack",
+          label: "Team updates",
+          category: "slack",
+          pinned: false,
+        },
         {
           target: "conversation:session-archive-1",
           kind: "conversation",
           label: "session-archive-1",
+          category: "session",
+          pinned: false,
+          activityAt: "2026-09-17T12:00:00.000Z",
         },
       ]),
     );
@@ -1430,4 +1444,100 @@ describe("useZiggyGateway", () => {
 
     expect(hook.result.current.agentDefinitionDetail).toBeUndefined();
   });
+});
+
+it("reconciles a timed-out run with durable running state without sending it twice", async () => {
+  const run = {
+    ...automationRun("morning-weather", 100),
+    state: "running" as const,
+    finishedAtMs: null,
+  };
+  const { client, fixture } = makeClient({
+    runAutomation: vi.fn(async () => {
+      throw new ZiggyRequestOutcomeUnknownError("automation.run", {
+        profileId: profile.profileId,
+        automationId: "morning-weather",
+        commandId: "test-run",
+      });
+    }),
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [run, { ...automationRun("morning-weather", 200), state: "skipped-busy" as const }],
+    })),
+  });
+  const hook = await connectHook(client);
+  await act(async () => {
+    await hook.result.current.runAutomation("morning-weather");
+  });
+  expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("running");
+  expect(fixture.runAutomation).toHaveBeenCalledTimes(1);
+  expect(hook.result.current.localError).toBeUndefined();
+  expect(hook.result.current.sidebarBusy).toBe(false);
+});
+
+it("clears a recovered run-history error while preserving the definition", async () => {
+  let unavailable = true;
+  const { client } = makeClient({
+    listAutomationRuns: vi.fn(async () => {
+      if (unavailable) throw new Error("journal unavailable");
+      return { profileId: profile.profileId, runs: [automationRun("morning-weather", 100)] };
+    }),
+  });
+  const hook = await connectHook(client);
+  await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+  expect(hook.result.current.automationDetail?.errors[0]?.source).toBe("runs");
+  unavailable = false;
+  await act(async () => hook.result.current.runAutomation("morning-weather"));
+  expect(hook.result.current.automationDetail?.errors).toEqual([]);
+  expect(hook.result.current.automationDetail?.runs).toHaveLength(1);
+  expect(hook.result.current.automationDetail?.definition?.id).toBe("morning-weather");
+});
+
+it("clears prior endpoint run states before the replacement endpoint responds", async () => {
+  const { client: first } = makeClient({
+    listAutomations: vi.fn(async () => ({
+      profileId: profile.profileId,
+      automations: [{ id: "morning-weather", valid: true, lifecycle: "active" as const }],
+    })),
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [{ ...automationRun("morning-weather", 100), state: "running" as const }],
+    })),
+  });
+  const pending = deferred<Awaited<ReturnType<GatewayClient["listAutomationRuns"]>>>();
+  const { client: second } = makeClient({ listAutomationRuns: vi.fn(() => pending.promise) });
+  let selected = first;
+  const hook = renderHook(() => useZiggyGateway(() => selected));
+  await act(async () =>
+    hook.result.current.connect({ url: "ws://127.0.0.1:9876/ws", token: "first" }),
+  );
+  await waitFor(() =>
+    expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("running"),
+  );
+  selected = second;
+  await act(async () =>
+    hook.result.current.connect({ url: "ws://127.0.0.1:9877/ws", token: "second" }),
+  );
+  expect(hook.result.current.automationRuns).toEqual({});
+  pending.resolve({ profileId: profile.profileId, runs: [] });
+  await act(async () => pending.promise);
+});
+
+it("shows the completed run after a later busy attempt was skipped", async () => {
+  const { client } = makeClient({
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [
+        {
+          ...automationRun("morning-weather", 200),
+          state: "skipped-busy" as const,
+          startedAtMs: null,
+        },
+        automationRun("morning-weather", 100),
+      ],
+    })),
+  });
+  const hook = await connectHook(client);
+  await act(async () => hook.result.current.runAutomation("morning-weather"));
+  expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("completed");
 });

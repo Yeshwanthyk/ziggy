@@ -925,3 +925,18 @@ results.
 - Project the latest Pi `session_info` display name into stored session metadata and use it in the automation destination catalog, while keeping canonical session IDs unchanged and applying explicit UI pin labels last.
 - New conversations write one bounded Pi-native name on their first valid prompt. Stable local and channel routes lead with semantic identity and add the first-message topic; otherwise the first user message supplies the title. Existing names and explicit clears are never overwritten. One-off specialist runs include the agent identity and task topic, while the direct UI specialist route remains one continuing session per agent.
 - Focused adapter and UI tests cover latest-name extraction, explicit clearing, bounded fallback, stable identity, catalog labels, and pin precedence. No live Profile, transcript, external message, installation, or resident restart was used.
+
+## Make automation destinations searchable and run state readable
+
+- Enriched destination discovery with pinned, agent/session, and channel categories plus latest message or automation-result activity. Later naming metadata does not make historical conversations appear recent; exact single-session UI pin directories restore pinned grouping after a resident restart.
+- Replaced the automation destination select with a searchable, filtered picker. All destinations group pinned conversations first, followed by agents, sessions, Slack, Discord, and Telegram, with recent conversation activity first and exact activity times available on hover.
+- Automation details now feature an active run over a newer skipped-busy attempt, show elapsed in-progress state, explain skipped and pending delivery clearly, and render readable per-destination outcomes in both featured and recent runs.
+- Verification: 13 focused core tests, 21 SDK tests, 6 focused picker/detail tests, the 66-test web check and build, targeted source lint, formatting, and repository TypeScript checks passed.
+
+## Automation run visibility and release 0.2.9
+
+- Poll recorded run history while connected; show starting/running/completed/failed state in the sidebar, keep running jobs inspectable, and disable repeat execution while active. A timed-out request reconciles durable status without redispatching.
+- Keep the active or latest non-busy run featured so a later skipped duplicate cannot hide execution or completion. Show elapsed time and named per-target results directly in run details.
+- Astra review found reconnect state leakage and stale run-history errors after recovery; both were fixed with focused regressions. Browser simulation additionally caught a completed run being hidden behind a newer busy attempt; fixed and regression-tested.
+- Full repository check passed, including SDK and web tests. Isolated browser proof exercised search, agent filtering, two saved destinations, automatic running-state refresh, and simulated completion with visible per-target outcomes. Simulated records were written only to the disposable preview Profile.
+- Read-only live evidence: Squarey's original LinkedIn jobs manual run completed at 2026-09-17T22:17:11Z; its stored outcomes record both the conversation and Slack channel as delivered. The second manual attempt was skipped-busy. No live run or outbound message was initiated during this verification.

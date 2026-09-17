@@ -47,6 +47,7 @@ type TestSessionEntryBody =
   | { readonly type: "model_change"; readonly provider: string; readonly modelId: string }
   | { readonly type: "thinking_level_change"; readonly thinkingLevel: string }
   | { readonly type: "session_info"; readonly name?: string }
+  | { readonly type: "custom_message"; readonly customType: string }
   | { readonly type: "message"; readonly message: TestSessionMessage };
 
 const header = (id: string, parentSession?: string) => {
@@ -134,6 +135,37 @@ describe("Pi session metadata adapter", () => {
 
     expect(sessions.find((session) => session.id === "named")?.name).toBe("Gateway review");
     expect(sessions.find((session) => session.id === "cleared")?.name).toBeUndefined();
+  });
+
+  test("uses the latest message as activity without advancing for later naming metadata", async () => {
+    const root = await profile();
+    const file = join(root, "sessions", "activity.jsonl");
+    await writeJsonl(file, [
+      header("activity"),
+      {
+        ...entry("message", null, {
+          type: "message",
+          message: { role: "user", content: "Earlier conversation", timestamp: 1 },
+        }),
+        timestamp: "2026-08-08T11:00:00.000Z",
+      },
+      {
+        ...entry("result", "message", {
+          type: "custom_message",
+          customType: "ziggy.automation-result",
+        }),
+        timestamp: "2026-09-16T12:00:00.000Z",
+      },
+      {
+        ...entry("name", "result", { type: "session_info", name: "Backfilled name" }),
+        timestamp: "2026-09-17T12:00:00.000Z",
+      },
+    ]);
+
+    const session = (await Effect.runPromise(listProfileSessions(root)))[0];
+
+    expect(session?.name).toBe("Backfilled name");
+    expect(session?.activityAt).toBe("2026-09-16T12:00:00.000Z");
   });
 
   test("projects lineage, changes, usage, and terminal state without transcript fields", async () => {

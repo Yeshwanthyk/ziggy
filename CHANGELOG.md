@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-09-17
+
+### Added
+
+- Searchable automation destinations grouped by pins, agents, sessions, and messaging platform, with recent activity ordering
+
+### Fixed
+
+- Automation runs show progress and refresh recorded outcomes without retrying when a long run outlasts the UI request timeout
+
 ## [0.2.8] - 2026-09-17
 
 ### Added
@@ -127,7 +137,7 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.9...HEAD
 [0.2.8]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...v0.2.6
@@ -138,3 +148,5 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 [0.2.1]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Yeshwanthyk/ziggy/releases/tag/v0.1.0
+
+[0.2.9]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.8...v0.2.9

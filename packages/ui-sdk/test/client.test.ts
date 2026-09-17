@@ -361,8 +361,21 @@ const methodFixtures = (): ReadonlyArray<{
       result: {
         profileId: PROFILE_A,
         entries: [
-          { target: "conversation:main-session", kind: "conversation", label: "Main" },
-          { target: "slack:channel:C012345678", kind: "slack", label: "engineering" },
+          {
+            target: "conversation:main-session",
+            kind: "conversation",
+            label: "Main",
+            category: "session",
+            pinned: true,
+            activityAt: "2026-09-17T12:00:00.000Z",
+          },
+          {
+            target: "slack:channel:C012345678",
+            kind: "slack",
+            label: "engineering",
+            category: "slack",
+            pinned: false,
+          },
         ],
         nextCursor: "slack:channel:C012345678",
       },

@@ -49,3 +49,17 @@ describe("AutomationRow status", () => {
     );
   });
 });
+
+it("keeps running jobs inspectable and prevents a duplicate run", () => {
+  render(
+    <AutomationRow
+      {...actions}
+      busy
+      runState="running"
+      automation={{ id: "jobs", lifecycle: "active" }}
+    />,
+  );
+  expect(screen.getByText("Running · View progress")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Run jobs" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: /Jobs Running/ }).hasAttribute("disabled")).toBe(false);
+});
