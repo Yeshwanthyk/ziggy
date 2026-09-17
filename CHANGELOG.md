@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-09-17
+
+### Added
+
+- Durable one-use browser pairing, persistent cookie sessions, explicit revocation, same-origin embedded web assets, and a multi-Profile selector for the resident web gateway
+- General and paginated browser workflows with structured results, verification before saving, persisted replay evidence, and safe updates for installed bundled extensions
+
+### Changed
+
+- Expanded and polished the web client across Profile documents, automations, settings recovery, tool activity, sidebar hierarchy, and composer behavior
+
+### Fixed
+
+- Large transcript history reads, cached model discovery, and UI SDK watch recovery across replay rollover
+
 ## [0.2.5] - 2026-09-03
 
 ### Added
@@ -91,7 +106,8 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.2...v0.2.3

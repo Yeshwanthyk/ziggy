@@ -875,3 +875,8 @@ results.
 - Added a native Profile selector backed by the existing shared gateway. Switching resets Profile-scoped watches, conversations, sidebar data, drafts, and dialogs; the selected Profile is retained for that endpoint across a tab reload.
 - Focused server, storage, resident, CLI, SDK, and web tests cover atomic one-time pairing, restart persistence, runtime-token rotation, revocation, schema/config failure, static assets, occupied-port propagation, legacy authentication, long reconnects, and two-Profile switching. Full repository checks, the 736-test Bun suite, the updated 55-test web suite, a development standalone build, and the checkout-denied standalone smoke passed.
 - An isolated two-Profile browser preview paired once, switched Alpha to Beta, retained Beta across reload, survived a 56-second server outage, and reconnected automatically with the durable cookie. Revocation forced the pairing-required state. Live Tailscale configuration and the installed daemon remain unchanged for operator cutover after review.
+
+## Release 0.2.6 locally
+
+- Promoted the accumulated web client, browser workflow, extension update, session history, and durable browser access work to version 0.2.6. Updated the package source of truth, release notes, installer platform message, README, and version assertions.
+- The clean release executable was built and smoke-tested before atomically replacing the user-local Ziggy binary. Squarey's running resident and Tailscale configuration were intentionally left unchanged for a separate restart and pairing step.
