@@ -918,6 +918,7 @@ results.
 
 - Bumped the CLI and release surfaces for native conversation naming. Existing Squarey sessions will receive semantic names through Pi session-info metadata after a copied-transcript rehearsal, with original transcript backups and unchanged session identity.
 - The shared Pi pre-turn hook supplies first-message names for CLI and TUI sessions, including newly switched sessions. Semantic hints reserve room for the topic; explicit names and clears remain authoritative.
+- Release checks, full build tests, and the checkout-denied standalone smoke passed. Installed the verified 0.2.8 binary, stopped Squarey for the metadata update, and appended native names to 252 existing session files with original backups and byte-prefix/ID/reload assertions. Restarted successfully; the live SDK catalog returned 249 conversations with zero raw-ID labels, both existing pin titles, and all four Slack room names. No provider call or outbound message was initiated for verification.
 
 ## Name stored conversations with Pi session metadata
 
