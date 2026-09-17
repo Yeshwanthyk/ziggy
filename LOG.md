@@ -886,3 +886,9 @@ results.
 - Added a short local browser quickstart plus complete local/Tailscale pairing, revocation, shared-gateway, state-ownership, session-inspection, and installed-package update guidance. Synchronized the `ziggy-operations` references and generated catalog resources.
 - Archived the completed anti-slop alignment, Effect-native audit, and CLI/filesystem UI-hook reports from the working tree. Their history remains in Git; current behavior belongs to source rules, focused skills, and the web operations/architecture guides.
 - Verification: the full `bun run check` gate passed before the documentation commit; packaged operations references matched their public sources and loaded in the focused resource test.
+
+## General computer workflow alignment
+
+- Removed the obsolete `browser_workflow_save`, `browser_workflow_list`, `browser_workflow_show`, and `browser_workflow_run` tools with their fixed browser-job runner, schemas, storage adapter, tests, and two-page skill guidance. The adaptable `workflow_task_*` lifecycle and existing compiled semantic workflow support remain.
+- Replaced tuple-shaped keypress schemas with provider-compatible bounded arrays and retained strict modifier/chord ordering in application validation. Regenerated the bundled catalog.
+- Verification: focused computer-workflows and bundled-resource tests passed; `bun run check` passed. A session-scoped `opencode-go/deepseek-v4-flash` prompt with the updated tool surface returned `deepseek-schema-ok` without a tool call; the Profile default model remained unchanged.

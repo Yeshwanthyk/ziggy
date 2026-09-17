@@ -7,7 +7,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { Type, type Static } from "typebox";
 import {
-  BrowserJobDefinitionSchema,
   GeneralTaskDefinitionSchema,
   WorkflowDefinitionSchema,
   WorkflowIdSchema,
@@ -32,14 +31,6 @@ import {
   writeDraftSnapshot,
   writeRunRecord,
   writeRunSummary,
-  listBrowserJobs,
-  readBrowserJob,
-  readBrowserJobIfPresent,
-  readBrowserJobBaseline,
-  withBrowserJobLock,
-  writeBrowserJobBaseline,
-  writeBrowserJobRunReport,
-  promoteVerifiedBrowserJob,
   writeSaveCandidate,
   readSaveCandidate,
   writeSaveProof,
@@ -66,12 +57,6 @@ import {
   type ActiveWorkflowRun,
 } from "./src/run-tracker.ts";
 import { makeWorkflowSaveCandidate, proveWorkflowSaveCandidate } from "./src/save-pipeline.ts";
-import {
-  makeSavedBrowserJob,
-  runSavedBrowserJob,
-  validateBrowserJobDefinition,
-} from "./src/browser-jobs.ts";
-import { makeBrowserJobBridge } from "./src/browser-job-bridge.ts";
 import {
   cancelGeneralTaskRun,
   finishGeneralTaskRun,
@@ -115,11 +100,6 @@ const WorkflowParameters = Type.Object(
       Type.Record(WorkflowIdSchema, Type.String({ minLength: 1, maxLength: 1_024 })),
     ),
   },
-  { additionalProperties: false },
-);
-
-const SaveBrowserWorkflowParameters = Type.Object(
-  { workflow: BrowserJobDefinitionSchema },
   { additionalProperties: false },
 );
 
@@ -856,153 +836,6 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         issueCount: draft.issues.length,
         path,
       });
-    },
-  });
-
-  pi.registerTool({
-    name: "browser_workflow_save",
-    label: "Save Browser Workflow",
-    description:
-      "Optional fixed-recipe accelerator: validate, verify, and save a bounded read-only browser monitor. Use workflow_task_* for normal adaptable tasks.",
-    parameters: SaveBrowserWorkflowParameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
-      try {
-        const workflow = validateBrowserJobDefinition(parameters.workflow);
-        const current = await readBrowserJobIfPresent(ctx.cwd, workflow.id);
-        const saved = makeSavedBrowserJob(workflow);
-        const runSignal = _signal ?? new AbortController().signal;
-        const completed = await withBrowserJobLock(
-          ctx.cwd,
-          workflow.id,
-          runSignal,
-          async () =>
-            await runSavedBrowserJob({
-              saved,
-              bridge: makeBrowserJobBridge(pi, ctx),
-              store: {
-                readBaseline: async () => undefined,
-                writeBaseline: async () => undefined,
-                writeReport: async (report) => await writeBrowserJobRunReport(ctx.cwd, report),
-              },
-              signal: runSignal,
-            }),
-        );
-        if (completed.report.status !== "passed" || completed.report.revision !== saved.revision) {
-          throw new Error(
-            `Browser workflow verification ${completed.report.status}; current saved revision was preserved.`,
-          );
-        }
-        const paths = await promoteVerifiedBrowserJob(ctx.cwd, saved, current?.revision ?? null);
-
-        return result({
-          ok: true,
-          status: "saved",
-          workflowId: workflow.id,
-          revision: saved.revision,
-          sourceFingerprint: saved.sourceFingerprint,
-          proofReportPath: completed.reportPath,
-          ...paths,
-        });
-      } catch (cause) {
-        throw boundedFailure(cause);
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "browser_workflow_list",
-    label: "List Browser Workflows",
-    description: "List saved bounded browser monitoring workflows in this Profile.",
-    parameters: EmptyParameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
-      try {
-        const workflows = await listBrowserJobs(ctx.cwd);
-
-        return result({
-          workflows: workflows.map((entry) => ({
-            id: entry.workflow.id,
-            name: entry.workflow.name,
-            revision: entry.revision,
-            savedAt: entry.savedAt,
-            browserProfile: entry.workflow.browserProfile,
-            pageCount: entry.workflow.pages.length,
-          })),
-        });
-      } catch (cause) {
-        throw boundedFailure(cause);
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "browser_workflow_show",
-    label: "Show Browser Workflow",
-    description: "Load the current saved revision of one browser monitoring workflow.",
-    parameters: WorkflowParameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
-      try {
-        return result({ workflow: await readBrowserJob(ctx.cwd, parameters.workflowId) });
-      } catch (cause) {
-        throw boundedFailure(cause);
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "browser_workflow_run",
-    label: "Run Browser Workflow",
-    description:
-      "Run a saved browser workflow directly once through the existing computer-use bridge and update its stable-ID baseline only after full success.",
-    parameters: WorkflowParameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, parameters, signal, _onUpdate, ctx) {
-      try {
-        const saved = await readBrowserJob(ctx.cwd, parameters.workflowId);
-        const runSignal = signal ?? new AbortController().signal;
-
-        const completed = await withBrowserJobLock(
-          ctx.cwd,
-          saved.workflow.id,
-          runSignal,
-          async () =>
-            await runSavedBrowserJob({
-              saved,
-              bridge: makeBrowserJobBridge(pi, ctx),
-              store: {
-                readBaseline: async (workflowId) =>
-                  await readBrowserJobBaseline(ctx.cwd, workflowId),
-                writeBaseline: async (baseline) => await writeBrowserJobBaseline(ctx.cwd, baseline),
-                writeReport: async (report) => await writeBrowserJobRunReport(ctx.cwd, report),
-              },
-              signal: runSignal,
-            }),
-        );
-
-        const report = completed.report;
-
-        return result({
-          reportPath: completed.reportPath,
-          status: report.status,
-          workflowId: report.workflowId,
-          itemCount: report.itemCount,
-          newItemCount: report.newItems.length,
-          baselineEstablished: report.baselineEstablished,
-          baselineReset: report.baselineReset,
-          pagesCompleted: report.pagesCompleted,
-          resultPagesCompleted: report.resultPagesCompleted,
-          detailItemsCompleted: report.detailItemsCompleted,
-          failure: report.failure,
-          newItemPreview: report.newItems.slice(0, 20).map(({ details, ...item }) => ({
-            ...item,
-            detailFields: details === undefined ? undefined : Object.keys(details),
-          })),
-        });
-      } catch (cause) {
-        throw boundedFailure(cause);
-      }
     },
   });
 

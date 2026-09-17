@@ -30,6 +30,7 @@ import {
   startActiveRun,
 } from "../src/run-tracker.ts";
 import type { RunRecord } from "../src/schema.ts";
+import { WorkflowDefinitionSchema } from "../src/schema.ts";
 
 const roots: string[] = [];
 
@@ -74,6 +75,26 @@ const definition = () =>
   });
 
 describe("computer workflow recording", () => {
+  test("keeps provider-facing workflow schemas tuple-free", () => {
+    expect(JSON.stringify(WorkflowDefinitionSchema)).not.toMatch(/"items":\s*\[/);
+  });
+
+  test("retains strict keypress chord validation with an array schema", () => {
+    const valid = definition();
+    expect(
+      validateWorkflowDefinition({
+        ...valid,
+        steps: [{ kind: "keypress", keys: ["CTRL", "SHIFT", "A"] }],
+      }).steps,
+    ).toEqual([{ kind: "keypress", keys: ["CTRL", "SHIFT", "A"] }]);
+    expect(() =>
+      validateWorkflowDefinition({
+        ...valid,
+        steps: [{ kind: "keypress", keys: ["SHIFT", "A"] }],
+      }),
+    ).toThrow("unsupported keypress chord");
+  });
+
   test("accepts successful CDP browser action evidence without a native execution trace", () => {
     const recording = startRecording("Browser action", "Use a browser control", "session-cdp");
     observeToolCall(recording, {

@@ -1,263 +1,310 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- The Pi event bus is the extension-to-extension async boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Protocol failures become bounded Pi tool failures. */
-/* oxlint-disable ziggy/no-unknown-parameters -- Event bus replies are decoded at this boundary. */
-/* oxlint-disable ziggy/no-conditional-empty-object-spread -- Exact optional reply fields are projected from schema-decoded data. */
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Parse } from "typebox/value";
-import type { BrowserJobBridge } from "./browser-jobs.ts";
+import type { WorkflowDefinition } from "./schema.ts";
 
-const CHANNEL = "ziggy:computer-use:browser-bridge:v1";
-
-const BridgeErrorCode = Type.Union([
-  Type.Literal("browser-busy"),
-  Type.Literal("invalid-owner"),
-  Type.Literal("aborted"),
-  Type.Literal("invalid-request"),
-  Type.Literal("browser-error"),
-]);
-
-const Failure = Type.Object(
-  {
-    version: Type.Literal(1),
-    ok: Type.Literal(false),
-    requestId: Type.String(),
-    operation: Type.String(),
-    error: Type.Object({ code: BridgeErrorCode, message: Type.String({ maxLength: 1_024 }) }),
-  },
-  { additionalProperties: false },
-);
-
-const SuccessBase = {
-  version: Type.Literal(1),
-  ok: Type.Literal(true),
-  requestId: Type.String(),
-};
-
-const AcquireReply = Type.Union([
-  Failure,
-  Type.Object(
-    {
-      ...SuccessBase,
-      operation: Type.Literal("acquire"),
-      token: Type.String({ minLength: 1, maxLength: 256 }),
-      stateId: Type.String(),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
-const NavigateReply = Type.Union([
-  Failure,
-  Type.Object(
-    { ...SuccessBase, operation: Type.Literal("navigate"), stateId: Type.String() },
-    { additionalProperties: false },
-  ),
-]);
-
-const WaitReply = Type.Union([
-  Failure,
-  Type.Object(
-    {
-      ...SuccessBase,
-      operation: Type.Literal("wait"),
-      stateId: Type.String(),
-      found: Type.Boolean(),
-      timedOut: Type.Optional(Type.Boolean()),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
-const EvaluateReply = Type.Union([
-  Failure,
-  Type.Object(
-    {
-      ...SuccessBase,
-      operation: Type.Literal("evaluate"),
-      stateId: Type.String(),
-      value: Type.Unknown(),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
-const ClickReply = Type.Union([
-  Failure,
-  Type.Object(
-    {
-      ...SuccessBase,
-      operation: Type.Literal("click"),
-      stateId: Type.String(),
-      status: Type.Union([Type.Literal("clicked"), Type.Literal("end"), Type.Literal("ambiguous")]),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
-const ReleaseReply = Type.Union([
-  Failure,
-  Type.Object(
-    { ...SuccessBase, operation: Type.Literal("release"), released: Type.Boolean() },
-    { additionalProperties: false },
-  ),
-]);
-
-class BrowserBridgeError extends Error {
-  constructor(
-    readonly code: Static<typeof BridgeErrorCode>,
-    message: string,
-  ) {
-    super(message);
-  }
+interface SegmentCondition {
+  readonly text?: string;
+  readonly role?: string;
+  readonly until: "present" | "absent";
+  readonly timeoutMs?: number;
 }
 
-const request = async <
-  Reply extends { readonly requestId: string; readonly operation: string },
->(input: {
-  readonly pi: ExtensionAPI;
-  readonly ctx: ExtensionContext;
-  readonly operation: "acquire" | "navigate" | "wait" | "evaluate" | "click" | "release";
-  readonly payload: object;
-  readonly signal: AbortSignal;
-  readonly decode: (value: unknown) => Reply;
-}): Promise<Reply> => {
-  input.signal.throwIfAborted();
-  const requestId = crypto.randomUUID();
+interface CompatibleActionStep {
+  readonly target: { readonly text?: string; readonly role?: string; readonly capability?: string };
+  readonly actions: readonly CompatibleSegmentAction[];
+  readonly expect: SegmentCondition;
+}
 
-  const reply = await new Promise<unknown>((resolve, reject) => {
-    let settled = false;
-    let accepted = false;
+interface CompatibleAssertionStep {
+  readonly assert: SegmentCondition;
+}
 
-    const finish = (value: unknown): void => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
+type CompatibleSegmentStep = CompatibleActionStep | CompatibleAssertionStep;
 
-    input.pi.events.emit(CHANNEL, {
-      version: 1,
-      requestId,
-      operation: input.operation,
-      ...input.payload,
-      ctx: input.ctx,
-      signal: input.signal,
-      accept: () => {
-        accepted = true;
-      },
-      reply: finish,
-    });
+interface MutableSemanticTarget {
+  text?: string;
+  role?: string;
+  capability?: string;
+}
 
-    if (!accepted && !settled) {
-      settled = true;
-      reject(
-        new BrowserBridgeError(
-          "invalid-request",
-          "The computer-use browser bridge is not loaded in this Profile.",
-        ),
-      );
+type CompatibleSegmentAction =
+  | {
+      action: "click";
+      button?: "left" | "right" | "middle";
+      clickCount?: number;
     }
-  });
+  | { action: "keypress"; keys: readonly string[] }
+  | { action: "scroll"; scrollX?: number; scrollY?: number };
 
-  const decoded = input.decode(reply);
+export interface WorkflowExecutionPlan {
+  readonly tool: "run_ui_segment";
+  readonly input: {
+    readonly rootQuery?: RootQuery;
+    readonly steps: readonly CompatibleSegmentStep[];
+  };
+  readonly sourceSteps: readonly number[];
+}
 
-  if (decoded.requestId !== requestId || decoded.operation !== input.operation) {
-    throw new BrowserBridgeError(
-      "invalid-request",
-      "Computer-use returned a mismatched bridge reply.",
-    );
-  }
+interface RootQuery {
+  text?: string;
+  app?: string;
+  bundleId?: string;
+  kind?: "window" | "menu" | "sheet" | "popover" | "dialog" | "browser_page";
+}
 
-  return decoded;
+const PRIMARY_MODIFIERS = new Set(["CMD", "COMMAND", "CTRL", "CONTROL", "META"]);
+
+const SECONDARY_MODIFIERS = new Set(["SHIFT", "ALT", "OPTION"]);
+
+const CONTROL_KEYS = new Set([
+  "ENTER",
+  "RETURN",
+  "ESC",
+  "ESCAPE",
+  "TAB",
+  "BACKSPACE",
+  "DELETE",
+  "FORWARDDELETE",
+  "ARROWUP",
+  "ARROWDOWN",
+  "ARROWLEFT",
+  "ARROWRIGHT",
+  "UP",
+  "DOWN",
+  "LEFT",
+  "RIGHT",
+  "HOME",
+  "END",
+  "PAGEUP",
+  "PAGEDOWN",
+  ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
+]);
+
+export const normalizeSafeControlKeypress = (
+  keys: readonly string[],
+): readonly string[] | undefined => {
+  const normalized = keys.map((key) => key.trim().toUpperCase());
+
+  if (normalized.some((key) => key.length === 0)) return undefined;
+
+  const modifiers = normalized.filter(
+    (key) => PRIMARY_MODIFIERS.has(key) || SECONDARY_MODIFIERS.has(key),
+  );
+
+  const baseKeys = normalized.filter(
+    (key) => !PRIMARY_MODIFIERS.has(key) && !SECONDARY_MODIFIERS.has(key),
+  );
+
+  if (baseKeys.length !== 1 || modifiers.length !== normalized.length - 1) return undefined;
+  const base = baseKeys[0];
+
+  if (base === undefined) return undefined;
+
+  if (CONTROL_KEYS.has(base)) return normalized.length <= 4 ? normalized : undefined;
+
+  if (!/^[A-Z0-9]$/.test(base)) return undefined;
+
+  if (!modifiers.some((key) => PRIMARY_MODIFIERS.has(key))) return undefined;
+
+  return normalized.length >= 2 && normalized.length <= 4 ? normalized : undefined;
 };
 
-export const makeBrowserJobBridge = (
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-): BrowserJobBridge => ({
-  acquire: async (parameters, signal) => {
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "acquire",
-      payload: parameters,
-      signal,
-      decode: (value) => Parse(AcquireReply, value),
+interface ManualWorkflowStep {
+  readonly sourceStep: number;
+  readonly reason: string;
+}
+
+export interface CompiledWorkflowExecution {
+  readonly segments: readonly WorkflowExecutionPlan[];
+  readonly manual: readonly ManualWorkflowStep[];
+}
+
+const segmentTarget = (target: {
+  readonly text?: string;
+  readonly role?: string;
+  readonly capability?: string;
+}): CompatibleActionStep["target"] => {
+  const projected: MutableSemanticTarget = {};
+
+  if (target.text !== undefined) projected.text = target.text;
+
+  if (target.role !== undefined) projected.role = target.role;
+
+  if (target.capability !== undefined) projected.capability = target.capability;
+
+  return projected;
+};
+
+export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWorkflowExecution => {
+  const segments: WorkflowExecutionPlan[] = [];
+  let compatible: CompatibleSegmentStep[] = [];
+  let sourceSteps: number[] = [];
+  const manual: ManualWorkflowStep[] = [];
+  let rootQuery: RootQuery | undefined;
+
+  const flushSegment = (): void => {
+    if (compatible.length === 0) return;
+    segments.push({
+      tool: "run_ui_segment",
+      input: rootQuery === undefined ? { steps: compatible } : { rootQuery, steps: compatible },
+      sourceSteps,
     });
+    compatible = [];
+    sourceSteps = [];
+  };
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+  const appendCompatible = (step: CompatibleSegmentStep, sourceStep: number): void => {
+    if (compatible.length === 20) flushSegment();
+    compatible.push(step);
+    sourceSteps.push(sourceStep);
+  };
 
-    return { token: reply.token };
-  },
-  navigate: async (parameters, signal) => {
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "navigate",
-      payload: parameters,
-      signal,
-      decode: (value) => Parse(NavigateReply, value),
-    });
+  for (const [index, step] of workflow.steps.entries()) {
+    const sourceStep = index + 1;
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
-  },
-  wait: async (parameters, signal) => {
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "wait",
-      payload: parameters,
-      signal,
-      decode: (value) => Parse(WaitReply, value),
-    });
+    if (step.kind === "find_roots") {
+      flushSegment();
+      const nextRootQuery: RootQuery = {};
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+      if (step.text !== undefined) nextRootQuery.text = step.text;
 
-    return {
-      found: reply.found,
-      ...(reply.timedOut === undefined ? {} : { timedOut: reply.timedOut }),
-    };
-  },
-  evaluate: async (parameters, signal) => {
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "evaluate",
-      payload: parameters,
-      signal,
-      decode: (value) => Parse(EvaluateReply, value),
-    });
+      if (step.app !== undefined) nextRootQuery.app = step.app;
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+      if (step.bundleId !== undefined) nextRootQuery.bundleId = step.bundleId;
 
-    return { value: reply.value };
-  },
-  click: async (parameters, signal) => {
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "click",
-      payload: parameters,
-      signal,
-      decode: (value) => Parse(ClickReply, value),
-    });
+      if (step.rootKind !== undefined) nextRootQuery.kind = step.rootKind;
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+      if (Object.keys(nextRootQuery).length === 0) {
+        rootQuery = undefined;
+        manual.push({
+          sourceStep,
+          reason: "This find_roots setup has no durable root query.",
+        });
+      } else {
+        rootQuery = nextRootQuery;
+      }
 
-    return { status: reply.status };
-  },
-  release: async (parameters) => {
-    const releaseSignal = new AbortController().signal;
+      continue;
+    }
 
-    const reply = await request({
-      pi,
-      ctx,
-      operation: "release",
-      payload: parameters,
-      signal: releaseSignal,
-      decode: (value) => Parse(ReleaseReply, value),
-    });
+    if (step.kind === "observe") continue;
 
-    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
-  },
-});
+    if (step.kind === "wait") {
+      if (rootQuery === undefined) {
+        manual.push({
+          sourceStep,
+          reason: "This assertion has no active durable find_roots query.",
+        });
+        continue;
+      }
+
+      appendCompatible({ assert: step.condition }, sourceStep);
+      continue;
+    }
+
+    if (step.kind === "click" && step.checkpoint !== undefined) {
+      if (rootQuery === undefined) {
+        manual.push({
+          sourceStep,
+          reason: "This action has no active durable find_roots query.",
+        });
+        continue;
+      }
+
+      const target = segmentTarget(step.target);
+
+      if (Object.keys(target).length === 0) {
+        manual.push({
+          sourceStep,
+          reason:
+            "An app-only action target is not a semantic control target; use app in find_roots.",
+        });
+        continue;
+      }
+
+      const action: CompatibleSegmentAction = { action: "click" };
+
+      if (step.button !== undefined) action.button = step.button;
+
+      if (step.clickCount !== undefined) action.clickCount = step.clickCount;
+      appendCompatible(
+        {
+          target,
+          actions: [action],
+          expect: step.checkpoint,
+        },
+        sourceStep,
+      );
+      continue;
+    }
+
+    if (
+      (step.kind === "keypress" || step.kind === "scroll") &&
+      step.target !== undefined &&
+      step.checkpoint !== undefined
+    ) {
+      if (rootQuery === undefined) {
+        manual.push({
+          sourceStep,
+          reason: "This action has no active durable find_roots query.",
+        });
+        continue;
+      }
+
+      const target = segmentTarget(step.target);
+
+      if (Object.keys(target).length === 0) {
+        manual.push({
+          sourceStep,
+          reason:
+            "An app-only action target is not a semantic control target; use app in find_roots.",
+        });
+        continue;
+      }
+
+      let action: CompatibleSegmentAction;
+
+      if (step.kind === "keypress") {
+        const keys = normalizeSafeControlKeypress(step.keys);
+
+        if (keys === undefined) {
+          manual.push({
+            sourceStep,
+            reason: "Text-producing keypresses are not replayable; use a user-entered variable.",
+          });
+          continue;
+        }
+
+        action = { action: "keypress", keys };
+      } else {
+        action = { action: "scroll" };
+
+        if (step.scrollX !== undefined) action.scrollX = step.scrollX;
+
+        if (step.scrollY !== undefined) action.scrollY = step.scrollY;
+      }
+
+      appendCompatible(
+        {
+          target,
+          actions: [action],
+          expect: step.checkpoint,
+        },
+        sourceStep,
+      );
+      continue;
+    }
+
+    const reason =
+      step.kind === "type"
+        ? "Text and secret values are never accepted by run_ui_segment; the user must enter the value directly."
+        : "This step lacks a semantic target with a mandatory postcondition or is not in the segment allowlist.";
+
+    manual.push({ sourceStep, reason });
+  }
+
+  flushSegment();
+
+  return {
+    segments,
+    manual,
+  };
+};

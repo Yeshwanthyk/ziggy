@@ -11,9 +11,6 @@ import type { Static, TSchema } from "typebox";
 import { Parse } from "typebox/value";
 import {
   PublishApprovalSchema,
-  BrowserJobBaselineSchema,
-  BrowserJobRunReportSchema,
-  SavedBrowserJobSchema,
   PublishedWorkflowSchema,
   RunRecordSchema,
   RunSummarySchema,
@@ -33,20 +30,12 @@ import {
   type GeneralTaskCandidate,
   type GeneralTaskRun,
   type PublishedGeneralTask,
-  type BrowserJobBaseline,
-  type BrowserJobRunReport,
-  type SavedBrowserJob,
 } from "./schema.ts";
 
 const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
 
 const runtimeRoot = (profilePath: string): string =>
   join(profilePath, ".runtime", "computer-workflows");
-
-const browserJobsRoot = (profilePath: string): string => join(profilePath, "browser-workflows");
-
-const browserJobRuntimeRoot = (profilePath: string, workflowId: string): string =>
-  join(runtimeRoot(profilePath), "jobs", workflowId);
 
 const generalTasksRoot = (profilePath: string): string => join(profilePath, "tasks");
 
@@ -541,173 +530,3 @@ export const readPublishApproval = async (
 
 export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
   Parse(PublishedWorkflowSchema, value);
-
-export const saveBrowserJob = async (
-  profilePath: string,
-  saved: SavedBrowserJob,
-): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
-  const root = browserJobsRoot(profilePath);
-  await assertDirectory(root);
-  const workflowRoot = join(root, saved.workflow.id);
-  await assertDirectory(workflowRoot);
-  const revisionsRoot = join(workflowRoot, "revisions");
-  await assertDirectory(revisionsRoot);
-  const revisionPath = join(revisionsRoot, `${saved.revision}.json`);
-  await writeExclusiveJson(revisionPath, Parse(SavedBrowserJobSchema, saved));
-  const manifestPath = join(workflowRoot, "workflow.json");
-  await replaceJsonAtomically(manifestPath, saved);
-
-  return { manifestPath, revisionPath };
-};
-
-export const promoteVerifiedBrowserJob = async (
-  profilePath: string,
-  saved: SavedBrowserJob,
-  expectedRevision: string | null,
-): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
-  const locksRoot = join(runtimeRoot(profilePath), "browser-save-locks");
-  await assertDirectory(locksRoot);
-  const lockPath = join(locksRoot, saved.workflow.id);
-  try {
-    await mkdir(lockPath, { mode: 0o700 });
-  } catch (cause) {
-    if (errorCode(cause) === "EEXIST")
-      throw new Error("Browser workflow save is already in progress.");
-    throw cause;
-  }
-  try {
-    let currentRevision: string | null = null;
-    try {
-      currentRevision = (await readBrowserJob(profilePath, saved.workflow.id)).revision;
-    } catch (cause) {
-      if (errorCode(cause) !== "ENOENT") throw cause;
-    }
-    if (currentRevision === saved.revision) {
-      return {
-        manifestPath: join(browserJobsRoot(profilePath), saved.workflow.id, "workflow.json"),
-        revisionPath: join(
-          browserJobsRoot(profilePath),
-          saved.workflow.id,
-          "revisions",
-          `${saved.revision}.json`,
-        ),
-      };
-    }
-    if (currentRevision !== expectedRevision)
-      throw new Error("The saved browser workflow changed during verification.");
-    return await saveBrowserJob(profilePath, saved);
-  } finally {
-    await rm(lockPath, { recursive: true, force: true });
-  }
-};
-
-export const readBrowserJob = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<SavedBrowserJob> =>
-  readDecoded(
-    join(browserJobsRoot(profilePath), workflowId, "workflow.json"),
-    SavedBrowserJobSchema,
-  );
-
-export const readBrowserJobIfPresent = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<SavedBrowserJob | undefined> => {
-  try {
-    return await readBrowserJob(profilePath, workflowId);
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return undefined;
-    throw cause;
-  }
-};
-
-export const listBrowserJobs = async (profilePath: string): Promise<SavedBrowserJob[]> => {
-  let entries: string[];
-
-  try {
-    entries = await readdir(browserJobsRoot(profilePath));
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return [];
-    throw cause;
-  }
-
-  const jobs: SavedBrowserJob[] = [];
-
-  for (const entry of entries.slice(0, 500)) {
-    try {
-      jobs.push(await readBrowserJob(profilePath, entry));
-    } catch {
-      // Malformed entries are excluded from the index; browser_workflow_show reports the failure.
-    }
-  }
-
-  return jobs.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
-};
-
-export const readBrowserJobBaseline = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<BrowserJobBaseline | undefined> => {
-  try {
-    return await readDecoded(
-      join(browserJobRuntimeRoot(profilePath, workflowId), "baseline.json"),
-      BrowserJobBaselineSchema,
-    );
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return undefined;
-    throw cause;
-  }
-};
-
-export const writeBrowserJobBaseline = async (
-  profilePath: string,
-  baseline: BrowserJobBaseline,
-): Promise<void> => {
-  const root = browserJobRuntimeRoot(profilePath, baseline.workflowId);
-  await assertDirectory(root);
-  await replaceJsonAtomically(
-    join(root, "baseline.json"),
-    Parse(BrowserJobBaselineSchema, baseline),
-  );
-};
-
-export const writeBrowserJobRunReport = async (
-  profilePath: string,
-  report: BrowserJobRunReport,
-): Promise<string> => {
-  const root = join(browserJobRuntimeRoot(profilePath, report.workflowId), "runs");
-  await assertDirectory(root);
-  const path = join(root, `${report.id}.json`);
-  await writeExclusiveJson(path, Parse(BrowserJobRunReportSchema, report));
-
-  return path;
-};
-
-export const withBrowserJobLock = async <Result>(
-  profilePath: string,
-  workflowId: string,
-  signal: AbortSignal,
-  run: () => Promise<Result>,
-): Promise<Result> => {
-  const root = browserJobRuntimeRoot(profilePath, workflowId);
-  await assertDirectory(root);
-  const lockPath = join(root, "run.lock");
-  signal.throwIfAborted();
-
-  try {
-    await mkdir(lockPath, { mode: 0o700 });
-  } catch (cause) {
-    if (errorCode(cause) === "EEXIST") {
-      throw new Error(`Browser workflow '${workflowId}' already has an active run.`);
-    }
-
-    throw cause;
-  }
-
-  try {
-    return await run();
-  } finally {
-    await rm(lockPath, { recursive: true, force: true });
-  }
-};

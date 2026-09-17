@@ -1,213 +1,532 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Save validation failures become Pi tool failures. */
-/* oxlint-disable ziggy/no-unknown-parameters, ziggy/no-runtime-typeof, ziggy/no-known-value-widening -- Stable canonical JSON is an internal hash serializer over already schema-decoded domain values. */
-/* oxlint-disable ziggy/require-readable-spacing -- Hash and proof predicates remain adjacent for auditability. */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem adapter boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Boundary failures become Pi tool failures. */
+/* oxlint-disable ziggy-effect/no-json-parse -- JSON is decoded immediately through the complete TypeBox schema. */
+/* oxlint-disable ziggy/no-unknown-parameters -- Unknown JSON exists only at the decoder and serializer boundary. */
+/* oxlint-disable ziggy/no-runtime-typeof -- Node filesystem errors require a narrow code probe at this adapter boundary. */
+/* oxlint-disable ziggy/require-readable-spacing -- Filesystem transaction steps remain adjacent. */
 import { createHash } from "node:crypto";
+import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { Static, TSchema } from "typebox";
 import { Parse } from "typebox/value";
 import {
+  PublishApprovalSchema,
+  PublishedWorkflowSchema,
+  RunRecordSchema,
+  RunSummarySchema,
+  WorkflowDraftSchema,
   WorkflowSaveCandidateSchema,
   WorkflowSaveProofSchema,
+  GeneralTaskCandidateSchema,
+  GeneralTaskRunSchema,
+  PublishedGeneralTaskSchema,
+  type PublishApproval,
+  type PublishedWorkflow,
+  type RunRecord,
   type RunSummary,
-  type WorkflowDefinition,
   type WorkflowDraft,
   type WorkflowSaveCandidate,
   type WorkflowSaveProof,
+  type GeneralTaskCandidate,
+  type GeneralTaskRun,
+  type PublishedGeneralTask,
 } from "./schema.ts";
-import { compileExecutionPlan } from "./execution-plan.ts";
-import { resolveWorkflowTemplates, validateWorkflowDefinition } from "./workflows.ts";
 
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
+
+const runtimeRoot = (profilePath: string): string =>
+  join(profilePath, ".runtime", "computer-workflows");
+
+const generalTasksRoot = (profilePath: string): string => join(profilePath, "tasks");
+
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+
+  return typeof cause.code === "string" ? cause.code : undefined;
+};
+
+const assertDirectory = async (path: string): Promise<void> => {
+  try {
+    const stat = await lstat(path);
+
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
+    }
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+    await mkdir(path, { recursive: true });
+    const stat = await lstat(path);
+
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
+    }
+  }
+};
+
+const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
+  const handle = await open(path, "wx", 0o600);
+
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+};
+
+const replaceJsonAtomically = async (path: string, value: unknown): Promise<void> => {
+  const temporary = `${path}.tmp-${crypto.randomUUID()}`;
+  await writeExclusiveJson(temporary, value);
+  await rename(temporary, path);
+};
+
+const readDecoded = async <const Schema extends TSchema>(
+  path: string,
+  schema: Schema,
+): Promise<Static<Schema>> => Parse(schema, JSON.parse(await readFile(path, "utf8")));
+
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
     return `{${Object.entries(value)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
       .join(",")}}`;
   }
   return JSON.stringify(value);
 };
 
-const workflowHash = (workflow: WorkflowDefinition): string =>
-  createHash("sha256").update(stableJson(workflow)).digest("hex");
+const storedValueHash = (value: unknown): string =>
+  createHash("sha256").update(canonicalJson(value)).digest("hex");
 
-const same = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
+export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await writeExclusiveJson(path, draft);
 
-const optimizeWorkflow = (
-  source: WorkflowDefinition,
-): {
-  readonly workflow: WorkflowDefinition;
-  readonly removedRedundantObservations: number;
-  readonly removedRedundantRootLookups: number;
-} => {
-  const steps: WorkflowDefinition["steps"][number][] = [];
-  let removedRedundantObservations = 0;
-  let removedRedundantRootLookups = 0;
-
-  for (const step of source.steps) {
-    const prior = steps.at(-1);
-    if (step.kind === "observe" && prior?.kind === "observe" && same(step, prior)) {
-      removedRedundantObservations += 1;
-      continue;
-    }
-    if (step.kind === "find_roots" && prior?.kind === "find_roots" && same(step, prior)) {
-      removedRedundantRootLookups += 1;
-      continue;
-    }
-    steps.push(step);
-  }
-
-  return {
-    workflow: validateWorkflowDefinition({ ...source, steps }),
-    removedRedundantObservations,
-    removedRedundantRootLookups,
-  };
+  return path;
 };
 
-const observableSteps = (workflow: WorkflowDefinition): readonly unknown[] => {
-  const normalized: unknown[] = [];
-  for (const step of workflow.steps) {
-    if (step.kind === "observe") continue;
-    const prior = normalized.at(-1);
-    if (step.kind === "find_roots" && prior !== undefined && same(step, prior)) continue;
-    normalized.push(step);
-  }
-  return normalized;
+export const writeDraftSnapshot = async (
+  profilePath: string,
+  draft: WorkflowDraft,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await replaceJsonAtomically(path, Parse(WorkflowDraftSchema, draft));
+  return path;
 };
 
-export const makeWorkflowSaveCandidate = (input: {
-  readonly workflow: unknown;
-  readonly sourceDraftId: string;
-  readonly baseRevision?: string;
-  readonly bindings: Readonly<Record<string, string>>;
-  readonly draft: WorkflowDraft;
-  readonly now?: Date;
-}): WorkflowSaveCandidate => {
-  const source = validateWorkflowDefinition(input.workflow);
-  const optimized = optimizeWorkflow(source);
-  const sourceObservable = observableSteps(source);
-  const candidateObservable = observableSteps(optimized.workflow);
+export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
+  readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
 
-  if (!same(sourceObservable, candidateObservable)) {
-    throw new Error("Workflow optimization changed an action, checkpoint, or durable root lookup.");
-  }
+export const writeGeneralTaskCandidate = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-candidates");
+  await assertDirectory(root);
+  const path = join(root, `${candidate.id}.json`);
+  await writeExclusiveJson(path, Parse(GeneralTaskCandidateSchema, candidate));
+  return path;
+};
 
-  const compiled = compileExecutionPlan(optimized.workflow);
-  const resolved = resolveWorkflowTemplates(optimized.workflow, input.bindings);
-  const finalCheckpoint = resolved.steps
-    .toReversed()
-    .map((step) =>
-      step.kind === "wait" ? step.condition : "checkpoint" in step ? step.checkpoint : undefined,
-    )
-    .find((checkpoint) => checkpoint !== undefined);
-  if (finalCheckpoint === undefined)
-    throw new Error("A saved workflow requires a final observable checkpoint.");
-
-  const sameCondition = (condition: {
-    readonly text?: string;
-    readonly role?: string;
-    readonly until?: "present" | "absent";
-  }) =>
-    condition.text === finalCheckpoint.text &&
-    condition.role === finalCheckpoint.role &&
-    (condition.until ?? "present") === finalCheckpoint.until;
-  const finalRecordedOutcome = input.draft.calls
-    .toReversed()
-    .find(
-      (call) =>
-        call.input.kind === "wait_for" ||
-        call.input.kind === "semantic_segment" ||
-        (call.input.kind === "safe_actions" && call.input.expect !== undefined),
-    );
-  const trailingCalls =
-    finalRecordedOutcome === undefined
-      ? input.draft.calls
-      : input.draft.calls.filter((call) => call.sequence > finalRecordedOutcome.sequence);
-  const safeAfterTerminalOutcome = trailingCalls.every(
-    (call) =>
-      call.outcome === "success" &&
-      (call.input.kind === "find_roots" ||
-        call.input.kind === "observe_ui" ||
-        call.input.kind === "search_ui" ||
-        call.toolName === "expand_ui" ||
-        call.toolName === "inspect_ui" ||
-        call.toolName === "read_text" ||
-        call.toolName === "close_browser"),
+export const readGeneralTaskCandidate = async (
+  profilePath: string,
+  candidateId: string,
+): Promise<GeneralTaskCandidate> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "task-candidates", `${candidateId}.json`),
+    GeneralTaskCandidateSchema,
   );
-  const hasPendingSourceCall = input.draft.issues.some((issue) =>
-    issue.includes("had not completed when recording stopped"),
-  );
-  const recordedFinalPassed = (() => {
-    if (finalRecordedOutcome?.outcome !== "success") return false;
-    if (finalRecordedOutcome.input.kind === "wait_for")
-      return sameCondition(finalRecordedOutcome.input);
-    if (
-      finalRecordedOutcome.input.kind === "safe_actions" &&
-      finalRecordedOutcome.input.expect !== undefined
-    )
-      return sameCondition(finalRecordedOutcome.input.expect);
-    if (finalRecordedOutcome.input.kind === "semantic_segment") {
-      const final = finalRecordedOutcome.input.steps.at(-1);
-      return final !== undefined && sameCondition("assert" in final ? final.assert : final.expect);
+
+export const writeGeneralTaskRun = async (
+  profilePath: string,
+  run: GeneralTaskRun,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await replaceJsonAtomically(path, Parse(GeneralTaskRunSchema, run));
+  return path;
+};
+
+export const readGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+): Promise<GeneralTaskRun> =>
+  readDecoded(join(runtimeRoot(profilePath), "task-runs", `${runId}.json`), GeneralTaskRunSchema);
+
+export const claimGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+  sessionId: string,
+): Promise<GeneralTaskRun> => {
+  const locksRoot = join(runtimeRoot(profilePath), "task-run-claims");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, runId);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST")
+      throw new Error("Task run is being claimed by another session.");
+    throw cause;
+  }
+  try {
+    const prior = await readGeneralTaskRun(profilePath, runId);
+    if (prior.state === "active" && prior.sessionId !== sessionId) {
+      throw new Error("Task run is active in another session.");
     }
-    return false;
-  })();
-  if (!recordedFinalPassed || !safeAfterTerminalOutcome || hasPendingSourceCall) {
-    throw new Error(
-      "The candidate final checkpoint is not the terminal successful recorded task outcome.",
-    );
+    if (prior.state !== "active" && prior.state !== "cancelled" && prior.state !== "incomplete") {
+      throw new Error("Only active-orphaned, cancelled, or incomplete runs can resume.");
+    }
+    const claimed = Parse(GeneralTaskRunSchema, {
+      ...prior,
+      sessionId,
+      updatedAt: new Date().toISOString(),
+      state: "active",
+      calls: prior.calls.map((call) =>
+        call.status === "pending" ? { ...call, status: "unknown" } : call,
+      ),
+    });
+    await writeGeneralTaskRun(profilePath, claimed);
+    return claimed;
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
   }
-  return Parse(WorkflowSaveCandidateSchema, {
-    format: "ziggy-workflow-save-candidate",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateHash: workflowHash(optimized.workflow),
-    sourceHash: workflowHash(source),
-    verificationBindingsHash: createHash("sha256").update(stableJson(input.bindings)).digest("hex"),
-    sourceDraftId: input.sourceDraftId,
-    baseRevision: input.baseRevision ?? null,
-    createdAt: (input.now ?? new Date()).toISOString(),
-    workflow: optimized.workflow,
-    optimization: {
-      removedRedundantObservations: optimized.removedRedundantObservations,
-      removedRedundantRootLookups: optimized.removedRedundantRootLookups,
-      segmentCount: compiled.segments.length,
-    },
-  });
 };
 
-export const proveWorkflowSaveCandidate = (input: {
-  readonly candidate: WorkflowSaveCandidate;
-  readonly summary: RunSummary;
-  readonly now?: Date;
-}): WorkflowSaveProof => {
-  if (workflowHash(input.candidate.workflow) !== input.candidate.candidateHash) {
-    throw new Error("Workflow save candidate content no longer matches its hash.");
+export const readGeneralTask = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(join(generalTasksRoot(profilePath), taskId, "task.json"), PublishedGeneralTaskSchema);
+
+export const readGeneralTaskRevision = async (
+  profilePath: string,
+  taskId: string,
+  revision: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(
+    join(generalTasksRoot(profilePath), taskId, "revisions", `${revision}.json`),
+    PublishedGeneralTaskSchema,
+  );
+
+export const readGeneralTaskIfPresent = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask | undefined> => {
+  try {
+    return await readGeneralTask(profilePath, taskId);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
   }
+};
+
+export const listGeneralTasks = async (profilePath: string): Promise<PublishedGeneralTask[]> => {
+  let entries: string[];
+  try {
+    entries = await readdir(generalTasksRoot(profilePath));
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+  const tasks: PublishedGeneralTask[] = [];
+  for (const entry of entries.slice(0, 500)) {
+    try {
+      tasks.push(await readGeneralTask(profilePath, entry));
+    } catch {
+      // Invalid entries remain available through workflow_task_show for exact diagnosis.
+    }
+  }
+  return tasks.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+};
+
+export const promoteGeneralTask = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+  verification: GeneralTaskRun,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
   if (
-    input.summary.workflowId !== input.candidate.workflow.id ||
-    input.summary.revision !== input.candidate.candidateHash
+    verification.mode !== "verification" ||
+    verification.state !== "passed" ||
+    verification.candidateId !== candidate.id ||
+    verification.revision !== candidate.candidateHash ||
+    verification.taskId !== candidate.task.id ||
+    storedValueHash(candidate.task) !== candidate.candidateHash
   ) {
-    throw new Error("Workflow verification evidence belongs to a different candidate revision.");
+    throw new Error("A passed verification of this exact task candidate is required.");
   }
-  if (input.summary.overall !== "passed" || input.summary.stopReason !== "completed") {
-    throw new Error("Workflow verification did not pass every planned segment and checkpoint.");
+  const locksRoot = join(runtimeRoot(profilePath), "task-save-locks");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, candidate.task.id);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") throw new Error("Task save is already in progress.");
+    throw cause;
   }
+  try {
+    const current = await readGeneralTaskIfPresent(profilePath, candidate.task.id);
+    if (current?.revision === candidate.candidateHash) {
+      return {
+        manifestPath: join(generalTasksRoot(profilePath), candidate.task.id, "task.json"),
+        revisionPath: join(
+          generalTasksRoot(profilePath),
+          candidate.task.id,
+          "revisions",
+          `${candidate.candidateHash}.json`,
+        ),
+      };
+    }
+    if ((current?.revision ?? null) !== candidate.baseRevision)
+      throw new Error("The saved task changed after this candidate was prepared.");
+    const published = Parse(PublishedGeneralTaskSchema, {
+      format: "ziggy-general-task",
+      formatVersion: 1,
+      revision: candidate.candidateHash,
+      savedAt: verification.updatedAt,
+      sourceDraftId: candidate.sourceDraftId,
+      task: candidate.task,
+    });
+    const taskRoot = join(generalTasksRoot(profilePath), candidate.task.id);
+    await assertDirectory(taskRoot);
+    const revisionsRoot = join(taskRoot, "revisions");
+    await assertDirectory(revisionsRoot);
+    const revisionPath = join(revisionsRoot, `${candidate.candidateHash}.json`);
+    try {
+      const existing = await readDecoded(revisionPath, PublishedGeneralTaskSchema);
+      if (
+        existing.revision !== candidate.candidateHash ||
+        storedValueHash(existing.task) !== candidate.candidateHash
+      )
+        throw new Error("Existing task revision does not match the candidate hash.");
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      await writeExclusiveJson(revisionPath, published);
+    }
+    const manifestPath = join(taskRoot, "task.json");
+    await replaceJsonAtomically(manifestPath, published);
+    return { manifestPath, revisionPath };
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
+export const writeSaveCandidate = async (
+  profilePath: string,
+  candidate: WorkflowSaveCandidate,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "save-candidates");
+  await assertDirectory(root);
+  const path = join(root, `${candidate.id}.json`);
+  await writeExclusiveJson(path, Parse(WorkflowSaveCandidateSchema, candidate));
+  return path;
+};
+
+export const readSaveCandidate = async (
+  profilePath: string,
+  candidateId: string,
+): Promise<WorkflowSaveCandidate> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "save-candidates", `${candidateId}.json`),
+    WorkflowSaveCandidateSchema,
+  );
+
+export const writeSaveProof = async (
+  profilePath: string,
+  proof: WorkflowSaveProof,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "save-proofs");
+  await assertDirectory(root);
+  const path = join(root, `${proof.id}.json`);
+  await writeExclusiveJson(path, Parse(WorkflowSaveProofSchema, proof));
+  return path;
+};
+
+export const publishWorkflow = async (
+  profilePath: string,
+  published: PublishedWorkflow,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  const root = durableRoot(profilePath);
+  await assertDirectory(root);
+  const workflowRoot = join(root, published.workflow.id);
+  await assertDirectory(workflowRoot);
+  const revisionsRoot = join(workflowRoot, "revisions");
+  await assertDirectory(revisionsRoot);
+  const revisionPath = join(revisionsRoot, `${published.revision}.json`);
+  await writeExclusiveJson(revisionPath, published);
+  const manifestPath = join(workflowRoot, "workflow.json");
+  await replaceJsonAtomically(manifestPath, published);
+
+  return { manifestPath, revisionPath };
+};
+
+export const promoteVerifiedWorkflow = async (
+  profilePath: string,
+  candidate: WorkflowSaveCandidate,
+  proof: WorkflowSaveProof,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
   if (
-    input.summary.segments.planned === 0 ||
-    input.summary.segments.passed !== input.summary.segments.planned ||
-    input.summary.checks.length === 0 ||
-    input.summary.checks.some((check) => check.outcome !== "passed")
+    proof.candidateId !== candidate.id ||
+    proof.candidateHash !== candidate.candidateHash ||
+    proof.outcome !== "passed"
   ) {
-    throw new Error("Workflow verification evidence is incomplete.");
+    throw new Error("Workflow save proof does not authorize this exact candidate.");
   }
 
-  return Parse(WorkflowSaveProofSchema, {
-    format: "ziggy-workflow-save-proof",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateId: input.candidate.id,
-    candidateHash: input.candidate.candidateHash,
-    runSummaryId: input.summary.id,
-    verifiedAt: (input.now ?? new Date()).toISOString(),
-    outcome: "passed",
-  });
+  const locksRoot = join(runtimeRoot(profilePath), "save-locks");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, candidate.workflow.id);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") throw new Error("Workflow save is already in progress.");
+    throw cause;
+  }
+
+  try {
+    let currentRevision: string | null = null;
+    try {
+      currentRevision = (await readWorkflow(profilePath, candidate.workflow.id)).revision;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+    }
+    if (currentRevision === candidate.candidateHash) {
+      return {
+        manifestPath: join(durableRoot(profilePath), candidate.workflow.id, "workflow.json"),
+        revisionPath: join(
+          durableRoot(profilePath),
+          candidate.workflow.id,
+          "revisions",
+          `${candidate.candidateHash}.json`,
+        ),
+      };
+    }
+    if (currentRevision !== candidate.baseRevision) {
+      throw new Error("The saved workflow changed after this candidate was prepared.");
+    }
+
+    const published: PublishedWorkflow = Parse(PublishedWorkflowSchema, {
+      format: "ziggy-computer-workflow",
+      formatVersion: 1,
+      revision: candidate.candidateHash,
+      publishedAt: proof.verifiedAt,
+      sourceDraftId: candidate.sourceDraftId,
+      workflow: candidate.workflow,
+    });
+    const workflowRoot = join(durableRoot(profilePath), candidate.workflow.id);
+    await assertDirectory(workflowRoot);
+    const revisionsRoot = join(workflowRoot, "revisions");
+    await assertDirectory(revisionsRoot);
+    const revisionPath = join(revisionsRoot, `${candidate.candidateHash}.json`);
+    let immutable = published;
+    try {
+      immutable = await readDecoded(revisionPath, PublishedWorkflowSchema);
+      if (
+        immutable.revision !== candidate.candidateHash ||
+        storedValueHash(immutable.workflow) !== candidate.candidateHash
+      ) {
+        throw new Error("Existing immutable revision does not match the verified candidate.");
+      }
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      await writeExclusiveJson(revisionPath, published);
+    }
+    const manifestPath = join(workflowRoot, "workflow.json");
+    await replaceJsonAtomically(manifestPath, immutable);
+    return { manifestPath, revisionPath };
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
 };
+
+export const readWorkflow = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<PublishedWorkflow> =>
+  readDecoded(join(durableRoot(profilePath), workflowId, "workflow.json"), PublishedWorkflowSchema);
+
+export const readWorkflowIfPresent = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<PublishedWorkflow | undefined> => {
+  try {
+    return await readWorkflow(profilePath, workflowId);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
+  const root = durableRoot(profilePath);
+  let entries: string[];
+
+  try {
+    entries = await readdir(root);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+
+  const workflows: PublishedWorkflow[] = [];
+
+  for (const entry of entries.slice(0, 500)) {
+    try {
+      workflows.push(await readWorkflow(profilePath, entry));
+    } catch {
+      // Malformed entries are excluded from the index; workflow_show reports their exact failure.
+    }
+  }
+
+  return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+};
+
+export const writeRunRecord = async (profilePath: string, run: RunRecord): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await writeExclusiveJson(path, Parse(RunRecordSchema, run));
+
+  return path;
+};
+
+export const writeRunSummary = async (
+  profilePath: string,
+  summary: RunSummary,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "run-summaries");
+  await assertDirectory(root);
+  const path = join(root, `${summary.id}.json`);
+  await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
+
+  return path;
+};
+
+export const writePublishApproval = async (
+  profilePath: string,
+  approval: PublishApproval,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "publish-approvals");
+  await assertDirectory(root);
+  const path = join(root, `${approval.id}.json`);
+  await writeExclusiveJson(path, approval);
+
+  return path;
+};
+
+export const readPublishApproval = async (
+  profilePath: string,
+  approvalId: string,
+): Promise<PublishApproval> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "publish-approvals", `${approvalId}.json`),
+    PublishApprovalSchema,
+  );
+
+export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
+  Parse(PublishedWorkflowSchema, value);

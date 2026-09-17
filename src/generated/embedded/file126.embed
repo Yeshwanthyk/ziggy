@@ -62,9 +62,8 @@ and return a concise summary with their paths.
 A successful adaptation can inform an improved candidate. Verify that candidate before replacing
 the current saved revision; failed improvements leave the working revision intact.
 
-## Existing accelerators
+## Existing compiled workflows
 
-For an existing fixed browser recipe or compiled semantic workflow, consult
-[accelerators.md](references/accelerators.md). These formats are optional execution shortcuts.
-When their assumptions fail, use the general task path and full computer-use capabilities rather
-than treating the task as unsupported.
+For a previously saved compiled semantic workflow, consult
+[accelerators.md](references/accelerators.md). New adaptable tasks use the general task lifecycle
+above.

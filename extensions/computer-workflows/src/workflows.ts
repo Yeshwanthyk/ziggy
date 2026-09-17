@@ -13,6 +13,24 @@ const transientPattern = /(?:@[ero][A-Za-z0-9._:-]*|stateId)/i;
 
 const suspiciousVariablePattern = /(?:password|passwd|token|cookie|secret|otp|api[-_ ]?key)/i;
 const templatePattern = /\{\{([a-z0-9]+(?:-[a-z0-9]+)*)\}\}/g;
+const primaryModifierPattern = /^(?:CMD|COMMAND|CTRL|CONTROL|META)$/;
+const secondaryModifierPattern = /^(?:SHIFT|ALT|OPTION)$/;
+const controlKeyPattern =
+  /^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$/;
+const chordKeyPattern =
+  /^(?:[A-Z0-9]|ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$/;
+
+const isSafeKeypressChord = (keys: readonly string[]): boolean => {
+  if (keys.length === 1) return controlKeyPattern.test(keys[0] ?? "");
+  if (keys.length === 2 && secondaryModifierPattern.test(keys[0] ?? "")) {
+    return controlKeyPattern.test(keys[1] ?? "");
+  }
+  if (!primaryModifierPattern.test(keys[0] ?? "") || !chordKeyPattern.test(keys.at(-1) ?? "")) {
+    return false;
+  }
+
+  return keys.slice(1, -1).every((key) => secondaryModifierPattern.test(key));
+};
 
 export const validateWorkflowDefinition = (value: unknown): WorkflowDefinition => {
   const workflow = Parse(WorkflowDefinitionSchema, value);
@@ -52,6 +70,10 @@ export const validateWorkflowDefinition = (value: unknown): WorkflowDefinition =
 
     if (step.kind === "type" && !variableIds.has(step.value.variable)) {
       throw new Error(`Step ${index + 1} references unknown variable '${step.value.variable}'.`);
+    }
+
+    if (step.kind === "keypress" && !isSafeKeypressChord(step.keys)) {
+      throw new Error(`Step ${index + 1} has an unsupported keypress chord.`);
     }
 
     if (
