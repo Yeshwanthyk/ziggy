@@ -159,89 +159,95 @@ export function SettingsDialog({
         <DialogHeader className="ziggy-settings-header">
           <DialogTitle>{profileName} settings</DialogTitle>
           <DialogDescription>
-            Manage this browser connection and the Profile default used when sessions open.
+            {connected
+              ? "Manage this browser connection and the Profile default used when sessions open."
+              : "Connect to Squarey to open your conversations. Model and provider settings will appear once connected."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="ziggy-settings-body">
-          <PrismArt />
-          <section className="ziggy-settings-block" aria-labelledby="model-heading">
-            <div className="ziggy-settings-block-header">
-              <span className="ziggy-settings-block-title">
-                <h3 id="model-heading">Default model</h3>
-                <small>
-                  {statusProvider && statusModel
-                    ? `Current: ${statusProvider}/${statusModel} · ${statusThinking}`
-                    : modelSettings?.loading
-                      ? "Loading model settings…"
-                      : "The runtime could not report a usable Profile default."}
-                </small>
-              </span>
-            </div>
-            <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
-              <div className="ziggy-settings-fields">
-                <div className="ziggy-settings-field">
-                  <span>Model</span>
-                  <ModelPicker
-                    disabled={!connected || modelSettings?.loading || availableModels.length === 0}
-                    models={availableModels}
-                    onSelect={selectModel}
-                    selected={selectedModel}
-                  />
-                </div>
-                <fieldset className="thinking-fieldset">
-                  <legend>Thinking</legend>
-                  <div className="thinking-options">
-                    {selectedModel === undefined ? (
-                      <p className="ziggy-settings-muted">
-                        Choose an available model to see its thinking options.
-                      </p>
-                    ) : null}
-                    {supportedThinking.map((level) => (
-                      <label className="thinking-option" key={level}>
-                        <input
-                          checked={thinking === level}
-                          disabled={!connected || selectedModel === undefined}
-                          name="model-thinking"
-                          onChange={() => setThinking(level)}
-                          type="radio"
-                          value={level}
-                        />
-                        <span>{level}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              </div>
-              <p className="ziggy-settings-note">
-                <Info aria-hidden="true" />
-                <span>
-                  New sessions use this default. Existing chats keep their current model until the
-                  resident restarts.
+          {connected ? <PrismArt /> : null}
+          {connected ? (
+            <section className="ziggy-settings-block" aria-labelledby="model-heading">
+              <div className="ziggy-settings-block-header">
+                <span className="ziggy-settings-block-title">
+                  <h3 id="model-heading">Default model</h3>
+                  <small>
+                    {statusProvider && statusModel
+                      ? `Current: ${statusProvider}/${statusModel} · ${statusThinking}`
+                      : modelSettings?.loading
+                        ? "Loading model settings…"
+                        : "The runtime could not report a usable Profile default."}
+                  </small>
                 </span>
-              </p>
-              {modelSettings?.error === undefined ? null : (
-                <p className="form-error" role="alert">
-                  {modelSettings.error}
+              </div>
+              <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
+                <div className="ziggy-settings-fields">
+                  <div className="ziggy-settings-field">
+                    <span>Model</span>
+                    <ModelPicker
+                      disabled={
+                        !connected || modelSettings?.loading || availableModels.length === 0
+                      }
+                      models={availableModels}
+                      onSelect={selectModel}
+                      selected={selectedModel}
+                    />
+                  </div>
+                  <fieldset className="thinking-fieldset">
+                    <legend>Thinking</legend>
+                    <div className="thinking-options">
+                      {selectedModel === undefined ? (
+                        <p className="ziggy-settings-muted">
+                          Choose an available model to see its thinking options.
+                        </p>
+                      ) : null}
+                      {supportedThinking.map((level) => (
+                        <label className="thinking-option" key={level}>
+                          <input
+                            checked={thinking === level}
+                            disabled={!connected || selectedModel === undefined}
+                            name="model-thinking"
+                            onChange={() => setThinking(level)}
+                            type="radio"
+                            value={level}
+                          />
+                          <span>{level}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
+                <p className="ziggy-settings-note">
+                  <Info aria-hidden="true" />
+                  <span>
+                    New sessions use this default. Existing chats keep their current model until the
+                    resident restarts.
+                  </span>
                 </p>
-              )}
-              <DialogFooter className="ziggy-settings-actions">
-                <Button
-                  disabled={
-                    !connected ||
-                    modelSettings?.loading ||
-                    modelSettings?.saving ||
-                    selectedModel === undefined ||
-                    thinking === "" ||
-                    !modelChanged
-                  }
-                  type="submit"
-                >
-                  {modelSettings?.saving ? "Saving…" : "Save model"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </section>
+                {modelSettings?.error === undefined ? null : (
+                  <p className="form-error" role="alert">
+                    {modelSettings.error}
+                  </p>
+                )}
+                <DialogFooter className="ziggy-settings-actions">
+                  <Button
+                    disabled={
+                      !connected ||
+                      modelSettings?.loading ||
+                      modelSettings?.saving ||
+                      selectedModel === undefined ||
+                      thinking === "" ||
+                      !modelChanged
+                    }
+                    type="submit"
+                  >
+                    {modelSettings?.saving ? "Saving…" : "Save model"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </section>
+          ) : null}
 
           <section className="ziggy-settings-block" aria-labelledby="connection-heading">
             <div className="ziggy-settings-block-header">
@@ -291,7 +297,7 @@ export function SettingsDialog({
                     connectionPending || url.trim().length === 0 || token.trim().length === 0
                   }
                   type="submit"
-                  variant="secondary"
+                  variant={connected ? "secondary" : "default"}
                 >
                   {connectionPending ? "Connecting…" : connected ? "Reconnect" : "Connect"}
                 </Button>
@@ -299,72 +305,77 @@ export function SettingsDialog({
             </form>
           </section>
 
-          <section className="ziggy-settings-block" aria-labelledby="providers-heading">
-            <div className="ziggy-settings-block-header">
-              <span className="ziggy-settings-block-title">
-                <h3 id="providers-heading">Providers</h3>
-                <small>Credentials are managed on the Ziggy host.</small>
-              </span>
-            </div>
-            {!connected ? (
-              <p className="ziggy-settings-muted">Connect to inspect provider credentials.</p>
-            ) : modelSettings?.loading && modelSettings.providers.length === 0 ? (
-              <p className="ziggy-settings-muted">Loading providers…</p>
-            ) : configuredProviders.length > 0 || otherProviders.length > 0 ? (
-              <div className="provider-list">
-                {configuredProviders.map((provider) => (
-                  <div className="provider-row" key={provider.id}>
-                    <span>
-                      <strong>{provider.name}</strong>
-                      <small>{provider.type === "oauth" ? "OAuth" : "API key"}</small>
-                    </span>
-                    <span className="settings-status is-ready">Ready</span>
-                  </div>
-                ))}
-                {otherProviders.length === 0 ? null : (
-                  <details className="other-providers">
-                    <summary>Other reported providers ({otherProviders.length})</summary>
-                    {otherProviders.map((provider) => (
+          {connected ? (
+            <>
+              <section className="ziggy-settings-block" aria-labelledby="providers-heading">
+                <div className="ziggy-settings-block-header">
+                  <span className="ziggy-settings-block-title">
+                    <h3 id="providers-heading">Providers</h3>
+                    <small>Credentials are managed on the Ziggy host.</small>
+                  </span>
+                </div>
+                {!connected ? (
+                  <p className="ziggy-settings-muted">Connect to inspect provider credentials.</p>
+                ) : modelSettings?.loading && modelSettings.providers.length === 0 ? (
+                  <p className="ziggy-settings-muted">Loading providers…</p>
+                ) : configuredProviders.length > 0 || otherProviders.length > 0 ? (
+                  <div className="provider-list">
+                    {configuredProviders.map((provider) => (
                       <div className="provider-row" key={provider.id}>
                         <span>
                           <strong>{provider.name}</strong>
-                          <small>No credential</small>
+                          <small>{provider.type === "oauth" ? "OAuth" : "API key"}</small>
                         </span>
-                        <span className="settings-status">Not configured</span>
+                        <span className="settings-status is-ready">Ready</span>
                       </div>
                     ))}
-                  </details>
-                )}
-              </div>
-            ) : (
-              <p className="ziggy-settings-muted">No providers reported.</p>
-            )}
-          </section>
-          <section className="ziggy-settings-block" aria-label="Extensions">
-            <h3>Extensions</h3>
-            <p className="ziggy-settings-muted">
-              Selected for this Profile. Existing sessions may need to restart to pick up changes.
-            </p>
-            {modelSettings?.extensions === undefined ? (
-              <p className="ziggy-settings-muted">
-                {connected ? "Extension list unavailable." : "Connect to see extensions."}
-              </p>
-            ) : modelSettings.extensions.selected.length === 0 ? (
-              <p className="ziggy-settings-muted">No extensions selected.</p>
-            ) : (
-              modelSettings.extensions.selected.map((id) => {
-                const extension = modelSettings.extensions?.available.find(
-                  (item) => item.id === id,
-                );
-                return (
-                  <div className="settings-extension" key={id}>
-                    <strong>{id}</strong>
-                    <p className="ziggy-settings-muted">{extension?.description}</p>
+                    {otherProviders.length === 0 ? null : (
+                      <details className="other-providers">
+                        <summary>Other reported providers ({otherProviders.length})</summary>
+                        {otherProviders.map((provider) => (
+                          <div className="provider-row" key={provider.id}>
+                            <span>
+                              <strong>{provider.name}</strong>
+                              <small>No credential</small>
+                            </span>
+                            <span className="settings-status">Not configured</span>
+                          </div>
+                        ))}
+                      </details>
+                    )}
                   </div>
-                );
-              })
-            )}
-          </section>
+                ) : (
+                  <p className="ziggy-settings-muted">No providers reported.</p>
+                )}
+              </section>
+              <section className="ziggy-settings-block" aria-label="Extensions">
+                <h3>Extensions</h3>
+                <p className="ziggy-settings-muted">
+                  Selected for this Profile. Existing sessions may need to restart to pick up
+                  changes.
+                </p>
+                {modelSettings?.extensions === undefined ? (
+                  <p className="ziggy-settings-muted">
+                    {connected ? "Extension list unavailable." : "Connect to see extensions."}
+                  </p>
+                ) : modelSettings.extensions.selected.length === 0 ? (
+                  <p className="ziggy-settings-muted">No extensions selected.</p>
+                ) : (
+                  modelSettings.extensions.selected.map((id) => {
+                    const extension = modelSettings.extensions?.available.find(
+                      (item) => item.id === id,
+                    );
+                    return (
+                      <div className="settings-extension" key={id}>
+                        <strong>{id}</strong>
+                        <p className="ziggy-settings-muted">{extension?.description}</p>
+                      </div>
+                    );
+                  })
+                )}
+              </section>
+            </>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

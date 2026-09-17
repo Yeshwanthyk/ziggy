@@ -813,3 +813,9 @@ results.
 
 - Replaced tiny tracked uppercase section labels with 12px sentence-case labels. Specialist rows display the opening role sentence without the repetitive Squarey suffix; full descriptions remain in title tooltips. Profile definitions are unchanged.
 - Rebuilt and visually verified all three specialist descriptions fit the desktop rail. Full `bun run check` and `git diff --check` passed; existing bundle-size warning remains.
+
+## Simplify offline connection setup
+
+- Offline settings now lead directly with the connection form and hide artwork, model, provider, and extension sections until connected. Connect uses the primary action treatment; connected settings retain their existing sections.
+- Removed repeated connection prompts from empty sidebar sections and kept a single welcome action with concise explanatory copy.
+- Full `bun run check` passed. Verified the fresh offline browser state and compact dialog visually; existing bundle-size warning remains.

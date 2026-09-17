@@ -347,9 +347,7 @@ export function App() {
           <div className="conversation-list">
             <SidebarSection
               title="Main chat"
-              empty={
-                startupPending ? "Restoring main chat…" : "Connect to open your main conversation."
-              }
+              empty={startupPending ? "Restoring main chat…" : undefined}
             >
               {mainConversation === undefined ? null : (
                 <ConversationRow
@@ -377,7 +375,7 @@ export function App() {
                   ? "Restoring pinned chats…"
                   : connected
                     ? "Create a chat or pin an existing conversation."
-                    : "Connect to see pinned chats."
+                    : undefined
               }
             >
               {sidebarItems.pins.map((pin) => (
@@ -401,7 +399,7 @@ export function App() {
                   ? "Loading direct agents…"
                   : connected
                     ? "No Profile specialists are available."
-                    : "Connect to see direct agents."
+                    : undefined
               }
             >
               {sidebarItems.agents.map((agent) => (
@@ -449,7 +447,7 @@ export function App() {
                   ? "Loading group conversations…"
                   : connected
                     ? "Bring specialists into one conversation."
-                    : "Connect to see group conversations."
+                    : undefined
               }
             >
               {sidebarItems.groups.map((group) => (
@@ -475,7 +473,7 @@ export function App() {
                   ? "Loading automations…"
                   : connected
                     ? "No automations are configured."
-                    : "Connect to see automations."
+                    : undefined
               }
             >
               {sidebarItems.automations.map((automation) => (
@@ -557,7 +555,7 @@ export function App() {
                     ? "Past conversation"
                     : gateway.connection === "open"
                       ? "Ready"
-                      : "Connect to begin"}
+                      : "Offline"}
             </span>
           </div>
           <div className="header-actions">
@@ -628,7 +626,7 @@ export function App() {
                 <p>
                   {connected
                     ? "Start with what is on your mind. This conversation stays with your local Profile."
-                    : "Connect this tab to the local Ziggy resident to open your main conversation."}
+                    : "Connect to Squarey to open your conversations and start chatting."}
                 </p>
                 {connected ? null : (
                   <Button onClick={() => setConnectionOpen(true)}>Connect</Button>
@@ -724,7 +722,7 @@ export function App() {
                 onKeyDown={composerKeyDown}
                 placeholder={
                   !connected
-                    ? "Connect to begin"
+                    ? "Offline"
                     : selectedIsLive
                       ? `Message ${gateway.selectedTitle}`
                       : "Past conversations are read only"
