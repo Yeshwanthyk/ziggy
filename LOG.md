@@ -803,3 +803,8 @@ results.
 
 - Matched the composer outer edges to the transcript content column, including narrow-screen gutters. Removed focus-triggered expansion; content now grows the textarea from 38px up to 180px.
 - Desktop browser measurements confirmed matching left edges, unchanged 38px textarea height on focus, and growth to 80px for a three-line draft. Cleared the test draft without sending. Full checks passed; rebuilt after the final narrow-gutter adjustment. Mobile layout remains source-checked only.
+
+## Restore composer click expansion
+
+- Restored the preferred 112px minimum textarea height on focus while preserving the new transcript alignment and content-driven growth.
+- Full `bun run check` passed. Rebuilt preview and verified clicking the composer expands its textarea to 112px.

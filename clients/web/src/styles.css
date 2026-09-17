@@ -1040,6 +1040,10 @@ button {
   resize: none;
 }
 
+.composer:focus-within textarea {
+  min-height: 112px;
+}
+
 .composer textarea:focus-visible {
   box-shadow: none;
   outline: 0;
