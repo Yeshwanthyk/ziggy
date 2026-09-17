@@ -8,6 +8,7 @@ import {
 import { openUiServer, type UiServerConnection, UiServerError } from "../adapters/bun/ui-server";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
+import { readWebAccessConfig } from "../adapters/fs/web-access-config";
 import { type SlackApiError } from "../adapters/slack/api";
 import { type TelegramApiError } from "../adapters/telegram/api";
 import { ProfileNotInitialized } from "../domain/agent";
@@ -77,7 +78,8 @@ export type ResidentGatewayError =
   | ProfileNotInitialized
   | GatewayConfigError
   | GatewayOwnerError
-  | AutomationSchedulerError;
+  | AutomationSchedulerError
+  | UiServerError;
 
 export interface ResidentGatewayApi {
   readonly run: (target: ProfileTarget) => Effect.Effect<never, ResidentGatewayError>;
@@ -136,6 +138,17 @@ const makeLiveUiRuntime = (
 ): ResidentUiRuntime => ({
   run: (target, registry) =>
     Effect.gen(function* () {
+      const webConfig = yield* readWebAccessConfig(target.path).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UiServerError({
+              operation: "start",
+              message: cause.message,
+              cause,
+            }),
+        ),
+      );
+
       const defaultBranch: ResidentProfileBranch = {
         profileId: stableProfileId(target.path),
         target,
@@ -204,17 +217,26 @@ const makeLiveUiRuntime = (
         return opened;
       };
 
-      yield* openUiServer(target.path, {
-        onRequest: (connection, request) => connectionFor(connection).request(request),
-        onClose: (connection) => {
-          const opened = connections.get(connection.id);
+      const uiOptions =
+        webConfig.publicUrl === undefined
+          ? { port: webConfig.port }
+          : { port: webConfig.port, publicUrl: webConfig.publicUrl };
 
-          if (opened === undefined) return Effect.void;
-          connections.delete(connection.id);
+      yield* openUiServer(
+        target.path,
+        {
+          onRequest: (connection, request) => connectionFor(connection).request(request),
+          onClose: (connection) => {
+            const opened = connections.get(connection.id);
 
-          return opened.close;
+            if (opened === undefined) return Effect.void;
+            connections.delete(connection.id);
+
+            return opened.close;
+          },
         },
-      });
+        uiOptions,
+      );
 
       return yield* Effect.never;
     }),
@@ -238,15 +260,15 @@ export const makeResidentGateway = (
           const owner = yield* runtime.acquireOwner(target);
           const registry = yield* makeChatRegistry();
 
-          const branches: Array<Effect.Effect<never, AutomationSchedulerError, Scope.Scope>> = [
+          const branches: Array<
+            Effect.Effect<never, AutomationSchedulerError | UiServerError, Scope.Scope>
+          > = [
             scheduler.run(target, owner),
             ui
               .run(target, registry)
               .pipe(
-                Effect.catchTag("UiServerError", (failure) =>
-                  runtime
-                    .logError(`[gateway] UI server stopped: ${failure.message}`)
-                    .pipe(Effect.andThen(Effect.never)),
+                Effect.tapError((failure) =>
+                  runtime.logError(`[gateway] UI server stopped: ${failure.message}`),
                 ),
               ),
           ];

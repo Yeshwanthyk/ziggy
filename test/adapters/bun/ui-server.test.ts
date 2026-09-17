@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Result } from "effect";
 import {
+  gatewayCookieName,
   openUiServer,
   readUiServerProjection,
   UI_SERVER_BACKPRESSURE_BYTES,
@@ -13,6 +14,7 @@ import {
   uiServerProjectionPath,
   type UiServerHandlers,
 } from "ziggy/adapters/bun/ui-server";
+import { openWebAccessStore } from "ziggy/adapters/bun/web-access-sqlite";
 
 const paths: Array<string> = [];
 
@@ -144,6 +146,131 @@ describe("Bun UI server projection and authentication", () => {
         }),
       ),
     );
+  });
+
+  test("pairs once, serves assets, persists cookie auth, and enforces revocation", async () => {
+    const profilePath = await makeProfile();
+    const pairingStore = openWebAccessStore(profilePath);
+    const pairing = pairingStore.issuePairing();
+    pairingStore.close();
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openUiServer(profilePath, handlers());
+          const origin = `http://127.0.0.1:${server.port}`;
+          const index = yield* Effect.promise(() => fetch(origin));
+          expect(index.status).toBe(200);
+          expect(index.headers.get("content-type")).toContain("text/html");
+          expect((yield* Effect.promise(() => fetch(`${origin}/assets/app.js`))).status).toBe(200);
+
+          const paired = yield* Effect.promise(() =>
+            fetch(`${origin}/auth/pair`, {
+              method: "POST",
+              body: pairing.token,
+              headers: { Origin: origin },
+            }),
+          );
+
+          expect(paired.status).toBe(204);
+          const cookie = paired.headers.get("set-cookie")?.split(";", 1)[0];
+          expect(cookie).toContain("ziggy_ui_");
+
+          const replay = yield* Effect.promise(() =>
+            fetch(`${origin}/auth/pair`, {
+              method: "POST",
+              body: pairing.token,
+              headers: { Origin: origin },
+            }),
+          );
+
+          expect(replay.status).toBe(401);
+
+          const status = yield* Effect.promise(() =>
+            fetch(`${origin}/auth/status`, {
+              headers: { Cookie: cookie ?? "", Origin: origin },
+            }),
+          );
+
+          expect(status.status).toBe(204);
+          expect(status.headers.get("cache-control")).toBe("no-store");
+
+          const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+            headers: { Cookie: cookie ?? "", Origin: origin },
+          });
+
+          yield* Effect.promise(() => within(waitForOpen(socket), "cookie socket open"));
+
+          const revoker = openWebAccessStore(profilePath);
+          expect(revoker.revokeAll()).toBe(1);
+          revoker.close();
+          const closed = nextClose(socket);
+          socket.send(JSON.stringify({ id: "after-revoke", method: "ping", params: {} }));
+          expect((yield* Effect.promise(() => within(closed, "revoked socket close"))).code).toBe(
+            4401,
+          );
+        }),
+      ),
+    );
+  });
+
+  test("reuses a browser session after restart while rotating the legacy runtime token", async () => {
+    const profilePath = await makeProfile();
+    const pairingStore = openWebAccessStore(profilePath);
+    const pairing = pairingStore.issuePairing();
+    pairingStore.close();
+
+    const first = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openUiServer(profilePath, handlers());
+          const origin = `http://127.0.0.1:${server.port}`;
+
+          const paired = yield* Effect.promise(() =>
+            fetch(`${origin}/auth/pair`, {
+              method: "POST",
+              body: pairing.token,
+              headers: { Origin: origin },
+            }),
+          );
+
+          const cookie = paired.headers.get("set-cookie")?.split(";", 1)[0];
+          const projection = yield* readUiServerProjection(profilePath);
+
+          return { port: server.port, cookie: cookie ?? "", token: projection.token };
+        }),
+      ),
+    );
+
+    await Bun.sleep(20);
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openUiServer(profilePath, handlers(), { port: first.port });
+          const origin = `http://127.0.0.1:${server.port}`;
+          const projection = yield* readUiServerProjection(profilePath);
+          expect(projection.token).not.toBe(first.token);
+          expect(
+            (yield* Effect.promise(() =>
+              fetch(`${origin}/ws?token=${first.token}`, { headers: { Origin: origin } }),
+            )).status,
+          ).toBe(401);
+
+          const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+            headers: { Cookie: first.cookie, Origin: origin },
+          });
+
+          yield* Effect.promise(() => within(waitForOpen(socket), "restarted cookie socket open"));
+          yield* Effect.promise(() => closeClient(socket));
+        }),
+      ),
+    );
+  });
+
+  test("uses distinct cookie identities for separate gateway owners", async () => {
+    const firstProfile = await makeProfile();
+    const secondProfile = await makeProfile();
+    expect(gatewayCookieName(firstProfile)).not.toBe(gatewayCookieName(secondProfile));
   });
 
   test("keeps a replacement projection whose token belongs to another server", async () => {

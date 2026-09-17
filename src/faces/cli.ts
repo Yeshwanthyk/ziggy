@@ -667,6 +667,39 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return invalid(serveHelp);
   }
 
+  if (word === "web") {
+    if ((rest[0] === "pair" || rest[0] === "revoke") && rest.length === 2 && required(rest[1]))
+      return { _tag: rest[0] === "pair" ? "WebPair" : "WebRevoke", target: rest[1] };
+
+    if (rest[0] === "configure" && required(rest[1])) {
+      let port: number | undefined;
+      let publicUrl: string | undefined;
+
+      for (let index = 2; index < rest.length; index += 2) {
+        const option = rest[index];
+        const value = rest[index + 1];
+
+        if (!required(value)) return invalid("web configure options require values");
+
+        if (option === "--port" && port === undefined && /^\d+$/u.test(value)) {
+          const parsed = Number(value);
+
+          if (Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 65_535) port = parsed;
+          else return invalid("web port must be an integer from 1 to 65535");
+        } else if (option === "--public-url" && publicUrl === undefined) publicUrl = value;
+        else return invalid(`unknown, duplicate, or invalid web configure option ${option ?? ""}`);
+      }
+
+      if (port === undefined) return invalid("web configure requires --port <port>");
+
+      return publicUrl === undefined
+        ? { _tag: "WebConfigure", target: rest[1], port }
+        : { _tag: "WebConfigure", target: rest[1], port, publicUrl };
+    }
+
+    return invalid(renderZiggyHelp("web"));
+  }
+
   if (word === "gateway") {
     if (rest.length !== 1 || !required(rest[0])) {
       return invalid("usage: ziggy gateway <name|path>");

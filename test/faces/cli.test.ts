@@ -200,6 +200,40 @@ describe("CLI decoding", () => {
     });
   });
 
+  test("decodes persistent web configuration, pairing, and revocation", async () => {
+    await expect(
+      decode([
+        "web",
+        "configure",
+        "buddy",
+        "--port",
+        "8787",
+        "--public-url",
+        "https://ziggy.example",
+      ]),
+    ).resolves.toEqual({
+      _tag: "WebConfigure",
+      target: "buddy",
+      port: 8787,
+      publicUrl: "https://ziggy.example",
+    });
+    await expect(decode(["web", "pair", "buddy"])).resolves.toEqual({
+      _tag: "WebPair",
+      target: "buddy",
+    });
+    await expect(decode(["web", "revoke", "buddy"])).resolves.toEqual({
+      _tag: "WebRevoke",
+      target: "buddy",
+    });
+    await expect(decode(["serve", "web"])).resolves.toEqual({
+      _tag: "Serve",
+      target: "web",
+    });
+    await expect(decode(["web", "configure", "buddy", "--port", "0"])).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+    });
+  });
+
   test("decodes JSON list/show flags and exact run sessions", async () => {
     await expect(decode(["profiles", "--json"])).resolves.toEqual({
       _tag: "Profiles",

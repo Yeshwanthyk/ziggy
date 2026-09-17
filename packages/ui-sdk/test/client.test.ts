@@ -609,6 +609,17 @@ describe("gateway client transport", () => {
     client.close();
   });
 
+  test("leaves the socket URL credential-free for browser cookie authentication", () => {
+    const client = connectZiggy({
+      url: "wss://ziggy.example/ws?source=hosted",
+      socketFactory: (url) => {
+        expect(url).toBe("wss://ziggy.example/ws?source=hosted");
+        return new FakeSocket();
+      },
+    });
+    client.close();
+  });
+
   test("rejects malformed wire frames and malformed typed results", async () => {
     const socket = new FakeSocket();
     const client = connectZiggy({

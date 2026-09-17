@@ -19,6 +19,8 @@ interface SettingsDialogProps {
   readonly connectionError?: string;
   readonly connectionPending: boolean;
   readonly modelSettings?: ModelSettingsState;
+  readonly hosted?: boolean;
+  readonly pairingRequired?: boolean;
   readonly open: boolean;
   readonly profileName: string;
   readonly onConnect: (url: string, token: string) => Promise<void>;
@@ -68,6 +70,8 @@ export function SettingsDialog({
   connectionError,
   connectionPending,
   modelSettings,
+  hosted = false,
+  pairingRequired = false,
   open,
   profileName,
   onConnect,
@@ -276,48 +280,58 @@ export function SettingsDialog({
                 {connected ? "Connected" : "Offline"}
               </span>
             </div>
-            <form onSubmit={(event) => void submitConnection(event)}>
+            {hosted ? (
               <div className="ziggy-connection-fields">
-                <label>
-                  <span>WebSocket endpoint</span>
-                  <input
-                    autoComplete="url"
-                    inputMode="url"
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder="ws://127.0.0.1:8787/ws"
-                    required
-                    value={url}
-                  />
-                </label>
-                <label>
-                  <span>Runtime token</span>
-                  <input
-                    autoComplete="off"
-                    onChange={(event) => setToken(event.target.value)}
-                    placeholder="Paste token"
-                    required
-                    type="password"
-                    value={token}
-                  />
-                </label>
-                {connectionError === undefined ? null : (
-                  <p className="form-error" role="alert">
-                    {connectionError}
-                  </p>
-                )}
+                <p className={pairingRequired ? "form-error" : "ziggy-settings-muted"}>
+                  {pairingRequired
+                    ? "This browser needs pairing. Open a fresh link from `ziggy web pair <profile>`."
+                    : "This browser is paired with the hosted Ziggy gateway."}
+                </p>
               </div>
-              <DialogFooter>
-                <Button
-                  disabled={
-                    connectionPending || url.trim().length === 0 || token.trim().length === 0
-                  }
-                  type="submit"
-                  variant={connected ? "secondary" : "default"}
-                >
-                  {connectionPending ? "Connecting…" : connected ? "Reconnect" : "Connect"}
-                </Button>
-              </DialogFooter>
-            </form>
+            ) : (
+              <form onSubmit={(event) => void submitConnection(event)}>
+                <div className="ziggy-connection-fields">
+                  <label>
+                    <span>WebSocket endpoint</span>
+                    <input
+                      autoComplete="url"
+                      inputMode="url"
+                      onChange={(event) => setUrl(event.target.value)}
+                      placeholder="ws://127.0.0.1:8787/ws"
+                      required
+                      value={url}
+                    />
+                  </label>
+                  <label>
+                    <span>Runtime token</span>
+                    <input
+                      autoComplete="off"
+                      onChange={(event) => setToken(event.target.value)}
+                      placeholder="Paste token"
+                      required
+                      type="password"
+                      value={token}
+                    />
+                  </label>
+                  {connectionError === undefined ? null : (
+                    <p className="form-error" role="alert">
+                      {connectionError}
+                    </p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button
+                    disabled={
+                      connectionPending || url.trim().length === 0 || token.trim().length === 0
+                    }
+                    type="submit"
+                    variant={connected ? "secondary" : "default"}
+                  >
+                    {connectionPending ? "Connecting…" : connected ? "Reconnect" : "Connect"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
           </section>
 
           {connected ? (

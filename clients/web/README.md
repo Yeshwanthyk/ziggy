@@ -19,11 +19,10 @@ React modules are actively changing. Build the checked static client with:
 bun run build
 ```
 
-The build is written to `dist/` and the local Ziggy web host serves it at
-<http://127.0.0.1:4173/> for stable review. Connection settings ask
-for the local WebSocket endpoint and runtime token. The endpoint is remembered in local storage;
-the token is kept only in session storage. Reloading the same browser tab reconnects automatically;
-a new tab or browser session shows the connection form again.
+The build is written to `dist/`. A configured `ziggy serve` listener serves the checked web client,
+pairing endpoint, and WebSocket from one origin. A browser opened through a `ziggy web pair` link
+receives an HttpOnly session cookie and reconnects after resident or browser restarts. Manual
+WebSocket endpoint and runtime-token entry remains available for an explicitly external client.
 
 ## Stack boundary
 

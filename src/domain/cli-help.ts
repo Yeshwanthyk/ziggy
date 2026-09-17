@@ -18,6 +18,7 @@ export const ziggyHelpTopics = [
   "sessions",
   "memory",
   "serve",
+  "web",
   "gateway",
   "tui",
 ] as const satisfies ReadonlyArray<HelpTopic>;
@@ -59,6 +60,9 @@ const generalHelp = `Usage:
   ziggy serve status <name|path>
   ziggy serve logs <name|path> [--follow]
   ziggy serve uninstall <name|path>
+  ziggy web configure <name|path> --port <port> [--public-url <url>]
+  ziggy web pair <name|path>
+  ziggy web revoke <name|path>
   ziggy gateway <name|path>  # compatibility alias
   ziggy help [command]
   ziggy version
@@ -88,6 +92,7 @@ const topicHelp = {
   memory:
     "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
   serve: serveHelp,
+  web: "usage:\n  ziggy web configure <name|path> --port <port> [--public-url <url>]\n  ziggy web pair <name|path>\n  ziggy web revoke <name|path>",
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
   tui: "usage: ziggy tui [<name|path>]",
 } satisfies Record<HelpTopic, string>;

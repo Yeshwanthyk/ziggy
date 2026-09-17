@@ -367,7 +367,7 @@ describe("resident gateway supervision", () => {
     expect(events.indexOf("ui:exit")).toBeLessThan(events.indexOf("owner:exit"));
   });
 
-  test("isolates a typed UI server failure while the scheduler stays live", async () => {
+  test("propagates a typed UI server failure and releases resident ownership", async () => {
     const target = await profile();
     const events: Array<string> = [];
     const progress = await Effect.runPromise(Deferred.make<void>());
@@ -401,16 +401,15 @@ describe("resident gateway supervision", () => {
 
     await runScoped(
       Effect.gen(function* () {
-        const fiber = yield* Effect.forkScoped(host.run(target));
-        yield* waitFor(() => events.includes("ui:exit"));
+        const result = yield* host.run(target).pipe(Effect.result);
+        expect(Result.isFailure(result) && result.failure.message).toBe("address unavailable");
         expect(events.filter((event) => event.includes("UI server stopped"))).toEqual([
           "[gateway] UI server stopped: address unavailable",
         ]);
-        yield* Deferred.succeed(progress, undefined);
-        yield* waitFor(() => events.includes("scheduler:progress"));
-        yield* Fiber.interrupt(fiber);
       }),
     );
+    expect(events).not.toContain("scheduler:progress");
+    expect(events.at(-1)).toBe("owner:exit");
   });
 
   test("routes an authenticated UI extension request through shared ProfileExtensions", async () => {

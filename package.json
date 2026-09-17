@@ -27,7 +27,9 @@
     "test": "bun test ./test ./extensions ./tooling",
     "check:ui-sdk": "bun run --cwd packages/ui-sdk lint && bun run --cwd packages/ui-sdk typecheck && bun run --cwd packages/ui-sdk test",
     "check:web": "bun run --cwd clients/web check",
-    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run knip && bun run check:ui-sdk && bun run check:web && bun run check:catalog && bun run check:pi-docs"
+    "generate:web-assets": "bun run --cwd clients/web build && bun tooling/generate-web-assets.mjs",
+    "check:web-assets": "bun tooling/generate-web-assets.mjs --check",
+    "check": "oxfmt --check \"src/**/*.ts\" \"!src/generated/**\" \"!src/adapters/pi/generated/**\" \"test/**/*.ts\" \"extensions/**/*.ts\" \"extensions/**/*.mjs\" \"tooling/**/*.mjs\" \"tooling/**/*.ts\" && bun run lint && bun run typecheck && bun run knip && bun run check:ui-sdk && bun run check:web && bun run check:web-assets && bun run check:catalog && bun run check:pi-docs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

@@ -19,6 +19,7 @@ export type HelpTopic =
   | "sessions"
   | "memory"
   | "serve"
+  | "web"
   | "gateway"
   | "tui";
 
@@ -141,6 +142,14 @@ export type CliCommand =
   | { readonly _tag: "ServeStatus"; readonly target: string }
   | { readonly _tag: "ServeLogs"; readonly target: string; readonly follow: boolean }
   | { readonly _tag: "ServeUninstall"; readonly target: string }
+  | {
+      readonly _tag: "WebConfigure";
+      readonly target: string;
+      readonly port: number;
+      readonly publicUrl?: string;
+    }
+  | { readonly _tag: "WebPair"; readonly target: string }
+  | { readonly _tag: "WebRevoke"; readonly target: string }
   | { readonly _tag: "Gateway"; readonly target: string }
   | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
   | { readonly _tag: "Tui"; readonly target: string };

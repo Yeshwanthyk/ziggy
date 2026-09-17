@@ -58,6 +58,16 @@ declare module "*.css" {
   export default path;
 }
 
+declare module "*.js" {
+  const path: string;
+  export default path;
+}
+
+declare module "*.webp" {
+  const path: string;
+  export default path;
+}
+
 declare module "*export-html/template.js" {
   const path: string;
   export default path;

@@ -1,7 +1,7 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, rename, rm, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Effect, FiberMap, Option, Queue, Schema, Scope } from "effect";
 import {
   UiRequestEnvelope,
@@ -10,6 +10,8 @@ import {
   type UiRequestEnvelope as UiRequestEnvelopeValue,
 } from "../../domain/ui-gateway";
 import { fileSystemCauseDetails } from "../fs/cause";
+import { openWebAccessStore } from "./web-access-sqlite";
+import { webAssetResponse } from "./web-assets";
 
 export const UI_SERVER_MAX_FRAME_BYTES = UI_PROTOCOL_MAX_FRAME_BYTES;
 
@@ -92,6 +94,8 @@ export interface UiServer {
 export interface UiServerOptions {
   readonly commandCapacity?: number;
   readonly maxInFlightPerSocket?: number;
+  readonly port?: number;
+  readonly publicUrl?: string;
 }
 
 interface SocketState {
@@ -104,6 +108,8 @@ interface SocketState {
   sequence: number;
   accepting: boolean;
   cleaned: boolean;
+  readonly browserSessionToken: string | undefined;
+  readonly browserSessionValid: (() => boolean) | undefined;
 }
 
 type Command =
@@ -306,6 +312,41 @@ const authenticated = (request: Request, token: string): boolean => {
   return constantTokenEqual(header ?? query ?? "", token);
 };
 
+export const gatewayCookieName = (profilePath: string): string =>
+  `ziggy_ui_${createHash("sha256").update(resolve(profilePath)).digest("hex").slice(0, 16)}`;
+
+const cookieValue = (request: Request, name: string): string | undefined => {
+  const header = request.headers.get("cookie");
+
+  if (header === null) return undefined;
+
+  for (const entry of header.split(";")) {
+    const separator = entry.indexOf("=");
+
+    if (separator < 0 || entry.slice(0, separator).trim() !== name) continue;
+    const value = entry.slice(separator + 1).trim();
+
+    return TOKEN_PATTERN.test(value) ? value : undefined;
+  }
+
+  return undefined;
+};
+
+const requestOrigin = (request: Request): string | undefined => {
+  const origin = request.headers.get("origin");
+
+  if (origin !== null) return origin;
+  const referer = request.headers.get("referer");
+
+  if (referer === null) return undefined;
+
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return undefined;
+  }
+};
+
 const failureFrame = (id: string, code: "bad_params" | "internal", message: string): string =>
   JSON.stringify({ id, ok: false, error: { code, message } });
 
@@ -313,6 +354,12 @@ const trySend = (state: SocketState, text: string): boolean => {
   const socket = state.socket;
 
   if (socket === undefined || socket.readyState !== WebSocket.OPEN) return false;
+
+  if (state.browserSessionValid !== undefined && !state.browserSessionValid()) {
+    closeSocket(state, 4401, "browser session expired or revoked");
+
+    return false;
+  }
 
   try {
     if (Buffer.byteLength(text, "utf8") > UI_SERVER_MAX_FRAME_BYTES) {
@@ -372,6 +419,14 @@ export const openUiServer = (
     }
 
     const token = randomBytes(32).toString("hex");
+    const cookieName = gatewayCookieName(profilePath);
+
+    const accessStore = yield* Effect.try({
+      try: () => openWebAccessStore(profilePath),
+      catch: (cause) =>
+        serverError("start", "could not open durable browser access", cause, profilePath),
+    });
+
     const commands = yield* Queue.dropping<Command>(commandCapacity);
     const requestFibers = yield* FiberMap.make<string, void, never>();
     const connections = new Map<string, SocketState>();
@@ -444,13 +499,57 @@ export const openUiServer = (
       try: () =>
         Bun.serve<SocketState>({
           hostname: "127.0.0.1",
-          port: 0,
-          fetch: (request, current) => {
+          port: options.port ?? 0,
+          fetch: async (request, current) => {
             const url = new URL(request.url);
+
+            const allowedOrigins = new Set([
+              `http://127.0.0.1:${current.port}`,
+              `http://localhost:${current.port}`,
+              ...(options.publicUrl === undefined ? [] : [new URL(options.publicUrl).origin]),
+            ]);
+
+            if (url.pathname === "/auth/pair" && request.method === "POST") {
+              const code = await request.text();
+
+              const session =
+                allowedOrigins.has(requestOrigin(request) ?? "") && TOKEN_PATTERN.test(code)
+                  ? accessStore.redeemPairing(code)
+                  : undefined;
+
+              if (session === undefined)
+                return new Response("Pairing link is invalid or expired.", { status: 401 });
+              const secure = options.publicUrl?.startsWith("https://") === true ? "; Secure" : "";
+              const maxAge = Math.max(0, Math.floor((session.expiresAtMs - Date.now()) / 1_000));
+
+              return new Response(null, {
+                status: 204,
+                headers: {
+                  "Set-Cookie": `${cookieName}=${session.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secure}`,
+                },
+              });
+            }
+
+            const browserSessionToken = cookieValue(request, cookieName);
+
+            const browserAuthenticated =
+              browserSessionToken !== undefined &&
+              allowedOrigins.has(requestOrigin(request) ?? "") &&
+              accessStore.sessionValid(browserSessionToken);
+
+            if (url.pathname === "/auth/status")
+              return new Response(null, {
+                status: browserAuthenticated ? 204 : 401,
+                headers: { "Cache-Control": "no-store" },
+              });
+
+            const asset = webAssetResponse(url.pathname);
+
+            if (asset !== undefined) return asset;
 
             if (url.pathname !== "/ws") return new Response("Not Found", { status: 404 });
 
-            if (!authenticated(request, token)) {
+            if (!authenticated(request, token) && !browserAuthenticated) {
               return new Response("Unauthorized", { status: 401 });
             }
 
@@ -464,6 +563,12 @@ export const openUiServer = (
               sequence: 0,
               accepting: true,
               cleaned: false,
+              browserSessionToken: browserAuthenticated ? browserSessionToken : undefined,
+              browserSessionValid: browserAuthenticated
+                ? () =>
+                    browserSessionToken !== undefined &&
+                    accessStore.sessionValid(browserSessionToken)
+                : undefined,
             };
 
             if (current.upgrade(request, { data: state })) return;
@@ -484,6 +589,16 @@ export const openUiServer = (
               const state = socket.data;
 
               if (!state.accepting || state.cleaned) return;
+
+              if (
+                state.browserSessionToken !== undefined &&
+                !accessStore.sessionValid(state.browserSessionToken)
+              ) {
+                closeSocket(state, 4401, "browser session expired or revoked");
+
+                return;
+              }
+
               const textFrame = decodeTextFrame(message);
 
               if (Option.isNone(textFrame)) {
@@ -559,8 +674,15 @@ export const openUiServer = (
             },
           },
         }),
-      catch: (cause) => serverError("start", "could not start UI server", cause),
-    });
+      catch: (cause) =>
+        serverError(
+          "start",
+          options.port === undefined || options.port === 0
+            ? "could not start UI server"
+            : `could not bind UI server to 127.0.0.1:${options.port}`,
+          cause,
+        ),
+    }).pipe(Effect.tapError(() => Effect.sync(() => accessStore.close())));
 
     const port = server.port;
 
@@ -599,6 +721,7 @@ export const openUiServer = (
           projectionPublished ? removeMatchingProjection(profilePath, token) : Effect.void,
         ),
         Effect.andThen(Queue.shutdown(commands)),
+        Effect.ensuring(Effect.sync(() => accessStore.close())),
       );
     });
 

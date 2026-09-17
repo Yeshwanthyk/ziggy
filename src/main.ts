@@ -30,6 +30,7 @@ import { Doctor, DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
 import { Models, ModelsLive } from "./application/models";
 import { Memory, MemoryLive } from "./application/memory";
+import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
 import { ResidentGateway, makeResidentGatewayLive } from "./application/resident-gateway";
@@ -802,6 +803,36 @@ const program = Effect.gen(function* () {
       return yield* fail(
         `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
       );
+    case "WebConfigure": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      yield* configureWebAccess(target, command.port, command.publicUrl);
+      console.log(
+        `web configured: http://127.0.0.1:${command.port}${command.publicUrl === undefined ? "" : ` (public ${command.publicUrl})`}\nrestart the resident to apply it`,
+      );
+
+      return;
+    }
+
+    case "WebPair": {
+      const pairing = yield* issueWebPairing(
+        resolveProfileTarget(command.target, resolutionOptions),
+      );
+
+      console.log(`${pairing.url}\nexpires: ${pairing.expiresAt}`);
+
+      return;
+    }
+
+    case "WebRevoke": {
+      const count = yield* revokeWebSessions(
+        resolveProfileTarget(command.target, resolutionOptions),
+      );
+
+      console.log(`revoked browser sessions: ${count}`);
+
+      return;
+    }
+
     case "Tui": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
 
@@ -963,6 +994,8 @@ const program = Effect.gen(function* () {
     GatewayConfigError: (failure) => fail(failure.message),
     GatewayOwnerError: (failure) => fail(failure.message),
     ResidentServiceError: (failure) => fail(failure.message),
+    UiServerError: (failure) => fail(failure.message),
+    WebAccessError: (failure) => fail(failure.message),
     SessionReadFailed: (failure) => fail(failure.message),
     SessionNotFound: (failure) => fail(failure.message),
     ExtensionCatalogInvalid: (failure) => fail(failure.message),

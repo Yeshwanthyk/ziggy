@@ -145,3 +145,37 @@ ziggy serve status <profile>
 ziggy serve logs <profile>
 ziggy automations runs <profile>
 ```
+## Browser access
+
+Configure one stable loopback port for each resident that should host the web client. The setting is
+stored with the resident owner and survives service restarts:
+
+```sh
+ziggy web configure squarey --port 8797 --public-url https://yesh-m4pro.tail6bc56d.ts.net:4173
+ziggy serve restart squarey
+```
+
+The configured port must be unique on the host. Ziggy fails the resident with the exact occupied
+port instead of silently choosing another one. Profiles without `web.json` keep the legacy automatic
+loopback port until explicitly configured.
+
+Pair a browser once with a short-lived, single-use link:
+
+```sh
+ziggy web pair squarey
+```
+
+The link keeps its pairing code in the URL fragment, exchanges it with a same-origin POST, removes
+the fragment, and stores only an HttpOnly browser cookie. The session lasts 30 days and remains valid
+when the resident restarts. It authorizes the shared gateway and therefore every Profile exposed by
+that resident's registered Profile directory. It does not copy credentials between Profiles.
+
+Revoke every paired browser for that resident with:
+
+```sh
+ziggy web revoke squarey
+```
+
+The next request or event closes an already-open browser socket. A fresh pairing link is then
+required. The rotating token in `.runtime/ui-server.json` remains available for existing SDK clients
+and is separate from browser sessions.

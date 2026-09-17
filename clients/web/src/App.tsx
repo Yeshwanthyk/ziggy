@@ -2,6 +2,7 @@ import { NewChatDialog } from "@/components/new-chat-dialog";
 import Stack from "@nkzw/stack";
 import {
   ArrowUp,
+  ChevronDown,
   Menu,
   PanelLeftClose,
   Pencil,
@@ -138,6 +139,9 @@ function HistoryEntry({
 export function App() {
   const gateway = useZiggyGateway();
   const [connectionOpen, setConnectionOpen] = useState(() => readSavedConnection() === undefined);
+  const [hosted, setHosted] = useState(false);
+  const [pairingRequired, setPairingRequired] = useState(false);
+  const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
   const [startupPending, setStartupPending] = useState(() => readSavedConnection() !== undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -169,6 +173,15 @@ export function App() {
   useEffect(() => {
     firstHistoryKeyRef.current = undefined;
   }, [gateway.selectedRef]);
+
+  useEffect(() => {
+    setNewChatOpen(false);
+    setGroupDialogOpen(false);
+    setSelectedAutomationId(undefined);
+    setAgentEditorOpen(false);
+    setDraft("");
+    setLocalAction(undefined);
+  }, [gateway.profile?.profileId]);
 
   const sidebarItems = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -221,11 +234,11 @@ export function App() {
     );
   }, [selectedGroup]);
 
-  const connect = async (url: string, token: string): Promise<void> => {
+  const connect = async (url: string, token?: string, persistent = false): Promise<void> => {
     const attempt = ++connectionAttemptRef.current;
     setStartupPending(true);
     try {
-      await gateway.connect({ url, token });
+      await gateway.connect({ persistent, url, token });
       if (attempt === connectionAttemptRef.current) setConnectionOpen(false);
     } catch {
       if (attempt === connectionAttemptRef.current) setConnectionOpen(true);
@@ -237,10 +250,67 @@ export function App() {
   useEffect(() => {
     if (autoConnectStartedRef.current) return;
     const saved = readSavedConnection();
-    if (saved === undefined) return;
     autoConnectStartedRef.current = true;
-    void connect(saved.url, saved.token);
-  });
+    const pairingCode = new URLSearchParams(location.hash.slice(1)).get("code");
+    const pairing =
+      pairingCode === null
+        ? Promise.resolve<Response | undefined>(undefined)
+        : fetch("/auth/pair", {
+            body: pairingCode,
+            credentials: "include",
+            method: "POST",
+          }).then((response) => {
+            history.replaceState(null, "", `${location.pathname}${location.search}`);
+            return response;
+          });
+    void pairing
+      .then((response) => {
+        if (response !== undefined && response.status !== 204) throw new Error("pairing failed");
+        return fetch("/auth/status", { credentials: "include" });
+      })
+      .then(async (response) => {
+        if (response.status !== 204 && response.status !== 401) {
+          if (saved !== undefined) await connect(saved.url, saved.token);
+          return;
+        }
+        setHosted(true);
+        if (response.status === 401) {
+          setPairingRequired(true);
+          setConnectionOpen(true);
+          return;
+        }
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        await connect(`${protocol}//${location.host}/ws`, undefined, true);
+      })
+      .catch(() => {
+        setStartupPending(false);
+        globalThis.setTimeout(() => {
+          autoConnectStartedRef.current = false;
+          setDiscoveryAttempt((current) => current + 1);
+        }, 1_000);
+      });
+  }, [discoveryAttempt]);
+
+  useEffect(() => {
+    if (!hosted || gateway.connection !== "reconnecting") return;
+    let stopped = false;
+    const check = (): void => {
+      void fetch("/auth/status", { credentials: "include" })
+        .then((response) => {
+          if (stopped || response.status !== 401) return;
+          setPairingRequired(true);
+          setConnectionOpen(true);
+        })
+        .catch(() => undefined);
+    };
+    check();
+    const timer = globalThis.setInterval(check, 2_000);
+
+    return () => {
+      stopped = true;
+      globalThis.clearInterval(timer);
+    };
+  }, [gateway.connection, hosted]);
 
   const runSidebarAction = async (key: string, action: () => Promise<void>): Promise<boolean> => {
     setLocalAction(key);
@@ -309,7 +379,38 @@ export function App() {
         <Stack alignCenter between className="sidebar-heading">
           <span className="ziggy-brand">
             <PrismArt compact />
-            <strong>Ziggy</strong>
+            <span className="ziggy-brand-copy">
+              <strong>Ziggy</strong>
+              {gateway.profiles.length > 1 ? (
+                <label className="profile-switcher">
+                  <span>{gateway.profile?.name ?? "Profile"}</span>
+                  <ChevronDown aria-hidden="true" />
+                  <select
+                    aria-label="Ziggy Profile"
+                    disabled={!connected || gateway.sidebarBusy}
+                    onChange={(event) => {
+                      const selected = gateway.profiles.find(
+                        (profile) => profile.profileId === event.target.value,
+                      );
+                      if (selected !== undefined) void gateway.switchProfile(selected.profileId);
+                    }}
+                    value={gateway.profile?.profileId ?? ""}
+                  >
+                    {gateway.profiles.map((profile) => (
+                      <option
+                        disabled={!profile.available}
+                        key={profile.profileId}
+                        value={profile.profileId}
+                      >
+                        {profile.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : gateway.profile === undefined ? null : (
+                <span className="profile-name-static">{gateway.profile.name}</span>
+              )}
+            </span>
           </span>
           <Stack alignCenter gap={2}>
             <Button
@@ -836,6 +937,8 @@ export function App() {
         connectionError={gateway.localError}
         connectionPending={gateway.connection === "connecting"}
         modelSettings={gateway.modelSettings}
+        hosted={hosted}
+        pairingRequired={pairingRequired}
         onConnect={connect}
         onOpenChange={(open) => {
           setConnectionOpen(open);

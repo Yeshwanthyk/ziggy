@@ -412,6 +412,57 @@ describe("useZiggyGateway", () => {
     expect(hook.result.current.connection).toBe("open");
   });
 
+  it("switches Profile-scoped state and restores the selected Profile for the endpoint", async () => {
+    const beta = {
+      profileId: "prf_beta",
+      name: "Beta",
+      current: false,
+      available: true,
+    } as const satisfies ZiggyProfileSummary;
+    const betaMain = {
+      profileId: beta.profileId,
+      kind: "live",
+      key: "local/main",
+    } as const satisfies ZiggySessionRef;
+    const { client, fixture } = makeClient({
+      listProfiles: vi.fn(async () => ({ profiles: [profile, beta] })),
+      openMain: vi.fn(async (profileId) => (profileId === beta.profileId ? betaMain : mainRef)),
+      listSessions: vi.fn(async (profileId) => ({
+        profileId,
+        live: [
+          {
+            ref: profileId === beta.profileId ? betaMain : mainRef,
+            kind: "ui" as const,
+            idle: true,
+          },
+        ],
+        stored: [],
+      })),
+      listAgents: vi.fn(async (profileId) => ({
+        profileId,
+        agents:
+          profileId === beta.profileId
+            ? [{ id: "beta-agent", description: "Beta agent", tools: [] }]
+            : [{ id: "squarey-agent", description: "Squarey agent", tools: [] }],
+      })),
+    });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.agents[0]?.id).toBe("squarey-agent"));
+
+    await act(async () => hook.result.current.switchProfile(beta.profileId));
+
+    expect(hook.result.current.profile).toEqual(beta);
+    expect(hook.result.current.selectedRef).toEqual(betaMain);
+    expect(hook.result.current.agents.map((agent) => agent.id)).toEqual(["beta-agent"]);
+    expect(fixture.unwatchSession).toHaveBeenCalledWith(mainRef);
+    expect(fixture.watchSession).toHaveBeenCalledWith(betaMain);
+    hook.unmount();
+
+    const restored = await connectHook(client);
+    expect(restored.result.current.profile).toEqual(beta);
+    expect(restored.result.current.selectedRef).toEqual(betaMain);
+  });
+
   it("loads provider and model settings and saves an explicit Profile default", async () => {
     const { client, fixture } = makeClient();
     const hook = await connectHook(client);
@@ -847,6 +898,41 @@ describe("useZiggyGateway", () => {
       "Connection lost. Reconnect with current endpoint and runtime token.",
     );
     expect(hook.result.current.history).toEqual(initialHistory);
+  });
+
+  it("keeps a persistent browser connection reconnecting beyond the legacy grace period", async () => {
+    vi.useFakeTimers();
+    let transportState: GatewayClient["state"] = "open";
+    let emit: ((event: ZiggyClientEvent) => void) | undefined;
+    const { client, fixture } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    });
+    Object.defineProperty(client, "state", { get: () => transportState });
+    const connector: GatewayConnector = () => client;
+    const hook = renderHook(() => useZiggyGateway(connector));
+    await act(async () => {
+      await hook.result.current.connect({
+        persistent: true,
+        url: "ws://127.0.0.1:9876/ws",
+      });
+    });
+
+    act(() => {
+      transportState = "reconnecting";
+      emit?.({ event: "connection-state", state: "reconnecting" });
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(fixture.close).not.toHaveBeenCalled();
+    expect(hook.result.current.connection).toBe("reconnecting");
+
+    act(() => {
+      transportState = "open";
+      emit?.({ event: "connection-state", state: "open" });
+    });
+    expect(hook.result.current.connection).toBe("open");
   });
 
   it("keeps a watch failure visible after history loads without marking transport offline", async () => {

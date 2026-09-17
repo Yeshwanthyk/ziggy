@@ -59,7 +59,7 @@ export type ZiggySocketFactory = (url: string) => ZiggySocket;
 
 export interface ZiggyConnectionOptions {
   readonly url: string;
-  readonly token: string;
+  readonly token?: string;
   readonly requestTimeoutMs?: number;
   readonly reconnectBaseDelayMs?: number;
   readonly reconnectMaxDelayMs?: number;
@@ -107,9 +107,9 @@ interface SequenceState {
 const boundedDelay = (value: number | undefined, fallback: number): number =>
   value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
 
-const authenticatedUrl = (value: string, token: string): string => {
+const authenticatedUrl = (value: string, token?: string): string => {
   const url = new URL(value);
-  url.searchParams.set("token", token);
+  if (token !== undefined && token.length > 0) url.searchParams.set("token", token);
   return url.toString();
 };
 

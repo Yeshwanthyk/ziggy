@@ -106,8 +106,9 @@ export interface AutomationDetail {
 }
 
 export interface ConnectInput {
+  readonly persistent?: boolean;
   readonly url: string;
-  readonly token: string;
+  readonly token?: string;
 }
 
 export interface ModelSettingsState {
@@ -169,6 +170,7 @@ const defaultConnector: GatewayConnector = (input) => connectZiggy(input);
 
 const RECONNECT_GRACE_PERIOD_MS = 10_000;
 const SELECTION_STORAGE_PREFIX = "ziggy:selected:v1:";
+const PROFILE_STORAGE_PREFIX = "ziggy:profile:v1:";
 
 type StoredSelectionTarget =
   | { readonly kind: "main" }
@@ -234,6 +236,22 @@ const clearStoredSelection = (profileId: ZiggyProfileSummary["profileId"]): void
     globalThis.sessionStorage?.removeItem(`${SELECTION_STORAGE_PREFIX}${profileId}`);
   } catch {
     // Selection persistence is optional when tab storage is unavailable.
+  }
+};
+
+const readStoredProfile = (endpoint: string): string | undefined => {
+  try {
+    return globalThis.sessionStorage?.getItem(`${PROFILE_STORAGE_PREFIX}${endpoint}`) ?? undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const writeStoredProfile = (endpoint: string, profileId: string): void => {
+  try {
+    globalThis.sessionStorage?.setItem(`${PROFILE_STORAGE_PREFIX}${endpoint}`, profileId);
+  } catch {
+    // Profile persistence is optional when browser storage is unavailable.
   }
 };
 
@@ -320,6 +338,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [maxPromptCodePoints, setMaxPromptCodePoints] = useState(16_000);
 
   const clientRef = useRef<GatewayClient | undefined>(undefined);
+  const endpointRef = useRef<string | undefined>(undefined);
+  const persistentConnectionRef = useRef(false);
   const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
   const selectedRefRef = useRef<ZiggySessionRef | undefined>(undefined);
   const profileRef = useRef<ZiggyProfileSummary | undefined>(undefined);
@@ -354,6 +374,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
 
   useEffect(() => {
     if (connection !== "reconnecting") return;
+    if (persistentConnectionRef.current) return;
     const client = clientRef.current;
     if (client === undefined) return;
     const timer = globalThis.setTimeout(() => {
@@ -765,13 +786,14 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   );
 
   const connect = useCallback(
-    async ({ url, token }: ConnectInput): Promise<void> => {
+    async ({ persistent = false, url, token }: ConnectInput): Promise<void> => {
       unsubscribeRef.current?.();
       clientRef.current?.close();
       selectedRefRef.current = undefined;
       setSelectedRef(undefined);
       unselectedEventsRef.current = [];
       const connectionGeneration = ++connectionGenerationRef.current;
+      persistentConnectionRef.current = persistent;
       selectionGenerationRef.current += 1;
       automationDetailGenerationRef.current += 1;
       agentDefinitionGenerationRef.current += 1;
@@ -789,6 +811,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         }
         client = connector({ url, token });
         clientRef.current = client;
+        endpointRef.current = url;
         unsubscribeRef.current = client.onAny(handleEvent);
         const [capabilities, listedProfiles, current] = await Promise.all([
           client.capabilities(),
@@ -802,10 +825,15 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           return;
         setMaxPromptCodePoints(capabilities.bounds.maxPromptCodePoints);
         setProfiles(listedProfiles.profiles);
+        const storedProfileId = readStoredProfile(url);
         const selectedProfile =
           listedProfiles.profiles.find(
+            (candidate) => candidate.profileId === storedProfileId && candidate.available,
+          ) ??
+          listedProfiles.profiles.find(
             (candidate) => candidate.profileId === current.profileId && candidate.available,
-          ) ?? listedProfiles.profiles.find((candidate) => candidate.available);
+          ) ??
+          listedProfiles.profiles.find((candidate) => candidate.available);
         if (selectedProfile === undefined) throw new Error("No available Ziggy Profile was found.");
         profileRef.current = selectedProfile;
         setProfile(selectedProfile);
@@ -864,6 +892,82 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     };
     await refreshSidebarFor(client, selectedProfile, mainRef);
   }, [refreshSidebarFor]);
+
+  const switchProfile = useCallback(
+    async (profileId: ZiggyProfileSummary["profileId"]): Promise<void> => {
+      const client = clientRef.current;
+      const current = profileRef.current;
+      const selectedProfile = profiles.find(
+        (candidate) => candidate.profileId === profileId && candidate.available,
+      );
+      if (
+        client === undefined ||
+        current === undefined ||
+        selectedProfile === undefined ||
+        current.profileId === selectedProfile.profileId ||
+        sidebarMutationRef.current
+      )
+        return;
+      requireOpenSidebarClient(client);
+      sidebarMutationRef.current = true;
+      setSidebarBusy(true);
+      setLocalError(undefined);
+      unselectedEventsRef.current = [];
+      try {
+        const mainRef = await client.openMain(selectedProfile.profileId);
+        if (clientRef.current !== client) return;
+        const previous = selectedRefRef.current;
+        sidebarGenerationRef.current += 1;
+        selectionGenerationRef.current += 1;
+        historyGenerationRef.current += 1;
+        automationDetailGenerationRef.current += 1;
+        agentDefinitionGenerationRef.current += 1;
+        modelSettingsGenerationRef.current += 1;
+        profileRef.current = selectedProfile;
+        setProfile(selectedProfile);
+        selectedRefRef.current = undefined;
+        setSelectedRef(undefined);
+        setConversations([]);
+        setPins([]);
+        pinRevisionRef.current = 0;
+        setPinRevision(0);
+        setAgents([]);
+        setGroups([]);
+        setAutomations([]);
+        setAutomationDetail(undefined);
+        setAgentDefinitionDetail(undefined);
+        setModelSettings(undefined);
+        setPendingInputs([]);
+        setHistory([]);
+        setHistoryCursor(undefined);
+        setHasMoreHistory(false);
+        setStreamText("");
+        setTools([]);
+        setPendingUser(undefined);
+        setBusy(false);
+        setReconciling(false);
+        if (previous?.kind === "live") await client.unwatchSession(previous).catch(() => undefined);
+        const conversation: ConversationSummary = {
+          ref: mainRef,
+          title: selectedProfile.name,
+          subtitle: "Main conversation",
+          active: false,
+        };
+        setConversations([conversation]);
+        await selectConversation(conversation, false);
+        const endpoint = endpointRef.current;
+        if (endpoint !== undefined) writeStoredProfile(endpoint, selectedProfile.profileId);
+        await refreshSidebarFor(client, selectedProfile, mainRef, true);
+      } catch (cause) {
+        setLocalError(cause instanceof Error ? cause.message : "Could not switch Ziggy Profile.");
+        throw cause;
+      } finally {
+        sidebarMutationRef.current = false;
+        setSidebarBusy(false);
+      }
+    },
+    [profiles, refreshSidebarFor, requireOpenSidebarClient, selectConversation],
+  );
 
   const openSpecialist = useCallback(
     async (agentId: string): Promise<void> => {
@@ -1587,6 +1691,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     sidebarLoading,
     streamText,
     submit,
+    switchProfile,
     createChat,
     tools,
   };
