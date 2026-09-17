@@ -808,3 +808,8 @@ results.
 
 - Restored the preferred 112px minimum textarea height on focus while preserving the new transcript alignment and content-driven growth.
 - Full `bun run check` passed. Rebuilt preview and verified clicking the composer expands its textarea to 112px.
+
+## Refine sidebar typography
+
+- Replaced tiny tracked uppercase section labels with 12px sentence-case labels. Specialist rows display the opening role sentence without the repetitive Squarey suffix; full descriptions remain in title tooltips. Profile definitions are unchanged.
+- Rebuilt and visually verified all three specialist descriptions fit the desktop rail. Full `bun run check` and `git diff --check` passed; existing bundle-size warning remains.

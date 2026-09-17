@@ -82,6 +82,7 @@ function ActionRow({
   name,
   onSelect,
   selected = false,
+  shortDescription = description,
 }: {
   readonly active?: boolean;
   readonly description: string;
@@ -89,6 +90,7 @@ function ActionRow({
   readonly name: string;
   readonly onSelect: () => void;
   readonly selected?: boolean;
+  readonly shortDescription?: string;
 }) {
   return (
     <button
@@ -101,7 +103,7 @@ function ActionRow({
       {avatar(name, active)}
       <span className="conversation-copy">
         <strong>{name}</strong>
-        <span>{description}</span>
+        <span title={description}>{shortDescription}</span>
       </span>
     </button>
   );
@@ -411,6 +413,9 @@ export function App() {
                       conversation.active,
                   )}
                   description={agent.description}
+                  shortDescription={agent.description
+                    .split(/\.\s/u)[0]
+                    ?.replace(/ for Squarey\.?$/u, "")}
                   disabled={!connected || gateway.sidebarBusy}
                   key={agent.id}
                   name={agent.id}
