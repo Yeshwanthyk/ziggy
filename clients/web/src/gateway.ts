@@ -996,7 +996,6 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         setGroups([]);
         setAutomations([]);
         setAutomationDestinations([]);
-        setAutomationDestinations([]);
         setAutomationDetail(undefined);
         setAgentDefinitionDetail(undefined);
         setModelSettings(undefined);

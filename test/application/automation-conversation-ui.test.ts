@@ -8,6 +8,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Schema } from "effect";
 import { makeAutomationRunStore, readAutomationRuns } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
+import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
 import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
 import { readSessionHistory } from "ziggy/adapters/pi/session-history";
 import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
@@ -405,15 +406,20 @@ test("destination.list pages the selected Profile's stored and external destinat
   const otherTarget = await makeProfile("none");
   const otherProfileId = stableProfileId(otherTarget.path);
 
+  const sessionIds = [
+    ...Array.from({ length: 32 }, (_, index) => `a${String(index).padStart(2, "0")}`),
+    "Z-last",
+    "a-under_score",
+    "a.dot",
+  ];
+
   const manySessions: SessionsApi = {
     ...sessions,
     list: (target) =>
       target.path !== fixture.target.path
         ? sessions.list(target)
         : Effect.succeed(
-            Array.from({ length: 35 }, (_, index) => {
-              const id = `session-${String(index).padStart(2, "0")}`;
-
+            sessionIds.map((id) => {
               return {
                 path: join(target.path, "sessions", `${id}.jsonl`),
                 id,
@@ -444,13 +450,59 @@ test("destination.list pages the selected Profile's stored and external destinat
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry(fixture.target.path);
         const otherRegistry = yield* makeChatRegistry(otherTarget.path);
+        const pins = makeUiPinStore();
+        yield* pins.set(
+          fixture.target.path,
+          {
+            id: "stored-label",
+            ref: { profileId: fixture.profileId, kind: "stored", id: "Z-last" },
+            label: "Stored planning",
+            order: 0,
+          },
+          0,
+          "pin-stored-label",
+        );
+        yield* pins.set(
+          fixture.target.path,
+          {
+            id: "live-label",
+            ref: { profileId: fixture.profileId, kind: "live", key: "ui/chat-live" },
+            label: "Live planning",
+            order: 1,
+          },
+          1,
+          "pin-live-label",
+        );
+        yield* pins.set(
+          fixture.target.path,
+          {
+            id: "stale-label",
+            ref: { profileId: fixture.profileId, kind: "live", key: "ui/chat-stale" },
+            label: "Unopened conversation",
+            order: 2,
+          },
+          2,
+          "pin-stale-label",
+        );
+        yield* registry.getOrOpenUi(
+          "ui/chat-live",
+          Effect.succeed(
+            makeChatHandle({
+              prompt: () => Effect.succeed("unused"),
+              currentSession: Effect.succeed({
+                id: "a00",
+                file: join(fixture.target.path, "sessions", "a00.jsonl"),
+              }),
+            }),
+          ),
+        );
         yield* registry.rememberDestination({
           target: {
             _tag: "telegram",
             target: "telegram:chat:-100123",
             chatId: -100123,
           },
-          label: "Release room",
+          label: "🚀".repeat(170),
         });
         yield* otherRegistry.rememberDestination({
           target: {
@@ -511,8 +563,23 @@ test("destination.list pages the selected Profile's stored and external destinat
         expect(all).toContainEqual({
           target: "telegram:chat:-100123",
           kind: "telegram",
-          label: "Release room",
+          label: "🚀".repeat(160),
         });
+        expect(
+          all.filter((entry) => entry.kind === "conversation").map((entry) => entry.target),
+        ).toEqual(sessionIds.map((id) => `conversation:${id}`).sort());
+        expect(second.nextCursor).toBeUndefined();
+        expect(all).toContainEqual({
+          target: "conversation:Z-last",
+          kind: "conversation",
+          label: "Stored planning",
+        });
+        expect(all).toContainEqual({
+          target: "conversation:a00",
+          kind: "conversation",
+          label: "Live planning",
+        });
+        expect(all.some((entry) => entry.label === "Unopened conversation")).toBe(false);
         expect(all.some((entry) => entry.label === "Other Profile")).toBe(false);
       }),
     ),

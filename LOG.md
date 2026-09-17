@@ -900,3 +900,11 @@ results.
 - Channel boundaries retain signed Telegram chat IDs, Discord channel/thread IDs and available names, plus Slack channel/thread addresses. Configured Slack policy IDs seed the catalog, with one best-effort `conversations.info` name lookup and ID fallback; `slack.json` policy remains unchanged.
 - Replaced the conversation-only web resolver with one SDK catalog and multi-destination add/remove rows. Mixed targets, `origin`, `all`, and saved targets missing from discovery remain editable, and removing the last target writes `none`.
 - Focused verification covers Profile isolation, more than one catalog page, configured Slack names and fallback, transport address metadata, restart-safe saved selections, SDK method parity, and mixed add/remove behavior. No live Profile, external message, installation, or resident restart was used.
+
+## Verify destination selection end to end
+
+- Independent verification found and corrected mismatched cursor/sort ordering and overlong display labels. Catalog pages now use consistent canonical ordering and bound only display text; regression coverage includes mixed-case/punctuation IDs and Unicode labels.
+- Restored existing pin names for stored conversations and resolvable live handles without reopening stale pins or adding persistent destination metadata. Removed a duplicate web state reset.
+- Bounded optional Slack name lookups to two seconds so a stalled metadata request falls back to the channel ID instead of blocking gateway startup; verified with Effect's test clock.
+- The independent isolated browser check added and removed conversations, saved mixed transport targets plus `origin`/`all`, retained them after resident restart, removed an undiscovered target, and saved `none` after removing the last target. No provider run or external message was sent.
+- Final `bun run check` passed; `bun run test` passed 750 tests with 2,763 assertions. An initial full run failed the resident hard-crash test, which passed in isolation and on the full rerun; no lifecycle code was changed. Astra independently rechecked the fixes with 99 passing tests and reported no remaining blocking findings.

@@ -963,7 +963,7 @@ export const makeSlackGateway = (
 
                 const result = yield* transport
                   .getConversation(config.botToken, channel)
-                  .pipe(Effect.result);
+                  .pipe(Effect.timeout("2 seconds"), Effect.result);
 
                 if (result._tag === "Failure" || result.success.name === undefined) return;
 

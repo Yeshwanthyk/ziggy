@@ -796,11 +796,14 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
 
           const branch = yield* route(params.profileId);
 
-          const [stored, external] = yield* Effect.all([
+          const [stored, external, pinState] = yield* Effect.all([
             config.sessions
               .list(branch.target)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
             branch.registry.destinations,
+            pins
+              .read(branch.target.path)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
           ]);
 
           const destinations = new Map<
@@ -814,7 +817,11 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
 
           for (const session of stored) {
             const target = `conversation:${session.id}`;
-            destinations.set(target, { target, kind: "conversation", label: session.id });
+            destinations.set(target, {
+              target,
+              kind: "conversation",
+              label: boundedText(session.id, 160, "Conversation"),
+            });
           }
 
           for (const destination of external) {
@@ -824,13 +831,53 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               target,
               destination.label === undefined
                 ? { target, kind }
-                : { target, kind, label: destination.label },
+                : { target, kind, label: boundedText(destination.label, 160, kind) },
             );
+          }
+
+          for (const pin of pinState.pins) {
+            if (pin.ref.profileId !== branch.profileId || pin.label === undefined) continue;
+
+            let sessionId: string | undefined;
+
+            if (pin.ref.kind === "stored") {
+              sessionId = pin.ref.id;
+            } else {
+              const entry = yield* branch.registry
+                .get(pin.ref.key)
+                .pipe(
+                  Effect.catch((cause) =>
+                    cause.code === "unknown_session"
+                      ? Effect.succeed(undefined)
+                      : Effect.fail(cause),
+                  ),
+                );
+
+              if (entry?.handle.currentSession === undefined) continue;
+
+              const session = yield* entry.handle.currentSession.pipe(
+                Effect.mapError((cause) => toGatewayError(request.method, cause)),
+              );
+
+              sessionId = session?.id;
+            }
+
+            if (sessionId === undefined) continue;
+            const destination = destinations.get(`conversation:${sessionId}`);
+
+            if (destination !== undefined) {
+              destinations.set(destination.target, {
+                ...destination,
+                label: boundedText(pin.label, 160, "Conversation"),
+              });
+            }
           }
 
           const ordered = [...destinations.values()]
             .filter((entry) => params.after === undefined || entry.target > params.after)
-            .sort((left, right) => left.target.localeCompare(right.target));
+            .sort((left, right) =>
+              left.target < right.target ? -1 : left.target > right.target ? 1 : 0,
+            );
 
           const entries = ordered.slice(0, 32);
           const lastEntry = entries.at(-1);

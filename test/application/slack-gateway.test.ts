@@ -1,6 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary, ziggy-effect/no-native-promise-ownership, ziggy-effect/no-error-constructor -- tests are approved execution boundaries and use typed adapter-error fixtures. */
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Result } from "effect";
+import { TestClock } from "effect/testing";
 import { SlackApiError } from "ziggy/adapters/slack/api";
 import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
@@ -38,7 +39,7 @@ const message = (overrides: Partial<SlackInboundMessage> = {}): SlackInboundMess
 });
 
 describe("Slack gateway boundary", () => {
-  test("seeds configured channels with friendly names and ID fallback", async () => {
+  test("seeds configured channels with names and starts despite failed or stalled name lookups", async () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -51,15 +52,17 @@ describe("Slack gateway boundary", () => {
             getConversation: (_token, channel) =>
               channel === "C012345678"
                 ? Effect.succeed({ id: channel, name: "engineering" })
-                : Effect.fail(
-                    new SlackApiError({
-                      operation: "getConversation",
-                      reason: "authentication",
-                      retriable: false,
-                      message: "missing scope",
-                      cause: {},
-                    }),
-                  ),
+                : channel === "C222222222"
+                  ? Effect.never
+                  : Effect.fail(
+                      new SlackApiError({
+                        operation: "getConversation",
+                        reason: "authentication",
+                        retriable: false,
+                        message: "missing scope",
+                        cause: {},
+                      }),
+                    ),
             getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
             openSocket: () =>
               Deferred.succeed(opened, undefined).pipe(
@@ -90,11 +93,16 @@ describe("Slack gateway boundary", () => {
                 botToken: "bot-token",
                 appToken: "app-token",
                 ownerUserId: "U123",
-                channels: { C012345678: "always", C987654321: "mention" },
+                channels: {
+                  C012345678: "always",
+                  C987654321: "mention",
+                  C222222222: "mention",
+                },
               },
               registry,
             )
             .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(2_000);
           yield* Deferred.await(opened);
 
           expect(yield* registry.destinations).toEqual([
@@ -109,13 +117,20 @@ describe("Slack gateway boundary", () => {
             {
               target: {
                 _tag: "slack",
+                target: "slack:channel:C222222222",
+                channelId: "C222222222",
+              },
+            },
+            {
+              target: {
+                _tag: "slack",
                 target: "slack:channel:C987654321",
                 channelId: "C987654321",
               },
             },
           ]);
         }),
-      ),
+      ).pipe(Effect.provide(TestClock.layer({}))),
     );
   });
   test("maps an owner DM to owner memory without changing its chat route or thread", () => {
