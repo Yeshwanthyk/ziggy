@@ -31,6 +31,7 @@ export interface SessionUsage {
 export interface SessionMetadata {
   readonly path: string;
   readonly id: string;
+  readonly name?: string;
   readonly kind: "root" | "child";
   readonly createdAt: string;
   readonly entryCount: number;

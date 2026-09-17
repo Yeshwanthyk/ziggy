@@ -46,6 +46,7 @@ interface TestSessionMessage {
 type TestSessionEntryBody =
   | { readonly type: "model_change"; readonly provider: string; readonly modelId: string }
   | { readonly type: "thinking_level_change"; readonly thinkingLevel: string }
+  | { readonly type: "session_info"; readonly name?: string }
   | { readonly type: "message"; readonly message: TestSessionMessage };
 
 const header = (id: string, parentSession?: string) => {
@@ -113,6 +114,28 @@ afterEach(async () =>
 );
 
 describe("Pi session metadata adapter", () => {
+  test("projects the latest Pi session name and preserves an explicit clear", async () => {
+    const root = await profile();
+    const namedFile = join(root, "sessions", "named.jsonl");
+    const clearedFile = join(root, "sessions", "cleared.jsonl");
+
+    await writeJsonl(namedFile, [
+      header("named"),
+      entry("old", null, { type: "session_info", name: "Old name" }),
+      entry("new", "old", { type: "session_info", name: "  Gateway\nreview  " }),
+    ]);
+    await writeJsonl(clearedFile, [
+      header("cleared"),
+      entry("old", null, { type: "session_info", name: "Keep no longer" }),
+      entry("new", "old", { type: "session_info", name: "" }),
+    ]);
+
+    const sessions = await Effect.runPromise(listProfileSessions(root));
+
+    expect(sessions.find((session) => session.id === "named")?.name).toBe("Gateway review");
+    expect(sessions.find((session) => session.id === "cleared")?.name).toBeUndefined();
+  });
+
   test("projects lineage, changes, usage, and terminal state without transcript fields", async () => {
     const root = await profile();
     const parentFile = join(root, "sessions", "local", "root.jsonl");

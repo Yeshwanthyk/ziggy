@@ -420,7 +420,7 @@ test("destination.list pages the selected Profile's stored and external destinat
         ? sessions.list(target)
         : Effect.succeed(
             sessionIds.map((id) => {
-              return {
+              const session = {
                 path: join(target.path, "sessions", `${id}.jsonl`),
                 id,
                 kind: "root" as const,
@@ -441,6 +441,8 @@ test("destination.list pages the selected Profile's stored and external destinat
                 },
                 terminalState: "completed" as const,
               };
+
+              return id === "a.dot" ? { ...session, name: "Gateway review" } : session;
             }),
           ),
   };
@@ -578,6 +580,11 @@ test("destination.list pages the selected Profile's stored and external destinat
           target: "conversation:a00",
           kind: "conversation",
           label: "Live planning",
+        });
+        expect(all).toContainEqual({
+          target: "conversation:a.dot",
+          kind: "conversation",
+          label: "Gateway review",
         });
         expect(all.some((entry) => entry.label === "Unopened conversation")).toBe(false);
         expect(all.some((entry) => entry.label === "Other Profile")).toBe(false);

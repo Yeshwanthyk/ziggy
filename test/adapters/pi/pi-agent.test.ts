@@ -37,6 +37,7 @@ import {
   createLocalSessionManager,
   createProfileMemoryExtension,
   currentPiSessionReference,
+  ensurePiSessionName,
   localMainSessionDirectory,
   localSpecialistSessionDirectory,
   makeSessionChatHandle,
@@ -82,6 +83,24 @@ const temporaryProfile = async (): Promise<string> => {
 
   return profilePath;
 };
+
+test("Pi session names prefer semantic identity, bound fallback text, and never overwrite", () => {
+  const semantic = SessionManager.inMemory("/profile");
+  ensurePiSessionName(semantic, "Agent · Ada", "Review the gateway");
+  expect(semantic.getSessionName()).toBe("Agent · Ada · Review the gateway");
+
+  ensurePiSessionName(semantic, "Agent · Reviewer", "Replace the existing identity");
+  expect(semantic.getSessionName()).toBe("Agent · Ada · Review the gateway");
+
+  const fallback = SessionManager.inMemory("/profile");
+  ensurePiSessionName(fallback, undefined, `  ${"x".repeat(120)}\nignored  `);
+  expect(fallback.getSessionName()).toBe("x".repeat(80));
+
+  const cleared = SessionManager.inMemory("/profile");
+  cleared.appendSessionInfo("");
+  ensurePiSessionName(cleared, "Local · Main", "Do not restore a cleared name");
+  expect(cleared.getSessionName()).toBeUndefined();
+});
 
 const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {
   const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>

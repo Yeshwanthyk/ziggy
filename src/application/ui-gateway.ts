@@ -820,7 +820,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             destinations.set(target, {
               target,
               kind: "conversation",
-              label: boundedText(session.id, 160, "Conversation"),
+              label: boundedText(session.name ?? session.id, 160, "Conversation"),
             });
           }
 
@@ -1041,7 +1041,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
 
           const open =
             params.agentId === undefined
-              ? config.agent.openChat(branch.target, context, sessionDirectory, "continue")
+              ? config.agent.openChat(
+                  branch.target,
+                  context,
+                  sessionDirectory,
+                  "continue",
+                  undefined,
+                  params.name === undefined && context.kind === "local"
+                    ? "Local · Main"
+                    : undefined,
+                )
               : config.agent.openSpecialistChat(branch.target, params.agentId);
 
           const metadata =

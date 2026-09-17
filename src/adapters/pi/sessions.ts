@@ -57,6 +57,7 @@ const SessionEntry = Schema.Struct({
   provider: Schema.optional(Schema.String),
   modelId: Schema.optional(Schema.String),
   thinkingLevel: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
   usage: Schema.optional(Usage),
   message: Schema.optional(RawMessage),
 });
@@ -75,6 +76,7 @@ interface ParsedSession {
   readonly file: string;
   readonly relativePath: string;
   readonly header: Header;
+  readonly name: string | undefined;
   readonly entryCount: number;
   readonly modelChanges: ReadonlyArray<SessionModelChange>;
   readonly thinkingChanges: ReadonlyArray<SessionThinkingChange>;
@@ -245,6 +247,7 @@ const parseSession = (
     const thinkingChanges: Array<SessionThinkingChange> = [];
     let usage = zeroUsage();
     let lastMessage: Entry["message"];
+    let name: string | undefined;
 
     const reject = (cause: unknown): never => {
       throw new TranscriptLineRejected(decodeFailure(file, cause));
@@ -307,6 +310,9 @@ const parseSession = (
         } else {
           thinkingChanges.push({ at: entry.timestamp, level: thinkingLevel });
         }
+      } else if (entry.type === "session_info") {
+        const candidate = entry.name?.replace(/[\r\n]+/gu, " ").trim();
+        name = candidate === undefined || candidate.length === 0 ? undefined : candidate;
       }
 
       if (entry.type === "message" && entry.message === undefined)
@@ -349,6 +355,7 @@ const parseSession = (
       file,
       relativePath: path.relative(root, file),
       header: parsedHeader,
+      name,
       entryCount,
       modelChanges,
       thinkingChanges,
@@ -391,6 +398,7 @@ const parseSessionHeader = (
       file,
       relativePath: path.relative(root, file),
       header: parsedHeader,
+      name: undefined,
       entryCount: 0,
       modelChanges: [],
       thinkingChanges: [],
@@ -438,7 +446,7 @@ const projectSessions = (
         const parentPath = session.header.parentSession;
         const parent = parentPath === undefined ? undefined : byFile.get(path.resolve(parentPath));
 
-        return {
+        const metadata: SessionMetadata = {
           path: session.relativePath,
           id: session.header.id,
           kind: parentPath === undefined ? "root" : "child",
@@ -455,6 +463,8 @@ const projectSessions = (
           usage: session.usage,
           terminalState: session.terminalState,
         };
+
+        return session.name === undefined ? metadata : { ...metadata, name: session.name };
       })
       .sort(
         (left, right) =>

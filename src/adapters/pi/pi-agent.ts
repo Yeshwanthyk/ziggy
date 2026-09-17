@@ -129,6 +129,7 @@ export interface PiAgentApi {
     sessionDirectory: string,
     sessionMode?: ChatSessionMode,
     modelOverride?: ChatModelOverride,
+    sessionName?: string,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
   readonly openSpecialistChat: (
     target: ProfileTarget,
@@ -139,6 +140,35 @@ export interface PiAgentApi {
 export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
 
 export type ChatSessionMode = "continue" | "fresh";
+
+const SESSION_NAME_MAX_CODE_POINTS = 80;
+
+const normalizedSessionName = (value: string): string =>
+  [
+    ...value
+      .replace(/\p{Cc}+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim(),
+  ]
+    .slice(0, SESSION_NAME_MAX_CODE_POINTS)
+    .join("");
+
+export const ensurePiSessionName = (
+  sessionManager: Pick<SessionManager, "appendSessionInfo" | "getEntries">,
+  semanticName: string | undefined,
+  firstUserMessage: string,
+): void => {
+  if (sessionManager.getEntries().some((entry) => entry.type === "session_info")) return;
+
+  const semantic = semanticName === undefined ? "" : normalizedSessionName(semanticName);
+  const fallback = normalizedSessionName(firstUserMessage);
+
+  const name = normalizedSessionName(
+    semantic.length > 0 && fallback.length > 0 ? `${semantic} · ${fallback}` : semantic || fallback,
+  );
+
+  if (name.length > 0) sessionManager.appendSessionInfo(name);
+};
 
 const causeMessage = (cause: unknown): string =>
   (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
@@ -1989,6 +2019,7 @@ export const openChat = (
   modelOverride?: ChatModelOverride,
   profileExtensions?: ProfileExtensionsApi,
   runtimeFactory?: typeof createAgentSessionRuntime,
+  sessionName?: string,
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(target.path);
@@ -2060,6 +2091,10 @@ export const openChat = (
             }
 
             const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+
+            if (prepared.ok) {
+              ensurePiSessionName(runtime.session.sessionManager, sessionName, text);
+            }
 
             const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
               ? promptForAssistantText(
@@ -2193,7 +2228,11 @@ export const openSpecialistChat = (
             liveRuntime.session.sessionManager,
           ),
           prompt: (text, options) =>
-            promptForAssistantText(target.path, promptSession, text, options),
+            Effect.sync(() =>
+              ensurePiSessionName(liveRuntime.session.sessionManager, `Agent · ${agentId}`, text),
+            ).pipe(
+              Effect.andThen(promptForAssistantText(target.path, promptSession, text, options)),
+            ),
           dispose: disposeLive,
         },
         abortSession,
@@ -2224,6 +2263,7 @@ export const runSpecialist = (
       }
 
       const rootManager = SessionManager.create(target.path, context.sessionDirectory);
+      ensurePiSessionName(rootManager, `Agent · ${agentId}`, task);
       const rootReference = sessionReference(rootManager);
 
       if (rootReference === undefined) {
@@ -2364,7 +2404,7 @@ export const makePiAgent = (
     askOnce(target, prompt, continueSession, context, repositoryRoot, options, profileExtensions),
   openTui: (target, context, automationHandler) =>
     openTui(target, context, repositoryRoot, automationHandler, profileExtensions),
-  openChat: (target, context, sessionDirectory, sessionMode, modelOverride) =>
+  openChat: (target, context, sessionDirectory, sessionMode, modelOverride, sessionName) =>
     openChat(
       target,
       context,
@@ -2373,6 +2413,8 @@ export const makePiAgent = (
       sessionMode,
       modelOverride,
       profileExtensions,
+      undefined,
+      sessionName,
     ),
   openSpecialistChat: (target, agentId) =>
     openSpecialistChat(target, agentId, repositoryRoot, profileExtensions),

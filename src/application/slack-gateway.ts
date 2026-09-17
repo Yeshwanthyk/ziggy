@@ -1415,6 +1415,11 @@ export const makeSlackGateway = (
                         target,
                         message.context,
                         join(target.path, "sessions", "slack", message.chatKey),
+                        "continue",
+                        undefined,
+                        channelLabels.get(message.channel) === undefined
+                          ? undefined
+                          : `Slack · ${channelLabels.get(message.channel)}`,
                       );
 
                       handle =

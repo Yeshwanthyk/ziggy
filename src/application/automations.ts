@@ -421,6 +421,7 @@ export const makeAutomations = (
                   join(target.path, "sessions", "automations", automation.id),
                   "fresh",
                   chatModelOverride(automation),
+                  `Automation · ${automation.id}`,
                 ),
                 (handle) => handle.prompt(automation.prompt),
                 (handle) =>

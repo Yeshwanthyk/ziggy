@@ -240,6 +240,9 @@ export const makeTelegramGateway = (
                   target,
                   message.context,
                   join(target.path, "sessions", "telegram", message.chatKey),
+                  "continue",
+                  undefined,
+                  message.label === undefined ? undefined : `Telegram · ${message.label}`,
                 );
 
                 chatState.handle =

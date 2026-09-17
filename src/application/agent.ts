@@ -118,6 +118,7 @@ export interface ZiggyAgentApi {
     sessionDirectory: string,
     sessionMode?: ChatSessionMode,
     modelOverride?: ChatModelOverride,
+    sessionName?: string,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
   readonly openSpecialistChat: (
     target: ProfileTarget,
@@ -162,7 +163,16 @@ export const ZiggyAgentLive = Layer.effect(
         sessionDirectory: string,
         sessionMode?: ChatSessionMode,
         modelOverride?: ChatModelOverride,
-      ) => piAgent.openChat(target, context, sessionDirectory, sessionMode, modelOverride),
+        sessionName?: string,
+      ) =>
+        piAgent.openChat(
+          target,
+          context,
+          sessionDirectory,
+          sessionMode,
+          modelOverride,
+          sessionName,
+        ),
       openSpecialistChat: (target, agentId) => piAgent.openSpecialistChat(target, agentId),
       runSpecialist: (target, agentId, task, context) =>
         piAgent.runSpecialist(target, agentId, task, context),

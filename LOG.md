@@ -913,3 +913,9 @@ results.
 
 - Bumped the CLI version, README, release notes, installer platform message, and version assertions for conversation delivery and shared multi-destination selection.
 - Build and smoke the standalone artifact before updating the installed CLI and restarting the existing Squarey resident for user testing.
+
+## Name stored conversations with Pi session metadata
+
+- Project the latest Pi `session_info` display name into stored session metadata and use it in the automation destination catalog, while keeping canonical session IDs unchanged and applying explicit UI pin labels last.
+- New conversations write one bounded Pi-native name on their first valid prompt. Stable local and channel routes lead with semantic identity and add the first-message topic; otherwise the first user message supplies the title. Existing names and explicit clears are never overwritten. One-off specialist runs include the agent identity and task topic, while the direct UI specialist route remains one continuing session per agent.
+- Focused adapter and UI tests cover latest-name extraction, explicit clearing, bounded fallback, stable identity, catalog labels, and pin precedence. No live Profile, transcript, external message, installation, or resident restart was used.

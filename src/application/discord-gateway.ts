@@ -953,6 +953,9 @@ export const makeDiscordGateway = (
                     target,
                     message.context,
                     join(target.path, "sessions", "discord", message.chatKey),
+                    "continue",
+                    undefined,
+                    message.label === undefined ? undefined : `Discord · ${message.label}`,
                   );
 
                   chatState.handle =
