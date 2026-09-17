@@ -48,7 +48,7 @@ const generalHelp = `Usage:
   ziggy models set <name|path> <provider>/<model> [--thinking <level>]
   ziggy agents create|list|show|validate|run ... [--json on list/show]
   ziggy doctor <name|path>
-  ziggy extensions manage|list|show|add|remove ... [--json on list/show]
+  ziggy extensions manage|list|show|add|remove|update ... [--json on list/show]
   ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ... [--json]
@@ -71,7 +71,7 @@ const topicHelp = {
   init: "usage: ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]",
   profiles: "usage: ziggy profiles [--json]",
   extensions:
-    "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
+    "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list [--json]\n  ziggy extensions show <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>\n  ziggy extensions update <name|path> <id> [--adopt]",
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
   models:
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",

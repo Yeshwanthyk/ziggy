@@ -36,6 +36,7 @@ import { ResidentGateway, makeResidentGatewayLive } from "./application/resident
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
+import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
@@ -121,6 +122,16 @@ const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
     Layer.mergeAll(
       ExtensionArchiveClientLive,
       ProfileExtensionPreflightLive,
+      ProfileExtensionMutationLockLive,
+    ),
+  ),
+);
+
+const ExtensionUpdateProvided = ExtensionUpdateLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ExtensionArchiveClientLive,
+      ProfileExtensionsProvided,
       ProfileExtensionMutationLockLive,
     ),
   ),
@@ -233,6 +244,7 @@ const program = Effect.gen(function* () {
   const sessions = yield* Sessions;
   const profileExtensions = yield* ProfileExtensions;
   const selfUpdate = yield* SelfUpdate;
+  const extensionUpdate = yield* ExtensionUpdate;
   const memory = yield* Memory;
 
   switch (command._tag) {
@@ -414,6 +426,19 @@ const program = Effect.gen(function* () {
         : profileExtensions.remove(target, repositoryRoot, command.id);
 
       console.log(renderExtensionMutation(result, terminalRenderOptions()));
+
+      return;
+    }
+
+    case "ExtensionsUpdate": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const updated = yield* extensionUpdate.update(target, command.id, { adopt: command.adopt });
+      console.log(`${updated.status} ${updated.id} in ${updated.profilePath}`);
+
+      if (updated.adoptedUnknownOrigin) console.log("adopted previously untracked package");
+      console.log(`content ${updated.contentHash}`);
+
+      if (updated.backupPath !== undefined) console.log(`backup ${updated.backupPath}`);
 
       return;
     }
@@ -944,6 +969,7 @@ const program = Effect.gen(function* () {
     ExtensionCatalogUnavailable: (failure) => fail(failure.message),
     ExtensionCatalogInstallFailed: (failure) => fail(failure.message),
     ZiggyUpdateUnavailable: (failure) => fail(failure.message),
+    ExtensionUpdateError: (failure) => fail(failure.message),
     AcpFaceError: (failure) => fail(failure.message),
   }),
   Effect.provide(
@@ -977,6 +1003,7 @@ const program = Effect.gen(function* () {
       ResidentServiceProvided,
       ProfileExtensionsProvided,
       SelfUpdateProvided,
+      ExtensionUpdateProvided,
       MemoryProvided,
     ),
   ),

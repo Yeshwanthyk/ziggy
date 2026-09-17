@@ -281,6 +281,25 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
   if (word === "extensions") {
     if (rest.length === 0) return { _tag: "ExtensionsManage" };
 
+    if (rest[0] === "update") {
+      if (
+        (rest.length === 3 || (rest.length === 4 && rest[3] === "--adopt")) &&
+        required(rest[1]) &&
+        required(rest[2]) &&
+        !rest[1].startsWith("--") &&
+        !rest[2].startsWith("--")
+      ) {
+        return {
+          _tag: "ExtensionsUpdate",
+          target: rest[1],
+          id: rest[2],
+          adopt: rest.length === 4,
+        };
+      }
+
+      return invalid("usage: ziggy extensions update <name|path> <id> [--adopt]");
+    }
+
     if (rest[0] === "manage" && rest.length <= 2) {
       const target = rest[1];
 

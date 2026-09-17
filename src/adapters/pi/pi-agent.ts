@@ -67,6 +67,8 @@ import { discoverProfileAgents } from "../fs/profile-agents";
 import { composePiResources, discoverPiResources, type PiResources } from "./resources";
 import { assertNoPiResourceDiagnostics } from "./profile-extension-diagnostics";
 import { profileResourceLoaderOptions } from "./profile-resource-loader";
+import { leaseProfileRuntime } from "./profile-runtime-lease";
+import { withProfileRuntimeLock } from "../bun/profile-runtime-lock";
 import {
   createAgentDiscussTool,
   createAgentRunTool,
@@ -995,74 +997,82 @@ export const askOnce = (
   options?: RunOnceOptions,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<number, ZiggyAgentError> =>
-  Effect.gen(function* () {
-    const soulPath = yield* requireSoul(target.path);
+  Effect.scoped(
+    Effect.gen(function* () {
+      const soulPath = yield* requireSoul(target.path);
 
-    const sessionManager =
-      options?.sessionPath === undefined
-        ? createLocalSessionManager(target.path, continueSession ? "main" : "fresh")
-        : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
+      const sessionManager =
+        options?.sessionPath === undefined
+          ? createLocalSessionManager(target.path, continueSession ? "main" : "fresh")
+          : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
 
-    const runtimeOptions: ProfileRuntimeOptions = {};
+      const runtimeOptions: ProfileRuntimeOptions = {};
 
-    if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
-    const runtime = yield* createProfileRuntime(
-      target.path,
-      repositoryRoot,
-      soulPath,
-      sessionManager,
-      context,
-      runtimeOptions,
-    );
-
-    const prepared = prepareProfileAgentPrompt(prompt, runtime.agents);
-
-    if (!prepared.ok) {
-      yield* piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
-        Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
-      );
-
-      return yield* new ProfileAgentMentionInvalid({
-        profilePath: target.path,
-        message: prepared.message,
-      });
-    }
-
-    if (runtime.modelFallbackMessage !== undefined) {
-      return yield* new ProviderConfigError({
-        profilePath: target.path,
-        operation: "select model",
-        message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
-        cause: new Error(runtime.modelFallbackMessage),
-      });
-    }
-
-    let printError: string | undefined;
-    const originalConsoleError = console.error;
-    console.error = (...values: ReadonlyArray<unknown>) => {
-      printError = values.map(String).join(" ");
-    };
-
-    const exitCode = yield* piPromise(target.path, "call provider", () =>
-      runPrintMode(runtime, {
-        mode: options?.mode ?? "text",
-        initialMessage: prepared.text,
-      }).finally(() => {
-        console.error = originalConsoleError;
-      }),
-    );
-
-    if (exitCode !== 0) {
-      return yield* providerError(
+      const runtime = yield* createProfileRuntime(
         target.path,
-        "call provider",
-        new Error(printError ?? `provider returned exit code ${exitCode}`),
+        repositoryRoot,
+        soulPath,
+        sessionManager,
+        context,
+        runtimeOptions,
       );
-    }
 
-    return exitCode;
-  });
+      yield* Effect.addFinalizer(() =>
+        piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+          Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+        ),
+      );
+
+      const prepared = prepareProfileAgentPrompt(prompt, runtime.agents);
+
+      if (!prepared.ok) {
+        yield* piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+          Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+        );
+
+        return yield* new ProfileAgentMentionInvalid({
+          profilePath: target.path,
+          message: prepared.message,
+        });
+      }
+
+      if (runtime.modelFallbackMessage !== undefined) {
+        return yield* new ProviderConfigError({
+          profilePath: target.path,
+          operation: "select model",
+          message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
+          cause: new Error(runtime.modelFallbackMessage),
+        });
+      }
+
+      let printError: string | undefined;
+      const originalConsoleError = console.error;
+      console.error = (...values: ReadonlyArray<unknown>) => {
+        printError = values.map(String).join(" ");
+      };
+
+      const exitCode = yield* piPromise(target.path, "call provider", () =>
+        runPrintMode(runtime, {
+          mode: options?.mode ?? "text",
+          initialMessage: prepared.text,
+        }).finally(() => {
+          console.error = originalConsoleError;
+        }),
+      );
+
+      if (exitCode !== 0) {
+        return yield* providerError(
+          target.path,
+          "call provider",
+          new Error(printError ?? `provider returned exit code ${exitCode}`),
+        );
+      }
+
+      return exitCode;
+    }),
+  );
 
 interface SpecialistVoiceHub {
   readonly emit: (agentId: string, text: string) => void;
@@ -1197,197 +1207,200 @@ const createProfileRuntime = (
   context: ChatContext,
   runtimeOptions: ProfileRuntimeOptions = {},
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
-  Effect.gen(function* () {
-    const paths = memoryFilePaths(profilePath, context);
+  leaseProfileRuntime(
+    profilePath,
+    Effect.gen(function* () {
+      const paths = memoryFilePaths(profilePath, context);
 
-    if (!paths.ok) {
-      return yield* paths.error;
-    }
+      if (!paths.ok) {
+        return yield* paths.error;
+      }
 
-    const agents = runtimeOptions.admittedAgents ?? (yield* discoverProfileAgents(profilePath));
+      const agents = runtimeOptions.admittedAgents ?? (yield* discoverProfileAgents(profilePath));
 
-    const preparation =
-      runtimeOptions.profileExtensions === undefined
-        ? undefined
-        : yield* runtimeOptions.profileExtensions.prepareRuntime(profilePath, repositoryRoot);
+      const preparation =
+        runtimeOptions.profileExtensions === undefined
+          ? undefined
+          : yield* runtimeOptions.profileExtensions.prepareRuntime(profilePath, repositoryRoot);
 
-    const resources =
-      preparation === undefined
-        ? yield* discoverPiResources(profilePath, repositoryRoot)
-        : yield* composePiResources(profilePath, preparation.selected);
+      const resources =
+        preparation === undefined
+          ? yield* discoverPiResources(profilePath, repositoryRoot)
+          : yield* composePiResources(profilePath, preparation.selected);
 
-    const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
+      const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
 
-    const runtimeRef: AgentSessionRuntimeRef = {};
-    const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
-    const voiceHub = createSpecialistVoiceHub();
+      const runtimeRef: AgentSessionRuntimeRef = {};
+      const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
+      const voiceHub = createSpecialistVoiceHub();
 
-    const extensionSelection =
-      runtimeOptions.profileExtensions === undefined
-        ? undefined
-        : createProfileExtensionSelectionRunner(
-            profilePath,
-            repositoryRoot,
-            runtimeOptions.profileExtensions,
+      const extensionSelection =
+        runtimeOptions.profileExtensions === undefined
+          ? undefined
+          : createProfileExtensionSelectionRunner(
+              profilePath,
+              repositoryRoot,
+              runtimeOptions.profileExtensions,
+            );
+
+      const inlineExtensions = createProfileCoreInlineExtensions({
+        profilePath,
+        agents,
+        memoryDocuments: paths.documents,
+        extensionSelection,
+        automationDispatch:
+          runtimeOptions.automationDispatch ??
+          (runtimeOptions.profileExtensions === undefined
+            ? undefined
+            : unavailableAutomationDispatch),
+        ephemeralPromptContext: () => ephemeralPromptContext.value,
+      });
+
+      const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
+
+      const runtime = yield* Effect.tryPromise({
+        try: async () => {
+          const runtime = await runtimeFactory(
+            async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
+              const services = await createAgentSessionServices({
+                cwd,
+                agentDir,
+                resourceLoaderOptions: profileResourceLoaderOptions(
+                  systemPrompt,
+                  resources,
+                  inlineExtensions,
+                ),
+              });
+
+              assertNoPiResourceDiagnostics(profilePath, services);
+
+              const specialistRunner =
+                agents.length === 0
+                  ? undefined
+                  : makeSpecialistRunner({
+                      profilePath,
+                      agents,
+                      parent: () => {
+                        const current = runtimeRef.current;
+
+                        if (current === undefined) return undefined;
+
+                        const parent: SpecialistParent = {
+                          session: current.session,
+                          services,
+                          resources,
+                        };
+
+                        return parent;
+                      },
+                    });
+
+              const customTools: Array<ToolDefinition> = [
+                createMemoryWriteTool(profilePath, context),
+                ...(runtimeOptions.profileExtensions === undefined
+                  ? []
+                  : [
+                      defineTool(
+                        createProfileExtensionTool(
+                          profilePath,
+                          repositoryRoot,
+                          runtimeOptions.profileExtensions,
+                        ),
+                      ),
+                    ]),
+                ...(specialistRunner === undefined
+                  ? []
+                  : [
+                      createAgentRunTool(specialistRunner, voiceHub.emit),
+                      createAgentDiscussTool(specialistRunner, voiceHub.emit),
+                    ]),
+              ];
+
+              const sessionOptions: CreateAgentSessionFromServicesOptions = {
+                services,
+                sessionManager: runtimeSessionManager,
+                customTools,
+              };
+
+              if (sessionStartEvent !== undefined)
+                sessionOptions.sessionStartEvent = sessionStartEvent;
+              applyConfiguredSessionModel(
+                profilePath,
+                services,
+                sessionOptions,
+                runtimeOptions.modelOverride,
+              );
+              const created = await createAgentSessionFromServices(sessionOptions);
+
+              return {
+                ...created,
+                services,
+                diagnostics: services.diagnostics,
+              };
+            },
+            {
+              cwd: profilePath,
+              agentDir: profilePath,
+              sessionManager,
+            },
           );
 
-    const inlineExtensions = createProfileCoreInlineExtensions({
-      profilePath,
-      agents,
-      memoryDocuments: paths.documents,
-      extensionSelection,
-      automationDispatch:
-        runtimeOptions.automationDispatch ??
-        (runtimeOptions.profileExtensions === undefined
-          ? undefined
-          : unavailableAutomationDispatch),
-      ephemeralPromptContext: () => ephemeralPromptContext.value,
-    });
+          return runtime;
+        },
+        catch: (cause) =>
+          isProfileExtensionPreflightFailure(cause)
+            ? cause
+            : providerError(profilePath, "create agent runtime", cause),
+      });
 
-    const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
+      // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
+      // additional resource bundle; assigning `services` would throw at runtime.
+      const profileRuntime: ProfileRuntime = Object.assign(runtime, {
+        resources,
+        agents,
+        ephemeralPromptContext,
+        voiceHub,
+      });
 
-    const runtime = yield* Effect.tryPromise({
-      try: async () => {
-        const runtime = await runtimeFactory(
-          async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-            const services = await createAgentSessionServices({
-              cwd,
-              agentDir,
-              resourceLoaderOptions: profileResourceLoaderOptions(
-                systemPrompt,
-                resources,
-                inlineExtensions,
-              ),
-            });
+      if (preparation !== undefined && runtimeOptions.profileExtensions !== undefined) {
+        yield* runtimeOptions.profileExtensions
+          .activateRuntime(profilePath, repositoryRoot, preparation)
+          .pipe(
+            Effect.catch((failure) =>
+              Effect.gen(function* () {
+                const disposed = yield* piPromise(profilePath, "dispose agent runtime", () =>
+                  runtime.dispose(),
+                ).pipe(Effect.result);
 
-            assertNoPiResourceDiagnostics(profilePath, services);
-
-            const specialistRunner =
-              agents.length === 0
-                ? undefined
-                : makeSpecialistRunner({
+                if (Result.isFailure(disposed)) {
+                  return yield* new ProfileExtensionRollbackFailed({
                     profilePath,
-                    agents,
-                    parent: () => {
-                      const current = runtimeRef.current;
-
-                      if (current === undefined) return undefined;
-
-                      const parent: SpecialistParent = {
-                        session: current.session,
-                        services,
-                        resources,
-                      };
-
-                      return parent;
-                    },
+                    operation: "activate-runtime",
+                    message:
+                      "Profile extension activation failed and the newly created runtime could not be disposed; Profile state may have changed",
+                    originalFailure: failure,
+                    rollbackFailures: [
+                      {
+                        operation: "dispose runtime",
+                        path: profilePath,
+                        message: "could not dispose the newly created Pi runtime",
+                      },
+                    ],
+                    cause: failure,
                   });
+                }
 
-            const customTools: Array<ToolDefinition> = [
-              createMemoryWriteTool(profilePath, context),
-              ...(runtimeOptions.profileExtensions === undefined
-                ? []
-                : [
-                    defineTool(
-                      createProfileExtensionTool(
-                        profilePath,
-                        repositoryRoot,
-                        runtimeOptions.profileExtensions,
-                      ),
-                    ),
-                  ]),
-              ...(specialistRunner === undefined
-                ? []
-                : [
-                    createAgentRunTool(specialistRunner, voiceHub.emit),
-                    createAgentDiscussTool(specialistRunner, voiceHub.emit),
-                  ]),
-            ];
+                return yield* failure;
+              }),
+            ),
+          );
+      }
 
-            const sessionOptions: CreateAgentSessionFromServicesOptions = {
-              services,
-              sessionManager: runtimeSessionManager,
-              customTools,
-            };
+      runtimeRef.current = profileRuntime;
 
-            if (sessionStartEvent !== undefined)
-              sessionOptions.sessionStartEvent = sessionStartEvent;
-            applyConfiguredSessionModel(
-              profilePath,
-              services,
-              sessionOptions,
-              runtimeOptions.modelOverride,
-            );
-            const created = await createAgentSessionFromServices(sessionOptions);
-
-            return {
-              ...created,
-              services,
-              diagnostics: services.diagnostics,
-            };
-          },
-          {
-            cwd: profilePath,
-            agentDir: profilePath,
-            sessionManager,
-          },
-        );
-
-        return runtime;
-      },
-      catch: (cause) =>
-        isProfileExtensionPreflightFailure(cause)
-          ? cause
-          : providerError(profilePath, "create agent runtime", cause),
-    });
-
-    // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
-    // additional resource bundle; assigning `services` would throw at runtime.
-    const profileRuntime: ProfileRuntime = Object.assign(runtime, {
-      resources,
-      agents,
-      ephemeralPromptContext,
-      voiceHub,
-    });
-
-    if (preparation !== undefined && runtimeOptions.profileExtensions !== undefined) {
-      yield* runtimeOptions.profileExtensions
-        .activateRuntime(profilePath, repositoryRoot, preparation)
-        .pipe(
-          Effect.catch((failure) =>
-            Effect.gen(function* () {
-              const disposed = yield* piPromise(profilePath, "dispose agent runtime", () =>
-                runtime.dispose(),
-              ).pipe(Effect.result);
-
-              if (Result.isFailure(disposed)) {
-                return yield* new ProfileExtensionRollbackFailed({
-                  profilePath,
-                  operation: "activate-runtime",
-                  message:
-                    "Profile extension activation failed and the newly created runtime could not be disposed; Profile state may have changed",
-                  originalFailure: failure,
-                  rollbackFailures: [
-                    {
-                      operation: "dispose runtime",
-                      path: profilePath,
-                      message: "could not dispose the newly created Pi runtime",
-                    },
-                  ],
-                  cause: failure,
-                });
-              }
-
-              return yield* failure;
-            }),
-          ),
-        );
-    }
-
-    runtimeRef.current = profileRuntime;
-
-    return profileRuntime;
-  });
+      return profileRuntime;
+    }),
+  );
 
 const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
   const bindSession = async (): Promise<void> => {
@@ -1930,101 +1943,107 @@ export const openSpecialistChat = (
   repositoryRoot: string,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError> =>
-  Effect.gen(function* () {
-    const soulPath = yield* requireSoul(target.path);
-    const agents = yield* discoverProfileAgents(target.path);
+  withProfileRuntimeLock(
+    target.path,
+    Effect.gen(function* () {
+      const soulPath = yield* requireSoul(target.path);
+      const agents = yield* discoverProfileAgents(target.path);
 
-    if (!agents.some((agent) => agent.id === agentId)) {
-      return yield* new SpecialistAgentNotFound({
-        profilePath: target.path,
-        agentId,
-        message: `unknown Profile agent: ${agentId}`,
-      });
-    }
+      if (!agents.some((agent) => agent.id === agentId)) {
+        return yield* new SpecialistAgentNotFound({
+          profilePath: target.path,
+          agentId,
+          message: `unknown Profile agent: ${agentId}`,
+        });
+      }
 
-    const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+      const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
 
-    if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
-    const selectedEnvironment = yield* Effect.acquireUseRelease(
-      createProfileRuntime(
-        target.path,
-        repositoryRoot,
-        soulPath,
-        SessionManager.inMemory(target.path),
-        { kind: "local" },
-        runtimeOptions,
-      ),
-      (runtime) =>
-        selectSpecialist(
-          { profilePath: target.path, agents },
-          { agent: agentId, prompt: agentId },
-          runtime,
-        ).pipe(
-          Effect.map((selected) => ({
-            selected,
-            environment: { services: runtime.services, resources: runtime.resources },
-          })),
+      const selectedEnvironment = yield* Effect.acquireUseRelease(
+        createProfileRuntime(
+          target.path,
+          repositoryRoot,
+          soulPath,
+          SessionManager.inMemory(target.path),
+          { kind: "local" },
+          runtimeOptions,
         ),
-      (runtime) =>
-        piPromise(target.path, "dispose specialist selection runtime", () =>
-          runtime.dispose(),
-        ).pipe(
-          Effect.catch((failure) =>
-            Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+        (runtime) =>
+          selectSpecialist(
+            { profilePath: target.path, agents },
+            { agent: agentId, prompt: agentId },
+            runtime,
+          ).pipe(
+            Effect.map((selected) => ({
+              selected,
+              environment: { services: runtime.services, resources: runtime.resources },
+            })),
           ),
-        ),
-    );
+        (runtime) =>
+          piPromise(target.path, "dispose specialist selection runtime", () =>
+            runtime.dispose(),
+          ).pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+            ),
+          ),
+      );
 
-    const { selected, environment } = selectedEnvironment;
+      const { selected, environment } = selectedEnvironment;
 
-    const liveRuntime = yield* specialistRuntime(
-      target.path,
-      environment,
-      selected.agent,
-      selected.model,
-      selected.thinking,
-      selected.tools,
-      SessionManager.continueRecent(
+      const liveRuntime = yield* specialistRuntime(
         target.path,
-        localSpecialistSessionDirectory(target.path, agentId),
-      ),
-    );
+        environment,
+        selected.agent,
+        selected.model,
+        selected.thinking,
+        selected.tools,
+        SessionManager.continueRecent(
+          target.path,
+          localSpecialistSessionDirectory(target.path, agentId),
+        ),
+      );
 
-    const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
-      liveRuntime.dispose(),
-    );
+      const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
+        liveRuntime.dispose(),
+      );
 
-    const disposeLiveBestEffort = disposeLive.pipe(
-      Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
-    );
+      const disposeLiveBestEffort = disposeLive.pipe(
+        Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+      );
 
-    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(liveRuntime)).pipe(
-      Effect.tapError(() => disposeLiveBestEffort),
-    );
-    const abortSession = sharePiAbort(() => liveRuntime.session.abort());
+      yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(liveRuntime)).pipe(
+        Effect.tapError(() => disposeLiveBestEffort),
+      );
+      const abortSession = sharePiAbort(() => liveRuntime.session.abort());
 
-    const promptSession: PromptSession = {
-      abort: abortSession,
-      prompt: (text, options) => liveRuntime.session.prompt(text, options),
-      subscribe: (listener) => liveRuntime.session.subscribe(listener),
-      get isIdle() {
-        return liveRuntime.session.isIdle;
-      },
-    };
+      const promptSession: PromptSession = {
+        abort: abortSession,
+        prompt: (text, options) => liveRuntime.session.prompt(text, options),
+        subscribe: (listener) => liveRuntime.session.subscribe(listener),
+        get isIdle() {
+          return liveRuntime.session.isIdle;
+        },
+      };
 
-    return makeSessionChatHandle(
-      target.path,
-      liveRuntime.session,
-      {
-        currentSession: currentPiSessionReference(target.path, liveRuntime.session.sessionManager),
-        prompt: (text, options) =>
-          promptForAssistantText(target.path, promptSession, text, options),
-        dispose: disposeLive,
-      },
-      abortSession,
-    );
-  });
+      return makeSessionChatHandle(
+        target.path,
+        liveRuntime.session,
+        {
+          currentSession: currentPiSessionReference(
+            target.path,
+            liveRuntime.session.sessionManager,
+          ),
+          prompt: (text, options) =>
+            promptForAssistantText(target.path, promptSession, text, options),
+          dispose: disposeLive,
+        },
+        abortSession,
+      );
+    }),
+  );
 
 export const runSpecialist = (
   target: ProfileTarget,
@@ -2034,89 +2053,92 @@ export const runSpecialist = (
   repositoryRoot: string,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError> =>
-  Effect.gen(function* () {
-    const soulPath = yield* requireSoul(target.path);
-    const agents = yield* discoverProfileAgents(target.path);
+  withProfileRuntimeLock(
+    target.path,
+    Effect.gen(function* () {
+      const soulPath = yield* requireSoul(target.path);
+      const agents = yield* discoverProfileAgents(target.path);
 
-    if (!agents.some((agent) => agent.id === agentId)) {
-      return yield* new SpecialistAgentNotFound({
-        profilePath: target.path,
-        agentId,
-        message: `unknown Profile agent: ${agentId}`,
-      });
-    }
+      if (!agents.some((agent) => agent.id === agentId)) {
+        return yield* new SpecialistAgentNotFound({
+          profilePath: target.path,
+          agentId,
+          message: `unknown Profile agent: ${agentId}`,
+        });
+      }
 
-    const rootManager = SessionManager.create(target.path, context.sessionDirectory);
-    const rootReference = sessionReference(rootManager);
+      const rootManager = SessionManager.create(target.path, context.sessionDirectory);
+      const rootReference = sessionReference(rootManager);
 
-    if (rootReference === undefined) {
-      return yield* new ProviderConfigError({
-        profilePath: target.path,
-        operation: "create Profile agent session",
-        message: "Pi did not create a persistent Profile agent session",
-        cause: undefined,
-      });
-    }
+      if (rootReference === undefined) {
+        return yield* new ProviderConfigError({
+          profilePath: target.path,
+          operation: "create Profile agent session",
+          message: "Pi did not create a persistent Profile agent session",
+          cause: undefined,
+        });
+      }
 
-    const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+      const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
 
-    if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
-    const selectedEnvironment = yield* Effect.acquireUseRelease(
-      createProfileRuntime(
+      const selectedEnvironment = yield* Effect.acquireUseRelease(
+        createProfileRuntime(
+          target.path,
+          repositoryRoot,
+          soulPath,
+          rootManager,
+          { kind: "local" },
+          runtimeOptions,
+        ),
+        (runtime) =>
+          selectSpecialist(
+            { profilePath: target.path, agents },
+            { agent: agentId, prompt: task },
+            runtime,
+          ).pipe(
+            Effect.map((selected) => ({
+              selected,
+              environment: { services: runtime.services, resources: runtime.resources },
+            })),
+          ),
+        (runtime) =>
+          piPromise(target.path, "dispose specialist selection runtime", () =>
+            runtime.dispose(),
+          ).pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+            ),
+          ),
+      );
+
+      const { selected, environment } = selectedEnvironment;
+
+      const result = yield* useSpecialistChild(
         target.path,
-        repositoryRoot,
-        soulPath,
-        rootManager,
-        { kind: "local" },
-        runtimeOptions,
-      ),
-      (runtime) =>
-        selectSpecialist(
-          { profilePath: target.path, agents },
-          { agent: agentId, prompt: task },
-          runtime,
+        specialistRuntime(
+          target.path,
+          environment,
+          selected.agent,
+          selected.model,
+          selected.thinking,
+          selected.tools,
+          rootManager,
         ).pipe(
-          Effect.map((selected) => ({
-            selected,
-            environment: { services: runtime.services, resources: runtime.resources },
+          Effect.map((runtime) => ({
+            session: runtime.session,
+            reference: rootReference,
+            dispose: () => runtime.dispose(),
           })),
         ),
-      (runtime) =>
-        piPromise(target.path, "dispose specialist selection runtime", () =>
-          runtime.dispose(),
-        ).pipe(
-          Effect.catch((failure) =>
-            Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
-          ),
-        ),
-    );
+        selected,
+        (runtime) => promptForAssistantText(target.path, runtime.session, task),
+      );
 
-    const { selected, environment } = selectedEnvironment;
-
-    const result = yield* useSpecialistChild(
-      target.path,
-      specialistRuntime(
-        target.path,
-        environment,
-        selected.agent,
-        selected.model,
-        selected.thinking,
-        selected.tools,
-        rootManager,
-      ).pipe(
-        Effect.map((runtime) => ({
-          session: runtime.session,
-          reference: rootReference,
-          dispose: () => runtime.dispose(),
-        })),
-      ),
-      selected,
-      (runtime) => promptForAssistantText(target.path, runtime.session, task),
-    );
-
-    return { answer: result.answer, session: result.session };
-  });
+      return { answer: result.answer, session: result.session };
+    }),
+  );
 
 export const openTui = (
   target: ProfileTarget,
@@ -2158,6 +2180,12 @@ export const openTui = (
         sessionManager,
         context,
         runtimeOptions,
+      );
+
+      yield* Effect.addFinalizer(() =>
+        piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+          Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+        ),
       );
 
       yield* piPromise(target.path, "open interactive mode", async () => {

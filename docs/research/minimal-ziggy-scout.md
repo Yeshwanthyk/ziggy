@@ -67,6 +67,7 @@ ziggy extensions list        inspect the approved catalog.json entries
 ziggy extensions show <id>   inspect one approved package without importing its code
 ziggy extensions add <profile> <id>      select an optional package
 ziggy extensions remove <profile> <id>   unselect an optional package
+ziggy extensions update <profile> <id> [--adopt]  replace a stopped Profile's managed bundled copy
 ```
 
 ## Primitives, in build order

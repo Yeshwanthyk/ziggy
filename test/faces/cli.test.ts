@@ -7,6 +7,29 @@ import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "zig
 const decode = (args: ReadonlyArray<string>) => Effect.runPromise(decodeCliCommand(args));
 
 describe("CLI decoding", () => {
+  test("extension updates require a named package and explicit adoption", async () => {
+    await expect(decode(["extensions", "update", "squarey", "computer-use"])).resolves.toEqual({
+      _tag: "ExtensionsUpdate",
+      target: "squarey",
+      id: "computer-use",
+      adopt: false,
+    });
+    await expect(
+      decode(["extensions", "update", "squarey", "computer-use", "--adopt"]),
+    ).resolves.toMatchObject({ adopt: true });
+
+    for (const args of [
+      ["squarey"],
+      ["squarey", "--adopt"],
+      ["squarey", "computer-use", "--force"],
+      ["squarey", "computer-use", "--adopt", "--adopt"],
+    ]) {
+      await expect(decode(["extensions", "update", ...args])).rejects.toMatchObject({
+        _tag: "CliInputInvalid",
+      });
+    }
+  });
+
   test("decodes help and version aliases", async () => {
     await expect(decode(["help"])).resolves.toEqual({ _tag: "Help" });
     await expect(decode(["--help"])).resolves.toEqual({ _tag: "Help" });

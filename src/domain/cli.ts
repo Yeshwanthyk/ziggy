@@ -41,6 +41,12 @@ export type CliCommand =
   | { readonly _tag: "ExtensionsManage"; readonly target?: string }
   | { readonly _tag: "ExtensionsAdd"; readonly target: string; readonly id: string }
   | { readonly _tag: "ExtensionsRemove"; readonly target: string; readonly id: string }
+  | {
+      readonly _tag: "ExtensionsUpdate";
+      readonly target: string;
+      readonly id: string;
+      readonly adopt: boolean;
+    }
   | { readonly _tag: "AuthStatus"; readonly target: string }
   | {
       readonly _tag: "AuthLogin";

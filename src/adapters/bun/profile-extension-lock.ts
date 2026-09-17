@@ -164,8 +164,8 @@ const openLockFile = async (lockPath: string) => {
   }
 };
 
-const openLockDatabase = (profilePath: string, runtimePath: string) => {
-  const lockPath = join(runtimePath, LOCK_NAME);
+const openLockDatabase = (profilePath: string, runtimePath: string, lockName = LOCK_NAME) => {
+  const lockPath = join(runtimePath, lockName);
 
   return Effect.tryPromise({
     try: async () => {
@@ -216,6 +216,14 @@ const openLockDatabase = (profilePath: string, runtimePath: string) => {
       lockFailure(profilePath, "acquire", "could not open the Profile extension lock", cause),
   });
 };
+
+/** Open a hardened, stable SQLite artifact shared by Profile coordination adapters. */
+export const openProfileLockDatabase = (profilePath: string, lockName: string) =>
+  Effect.tryPromise({
+    try: () => ensureRuntimeDirectory(profilePath),
+    catch: (cause) =>
+      lockFailure(profilePath, "prepare", "could not prepare the Profile runtime directory", cause),
+  }).pipe(Effect.flatMap((runtimePath) => openLockDatabase(profilePath, runtimePath, lockName)));
 
 const isBusy = (cause: unknown): boolean => {
   const details = fileSystemCauseDetails(cause);

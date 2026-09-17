@@ -37,6 +37,7 @@ import {
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { createPiDocsExtension } from "./pi-docs";
+import { leaseProfileRuntime } from "./profile-runtime-lease";
 import { promptForAssistantText } from "./pi-agent";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
 import type { PiResources } from "./resources";
@@ -272,71 +273,81 @@ export const specialistRuntime = (
   tools: ReadonlyArray<string>,
   sessionManager: SessionManager,
 ): Effect.Effect<AgentSessionRuntime, SpecialistRunFailed> =>
-  loadProfileAgentsPrompt(profilePath).pipe(
-    Effect.mapError((error) => specialistFailure(profilePath, "read AGENTS.md", error)),
-    Effect.flatMap((agentsPrompt) =>
-      Effect.tryPromise({
-        try: () =>
-          createAgentSessionRuntime(
-            async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-              const services = await createAgentSessionServices({
+  leaseProfileRuntime(
+    profilePath,
+    loadProfileAgentsPrompt(profilePath).pipe(
+      Effect.mapError((error) => specialistFailure(profilePath, "read AGENTS.md", error)),
+      Effect.flatMap((agentsPrompt) =>
+        Effect.tryPromise({
+          try: () =>
+            createAgentSessionRuntime(
+              async ({
                 cwd,
                 agentDir,
-                modelRuntime: environment.services.modelRuntime,
-                resourceLoaderOptions: (() => {
-                  const options: SpecialistResourceLoaderOptions = {
-                    systemPrompt: composeProfileSystemPrompt(agentsPrompt, agent.body),
-                    noExtensions: true,
-                    noSkills: true,
-                    noPromptTemplates: true,
-                    noThemes: true,
-                    noContextFiles: true,
-                    extensionFactories: [
-                      ...environment.resources.extensionFactories,
-                      ...specialistReferenceExtensions(),
-                    ],
-                  };
+                sessionManager: runtimeSessionManager,
+                sessionStartEvent,
+              }) => {
+                const services = await createAgentSessionServices({
+                  cwd,
+                  agentDir,
+                  modelRuntime: environment.services.modelRuntime,
+                  resourceLoaderOptions: (() => {
+                    const options: SpecialistResourceLoaderOptions = {
+                      systemPrompt: composeProfileSystemPrompt(agentsPrompt, agent.body),
+                      noExtensions: true,
+                      noSkills: true,
+                      noPromptTemplates: true,
+                      noThemes: true,
+                      noContextFiles: true,
+                      extensionFactories: [
+                        ...environment.resources.extensionFactories,
+                        ...specialistReferenceExtensions(),
+                      ],
+                    };
 
-                  if (environment.resources.extensionPaths.length > 0) {
-                    options.additionalExtensionPaths = [...environment.resources.extensionPaths];
-                  }
-
-                  if (environment.resources.skillPaths.length > 0) {
-                    options.additionalSkillPaths = [...environment.resources.skillPaths];
-                  }
-
-                  return options;
-                })(),
-              });
-
-              const created = await createAgentSessionFromServices(
-                sessionStartEvent === undefined
-                  ? {
-                      services,
-                      sessionManager: runtimeSessionManager,
-                      model,
-                      thinkingLevel: thinking,
-                      tools: [...tools],
-                      noTools: "all" as const,
+                    if (environment.resources.extensionPaths.length > 0) {
+                      options.additionalExtensionPaths = [...environment.resources.extensionPaths];
                     }
-                  : {
-                      services,
-                      sessionManager: runtimeSessionManager,
-                      sessionStartEvent,
-                      model,
-                      thinkingLevel: thinking,
-                      tools: [...tools],
-                      noTools: "all" as const,
-                    },
-              );
 
-              return { ...created, services, diagnostics: services.diagnostics };
-            },
-            { cwd: profilePath, agentDir: profilePath, sessionManager },
-          ),
-        catch: (cause) => specialistFailure(profilePath, "create specialist runtime", cause),
-      }),
+                    if (environment.resources.skillPaths.length > 0) {
+                      options.additionalSkillPaths = [...environment.resources.skillPaths];
+                    }
+
+                    return options;
+                  })(),
+                });
+
+                const created = await createAgentSessionFromServices(
+                  sessionStartEvent === undefined
+                    ? {
+                        services,
+                        sessionManager: runtimeSessionManager,
+                        model,
+                        thinkingLevel: thinking,
+                        tools: [...tools],
+                        noTools: "all" as const,
+                      }
+                    : {
+                        services,
+                        sessionManager: runtimeSessionManager,
+                        sessionStartEvent,
+                        model,
+                        thinkingLevel: thinking,
+                        tools: [...tools],
+                        noTools: "all" as const,
+                      },
+                );
+
+                return { ...created, services, diagnostics: services.diagnostics };
+              },
+              { cwd: profilePath, agentDir: profilePath, sessionManager },
+            ),
+          catch: (cause) => specialistFailure(profilePath, "create specialist runtime", cause),
+        }),
+      ),
     ),
+  ).pipe(
+    Effect.mapError((cause) => specialistFailure(profilePath, "lease specialist runtime", cause)),
   );
 
 const childRuntime = (
