@@ -151,6 +151,12 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
     sourceSteps = [];
   };
 
+  const appendCompatible = (step: CompatibleSegmentStep, sourceStep: number): void => {
+    if (compatible.length === 20) flushSegment();
+    compatible.push(step);
+    sourceSteps.push(sourceStep);
+  };
+
   for (const [index, step] of workflow.steps.entries()) {
     const sourceStep = index + 1;
 
@@ -190,8 +196,7 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         continue;
       }
 
-      compatible.push({ assert: step.condition });
-      sourceSteps.push(sourceStep);
+      appendCompatible({ assert: step.condition }, sourceStep);
       continue;
     }
 
@@ -220,12 +225,14 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
       if (step.button !== undefined) action.button = step.button;
 
       if (step.clickCount !== undefined) action.clickCount = step.clickCount;
-      compatible.push({
-        target,
-        actions: [action],
-        expect: step.checkpoint,
-      });
-      sourceSteps.push(sourceStep);
+      appendCompatible(
+        {
+          target,
+          actions: [action],
+          expect: step.checkpoint,
+        },
+        sourceStep,
+      );
       continue;
     }
 
@@ -275,12 +282,14 @@ export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWork
         if (step.scrollY !== undefined) action.scrollY = step.scrollY;
       }
 
-      compatible.push({
-        target,
-        actions: [action],
-        expect: step.checkpoint,
-      });
-      sourceSteps.push(sourceStep);
+      appendCompatible(
+        {
+          target,
+          actions: [action],
+          expect: step.checkpoint,
+        },
+        sourceStep,
+      );
       continue;
     }
 

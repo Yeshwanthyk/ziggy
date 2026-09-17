@@ -526,6 +526,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     "workflow_record_stop",
     "workflow_record_cancel",
     "workflow_draft_show",
+    "workflow_draft_recent",
     "workflow_save",
     "workflow_save_prepare",
     "workflow_list",

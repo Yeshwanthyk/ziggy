@@ -1,3 +1,4 @@
+/* oxlint-disable ziggy/require-readable-spacing -- Declarative schemas are intentionally compact. */
 import { Type, type Static } from "typebox";
 
 const Id = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 1, maxLength: 80 });
@@ -214,6 +215,7 @@ const RecordedInputSchema = Type.Union([
   Type.Object(
     {
       kind: Type.Literal("safe_actions"),
+      expect: Type.Optional(CheckpointSchema),
       actions: Type.Array(
         Type.Union([
           Type.Object(
@@ -249,6 +251,70 @@ const RecordedInputSchema = Type.Union([
                 Type.Literal("coordinate-action"),
                 Type.Literal("unsupported-action"),
               ]),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("semantic_segment"),
+      rootQuery: Type.Optional(
+        Type.Object(
+          {
+            text: Type.Optional(ShortText),
+            app: Type.Optional(ShortText),
+            bundleId: Type.Optional(ShortText),
+            kind: Type.Optional(
+              Type.Union([
+                Type.Literal("window"),
+                Type.Literal("menu"),
+                Type.Literal("sheet"),
+                Type.Literal("popover"),
+                Type.Literal("dialog"),
+                Type.Literal("browser_page"),
+              ]),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      steps: Type.Array(
+        Type.Union([
+          Type.Object({ assert: CheckpointSchema }, { additionalProperties: false }),
+          Type.Object(
+            {
+              target: SemanticTargetSchema,
+              actions: Type.Array(
+                Type.Union([
+                  Type.Object(
+                    {
+                      action: Type.Literal("click"),
+                      button: Type.Optional(Button),
+                      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+                    },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    {
+                      action: Type.Literal("scroll"),
+                      scrollX: Type.Optional(Type.Number()),
+                      scrollY: Type.Optional(Type.Number()),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ]),
+                { minItems: 1, maxItems: 20 },
+              ),
+              expect: CheckpointSchema,
             },
             { additionalProperties: false },
           ),
@@ -331,6 +397,44 @@ export const RunRecordSchema = Type.Object(
     status: Type.Literal("planned"),
     plannedSegmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
     manualStepCount: Type.Integer({ minimum: 0, maximum: 200 }),
+  },
+  { additionalProperties: false },
+);
+
+export const WorkflowSaveCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    verificationBindingsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+    optimization: Type.Object(
+      {
+        removedRedundantObservations: Type.Integer({ minimum: 0, maximum: 200 }),
+        removedRedundantRootLookups: Type.Integer({ minimum: 0, maximum: 200 }),
+        segmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const WorkflowSaveProofSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-proof"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateId: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    runSummaryId: Id,
+    verifiedAt: Timestamp,
+    outcome: Type.Literal("passed"),
   },
   { additionalProperties: false },
 );
@@ -635,6 +739,8 @@ export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
 export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
 
 export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
+export type WorkflowSaveCandidate = Static<typeof WorkflowSaveCandidateSchema>;
+export type WorkflowSaveProof = Static<typeof WorkflowSaveProofSchema>;
 
 export type RecordedCall = Static<typeof RecordedCallSchema>;
 

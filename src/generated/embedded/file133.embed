@@ -1,305 +1,765 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem adapter boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Boundary failures become Pi tool failures. */
-/* oxlint-disable ziggy-effect/no-json-parse -- JSON is decoded immediately through the complete TypeBox schema. */
-/* oxlint-disable ziggy/no-unknown-parameters -- Unknown JSON exists only at the decoder and serializer boundary. */
-/* oxlint-disable ziggy/no-runtime-typeof -- Node filesystem errors require a narrow code probe at this adapter boundary. */
-import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
-import type { Static, TSchema } from "typebox";
-import { Parse } from "typebox/value";
-import {
-  PublishApprovalSchema,
-  BrowserJobBaselineSchema,
-  BrowserJobRunReportSchema,
-  SavedBrowserJobSchema,
-  PublishedWorkflowSchema,
-  RunRecordSchema,
-  RunSummarySchema,
-  WorkflowDraftSchema,
-  type PublishApproval,
-  type PublishedWorkflow,
-  type RunRecord,
-  type RunSummary,
-  type WorkflowDraft,
-  type BrowserJobBaseline,
-  type BrowserJobRunReport,
-  type SavedBrowserJob,
-} from "./schema.ts";
+/* oxlint-disable ziggy/require-readable-spacing -- Declarative schemas are intentionally compact. */
+import { Type, type Static } from "typebox";
 
-const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
+const Id = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 1, maxLength: 80 });
 
-const runtimeRoot = (profilePath: string): string =>
-  join(profilePath, ".runtime", "computer-workflows");
+const Text = Type.String({ minLength: 1, maxLength: 1_024 });
 
-const browserJobsRoot = (profilePath: string): string => join(profilePath, "browser-workflows");
+const ShortText = Type.String({ minLength: 1, maxLength: 256 });
 
-const browserJobRuntimeRoot = (profilePath: string, workflowId: string): string =>
-  join(runtimeRoot(profilePath), "jobs", workflowId);
+const Timestamp = Type.String({ format: "date-time" });
 
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+const Button = Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]);
 
-  return typeof cause.code === "string" ? cause.code : undefined;
+const PrimaryModifierKey = Type.String({ pattern: "^(?:CMD|COMMAND|CTRL|CONTROL|META)$" });
+
+const SecondaryModifierKey = Type.String({ pattern: "^(?:SHIFT|ALT|OPTION)$" });
+
+const ControlKey = Type.String({
+  pattern:
+    "^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$",
+});
+
+const ChordKey = Type.Union([ControlKey, Type.String({ pattern: "^[A-Z0-9]$" })]);
+
+export const SafeKeypressKeysSchema = Type.Union([
+  Type.Tuple([ControlKey]),
+  Type.Tuple([SecondaryModifierKey, ControlKey]),
+  Type.Tuple([PrimaryModifierKey, ChordKey]),
+  Type.Tuple([PrimaryModifierKey, SecondaryModifierKey, ChordKey]),
+  Type.Tuple([PrimaryModifierKey, SecondaryModifierKey, SecondaryModifierKey, ChordKey]),
+]);
+
+const SemanticTargetSchema = Type.Object(
+  {
+    text: Type.Optional(ShortText),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    app: Type.Optional(ShortText),
+  },
+  { additionalProperties: false },
+);
+
+const CheckpointSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+
+const VariableSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    secret: Type.Boolean(),
+    source: Type.Union([Type.Literal("user"), Type.Literal("agent")]),
+  },
+  { additionalProperties: false },
+);
+
+const VariableReferenceSchema = Type.Object({ variable: Id }, { additionalProperties: false });
+
+const StepMetadata = {
+  checkpoint: Type.Optional(CheckpointSchema),
 };
 
-const assertDirectory = async (path: string): Promise<void> => {
-  try {
-    const stat = await lstat(path);
+const WorkflowStepSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("click"),
+      target: SemanticTargetSchema,
+      button: Type.Optional(Button),
+      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("type"),
+      target: Type.Optional(SemanticTargetSchema),
+      value: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("keypress"),
+      target: Type.Optional(SemanticTargetSchema),
+      keys: SafeKeypressKeysSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("scroll"),
+      target: Type.Optional(SemanticTargetSchema),
+      scrollX: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      scrollY: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait"),
+      condition: CheckpointSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      url: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`Refusing non-directory workflow path: ${path}`);
-    }
-  } catch (cause) {
-    if (errorCode(cause) !== "ENOENT") throw cause;
-    await mkdir(path, { recursive: true });
-    const stat = await lstat(path);
+export const WorkflowDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    description: Type.Optional(Type.String({ maxLength: 2_000 })),
+    variables: Type.Array(VariableSchema, { maxItems: 50 }),
+    steps: Type.Array(WorkflowStepSchema, { minItems: 1, maxItems: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error(`Refusing non-directory workflow path: ${path}`);
-    }
-  }
-};
+export const PublishedWorkflowSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    publishedAt: Timestamp,
+    sourceDraftId: Id,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
 
-const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
-  const handle = await open(path, "wx", 0o600);
+const RecordedInputSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe_ui"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("search_ui"),
+      text: Type.Optional(ShortText),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("safe_actions"),
+      expect: Type.Optional(CheckpointSchema),
+      actions: Type.Array(
+        Type.Union([
+          Type.Object(
+            {
+              action: Type.Literal("keypress"),
+              keys: SafeKeypressKeysSchema,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("scroll"),
+              scrollX: Type.Optional(Type.Number()),
+              scrollY: Type.Optional(Type.Number()),
+              target: Type.Union([Type.Literal("root"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("variable-input"),
+              variable: Id,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("requires-review"),
+              reason: Type.Union([
+                Type.Literal("transient-target"),
+                Type.Literal("coordinate-action"),
+                Type.Literal("unsupported-action"),
+              ]),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("semantic_segment"),
+      rootQuery: Type.Optional(
+        Type.Object(
+          {
+            text: Type.Optional(ShortText),
+            app: Type.Optional(ShortText),
+            bundleId: Type.Optional(ShortText),
+            kind: Type.Optional(
+              Type.Union([
+                Type.Literal("window"),
+                Type.Literal("menu"),
+                Type.Literal("sheet"),
+                Type.Literal("popover"),
+                Type.Literal("dialog"),
+                Type.Literal("browser_page"),
+              ]),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      steps: Type.Array(
+        Type.Union([
+          Type.Object({ assert: CheckpointSchema }, { additionalProperties: false }),
+          Type.Object(
+            {
+              target: SemanticTargetSchema,
+              actions: Type.Array(
+                Type.Union([
+                  Type.Object(
+                    {
+                      action: Type.Literal("click"),
+                      button: Type.Optional(Button),
+                      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+                    },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    {
+                      action: Type.Literal("scroll"),
+                      scrollX: Type.Optional(Type.Number()),
+                      scrollY: Type.Optional(Type.Number()),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ]),
+                { minItems: 1, maxItems: 20 },
+              ),
+              expect: CheckpointSchema,
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait_for"),
+      text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")])),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      urlVariable: Id,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("withheld"),
+      reason: Type.Union([
+        Type.Literal("transient-reference"),
+        Type.Literal("arbitrary-code"),
+        Type.Literal("unsupported-input"),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-  try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-};
+const RecordedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Timestamp,
+    outcome: Type.Union([Type.Literal("success"), Type.Literal("error")]),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+  },
+  { additionalProperties: false },
+);
 
-const replaceJsonAtomically = async (path: string, value: unknown): Promise<void> => {
-  const temporary = `${path}.tmp-${crypto.randomUUID()}`;
-  await writeExclusiveJson(temporary, value);
-  await rename(temporary, path);
-};
+export const WorkflowDraftSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-draft"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    startedAt: Timestamp,
+    stoppedAt: Timestamp,
+    status: Type.Literal("review-required"),
+    calls: Type.Array(RecordedCallSchema, { maxItems: 1_000 }),
+    issues: Type.Array(Text, { maxItems: 1_000 }),
+  },
+  { additionalProperties: false },
+);
 
-const readDecoded = async <const Schema extends TSchema>(
-  path: string,
-  schema: Schema,
-): Promise<Static<Schema>> => Parse(schema, JSON.parse(await readFile(path, "utf8")));
+export const RunRecordSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    status: Type.Literal("planned"),
+    plannedSegmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+    manualStepCount: Type.Integer({ minimum: 0, maximum: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "drafts");
-  await assertDirectory(root);
-  const path = join(root, `${draft.id}.json`);
-  await writeExclusiveJson(path, draft);
+export const WorkflowSaveCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    verificationBindingsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+    optimization: Type.Object(
+      {
+        removedRedundantObservations: Type.Integer({ minimum: 0, maximum: 200 }),
+        removedRedundantRootLookups: Type.Integer({ minimum: 0, maximum: 200 }),
+        segmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
-  return path;
-};
+export const WorkflowSaveProofSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-proof"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateId: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    runSummaryId: Id,
+    verifiedAt: Timestamp,
+    outcome: Type.Literal("passed"),
+  },
+  { additionalProperties: false },
+);
 
-export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
-  readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
+const RunCheckSchema = Type.Object(
+  {
+    sourceStep: Type.Integer({ minimum: 1, maximum: 200 }),
+    expected: CheckpointSchema,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("not-run")]),
+  },
+  { additionalProperties: false },
+);
 
-export const publishWorkflow = async (
-  profilePath: string,
-  published: PublishedWorkflow,
-): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
-  const root = durableRoot(profilePath);
-  await assertDirectory(root);
-  const workflowRoot = join(root, published.workflow.id);
-  await assertDirectory(workflowRoot);
-  const revisionsRoot = join(workflowRoot, "revisions");
-  await assertDirectory(revisionsRoot);
-  const revisionPath = join(revisionsRoot, `${published.revision}.json`);
-  await writeExclusiveJson(revisionPath, published);
-  const manifestPath = join(workflowRoot, "workflow.json");
-  await replaceJsonAtomically(manifestPath, published);
+export const RunSummarySchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run-summary"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    finishedAt: Timestamp,
+    overall: Type.Union([
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    checks: Type.Array(RunCheckSchema, { maxItems: 200 }),
+    segments: Type.Object(
+      {
+        planned: Type.Integer({ minimum: 0, maximum: 200 }),
+        matched: Type.Integer({ minimum: 0, maximum: 200 }),
+        passed: Type.Integer({ minimum: 0, maximum: 200 }),
+        failed: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
+    ),
+    stopReason: Type.Union([
+      Type.Literal("completed"),
+      Type.Literal("manual-steps"),
+      Type.Literal("tool-error"),
+      Type.Literal("invalid-result"),
+      Type.Literal("input-mismatch"),
+      Type.Literal("unfinished-segments"),
+    ]),
+  },
+  { additionalProperties: false },
+);
 
-  return { manifestPath, revisionPath };
-};
+export const PublishApprovalSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-publish-approval"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    sourceDraftId: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    cwd: Type.String({ minLength: 1, maxLength: 8_192 }),
+    preparedAtUserInput: Type.Integer({ minimum: 0 }),
+    preparedAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
 
-export const readWorkflow = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<PublishedWorkflow> =>
-  readDecoded(join(durableRoot(profilePath), workflowId, "workflow.json"), PublishedWorkflowSchema);
+const BrowserProfile = Type.String({
+  pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$",
+  minLength: 1,
+  maxLength: 64,
+});
 
-export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
-  const root = durableRoot(profilePath);
-  let entries: string[];
+const AbsoluteHttpUrl = Type.String({
+  pattern: "^https?://",
+  minLength: 8,
+  maxLength: 8_192,
+});
 
-  try {
-    entries = await readdir(root);
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return [];
-    throw cause;
-  }
+const CssSelector = Type.String({ minLength: 1, maxLength: 1_024 });
 
-  const workflows: PublishedWorkflow[] = [];
+const BrowserCheckpointSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
 
-  for (const entry of entries.slice(0, 500)) {
-    try {
-      workflows.push(await readWorkflow(profilePath, entry));
-    } catch {
-      // Malformed entries are excluded from the index; workflow_show reports their exact failure.
-    }
-  }
+const BrowserJobPageSchema = Type.Object(
+  {
+    id: Id,
+    url: AbsoluteHttpUrl,
+    signedInCheckpoint: BrowserCheckpointSchema,
+    readyCheckpoint: BrowserCheckpointSchema,
+    emptyCheckpoint: BrowserCheckpointSchema,
+    extraction: Type.Object(
+      {
+        itemSelector: CssSelector,
+        idAttribute: Type.String({ pattern: "^[A-Za-z_:][-A-Za-z0-9_:.]*$", maxLength: 128 }),
+        titleSelector: CssSelector,
+        linkSelector: CssSelector,
+        companySelector: Type.Optional(CssSelector),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
-  return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
-};
+const BrowserJobV1DefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    browserProfile: BrowserProfile,
+    pages: Type.Tuple([BrowserJobPageSchema, BrowserJobPageSchema]),
+    overallTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 600_000 }),
+  },
+  { additionalProperties: false },
+);
 
-export const writeRunRecord = async (profilePath: string, run: RunRecord): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "runs");
-  await assertDirectory(root);
-  const path = join(root, `${run.id}.json`);
-  await writeExclusiveJson(path, Parse(RunRecordSchema, run));
+const BrowserJobV2PageSchema = Type.Object(
+  {
+    id: Id,
+    url: AbsoluteHttpUrl,
+    signedInCheckpoint: BrowserCheckpointSchema,
+    readyCheckpoint: BrowserCheckpointSchema,
+    emptyCheckpoint: BrowserCheckpointSchema,
+    extraction: BrowserJobPageSchema.properties.extraction,
+    pagination: Type.Optional(
+      Type.Object(
+        {
+          nextSelector: CssSelector,
+          maxPages: Type.Integer({ minimum: 1, maximum: 100 }),
+          changeTimeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-  return path;
-};
+const DetailFieldSchema = Type.Object(
+  {
+    name: Id,
+    selector: CssSelector,
+    mode: Type.Union([Type.Literal("text"), Type.Literal("list")]),
+    required: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
 
-export const writeRunSummary = async (
-  profilePath: string,
-  summary: RunSummary,
-): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "run-summaries");
-  await assertDirectory(root);
-  const path = join(root, `${summary.id}.json`);
-  await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
+const BrowserJobV2DefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(2),
+    id: Id,
+    name: Text,
+    browserProfile: BrowserProfile,
+    pages: Type.Array(BrowserJobV2PageSchema, { minItems: 1, maxItems: 50 }),
+    detailExtraction: Type.Optional(
+      Type.Object(
+        {
+          maxItems: Type.Integer({ minimum: 1, maximum: 10_000 }),
+          allowedOrigins: Type.Array(Type.String({ minLength: 8, maxLength: 2_048 }), {
+            minItems: 1,
+            maxItems: 50,
+            uniqueItems: true,
+          }),
+          readyCheckpoint: BrowserCheckpointSchema,
+          fields: Type.Array(DetailFieldSchema, { minItems: 1, maxItems: 20 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    reportBudgetBytes: Type.Integer({ minimum: 64 * 1_024, maximum: 10 * 1_024 * 1_024 }),
+    overallTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 600_000 }),
+  },
+  { additionalProperties: false },
+);
 
-  return path;
-};
+export const BrowserJobDefinitionSchema = Type.Union([
+  BrowserJobV1DefinitionSchema,
+  BrowserJobV2DefinitionSchema,
+]);
 
-export const writePublishApproval = async (
-  profilePath: string,
-  approval: PublishApproval,
-): Promise<string> => {
-  const root = join(runtimeRoot(profilePath), "publish-approvals");
-  await assertDirectory(root);
-  const path = join(root, `${approval.id}.json`);
-  await writeExclusiveJson(path, approval);
+export const SavedBrowserJobSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-saved-browser-job"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    savedAt: Timestamp,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    workflow: BrowserJobDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
 
-  return path;
-};
+const ExtractedJobItemSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 1_024 }),
+    title: Type.String({ minLength: 1, maxLength: 4_096 }),
+    link: Type.String({ minLength: 1, maxLength: 8_192 }),
+    company: Type.Optional(Type.String({ maxLength: 4_096 })),
+    pageId: Id,
+    details: Type.Optional(
+      Type.Record(
+        Id,
+        Type.Object(
+          {
+            value: Type.Union([
+              Type.String({ maxLength: 64 * 1_024 }),
+              Type.Array(Type.String({ maxLength: 16 * 1_024 }), { maxItems: 1_000 }),
+              Type.Null(),
+            ]),
+            source: Type.Object(
+              {
+                url: AbsoluteHttpUrl,
+                selector: CssSelector,
+                mode: Type.Union([Type.Literal("text"), Type.Literal("list")]),
+              },
+              { additionalProperties: false },
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-export const readPublishApproval = async (
-  profilePath: string,
-  approvalId: string,
-): Promise<PublishApproval> =>
-  readDecoded(
-    join(runtimeRoot(profilePath), "publish-approvals", `${approvalId}.json`),
-    PublishApprovalSchema,
-  );
+export const BrowserJobBaselineSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-browser-job-baseline"),
+    formatVersion: Type.Literal(1),
+    workflowId: Id,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    updatedAt: Timestamp,
+    seenIds: Type.Array(Type.String({ minLength: 1, maxLength: 1_024 }), {
+      maxItems: 100_000,
+      uniqueItems: true,
+    }),
+  },
+  { additionalProperties: false },
+);
 
-export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
-  Parse(PublishedWorkflowSchema, value);
+export const BrowserJobRunReportSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-browser-job-run-report"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    startedAt: Timestamp,
+    finishedAt: Timestamp,
+    status: Type.Union([
+      Type.Literal("passed"),
+      Type.Literal("partial"),
+      Type.Literal("failed"),
+      Type.Literal("cancelled"),
+    ]),
+    baselineEstablished: Type.Boolean(),
+    baselineReset: Type.Boolean(),
+    itemCount: Type.Integer({ minimum: 0, maximum: 100_000 }),
+    items: Type.Array(ExtractedJobItemSchema, { maxItems: 100_000 }),
+    newItems: Type.Array(ExtractedJobItemSchema, { maxItems: 100_000 }),
+    pagesCompleted: Type.Array(Id, { maxItems: 50 }),
+    resultPagesCompleted: Type.Integer({ minimum: 0, maximum: 5_000 }),
+    detailItemsCompleted: Type.Integer({ minimum: 0, maximum: 10_000 }),
+    failure: Type.Optional(
+      Type.Object(
+        {
+          code: Type.Union([
+            Type.Literal("browser-busy"),
+            Type.Literal("checkpoint-failed"),
+            Type.Literal("invalid-extraction"),
+            Type.Literal("duplicate-id"),
+            Type.Literal("output-cap"),
+            Type.Literal("pagination-budget"),
+            Type.Literal("pagination-stalled"),
+            Type.Literal("detail-budget"),
+            Type.Literal("detail-url"),
+            Type.Literal("missing-detail-field"),
+            Type.Literal("timeout"),
+            Type.Literal("cancelled"),
+            Type.Literal("browser-error"),
+          ]),
+          pageId: Type.Optional(Id),
+          message: Type.String({ minLength: 1, maxLength: 1_024 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-export const saveBrowserJob = async (
-  profilePath: string,
-  saved: SavedBrowserJob,
-): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
-  const root = browserJobsRoot(profilePath);
-  await assertDirectory(root);
-  const workflowRoot = join(root, saved.workflow.id);
-  await assertDirectory(workflowRoot);
-  const revisionsRoot = join(workflowRoot, "revisions");
-  await assertDirectory(revisionsRoot);
-  const revisionPath = join(revisionsRoot, `${saved.revision}.json`);
-  await writeExclusiveJson(revisionPath, Parse(SavedBrowserJobSchema, saved));
-  const manifestPath = join(workflowRoot, "workflow.json");
-  await replaceJsonAtomically(manifestPath, saved);
+export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
 
-  return { manifestPath, revisionPath };
-};
+export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
 
-export const readBrowserJob = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<SavedBrowserJob> =>
-  readDecoded(
-    join(browserJobsRoot(profilePath), workflowId, "workflow.json"),
-    SavedBrowserJobSchema,
-  );
+export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
+export type WorkflowSaveCandidate = Static<typeof WorkflowSaveCandidateSchema>;
+export type WorkflowSaveProof = Static<typeof WorkflowSaveProofSchema>;
 
-export const listBrowserJobs = async (profilePath: string): Promise<SavedBrowserJob[]> => {
-  let entries: string[];
+export type RecordedCall = Static<typeof RecordedCallSchema>;
 
-  try {
-    entries = await readdir(browserJobsRoot(profilePath));
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return [];
-    throw cause;
-  }
+export type RecordedInput = Static<typeof RecordedInputSchema>;
 
-  const jobs: SavedBrowserJob[] = [];
+export type RunRecord = Static<typeof RunRecordSchema>;
 
-  for (const entry of entries.slice(0, 500)) {
-    try {
-      jobs.push(await readBrowserJob(profilePath, entry));
-    } catch {
-      // Malformed entries are excluded from the index; browser_workflow_show reports the failure.
-    }
-  }
+export type RunSummary = Static<typeof RunSummarySchema>;
 
-  return jobs.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
-};
+export type PublishApproval = Static<typeof PublishApprovalSchema>;
 
-export const readBrowserJobBaseline = async (
-  profilePath: string,
-  workflowId: string,
-): Promise<BrowserJobBaseline | undefined> => {
-  try {
-    return await readDecoded(
-      join(browserJobRuntimeRoot(profilePath, workflowId), "baseline.json"),
-      BrowserJobBaselineSchema,
-    );
-  } catch (cause) {
-    if (errorCode(cause) === "ENOENT") return undefined;
-    throw cause;
-  }
-};
+export type BrowserJobDefinition = Static<typeof BrowserJobDefinitionSchema>;
 
-export const writeBrowserJobBaseline = async (
-  profilePath: string,
-  baseline: BrowserJobBaseline,
-): Promise<void> => {
-  const root = browserJobRuntimeRoot(profilePath, baseline.workflowId);
-  await assertDirectory(root);
-  await replaceJsonAtomically(
-    join(root, "baseline.json"),
-    Parse(BrowserJobBaselineSchema, baseline),
-  );
-};
+export type SavedBrowserJob = Static<typeof SavedBrowserJobSchema>;
 
-export const writeBrowserJobRunReport = async (
-  profilePath: string,
-  report: BrowserJobRunReport,
-): Promise<string> => {
-  const root = join(browserJobRuntimeRoot(profilePath, report.workflowId), "runs");
-  await assertDirectory(root);
-  const path = join(root, `${report.id}.json`);
-  await writeExclusiveJson(path, Parse(BrowserJobRunReportSchema, report));
+export type BrowserJobBaseline = Static<typeof BrowserJobBaselineSchema>;
 
-  return path;
-};
+export type BrowserJobRunReport = Static<typeof BrowserJobRunReportSchema>;
 
-export const withBrowserJobLock = async <Result>(
-  profilePath: string,
-  workflowId: string,
-  signal: AbortSignal,
-  run: () => Promise<Result>,
-): Promise<Result> => {
-  const root = browserJobRuntimeRoot(profilePath, workflowId);
-  await assertDirectory(root);
-  const lockPath = join(root, "run.lock");
-  signal.throwIfAborted();
+export type ExtractedJobItem = Static<typeof ExtractedJobItemSchema>;
 
-  try {
-    await mkdir(lockPath, { mode: 0o700 });
-  } catch (cause) {
-    if (errorCode(cause) === "EEXIST") {
-      throw new Error(`Browser workflow '${workflowId}' already has an active run.`);
-    }
-
-    throw cause;
-  }
-
-  try {
-    return await run();
-  } finally {
-    await rm(lockPath, { recursive: true, force: true });
-  }
-};
+export const WorkflowIdSchema = Id;

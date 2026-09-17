@@ -1,6 +1,8 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Invalid observed tool inputs are withheld instead of entering durable state. */
 /* oxlint-disable ziggy/no-conditional-empty-object-spread -- Exact optional properties are assembled from schema-decoded optional inputs. */
 /* oxlint-disable ziggy/no-unsafe-dictionary-type -- Pi's public custom-tool event contract supplies Record<string, unknown>; every supported input is immediately schema-decoded. */
+/* oxlint-disable ziggy/no-runtime-typeof -- Tool-result details are an untrusted event boundary probed only to fail wait evidence closed. */
+/* oxlint-disable ziggy/require-readable-spacing -- Sanitization branches keep decode and projection together. */
 import { Parse } from "typebox/value";
 import { Type, type Static } from "typebox";
 import { normalizeSafeControlKeypress } from "./execution-plan.ts";
@@ -23,6 +25,8 @@ const COMPUTER_USE_TOOLS = new Set([
   "launch_browser",
   "navigate_browser",
   "evaluate_browser",
+  "close_browser",
+  "run_ui_segment",
 ]);
 
 const Ref = Type.String({ pattern: "^@[ero][A-Za-z0-9._:-]*$" });
@@ -148,8 +152,137 @@ const ActInput = Type.Object(
 const WaitInput = Type.Object({ ...Condition, stateId: StateId }, { additionalProperties: false });
 
 const BrowserInput = Type.Object(
-  { url: Type.Optional(Type.String({ maxLength: 8_192 })), stateId: Type.Optional(StateId) },
+  {
+    url: Type.Optional(Type.String({ maxLength: 8_192 })),
+    stateId: Type.Optional(StateId),
+    profile: Type.Optional(Type.String({ maxLength: 64 })),
+    mode: Type.Optional(Type.Union([Type.Literal("foreground"), Type.Literal("background")])),
+  },
   { additionalProperties: false },
+);
+
+const RecordedCondition = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+
+const SegmentInput = Type.Object(
+  {
+    rootQuery: Type.Optional(
+      Type.Object(
+        {
+          text: Type.Optional(Type.String({ maxLength: 256 })),
+          app: Type.Optional(Type.String({ maxLength: 256 })),
+          bundleId: Type.Optional(Type.String({ maxLength: 256 })),
+          kind: Type.Optional(
+            Type.Union([
+              Type.Literal("window"),
+              Type.Literal("menu"),
+              Type.Literal("sheet"),
+              Type.Literal("popover"),
+              Type.Literal("dialog"),
+              Type.Literal("browser_page"),
+            ]),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    steps: Type.Array(
+      Type.Union([
+        Type.Object({ assert: RecordedCondition }, { additionalProperties: false }),
+        Type.Object(
+          {
+            target: Type.Object(
+              {
+                text: Type.Optional(Type.String({ maxLength: 256 })),
+                role: Type.Optional(Type.String({ maxLength: 128 })),
+                capability: Type.Optional(Type.String({ maxLength: 128 })),
+              },
+              { additionalProperties: false },
+            ),
+            actions: Type.Array(
+              Type.Union([
+                Type.Object(
+                  {
+                    action: Type.Literal("click"),
+                    button: Type.Optional(
+                      Type.Union([
+                        Type.Literal("left"),
+                        Type.Literal("right"),
+                        Type.Literal("middle"),
+                      ]),
+                    ),
+                    clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+                  },
+                  { additionalProperties: false },
+                ),
+                Type.Object(
+                  { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
+                  { additionalProperties: false },
+                ),
+                Type.Object(
+                  {
+                    action: Type.Literal("scroll"),
+                    scrollX: Type.Optional(Type.Number()),
+                    scrollY: Type.Optional(Type.Number()),
+                  },
+                  { additionalProperties: false },
+                ),
+              ]),
+              { minItems: 1, maxItems: 20 },
+            ),
+            expect: RecordedCondition,
+          },
+          { additionalProperties: false },
+        ),
+      ]),
+      { minItems: 1, maxItems: 20 },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const SegmentResult = Type.Object(
+  {
+    tool: Type.Literal("run_ui_segment"),
+    status: Type.Literal("completed"),
+    completed: Type.Array(
+      Type.Object(
+        {
+          step: Type.Integer({ minimum: 1, maximum: 20 }),
+          stateId: Type.String({ minLength: 1 }),
+          ref: Type.Optional(Type.String({ minLength: 1 })),
+          kind: Type.Optional(Type.Literal("assert")),
+          actionCount: Type.Integer({ minimum: 0, maximum: 20 }),
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 20 },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const ActResult = Type.Object(
+  {
+    tool: Type.Literal("act_ui"),
+    execution: Type.Object(
+      {
+        verification: Type.Object(
+          { status: Type.Union([Type.Literal("verified"), Type.Literal("preexisting")]) },
+          { additionalProperties: true },
+        ),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
 );
 
 type PendingCall = {
@@ -239,7 +372,14 @@ const sanitizeActions = (
     }
   }
 
-  return { input: { kind: "safe_actions", actions: sanitized }, issues };
+  return {
+    input: {
+      kind: "safe_actions",
+      actions: sanitized,
+      ...(actions.length > 0 ? {} : {}),
+    },
+    issues,
+  };
 };
 
 const sanitizeComputerUseInput = (
@@ -296,8 +436,27 @@ const sanitizeComputerUseInput = (
 
     if (toolName === "act_ui") {
       const decoded = Parse(ActInput, input);
-
-      return sanitizeActions(decoded.actions, sequence);
+      const sanitized = sanitizeActions(decoded.actions, sequence);
+      return {
+        ...sanitized,
+        input: {
+          ...sanitized.input,
+          ...(decoded.expect === undefined
+            ? {}
+            : {
+                expect: {
+                  ...(withoutTransientText(decoded.expect.text) === undefined
+                    ? {}
+                    : { text: decoded.expect.text }),
+                  ...(decoded.expect.role === undefined ? {} : { role: decoded.expect.role }),
+                  until: decoded.expect.until ?? "present",
+                  ...(decoded.expect.timeoutMs === undefined
+                    ? {}
+                    : { timeoutMs: decoded.expect.timeoutMs }),
+                },
+              }),
+        },
+      };
     }
 
     if (toolName === "wait_for") {
@@ -325,6 +484,18 @@ const sanitizeComputerUseInput = (
       return {
         input: { kind: toolName, urlVariable: `url-${sequence}` },
         issues: ["The browser URL was not recorded; define and bind the generated variable."],
+      };
+    }
+
+    if (toolName === "run_ui_segment") {
+      const decoded = Parse(SegmentInput, input);
+      return { input: { kind: "semantic_segment", ...decoded }, issues: [] };
+    }
+
+    if (toolName === "close_browser") {
+      return {
+        input: withheld("unsupported-input"),
+        issues: ["Browser cleanup was observed but is not a replay step."],
       };
     }
 
@@ -393,17 +564,59 @@ export const observeToolCall = (
 
 export const observeToolResult = (
   recording: ActiveRecording,
-  event: { readonly toolCallId: string; readonly toolName: string; readonly isError: boolean },
+  event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly isError: boolean;
+    readonly details?: unknown;
+  },
   now = new Date(),
 ): void => {
   const pending = recording.pending.get(event.toolCallId);
 
   if (pending === undefined || pending.toolName !== event.toolName) return;
   recording.pending.delete(event.toolCallId);
+  let successful = !event.isError;
+
+  try {
+    if (successful && pending.toolName === "wait_for") {
+      successful =
+        typeof event.details === "object" &&
+        event.details !== null &&
+        "found" in event.details &&
+        event.details.found === true &&
+        (!("timedOut" in event.details) || event.details.timedOut !== true);
+    } else if (successful && pending.toolName === "run_ui_segment") {
+      const decoded = Parse(SegmentResult, event.details);
+      if (pending.input.kind !== "semantic_segment") successful = false;
+      else {
+        successful =
+          decoded.completed.length === pending.input.steps.length &&
+          decoded.completed.every((entry, index) => {
+            const planned =
+              pending.input.kind === "semantic_segment" ? pending.input.steps[index] : undefined;
+            if (planned === undefined || entry.step !== index + 1) return false;
+            return "assert" in planned
+              ? entry.kind === "assert" && entry.actionCount === 0
+              : entry.kind === undefined && entry.actionCount === planned.actions.length;
+          });
+      }
+    } else if (
+      successful &&
+      pending.toolName === "act_ui" &&
+      pending.input.kind === "safe_actions" &&
+      pending.input.expect !== undefined
+    ) {
+      Parse(ActResult, event.details);
+    }
+  } catch {
+    successful = false;
+  }
+
   recording.completed.push({
     ...pending,
     completedAt: now.toISOString(),
-    outcome: event.isError ? "error" : "success",
+    outcome: successful ? "success" : "error",
   });
 };
 

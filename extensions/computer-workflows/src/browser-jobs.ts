@@ -216,7 +216,7 @@ export const makeSavedBrowserJob = (
 ): SavedBrowserJob => ({
   format: "ziggy-saved-browser-job",
   formatVersion: 1,
-  revision: crypto.randomUUID(),
+  revision: createHash("sha256").update(JSON.stringify(definition)).digest("hex"),
   savedAt: now.toISOString(),
   sourceFingerprint: browserJobFingerprint(definition),
   workflow: definition,

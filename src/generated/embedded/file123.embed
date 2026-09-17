@@ -2,7 +2,8 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Pi surfaces bounded rejected tool Promises as failures. */
 /* oxlint-disable ziggy-effect/no-instanceof-error -- Pi rejects native Errors at this extension boundary. */
 /* oxlint-disable ziggy/no-unknown-parameters -- Tool results serialize boundary-owned payloads only. */
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+/* oxlint-disable ziggy/require-readable-spacing -- Tool registrations keep each bounded operation together. */
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import {
   BrowserJobDefinitionSchema,
@@ -17,34 +18,38 @@ import {
   startRecording,
   type ActiveRecording,
 } from "./src/recorder.ts";
-import { assertPublishApproval, makePublishApproval } from "./src/approval.ts";
 import {
   listWorkflows,
-  publishWorkflow,
   readDraft,
-  readPublishApproval,
   readWorkflow,
+  readWorkflowIfPresent,
   writeDraft,
-  writePublishApproval,
   writeRunRecord,
   writeRunSummary,
   listBrowserJobs,
   readBrowserJob,
+  readBrowserJobIfPresent,
   readBrowserJobBaseline,
-  saveBrowserJob,
   withBrowserJobLock,
   writeBrowserJobBaseline,
   writeBrowserJobRunReport,
+  promoteVerifiedBrowserJob,
+  writeSaveCandidate,
+  readSaveCandidate,
+  writeSaveProof,
+  promoteVerifiedWorkflow,
 } from "./src/storage.ts";
-import { makePublishedWorkflow, validateWorkflowDefinition } from "./src/workflows.ts";
+import { resolveWorkflowTemplates } from "./src/workflows.ts";
 import { compileExecutionPlan } from "./src/execution-plan.ts";
 import {
   finishActiveRun,
   observeRunToolCall,
   observeRunToolResult,
+  observeInterveningVerificationTool,
   startActiveRun,
   type ActiveWorkflowRun,
 } from "./src/run-tracker.ts";
+import { makeWorkflowSaveCandidate, proveWorkflowSaveCandidate } from "./src/save-pipeline.ts";
 import {
   makeSavedBrowserJob,
   runSavedBrowserJob,
@@ -66,17 +71,27 @@ const RecordStartParameters = Type.Object(
 const DraftParameters = Type.Object({ draftId: WorkflowIdSchema }, { additionalProperties: false });
 
 const PreparePublishParameters = Type.Object(
-  { draftId: WorkflowIdSchema, workflow: WorkflowDefinitionSchema },
+  {
+    draftId: WorkflowIdSchema,
+    workflow: WorkflowDefinitionSchema,
+    bindings: Type.Record(WorkflowIdSchema, Type.String({ minLength: 1, maxLength: 1_024 })),
+    replayMode: Type.Union([Type.Literal("read-only"), Type.Literal("reversible-test")]),
+  },
   { additionalProperties: false },
 );
 
 const PublishParameters = Type.Object(
-  { approvalId: WorkflowIdSchema },
+  { candidateId: WorkflowIdSchema },
   { additionalProperties: false },
 );
 
 const WorkflowParameters = Type.Object(
-  { workflowId: WorkflowIdSchema },
+  {
+    workflowId: WorkflowIdSchema,
+    bindings: Type.Optional(
+      Type.Record(WorkflowIdSchema, Type.String({ minLength: 1, maxLength: 1_024 })),
+    ),
+  },
   { additionalProperties: false },
 );
 
@@ -108,18 +123,18 @@ const sessionKey = (ctx: {
 const boundedFailure = (cause: unknown): Error =>
   new Error(bounded(cause instanceof Error ? cause.message : String(cause)));
 
-const userInputRevision = (ctx: Pick<ExtensionContext, "sessionManager">): number =>
-  ctx.sessionManager
-    .getBranch()
-    .filter((entry) => entry.type === "message" && entry.message.role === "user").length;
-
 export default function computerWorkflows(pi: ExtensionAPI): void {
   const active = new Map<string, ActiveRecording>();
+  const rolling = new Map<string, ActiveRecording>();
   const activeRuns = new Map<string, ActiveWorkflowRun>();
+  const activeSaveCandidates = new Map<string, string>();
 
   const clearProfileRecording = (profilePath: string): void => {
     for (const key of active.keys()) {
       if (key.startsWith(`${profilePath}\0`)) active.delete(key);
+    }
+    for (const key of rolling.keys()) {
+      if (key.startsWith(`${profilePath}\0`)) rolling.delete(key);
     }
   };
 
@@ -127,17 +142,39 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     for (const key of activeRuns.keys()) {
       if (key.startsWith(`${profilePath}\0`)) activeRuns.delete(key);
     }
+    for (const key of activeSaveCandidates.keys()) {
+      if (key.startsWith(`${profilePath}\0`)) activeSaveCandidates.delete(key);
+    }
   };
 
   pi.on("tool_call", (event, ctx) => {
+    const key = sessionKey(ctx);
+    let recent = rolling.get(key);
+    if (recent === undefined) {
+      recent = startRecording(
+        "Recent task",
+        "Recent successful computer task",
+        ctx.sessionManager.getSessionId(),
+      );
+      rolling.set(key, recent);
+    }
+    observeToolCall(recent, event);
     const recording = active.get(sessionKey(ctx));
 
     if (recording !== undefined) observeToolCall(recording, event);
     const run = activeRuns.get(sessionKey(ctx));
 
-    if (run !== undefined) observeRunToolCall(run, event);
+    if (run !== undefined) {
+      if (event.toolName === "run_ui_segment") observeRunToolCall(run, event);
+      else observeInterveningVerificationTool(run, event.toolName);
+    }
   });
   pi.on("tool_result", (event, ctx) => {
+    const recent = rolling.get(sessionKey(ctx));
+    if (recent !== undefined) {
+      observeToolResult(recent, event);
+      if (recent.completed.length > 500) recent.completed.splice(0, recent.completed.length - 500);
+    }
     const recording = active.get(sessionKey(ctx));
 
     if (recording !== undefined) observeToolResult(recording, event);
@@ -170,6 +207,39 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "workflow_draft_recent",
+    label: "Draft Recent Workflow",
+    description:
+      "Snapshot the bounded session-local redacted capture of recent computer-use calls after the user asks to save a task.",
+    parameters: RecordStartParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      const key = sessionKey(ctx);
+      const recent =
+        rolling.get(key) ??
+        startRecording(parameters.name, parameters.goal, ctx.sessionManager.getSessionId());
+      const draft = finishRecording({ ...recent, name: parameters.name, goal: parameters.goal });
+      const path = await writeDraft(ctx.cwd, draft);
+      rolling.set(
+        key,
+        startRecording(
+          "Recent task",
+          "Recent successful computer task",
+          ctx.sessionManager.getSessionId(),
+        ),
+      );
+      return result({
+        ok: true,
+        status: draft.status,
+        draftId: draft.id,
+        callCount: draft.calls.length,
+        issueCount: draft.issues.length,
+        path,
+      });
+    },
+  });
+
+  pi.registerTool({
     name: "browser_workflow_save",
     label: "Save Browser Workflow",
     description:
@@ -179,8 +249,31 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
         const workflow = validateBrowserJobDefinition(parameters.workflow);
+        const current = await readBrowserJobIfPresent(ctx.cwd, workflow.id);
         const saved = makeSavedBrowserJob(workflow);
-        const paths = await saveBrowserJob(ctx.cwd, saved);
+        const runSignal = _signal ?? new AbortController().signal;
+        const completed = await withBrowserJobLock(
+          ctx.cwd,
+          workflow.id,
+          runSignal,
+          async () =>
+            await runSavedBrowserJob({
+              saved,
+              bridge: makeBrowserJobBridge(pi, ctx),
+              store: {
+                readBaseline: async () => undefined,
+                writeBaseline: async () => undefined,
+                writeReport: async (report) => await writeBrowserJobRunReport(ctx.cwd, report),
+              },
+              signal: runSignal,
+            }),
+        );
+        if (completed.report.status !== "passed" || completed.report.revision !== saved.revision) {
+          throw new Error(
+            `Browser workflow verification ${completed.report.status}; current saved revision was preserved.`,
+          );
+        }
+        const paths = await promoteVerifiedBrowserJob(ctx.cwd, saved, current?.revision ?? null);
 
         return result({
           ok: true,
@@ -188,6 +281,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
           workflowId: workflow.id,
           revision: saved.revision,
           sourceFingerprint: saved.sourceFingerprint,
+          proofReportPath: completed.reportPath,
           ...paths,
         });
       } catch (cause) {
@@ -384,34 +478,64 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     name: "workflow_save_prepare",
     label: "Prepare Workflow Save",
     description:
-      "Validate and durably prepare a reviewed semantic workflow to save. A later explicit user turn must approve saving; this call never saves the workflow.",
+      "Validate, conservatively optimize, hash, and durably stage a reviewed semantic workflow for exact observed verification. The user's save request authorizes promotion after proof.",
     parameters: PreparePublishParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
+        const key = sessionKey(ctx);
+        if (activeRuns.has(key))
+          throw new Error("This session already has an active workflow run.");
         const draft = await readDraft(ctx.cwd, parameters.draftId);
-        const workflow = validateWorkflowDefinition(parameters.workflow);
-
-        const approval = makePublishApproval({
-          workflow,
+        const current = await readWorkflowIfPresent(ctx.cwd, parameters.workflow.id);
+        const candidateInput = {
+          workflow: parameters.workflow,
           sourceDraftId: draft.id,
+          draft,
+          bindings: parameters.bindings,
+        };
+        const candidate = makeWorkflowSaveCandidate(
+          current === undefined
+            ? candidateInput
+            : { ...candidateInput, baseRevision: current.revision },
+        );
+        const resolved = resolveWorkflowTemplates(candidate.workflow, parameters.bindings);
+        const compiled = compileExecutionPlan(resolved);
+        const hasActions = compiled.segments.some((segment) =>
+          segment.input.steps.some((step) => "actions" in step),
+        );
+        if (hasActions && parameters.replayMode !== "reversible-test") {
+          throw new Error(
+            "Action verification requires replayMode='reversible-test' after the agent establishes an isolated or reversible test context.",
+          );
+        }
+        const candidatePath = await writeSaveCandidate(ctx.cwd, candidate);
+        const run: RunRecord = {
+          format: "ziggy-computer-workflow-run",
+          formatVersion: 1,
+          id: crypto.randomUUID(),
+          workflowId: candidate.workflow.id,
+          revision: candidate.candidateHash,
           sessionId: ctx.sessionManager.getSessionId(),
-          cwd: ctx.cwd,
-          preparedAtUserInput: userInputRevision(ctx),
-        });
-
-        const approvalPath = await writePublishApproval(ctx.cwd, approval);
+          preparedAt: new Date().toISOString(),
+          status: "planned",
+          plannedSegmentCount: compiled.segments.length,
+          manualStepCount: compiled.manual.length,
+        };
+        await writeRunRecord(ctx.cwd, run);
+        activeRuns.set(key, startActiveRun(run, compiled));
+        activeSaveCandidates.set(key, candidate.id);
 
         return result({
           ok: true,
-          status: "awaiting-user-approval",
-          approvalId: approval.id,
-          workflowId: workflow.id,
-          stepCount: workflow.steps.length,
-          workflow,
-          approvalPath,
-          instruction:
-            "Show this exact workflow summary to the user. Only a later user response can authorize workflow_save.",
+          status: compiled.manual.length === 0 ? "verification-ready" : "verification-blocked",
+          candidateId: candidate.id,
+          candidateHash: candidate.candidateHash,
+          workflowId: candidate.workflow.id,
+          workflow: candidate.workflow,
+          optimization: candidate.optimization,
+          candidatePath,
+          verification: { runId: run.id, segments: compiled.segments, manual: compiled.manual },
         });
       } catch (cause) {
         throw boundedFailure(cause);
@@ -423,25 +547,37 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     name: "workflow_save",
     label: "Save Workflow Revision",
     description:
-      "Save one prepared semantic workflow after a newer user response in the same Profile session. This works in TUI, RPC, gateway, print, and automation faces without a dialog.",
+      "Promote the exact staged candidate only after this session observed every planned run_ui_segment and its driver-verified checkpoints pass.",
     parameters: PublishParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       try {
-        const approval = await readPublishApproval(ctx.cwd, parameters.approvalId);
-        assertPublishApproval(approval, {
-          sessionId: ctx.sessionManager.getSessionId(),
-          cwd: ctx.cwd,
-          userInput: userInputRevision(ctx),
-        });
-        const published = makePublishedWorkflow(approval.workflow, approval.sourceDraftId);
-        const paths = await publishWorkflow(ctx.cwd, published);
-
+        const key = sessionKey(ctx);
+        const activeRun = activeRuns.get(key);
+        const candidate = await readSaveCandidate(ctx.cwd, parameters.candidateId);
+        if (
+          activeRun === undefined ||
+          activeSaveCandidates.get(key) !== candidate.id ||
+          activeRun.record.revision !== candidate.candidateHash
+        ) {
+          throw new Error(
+            "No active verification exists for this exact candidate in this session.",
+          );
+        }
+        const summary = finishActiveRun(activeRun);
+        const summaryPath = await writeRunSummary(ctx.cwd, summary);
+        activeRuns.delete(key);
+        activeSaveCandidates.delete(key);
+        const proof = proveWorkflowSaveCandidate({ candidate, summary });
+        const proofPath = await writeSaveProof(ctx.cwd, proof);
+        const paths = await promoteVerifiedWorkflow(ctx.cwd, candidate, proof);
         return result({
           ok: true,
           status: "saved",
-          workflowId: approval.workflow.id,
-          revision: published.revision,
+          workflowId: candidate.workflow.id,
+          revision: candidate.candidateHash,
+          summaryPath,
+          proofPath,
           ...paths,
         });
       } catch (cause) {
@@ -506,7 +642,9 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         }
 
         const published = await readWorkflow(ctx.cwd, parameters.workflowId);
-        const compiled = compileExecutionPlan(published.workflow);
+        const compiled = compileExecutionPlan(
+          resolveWorkflowTemplates(published.workflow, parameters.bindings ?? {}),
+        );
 
         const run: RunRecord = {
           format: "ziggy-computer-workflow-run",
@@ -562,6 +700,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
         const summary = finishActiveRun(run);
         const summaryPath = await writeRunSummary(ctx.cwd, summary);
         activeRuns.delete(key);
+        activeSaveCandidates.delete(key);
 
         return result({ summary, summaryPath });
       } catch (cause) {

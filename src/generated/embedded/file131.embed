@@ -1,5 +1,6 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Invalid observed tool events fail the active evidence run closed. */
 /* oxlint-disable ziggy/no-unsafe-dictionary-type, ziggy/no-unknown-parameters -- Pi custom-tool inputs and result details are unknown at the event boundary and are immediately strictly decoded. */
+/* oxlint-disable ziggy/require-readable-spacing -- Evidence checks keep each fail-closed predicate adjacent. */
 import { Type } from "typebox";
 import { Equal, Parse } from "typebox/value";
 import type { CompiledWorkflowExecution, WorkflowExecutionPlan } from "./execution-plan.ts";
@@ -192,11 +193,39 @@ const validCompletedSteps = (details: unknown, planned: WorkflowExecutionPlan): 
 
     return (
       decoded.completed.length === planned.input.steps.length &&
-      decoded.completed.every((entry, index) => entry.step === index + 1)
+      decoded.completed.every((entry, index) => {
+        const plannedStep = planned.input.steps[index];
+        if (entry.step !== index + 1 || plannedStep === undefined) return false;
+        return "assert" in plannedStep
+          ? "kind" in entry && entry.kind === "assert" && entry.actionCount === 0
+          : !("kind" in entry) && entry.actionCount === plannedStep.actions.length;
+      })
     );
   } catch {
     return false;
   }
+};
+
+const INTERVENING_COMPUTER_TOOLS = new Set([
+  "find_roots",
+  "observe_ui",
+  "search_ui",
+  "expand_ui",
+  "inspect_ui",
+  "act_ui",
+  "read_text",
+  "wait_for",
+  "launch_browser",
+  "navigate_browser",
+  "close_browser",
+  "evaluate_browser",
+]);
+
+export const observeInterveningVerificationTool = (
+  run: ActiveWorkflowRun,
+  toolName: string,
+): void => {
+  if (INTERVENING_COMPUTER_TOOLS.has(toolName)) run.mismatch = true;
 };
 
 export const observeRunToolResult = (
@@ -268,7 +297,7 @@ export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSu
   } else if (run.mismatch) {
     overall = "incomplete";
     stopReason = "input-mismatch";
-  } else if (run.plan.manual.length > 0) {
+  } else if (run.plan.segments.length === 0 || run.plan.manual.length > 0) {
     overall = "incomplete";
     stopReason = "manual-steps";
   } else if (

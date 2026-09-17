@@ -1,41 +1,123 @@
-# Connect a Profile to Telegram
+# Connect a Profile to Slack
 
-This guide connects one Ziggy Profile to Telegram through the Bot API's long-polling interface. The
-existing `ziggy serve <profile>` resident owns the Telegram loop alongside the automation scheduler
-and any other configured channels.
+This guide connects one Ziggy Profile to Slack through Slack Socket Mode. It uses no public webhook,
+request URL, inbound port, or Slack-specific daemon. The existing `ziggy serve <profile>` resident
+owns the Slack loop alongside the automation scheduler and any other configured channels.
 
-Keep the bot token and owner user ID out of documentation, commits, screenshots, logs, and chat
-transcripts. Treat the bot token like a password.
+The procedure below was verified through Slack app creation, strict Profile configuration, doctor,
+managed macOS LaunchAgent restart, healthy resident status, and a clean Slack startup. A successful
+DM and channel reply remain the final operator proof. Keep tokens and user IDs out of documentation,
+commits, screenshots, logs, and chat transcripts.
 
 ## What the gateway provides
 
-A Telegram-connected Profile uses the same SOUL, provider/model configuration, selected extension
-packages, and Pi runtime as its other faces. Telegram owns only message transport and chat-specific
+A Slack-connected Profile uses the same SOUL, provider/model configuration, selected extension
+packages, and Pi runtime as its other faces. Slack owns only channel transport and channel-specific
 session routing.
 
-- Only text messages authored by the configured `ownerUserId` are processed.
-- Private chats use owner memory and sessions under `sessions/telegram/user-<user-id>/`.
-- Group and supergroup chats use group memory and sessions under
-  `sessions/telegram/group-tg<absolute-chat-id>/`.
-- Each Telegram chat has one serialized Pi chat handle. Follow-up messages continue the same chat
-  session while separate chats remain isolated.
-- The exact owner-authored text `stop` or `/stop` aborts the active turn in that chat and replies
-  `Stopped.`. When no turn is active, Telegram replies `Nothing was running.`.
-- Replies are split at Telegram's 4,096 Unicode-code-point message limit. Specialist progress is
-  delivered as bounded text messages before the final reply when a specialist emits progress.
-- Messages from other users, unsupported chat types, and updates without text are ignored.
+- Only messages authored by the configured `ownerUserId` are processed.
+- Direct messages use owner memory and sessions under `sessions/slack/user-<member-id>/`.
+- Channel conversations use channel-scoped group memory. Every accepted top-level channel request
+  creates or joins its own Slack thread and uses
+  `sessions/slack/group-sl<channel-id>-thread-<root-ts>/`. Later accepted replies in that thread use
+  the same Pi session. Separate roots do not share a transcript or queue, and owner-DM memory is
+  never exposed to the channel.
+- Before every new turn inside an existing channel thread, Ziggy reads a fresh bounded
+  snapshot of that thread's root and prior replies. The snapshot is supplied to Pi as untrusted
+  context for that turn only; it is not copied into the persistent Pi transcript or Profile memory.
+  Slack threads are flat, so this covers the parent plus all replies before the triggering message.
+  Ziggy reads at most 200 messages and renders at most 30,000 Unicode code points. Supported images
+  attached to earlier thread replies are also available: pasting images and then mentioning Squarey
+  in the next reply supplies those recent images to Pi.
+- Personal direct-message memory is intentionally not admitted into channel conversations.
+- Other Slack users are ignored.
+- Channel activation is mention-only by default. A `channels` entry can opt one channel into
+  `"always"`; root messages and thread replies both inherit the setting for their Slack channel ID.
+  Direct messages are always active, and every accepted request in a mention-only channel must
+  contain the app's real Slack mention.
+- Messages starting a new turn immediately show Slack's native `is thinking...` loading status on the source
+  thread. The status is best-effort, never blocks the model turn, and is explicitly cleared after
+  success, failure, or cancellation.
+- Ziggy reacts to the source message with 👀 at admission, removes it at settlement, and adds ✅ on
+  success or ❌ on failure. Reactions are best-effort; a missing permission disables them for the
+  current resident process without blocking the turn or its other feedback.
+- Accepted messages also post `Working on that…` immediately, then replace that same message with
+  the final answer. A top-level channel request puts this placeholder in its new Slack thread; an
+  existing thread request keeps it in that thread; and a direct message keeps its current placement.
+  This is the client-visible fallback when Slack does not render the native status. A failed turn
+  replaces it with an explicit failure notice instead of leaving stale working text.
+- During a slow Pi turn, Ziggy progressively edits that same placeholder with bounded assistant text
+  snapshots. It requires both 1.5 seconds and at least 48 Unicode code points of meaningful growth
+  between edits, coalesces faster deltas, and serializes them with native status updates. While Pi is
+  using a tool, the native thread status describes the task (for example, `Running tests: bun test…`
+  or `Reading a file: src/main.ts…`) using the adapter's bounded detail projection, and returns to
+  thinking or heartbeat text after the tool ends. These intermediate writes are best-effort; the
+  ordinary final placeholder edit and overflow chunks remain authoritative. `stop` prevents queued
+  progress, waits behind any already in-flight native status write, and then clears every unique
+  cancelled request or shared channel-thread status target last. Scoped progress workers finish
+  interrupting before final delivery begins.
+- Optional `busyMessageMode` in the Slack config accepts `"steer"` (the default when omitted) or
+  `"queue"`. While Pi is actively responding in the same Slack channel and thread, a text-only
+  follow-up steers that response. It shares the existing progress and final answer, does not create
+  another placeholder or fetch thread history, and its ingress row completes when Pi accepts it.
+  This records steering acceptance, not a separate delivered answer. Idle or unavailable handles,
+  steering failures, another DM thread, and messages with attachment metadata fall back to queue.
+  Explicit `"queue"` always keeps the serial-turn behavior: `Queued behind an earlier request…`,
+  then `Working on that…` when the chat permit becomes available. Active turns refresh native
+  status every 30 seconds.
+- Owner-authored messages may include up to four PNG, JPEG, WebP, or GIF files, each no larger than
+  5 MiB. File-only messages are valid. Ziggy validates Slack's private-file metadata before using
+  the bot credential, downloads only `https://files.slack.com` content, verifies the response type
+  and a bounded byte stream, and supplies successful images through Pi's native image prompt input.
+  Current-message images take priority, followed by the most recent distinct images from prior
+  thread replies, with the same four-image total bound.
+  Unsupported, oversized, inaccessible, or excess attachments become concise metadata notices in
+  the prompt instead of failing the whole turn. Private URLs and credentials are never placed in
+  prompts or diagnostics. The configured provider and model must also support image input.
+- Send the exact owner-authored message `stop` to cancel every earlier queued or running request in
+  that direct message, channel, or Slack thread. `/stop` is also accepted when Slack delivers it as
+  message text, but the Slack composer may reserve slash-prefixed text unless that command is
+  registered for the app. In mention-only channels, send `@Squarey stop`; the ordinary mention
+  normalization must leave exactly `stop`. The command is journaled before
+  ACK like other accepted input, but cancellation runs outside the chat queue. It marks cancelled
+  placeholders `Stopped.`, changes their source reaction to 🛑, and posts a short count such as
+  `Stopped 2 requests.` A different channel or thread is unaffected, and the next ordinary message
+  starts on a fresh generation. Stop feedback is best-effort and cannot delay Pi interruption or
+  the owner-fenced `cancelled` journal transition.
+- Replies preserve an incoming Slack thread when one is present and are split at Slack's 4,000
+  Unicode-code-point limit, preferring line and word boundaries. Standard Markdown is sent through
+  Slack's `markdown_text` boundary, so constructs such as `**bold**` render without Slack mrkdwn
+  delimiters. Executable `<!channel>`, `<!here>`, and `<!everyone>` output tokens are escaped before
+  delivery.
+- Accepted inbound Socket Mode messages are committed to
+  `<profile>/.runtime/slack-ingress.sqlite` before Ziggy acknowledges the originating live socket.
+  The inbox is independent from the automation scheduler database. Its strict, versioned schema
+  deduplicates the logical Slack message key (`channel` plus source timestamp) and the optional
+  Slack event ID. A duplicate envelope is acknowledged but never prompts the model twice in the
+  same resident lifecycle.
+- On resident startup, rows left `received` or `running` by a prior resident owner are replayed with
+  bounded concurrency. Completed, failed, cancelled, and delivery-unknown rows are terminal and
+  never replayed. Only the resident UUID that claims a row may mark it terminal. Prompt text and
+  private-file metadata are cleared at that transition, and old routing/deduplication rows are
+  retained only within a fixed count bound. An ACK is bound to the WebSocket that supplied its
+  envelope and is not attempted after that socket becomes stale or reconnects.
+- This is durable at-least-once ingress, not an exactly-once claim for model execution or outbound
+  Slack delivery. A process loss after the model starts but before its terminal commit can replay
+  the prompt. Ambiguous outbound message posts are still not retried, because doing so could create
+  duplicate Slack replies.
+  Valid work enters Ziggy's bounded in-memory queue only after its durable commit.
+  Slack-generated link markup is normalized back to its visible label before prompting, including
+  telephone-looking numeric text; HTML entities are decoded, while user and channel mentions remain
+  explicit Slack tokens. Mention-only admission still requires the real bot mention in the original
+  event text.
+  Message edits use at most four idempotent retries. New message posts retry only explicit Slack rate
+  limits, never ambiguous network or server failures that could otherwise duplicate a reply.
 - Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Telegram command.
-
-Telegram keeps the current update offset in process memory. On startup Ziggy performs a zero-timeout
-poll, advances past the returned updates, and logs that the pending backlog was discarded. A restart
-does not recover accepted Telegram work: pending messages can be discarded, and the offset is not a
-durable ingress journal. Telegram also has no Telegram health projection in the current
-implementation.
+  not a Slack slash command.
 
 ## Prerequisites
 
-Before creating the bot:
+Before creating the Slack app:
 
 1. Initialize and configure the Profile.
 2. Confirm that its model and authentication work.
@@ -49,52 +131,143 @@ ziggy doctor <profile>
 ziggy serve status <profile>
 ```
 
-`doctor` validates a present `telegram.json` against Ziggy's strict local schema. `serve status`
-does not report a Telegram health projection; use `ziggy serve logs <profile>` and a live message
-round trip to prove Telegram connectivity.
+A resident with no `telegram.json`, `discord.json`, or `slack.json` is valid but scheduler-only.
+When Slack is configured, `serve status` also reports its connection state, observation freshness,
+active and queued turn counts, completed, cancelled, and failed counts, and a bounded failure
+category. An intentional `stop` increments cancellation without fabricating a turn failure. `doctor`
+reports a missing, stale, reconnecting, or failed Slack runtime independently from configuration
+validity. The resident atomically refreshes this projection at
+`<profile>/.runtime/slack-health.json`; inability to write it is logged but never blocks a turn.
 
-## 1. Create a bot with BotFather
+The projection is deliberately content-free. It contains no prompt or response text, channel or
+user IDs, Slack timestamps, tokens, session paths, or external error messages. It is operational
+evidence, not a transcript.
 
-In Telegram, open [@BotFather](https://t.me/BotFather):
+## 1. Create a blank Slack app
 
-1. Send `/newbot`.
-2. Choose a display name for the Profile.
-3. Choose a unique username ending in `bot`.
-4. Store the returned token securely for the Profile configuration step.
+Open [Slack API apps](https://api.slack.com/apps), then:
 
-Do not put the token in a shell command, source file, issue, or operations guide. If it is exposed,
-revoke it with BotFather and issue a replacement.
+1. Choose **Create New App**.
+2. Choose **Blank app**. Do not use the AI agent template; Ziggy does not need its additional Slack
+   features or permissions.
+3. Name the app for the Profile, for example `Squarey`.
+4. Select the target workspace and create the app.
 
-## 2. Copy the owner user ID
+## 2. Enable Socket Mode and create the app token
 
-The owner ID is the only Telegram account Ziggy accepts. Use a trusted Telegram user-ID bot or an
-equivalent account-information method to obtain your numeric user ID. Use the user ID, not the bot
-ID, username, chat ID, or group ID.
+Open **Socket Mode** in the Slack app sidebar:
 
-## 3. Create the Profile configuration
+1. Enable Socket Mode.
+2. Create an app-level token named `ziggy-socket`.
+3. Add the app-level scope `connections:write`.
+4. Generate and securely retain the resulting `xapp-...` token.
 
-Create `<profile>/telegram.json` with exactly these fields:
+This is the **app token**. It opens the Socket Mode connection and is different from the bot token
+created later. Socket Mode means no public request URL is required.
+
+## 3. Add bot token scopes
+
+Open **OAuth & Permissions**. Under **Bot Token Scopes**, not User Token Scopes, add:
+
+- `chat:write`
+- `reactions:write`
+- `files:read`
+- `im:history`
+- `channels:history`
+- `groups:history`
+- `mpim:history`
+
+`chat:write` also authorizes `assistant.threads.setStatus`; `reactions:write` authorizes the 👀, ✅,
+and ❌ source-message lifecycle. `files:read` allows the bot to receive usable private-file metadata
+and download owner-attached images. Install or reinstall the app after adding this scope. Without
+it, the text turn still proceeds with an attachment-unavailable notice. Attachments arrive on the
+ordinary message events configured below, so no separate file event subscription is required.
+Since Slack's March 2026 scope update, channel-based apps can use that loading state without
+`assistant:write` or the AI assistant split view.
+
+`mpim:history` is only needed for multi-person direct messages, but keeping it with the corresponding
+event below makes the complete DM-and-channel setup explicit. Channel-thread hydration uses the
+history scope corresponding to the conversation type: `channels:history` for public channels,
+`groups:history` for private channels, and `mpim:history` for multi-person direct messages.
+
+## 4. Subscribe to message events
+
+Open **Event Subscriptions**:
+
+1. Enable events.
+2. Under **Subscribe to bot events**, add:
+   - `message.im`
+   - `message.channels`
+   - `message.groups`
+   - `message.mpim`
+3. Save changes when Slack prompts.
+
+These subscriptions cover direct messages, public channels, private channels, and multi-person DMs.
+Ziggy still filters every event by the configured owner member ID.
+
+## 5. Enable direct messages
+
+Open **App Home**:
+
+1. Enable the **Messages Tab**.
+2. If Slack shows the option, enable sending messages from the Messages Tab.
+3. Save the changes.
+
+Slack changes labels occasionally; the required outcome is that a workspace member can open the app
+and send it a direct message.
+
+## 6. Install the app and retain the bot token
+
+Open **Install App** and install or reinstall the app into the workspace. Approve the requested
+permissions, then securely retain the **Bot User OAuth Token** beginning with `xoxb-`.
+
+This is the **bot token**. Ziggy uses it for `auth.test` and `chat.postMessage`. Reinstall the app
+after changing bot scopes or event subscriptions when Slack requests it.
+
+## 7. Copy the owner member ID
+
+The owner ID identifies the only Slack user Ziggy will accept.
+
+1. Open your own Slack profile, not a channel menu.
+2. Open the profile's **More** (`...`) menu.
+3. Choose **Copy member ID**.
+4. Confirm the value begins with `U`.
+
+A channel ID begins with `C` and is not valid for `ownerUserId`.
+
+## 8. Create the Profile configuration
+
+Create `<profile>/slack.json` with these fields:
 
 ```json
 {
-  "botToken": "replace-with-the-telegram-bot-token",
-  "ownerUserId": 123456789
+  "botToken": "xoxb-...",
+  "appToken": "xapp-...",
+  "ownerUserId": "U...",
+  "channels": {
+    "C0A06UL1CKW": "always",
+    "C0BP3QUQ3CL": "mention"
+  }
 }
 ```
 
-`ownerUserId` is a positive safe integer JSON number. The decoder rejects unknown fields, missing
-fields, empty tokens, non-integer IDs, and IDs outside JavaScript's safe integer range. Store the file
-privately:
+`channels` is optional. Any omitted channel defaults to `"mention"`; use an explicit `"always"`
+entry only for a channel where every owner-authored message should activate Ziggy. An explicit
+`"mention"` entry is allowed when documenting policy matters. The former Profile-wide
+`channelMode` field is no longer accepted. Channel keys must be Slack channel IDs beginning with
+`C` or `G`; the decoder rejects invalid IDs, unknown modes, missing required fields, empty values,
+and additional fields. Store the file privately:
 
 ```sh
 umask 077
-${EDITOR:-nano} <profile>/telegram.json
-chmod 600 <profile>/telegram.json
+${EDITOR:-nano} <profile>/slack.json
+chmod 600 <profile>/slack.json
 ```
 
-Do not commit this file. Managed service definitions contain the Profile path but no channel token.
+Do not commit this file. The managed launchd or systemd service definition contains the Profile path
+but does not contain channel tokens.
 
-## 4. Validate and restart the resident
+## 9. Validate and restart the resident
 
 Validate before restart:
 
@@ -102,98 +275,227 @@ Validate before restart:
 ziggy doctor <profile>
 ```
 
-Then restart the existing resident so it rereads `telegram.json`:
+A valid result includes a gateway check such as:
+
+```text
+OK  gateways  1 present gateway config file valid
+```
+
+Then restart the existing resident so it rereads channel configuration and the selected extension
+set:
 
 ```sh
 ziggy serve restart <profile>
+ziggy serve status <profile>
 ziggy serve logs <profile>
 ```
 
-For a Profile without a managed service, install and start it instead:
-
-```sh
-ziggy serve install <profile>
-```
-
-Use one `ziggy serve` process for the scheduler and every configured channel loop. The compatibility
-foreground names are `ziggy serve <profile>` and `ziggy gateway <profile>`; there is no separate
-Telegram resident command.
-
-## 5. Prove the live message path
-
-Follow the managed logs while testing:
+A healthy restart reports a ready supervisor, a running process, and an active scheduler. Slack logs
+then distinguish authenticated socket-supervisor startup, a connected socket, admitted chat keys,
+mention-required ignores, reconnect degradation, and terminal failures without printing message
+content or tokens. Use `--follow` while testing:
 
 ```sh
 ziggy serve logs <profile> --follow
 ```
 
-Send a short message from the configured owner account to the bot. A successful private-chat turn
-has these observations:
+Do not run `ziggy slack <profile>`. The old resident alias is unsupported; use one `ziggy serve`
+process for the scheduler and every configured channel loop.
 
-1. Telegram receives a reply from the bot.
-2. The log contains a bounded line shaped like
-   `[gateway] user-<user-id> in:<count> out:<count> chars`.
-3. `ziggy sessions list <profile>` shows the Telegram session after the first turn.
+## 10. Test direct messages and channels
 
-Send a follow-up to prove session continuity. Then test a group or supergroup separately if the bot
-is intended to operate there. Only the configured owner can trigger a turn, but every owner-authored
-text message in an admitted group is processed; restrict the bot's group membership accordingly.
+### Direct message
 
-Send `stop` during a long-running turn to prove scoped cancellation. Test an automation with a
-`broadcast: telegram:chat:<chat-id>` target only after the resident and its Telegram configuration
-are healthy; automation delivery loads the same `telegram.json` and reports bounded delivery status.
+Open the Slack app's Messages tab and send a simple identity question:
+
+```text
+Hi. Who are you?
+```
+
+Then test owner memory with a harmless fact and confirm it remains available in a later direct
+message.
+
+Attach one supported image with or without accompanying text and confirm the reply addresses the
+image. Also verify that an unsupported or oversized attachment yields an unavailable notice without
+preventing Ziggy from answering the text portion.
+
+### Channel
+
+Invite the app into each channel where it should receive events:
+
+```text
+/invite @Squarey
+```
+
+By default, send `@Squarey` followed by the request; Ziggy strips its Slack mention before prompting
+Pi. Every request in a thread must mention Squarey too: one earlier mention does not latch activation
+for later replies. A channel configured as `"always"` treats any ordinary owner-authored message as
+a request, both at the root and in its threads. Messages from other users are ignored in both modes,
+and the channel receives isolated group memory rather than the owner's direct-message memory. A
+top-level request receives its working and final messages in a thread under that request. Later
+accepted replies in that thread continue the same Pi session. Separate top-level requests use
+separate sessions and can run independently. A bare `@Squarey` inside an existing thread means
+"review this thread and help"; a bare top-level mention asks the owner what help they want.
+
+To stop work in the current conversation, send `stop` in a direct message or `@Squarey stop` in a
+mention-only channel. The command affects only that exact chat key: separate channel threads keep
+running. Text such as `stop now` is an ordinary model request, and `stop` from another member is
+ignored. `/stop` has the same gateway meaning if Slack delivers it as message text.
+
+### Selected extensions
+
+Use natural language to exercise one selected package, for example a weather lookup or an Apple
+Reminders request. The resident must be restarted after changing `<profile>/extensions.json`; a TUI
+`/reload` does not recreate the resident or reread its startup admission set.
 
 ## Troubleshooting
 
-### The resident is healthy but Telegram does not answer
+### The resident is healthy but Slack does not answer
 
-Check these in order:
+Check, in order:
 
-1. `<profile>/telegram.json` exists under the resolved Profile path used by `serve`.
-2. `ziggy doctor <profile>` reports the gateway configuration as valid.
-3. The resident was restarted after creating or changing `telegram.json`.
-4. `botToken` is the current token from BotFather.
-5. The sending account's numeric user ID exactly matches `ownerUserId`.
-6. The message contains text and is sent in a private chat, group, or supergroup.
-7. `ziggy serve logs <profile>` has no `[gateway] Telegram stopped:` or Telegram API failure line.
+1. `slack.json` exists under the resolved Profile path used by `serve`.
+2. `ownerUserId` is your member ID beginning with `U`, not a channel ID.
+3. The app token begins with `xapp-`; the bot token begins with `xoxb-`.
+4. Socket Mode is enabled and the app token has `connections:write`.
+5. The required message events are subscribed.
+6. The app was reinstalled after permission changes, including `reactions:write` for progress
+   reactions and `files:read` for image input.
+7. The bot is invited to the target channel.
+8. The sender is exactly the configured owner.
+9. The resident was restarted after creating or changing `slack.json`.
+10. `ziggy serve logs <profile>` contains no authentication, socket, or provider failure.
 
-The process and scheduler can remain healthy while Telegram is disconnected because Telegram has no
-separate status projection. Inspect the logs and perform a fresh message proof.
+For an owner-authored channel message without a mention in the default mention-only mode, the log says
+`reason:mention-required`. An accepted message logs its chat key and activation mode. A healthy live
+transport logs `socket connected`; repeated `socket connection degraded` lines mean the resident is
+running but Socket Mode is reconnecting.
 
-### The bot ignores a message in a group
+Run the read-only projections before editing files:
 
-Confirm the sender is exactly `ownerUserId`, the update contains text, and the chat is a group or
-supergroup. Telegram privacy settings can prevent a bot from receiving ordinary group messages;
-adjust the bot's group privacy setting with BotFather when the bot must receive them. Ziggy does not
-implement mention-only admission or a multi-user allowlist.
+```sh
+ziggy doctor <profile>
+ziggy serve status <profile>
+ziggy serve logs <profile>
+ziggy sessions list <profile>
+```
 
-### A message is missing after restart
+### Direct messages work but channels do not
 
-The current Telegram adapter keeps its offset only in memory and discards pending startup backlog.
-A restart can therefore lose messages that were waiting in Telegram or still being processed. Inspect
-logs before repeating an operator action; do not assume Telegram delivery is durable or exactly once.
+Verify `message.channels` and `message.groups`, the corresponding history scopes, and membership of
+the bot in the channel. Public and private channels use different Slack event/scope pairs.
 
-### A long reply is incomplete
+### The bot sees the channel but ignores a message
 
-Telegram messages are split at 4,096 Unicode code points. Inspect the log's `out:<count>` value and
-confirm that all chunks arrived. A provider or Telegram API failure is logged as a bounded gateway
-failure; retry only after checking whether Telegram accepted the preceding chunk.
+This is expected when the sender is not `ownerUserId`, the text is blank, or the event was authored
+by the bot itself. Unless that exact channel is configured as `"always"`, the message must also
+contain the app's real Slack mention; plain text such as `Squarey` is not an activation. Ziggy
+currently has no multi-user allowlist and intentionally ignores those messages.
+
+### The reply works but no loading status appears
+
+Search `ziggy serve logs <profile>` for `status update failed`. Status delivery is intentionally
+best-effort, so a Slack API failure does not block the model or final reply. Confirm the app was
+reinstalled with `chat:write`, then restart the resident. Client-visible status remains a live Slack
+proof: a successful API response alone does not prove that a particular Slack client displayed it.
+The ordinary `Working on that…` message is the guaranteed visible fallback and should still be
+replaced by the final answer.
+
+### A `Working on that…` message never changes
+
+Search `ziggy serve logs <profile>` for `final working-message update failed`, `postMessage`, or
+`updateMessage`. A slow response may also log `progress message update failed`; progressive edits
+are deliberately rate-bounded and their failure does not change final delivery settlement. The
+placeholder, progressive edits, and final edit all use `chat:write`; no reaction, streaming, or
+Agent-view scope is required. A model failure should replace the placeholder with a failure notice.
+
+### Text replies work but attached images are unavailable
+
+Check that `files:read` is under **Bot Token Scopes**, reinstall the app after adding it, and restart
+the Ziggy resident. Confirm the file is PNG, JPEG, WebP, or GIF, no larger than 5 MiB, and shared in
+a direct message or channel the bot can access. The configured provider/model must support image
+input. Unsupported or inaccessible files intentionally become bounded notices while the text turn
+continues; Ziggy never forwards a private Slack URL to the model.
+
+### A selected command-line extension works in the TUI but not under `serve`
+
+A managed service does not inherit the interactive terminal's shell initialization. Ziggy therefore
+renders absolute `HOME` and `ZIGGY_HOME` values, an absolute service executable in
+`ProgramArguments`, and a deterministic default `PATH` in both launchd and systemd definitions:
+`<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`. This includes the canonical
+`~/.local/bin` install location and common Homebrew locations without relying on shell startup files.
+
+If the service was installed before these environment fields changed, `serve` reports a drifted
+definition. Restage it explicitly with `ziggy serve install <profile> --force`, then inspect
+`ziggy serve logs <profile>` rather than assuming the package was not selected.
+
+The in-process `profile_extensions` tool (`list`, `add`, `remove`, and `validate`) is separate from
+this environment: it never invokes Bash, searches `PATH`, or shells into `ziggy`. Extension
+lifecycle operations therefore do not depend on the managed-service `PATH`; this `PATH` only helps
+selected extensions invoke ordinary external commands.
+
+### Slack asks for a request URL
+
+Confirm Socket Mode is enabled. Ziggy receives Events API envelopes over the app-level Socket Mode
+connection and does not expose an HTTP callback.
+
+## Verification record
+
+On 2026-08-08, the manual path above produced these secret-free observations for a live Profile:
+
+- `slack.json` had mode `0600`, the three required keys plus its explicit channel mode, and correctly
+  prefixed token and member-ID values.
+- `ziggy doctor` reported the Profile, model, auth, agents, automations, memory, resources, one
+  gateway configuration, sessions, and runtime healthy.
+- `ziggy serve restart` reached `readiness: ready` under launchd.
+- `ziggy serve status` reported the supervisor and process running and the scheduler active.
+- Initial resident stdout and stderr were empty, with no Slack authentication or Socket Mode error.
+- A direct message rendered the immediate working message and its edited final Markdown reply.
+- An owner-authored channel message completed without an app mention under compatibility `always`
+  mode, and a real Slack thread used a distinct thread-root Pi session.
+- Two concurrent direct messages visibly moved from working/queued feedback to independent edited
+  final replies.
+- After installing `reactions:write`, a completed direct message changed its source reaction from 👀
+  to ✅. A controlled resident restart during a second active turn changed 👀 to ❌, edited the
+  placeholder to `I couldn't complete that request.`, and returned with a healthy replacement
+  resident. Conversation history was sufficient for this proof; `reactions:read` was not added.
+- After installing `files:read`, a PNG-only `file_share` direct message showed 👀 and the working
+  placeholder, passed the image to the configured Pi model, and edited the placeholder with an
+  accurate description of the page and its folded upper-right corner. The source reaction changed
+  to ✅, health returned to zero active/queued turns, and the completed ingress row contained neither
+  prompt text nor private-file metadata.
+
+On 2026-08-09, the thread-first channel path was verified in `#knowledge-base`:
+
+- A root `@Squarey` request received its acknowledgement reaction in the channel while the working
+  and final `ROOT-OK` reply appeared only in the request thread.
+- A second mention in that thread recalled the root request's `ORCHID` token, proving that the root
+  and its accepted thread replies reused one Pi session. `@Squarey stop` also replied `Nothing was
+  running.` in the same thread.
+- A new root mention with a 600x400 PNG accurately identified its yellow background, tall blue
+  rounded rectangle, and red circle. The answer appeared only in the image message's thread.
+
+This record proves the configured workspace's startup, direct-message, thread-first channel,
+thread-session continuity, queue, success-reaction, cancellation-reaction, and PNG image-input
+paths. It does not prove a different Slack workspace, client version, app manifest, provider/model,
+attachment format, or channel membership.
 
 ## Token rotation and removal
 
-To rotate a Telegram bot token:
+To rotate either token:
 
-1. Revoke or regenerate the token with BotFather.
-2. Replace only `botToken` in `<profile>/telegram.json` without exposing either token.
+1. Generate or reinstall the corresponding Slack credential.
+2. Replace only that value in `<profile>/slack.json`.
 3. Preserve file mode `600`.
 4. Run `ziggy doctor <profile>`.
-5. Restart the resident and repeat the live message proof.
+5. Run `ziggy serve restart <profile>`.
+6. Revoke the old token in Slack after the new connection is healthy.
 
-To disconnect Telegram without deleting sessions or memory:
+To disconnect Slack without deleting sessions or memory:
 
-1. Move `telegram.json` outside the Profile or delete it deliberately.
+1. Move `slack.json` outside the Profile or delete it deliberately.
 2. Restart `serve`.
-3. Revoke the bot token with BotFather if the integration is no longer needed.
+3. Revoke the Slack app credentials if the integration is no longer needed.
 
-Removing the configuration does not delete `sessions/telegram/`, memory, automation history, or the
-resident service.
+Removing the channel configuration does not remove Profile memory, selected extensions, Pi
+sessions, automation history, or the resident service.

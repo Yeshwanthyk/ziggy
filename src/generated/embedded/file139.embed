@@ -1,144 +1,25 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's required Promise adapter boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
-/* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
-import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+---
+name: dev-browser
+description: Automate a website with sandboxed JavaScript in a named persistent dev-browser profile, or inspect and stop the dev-browser daemon.
+---
 
-const OUTPUT_LIMIT = 32 * 1024;
+# Dev Browser
 
-const Arguments = Type.Object(
-  {
-    args: Type.Array(Type.String(), {
-      description: "Arguments passed verbatim after the fixed Executor subcommand.",
-      maxItems: 128,
-    }),
-  },
-  { additionalProperties: false },
-);
+Use `dev_browser` when browser work needs a reusable signed-in browser profile and no narrower API
+or connector fits. Prefer a purpose-built API for data access and mutations when one exists.
 
-type RunOptions = {
-  readonly command: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  readonly signal: AbortSignal | undefined;
-  readonly timeout: number;
-};
+For `execute`, choose a short lowercase `profile` slug that represents the site or account context.
+The same slug inside the same Ziggy Profile maps back to the same dev-browser browser profile.
+Scripts run in dev-browser's QuickJS sandbox and arrive through stdin; they are not shell commands.
+Use `connect: true` only to auto-discover an already-running Chrome. Remote CDP URLs are not
+supported by this extension.
 
-const truncate = (text: string): string => {
-  if (text.length <= OUTPUT_LIMIT) return text;
-  const omitted = text.length - OUTPUT_LIMIT;
+dev-browser stores browser profiles in its persistent global store, outside the Ziggy Profile.
+Idle cleanup closes only daemon-launched browsers and preserves their profile, cookies, and login
+state. It never reaps externally connected browsers. `stop` is global: after explicit confirmation,
+it stops the daemon and all managed browser connections but does not delete persistent profile
+directories.
 
-  return `${text.slice(0, OUTPUT_LIMIT)}\n… ${omitted} characters omitted`;
-};
-
-const formatSuccess = (result: ExecResult): string => {
-  const stdout = truncate(result.stdout);
-  const stderr = truncate(result.stderr);
-
-  if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
-
-  if (stdout.length > 0) return stdout;
-
-  if (stderr.length > 0) return `stderr:\n${stderr}`;
-
-  return "Command completed successfully.";
-};
-
-export const runExecutorCommand = async (exec: ExtensionAPI["exec"], options: RunOptions) => {
-  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
-    cwd: options.cwd,
-    timeout: options.timeout,
-  };
-
-  if (options.signal !== undefined) {
-    execOptions.signal = options.signal;
-  }
-
-  const result = await exec(options.command, [...options.args], execOptions);
-  const stdout = truncate(result.stdout);
-  const stderr = truncate(result.stderr);
-
-  if (result.code !== 0) {
-    const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
-
-    const output = [
-      stderr.length > 0 ? `stderr:\n${stderr}` : "",
-      stdout.length > 0 ? `stdout:\n${stdout}` : "",
-    ]
-      .filter((part) => part.length > 0)
-      .join("\n\n");
-
-    throw new Error(`executor ${reason}${output.length > 0 ? `\n${output}` : ""}`);
-  }
-
-  return {
-    content: [{ type: "text" as const, text: formatSuccess(result) }],
-    details: { code: result.code, killed: result.killed, stdout, stderr },
-  };
-};
-
-type ExecutorTool = {
-  readonly name:
-    | "executor_tools_search"
-    | "executor_tools_sources"
-    | "executor_tools_describe"
-    | "executor_call"
-    | "executor_resume";
-  readonly description: string;
-  readonly prefix: readonly string[];
-  readonly timeout: number;
-};
-
-const tools: readonly ExecutorTool[] = [
-  {
-    name: "executor_tools_search",
-    description:
-      "Search the configured Executor tool catalog. Pass query and options as separate args.",
-    prefix: ["tools", "search"],
-    timeout: 30_000,
-  },
-  {
-    name: "executor_tools_sources",
-    description: "List configured Executor sources and tool counts.",
-    prefix: ["tools", "sources"],
-    timeout: 30_000,
-  },
-  {
-    name: "executor_tools_describe",
-    description: "Describe an Executor tool path and its input schema.",
-    prefix: ["tools", "describe"],
-    timeout: 30_000,
-  },
-  {
-    name: "executor_call",
-    description: "Invoke an Executor tool path with its input.",
-    prefix: ["call"],
-    timeout: 120_000,
-  },
-  {
-    name: "executor_resume",
-    description: "Resume a paused Executor execution with explicit response arguments.",
-    prefix: ["resume"],
-    timeout: 120_000,
-  },
-];
-
-export default function executor(pi: ExtensionAPI): void {
-  for (const tool of tools) {
-    pi.registerTool({
-      name: tool.name,
-      label: tool.name,
-      description: tool.description,
-      parameters: Arguments,
-      async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
-        return runExecutorCommand(pi.exec.bind(pi), {
-          command: "executor",
-          args: [...tool.prefix, ...args],
-          cwd: ctx.cwd,
-          signal,
-          timeout: tool.timeout,
-        });
-      },
-    });
-  }
-}
+Treat browser automation as ephemeral execution data. Never put executable scripts, cookies,
+authorization headers, tokens, passwords, or other secrets into saved workflows. Saved workflows
+should contain only the safe intent and inputs needed to recreate a step at run time.

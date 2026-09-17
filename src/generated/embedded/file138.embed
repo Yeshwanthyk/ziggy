@@ -1,25 +1,14 @@
----
-name: dev-browser
-description: Automate a website with sandboxed JavaScript in a named persistent dev-browser profile, or inspect and stop the dev-browser daemon.
----
+# @ziggy/dev-browser
 
-# Dev Browser
+An optional Ziggy Pi package that invokes the external
+[`dev-browser`](https://github.com/SawyerHood/dev-browser) CLI. This adapter was built against
+upstream commit `73fe10f045b9c872f963fe6168de4328857e38cf` (`dev-browser` 0.2.9); it does not
+vendor upstream code.
 
-Use `dev_browser` when browser work needs a reusable signed-in browser profile and no narrower API
-or connector fits. Prefer a purpose-built API for data access and mutations when one exists.
+Install `dev-browser` and its Chromium runtime separately. Tests can point at a fixture CLI with
+`ZIGGY_DEV_BROWSER_BIN`; production normally resolves `dev-browser` from `PATH`.
 
-For `execute`, choose a short lowercase `profile` slug that represents the site or account context.
-The same slug inside the same Ziggy Profile maps back to the same dev-browser browser profile.
-Scripts run in dev-browser's QuickJS sandbox and arrive through stdin; they are not shell commands.
-Use `connect: true` only to auto-discover an already-running Chrome. Remote CDP URLs are not
-supported by this extension.
-
-dev-browser stores browser profiles in its persistent global store, outside the Ziggy Profile.
-Idle cleanup closes only daemon-launched browsers and preserves their profile, cookies, and login
-state. It never reaps externally connected browsers. `stop` is global: after explicit confirmation,
-it stops the daemon and all managed browser connections but does not delete persistent profile
-directories.
-
-Treat browser automation as ephemeral execution data. Never put executable scripts, cookies,
-authorization headers, tokens, passwords, or other secrets into saved workflows. Saved workflows
-should contain only the safe intent and inputs needed to recreate a step at run time.
+Each logical profile slug is mapped to a stable, collision-resistant daemon browser name derived
+from the Ziggy Profile directory and slug. `browsers`, `status`, and confirmed `stop` remain global
+daemon operations. `stop` closes the daemon and every managed browser connection, while persistent
+profile directories remain on disk.

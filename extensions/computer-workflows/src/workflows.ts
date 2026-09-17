@@ -1,5 +1,7 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Validation failures become Pi tool failures. */
 /* oxlint-disable ziggy/no-unknown-parameters -- This exported function is the schema decoder for tool input. */
+/* oxlint-disable ziggy/no-conditional-empty-object-spread -- Template resolution preserves exact optional schema fields. */
+/* oxlint-disable ziggy/require-readable-spacing -- Validation and resolution predicates remain adjacent. */
 import { Parse } from "typebox/value";
 import {
   WorkflowDefinitionSchema,
@@ -10,6 +12,7 @@ import {
 const transientPattern = /(?:@[ero][A-Za-z0-9._:-]*|stateId)/i;
 
 const suspiciousVariablePattern = /(?:password|passwd|token|cookie|secret|otp|api[-_ ]?key)/i;
+const templatePattern = /\{\{([a-z0-9]+(?:-[a-z0-9]+)*)\}\}/g;
 
 export const validateWorkflowDefinition = (value: unknown): WorkflowDefinition => {
   const workflow = Parse(WorkflowDefinitionSchema, value);
@@ -59,7 +62,70 @@ export const validateWorkflowDefinition = (value: unknown): WorkflowDefinition =
     }
   }
 
+  for (const match of JSON.stringify(workflow.steps).matchAll(templatePattern)) {
+    const variable = workflow.variables.find(({ id }) => id === match[1]);
+    if (variable === undefined)
+      throw new Error(`Template references unknown variable '${match[1]}'.`);
+    if (variable.secret)
+      throw new Error(`Secret variable '${variable.id}' cannot appear in semantic templates.`);
+  }
+
   return workflow;
+};
+
+const resolveText = (text: string | undefined, bindings: Readonly<Record<string, string>>) =>
+  text?.replace(templatePattern, (_template, id: string) => {
+    const value = bindings[id];
+    if (value === undefined || value.length === 0)
+      throw new Error(`Missing nonsecret binding '${id}'.`);
+    return value;
+  });
+
+export const resolveWorkflowTemplates = (
+  workflow: WorkflowDefinition,
+  bindings: Readonly<Record<string, string>>,
+): WorkflowDefinition => {
+  const steps = workflow.steps.map((step) => {
+    if (step.kind === "find_roots")
+      return {
+        ...step,
+        ...(step.text === undefined ? {} : { text: resolveText(step.text, bindings) }),
+      };
+    if (step.kind === "wait")
+      return {
+        ...step,
+        condition: {
+          ...step.condition,
+          ...(step.condition.text === undefined
+            ? {}
+            : { text: resolveText(step.condition.text, bindings) }),
+        },
+      };
+    if ("target" in step && step.target !== undefined) {
+      const target = {
+        ...step.target,
+        ...(step.target.text === undefined
+          ? {}
+          : { text: resolveText(step.target.text, bindings) }),
+      };
+      return {
+        ...step,
+        target,
+        ...("checkpoint" in step && step.checkpoint !== undefined
+          ? {
+              checkpoint: {
+                ...step.checkpoint,
+                ...(step.checkpoint.text === undefined
+                  ? {}
+                  : { text: resolveText(step.checkpoint.text, bindings) }),
+              },
+            }
+          : {}),
+      };
+    }
+    return step;
+  });
+  return validateWorkflowDefinition({ ...workflow, steps });
 };
 
 export const makePublishedWorkflow = (
