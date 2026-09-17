@@ -819,3 +819,8 @@ results.
 - Offline settings now lead directly with the connection form and hide artwork, model, provider, and extension sections until connected. Connect uses the primary action treatment; connected settings retain their existing sections.
 - Removed repeated connection prompts from empty sidebar sections and kept a single welcome action with concise explanatory copy.
 - Full `bun run check` passed. Verified the fresh offline browser state and compact dialog visually; existing bundle-size warning remains.
+
+## Clarify connected settings recovery
+
+- Removed decorative artwork from settings and updated the design guidance. Model controls now appear after model status loads; loading is announced, failures retain their error text, and absent/failed settings expose a Retry loading settings action wired to the existing loader.
+- Visually verified the connected settings without artwork and with provider data loaded. Full checks passed; a follow-up web check covers the added retry regression. The live empty default is distinct from unavailable status. Existing bundle-size warning remains.

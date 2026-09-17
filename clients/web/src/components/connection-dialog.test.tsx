@@ -42,6 +42,7 @@ describe("SettingsDialog", () => {
     const onSaveModel = vi.fn(async () => undefined);
     render(
       <SettingsDialog
+        onRetrySettings={vi.fn(async () => undefined)}
         connected
         connectionPending={false}
         modelSettings={modelSettings}
@@ -66,4 +67,24 @@ describe("SettingsDialog", () => {
       expect(onSaveModel).toHaveBeenCalledExactlyOnceWith("anthropic", "claude-sonnet-4", "high"),
     );
   });
+});
+
+it("offers retry instead of an empty model form when settings are unavailable", () => {
+  const retry = vi.fn(async () => undefined);
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={retry}
+    />,
+  );
+  expect(screen.getByText("Model settings could not be loaded.")).not.toBeNull();
+  expect(screen.queryByRole("button", { name: "Save model" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry loading settings" }));
+  expect(retry).toHaveBeenCalledTimes(1);
 });

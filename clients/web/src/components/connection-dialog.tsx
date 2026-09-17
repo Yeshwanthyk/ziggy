@@ -1,4 +1,3 @@
-import { PrismArt } from "@/components/prism-art";
 import { Button } from "@/components/ui/button";
 import { ModelPicker } from "@/components/model-picker";
 import {
@@ -24,6 +23,7 @@ interface SettingsDialogProps {
   readonly profileName: string;
   readonly onConnect: (url: string, token: string) => Promise<void>;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onRetrySettings: () => Promise<void>;
   readonly onSaveModel: (
     providerId: string,
     modelId: string,
@@ -73,6 +73,7 @@ export function SettingsDialog({
   onConnect,
   onOpenChange,
   onSaveModel,
+  onRetrySettings,
 }: SettingsDialogProps) {
   const [url, setUrl] = useState("ws://127.0.0.1:8787/ws");
   const [token, setToken] = useState("");
@@ -166,7 +167,6 @@ export function SettingsDialog({
         </DialogHeader>
 
         <div className="ziggy-settings-body">
-          {connected ? <PrismArt /> : null}
           {connected ? (
             <section className="ziggy-settings-block" aria-labelledby="model-heading">
               <div className="ziggy-settings-block-header">
@@ -177,75 +177,90 @@ export function SettingsDialog({
                       ? `Current: ${statusProvider}/${statusModel} · ${statusThinking}`
                       : modelSettings?.loading
                         ? "Loading model settings…"
-                        : "The runtime could not report a usable Profile default."}
+                        : modelSettings?.status === undefined
+                          ? "Model settings could not be loaded."
+                          : "No default model selected."}
                   </small>
                 </span>
               </div>
-              <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
-                <div className="ziggy-settings-fields">
-                  <div className="ziggy-settings-field">
-                    <span>Model</span>
-                    <ModelPicker
-                      disabled={
-                        !connected || modelSettings?.loading || availableModels.length === 0
-                      }
-                      models={availableModels}
-                      onSelect={selectModel}
-                      selected={selectedModel}
-                    />
-                  </div>
-                  <fieldset className="thinking-fieldset">
-                    <legend>Thinking</legend>
-                    <div className="thinking-options">
-                      {selectedModel === undefined ? (
-                        <p className="ziggy-settings-muted">
-                          Choose an available model to see its thinking options.
-                        </p>
-                      ) : null}
-                      {supportedThinking.map((level) => (
-                        <label className="thinking-option" key={level}>
-                          <input
-                            checked={thinking === level}
-                            disabled={!connected || selectedModel === undefined}
-                            name="model-thinking"
-                            onChange={() => setThinking(level)}
-                            type="radio"
-                            value={level}
-                          />
-                          <span>{level}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                </div>
-                <p className="ziggy-settings-note">
-                  <Info aria-hidden="true" />
-                  <span>
-                    New sessions use this default. Existing chats keep their current model until the
-                    resident restarts.
-                  </span>
+              {modelSettings?.loading ? <p role="status">Loading settings…</p> : null}
+              {modelSettings?.error ? (
+                <p className="form-error" role="alert">
+                  {modelSettings.error}
                 </p>
-                {modelSettings?.error === undefined ? null : (
-                  <p className="form-error" role="alert">
-                    {modelSettings.error}
+              ) : null}
+              {!modelSettings?.loading &&
+              (modelSettings?.status === undefined || modelSettings?.error) ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void onRetrySettings().catch(() => undefined)}
+                >
+                  Retry loading settings
+                </Button>
+              ) : null}
+              {!modelSettings?.loading && modelSettings?.status !== undefined ? (
+                <form onSubmit={(event) => void submitModel(event).catch(() => undefined)}>
+                  <div className="ziggy-settings-fields">
+                    <div className="ziggy-settings-field">
+                      <span>Model</span>
+                      <ModelPicker
+                        disabled={
+                          !connected || modelSettings?.loading || availableModels.length === 0
+                        }
+                        models={availableModels}
+                        onSelect={selectModel}
+                        selected={selectedModel}
+                      />
+                    </div>
+                    <fieldset className="thinking-fieldset">
+                      <legend>Thinking</legend>
+                      <div className="thinking-options">
+                        {selectedModel === undefined ? (
+                          <p className="ziggy-settings-muted">
+                            Choose an available model to see its thinking options.
+                          </p>
+                        ) : null}
+                        {supportedThinking.map((level) => (
+                          <label className="thinking-option" key={level}>
+                            <input
+                              checked={thinking === level}
+                              disabled={!connected || selectedModel === undefined}
+                              name="model-thinking"
+                              onChange={() => setThinking(level)}
+                              type="radio"
+                              value={level}
+                            />
+                            <span>{level}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  </div>
+                  <p className="ziggy-settings-note">
+                    <Info aria-hidden="true" />
+                    <span>
+                      New sessions use this default. Existing chats keep their current model until
+                      the resident restarts.
+                    </span>
                   </p>
-                )}
-                <DialogFooter className="ziggy-settings-actions">
-                  <Button
-                    disabled={
-                      !connected ||
-                      modelSettings?.loading ||
-                      modelSettings?.saving ||
-                      selectedModel === undefined ||
-                      thinking === "" ||
-                      !modelChanged
-                    }
-                    type="submit"
-                  >
-                    {modelSettings?.saving ? "Saving…" : "Save model"}
-                  </Button>
-                </DialogFooter>
-              </form>
+                  <DialogFooter className="ziggy-settings-actions">
+                    <Button
+                      disabled={
+                        !connected ||
+                        modelSettings?.loading ||
+                        modelSettings?.saving ||
+                        selectedModel === undefined ||
+                        thinking === "" ||
+                        !modelChanged
+                      }
+                      type="submit"
+                    >
+                      {modelSettings?.saving ? "Saving…" : "Save model"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              ) : null}
             </section>
           ) : null}
 

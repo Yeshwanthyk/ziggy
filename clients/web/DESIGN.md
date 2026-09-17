@@ -86,7 +86,7 @@ Record implemented behavior and future work in the client README.
 ## Ziggy prism identity
 
 Use the approved artwork in `assets/ziggy-prism/web` for the Ziggy brand: a small square
-image in the rail, and the wide composition in welcome and Settings surfaces. Preserve
+image in the rail, and the wide composition in the welcome surface. Settings keep controls first without decorative artwork. Preserve
 aspect ratios and use responsive WebP sources. Keep conversation text on plain surfaces.
 The prism palette informs muted blue rail selections and deep blue primary actions;
 Bloub avatars continue to identify individual agents and groups.

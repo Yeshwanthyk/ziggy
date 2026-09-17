@@ -841,6 +841,7 @@ export function App() {
           setConnectionOpen(open);
           if (!open) gateway.clearModelSettings();
         }}
+        onRetrySettings={gateway.loadModelSettings}
         onSaveModel={gateway.saveModelSettings}
         open={connectionOpen}
         profileName={gateway.profile?.name ?? "Squarey"}
