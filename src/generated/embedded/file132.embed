@@ -440,7 +440,7 @@ const BrowserJobPageSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const BrowserJobDefinitionSchema = Type.Object(
+const BrowserJobV1DefinitionSchema = Type.Object(
   {
     version: Type.Literal(1),
     id: Id,
@@ -451,6 +451,71 @@ export const BrowserJobDefinitionSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+const BrowserJobV2PageSchema = Type.Object(
+  {
+    id: Id,
+    url: AbsoluteHttpUrl,
+    signedInCheckpoint: BrowserCheckpointSchema,
+    readyCheckpoint: BrowserCheckpointSchema,
+    emptyCheckpoint: BrowserCheckpointSchema,
+    extraction: BrowserJobPageSchema.properties.extraction,
+    pagination: Type.Optional(
+      Type.Object(
+        {
+          nextSelector: CssSelector,
+          maxPages: Type.Integer({ minimum: 1, maximum: 100 }),
+          changeTimeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const DetailFieldSchema = Type.Object(
+  {
+    name: Id,
+    selector: CssSelector,
+    mode: Type.Union([Type.Literal("text"), Type.Literal("list")]),
+    required: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+const BrowserJobV2DefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(2),
+    id: Id,
+    name: Text,
+    browserProfile: BrowserProfile,
+    pages: Type.Array(BrowserJobV2PageSchema, { minItems: 1, maxItems: 50 }),
+    detailExtraction: Type.Optional(
+      Type.Object(
+        {
+          maxItems: Type.Integer({ minimum: 1, maximum: 10_000 }),
+          allowedOrigins: Type.Array(Type.String({ minLength: 8, maxLength: 2_048 }), {
+            minItems: 1,
+            maxItems: 50,
+            uniqueItems: true,
+          }),
+          readyCheckpoint: BrowserCheckpointSchema,
+          fields: Type.Array(DetailFieldSchema, { minItems: 1, maxItems: 20 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    reportBudgetBytes: Type.Integer({ minimum: 64 * 1_024, maximum: 10 * 1_024 * 1_024 }),
+    overallTimeoutMs: Type.Integer({ minimum: 1_000, maximum: 600_000 }),
+  },
+  { additionalProperties: false },
+);
+
+export const BrowserJobDefinitionSchema = Type.Union([
+  BrowserJobV1DefinitionSchema,
+  BrowserJobV2DefinitionSchema,
+]);
 
 export const SavedBrowserJobSchema = Type.Object(
   {
@@ -471,6 +536,29 @@ const ExtractedJobItemSchema = Type.Object(
     link: Type.String({ minLength: 1, maxLength: 8_192 }),
     company: Type.Optional(Type.String({ maxLength: 4_096 })),
     pageId: Id,
+    details: Type.Optional(
+      Type.Record(
+        Id,
+        Type.Object(
+          {
+            value: Type.Union([
+              Type.String({ maxLength: 64 * 1_024 }),
+              Type.Array(Type.String({ maxLength: 16 * 1_024 }), { maxItems: 1_000 }),
+              Type.Null(),
+            ]),
+            source: Type.Object(
+              {
+                url: AbsoluteHttpUrl,
+                selector: CssSelector,
+                mode: Type.Union([Type.Literal("text"), Type.Literal("list")]),
+              },
+              { additionalProperties: false },
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -500,12 +588,20 @@ export const BrowserJobRunReportSchema = Type.Object(
     sourceFingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
     startedAt: Timestamp,
     finishedAt: Timestamp,
-    status: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("cancelled")]),
+    status: Type.Union([
+      Type.Literal("passed"),
+      Type.Literal("partial"),
+      Type.Literal("failed"),
+      Type.Literal("cancelled"),
+    ]),
     baselineEstablished: Type.Boolean(),
     baselineReset: Type.Boolean(),
     itemCount: Type.Integer({ minimum: 0, maximum: 100_000 }),
+    items: Type.Array(ExtractedJobItemSchema, { maxItems: 100_000 }),
     newItems: Type.Array(ExtractedJobItemSchema, { maxItems: 100_000 }),
-    pagesCompleted: Type.Array(Id, { maxItems: 2 }),
+    pagesCompleted: Type.Array(Id, { maxItems: 50 }),
+    resultPagesCompleted: Type.Integer({ minimum: 0, maximum: 5_000 }),
+    detailItemsCompleted: Type.Integer({ minimum: 0, maximum: 10_000 }),
     failure: Type.Optional(
       Type.Object(
         {
@@ -515,6 +611,11 @@ export const BrowserJobRunReportSchema = Type.Object(
             Type.Literal("invalid-extraction"),
             Type.Literal("duplicate-id"),
             Type.Literal("output-cap"),
+            Type.Literal("pagination-budget"),
+            Type.Literal("pagination-stalled"),
+            Type.Literal("detail-budget"),
+            Type.Literal("detail-url"),
+            Type.Literal("missing-detail-field"),
             Type.Literal("timeout"),
             Type.Literal("cancelled"),
             Type.Literal("browser-error"),

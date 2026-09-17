@@ -82,6 +82,19 @@ const EvaluateReply = Type.Union([
   ),
 ]);
 
+const ClickReply = Type.Union([
+  Failure,
+  Type.Object(
+    {
+      ...SuccessBase,
+      operation: Type.Literal("click"),
+      stateId: Type.String(),
+      status: Type.Union([Type.Literal("clicked"), Type.Literal("end"), Type.Literal("ambiguous")]),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 const ReleaseReply = Type.Union([
   Failure,
   Type.Object(
@@ -104,7 +117,7 @@ const request = async <
 >(input: {
   readonly pi: ExtensionAPI;
   readonly ctx: ExtensionContext;
-  readonly operation: "acquire" | "navigate" | "wait" | "evaluate" | "release";
+  readonly operation: "acquire" | "navigate" | "wait" | "evaluate" | "click" | "release";
   readonly payload: object;
   readonly signal: AbortSignal;
   readonly decode: (value: unknown) => Reply;
@@ -218,6 +231,20 @@ export const makeBrowserJobBridge = (
     if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
 
     return { value: reply.value };
+  },
+  click: async (parameters, signal) => {
+    const reply = await request({
+      pi,
+      ctx,
+      operation: "click",
+      payload: parameters,
+      signal,
+      decode: (value) => Parse(ClickReply, value),
+    });
+
+    if (!reply.ok) throw new BrowserBridgeError(reply.error.code, reply.error.message);
+
+    return { status: reply.status };
   },
   release: async (parameters) => {
     const releaseSignal = new AbortController().signal;

@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserJobFingerprint,
+  buildDetailExtractionExpression,
   buildExtractionExpression,
+  buildPageSignatureExpression,
   makeSavedBrowserJob,
   runSavedBrowserJob,
   validateBrowserJobDefinition,
@@ -74,6 +76,50 @@ const definition = (pageTwoUrl = "https://jobs.example.test/search?page=2") =>
     ],
   });
 
+type ExpandedDefinition = Extract<BrowserJobDefinition, { readonly version: 2 }>;
+
+const expandedDefinition = (overrides: Partial<ExpandedDefinition> = {}) =>
+  validateBrowserJobDefinition({
+    version: 2,
+    id: "expanded-jobs",
+    name: "Expanded jobs",
+    browserProfile: "jobs-monitor",
+    overallTimeoutMs: 30_000,
+    reportBudgetBytes: 512 * 1_024,
+    pages: [
+      {
+        id: "search",
+        url: "https://jobs.example.test/search",
+        signedInCheckpoint: { text: "Signed in" },
+        readyCheckpoint: { text: "Job results" },
+        emptyCheckpoint: { text: "No jobs" },
+        extraction: {
+          itemSelector: "[data-job-id]",
+          idAttribute: "data-job-id",
+          titleSelector: ".title",
+          linkSelector: "a.title",
+          companySelector: ".company",
+        },
+        pagination: { nextSelector: "button.next", maxPages: 3, changeTimeoutMs: 2_000 },
+      },
+    ],
+    detailExtraction: {
+      maxItems: 10,
+      allowedOrigins: ["https://jobs.example.test"],
+      readyCheckpoint: { text: "Job details" },
+      fields: [
+        { name: "description", selector: ".description", mode: "text", required: true },
+        {
+          name: "requirements",
+          selector: ".requirements li",
+          mode: "list",
+          required: false,
+        },
+      ],
+    },
+    ...overrides,
+  });
+
 type Extracted = {
   readonly id: string;
   readonly title: string;
@@ -117,6 +163,7 @@ const fakeBridge = (
 
       return { value: { overflow: false, items: pages[page] ?? [] } };
     },
+    click: async () => ({ status: "clicked" }),
     release: async ({ token }) => {
       calls.push(`release:${token}`);
     },
@@ -199,6 +246,29 @@ describe("saved browser jobs", () => {
     expect(expression).toContain("nodes.slice(0, config.maxItems)");
   });
 
+  test("builds service-neutral pagination clicks and detail field extraction", () => {
+    const workflow = expandedDefinition();
+
+    if (workflow.version !== 2) throw new Error("Expected v2 workflow.");
+    const page = workflow.pages[0];
+
+    if (page === undefined) throw new Error("Missing v2 page.");
+    const pagination = page.pagination;
+    const detail = workflow.detailExtraction;
+
+    if (pagination === undefined || detail === undefined) throw new Error("Missing v2 config.");
+
+    const signatureExpression = buildPageSignatureExpression(page.extraction);
+    expect(signatureExpression).toContain("document.querySelectorAll");
+    expect(signatureExpression).not.toContain("location.href");
+    expect(signatureExpression).not.toContain("LinkedIn");
+
+    const detailExpression = buildDetailExtractionExpression(detail);
+    expect(detailExpression).toContain('"description"');
+    expect(detailExpression).toContain('"requirements"');
+    expect(detailExpression).toContain("value || null");
+  });
+
   test("establishes, reloads, and advances a union baseline only after full success", async () => {
     const profile = await makeProfile();
     const workflow = definition();
@@ -233,7 +303,7 @@ describe("saved browser jobs", () => {
     const conflict = { ...same, title: "Different" };
     const failed = await run(profile, workflow, fakeBridge([[same], [conflict]]));
     expect(failed.report).toMatchObject({
-      status: "failed",
+      status: "partial",
       failure: { code: "duplicate-id" },
       newItems: [],
     });
@@ -261,7 +331,7 @@ describe("saved browser jobs", () => {
 
     const b = { id: "b", title: "B", link: "https://jobs.example.test/b" };
     const failed = await run(profile, workflow, fakeBridge([[a, b], [a]], { failWaitAt: 3 }));
-    expect(failed.report).toMatchObject({ status: "failed", newItems: [] });
+    expect(failed.report).toMatchObject({ status: "partial", newItems: [] });
     expect(await readBrowserJobBaseline(profile, workflow.id)).toEqual(before);
   });
 
@@ -312,8 +382,242 @@ describe("saved browser jobs", () => {
     const completed = await run(profile, workflow, fakeBridge([many, many]));
 
     expect(completed.report).toMatchObject({
-      status: "failed",
+      status: "partial",
       failure: { code: "output-cap" },
+      newItems: [],
+    });
+    expect(await readBrowserJobBaseline(profile, workflow.id)).toEqual(before);
+  });
+
+  test("follows a bounded next control and extracts generic detail fields with provenance", async () => {
+    const profile = await makeProfile();
+    const workflow = expandedDefinition();
+    const calls: string[] = [];
+
+    const values: unknown[] = [
+      {
+        overflow: false,
+        signature: '["a"]',
+        nextAvailable: true,
+        items: [{ id: "a", title: "A", link: "https://jobs.example.test/a" }],
+      },
+      { signature: '["b"]', itemCount: 1 },
+      {
+        overflow: false,
+        signature: '["b"]',
+        nextAvailable: false,
+        items: [{ id: "b", title: "B", link: "https://jobs.example.test/b" }],
+      },
+      { description: "Build systems", requirements: ["TypeScript", "Bun"] },
+      { description: "Operate systems", requirements: [] },
+    ];
+
+    const bridge: BrowserJobBridge = {
+      acquire: async () => ({ token: "lease-1" }),
+      navigate: async ({ url }) => {
+        calls.push(`navigate:${url}`);
+      },
+      wait: async () => ({ found: true }),
+      evaluate: async () => ({ value: values.shift() }),
+      click: async () => ({ status: "clicked" }),
+      release: async () => undefined,
+    };
+
+    const completed = await run(profile, workflow, bridge);
+    expect(completed.report).toMatchObject({
+      status: "passed",
+      itemCount: 2,
+      resultPagesCompleted: 2,
+      detailItemsCompleted: 2,
+      baselineEstablished: true,
+    });
+    expect(calls).toEqual([
+      "navigate:https://jobs.example.test/a",
+      "navigate:https://jobs.example.test/b",
+    ]);
+    const firstReportText = await readFile(completed.reportPath, "utf8");
+    expect(firstReportText).toContain('"items": [');
+    expect(firstReportText).toContain('"value": "Build systems"');
+    expect(firstReportText).toContain('"selector": ".description"');
+
+    const secondValues: unknown[] = [
+      {
+        overflow: false,
+        signature: '["search","a"]',
+        nextAvailable: false,
+        items: [{ id: "a", title: "A", link: "https://jobs.example.test/a" }],
+      },
+      { description: "Build systems", requirements: ["TypeScript", "Bun"] },
+    ];
+
+    const secondBridge: BrowserJobBridge = {
+      ...bridge,
+      evaluate: async () => ({ value: secondValues.shift() }),
+    };
+
+    const second = await run(profile, workflow, secondBridge);
+    expect(second.report.newItems).toEqual([]);
+
+    const reportText = await readFile(second.reportPath, "utf8");
+    expect(reportText).toContain('"detailItemsCompleted": 1');
+  });
+
+  test("reports exhausted pagination and detail budgets as partial without advancing baseline", async () => {
+    const profile = await makeProfile();
+
+    const workflow = expandedDefinition({
+      detailExtraction: {
+        maxItems: 1,
+        allowedOrigins: ["https://jobs.example.test"],
+        readyCheckpoint: { text: "Job details" },
+        fields: [{ name: "description", selector: ".description", mode: "text", required: true }],
+      },
+      pages: [
+        {
+          id: "search",
+          url: "https://jobs.example.test/search",
+          signedInCheckpoint: { text: "Signed in" },
+          readyCheckpoint: { text: "Job results" },
+          emptyCheckpoint: { text: "No jobs" },
+          extraction: {
+            itemSelector: "[data-job-id]",
+            idAttribute: "data-job-id",
+            titleSelector: ".title",
+            linkSelector: "a.title",
+          },
+          pagination: { nextSelector: "button.next", maxPages: 1 },
+        },
+      ],
+    });
+
+    const item = { id: "a", title: "A", link: "https://jobs.example.test/a" };
+
+    const seedValues: unknown[] = [
+      {
+        overflow: false,
+        signature: "one",
+        nextAvailable: false,
+        items: [item],
+      },
+      { description: "A role" },
+    ];
+
+    const seedBridge: BrowserJobBridge = {
+      acquire: async () => ({ token: "lease-1" }),
+      navigate: async () => undefined,
+      wait: async () => ({ found: true }),
+      evaluate: async () => ({ value: seedValues.shift() }),
+      click: async () => ({ status: "clicked" }),
+      release: async () => undefined,
+    };
+
+    const pageBudget = await run(profile, workflow, seedBridge);
+    expect(pageBudget.report).toMatchObject({
+      status: "passed",
+      resultPagesCompleted: 1,
+    });
+
+    const before = await readBrowserJobBaseline(profile, workflow.id);
+
+    const paginationBridge: BrowserJobBridge = {
+      acquire: async () => ({ token: "lease-1" }),
+      navigate: async () => undefined,
+      wait: async () => ({ found: true }),
+      evaluate: async () => ({
+        value: { overflow: false, signature: "one", nextAvailable: true, items: [item] },
+      }),
+      click: async () => ({ status: "clicked" }),
+      release: async () => undefined,
+    };
+
+    const partial = await run(profile, workflow, paginationBridge);
+    expect(partial.report).toMatchObject({
+      status: "partial",
+      failure: { code: "pagination-budget" },
+      newItems: [],
+    });
+    expect(await readBrowserJobBaseline(profile, workflow.id)).toEqual(before);
+
+    const detailBudgetValues: unknown[] = [
+      {
+        overflow: false,
+        signature: '["a","b"]',
+        nextAvailable: false,
+        items: [item, { id: "b", title: "B", link: "https://jobs.example.test/b" }],
+      },
+    ];
+
+    const detailBudget = await run(profile, workflow, {
+      ...seedBridge,
+      evaluate: async () => ({ value: detailBudgetValues.shift() }),
+    });
+
+    expect(detailBudget.report).toMatchObject({
+      status: "partial",
+      failure: { code: "detail-budget" },
+      newItems: [],
+    });
+    expect(await readBrowserJobBaseline(profile, workflow.id)).toEqual(before);
+  });
+
+  test("accepts a paginated empty page only through its checkpoint and rejects missing required details", async () => {
+    const profile = await makeProfile();
+    const workflow = expandedDefinition();
+
+    const emptyPageValues: unknown[] = [
+      {
+        overflow: false,
+        signature: '["a"]',
+        nextStatus: "available",
+        items: [{ id: "a", title: "A", link: "https://jobs.example.test/a" }],
+      },
+      { signature: "[]", itemCount: 0 },
+      {
+        overflow: false,
+        signature: "[]",
+        nextStatus: "end",
+        items: [],
+      },
+      { description: "A role", requirements: null },
+    ];
+
+    const bridge: BrowserJobBridge = {
+      acquire: async () => ({ token: "lease-1" }),
+      navigate: async () => undefined,
+      wait: async () => ({ found: true }),
+      evaluate: async () => ({ value: emptyPageValues.shift() }),
+      click: async () => ({ status: "clicked" }),
+      release: async () => undefined,
+    };
+
+    const complete = await run(profile, workflow, bridge);
+    expect(complete.report).toMatchObject({
+      status: "passed",
+      resultPagesCompleted: 2,
+      detailItemsCompleted: 1,
+    });
+
+    const before = await readBrowserJobBaseline(profile, workflow.id);
+
+    const missingValues: unknown[] = [
+      {
+        overflow: false,
+        signature: '["a"]',
+        nextStatus: "end",
+        items: [{ id: "a", title: "A", link: "https://jobs.example.test/a" }],
+      },
+      { description: null, requirements: ["TypeScript"] },
+    ];
+
+    const missing = await run(profile, workflow, {
+      ...bridge,
+      evaluate: async () => ({ value: missingValues.shift() }),
+    });
+
+    expect(missing.report).toMatchObject({
+      status: "partial",
+      failure: { code: "missing-detail-field" },
+      items: [],
       newItems: [],
     });
     expect(await readBrowserJobBaseline(profile, workflow.id)).toEqual(before);

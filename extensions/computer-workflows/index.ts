@@ -100,16 +100,6 @@ const result = (payload: unknown) => ({
   details: payload,
 });
 
-const strictResult = (payload: unknown) => {
-  const text = JSON.stringify(payload, null, 2);
-
-  if (text.length > 256 * 1024) {
-    throw new Error("Browser workflow result exceeded the output cap and was not truncated.");
-  }
-
-  return { content: [{ type: "text" as const, text }], details: payload };
-};
-
 const sessionKey = (ctx: {
   readonly cwd: string;
   readonly sessionManager: { readonly getSessionId: () => string };
@@ -183,7 +173,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
     name: "browser_workflow_save",
     label: "Save Browser Workflow",
     description:
-      "Validate and save one fixed two-page read-only browser monitoring workflow using a persistent named browser profile.",
+      "Validate and save a bounded read-only browser monitoring workflow using a persistent named browser profile.",
     parameters: SaveBrowserWorkflowParameters,
     executionMode: "sequential",
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -209,7 +199,7 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "browser_workflow_list",
     label: "List Browser Workflows",
-    description: "List saved fixed two-page browser monitoring workflows in this Profile.",
+    description: "List saved bounded browser monitoring workflows in this Profile.",
     parameters: EmptyParameters,
     executionMode: "sequential",
     async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
@@ -277,7 +267,25 @@ export default function computerWorkflows(pi: ExtensionAPI): void {
             }),
         );
 
-        return strictResult(completed);
+        const report = completed.report;
+
+        return result({
+          reportPath: completed.reportPath,
+          status: report.status,
+          workflowId: report.workflowId,
+          itemCount: report.itemCount,
+          newItemCount: report.newItems.length,
+          baselineEstablished: report.baselineEstablished,
+          baselineReset: report.baselineReset,
+          pagesCompleted: report.pagesCompleted,
+          resultPagesCompleted: report.resultPagesCompleted,
+          detailItemsCompleted: report.detailItemsCompleted,
+          failure: report.failure,
+          newItemPreview: report.newItems.slice(0, 20).map(({ details, ...item }) => ({
+            ...item,
+            detailFields: details === undefined ? undefined : Object.keys(details),
+          })),
+        });
       } catch (cause) {
         throw boundedFailure(cause);
       }

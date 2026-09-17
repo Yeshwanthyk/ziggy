@@ -2522,7 +2522,7 @@ async function performEvaluateBrowser(params: EvaluateBrowserParams): Promise<Ag
 
 export const COMPUTER_USE_BROWSER_BRIDGE_CHANNEL = "ziggy:computer-use:browser-bridge:v1";
 
-type BrowserBridgeOperation = "acquire" | "navigate" | "wait" | "evaluate" | "release";
+type BrowserBridgeOperation = "acquire" | "navigate" | "wait" | "evaluate" | "click" | "release";
 type BrowserBridgeFailureCode = "browser-busy" | "invalid-owner" | "aborted" | "invalid-request" | "browser-error";
 
 interface BrowserBridgeRequest {
@@ -2542,10 +2542,11 @@ interface BrowserBridgeRequest {
 	until?: "present";
 	timeoutMs?: number;
 	expression?: string;
+	selector?: string;
 }
 
 type BrowserBridgeResponse =
-	| { ok: true; version: 1; requestId: string; operation: BrowserBridgeOperation; token?: string; stateId?: string; found?: boolean; timedOut?: boolean; value?: unknown; released?: boolean }
+	| { ok: true; version: 1; requestId: string; operation: BrowserBridgeOperation; token?: string; stateId?: string; found?: boolean; timedOut?: boolean; value?: unknown; status?: "clicked" | "end" | "ambiguous"; released?: boolean }
 	| { ok: false; version: 1; requestId: string; operation: BrowserBridgeOperation; error: { code: BrowserBridgeFailureCode; message: string } };
 
 function currentLease(token: unknown): BrowserLease {
@@ -2663,6 +2664,37 @@ async function evaluateBrowserLease(request: BrowserBridgeRequest): Promise<Brow
 	});
 }
 
+async function clickBrowserLease(request: BrowserBridgeRequest): Promise<BrowserBridgeResponse> {
+	if (typeof request.token !== "string") throw new Error("Browser workflow click requires an ownership token.");
+	const selector = trimOrUndefined(request.selector);
+	if (!selector || selector.length > 1_024) throw new Error("Browser workflow click requires a bounded CSS selector.");
+	return await withLeaseOperation(request.token, request.signal, async (lease) => {
+		if (!lease.stateId) throw new Error("Browser workflow has no current browser state.");
+		const params = { stateId: lease.stateId, selector };
+		const value = await executeTool(request.ctx, params, request.signal, async () => {
+			const contextId = browserContextForOperation();
+			if (!contextId) throw new Error("Browser workflow click requires a browser context.");
+			const expression = `(() => {
+				const nodes = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
+				if (nodes.length === 0) return { status: "end" };
+				if (nodes.length !== 1) return { status: "ambiguous" };
+				const node = nodes[0];
+				const disabled = (node instanceof HTMLButtonElement && node.disabled) || node.getAttribute("aria-disabled") === "true" || node.hasAttribute("disabled");
+				if (disabled || !(node instanceof HTMLElement)) return { status: "end" };
+				setTimeout(() => node.click(), 0);
+				return { status: "clicked" };
+			})()`;
+			const evaluated = await cdpEvaluateForContext(contextId, expression);
+			if (!evaluated) throw new Error(`Browser context '${contextId}' is no longer available. Observe it again.`);
+			return evaluated.value;
+		}, { browserHydrated: true }, { leaseToken: lease.token });
+		if (!value || typeof value !== "object" || !("status" in value) || !["clicked", "end", "ambiguous"].includes(String(value.status))) {
+			throw new Error("Browser workflow click returned an invalid status.");
+		}
+		return { ok: true, version: 1, requestId: request.requestId, operation: "click", stateId: lease.stateId, status: value.status as "clicked" | "end" | "ambiguous" };
+	});
+}
+
 async function releaseBrowserLease(token: string): Promise<boolean> {
 	if (!runtimeState.browserLease) {
 		if (runtimeState.lastReleasedLeaseToken === token) return false;
@@ -2684,6 +2716,7 @@ async function dispatchBrowserBridgeRequest(request: BrowserBridgeRequest): Prom
 	if (request.operation === "navigate") return await navigateBrowserLease(request);
 	if (request.operation === "wait") return await waitBrowserLease(request);
 	if (request.operation === "evaluate") return await evaluateBrowserLease(request);
+	if (request.operation === "click") return await clickBrowserLease(request);
 	if (request.operation === "release") {
 		if (typeof request.token !== "string") throw new Error("Browser workflow release requires an ownership token.");
 		return { ok: true, version: 1, requestId: request.requestId, operation: "release", released: await releaseBrowserLease(request.token) };
@@ -2711,7 +2744,7 @@ export function handleBrowserBridgeRequest(data: unknown): void {
 	if (typeof request.reply !== "function") return;
 	const requestId = typeof request.requestId === "string" ? request.requestId : "invalid";
 	const operation = request.operation;
-	if (request.version !== 1 || !operation || !["acquire", "navigate", "wait", "evaluate", "release"].includes(operation) || !request.ctx || typeof request.ctx.cwd !== "string") {
+	if (request.version !== 1 || !operation || !["acquire", "navigate", "wait", "evaluate", "click", "release"].includes(operation) || !request.ctx || typeof request.ctx.cwd !== "string") {
 		request.reply({ ok: false, version: 1, requestId, operation: operation ?? "acquire", error: { code: "invalid-request", message: "Invalid computer-use browser bridge request." } });
 		return;
 	}
