@@ -1,51 +1,110 @@
-# Updating bundled extensions
+---
+name: weather
+description: "Get current weather, rain, temperature, and forecasts for locations or travel planning."
+---
 
-Bundled extension code ships inside the Ziggy executable. An installed Profile copy takes
-precedence over that bundle, so updating the executable does not replace installed packages.
+# Weather Skill
 
-Update one installed bundled package from the executable you are running:
+Get current weather conditions and forecasts.
 
-```sh
-ziggy extensions update squarey computer-workflows
+## When to Use
+
+✅ **USE this skill when:**
+
+- "What's the weather?"
+- "Will it rain today/tomorrow?"
+- "Temperature in [city]"
+- "Weather forecast for the week"
+- Travel planning weather checks
+
+## When NOT to Use
+
+❌ **DON'T use this skill when:**
+
+- Historical weather data → use weather archives/APIs
+- Climate analysis or trends → use specialized data sources
+- Hyper-local microclimate data → use local sensors
+- Severe weather alerts → check official NWS sources
+- Aviation/marine weather → use specialized services (METAR, etc.)
+
+## Location
+
+Always include a city, region, or airport code in weather queries.
+
+## Commands
+
+### Current Weather
+
+```bash
+# One-line summary
+curl "wttr.in/London?format=3"
+
+# Detailed current conditions
+curl "wttr.in/London?0"
+
+# Specific city
+curl "wttr.in/New+York?format=3"
 ```
 
-Close all sessions using the Profile and stop its resident before updating. This first version
-does not drain active work, schedule an update, download another executable, or restart Squarey.
-Runtimes with update fencing block package replacement while open. Older Ziggy processes do not
-participate in that fence: close old TUI/run/ACP sessions before the initial upgrade as well.
+### Forecasts
 
-## Adopt an existing installation
+```bash
+# 3-day forecast
+curl "wttr.in/London"
 
-Installations without an update receipt are treated as untracked. To explicitly replace an
-untracked package with the executable's bundled copy and begin tracking it:
+# Week forecast
+curl "wttr.in/London?format=v2"
 
-```sh
-ziggy extensions update squarey computer-workflows --adopt
+# Specific day (0=today, 1=tomorrow, 2=day after)
+curl "wttr.in/London?1"
 ```
 
-Adoption is a takeover of that package directory, not proof that its previous contents came
-from Ziggy. Inspect local changes first. The updater retains the previous package as a backup.
-Once a receipt exists, modified package contents block updates; `--adopt` does not override
-that protection.
+### Format Options
 
-## Boundaries
+```bash
+# One-liner
+curl "wttr.in/London?format=%l:+%c+%t+%w"
 
-- Only an explicitly named, already installed bundled extension is updated.
-- Package content hashes detect changes even when the package version is unchanged.
-- The selected extension set, browser profiles, saved workflows, and human-owned Profile
-  documents are not replaced.
-- Updates that change extension-owned automation definitions are rejected in this version.
-- A recovery journal protects interrupted replacement. An unresolved update blocks runtime
-  loading until recovery succeeds. Rerun the update command for that package to recover it;
-  if recovery detects changed files, it preserves them and reports the conflict.
-- Restart the Profile after a successful update to load the new tool code and skill instructions
-  together.
+# JSON output
+curl "wttr.in/London?format=j1"
 
-A successful update verifies package installation and loading. It does not prove that a saved
-workflow completes on a live website.
+# PNG image
+curl "wttr.in/London.png"
+```
 
-## In-process lifecycle
+### Format Codes
 
-The `profile_extensions` tool manages `list`, `add`, `remove`, and `validate` inside the resident
-without Bash, a Ziggy subprocess, or `PATH` lookup. Extensions that invoke ordinary external
-commands still use the managed service `PATH` documented in [Supervise `ziggy serve`](serve.md).
+- `%c` — Weather condition emoji
+- `%t` — Temperature
+- `%f` — "Feels like"
+- `%w` — Wind
+- `%h` — Humidity
+- `%p` — Precipitation
+- `%l` — Location
+
+## Quick Responses
+
+**"What's the weather?"**
+
+```bash
+curl -s "wttr.in/London?format=%l:+%c+%t+(feels+like+%f),+%w+wind,+%h+humidity"
+```
+
+**"Will it rain?"**
+
+```bash
+curl -s "wttr.in/London?format=%l:+%c+%p"
+```
+
+**"Weekend forecast"**
+
+```bash
+curl "wttr.in/London?format=v2"
+```
+
+## Notes
+
+- No API key needed (uses wttr.in)
+- Rate limited; don't spam requests
+- Works for most global cities
+- Supports airport codes: `curl wttr.in/ORD`

@@ -1,59 +1,223 @@
-# Operate Profile memory
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- This executable owns its HTTP Promise boundary. */
+/* eslint-disable ziggy-effect/no-try-catch-or-throw -- This executable converts process failures into JSON and exit codes. */
+/* eslint-disable ziggy-effect/no-error-constructor -- HTTP and protocol failures terminate this executable boundary. */
+/* eslint-disable ziggy-effect/no-json-parse -- TypeBox validates every parsed unknown value immediately. */
+/* eslint-disable ziggy-effect/no-instanceof-error -- The executable normalizes unknown top-level failures for stderr-safe output. */
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
-Profile memory is plain Markdown owned by the Profile. It is separate from Pi session
-transcripts and is admitted by chat context:
+const MCP_URL = "https://mcp.exa.ai/mcp";
 
-- `MEMORY.md` is shared assistant memory and loads in local, 1:1, and group chats.
-- `memory/users/<id>.md` is person memory and loads only in that person's 1:1 chat. Local chats
-  use `memory/users/owner.md`. Person memory never loads in a group.
-- `memory/groups/<id>.md` is group memory and loads only in that group chat.
+const REQUEST_TIMEOUT_MS = 30_000;
 
-Each document contains one entry per block. Separate entries with a line containing `§`:
+const McpMessage = Type.Object(
+  {
+    error: Type.Optional(Type.Object({ message: Type.String() }, { additionalProperties: true })),
+    result: Type.Optional(
+      Type.Object(
+        {
+          content: Type.Array(Type.Object({ text: Type.String() }, { additionalProperties: true })),
+        },
+        { additionalProperties: true },
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
 
-```text
-The person prefers short answers.
-§
-The project ships on Fridays.
-```
+const ExaResults = Type.Object(
+  {
+    results: Type.Array(
+      Type.Object(
+        {
+          title: Type.Optional(Type.String()),
+          url: Type.Optional(Type.String()),
+          text: Type.Optional(Type.String()),
+          summary: Type.Optional(Type.String()),
+          highlights: Type.Optional(Type.Array(Type.String())),
+        },
+        { additionalProperties: true },
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
 
-The shared document is capped at 2,200 Unicode code points. Each person or group document is
-capped at 1,375 code points. A write that would exceed its cap is rejected as a whole; content is
-never silently truncated.
+interface SearchResult {
+  title: string;
+  url: string;
+  highlight: string;
+}
 
-The agent uses the `memory_write` tool with `add`, `replace`, and `remove` operations. `add` is
-idempotent. `replace` and `remove` require `oldText` to identify exactly one entry. A successful
-change is atomic under a per-document lock.
+interface SearchOutput {
+  query: string;
+  answer: string;
+  results: SearchResult[];
+}
 
-You can inspect memory without opening a chat:
+const parseArgs = (args: string[]) => {
+  let count = 5;
+  const words: string[] = [];
 
-```sh
-ziggy memory list [<profile>] [--json]
-ziggy memory show <profile> shared [--json]
-ziggy memory show <profile> user:<id> [--json]
-ziggy memory show <profile> group:<id> [--json]
-```
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
 
-Without a target, `memory list` inspects the current directory as the Profile target. JSON output
-contains scope, path, state, entry count, code-point count, and cap, but not raw memory content for
-`list`; `show --json` includes the bounded entries of the selected document.
+    if (argument === "--n") {
+      const value = args[index + 1];
 
-`memory list` reports only physical regular memory documents. Empty documents are reported as
-empty and are distinct from a missing document. The `memory/README.md` format note is never
-loaded as memory and is excluded from `ziggy doctor` size checks.
+      if (value !== undefined) {
+        const parsed = Number.parseInt(value, 10);
 
-Hand-editing is safe when no Ziggy process is writing the same document, you preserve the `§`
-delimiter, and you stay within the cap. Run `ziggy doctor <profile>` after edits.
+        if (Number.isFinite(parsed)) count = parsed;
+        index += 1;
+      }
+    } else if (argument !== undefined && !argument.startsWith("--")) {
+      words.push(argument);
+    }
+  }
 
-Before an existing document is changed, Ziggy saves its exact prior bytes under:
+  return { query: words.join(" ").trim(), count: Math.max(1, count) };
+};
 
-```text
-<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>.md
-```
+const clip = (value: string, maximum: number): string => value.slice(0, maximum);
 
-The newest ten backups for each document are retained. Backup and pruning failures block the
-memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
+const canned = (query: string, count: number): SearchOutput => ({
+  query,
+  answer: `(offline) Top result for: ${query}`,
+  results: Array.from({ length: Math.min(3, count) }, (_, index) => ({
+    title: `Result ${index + 1} for ${query}`,
+    url: `https://example.com/${index + 1}`,
+    highlight: "...",
+  })),
+});
 
-```sh
-cp <profile>/.runtime/memory-backups/MEMORY.md/<timestamp>.md <profile>/MEMORY.md
-ziggy doctor <profile>
-```
+const parseJsonResults = (text: string, count: number): SearchResult[] => {
+  let value: unknown;
+
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return [];
+  }
+
+  if (!Check(ExaResults, value)) return [];
+
+  return value.results.slice(0, count).map((item) => ({
+    title: item.title ?? "",
+    url: item.url ?? "",
+    highlight: clip(item.highlights?.[0] ?? item.text ?? item.summary ?? "", 300),
+  }));
+};
+
+const parseDigest = (text: string, count: number): SearchResult[] => {
+  const results: SearchResult[] = [];
+
+  for (const block of text.split("\n---\n")) {
+    let title = "";
+    let url = "";
+    let inHighlights = false;
+    const highlights: string[] = [];
+
+    for (const line of block.split("\n")) {
+      const value = line.trim();
+
+      if (value.startsWith("Title:")) {
+        title = value.slice(6).trim();
+        inHighlights = false;
+      } else if (value.startsWith("URL:")) {
+        url = value.slice(4).trim();
+        inHighlights = false;
+      } else if (value.startsWith("Published:") || value.startsWith("Author:")) {
+        inHighlights = false;
+      } else if (value.startsWith("Highlights:")) {
+        inHighlights = true;
+      } else if (inHighlights && value && value !== "[...]") {
+        highlights.push(value);
+      }
+    }
+
+    if (url) results.push({ title, url, highlight: clip(highlights.join(" "), 300) });
+
+    if (results.length >= count) break;
+  }
+
+  return results;
+};
+
+const mcpCall = async (endpoint: string, query: string, count: number): Promise<string> => {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "web_search_exa",
+        arguments: { query, numResults: count, type: "auto", livecrawl: "fallback" },
+      },
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  const body = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Exa MCP status ${response.status}: ${clip(body.trim(), 200)}`);
+  }
+
+  let payload = "";
+
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith("data:")) continue;
+    let value: unknown;
+
+    try {
+      value = JSON.parse(trimmed.slice(5).trim());
+    } catch {
+      continue;
+    }
+
+    if (!Check(McpMessage, value)) continue;
+
+    if (value.error) throw new Error(value.error.message);
+    const text = value.result?.content[0]?.text;
+
+    if (text) payload = text;
+  }
+
+  if (!payload) throw new Error("no content in Exa response");
+
+  return payload;
+};
+
+const search = async (query: string, count: number, key: string): Promise<SearchOutput> => {
+  if (key.startsWith("fake")) return canned(query, count);
+  const endpoint = key ? `${MCP_URL}?exaApiKey=${encodeURIComponent(key)}` : MCP_URL;
+  const text = await mcpCall(endpoint, query, count);
+  const results = parseJsonResults(text, count);
+  const parsed = results.length > 0 ? results : parseDigest(text, count);
+
+  return { query, answer: parsed.length > 0 ? "" : text, results: parsed };
+};
+
+const { query, count } = parseArgs(process.argv.slice(2));
+
+if (!query) {
+  process.stdout.write(`${JSON.stringify({ error: "empty query" }, null, 2)}\n`);
+  process.exit(2);
+}
+
+try {
+  const result = await search(query, count, process.env.EXA_API_KEY?.trim() ?? "");
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+} catch (cause: unknown) {
+  const message = cause instanceof Error ? cause.message : "unknown search failure";
+  process.stdout.write(`${JSON.stringify({ error: `search failed: ${message}` }, null, 2)}\n`);
+  process.exit(1);
+}

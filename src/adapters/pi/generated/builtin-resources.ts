@@ -8,6 +8,7 @@ import factoryComputerWorkflows from "../../../../extensions/computer-workflows/
 import factoryDevBrowser from "../../../../extensions/dev-browser/index.ts";
 import factoryExecutor from "../../../../extensions/executor/index.ts";
 import factoryGithub from "../../../../extensions/github/index.ts";
+import factoryJev from "../../../../extensions/jev/index.ts";
 import factoryLosslessClaw from "../../../../extensions/lossless-claw/index.ts";
 import factorySelfImprovement from "../../../../extensions/self-improvement/index.ts";
 import factoryWebSearch from "../../../../extensions/web-search/index.ts";
@@ -24,6 +25,7 @@ export const builtinFactories: ReadonlyArray<{
   { id: "dev-browser", factory: factoryDevBrowser },
   { id: "executor", factory: factoryExecutor },
   { id: "github", factory: factoryGithub },
+  { id: "jev", factory: factoryJev },
   { id: "lossless-claw", factory: factoryLosslessClaw },
   { id: "self-improvement", factory: factorySelfImprovement },
   { id: "web-search", factory: factoryWebSearch },

@@ -1,28 +1,62 @@
 ---
-name: curator
-description: Review repeated completed Profile sessions and apply bounded memory or Curator-managed skill improvements.
+name: obsidian
+description: "Work with Obsidian vaults (plain Markdown notes) and automate via obsidian-cli."
 ---
 
-# Curator
+# Obsidian
 
-Run this workflow only from the `curator` automation or when the user asks for an immediate review.
-The readiness marker is a cheap admission signal, not evidence by itself.
+Obsidian vault = a normal folder on disk.
 
-1. Call `self_improvement_status` and stop if the Curator is not ready.
-2. Review the source Pi session JSONL for the distinct completed foreground sessions named by the
-   logs. Do not treat automation, specialist, interrupted, empty, or one-off work as evidence.
-3. Prefer a durable, concise memory fact over a long procedure. Call native `memory_write` for an
-   approved memory add, and prefix every learned entry with `[learned]`.
-4. Create a new skill only for a repeated class of work across distinct sessions. Call
-   `self_improvement_extension_write` to create a real skill-only package under the Profile, then
-   call the in-process `profile_extensions` tool with `action: "add"` and the new shelf ID. Never
-   shell into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. The
-   Profile admits it after restart only when that tool returns structured success.
-5. Patch only a Profile package whose `package.json` visibly marks it `ziggy.curatorManaged: true`.
-   Never change repository, catalogue, human-owned, external, or pinned packages.
-6. Call `self_improvement_log` with an `applied`, `no-op`, or `staged` decision and compact evidence.
-   Set `clearReady: true` only after the review and every approved write completed successfully.
+Vault structure (typical)
 
-Do not copy raw transcripts, secrets, credentials, temporary task state, or guesses into logs,
-memory, or skills. A late or conflicting result must be logged as a no-op and must not overwrite
-newer Profile state.
+- Notes: `*.md` (plain text Markdown; edit with any editor)
+- Config: `.obsidian/` (workspace + plugin settings; usually don’t touch from scripts)
+- Canvases: `*.canvas` (JSON)
+- Attachments: whatever folder you chose in Obsidian settings (images/PDFs/etc.)
+
+## Find the active vault(s)
+
+Obsidian desktop tracks vaults here (source of truth):
+
+- `~/Library/Application Support/obsidian/obsidian.json`
+
+`obsidian-cli` resolves vaults from that file; vault name is typically the **folder name** (path suffix).
+
+Fast “what vault is active / where are the notes?”
+
+- If you’ve already set a default: `obsidian-cli print-default --path-only`
+- Otherwise, read `~/Library/Application Support/obsidian/obsidian.json` and use the vault entry with `"open": true`.
+
+Notes
+
+- Multiple vaults common (iCloud vs `~/Documents`, work/personal, etc.). Don’t guess; read config.
+- Avoid writing hardcoded vault paths into scripts; prefer reading the config or using `print-default`.
+
+## obsidian-cli quick start
+
+Pick a default vault (once):
+
+- `obsidian-cli set-default "<vault-folder-name>"`
+- `obsidian-cli print-default` / `obsidian-cli print-default --path-only`
+
+Search
+
+- `obsidian-cli search "query"` (note names)
+- `obsidian-cli search-content "query"` (inside notes; shows snippets + lines)
+
+Create
+
+- `obsidian-cli create "Folder/New note" --content "..." --open`
+- Requires Obsidian URI handler (`obsidian://…`) working (Obsidian installed).
+- Avoid creating notes under “hidden” dot-folders (e.g. `.something/...`) via URI; Obsidian may refuse.
+
+Move/rename (safe refactor)
+
+- `obsidian-cli move "old/path/note" "new/path/note"`
+- Updates `[[wikilinks]]` and common Markdown links across the vault (this is the main win vs `mv`).
+
+Delete
+
+- `obsidian-cli delete "path/note"`
+
+Prefer direct edits when appropriate: open the `.md` file and change it; Obsidian will pick it up.

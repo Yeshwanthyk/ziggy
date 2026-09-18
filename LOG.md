@@ -892,3 +892,13 @@ results.
 - Removed the obsolete `browser_workflow_save`, `browser_workflow_list`, `browser_workflow_show`, and `browser_workflow_run` tools with their fixed browser-job runner, schemas, storage adapter, tests, and two-page skill guidance. The adaptable `workflow_task_*` lifecycle and existing compiled semantic workflow support remain.
 - Replaced tuple-shaped keypress schemas with provider-compatible bounded arrays and retained strict modifier/chord ordering in application validation. Regenerated the bundled catalog.
 - Verification: focused computer-workflows and bundled-resource tests passed; `bun run check` passed. A session-scoped `opencode-go/deepseek-v4-flash` prompt with the updated tool surface returned `deepseek-schema-ok` without a tool call; the Profile default model remained unchanged.
+
+## 2026-09-18
+
+**Optional Jev extension.** Added `extensions/jev` and admitted it to `catalog.json`, with regenerated bundled resources and catalog-loading coverage. The `jev_evaluate` tool and versioned cross-extension request/reply bridge share one bounded client for mixed Choice, Score, and Noul questions. Credentials use `TYPESAFE_API_KEY` preferentially; configuration pins `jev-1.13.0` by default. Added cancellation, end-to-end deadlines, bounded transient retries, typed failures, strict answer validation, shutdown cleanup, and a standalone consumer helper. Production endpoint restrictions and redirect refusal prevent sending credentials to arbitrary configured hosts. No idle calls, transcript collection, caller policy, or Profile changes.
+
+**Verification.** Sol/medium implemented; Luna/high reviewed the extension. Eighteen mocked-network/contract tests pass, including malformed replies, probability invariants, structured legends, prototype-safe IDs, missing listeners, retry, deadline and cancellation behavior. Root `bun run check` passes after strict-TypeScript and unused-export fixes; catalog shelf loading passes. No live TypeSafe call or Squarey/LinkedIn integration has been performed.
+
+Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` both pass; the latter reports 742 tests passed, zero failures.
+
+**Release preparation: 0.2.10.** Updated package, installer, README/changelog and version assertions. The user selected 0.2.10 because the existing local executable identifies as 0.2.9 while the source was 0.2.6 and the latest public release was 0.2.5. Publication will include the existing main-branch changes and the Jev extension; unrelated uncommitted research remains outside the release.
