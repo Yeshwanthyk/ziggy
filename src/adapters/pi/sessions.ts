@@ -51,12 +51,14 @@ const SessionHeader = Schema.Struct({
 
 const SessionEntry = Schema.Struct({
   type: Schema.String,
+  customType: Schema.optional(Schema.String),
   id: Schema.String,
   parentId: Schema.NullOr(Schema.String),
   timestamp: Schema.String,
   provider: Schema.optional(Schema.String),
   modelId: Schema.optional(Schema.String),
   thinkingLevel: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
   usage: Schema.optional(Usage),
   message: Schema.optional(RawMessage),
 });
@@ -75,6 +77,8 @@ interface ParsedSession {
   readonly file: string;
   readonly relativePath: string;
   readonly header: Header;
+  readonly name: string | undefined;
+  readonly activityAt: string;
   readonly entryCount: number;
   readonly modelChanges: ReadonlyArray<SessionModelChange>;
   readonly thinkingChanges: ReadonlyArray<SessionThinkingChange>;
@@ -245,6 +249,8 @@ const parseSession = (
     const thinkingChanges: Array<SessionThinkingChange> = [];
     let usage = zeroUsage();
     let lastMessage: Entry["message"];
+    let name: string | undefined;
+    let activityAt: string | undefined;
 
     const reject = (cause: unknown): never => {
       throw new TranscriptLineRejected(decodeFailure(file, cause));
@@ -307,13 +313,25 @@ const parseSession = (
         } else {
           thinkingChanges.push({ at: entry.timestamp, level: thinkingLevel });
         }
+      } else if (entry.type === "session_info") {
+        const candidate = entry.name?.replace(/[\r\n]+/gu, " ").trim();
+        name = candidate === undefined || candidate.length === 0 ? undefined : candidate;
       }
 
       if (entry.type === "message" && entry.message === undefined)
         reject({ kind: "invalid-message", entryId: entry.id });
       const message = entry.message;
 
-      if (entry.type === "message") lastMessage = message;
+      if (
+        entry.type === "message" ||
+        (entry.type === "custom_message" && entry.customType === "ziggy.automation-result")
+      ) {
+        activityAt = entry.timestamp;
+      }
+
+      if (entry.type === "message") {
+        lastMessage = message;
+      }
 
       if (entry.type === "message" && message?.role === "assistant") {
         const provider = message.provider;
@@ -349,6 +367,8 @@ const parseSession = (
       file,
       relativePath: path.relative(root, file),
       header: parsedHeader,
+      name,
+      activityAt: activityAt ?? parsedHeader.timestamp,
       entryCount,
       modelChanges,
       thinkingChanges,
@@ -391,6 +411,8 @@ const parseSessionHeader = (
       file,
       relativePath: path.relative(root, file),
       header: parsedHeader,
+      name: undefined,
+      activityAt: parsedHeader.timestamp,
       entryCount: 0,
       modelChanges: [],
       thinkingChanges: [],
@@ -438,11 +460,12 @@ const projectSessions = (
         const parentPath = session.header.parentSession;
         const parent = parentPath === undefined ? undefined : byFile.get(path.resolve(parentPath));
 
-        return {
+        const metadata: SessionMetadata = {
           path: session.relativePath,
           id: session.header.id,
           kind: parentPath === undefined ? "root" : "child",
           createdAt: session.header.timestamp,
+          activityAt: session.activityAt,
           entryCount: session.entryCount,
           parent:
             parent === undefined ? undefined : { id: parent.header.id, path: parent.relativePath },
@@ -455,6 +478,8 @@ const projectSessions = (
           usage: session.usage,
           terminalState: session.terminalState,
         };
+
+        return session.name === undefined ? metadata : { ...metadata, name: session.name };
       })
       .sort(
         (left, right) =>

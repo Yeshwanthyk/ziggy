@@ -10,6 +10,27 @@ import {
   makeChatRegistry,
 } from "ziggy/application/chat-registry";
 
+test("remembered destinations keep a known label when a fallback observation arrives", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const target = {
+          _tag: "slack" as const,
+          target: "slack:channel:C012345678",
+          channelId: "C012345678",
+        };
+
+        yield* registry.rememberDestination({ target, label: "engineering" });
+        yield* registry.rememberDestination({ target });
+
+        expect(yield* registry.destinations).toEqual([{ target, label: "engineering" }]);
+      }),
+    ),
+  );
+});
+
 test("fresh subscriptions bootstrap retained activity while resume cursors require continuity", async () => {
   await Effect.runPromise(
     Effect.scoped(
@@ -216,4 +237,96 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
   );
   expect(aborts).toBe(0);
   expect(disposals).toBe(1);
+});
+
+test("automation delivery refuses opening and closing owners and rejects cross-Profile routing", async () => {
+  const result = {
+    automationId: "daily-note",
+    runId: "manual:one",
+    targetSessionId: "stored-session",
+    text: "result",
+    timestamp: "2026-09-17T12:00:00.000Z",
+  } as const;
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry("/profiles/a");
+        const openEntered = yield* Deferred.make<void>();
+        const releaseOpen = yield* Deferred.make<void>();
+        const openingHandle = makeChatHandle({ prompt: () => Effect.succeed("unused") });
+
+        const opening = yield* registry
+          .openAlias(
+            "discord/opening",
+            "discord",
+            Deferred.succeed(openEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseOpen)),
+              Effect.as(openingHandle),
+            ),
+          )
+          .pipe(Effect.forkScoped);
+
+        yield* Deferred.await(openEntered);
+
+        expect(
+          yield* Effect.result(
+            registry.deliverAutomationResult({ name: "a", path: "/profiles/a" }, result),
+          ),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { category: "owner-unavailable", retriable: true },
+        });
+        yield* Deferred.succeed(releaseOpen, undefined);
+        yield* Fiber.join(opening);
+
+        expect(
+          yield* Effect.result(
+            registry.deliverAutomationResult({ name: "b", path: "/profiles/b" }, result),
+          ),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { category: "destination-invalid", retriable: false },
+        });
+
+        const releaseDispose = yield* Deferred.make<void>();
+
+        const closingHandle = makeChatHandle({
+          prompt: () => Effect.succeed("unused"),
+          dispose: Deferred.await(releaseDispose),
+        });
+
+        yield* registry.registerAlias("slack/closing", "slack", closingHandle);
+
+        const closing = yield* registry
+          .closeAlias("slack/closing", closingHandle)
+          .pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+
+        expect(
+          yield* Effect.result(
+            registry.getOrOpenUi(
+              "slack/closing",
+              Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unsafe") })),
+            ),
+          ),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { code: "session_busy" },
+        });
+
+        expect(
+          yield* Effect.result(
+            registry.deliverAutomationResult({ name: "a", path: "/profiles/a" }, result),
+          ),
+        ).toMatchObject({
+          _tag: "Failure",
+          failure: { category: "owner-unavailable", retriable: true },
+        });
+        yield* Deferred.succeed(releaseDispose, undefined);
+        yield* Fiber.join(closing);
+      }),
+    ),
+  );
 });

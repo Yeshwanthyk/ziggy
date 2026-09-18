@@ -7,6 +7,7 @@ import {
   isMethodResult,
   isGatewayEvent,
   isRecord,
+  mergeSessionHistoryEntries,
   projectGroup,
   reduceGatewayState,
   selectProfileMain,
@@ -253,6 +254,7 @@ const methodFixtures = (): ReadonlyArray<{
         profileId: PROFILE_A,
         ref: MAIN_A,
         kind: "live",
+        storedSessionId: "main-session-1",
         live: { ref: MAIN_A, kind: "ui", idle: true },
       },
     },
@@ -352,6 +354,31 @@ const methodFixtures = (): ReadonlyArray<{
       method: "auth.status",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, providers: [provider] },
+    },
+    {
+      method: "destination.list",
+      params: profileScopedParams(PROFILE_A),
+      result: {
+        profileId: PROFILE_A,
+        entries: [
+          {
+            target: "conversation:main-session",
+            kind: "conversation",
+            label: "Main",
+            category: "session",
+            pinned: true,
+            activityAt: "2026-09-17T12:00:00.000Z",
+          },
+          {
+            target: "slack:channel:C012345678",
+            kind: "slack",
+            label: "engineering",
+            category: "slack",
+            pinned: false,
+          },
+        ],
+        nextCursor: "slack:channel:C012345678",
+      },
     },
     {
       method: "automation.list",
@@ -894,6 +921,78 @@ describe("gateway state projections", () => {
     expect(conversation?.cursor).toEqual({ epoch: EPOCH_A, seq: 1 });
     expect(conversation?.reconciliations).toEqual([reconciliation]);
   });
+
+  test("deduplicates an automation result across live delivery and history reconciliation", () => {
+    const automationEvent: ZiggyGatewayEvent = {
+      event: "automation-result",
+      eventId: "automation-1",
+      epoch: EPOCH_A,
+      seq: 1,
+      profileId: PROFILE_A,
+      session: MAIN_A,
+      payload: {
+        automationId: "daily-report",
+        runId: "run-1",
+        text: "The report is ready.",
+        timestamp: "2026-09-17T12:00:00.000Z",
+      },
+    };
+    let state = reduceGatewayState(initialGatewayState(PROFILE_A), {
+      type: "session.opened",
+      session: {
+        profileId: PROFILE_A,
+        ref: MAIN_A,
+        kind: "live",
+        storedSessionId: "main-session-1",
+        live: { ref: MAIN_A, kind: "ui", idle: true },
+      },
+    });
+    state = reduceGatewayState(state, {
+      type: "event.received",
+      event: automationEvent,
+    });
+    state = reduceGatewayState(state, {
+      type: "history.loaded",
+      result: {
+        profileId: PROFILE_A,
+        ref: MAIN_A,
+        entries: [
+          {
+            kind: "automation-result",
+            automationId: "daily-report",
+            runId: "run-1",
+            text: "The report is ready.",
+            timestamp: "2026-09-17T12:00:00.000Z",
+          },
+        ],
+        terminalState: "completed",
+        truncated: false,
+        hasMore: false,
+      },
+    });
+
+    expect(selectProfileMain(state, PROFILE_A)?.history).toHaveLength(1);
+    expect(selectProfileMain(state, PROFILE_A)?.status).toBe("idle");
+  });
+
+  test("does not move an old automation result after a newer history page", () => {
+    const oldAutomation = {
+      kind: "automation-result" as const,
+      automationId: "daily-report",
+      runId: "run-old",
+      text: "Old report.",
+      timestamp: "2026-09-16T12:00:00.000Z",
+    };
+    const newerHistory = [
+      {
+        kind: "assistant" as const,
+        text: "Newer response.",
+        timestamp: "2026-09-17T12:00:00.000Z",
+      },
+    ];
+
+    expect(mergeSessionHistoryEntries(newerHistory, [oldAutomation])).toEqual(newerHistory);
+  });
 });
 
 describe("protocol decoder parity", () => {
@@ -979,5 +1078,21 @@ describe("protocol decoder parity", () => {
         payload: { delta: "x", snapshot: "🧠".repeat(2_001) },
       }),
     ).toBe(false);
+    expect(
+      isGatewayEvent({
+        event: "automation-result",
+        eventId: "event-2",
+        epoch: EPOCH_A,
+        seq: 2,
+        profileId: PROFILE_A,
+        session: MAIN_A,
+        payload: {
+          automationId: "daily-report",
+          runId: "run-2",
+          text: "Finished.",
+          timestamp: "2026-09-17T12:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
   });
 });

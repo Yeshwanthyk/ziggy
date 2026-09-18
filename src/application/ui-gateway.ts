@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Context, Deferred, Effect, Option, Schema } from "effect";
 import { makeUiGroupStore, makeUiPinStore } from "../adapters/fs/ui-state";
 import {
@@ -24,6 +24,7 @@ import {
   UI_EVENTS,
   UI_METHODS,
   UiCommandId,
+  UiDestinationListParams,
   type UiEventFrame as UiEventFrameValue,
   type UiGatewayResult,
   type UiRequestEnvelope,
@@ -74,6 +75,10 @@ const decodeRef = Schema.decodeUnknownEffect(UiSessionRefParams, { onExcessPrope
 const decodeText = Schema.decodeUnknownEffect(UiSessionTextParams, { onExcessProperty: "error" });
 
 const decodeHistory = Schema.decodeUnknownEffect(UiSessionHistoryParams, {
+  onExcessProperty: "error",
+});
+
+const decodeDestinationList = Schema.decodeUnknownEffect(UiDestinationListParams, {
   onExcessProperty: "error",
 });
 
@@ -401,6 +406,19 @@ const eventFrame = (
           payload: {
             agentId: event.event.agentId,
             text: wireText(event.event.text, 4_096),
+          },
+        }),
+      );
+    case "automation-result":
+      return decodeEventFrame(
+        withCorrelation({
+          ...base,
+          event: "automation-result",
+          payload: {
+            automationId: event.event.automationId,
+            runId: event.event.runId,
+            text: wireText(event.event.text, 1_024),
+            timestamp: event.event.timestamp,
           },
         }),
       );
@@ -770,6 +788,149 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             })),
           };
         });
+      case "destination.list":
+        return Effect.gen(function* () {
+          const params = yield* decodeDestinationList(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+
+          const branch = yield* route(params.profileId);
+
+          const [stored, external, pinState] = yield* Effect.all([
+            config.sessions
+              .list(branch.target)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
+            branch.registry.destinations,
+            pins
+              .read(branch.target.path)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
+          ]);
+
+          const destinations = new Map<
+            string,
+            {
+              readonly target: string;
+              readonly kind: "conversation" | "telegram" | "discord" | "slack";
+              readonly label?: string;
+              readonly category: "agent" | "session" | "telegram" | "discord" | "slack";
+              readonly pinned: boolean;
+              readonly activityAt?: string;
+              readonly agentId?: string;
+            }
+          >();
+
+          for (const session of stored) {
+            const target = `conversation:${session.id}`;
+
+            const agentConversation = /(?:^|\/)agents\/[^/]+(?:\/|$)/u.test(session.path);
+
+            const agentId = session.path.match(
+              /^local\/agents\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/|$)/u,
+            )?.[1];
+
+            const destination = {
+              target,
+              kind: "conversation",
+              label: boundedText(session.name ?? session.id, 160, "Conversation"),
+              category: agentConversation ? "agent" : "session",
+              pinned: false,
+              activityAt: session.activityAt ?? session.createdAt,
+            } as const;
+
+            destinations.set(
+              target,
+              agentId === undefined ? destination : { ...destination, agentId },
+            );
+          }
+
+          for (const destination of external) {
+            const target = destination.target.target;
+            const kind = destination.target._tag;
+            const category = kind === "conversation" ? "session" : kind;
+            destinations.set(
+              target,
+              destination.label === undefined
+                ? { target, kind, category, pinned: false }
+                : {
+                    target,
+                    kind,
+                    label: boundedText(destination.label, 160, kind),
+                    category,
+                    pinned: false,
+                  },
+            );
+          }
+
+          for (const pin of pinState.pins) {
+            if (pin.ref.profileId !== branch.profileId) continue;
+
+            let sessionId: string | undefined;
+
+            if (pin.ref.kind === "stored") {
+              sessionId = pin.ref.id;
+            } else {
+              const liveKey = pin.ref.key;
+
+              const entry = yield* branch.registry
+                .get(liveKey)
+                .pipe(
+                  Effect.catch((cause) =>
+                    cause.code === "unknown_session"
+                      ? Effect.succeed(undefined)
+                      : Effect.fail(cause),
+                  ),
+                );
+
+              if (entry?.handle.currentSession !== undefined) {
+                const session = yield* entry.handle.currentSession.pipe(
+                  Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                );
+
+                sessionId = session?.id;
+              } else if (liveKey.startsWith("ui/chat-")) {
+                const matches = stored.filter((session) => dirname(session.path) === liveKey);
+
+                if (matches.length === 1) sessionId = matches[0]?.id;
+              }
+            }
+
+            if (sessionId === undefined) continue;
+
+            const destination = destinations.get(`conversation:${sessionId}`);
+
+            if (destination !== undefined) {
+              const pinnedDestination = { ...destination, pinned: true } as const;
+
+              destinations.set(
+                destination.target,
+                pin.label === undefined
+                  ? pinnedDestination
+                  : {
+                      ...pinnedDestination,
+                      label: boundedText(pin.label, 160, "Conversation"),
+                    },
+              );
+            }
+          }
+
+          const ordered = [...destinations.values()]
+            .filter((entry) => params.after === undefined || entry.target > params.after)
+            .sort((left, right) =>
+              left.target < right.target ? -1 : left.target > right.target ? 1 : 0,
+            );
+
+          const entries = ordered.slice(0, 32);
+          const lastEntry = entries.at(-1);
+
+          const result = {
+            profileId: branch.profileId,
+            entries,
+          };
+
+          return ordered.length > entries.length && lastEntry !== undefined
+            ? { ...result, nextCursor: lastEntry.target }
+            : result;
+        });
       case "session.show":
         return Effect.gen(function* () {
           const params = yield* decodeRef(request.params).pipe(
@@ -783,12 +944,21 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
-            return {
+            const current =
+              entry.handle.currentSession === undefined
+                ? undefined
+                : yield* entry.handle.currentSession.pipe(
+                    Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                  );
+
+            const shown = {
               profileId: branch.profileId,
               ref: params.ref,
               kind: "live" as const,
               live: liveSessionProjection(branch.profileId, entry),
             };
+
+            return current === undefined ? shown : { ...shown, storedSessionId: current.id };
           }
 
           const session = yield* config.sessions
@@ -802,6 +972,7 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
             createdAt: session.createdAt,
             entryCount: session.entryCount,
             terminalState: session.terminalState,
+            storedSessionId: session.id,
           };
         });
       case "session.history":
@@ -910,7 +1081,16 @@ export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
 
           const open =
             params.agentId === undefined
-              ? config.agent.openChat(branch.target, context, sessionDirectory, "continue")
+              ? config.agent.openChat(
+                  branch.target,
+                  context,
+                  sessionDirectory,
+                  "continue",
+                  undefined,
+                  params.name === undefined && context.kind === "local"
+                    ? "Local · Main"
+                    : undefined,
+                )
               : config.agent.openSpecialistChat(branch.target, params.agentId);
 
           const metadata =

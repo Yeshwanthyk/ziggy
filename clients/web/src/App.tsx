@@ -39,7 +39,13 @@ const avatar = (name: string, active = false, size = 36) => (
 );
 
 const historyKey = (entry: ZiggySessionHistoryEntry, index: number): string =>
-  `${entry.timestamp}:${entry.kind}:${entry.kind === "tool" ? entry.toolName : entry.text.slice(0, 24)}:${index}`;
+  `${entry.timestamp}:${entry.kind}:${
+    entry.kind === "tool"
+      ? entry.toolName
+      : entry.kind === "automation-result"
+        ? `${entry.automationId}:${entry.runId}`
+        : entry.text.slice(0, 24)
+  }:${index}`;
 
 const sameSession = (left: ZiggySessionRef | undefined, right: ZiggySessionRef): boolean =>
   left?.profileId === right.profileId &&
@@ -110,7 +116,7 @@ function ActionRow({
   );
 }
 
-function HistoryEntry({
+export function HistoryEntry({
   assistantName,
   entry,
 }: {
@@ -124,6 +130,16 @@ function HistoryEntry({
         <span>{entry.toolName}</span>
         <span>{entry.phase === "start" ? "started" : entry.failed ? "failed" : "finished"}</span>
       </div>
+    );
+  }
+  if (entry.kind === "automation-result") {
+    return (
+      <article className="message assistant automation-result">
+        <div className="message-author">Automation · {entry.automationId}</div>
+        <div className="message-body">
+          <MessageMarkdown>{entry.text}</MessageMarkdown>
+        </div>
+      </article>
     );
   }
   return (
@@ -580,6 +596,13 @@ export function App() {
               {sidebarItems.automations.map((automation) => (
                 <AutomationRow
                   automation={automation}
+                  runState={
+                    gateway.automationRuns?.[automation.id]?.state === "running"
+                      ? "running"
+                      : gateway.startingAutomation === automation.id
+                        ? "starting"
+                        : gateway.automationRuns?.[automation.id]?.state
+                  }
                   busy={
                     !connected ||
                     gateway.sidebarBusy ||
@@ -898,6 +921,7 @@ export function App() {
         automation={selectedAutomation}
         available={connected}
         detail={gateway.automationDetail}
+        destinations={gateway.automationDestinations}
         onOpenChange={(open) => {
           if (open) return;
           setSelectedAutomationId(undefined);

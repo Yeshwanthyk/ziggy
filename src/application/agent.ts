@@ -13,6 +13,10 @@ import type {
 } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
+import type {
+  AutomationConversationDeliveryFailed,
+  AutomationConversationResult,
+} from "../domain/automation";
 
 export interface ChatPromptImage {
   readonly type: "image";
@@ -43,6 +47,13 @@ export type ChatEvent =
       readonly agentId: string;
       readonly text: string;
     }
+  | {
+      readonly kind: "automation-result";
+      readonly automationId: string;
+      readonly runId: string;
+      readonly text: string;
+      readonly timestamp: string;
+    }
   | { readonly kind: "settled" }
   | { readonly kind: "error"; readonly message: string };
 
@@ -62,6 +73,9 @@ export interface ChatHandle {
   readonly isIdle: boolean;
   /** The current persisted Pi transcript identity, resolved at read time. */
   readonly currentSession?: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
+  readonly appendAutomationResult?: (
+    result: AutomationConversationResult,
+  ) => Effect.Effect<boolean, AutomationConversationDeliveryFailed>;
   readonly prompt: (
     text: string,
     options?: ChatPromptOptions,
@@ -104,6 +118,7 @@ export interface ZiggyAgentApi {
     sessionDirectory: string,
     sessionMode?: ChatSessionMode,
     modelOverride?: ChatModelOverride,
+    sessionName?: string,
   ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
   readonly openSpecialistChat: (
     target: ProfileTarget,
@@ -148,7 +163,16 @@ export const ZiggyAgentLive = Layer.effect(
         sessionDirectory: string,
         sessionMode?: ChatSessionMode,
         modelOverride?: ChatModelOverride,
-      ) => piAgent.openChat(target, context, sessionDirectory, sessionMode, modelOverride),
+        sessionName?: string,
+      ) =>
+        piAgent.openChat(
+          target,
+          context,
+          sessionDirectory,
+          sessionMode,
+          modelOverride,
+          sessionName,
+        ),
       openSpecialistChat: (target, agentId) => piAgent.openSpecialistChat(target, agentId),
       runSpecialist: (target, agentId, task, context) =>
         piAgent.runSpecialist(target, agentId, task, context),

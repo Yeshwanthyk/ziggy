@@ -904,3 +904,63 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 **Release preparation: 0.2.10.** Updated package, installer, README/changelog and version assertions. The user selected 0.2.10 because the existing local executable identifies as 0.2.9 while the source was 0.2.6 and the latest public release was 0.2.5. Publication will include the existing main-branch changes and the Jev extension; unrelated uncommitted research remains outside the release.
 
 **Release CI dependency fix.** The clean GitHub v0.2.10 build exposed a missing independent `clients/web` install (`vite/client` types were unavailable). Added its frozen-lockfile install before the existing build/check gates. Sol/medium verified the full `bun run check` in a clean archived checkout; no gate was removed. The v0.2.10 tag stays immutable; its exact source is being built separately for publication.
+
+## Deliver automation results into durable conversations
+
+- Added canonical `conversation:<stored-session-id>` automation targets. Every run still executes in a fresh automation session, then the selected Profile registry appends a provenance-labeled Pi custom message to the destination transcript without triggering a model turn.
+- Registry admission now fences live UI and channel session opening, prompting, automation append, and closing. Busy conversations fail retriably; unopened stored transcripts use the existing safe Profile-local session resolver. Durable receipts deduplicate retries across the full Pi entry tree, and a write is successful only after the JSONL receipt can be reloaded.
+- Added stored session identity to session inspection plus automation-result live events and history projection. CLI runs without a scoped registry report `owner-unavailable`; delivery failures remain explicit in the automation ledger.
+- Verification: the full `bun run check` gate passed, including 21 UI SDK tests, 59 web tests, synchronized generated assets/catalog/docs, and the UI conversation picker/documentation changes. The complete core, extension, and tooling suite passed with 744 tests and 2,744 assertions. No live Profile, transcript, external message, installation, or resident restart was used.
+
+## Select multiple automation destinations from one catalog
+
+- Added one Profile-scoped, paginated destination catalog over complete stored Pi sessions and the resident's observed Telegram, Discord, and Slack addresses. Canonical automation targets remain the only delivery identity; discovery is memory-only and never gates a saved target.
+- Channel boundaries retain signed Telegram chat IDs, Discord channel/thread IDs and available names, plus Slack channel/thread addresses. Configured Slack policy IDs seed the catalog, with one best-effort `conversations.info` name lookup and ID fallback; `slack.json` policy remains unchanged.
+- Replaced the conversation-only web resolver with one SDK catalog and multi-destination add/remove rows. Mixed targets, `origin`, `all`, and saved targets missing from discovery remain editable, and removing the last target writes `none`.
+- Focused verification covers Profile isolation, more than one catalog page, configured Slack names and fallback, transport address metadata, restart-safe saved selections, SDK method parity, and mixed add/remove behavior. No live Profile, external message, installation, or resident restart was used.
+
+## Verify destination selection end to end
+
+- Independent verification found and corrected mismatched cursor/sort ordering and overlong display labels. Catalog pages now use consistent canonical ordering and bound only display text; regression coverage includes mixed-case/punctuation IDs and Unicode labels.
+- Restored existing pin names for stored conversations and resolvable live handles without reopening stale pins or adding persistent destination metadata. Removed a duplicate web state reset.
+- Bounded optional Slack name lookups to two seconds so a stalled metadata request falls back to the channel ID instead of blocking gateway startup; verified with Effect's test clock.
+- The independent isolated browser check added and removed conversations, saved mixed transport targets plus `origin`/`all`, retained them after resident restart, removed an undiscovered target, and saved `none` after removing the last target. No provider run or external message was sent.
+- Final `bun run check` passed; `bun run test` passed 750 tests with 2,763 assertions. An initial full run failed the resident hard-crash test, which passed in isolation and on the full rerun; no lifecycle code was changed. Astra independently rechecked the fixes with 99 passing tests and reported no remaining blocking findings.
+
+## Release 0.2.7 locally
+
+- Bumped the CLI version, README, release notes, installer platform message, and version assertions for conversation delivery and shared multi-destination selection.
+- Build and smoke the standalone artifact before updating the installed CLI and restarting the existing Squarey resident for user testing.
+
+## Release 0.2.8 locally
+
+- Bumped the CLI and release surfaces for native conversation naming. Existing Squarey sessions will receive semantic names through Pi session-info metadata after a copied-transcript rehearsal, with original transcript backups and unchanged session identity.
+- The shared Pi pre-turn hook supplies first-message names for CLI and TUI sessions, including newly switched sessions. Semantic hints reserve room for the topic; explicit names and clears remain authoritative.
+- Release checks, full build tests, and the checkout-denied standalone smoke passed. Installed the verified 0.2.8 binary, stopped Squarey for the metadata update, and appended native names to 252 existing session files with original backups and byte-prefix/ID/reload assertions. Restarted successfully; the live SDK catalog returned 249 conversations with zero raw-ID labels, both existing pin titles, and all four Slack room names. No provider call or outbound message was initiated for verification.
+
+## Name stored conversations with Pi session metadata
+
+- Project the latest Pi `session_info` display name into stored session metadata and use it in the automation destination catalog, while keeping canonical session IDs unchanged and applying explicit UI pin labels last.
+- New conversations write one bounded Pi-native name on their first valid prompt. Stable local and channel routes lead with semantic identity and add the first-message topic; otherwise the first user message supplies the title. Existing names and explicit clears are never overwritten. One-off specialist runs include the agent identity and task topic, while the direct UI specialist route remains one continuing session per agent.
+- Focused adapter and UI tests cover latest-name extraction, explicit clearing, bounded fallback, stable identity, catalog labels, and pin precedence. No live Profile, transcript, external message, installation, or resident restart was used.
+
+## Make automation destinations searchable and run state readable
+
+- Enriched destination discovery with pinned, agent/session, and channel categories plus latest message or automation-result activity. Later naming metadata does not make historical conversations appear recent; exact single-session UI pin directories restore pinned grouping after a resident restart.
+- Replaced the automation destination select with a searchable, filtered picker. All destinations group pinned conversations first, followed by agents, sessions, Slack, Discord, and Telegram, with recent conversation activity first and exact activity times available on hover.
+- Automation details now feature an active run over a newer skipped-busy attempt, show elapsed in-progress state, explain skipped and pending delivery clearly, and render readable per-destination outcomes in both featured and recent runs.
+- Verification: 13 focused core tests, 21 SDK tests, 6 focused picker/detail tests, the 66-test web check and build, targeted source lint, formatting, and repository TypeScript checks passed.
+
+## Automation run visibility and release 0.2.9
+
+- Poll recorded run history while connected; show starting/running/completed/failed state in the sidebar, keep running jobs inspectable, and disable repeat execution while active. A timed-out request reconciles durable status without redispatching.
+- Keep the active or latest non-busy run featured so a later skipped duplicate cannot hide execution or completion. Show elapsed time and named per-target results directly in run details.
+- Astra review found reconnect state leakage and stale run-history errors after recovery; both were fixed with focused regressions. Browser simulation additionally caught a completed run being hidden behind a newer busy attempt; fixed and regression-tested.
+- Full repository check passed, including SDK and web tests. Isolated browser proof exercised search, agent filtering, two saved destinations, automatic running-state refresh, and simulated completion with visible per-target outcomes. Simulated records were written only to the disposable preview Profile.
+- Read-only live evidence: Squarey's original LinkedIn jobs manual run completed at 2026-09-17T22:17:11Z; its stored outcomes record both the conversation and Slack channel as delivered. The second manual attempt was skipped-busy. No live run or outbound message was initiated during this verification.
+
+## Release 0.2.11 compatibility recovery
+
+- Merged the exact installed 0.2.9 tip (`79d7bf1`) into the Jev-complete release line without including its dangling successor. The integration retains the optional Jev package and the removal of the four legacy fixed browser workflow tools while restoring durable `conversation:<id>` automation delivery, destination discovery, native session naming, and web run visibility.
+- Resolved release surfaces to 0.2.11 and regenerated the builtin catalog and web assets from source. Root and `clients/web` dependencies were installed with frozen lockfiles; the pinned Effect submodule was initialized at `6184a7dc`.
+- Verification: `bun run check` passed, including 21 UI SDK tests and 69 web tests. `bun test ./test ./extensions ./tooling` passed 759 tests with 2,727 assertions and zero failures, including the focused automation conversation delivery and Jev suites. No live API call, installation, publication, Squarey edit, or resident stop/restart was performed.

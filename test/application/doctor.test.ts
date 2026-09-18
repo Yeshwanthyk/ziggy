@@ -188,7 +188,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "ok",
     ]);
     expect(rendered.exitCode).toBe(0);
-    expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.2.10");
+    expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.2.11");
     expect(report.checks.find((check) => check.id === "pi_docs")?.message).toMatch(
       /^@earendil-works\/pi-coding-agent@0\.84\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
     );
@@ -234,7 +234,7 @@ test("doctor uses the ProfileExtensions service without publishing or activating
     expect(report.checks.find((check) => check.id === "resources")).toEqual({
       id: "resources",
       severity: "ok",
-      message: "5 bundled factories, 0 Profile extension entrypoints, and 3 skill roots selected",
+      message: "6 bundled factories, 0 Profile extension entrypoints, and 3 skill roots selected",
     });
     expect(await tree(profilePath)).toEqual(before);
   } finally {

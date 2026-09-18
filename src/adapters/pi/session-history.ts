@@ -13,6 +13,7 @@ import {
 } from "../../domain/session";
 import { showProfileSession } from "./sessions";
 import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
+import { AutomationResultDetails } from "./automation-result";
 
 export const MAX_HISTORY_ENTRIES = 8;
 
@@ -55,6 +56,8 @@ const isStringSchema = Schema.is(Schema.String);
 const isRawRecordSchema = Schema.is(RawRecord);
 
 const isRawArraySchema = Schema.is(Schema.Array(RawJson));
+
+const isAutomationResultDetails = Schema.is(AutomationResultDetails);
 
 const isString = (value: RawJson | undefined): value is string => isStringSchema(value);
 
@@ -111,6 +114,21 @@ const projectRecord = (
   const timestamp = validTimestamp(record.timestamp, new Date(0).toISOString());
   const message = recordValue(record.message);
   const role = stringValue(message?.role);
+
+  if (type === "custom_message" && stringValue(record.customType) === "ziggy.automation-result") {
+    const details = recordValue(record.details);
+    const text = boundedText(messageText(record.content), MAX_HISTORY_TEXT_CODE_POINTS);
+
+    if (isAutomationResultDetails(details) && text.length > 0) {
+      return {
+        kind: "automation-result",
+        timestamp,
+        automationId: details.automationId,
+        runId: details.runId,
+        text,
+      };
+    }
+  }
 
   if (type === "message" && role === "user") {
     const text = boundedText(messageText(message), MAX_HISTORY_TEXT_CODE_POINTS);

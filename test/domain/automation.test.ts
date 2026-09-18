@@ -147,6 +147,7 @@ describe("automation definition", () => {
       "discord:channel:1234567890",
       "slack:channel:C0123ABCDE",
       "slack:channel:G0123ABCDE:thread:1712345678.123456",
+      "conversation:0199aabb-ccdd-7000-8000-001122334455",
     ];
 
     const parsed = await Promise.all(
@@ -165,6 +166,8 @@ describe("automation definition", () => {
       "slack:channel:c0123ABCDE",
       "slack:channel:C0123ABCDE:thread:1.2",
       "telegram:42",
+      "conversation:../escape",
+      "conversation:",
     ];
 
     const results = await Promise.all(

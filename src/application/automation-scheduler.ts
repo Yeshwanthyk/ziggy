@@ -32,9 +32,10 @@ import {
 import type { ProfileTarget } from "../domain/profile";
 import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { Automations, type AutomationsApi } from "./automations";
+import type { ChatRegistryApi } from "./chat-registry";
 
 // oxfmt-ignore
-export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle, registry: ChatRegistryApi) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
 
 // oxfmt-ignore
 export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerApi>()("ziggy/AutomationScheduler") {}
@@ -255,6 +256,7 @@ export const makeAutomationScheduler = (
   const run = (
     target: ProfileTarget,
     owner: GatewayOwnerHandle,
+    registry: ChatRegistryApi,
   ): Effect.Effect<never, AutomationSchedulerError> =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -267,12 +269,17 @@ export const makeAutomationScheduler = (
           Effect.gen(function* () {
             for (const claim of result.claimed) {
               const worker = automations
-                .run(target, claim.automationId, {
-                  kind: "scheduled",
-                  scheduledFor: new Date(claim.scheduledForMs).toISOString(),
-                  scheduleFingerprint: claim.scheduleFingerprint,
-                  residentOwnerId: owner.ownerId,
-                })
+                .run(
+                  target,
+                  claim.automationId,
+                  {
+                    kind: "scheduled",
+                    scheduledFor: new Date(claim.scheduledForMs).toISOString(),
+                    scheduleFingerprint: claim.scheduleFingerprint,
+                    residentOwnerId: owner.ownerId,
+                  },
+                  { registry },
+                )
                 .pipe(
                   Effect.catchTag("AutomationDatabaseError", (failure) =>
                     Deferred.fail(fatal, failure).pipe(Effect.asVoid),

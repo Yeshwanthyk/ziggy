@@ -9,6 +9,27 @@ const clientFrom = (response: () => Response): HttpClient.HttpClient =>
   HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, response())));
 
 describe("Slack HTTP adapter", () => {
+  test("reads one conversation name without listing the workspace", async () => {
+    let requestUrl = "";
+
+    const client = HttpClient.make((request) => {
+      requestUrl = request.url;
+
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response('{"ok":true,"channel":{"id":"C012345678","name":"engineering"}}'),
+        ),
+      );
+    });
+
+    const channel = await Effect.runPromise(
+      makeSlackApi(client).getConversation("bot-secret", "C012345678"),
+    );
+
+    expect(channel).toEqual({ id: "C012345678", name: "engineering" });
+    expect(requestUrl).toBe("https://slack.com/api/conversations.info?channel=C012345678");
+  });
   test("adds and removes source-message progress reactions", async () => {
     const requests: Array<{ readonly body: string; readonly url: string }> = [];
 

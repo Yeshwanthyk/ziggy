@@ -126,6 +126,10 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     openMain: vi.fn(async () => mainRef),
     openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
+    listDestinations: vi.fn(async () => ({
+      profileId: profile.profileId,
+      entries: [],
+    })),
     listPins: vi.fn(async () => ({ profileId: profile.profileId, pins: [], revision: 0 })),
     listAgents: vi.fn(async () => ({ profileId: profile.profileId, agents: [] })),
     readAgentDocument: vi.fn(async (_profileId, agentId) => ({
@@ -377,6 +381,54 @@ describe("useZiggyGateway", () => {
     expect(hook.result.current.busy).toBe(false);
   });
 
+  it("shows one automation result after live delivery and authoritative history merge", async () => {
+    let emit: (event: ZiggyClientEvent) => void = () => undefined;
+    const reload = deferred<ZiggySessionHistoryResult>();
+    const { client, fixture } = makeClient({
+      onAny: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    });
+    const hook = await connectHook(client);
+    vi.mocked(fixture.getSessionHistory).mockImplementationOnce(() => reload.promise);
+    const entry = {
+      kind: "automation-result" as const,
+      automationId: "daily-report",
+      runId: "run-1",
+      text: "The report is ready.",
+      timestamp: "2026-09-17T12:00:00.000Z",
+    };
+
+    act(() => {
+      emit({
+        event: "automation-result",
+        eventId: "automation-1",
+        epoch: "epoch-1",
+        seq: 300,
+        profileId: profile.profileId,
+        session: mainRef,
+        payload: {
+          automationId: entry.automationId,
+          runId: entry.runId,
+          text: entry.text,
+          timestamp: entry.timestamp,
+        },
+      });
+      emit({
+        event: "history-reconciliation",
+        profileId: profile.profileId,
+        session: mainRef,
+        reason: "replay-gap",
+      });
+    });
+    await act(async () => reload.resolve(historyResult(mainRef, [...initialHistory, entry])));
+
+    expect(hook.result.current.history.filter((item) => item.kind === "automation-result")).toEqual(
+      [entry],
+    );
+  });
+
   it("keeps one startup connection alive through Strict Mode effect replay", async () => {
     const { client, fixture } = makeClient();
     const connector = vi.fn<GatewayConnector>(() => client);
@@ -500,6 +552,16 @@ describe("useZiggyGateway", () => {
       kind: "live",
       key: "ui/group-planning",
     } as const satisfies ZiggySessionRef;
+    const slackRef = {
+      profileId: profile.profileId,
+      kind: "live",
+      key: "slack/C123",
+    } as const satisfies ZiggySessionRef;
+    const storedRef = {
+      profileId: profile.profileId,
+      kind: "stored",
+      id: "session-archive-1",
+    } as const satisfies ZiggySessionRef;
     const { client, fixture } = makeClient({
       listSessions: vi.fn(async () => ({
         profileId: profile.profileId,
@@ -516,13 +578,24 @@ describe("useZiggyGateway", () => {
               defaultRecipient: { kind: "all" as const },
             },
           },
+          { ref: slackRef, kind: "slack" as const, idle: true },
         ],
-        stored: [],
+        stored: [
+          {
+            ref: storedRef,
+            createdAt: "2026-09-17T12:00:00.000Z",
+            entryCount: 3,
+            terminalState: "completed" as const,
+          },
+        ],
       })),
       listPins: vi.fn(async () => ({
         profileId: profile.profileId,
         revision: 4,
-        pins: [{ id: "main-pin", ref: mainRef, label: "Home", order: 0 }],
+        pins: [
+          { id: "main-pin", ref: mainRef, label: "Home", order: 0 },
+          { id: "slack-pin", ref: slackRef, label: "Team updates", order: 1 },
+        ],
       })),
       listAgents: vi.fn(async () => ({
         profileId: profile.profileId,
@@ -549,6 +622,26 @@ describe("useZiggyGateway", () => {
           { id: "broken", valid: false, lifecycle: "conflict" as const, message: "invalid" },
         ],
       })),
+      listDestinations: vi.fn(async () => ({
+        profileId: profile.profileId,
+        entries: [
+          {
+            target: "slack:channel:C012345678",
+            kind: "slack" as const,
+            label: "Team updates",
+            category: "slack" as const,
+            pinned: false,
+          },
+          {
+            target: "conversation:session-archive-1",
+            kind: "conversation" as const,
+            label: "session-archive-1",
+            category: "session" as const,
+            pinned: false,
+            activityAt: "2026-09-17T12:00:00.000Z",
+          },
+        ],
+      })),
     });
     const hook = await connectHook(client);
 
@@ -562,7 +655,33 @@ describe("useZiggyGateway", () => {
         subtitle: "Main conversation",
         active: false,
       },
+      {
+        pinId: "slack-pin",
+        ref: slackRef,
+        title: "Team updates",
+        subtitle: "Pinned conversation",
+        active: false,
+      },
     ]);
+    expect(hook.result.current.automationDestinations).toEqual(
+      expect.arrayContaining([
+        {
+          target: "slack:channel:C012345678",
+          kind: "slack",
+          label: "Team updates",
+          category: "slack",
+          pinned: false,
+        },
+        {
+          target: "conversation:session-archive-1",
+          kind: "conversation",
+          label: "session-archive-1",
+          category: "session",
+          pinned: false,
+          activityAt: "2026-09-17T12:00:00.000Z",
+        },
+      ]),
+    );
     expect(hook.result.current.agents).toEqual([
       { id: "ada", description: "Plans implementation" },
     ]);
@@ -1325,4 +1444,100 @@ describe("useZiggyGateway", () => {
 
     expect(hook.result.current.agentDefinitionDetail).toBeUndefined();
   });
+});
+
+it("reconciles a timed-out run with durable running state without sending it twice", async () => {
+  const run = {
+    ...automationRun("morning-weather", 100),
+    state: "running" as const,
+    finishedAtMs: null,
+  };
+  const { client, fixture } = makeClient({
+    runAutomation: vi.fn(async () => {
+      throw new ZiggyRequestOutcomeUnknownError("automation.run", {
+        profileId: profile.profileId,
+        automationId: "morning-weather",
+        commandId: "test-run",
+      });
+    }),
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [run, { ...automationRun("morning-weather", 200), state: "skipped-busy" as const }],
+    })),
+  });
+  const hook = await connectHook(client);
+  await act(async () => {
+    await hook.result.current.runAutomation("morning-weather");
+  });
+  expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("running");
+  expect(fixture.runAutomation).toHaveBeenCalledTimes(1);
+  expect(hook.result.current.localError).toBeUndefined();
+  expect(hook.result.current.sidebarBusy).toBe(false);
+});
+
+it("clears a recovered run-history error while preserving the definition", async () => {
+  let unavailable = true;
+  const { client } = makeClient({
+    listAutomationRuns: vi.fn(async () => {
+      if (unavailable) throw new Error("journal unavailable");
+      return { profileId: profile.profileId, runs: [automationRun("morning-weather", 100)] };
+    }),
+  });
+  const hook = await connectHook(client);
+  await act(async () => hook.result.current.loadAutomationDetail("morning-weather"));
+  expect(hook.result.current.automationDetail?.errors[0]?.source).toBe("runs");
+  unavailable = false;
+  await act(async () => hook.result.current.runAutomation("morning-weather"));
+  expect(hook.result.current.automationDetail?.errors).toEqual([]);
+  expect(hook.result.current.automationDetail?.runs).toHaveLength(1);
+  expect(hook.result.current.automationDetail?.definition?.id).toBe("morning-weather");
+});
+
+it("clears prior endpoint run states before the replacement endpoint responds", async () => {
+  const { client: first } = makeClient({
+    listAutomations: vi.fn(async () => ({
+      profileId: profile.profileId,
+      automations: [{ id: "morning-weather", valid: true, lifecycle: "active" as const }],
+    })),
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [{ ...automationRun("morning-weather", 100), state: "running" as const }],
+    })),
+  });
+  const pending = deferred<Awaited<ReturnType<GatewayClient["listAutomationRuns"]>>>();
+  const { client: second } = makeClient({ listAutomationRuns: vi.fn(() => pending.promise) });
+  let selected = first;
+  const hook = renderHook(() => useZiggyGateway(() => selected));
+  await act(async () =>
+    hook.result.current.connect({ url: "ws://127.0.0.1:9876/ws", token: "first" }),
+  );
+  await waitFor(() =>
+    expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("running"),
+  );
+  selected = second;
+  await act(async () =>
+    hook.result.current.connect({ url: "ws://127.0.0.1:9877/ws", token: "second" }),
+  );
+  expect(hook.result.current.automationRuns).toEqual({});
+  pending.resolve({ profileId: profile.profileId, runs: [] });
+  await act(async () => pending.promise);
+});
+
+it("shows the completed run after a later busy attempt was skipped", async () => {
+  const { client } = makeClient({
+    listAutomationRuns: vi.fn(async () => ({
+      profileId: profile.profileId,
+      runs: [
+        {
+          ...automationRun("morning-weather", 200),
+          state: "skipped-busy" as const,
+          startedAtMs: null,
+        },
+        automationRun("morning-weather", 100),
+      ],
+    })),
+  });
+  const hook = await connectHook(client);
+  await act(async () => hook.result.current.runAutomation("morning-weather"));
+  expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("completed");
 });

@@ -1,12 +1,14 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary, ziggy-effect/no-native-promise-ownership, ziggy-effect/no-error-constructor -- tests are approved execution boundaries and use typed adapter-error fixtures. */
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Result } from "effect";
+import { TestClock } from "effect/testing";
 import { SlackApiError } from "ziggy/adapters/slack/api";
 import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
 import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
 import { SlackHealthProjectionError } from "ziggy/domain/slack-health";
 import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {
   classifySlackCommand,
   makeSlackGateway,
@@ -37,6 +39,100 @@ const message = (overrides: Partial<SlackInboundMessage> = {}): SlackInboundMess
 });
 
 describe("Slack gateway boundary", () => {
+  test("seeds configured channels with names and starts despite failed or stalled name lookups", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const opened = yield* Deferred.make<void>();
+          const registry = yield* makeChatRegistry();
+
+          const transport: SlackTransport = {
+            addReaction: () => Effect.void,
+            authTest: () => Effect.succeed({ userId: "UBOT" }),
+            getConversation: (_token, channel) =>
+              channel === "C012345678"
+                ? Effect.succeed({ id: channel, name: "engineering" })
+                : channel === "C222222222"
+                  ? Effect.never
+                  : Effect.fail(
+                      new SlackApiError({
+                        operation: "getConversation",
+                        reason: "authentication",
+                        retriable: false,
+                        message: "missing scope",
+                        cause: {},
+                      }),
+                    ),
+            getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+            openSocket: () =>
+              Deferred.succeed(opened, undefined).pipe(
+                Effect.as({
+                  next: Effect.never,
+                  nextConnectionState: Effect.never,
+                  close: Effect.void,
+                }),
+              ),
+            postMessage: () => Effect.succeed({ ts: "1.0" }),
+            removeReaction: () => Effect.void,
+            setStatus: () => Effect.void,
+            updateMessage: () => Effect.void,
+          };
+
+          const agent: ZiggyAgentApi = {
+            runOnce: () => Effect.succeed(0),
+            openTui: () => Effect.succeed(0),
+            openChat: () => Effect.never,
+            openSpecialistChat: () => Effect.never,
+            runSpecialist: () => Effect.never,
+          };
+
+          yield* makeSlackGateway(agent, transport)
+            .runLoop(
+              { path: "/profile", name: "Profile" },
+              {
+                botToken: "bot-token",
+                appToken: "app-token",
+                ownerUserId: "U123",
+                channels: {
+                  C012345678: "always",
+                  C987654321: "mention",
+                  C222222222: "mention",
+                },
+              },
+              registry,
+            )
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(2_000);
+          yield* Deferred.await(opened);
+
+          expect(yield* registry.destinations).toEqual([
+            {
+              target: {
+                _tag: "slack",
+                target: "slack:channel:C012345678",
+                channelId: "C012345678",
+              },
+              label: "engineering",
+            },
+            {
+              target: {
+                _tag: "slack",
+                target: "slack:channel:C222222222",
+                channelId: "C222222222",
+              },
+            },
+            {
+              target: {
+                _tag: "slack",
+                target: "slack:channel:C987654321",
+                channelId: "C987654321",
+              },
+            },
+          ]);
+        }),
+      ).pipe(Effect.provide(TestClock.layer({}))),
+    );
+  });
   test("maps an owner DM to owner memory without changing its chat route or thread", () => {
     expect(normalizeSlackMessage(message({ threadTs: "0.9" }), "UBOT", "U123")).toEqual({
       chatKey: "user-U123",

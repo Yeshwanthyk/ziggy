@@ -29,6 +29,7 @@ import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { specialistRuntime } from "ziggy/adapters/pi/specialist";
+import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   appendEphemeralPromptContext,
@@ -82,6 +83,28 @@ const temporaryProfile = async (): Promise<string> => {
 
   return profilePath;
 };
+
+test("Pi session names prefer semantic identity, bound fallback text, and never overwrite", () => {
+  const semantic = SessionManager.inMemory("/profile");
+  ensurePiSessionName(semantic, "Agent · Ada", "Review the gateway");
+  expect(semantic.getSessionName()).toBe("Agent · Ada · Review the gateway");
+
+  ensurePiSessionName(semantic, "Agent · Reviewer", "Replace the existing identity");
+  expect(semantic.getSessionName()).toBe("Agent · Ada · Review the gateway");
+
+  const fallback = SessionManager.inMemory("/profile");
+  ensurePiSessionName(fallback, undefined, `  ${"x".repeat(120)}\nignored  `);
+  expect(fallback.getSessionName()).toBe("x".repeat(80));
+
+  const cleared = SessionManager.inMemory("/profile");
+  cleared.appendSessionInfo("");
+  ensurePiSessionName(cleared, "Local · Main", "Do not restore a cleared name");
+  expect(cleared.getSessionName()).toBeUndefined();
+
+  const longRoute = SessionManager.inMemory("/profile");
+  ensurePiSessionName(longRoute, "x".repeat(100), "Distinct task");
+  expect(longRoute.getSessionName()).toBe(`${"x".repeat(40)} · Distinct task`);
+});
 
 const makeProfileExtensionsForRuntime = (): ProfileExtensionsApi => {
   const unused = (): Effect.Effect<never, ProfileExtensionPreflightFailed> =>
@@ -335,6 +358,7 @@ describe("Pi provider failure classification", () => {
     let releaseAbort: (() => void) | undefined;
     const listeners = new Set<AgentSessionEventListener>();
     const events: Array<ChatEvent> = [];
+    const sessionManager = SessionManager.inMemory("/profile");
 
     const handle = makeSessionChatHandle(
       "/profile",
@@ -352,6 +376,8 @@ describe("Pi provider failure classification", () => {
         },
         steer: () => Promise.resolve(),
         followUp: () => Promise.resolve(),
+        sendCustomMessage: () => Promise.resolve(),
+        sessionManager,
         subscribe: (listener) => {
           listeners.add(listener);
 

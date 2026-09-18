@@ -177,6 +177,11 @@ Open **OAuth & Permissions**. Under **Bot Token Scopes**, not User Token Scopes,
 - `groups:history`
 - `mpim:history`
 
+For friendly destination names in the web automation picker, also add the read scope matching each
+conversation type you use: `channels:read`, `groups:read`, `im:read`, and `mpim:read`. Ziggy makes
+one bounded `conversations.info` lookup for each configured or newly observed Slack address. A
+missing scope does not stop the resident or delivery; the picker shows the canonical channel ID.
+
 `chat:write` also authorizes `assistant.threads.setStatus`; `reactions:write` authorizes the 👀, ✅,
 and ❌ source-message lifecycle. `files:read` allows the bot to receive usable private-file metadata
 and download owner-attached images. Install or reinstall the app after adding this scope. Without

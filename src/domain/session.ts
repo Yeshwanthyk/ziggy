@@ -31,8 +31,11 @@ export interface SessionUsage {
 export interface SessionMetadata {
   readonly path: string;
   readonly id: string;
+  readonly name?: string;
   readonly kind: "root" | "child";
   readonly createdAt: string;
+  /** Latest persisted conversation message timestamp; metadata-only entries do not advance it. */
+  readonly activityAt?: string;
   readonly entryCount: number;
   readonly parent: SessionReferenceMetadata | undefined;
   readonly parentUnknown: boolean;
@@ -79,6 +82,13 @@ export type SessionHistoryEntry =
       readonly phase: "start" | "end";
       readonly toolName: string;
       readonly failed: boolean;
+    }
+  | {
+      readonly kind: "automation-result";
+      readonly timestamp: string;
+      readonly automationId: string;
+      readonly runId: string;
+      readonly text: string;
     };
 
 export interface SessionHistoryPage {

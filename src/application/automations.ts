@@ -36,6 +36,7 @@ import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
 import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
 import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
+import type { ChatRegistryApi } from "./chat-registry";
 
 export type AutomationError =
   | AutomationInvalid
@@ -51,7 +52,12 @@ export interface AutomationsApi {
     target: ProfileTarget,
     automationId: string,
     trigger: AutomationTrigger,
+    context?: AutomationInvocationContext,
   ) => Effect.Effect<AutomationRunOutcome, AutomationError>;
+}
+
+export interface AutomationInvocationContext {
+  readonly registry?: ChatRegistryApi;
 }
 
 export class Automations extends Context.Service<Automations, AutomationsApi>()(
@@ -196,8 +202,38 @@ const deliver = (
   profile: ProfileTarget,
   target: AutomationTarget,
   reply: string,
+  automationId: string,
+  runId: string,
+  timestamp: string,
+  context?: AutomationInvocationContext,
 ): Effect.Effect<AutomationTargetOutcome> => {
   const operation: Effect.Effect<void, DeliveryFailure> = Effect.gen(function* () {
+    if (Predicate.isTagged("conversation")(target)) {
+      if (context?.registry === undefined) {
+        return yield* Effect.fail<DeliveryFailure>({
+          category: "owner-unavailable",
+          retriable: true,
+        });
+      }
+
+      return yield* context.registry
+        .deliverAutomationResult(profile, {
+          automationId,
+          runId,
+          targetSessionId: target.sessionId,
+          text: reply,
+          timestamp,
+        })
+        .pipe(
+          Effect.mapError(
+            (failure): DeliveryFailure => ({
+              category: failure.category,
+              retriable: failure.retriable,
+            }),
+          ),
+        );
+    }
+
     if (Predicate.isTagged("telegram")(target)) {
       const config = yield* capabilities
         .loadTelegramConfig(profile)
@@ -298,7 +334,7 @@ export const makeAutomations = (
   capabilities: AutomationCapabilities = liveCapabilities,
   runtime: AutomationRunRuntime = liveRunRuntime,
 ): AutomationsApi => ({
-  run: (target, automationIdSource, trigger) =>
+  run: (target, automationIdSource, trigger, context) =>
     Effect.gen(function* () {
       const automationId = yield* validateAutomationId(automationIdSource);
       const admittedAt = yield* runtime.now;
@@ -385,6 +421,7 @@ export const makeAutomations = (
                   join(target.path, "sessions", "automations", automation.id),
                   "fresh",
                   chatModelOverride(automation),
+                  `Automation · ${automation.id}`,
                 ),
                 (handle) => handle.prompt(automation.prompt),
                 (handle) =>
@@ -434,8 +471,22 @@ export const makeAutomations = (
 
         const outcomes: Array<AutomationTargetOutcome> = [];
 
-        for (const destination of resolution.targets)
-          outcomes.push(yield* deliver(capabilities, target, destination, reply));
+        for (const destination of resolution.targets) {
+          const deliveredAt = new Date(yield* runtime.now).toISOString();
+          outcomes.push(
+            yield* deliver(
+              capabilities,
+              target,
+              destination,
+              reply,
+              automation.id,
+              runId,
+              deliveredAt,
+              context,
+            ),
+          );
+        }
+
         const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
 
         return {

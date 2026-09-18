@@ -1,8 +1,13 @@
 import { CircleCheck, CircleX, Clock3, Pencil, RefreshCw, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DefinitionEditor } from "@/components/definition-editor";
-import { parseDefinitionSource } from "@/lib/definition-source";
-import type { AutomationDetail, AutomationSummary } from "@/gateway";
+import { AutomationDestinationPicker } from "@/components/automation-destination-picker";
+import {
+  addAutomationBroadcastTarget,
+  parseDefinitionSource,
+  removeAutomationBroadcastTarget,
+} from "@/lib/definition-source";
+import type { AutomationDestinationOption, AutomationDetail, AutomationSummary } from "@/gateway";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface AutomationDetailDialogProps {
   readonly automation?: AutomationSummary;
   readonly available: boolean;
+  readonly destinations: ReadonlyArray<AutomationDestinationOption>;
   readonly detail?: AutomationDetail;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => void;
@@ -56,6 +62,18 @@ const formatDuration = (started: number | null, finished: number | null): string
   return duration < 1_000 ? `${duration} ms` : `${(duration / 1_000).toFixed(1)} s`;
 };
 
+const formatRunDuration = (run: AutomationDetail["runs"][number]): string => {
+  if (
+    (run.state === "running" || run.state === "claimed") &&
+    run.startedAtMs !== null &&
+    run.finishedAtMs === null
+  ) {
+    return formatDuration(run.startedAtMs, Date.now());
+  }
+
+  return formatDuration(run.startedAtMs, run.finishedAtMs);
+};
+
 const taskFromSource = (source: string): string => {
   const parsed = parseDefinitionSource(source);
   return parsed.structured ? parsed.task : source.trim();
@@ -70,9 +88,63 @@ const taskPreview = (task: string): { readonly clipped: boolean; readonly previe
   return { clipped, preview: `${preview.trimEnd()}…` };
 };
 
+const kindLabel = (kind: AutomationDestinationOption["kind"]): string =>
+  kind === "conversation" ? "Conversation" : `${kind[0]?.toLocaleUpperCase()}${kind.slice(1)}`;
+
+const actionLabel = (kind: AutomationDestinationOption["kind"]): string =>
+  kind === "conversation" ? "Append history" : "Send message";
+
+const runStateLabel = (state: AutomationDetail["runs"][number]["state"]): string => {
+  if (state === "skipped-busy") return "Skipped · already running";
+  if (state === "running") return "Running";
+  if (state === "claimed") return "Waiting to start";
+  return state.replaceAll("-", " ");
+};
+
+const emptyDeliveryCopy = (state: AutomationDetail["runs"][number]["state"]): string => {
+  if (state === "running" || state === "claimed") {
+    return "Broadcast delivery waits for this run to finish.";
+  }
+  if (state === "skipped-busy") {
+    return "This attempt did not start, so no broadcasts were attempted.";
+  }
+  return "No delivery outcomes recorded.";
+};
+
+function RunTargets({
+  destinations,
+  run,
+}: {
+  readonly destinations: ReadonlyArray<AutomationDestinationOption>;
+  readonly run: AutomationDetail["runs"][number];
+}) {
+  if (run.targets.length === 0) {
+    return <p className="detail-muted">{emptyDeliveryCopy(run.state)}</p>;
+  }
+
+  return (
+    <ul className="run-targets">
+      {run.targets.map((target) => {
+        const destination = destinations.find((entry) => entry.target === target.target);
+
+        return (
+          <li key={target.target}>
+            <strong>{destination?.label ?? target.target}</strong>
+            <span>
+              {target.status}
+              {target.failureCategory === null ? "" : ` · ${target.failureCategory}`}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function AutomationDetailDialog({
   automation,
   available,
+  destinations,
   detail,
   onOpenChange,
   onRefresh,
@@ -80,12 +152,22 @@ export function AutomationDetailDialog({
   open,
 }: AutomationDetailDialogProps) {
   const [editing, setEditing] = useState(false);
-  useEffect(() => setEditing(false), [automation?.id, open]);
+  const [destinationKey, setDestinationKey] = useState("");
+  const [destinationError, setDestinationError] = useState<string>();
+  const [savingDestination, setSavingDestination] = useState(false);
+  useEffect(() => {
+    setEditing(false);
+    setDestinationKey("");
+    setDestinationError(undefined);
+  }, [automation?.id, open]);
   const timezone = automation?.timezone;
   const selectedSchedule = detail?.status?.schedules.find(
     (schedule) => schedule.automationId === automation?.id,
   );
   const latestRun = detail?.runs[0];
+  const activeRun = detail?.runs.find((run) => run.state === "running" || run.state === "claimed");
+  const featuredRun =
+    activeRun ?? detail?.runs.find((run) => run.state !== "skipped-busy") ?? latestRun;
   const runsUnavailable = detail?.errors.some((error) => error.source === "runs") ?? false;
   const nextRun =
     automation?.lifecycle === "paused"
@@ -96,6 +178,52 @@ export function AutomationDetailDialog({
   const task =
     detail?.definition === undefined ? undefined : taskFromSource(detail.definition.source);
   const preview = task === undefined ? undefined : taskPreview(task);
+  const parsedDefinition =
+    detail?.definition === undefined ? undefined : parseDefinitionSource(detail.definition.source);
+  const selectedTargets =
+    parsedDefinition?.fields.broadcast.trim() === "none"
+      ? []
+      : (parsedDefinition?.fields.broadcast.trim().split(",").filter(Boolean) ?? []);
+  const availableDestinations = destinations.filter(
+    (destination) => !selectedTargets.includes(destination.target),
+  );
+
+  const saveDestination = async (): Promise<void> => {
+    if (detail?.definition === undefined || parsedDefinition === undefined) return;
+    const destination = destinations.find((option) => destinationKey === option.target);
+    if (destination === undefined) return;
+    setSavingDestination(true);
+    setDestinationError(undefined);
+    try {
+      const source = addAutomationBroadcastTarget(detail.definition.source, destination.target);
+      await onSave(source, detail.definition.source);
+      setDestinationKey("");
+    } catch (cause) {
+      setDestinationError(
+        cause instanceof Error ? cause.message : "The delivery destination could not be selected.",
+      );
+    } finally {
+      setSavingDestination(false);
+    }
+  };
+
+  const removeDestination = async (target: string): Promise<void> => {
+    if (detail?.definition === undefined) return;
+    setSavingDestination(true);
+    setDestinationError(undefined);
+    try {
+      await onSave(
+        removeAutomationBroadcastTarget(detail.definition.source, target),
+        detail.definition.source,
+      );
+    } catch (cause) {
+      setDestinationError(
+        cause instanceof Error ? cause.message : "The delivery destination could not be removed.",
+      );
+    } finally {
+      setSavingDestination(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -196,52 +324,127 @@ export function AutomationDetailDialog({
                   </div>
                 </section>
 
+                <section className="detail-section automation-destination">
+                  <h3>Broadcast results to</h3>
+                  {selectedTargets.length === 0 ? (
+                    <p className="detail-muted">No delivery destinations selected.</p>
+                  ) : (
+                    <ul className="automation-destination-list">
+                      {selectedTargets.map((target) => {
+                        const destination = destinations.find((entry) => entry.target === target);
+                        return (
+                          <li key={target}>
+                            <span>
+                              <strong>
+                                {destination === undefined
+                                  ? target
+                                  : `${kindLabel(destination.kind)} · ${destination.label ?? destination.target}`}
+                              </strong>
+                              <small>
+                                {destination === undefined
+                                  ? "Saved broadcast target"
+                                  : actionLabel(destination.kind)}
+                              </small>
+                            </span>
+                            <Button
+                              aria-label={`Remove ${target}`}
+                              disabled={!available || savingDestination}
+                              onClick={() => void removeDestination(target)}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              Remove
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  <div className="automation-destination-controls">
+                    <div className="automation-destination-picker-field">
+                      <span>Destination</span>
+                      <AutomationDestinationPicker
+                        destinations={availableDestinations}
+                        disabled={
+                          !available || savingDestination || availableDestinations.length === 0
+                        }
+                        onSelect={(destination) => setDestinationKey(destination.target)}
+                        selected={destinations.find(
+                          (destination) => destination.target === destinationKey,
+                        )}
+                      />
+                    </div>
+                    <Button
+                      disabled={!available || destinationKey.length === 0 || savingDestination}
+                      onClick={() => void saveDestination()}
+                      size="sm"
+                      type="button"
+                    >
+                      {savingDestination ? "Adding…" : "Add destination"}
+                    </Button>
+                  </div>
+                  {availableDestinations.length === 0 ? (
+                    <p className="detail-muted">No additional known destinations are available.</p>
+                  ) : null}
+                  {destinationError === undefined ? null : (
+                    <p className="detail-error" role="alert">
+                      {destinationError}
+                    </p>
+                  )}
+                </section>
+
                 <section className="detail-section">
-                  <h3>Latest run</h3>
+                  <h3>{activeRun === undefined ? "Latest run" : "Active run"}</h3>
                   {detail === undefined || detail.loading ? (
                     <p className="detail-muted">Loading runs…</p>
                   ) : runsUnavailable ? (
                     <p className="detail-muted">Run history unavailable.</p>
-                  ) : latestRun === undefined ? (
+                  ) : featuredRun === undefined ? (
                     <p className="detail-muted">No runs recorded for this automation.</p>
                   ) : (
-                    <div className="run-card is-latest" data-state={latestRun.state}>
+                    <div className="run-card is-latest" data-state={featuredRun.state}>
                       <div className="run-card-heading">
                         <div className="run-status-group">
                           <strong className="run-status">
-                            {latestRun.state === "failed" ? (
+                            {featuredRun.state === "failed" ? (
                               <CircleX />
-                            ) : latestRun.state === "completed" ? (
+                            ) : featuredRun.state === "completed" ? (
                               <CircleCheck />
                             ) : (
                               <Clock3 />
                             )}
-                            {latestRun.state}
+                            {runStateLabel(featuredRun.state)}
                           </strong>
-                          <span className="run-trigger">{latestRun.trigger} run</span>
+                          <span className="run-trigger">{featuredRun.trigger} run</span>
                         </div>
                         <span
                           className="run-duration"
-                          aria-label={`Duration: ${formatDuration(latestRun.startedAtMs, latestRun.finishedAtMs)}`}
+                          aria-label={`Duration: ${formatRunDuration(featuredRun)}`}
                         >
                           <Timer />
-                          {formatDuration(latestRun.startedAtMs, latestRun.finishedAtMs)}
+                          {formatRunDuration(featuredRun)}
                         </span>
                       </div>
                       <dl>
                         <div>
                           <dt>Started</dt>
-                          <dd>{formatTimestamp(latestRun.startedAtMs, timezone)}</dd>
+                          <dd>{formatTimestamp(featuredRun.startedAtMs, timezone)}</dd>
                         </div>
                         <div>
                           <dt>Finished</dt>
-                          <dd>{formatTimestamp(latestRun.finishedAtMs, timezone)}</dd>
+                          <dd>
+                            {featuredRun.state === "running" || featuredRun.state === "claimed"
+                              ? "In progress"
+                              : formatTimestamp(featuredRun.finishedAtMs, timezone)}
+                          </dd>
                         </div>
                       </dl>
-                      {latestRun.state === "failed" || latestRun.failureCategory !== null ? (
+                      <RunTargets destinations={destinations} run={featuredRun} />
+                      {featuredRun.state === "failed" || featuredRun.failureCategory !== null ? (
                         <div className="run-failure">
                           <span>Failure reason</span>
-                          <code>{latestRun.failureCategory ?? "Not reported"}</code>
+                          <code>{featuredRun.failureCategory ?? "Not reported"}</code>
                         </div>
                       ) : null}
                     </div>
@@ -289,7 +492,7 @@ export function AutomationDetailDialog({
                     detail.runs.slice(0, 8).map((run) => (
                       <details className="run-row" key={run.runId}>
                         <summary>
-                          <strong>{run.state}</strong>
+                          <strong>{runStateLabel(run.state)}</strong>
                           <span>{formatTimestamp(run.recordedAtMs, timezone)}</span>
                           <span>{formatDuration(run.startedAtMs, run.finishedAtMs)}</span>
                         </summary>
@@ -319,20 +522,7 @@ export function AutomationDetailDialog({
                             <dd>{run.failureCategory ?? "Not reported"}</dd>
                           </div>
                         </dl>
-                        {run.targets.length === 0 ? (
-                          <p className="detail-muted">No delivery outcomes recorded.</p>
-                        ) : (
-                          <ul className="run-targets">
-                            {run.targets.map((target) => (
-                              <li key={target.target}>
-                                {target.target}: {target.status}
-                                {target.failureCategory === null
-                                  ? ""
-                                  : ` · ${target.failureCategory}`}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
+                        <RunTargets destinations={destinations} run={run} />
                       </details>
                     ))
                   )}

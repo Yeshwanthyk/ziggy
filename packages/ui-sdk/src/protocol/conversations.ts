@@ -80,6 +80,7 @@ export interface ZiggySessionShowResult {
   readonly profileId: ZiggyProfileId;
   readonly ref: ZiggySessionRef;
   readonly kind: "live" | "stored";
+  readonly storedSessionId?: ZiggyStoredSessionId;
   readonly createdAt?: string;
   readonly entryCount?: number;
   readonly terminalState?: ZiggyTerminalState;
@@ -106,10 +107,19 @@ export interface ZiggyHistoryToolEntry {
   readonly failed: boolean;
 }
 
+export interface ZiggyHistoryAutomationResultEntry {
+  readonly kind: "automation-result";
+  readonly timestamp: string;
+  readonly automationId: string;
+  readonly runId: string;
+  readonly text: string;
+}
+
 export type ZiggySessionHistoryEntry =
   | ZiggyHistoryUserEntry
   | ZiggyHistoryAssistantEntry
-  | ZiggyHistoryToolEntry;
+  | ZiggyHistoryToolEntry
+  | ZiggyHistoryAutomationResultEntry;
 
 export type ZiggyTerminalState = "completed" | "aborted" | "failed" | "incomplete";
 
@@ -240,6 +250,22 @@ export interface ZiggyVoiceEvent {
   readonly payload: { readonly agentId: string; readonly text: string };
 }
 
+export interface ZiggyAutomationResultEvent {
+  readonly event: "automation-result";
+  readonly eventId: string;
+  readonly epoch: string;
+  readonly seq: number;
+  readonly profileId: ZiggyProfileId;
+  readonly session: ZiggySessionRef;
+  readonly correlationId?: string;
+  readonly payload: {
+    readonly automationId: string;
+    readonly runId: string;
+    readonly text: string;
+    readonly timestamp: string;
+  };
+}
+
 export interface ZiggySettledEvent {
   readonly event: "settled";
   readonly eventId: string;
@@ -283,6 +309,7 @@ export type ZiggyGatewayEvent =
   | ZiggyThinkingEvent
   | ZiggyToolEvent
   | ZiggyVoiceEvent
+  | ZiggyAutomationResultEvent
   | ZiggySettledEvent
   | ZiggyErrorEvent
   | ZiggyReplayGapEvent;
@@ -395,6 +422,16 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
       typeof value.failed === "boolean"
     );
   }
+  if (value.kind === "automation-result") {
+    return (
+      hasOnlyKeys(value, ["kind", "timestamp", "automationId", "runId", "text"]) &&
+      isBoundedString(value.automationId, 80) &&
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.automationId) &&
+      isBoundedString(value.runId, 256) &&
+      value.runId.length > 0 &&
+      isBoundedCodePointString(value.text, 1_024, 0)
+    );
+  }
   return false;
 };
 
@@ -423,10 +460,14 @@ export const isSessionShowResult = (value: unknown): value is ZiggySessionShowRe
     "entryCount",
     "terminalState",
     "live",
+    "storedSessionId",
   ]) &&
   isProfileId(value.profileId) &&
   isSessionRef(value.ref) &&
   value.ref.profileId === value.profileId &&
+  (value.storedSessionId === undefined ||
+    (isBoundedString(value.storedSessionId, 128) &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value.storedSessionId))) &&
   ((value.kind === "live" &&
     value.ref.kind === "live" &&
     value.createdAt === undefined &&
@@ -498,9 +539,7 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
     );
   }
   if (value.event === "thinking") {
-    return (
-      hasOnlyKeys(payload, ["delta"]) && isBoundedUtf8String(payload.delta, 8_000)
-    );
+    return hasOnlyKeys(payload, ["delta"]) && isBoundedUtf8String(payload.delta, 8_000);
   }
   if (value.event === "tool") {
     return (
@@ -517,6 +556,17 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
       hasOnlyKeys(payload, ["agentId", "text"]) &&
       isBoundedString(payload.agentId, 80) &&
       isBoundedCodePointString(payload.text, 4_096)
+    );
+  }
+  if (value.event === "automation-result") {
+    return (
+      hasOnlyKeys(payload, ["automationId", "runId", "text", "timestamp"]) &&
+      isBoundedString(payload.automationId, 80) &&
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(payload.automationId) &&
+      isBoundedString(payload.runId, 256) &&
+      payload.runId.length > 0 &&
+      isBoundedCodePointString(payload.text, 1_024, 0) &&
+      isBoundedString(payload.timestamp, 128)
     );
   }
   if (value.event === "settled") {

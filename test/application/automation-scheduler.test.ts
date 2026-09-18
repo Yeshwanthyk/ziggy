@@ -18,6 +18,7 @@ import {
 } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { AutomationDatabaseError, AutomationSchedulerError } from "ziggy/domain/automation";
+import { makeChatRegistry } from "ziggy/application/chat-registry";
 import type { ProfileTarget } from "ziggy/domain/profile";
 import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
@@ -55,8 +56,9 @@ const runScheduler = (
   Effect.scoped(
     Effect.gen(function* () {
       const owner = yield* acquireGatewayOwner(target);
+      const registry = yield* makeChatRegistry(target.path);
 
-      return yield* scheduler.run(target, owner);
+      return yield* scheduler.run(target, owner, registry);
     }),
   ).pipe(
     Effect.mapError((cause) =>

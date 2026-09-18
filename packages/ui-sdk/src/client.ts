@@ -206,6 +206,10 @@ export interface ZiggyGatewayClient {
     commandId?: string,
   ): Promise<ZiggyResultMap["automation.run"]>;
   automationStatus(profileId: ZiggyProfileId): Promise<ZiggyAutomationStatusResult>;
+  listDestinations(
+    profileId: ZiggyProfileId,
+    after?: string,
+  ): Promise<ZiggyResultMap["destination.list"]>;
   listAutomationRuns(
     profileId: ZiggyProfileId,
     automationId?: string,
@@ -382,6 +386,11 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
         ? connection.request("automation.run", { profileId, automationId })
         : connection.request("automation.run", { profileId, automationId, commandId }),
     automationStatus: (profileId) => connection.request("automation.status", { profileId }),
+    listDestinations: (profileId, after) =>
+      connection.request(
+        "destination.list",
+        after === undefined ? { profileId } : { profileId, after },
+      ),
     listAutomationRuns: (profileId, automationId) =>
       connection.request(
         "automation.runs",

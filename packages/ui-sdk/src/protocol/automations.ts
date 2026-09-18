@@ -11,6 +11,30 @@ import {
 
 export type ZiggyAutomationId = string;
 
+export type ZiggyAutomationDestinationKind = "conversation" | "telegram" | "discord" | "slack";
+export type ZiggyAutomationDestinationCategory =
+  | "agent"
+  | "session"
+  | "telegram"
+  | "discord"
+  | "slack";
+
+export interface ZiggyAutomationDestination {
+  readonly target: string;
+  readonly kind: ZiggyAutomationDestinationKind;
+  readonly label?: string;
+  readonly category: ZiggyAutomationDestinationCategory;
+  readonly pinned: boolean;
+  readonly activityAt?: string;
+  readonly agentId?: string;
+}
+
+export interface ZiggyDestinationListResult {
+  readonly profileId: ZiggyProfileId;
+  readonly entries: ReadonlyArray<ZiggyAutomationDestination>;
+  readonly nextCursor?: string;
+}
+
 export type ZiggyAutomationLifecycle = "active" | "paused" | "conflict";
 
 export interface ZiggyAutomationDefinition {
@@ -142,6 +166,7 @@ export interface ZiggyAutomationRunsParams {
 }
 
 export interface ZiggyAutomationRequestMap {
+  readonly "destination.list": { readonly profileId: ZiggyProfileId; readonly after?: string };
   readonly "automation.list": { readonly profileId: ZiggyProfileId };
   readonly "automation.show": ZiggyAutomationShowParams;
   readonly "automation.create": ZiggyAutomationCreateParams;
@@ -155,6 +180,7 @@ export interface ZiggyAutomationRequestMap {
 }
 
 export interface ZiggyAutomationResultMap {
+  readonly "destination.list": ZiggyDestinationListResult;
   readonly "automation.list": ZiggyAutomationListResult;
   readonly "automation.show": ZiggyAutomationDocument;
   readonly "automation.create": ZiggyAutomationCreateResult;
@@ -169,6 +195,49 @@ export interface ZiggyAutomationResultMap {
 
 export const isAutomationId = (value: unknown): value is string =>
   isBoundedString(value, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
+
+export const isAutomationTarget = (value: unknown): value is string =>
+  typeof value === "string" &&
+  (/^conversation:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value) ||
+    /^telegram:chat:-?[1-9][0-9]*$/u.test(value) ||
+    /^discord:channel:[1-9][0-9]*$/u.test(value) ||
+    /^slack:channel:[CDG][A-Z0-9]{8,}(?::thread:[1-9][0-9]*\.[0-9]{6})?$/u.test(value));
+
+export const isDestinationListResult = (value: unknown): value is ZiggyDestinationListResult =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "entries", "nextCursor"]) &&
+  isProfileId(value.profileId) &&
+  Array.isArray(value.entries) &&
+  value.entries.length <= 32 &&
+  value.entries.every(
+    (entry) =>
+      isRecord(entry) &&
+      hasOnlyKeys(entry, [
+        "target",
+        "kind",
+        "label",
+        "category",
+        "pinned",
+        "activityAt",
+        "agentId",
+      ]) &&
+      isAutomationTarget(entry.target) &&
+      (entry.kind === "conversation" ||
+        entry.kind === "telegram" ||
+        entry.kind === "discord" ||
+        entry.kind === "slack") &&
+      (entry.category === "agent" ||
+        entry.category === "session" ||
+        entry.category === "telegram" ||
+        entry.category === "discord" ||
+        entry.category === "slack") &&
+      typeof entry.pinned === "boolean" &&
+      (entry.label === undefined || isBoundedCodePointString(entry.label, 160)) &&
+      (entry.activityAt === undefined || isBoundedString(entry.activityAt, 128)) &&
+      (entry.agentId === undefined ||
+        (isBoundedString(entry.agentId, 80) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(entry.agentId))),
+  ) &&
+  (value.nextCursor === undefined || isAutomationTarget(value.nextCursor));
 
 const isAutomationDefinition = (value: unknown): value is ZiggyAutomationDefinition =>
   isRecord(value) &&

@@ -179,6 +179,42 @@ const sortEvents = (events: ReadonlyArray<ZiggyGatewayEvent>): ReadonlyArray<Zig
       left.eventId.localeCompare(right.eventId),
   );
 
+const automationResultKey = (entry: ZiggySessionHistoryEntry): string | undefined =>
+  entry.kind === "automation-result" ? `${entry.automationId}:${entry.runId}` : undefined;
+
+export const dedupeSessionHistoryEntries = (
+  entries: ReadonlyArray<ZiggySessionHistoryEntry>,
+): ReadonlyArray<ZiggySessionHistoryEntry> => {
+  const merged: ZiggySessionHistoryEntry[] = [];
+  const seenAutomationResults = new Set<string>();
+  for (const entry of entries) {
+    const key = automationResultKey(entry);
+    if (key !== undefined && seenAutomationResults.has(key)) continue;
+    if (key !== undefined) seenAutomationResults.add(key);
+    merged.push(entry);
+  }
+  return merged;
+};
+
+export const mergeSessionHistoryEntries = (
+  authoritative: ReadonlyArray<ZiggySessionHistoryEntry>,
+  additional: ReadonlyArray<ZiggySessionHistoryEntry>,
+): ReadonlyArray<ZiggySessionHistoryEntry> => {
+  const newestTimestamp = authoritative.reduce<string | undefined>(
+    (newest, entry) =>
+      newest === undefined || entry.timestamp.localeCompare(newest) > 0 ? entry.timestamp : newest,
+    undefined,
+  );
+  return dedupeSessionHistoryEntries([
+    ...authoritative,
+    ...additional.filter(
+      (entry) =>
+        entry.kind === "automation-result" &&
+        (newestTimestamp === undefined || entry.timestamp.localeCompare(newestTimestamp) > 0),
+    ),
+  ]);
+};
+
 const applyEvent = (state: ZiggyGatewayState, event: ZiggyGatewayEvent): ZiggyGatewayState => {
   if (event.event === "replay-gap") return state;
   const key = keyOfRef(event.session);
@@ -188,17 +224,32 @@ const applyEvent = (state: ZiggyGatewayState, event: ZiggyGatewayEvent): ZiggyGa
   const events = sortEvents([...current.events, event]);
   const seenEventIds = [...current.seenEventIds, eventId].slice(-4_096);
   const nextStatus =
-    event.event === "settled" || event.event === "error"
-      ? event.event === "error"
-        ? "closed"
-        : "idle"
-      : current.status === "closed"
-        ? "working"
-        : current.status;
+    event.event === "automation-result"
+      ? current.status
+      : event.event === "settled" || event.event === "error"
+        ? event.event === "error"
+          ? "closed"
+          : "idle"
+        : current.status === "closed"
+          ? "working"
+          : current.status;
   const next: ZiggyConversationState = {
     ...current,
     status: nextStatus,
     events,
+    history:
+      event.event === "automation-result"
+        ? dedupeSessionHistoryEntries([
+            ...current.history,
+            {
+              kind: "automation-result",
+              automationId: event.payload.automationId,
+              runId: event.payload.runId,
+              text: event.payload.text,
+              timestamp: event.payload.timestamp,
+            },
+          ])
+        : current.history,
     cursor:
       current.cursor === undefined || current.cursor.epoch !== event.epoch
         ? { epoch: event.epoch, seq: event.seq }
@@ -267,7 +318,10 @@ export const reduceGatewayState = (
         ...state,
         conversations: {
           ...state.conversations,
-          [key]: { ...current, history: [...action.result.entries] },
+          [key]: {
+            ...current,
+            history: mergeSessionHistoryEntries(action.result.entries, current.history),
+          },
         },
       };
     }
@@ -365,6 +419,17 @@ export const visibleEvents = (
         profileId: event.profileId,
         session: event.session,
         kind: "voice",
+        text: event.payload.text,
+        event,
+      });
+      continue;
+    }
+    if (event.event === "automation-result") {
+      visible.push({
+        id: keyOfEvent(event),
+        profileId: event.profileId,
+        session: event.session,
+        kind: "assistant",
         text: event.payload.text,
         event,
       });

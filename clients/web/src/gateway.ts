@@ -1,8 +1,11 @@
 import {
   connectZiggy,
+  dedupeSessionHistoryEntries,
   isSessionReference,
+  mergeSessionHistoryEntries,
   ZiggyRequestOutcomeUnknownError,
   type ZiggyAutomationDefinition,
+  type ZiggyAutomationDestination,
   type ZiggyAutomationDocument,
   type ZiggyAutomationRun,
   type ZiggyAutomationStatusResult,
@@ -44,6 +47,8 @@ export interface ToolActivity {
 export interface PinnedConversationSummary extends ConversationSummary {
   readonly pinId: string;
 }
+
+export type AutomationDestinationOption = ZiggyAutomationDestination;
 
 export interface AgentSummary {
   readonly id: string;
@@ -135,6 +140,7 @@ export type GatewayClient = Pick<
   | "listGroups"
   | "listModels"
   | "listExtensionsForProfile"
+  | "listDestinations"
   | "listPins"
   | "listProfiles"
   | "listSessions"
@@ -167,6 +173,25 @@ export type GatewayClient = Pick<
 export type GatewayConnector = (input: ConnectInput) => GatewayClient;
 
 const defaultConnector: GatewayConnector = (input) => connectZiggy(input);
+
+const listAutomationDestinations = async (
+  client: GatewayClient,
+  profileId: ZiggyProfileSummary["profileId"],
+): Promise<ReadonlyArray<AutomationDestinationOption>> => {
+  const entries: Array<AutomationDestinationOption> = [];
+  const seenCursors = new Set<string>();
+  let after: string | undefined;
+
+  while (true) {
+    const page = await client.listDestinations(profileId, after);
+    entries.push(...page.entries);
+    if (page.nextCursor === undefined) return entries;
+    if (seenCursors.has(page.nextCursor))
+      throw new Error("Destination pagination did not advance.");
+    seenCursors.add(page.nextCursor);
+    after = page.nextCursor;
+  }
+};
 
 const RECONNECT_GRACE_PERIOD_MS = 10_000;
 const SELECTION_STORAGE_PREFIX = "ziggy:selected:v1:";
@@ -299,6 +324,13 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [agentDefinitionDetail, setAgentDefinitionDetail] = useState<AgentDefinitionDetail>();
   const [groups, setGroups] = useState<ReadonlyArray<GroupConversationSummary>>([]);
   const [automations, setAutomations] = useState<ReadonlyArray<AutomationSummary>>([]);
+  const [automationDestinations, setAutomationDestinations] = useState<
+    ReadonlyArray<AutomationDestinationOption>
+  >([]);
+  const [automationRuns, setAutomationRuns] = useState<
+    Readonly<Record<string, ZiggyAutomationRun | undefined>>
+  >({});
+  const [startingAutomation, setStartingAutomation] = useState<string>();
   const [automationDetail, setAutomationDetail] = useState<AutomationDetail>();
   const [modelSettings, setModelSettings] = useState<ModelSettingsState>();
   const [sidebarLoading, setSidebarLoading] = useState(false);
@@ -405,7 +437,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (generation !== historyGenerationRef.current || !sameRef(selectedRefRef.current, ref))
         return;
       setHistory((current) =>
-        before === undefined ? result.entries : [...result.entries, ...current],
+        before === undefined
+          ? mergeSessionHistoryEntries(result.entries, current)
+          : dedupeSessionHistoryEntries([...result.entries, ...current]),
       );
       setHistoryCursor(result.nextCursor);
       setHasMoreHistory(result.hasMore);
@@ -458,6 +492,21 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           ? [...current, next]
           : current.map((tool, itemIndex) => (itemIndex === index ? next : tool));
       });
+      return;
+    }
+    if (event.event === "automation-result") {
+      setHistory((current) =>
+        dedupeSessionHistoryEntries([
+          ...current,
+          {
+            kind: "automation-result",
+            automationId: event.payload.automationId,
+            runId: event.payload.runId,
+            text: event.payload.text,
+            timestamp: event.payload.timestamp,
+          },
+        ]),
+      );
       return;
     }
     if (event.event === "settled") {
@@ -598,14 +647,21 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       const generation = ++sidebarGenerationRef.current;
       const restoreSelectionGeneration = selectionGenerationRef.current;
       setSidebarLoading(true);
-      const [sessionResult, pinResult, agentResult, groupResult, automationResult] =
-        await Promise.allSettled([
-          client.listSessions(selectedProfile.profileId),
-          client.listPins(selectedProfile.profileId),
-          client.listAgents(selectedProfile.profileId),
-          client.listGroups(selectedProfile.profileId),
-          client.listAutomations(selectedProfile.profileId),
-        ]);
+      const [
+        sessionResult,
+        pinResult,
+        agentResult,
+        groupResult,
+        automationResult,
+        destinationResult,
+      ] = await Promise.allSettled([
+        client.listSessions(selectedProfile.profileId),
+        client.listPins(selectedProfile.profileId),
+        client.listAgents(selectedProfile.profileId),
+        client.listGroups(selectedProfile.profileId),
+        client.listAutomations(selectedProfile.profileId),
+        listAutomationDestinations(client, selectedProfile.profileId),
+      ]);
       if (
         generation !== sidebarGenerationRef.current ||
         clientRef.current !== client ||
@@ -619,6 +675,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (nextConversations !== undefined) {
         setConversations(nextConversations);
       }
+      setAutomationDestinations(
+        destinationResult.status === "fulfilled" ? destinationResult.value : [],
+      );
       const liveGroups =
         sessionResult.status === "fulfilled"
           ? sessionResult.value.live.flatMap((session) =>
@@ -679,9 +738,14 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         );
       }
       if (
-        [sessionResult, pinResult, agentResult, groupResult, automationResult].some(
-          (result) => result.status === "rejected",
-        )
+        [
+          sessionResult,
+          pinResult,
+          agentResult,
+          groupResult,
+          automationResult,
+          destinationResult,
+        ].some((result) => result.status === "rejected")
       ) {
         setLocalError("Some sidebar data could not be refreshed.");
       }
@@ -792,6 +856,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       selectedRefRef.current = undefined;
       setSelectedRef(undefined);
       unselectedEventsRef.current = [];
+      setAutomationDestinations([]);
+      setAutomationRuns({});
+      setStartingAutomation(undefined);
       const connectionGeneration = ++connectionGenerationRef.current;
       persistentConnectionRef.current = persistent;
       selectionGenerationRef.current += 1;
@@ -934,6 +1001,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         setAgents([]);
         setGroups([]);
         setAutomations([]);
+        setAutomationRuns({});
+        setStartingAutomation(undefined);
+        setAutomationDestinations([]);
         setAutomationDetail(undefined);
         setAgentDefinitionDetail(undefined);
         setModelSettings(undefined);
@@ -1443,6 +1513,50 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     [refreshSidebarFor, requireOpenSidebarClient],
   );
 
+  const refreshAutomationRuns = useCallback(
+    async (client: GatewayClient, selectedProfile: ZiggyProfileSummary, automationId: string) => {
+      const result = await client.listAutomationRuns(selectedProfile.profileId, automationId);
+      if (
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== selectedProfile.profileId
+      )
+        return;
+      const runs = result.runs
+        .filter((run) => run.automationId === automationId)
+        .sort((a, b) => b.recordedAtMs - a.recordedAtMs);
+      const latest =
+        runs.find((run) => run.state === "running" || run.state === "claimed") ??
+        runs.find((run) => run.state !== "skipped-busy") ??
+        runs[0];
+      setAutomationRuns((current) => ({ ...current, [automationId]: latest }));
+      setAutomationDetail((current) =>
+        current?.automationId === automationId
+          ? { ...current, runs, errors: current.errors.filter((error) => error.source !== "runs") }
+          : current,
+      );
+      return latest;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const client = clientRef.current;
+    if (connection !== "open" || client === undefined || profile === undefined) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      await Promise.allSettled(
+        automations.map((automation) => refreshAutomationRuns(client, profile, automation.id)),
+      );
+      if (!cancelled) timer = setTimeout(() => void refresh(), 5000);
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [connection, profile, automations, refreshAutomationRuns]);
+
   const updateAutomation = useCallback(
     async (automationId: string, action: "pause" | "resume" | "run"): Promise<void> => {
       const client = clientRef.current;
@@ -1452,11 +1566,26 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       requireOpenSidebarClient(client);
       sidebarMutationRef.current = true;
       setSidebarBusy(true);
+      if (action === "run") setStartingAutomation(automationId);
       setLocalError(undefined);
       try {
         const commandId = `web-automation-${crypto.randomUUID()}`;
         if (action === "run") {
-          await client.runAutomation(selectedProfile.profileId, automationId, commandId);
+          const result = await client.runAutomation(
+            selectedProfile.profileId,
+            automationId,
+            commandId,
+          );
+          if (
+            clientRef.current !== client ||
+            profileRef.current?.profileId !== selectedProfile.profileId
+          )
+            return;
+          await refreshAutomationRuns(client, selectedProfile, automationId);
+          if (result.outcome === "skipped-busy")
+            setLocalError(
+              "This automation is already running. This attempt did not start or send any broadcasts.",
+            );
         } else {
           const result =
             action === "pause"
@@ -1471,9 +1600,20 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           );
         }
       } catch (cause) {
+        if (
+          clientRef.current !== client ||
+          profileRef.current?.profileId !== selectedProfile.profileId
+        )
+          return;
+        if (action === "run" && cause instanceof ZiggyRequestOutcomeUnknownError) {
+          const run = await refreshAutomationRuns(client, selectedProfile, automationId).catch(
+            () => undefined,
+          );
+          if (run?.state === "running" || run?.state === "claimed") return;
+        }
         setLocalError(
           cause instanceof ZiggyRequestOutcomeUnknownError
-            ? "The automation action outcome is unknown. Refresh before trying again."
+            ? "The connection stopped waiting for this action. Check Recent runs before retrying; it may still be running."
             : cause instanceof Error
               ? cause.message
               : "The automation action failed.",
@@ -1482,9 +1622,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       } finally {
         sidebarMutationRef.current = false;
         setSidebarBusy(false);
+        setStartingAutomation(undefined);
       }
     },
-    [requireOpenSidebarClient],
+    [requireOpenSidebarClient, refreshAutomationRuns],
   );
 
   const pauseAutomation = useCallback(
@@ -1645,6 +1786,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     abort,
     agentDefinitionDetail,
     automationDetail,
+    automationRuns,
+    startingAutomation,
+    automationDestinations,
     pendingInputs: pendingInputs.filter(
       (input) => selectedRef !== undefined && sameRef(selectedRef, input.ref),
     ),

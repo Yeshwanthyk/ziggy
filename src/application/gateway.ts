@@ -13,6 +13,8 @@ import { codePointLength, type ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
+import type { UiGatewayError } from "../domain/ui-gateway";
+import { automationTargetFromString } from "../domain/automation";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 
@@ -54,7 +56,22 @@ interface InboundMessage {
   readonly chatId: number;
   readonly context: ChatContext;
   readonly text: string;
+  readonly label?: string;
 }
+
+const telegramChatLabel = (
+  chat: NonNullable<TelegramUpdate["message"]>["chat"],
+): string | undefined => {
+  const name =
+    chat.title ??
+    chat.username ??
+    [chat.first_name, chat.last_name]
+      .filter((part) => part !== undefined)
+      .join(" ")
+      .trim();
+
+  return name.length === 0 ? undefined : name;
+};
 
 interface ChatState {
   readonly semaphore: Semaphore.Semaphore;
@@ -79,25 +96,31 @@ export const normalizeTelegramUpdate = (
     return undefined;
   }
 
+  const label = telegramChatLabel(message.chat);
+
   if (message.chat.type === "private") {
-    return {
+    const inbound = {
       chatKey: `user-${message.from.id}`,
       chatId: message.chat.id,
       context: { kind: "user", userId: "owner" },
       text: message.text,
-    };
+    } satisfies InboundMessage;
+
+    return label === undefined ? inbound : { ...inbound, label };
   }
 
   if (message.chat.type === "group" || message.chat.type === "supergroup") {
     // Telegram group IDs are negative; the "tg" prefix makes a stable filesystem-safe memory ID.
     const groupId = `tg${Math.abs(message.chat.id)}`;
 
-    return {
+    const inbound = {
       chatKey: `group-${groupId}`,
       chatId: message.chat.id,
       context: { kind: "group", groupId },
       text: message.text,
-    };
+    } satisfies InboundMessage;
+
+    return label === undefined ? inbound : { ...inbound, label };
   }
 
   return undefined;
@@ -162,10 +185,9 @@ const disposeChats = (
       state.handle === undefined
         ? Effect.void
         : (registry === undefined
-            ? Effect.void
-            : registry.unregisterAlias(`telegram/${chatKey}`, state.handle)
+            ? state.handle.dispose
+            : registry.closeAlias(`telegram/${chatKey}`, state.handle)
           ).pipe(
-            Effect.andThen(state.handle.dispose),
             Effect.catch((failure) =>
               Effect.sync(() => {
                 console.error(`[gateway] ${chatKey} dispose failed: ${failure.message}`);
@@ -202,25 +224,31 @@ export const makeTelegramGateway = (
 
           return chatState.semaphore.withPermit(
             Effect.gen(function* () {
+              if (registry !== undefined) {
+                const target = automationTargetFromString(`telegram:chat:${message.chatId}`);
+
+                if (target !== undefined) {
+                  const destination =
+                    message.label === undefined ? { target } : { target, label: message.label };
+
+                  yield* registry.rememberDestination(destination);
+                }
+              }
+
               if (chatState.handle === undefined) {
-                chatState.handle = yield* agent.openChat(
+                const open = agent.openChat(
                   target,
                   message.context,
                   join(target.path, "sessions", "telegram", message.chatKey),
+                  "continue",
+                  undefined,
+                  message.label === undefined ? undefined : `Telegram · ${message.label}`,
                 );
 
-                if (registry !== undefined) {
-                  yield* registry
-                    .registerAlias(`telegram/${message.chatKey}`, "telegram", chatState.handle)
-                    .pipe(
-                      Effect.catch((failure) =>
-                        Effect.logWarning("Telegram registry registration failed", {
-                          chatKey: message.chatKey,
-                          failure,
-                        }),
-                      ),
-                    );
-                }
+                chatState.handle =
+                  registry === undefined
+                    ? yield* open
+                    : yield* registry.openAlias(`telegram/${message.chatKey}`, "telegram", open);
               }
 
               const handle = chatState.handle;
@@ -281,7 +309,7 @@ export const makeTelegramGateway = (
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((failure: ZiggyAgentError | TelegramApiError) =>
+              Effect.catch((failure: ZiggyAgentError | TelegramApiError | UiGatewayError) =>
                 Effect.sync(() => {
                   console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
                 }),

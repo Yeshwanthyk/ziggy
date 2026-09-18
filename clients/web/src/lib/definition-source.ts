@@ -107,3 +107,26 @@ export const updateDefinitionSource = (
   }
   return ["---", ...frontmatter, "---", "", task.trim(), ""].join(newline);
 };
+
+export const addAutomationBroadcastTarget = (source: string, target: string): string => {
+  const parsed = parseDefinitionSource(source);
+  if (!parsed.structured) return source;
+  const current = parsed.fields.broadcast.trim();
+  const targets = current.length === 0 || current === "none" ? [] : current.split(",");
+  const broadcast = targets.includes(target) ? targets.join(",") : [...targets, target].join(",");
+  return updateDefinitionSource(source, { ...parsed.fields, broadcast }, parsed.task);
+};
+
+export const removeAutomationBroadcastTarget = (source: string, target: string): string => {
+  const parsed = parseDefinitionSource(source);
+  if (!parsed.structured) return source;
+  const targets = parsed.fields.broadcast
+    .trim()
+    .split(",")
+    .filter((candidate) => candidate.length > 0 && candidate !== "none" && candidate !== target);
+  return updateDefinitionSource(
+    source,
+    { ...parsed.fields, broadcast: targets.length === 0 ? "none" : targets.join(",") },
+    parsed.task,
+  );
+};

@@ -617,6 +617,337 @@ button {
   margin: 0;
 }
 
+.automation-destination > .detail-muted {
+  margin: 0 0 10px;
+}
+
+.automation-destination code {
+  overflow-wrap: anywhere;
+}
+
+.automation-destination-list {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.automation-destination-list li {
+  align-items: center;
+  background: var(--muted);
+  border-radius: 9px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 7px 8px 7px 10px;
+}
+
+.automation-destination-list span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.automation-destination-list strong,
+.automation-destination-list small {
+  overflow-wrap: anywhere;
+}
+
+.automation-destination-list small {
+  color: var(--muted-foreground);
+}
+
+.automation-destination-controls {
+  align-items: flex-end;
+  display: flex;
+  gap: 8px;
+}
+
+.automation-destination-picker-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 550;
+  gap: 6px;
+  min-width: 0;
+}
+
+.automation-destination-picker-trigger {
+  height: 42px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.automation-destination-picker-trigger > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.automation-destination-picker-trigger strong,
+.automation-destination-picker-trigger small,
+.automation-destination-picker-placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-destination-picker-trigger small {
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-weight: 450;
+}
+
+.automation-destination-picker-placeholder {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  font-weight: 450;
+}
+
+.automation-destination-picker-trigger > svg {
+  flex: 0 0 auto;
+  height: 15px;
+  width: 15px;
+}
+
+.automation-destination-picker-dialog {
+  border-radius: 14px;
+  gap: 0;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.automation-destination-picker-search {
+  align-items: center;
+  background: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+  min-height: 42px;
+  padding: 0 11px;
+}
+
+.automation-destination-picker-search:focus-within {
+  border-color: var(--ring);
+  outline: 2px solid color-mix(in oklch, var(--ring) 16%, transparent);
+}
+
+.automation-destination-picker-search svg {
+  color: var(--muted-foreground);
+  height: 16px;
+  width: 16px;
+}
+
+.automation-destination-picker-search input {
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.automation-destination-picker-search input::placeholder {
+  color: oklch(0.44 0.012 260);
+  opacity: 1;
+}
+
+.automation-destination-filters {
+  display: flex;
+  gap: 5px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: none;
+}
+
+.automation-destination-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.automation-destination-filters button {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 550;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.automation-destination-filters button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.automation-destination-filters button[aria-pressed="true"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.automation-destination-filters button:focus-visible,
+.automation-destination-option:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.automation-destination-picker-scroll {
+  height: min(48dvh, 410px);
+  margin: 12px -8px -8px 0;
+  padding-right: 8px;
+}
+
+.automation-destination-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+}
+
+.automation-destination-group-heading,
+.automation-destination-group-heading > span {
+  align-items: center;
+  display: flex;
+}
+
+.automation-destination-group-heading {
+  color: var(--muted-foreground);
+  justify-content: space-between;
+  margin-bottom: 5px;
+  padding: 0 7px;
+}
+
+.automation-destination-group-heading > span {
+  gap: 7px;
+}
+
+.automation-destination-group-heading svg {
+  height: 13px;
+  width: 13px;
+}
+
+.automation-destination-group-heading h3,
+.automation-destination-group-heading small {
+  font-size: 11px;
+  margin: 0;
+}
+
+.automation-destination-group-heading h3 {
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+.automation-destination-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.automation-destination-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  min-height: 50px;
+  padding: 7px;
+  text-align: left;
+  transition: background-color 160ms ease-out;
+  width: 100%;
+}
+
+.automation-destination-option:hover,
+.automation-destination-option[aria-pressed="true"] {
+  background: var(--muted);
+}
+
+.automation-destination-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.automation-destination-option strong,
+.automation-destination-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-destination-option strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.automation-destination-option small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.automation-destination-option > svg {
+  color: var(--primary);
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+
+.automation-destination-picker-empty {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 58px 20px;
+  text-align: center;
+}
+
+.automation-destination-picker-empty svg {
+  height: 19px;
+  margin-bottom: 5px;
+  width: 19px;
+}
+
+.automation-destination-picker-empty strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.automation-destination-picker-empty span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.run-targets li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-targets strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.message.automation-result .message-author {
+  color: var(--muted-foreground);
+}
+
 .scheduler-line {
   align-items: flex-start;
   display: flex;
@@ -1556,6 +1887,15 @@ button {
 
   .definition-task {
     grid-column: auto;
+  }
+
+  .automation-destination-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .automation-destination-picker-dialog {
+    padding: 18px;
   }
 }
 

@@ -64,6 +64,23 @@ describe("Telegram gateway boundary", () => {
       text: "hello group",
     });
   });
+
+  test("keeps the signed group address and available Telegram title for discovery", () => {
+    expect(
+      normalizeTelegramUpdate(
+        {
+          update_id: 2,
+          message: {
+            message_id: 2,
+            from: { id: 7 },
+            chat: { id: -100123, type: "supergroup", title: "Release room" },
+            text: "hello group",
+          },
+        },
+        7,
+      ),
+    ).toMatchObject({ chatId: -100123, label: "Release room" });
+  });
 });
 
 describe("Telegram gateway startup", () => {

@@ -559,7 +559,14 @@ export const dispatchAutomation = (
         if (config.automations === undefined) return yield* Effect.fail(noService(request.method));
 
         const outcome = yield* config.automations
-          .run(branch.target, params.automationId, { kind: "manual-force" })
+          .run(
+            branch.target,
+            params.automationId,
+            { kind: "manual-force" },
+            {
+              registry: branch.registry,
+            },
+          )
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
         return {

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-09-18
+
+### Added
+
+- Restored automation delivery into durable conversations, searchable multi-destination selection, native session naming, and observable run progress from the installed 0.2.9 line
+
+### Fixed
+
+- Recovered `conversation:<id>` decoding and actual transcript delivery while retaining the optional Jev extension and removal of legacy fixed browser-job tools
+
 ## [0.2.10] - 2026-09-18
 
 ### Added
@@ -19,6 +29,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed the legacy fixed browser-job tools from computer workflows; adaptable tasks now use the general task lifecycle while saved semantic workflows remain available as accelerators
 
+## [0.2.9] - 2026-09-17
+
+### Added
+
+- Searchable automation destinations grouped by pins, agents, sessions, and messaging platform, with recent activity ordering
+
+### Fixed
+
+- Automation runs show progress and refresh recorded outcomes without retrying when a long run outlasts the UI request timeout
+
+## [0.2.8] - 2026-09-17
+
+### Added
+
+- Readable conversation names from native Pi session metadata, with automatic agent/thread identity and first-message topics for new conversations
+
+### Fixed
+
+- Stored conversation destinations now show saved names after restart while preserving explicit pin labels and stable session IDs
+
+## [0.2.7] - 2026-09-17
+
+### Added
+
+- Automation result delivery into durable conversations and a shared destination picker for multiple conversation, Slack, Discord, and Telegram broadcasts
+- Named channel destinations and existing conversation pin labels, with canonical ID fallbacks
+
+### Fixed
+
+- Destination pagination across mixed-case IDs, bounded display labels, and timeout fallback for optional Slack name lookups
 ## [0.2.6] - 2026-09-17
 
 ### Added
@@ -116,8 +156,12 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.10...HEAD
-[0.2.10]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...v0.2.10
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.11...HEAD
+[0.2.11]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.10...v0.2.11
+[0.2.10]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.9...v0.2.10
+[0.2.9]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.8...v0.2.9
+[0.2.8]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.3...v0.2.4
@@ -126,3 +170,5 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 [0.2.1]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Yeshwanthyk/ziggy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Yeshwanthyk/ziggy/releases/tag/v0.1.0
+
+[0.2.9]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.8...v0.2.9

@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { AutomationTargetString } from "./automation";
 import { ProfileAgentId, ProfileAgentThinking } from "./profile";
 import { ProfileId } from "./profile-directory";
 import { ProfileExtensionId } from "./profile-extension";
@@ -323,6 +324,13 @@ export const UiAutomationRunParams = Schema.Struct({
 
 export const UiAutomationStatusParams = UiProfileScopedParams;
 
+export const UiDestinationListParams = Schema.Struct({
+  profileId: ProfileId,
+  after: Schema.optionalKey(AutomationTargetString),
+});
+
+export type UiDestinationListParams = typeof UiDestinationListParams.Type;
+
 export const UiAutomationRunsParams = Schema.Struct({
   profileId: ProfileId,
   automationId: Schema.optionalKey(UiAutomationId),
@@ -481,6 +489,7 @@ export const UI_METHODS = [
   "model.available",
   "model.set",
   "auth.status",
+  "destination.list",
   "automation.list",
   "automation.show",
   "automation.create",
@@ -620,6 +629,26 @@ export const UiSessionListResult = Schema.Struct({
 
 export type UiSessionListResult = typeof UiSessionListResult.Type;
 
+export const UiAutomationDestination = Schema.Struct({
+  target: AutomationTargetString,
+  kind: Schema.Literals(["conversation", "telegram", "discord", "slack"]),
+  label: Schema.optionalKey(boundedCodePointString("destination label", 160, 1)),
+  category: Schema.Literals(["agent", "session", "telegram", "discord", "slack"]),
+  pinned: Schema.Boolean,
+  activityAt: Schema.optionalKey(boundedString("destination activity timestamp", 128)),
+  agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
+});
+
+export type UiAutomationDestination = typeof UiAutomationDestination.Type;
+
+export const UiDestinationListResult = Schema.Struct({
+  profileId: ProfileId,
+  entries: Schema.Array(UiAutomationDestination).check(Schema.isMaxLength(32)),
+  nextCursor: Schema.optionalKey(AutomationTargetString),
+}).check(resultWithinWireBudget);
+
+export type UiDestinationListResult = typeof UiDestinationListResult.Type;
+
 export const UiSessionOpenResult = Schema.Struct({ ref: UiSessionRef });
 
 export type UiSessionOpenResult = typeof UiSessionOpenResult.Type;
@@ -634,6 +663,15 @@ export const UiSessionShowResult = Schema.Struct({
     Schema.Literals(["completed", "aborted", "failed", "incomplete"]),
   ),
   live: Schema.optionalKey(UiLiveSession),
+  storedSessionId: Schema.optionalKey(
+    Schema.String.check(
+      Schema.makeFilter(
+        (value) =>
+          value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
+        { expected: "a canonical 1-128 character Pi session id" },
+      ),
+    ),
+  ),
 });
 
 export type UiSessionShowResult = typeof UiSessionShowResult.Type;
@@ -650,6 +688,13 @@ export const UiSessionHistoryEntry = Schema.Union([
     phase: Schema.Literals(["start", "end"]),
     toolName: boundedCodePointString("session history tool name", 48),
     failed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("automation-result"),
+    timestamp: boundedString("session history timestamp", 128),
+    automationId: UiAutomationId,
+    runId: boundedString("automation run id", 256),
+    text: boundedCodePointString("automation result text", 1_024, 0),
   }),
 ]);
 
@@ -1066,6 +1111,7 @@ export const UiGatewayResult = Schema.Union([
   UiSessionListResult,
   UiSessionShowResult,
   UiSessionHistoryResult,
+  UiDestinationListResult,
   UiSessionOpenResult,
   UiAcknowledgedResult,
   UiAgentListResult,
@@ -1128,6 +1174,7 @@ export const UI_EVENTS = [
   "thinking",
   "tool",
   "voice",
+  "automation-result",
   "settled",
   "error",
   "replay-gap",
@@ -1180,6 +1227,17 @@ const UiVoiceEvent = Schema.Struct({
   }),
 });
 
+const UiAutomationResultEvent = Schema.Struct({
+  ...UiEventBase,
+  event: Schema.Literal("automation-result"),
+  payload: Schema.Struct({
+    automationId: UiAutomationId,
+    runId: boundedString("automation run id", 256),
+    text: boundedCodePointString("automation result text", 1_024, 0),
+    timestamp: boundedString("automation result timestamp", 128),
+  }),
+});
+
 const UiSettledEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("settled"),
@@ -1208,6 +1266,7 @@ export const UiEventFrame = Schema.Union([
   UiThinkingEvent,
   UiToolEvent,
   UiVoiceEvent,
+  UiAutomationResultEvent,
   UiSettledEvent,
   UiErrorEvent,
   UiReplayGapEvent,
