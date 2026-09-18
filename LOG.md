@@ -902,3 +902,5 @@ results.
 Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` both pass; the latter reports 742 tests passed, zero failures.
 
 **Release preparation: 0.2.10.** Updated package, installer, README/changelog and version assertions. The user selected 0.2.10 because the existing local executable identifies as 0.2.9 while the source was 0.2.6 and the latest public release was 0.2.5. Publication will include the existing main-branch changes and the Jev extension; unrelated uncommitted research remains outside the release.
+
+**Release CI dependency fix.** The clean GitHub v0.2.10 build exposed a missing independent `clients/web` install (`vite/client` types were unavailable). Added its frozen-lockfile install before the existing build/check gates. Sol/medium verified the full `bun run check` in a clean archived checkout; no gate was removed. The v0.2.10 tag stays immutable; its exact source is being built separately for publication.
