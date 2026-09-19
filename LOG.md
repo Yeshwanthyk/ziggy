@@ -986,3 +986,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Bumped release metadata and version expectations for the Slack default-always change. Existing explicit channel policies remain authoritative; no Profile edits are needed.
 - Resident processes require a restart after installing the new CLI to load the changed Slack default.
 - Release verification passed: `bun run check`, 52 focused Slack/doctor/ACP tests, and `git diff --check`.
+
+## Release 0.2.13: repair release test timing
+
+- The 0.2.12 release failed twice: six CLI subprocess launches exceeded one 5-second test budget in both attempts; the second also hit a scheduler heartbeat test race. No 0.2.12 binary was installed locally.
+- Split CLI arity and tombstone cases into independent tests, preserving all assertions and the existing timeout.
+- Reproduced the scheduler timeout by delaying the continuation after heartbeat commit. The test advanced virtual time before the scheduler registered its sleep, moving the expected wakeup beyond the tested interval. Wait for the registered 60-second sleep through a test Clock service; retain the delayed continuation to exercise the race. The focused delayed test failed before this change and passed afterward.
+- No production scheduler changes, skipped checks, or increased timeout limits. Existing tags remain unchanged.
+- Verification passed: `bun run check`, all 764 tests, `git diff --check`, and ten repeated delayed-heartbeat regression runs. Release publication, local CLI installation, and Squarey restart follow the verified commit.

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-09-19
+
+### Fixed
+
+- Release tests no longer share one timeout across six CLI launches or advance the scheduler's virtual clock before its heartbeat sleep is registered. Includes the Slack default-always change from 0.2.12, whose release build failed before publishing binaries.
+
 ## [0.2.12] - 2026-09-19
 
 ### Changed
@@ -162,7 +168,8 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.12...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.13...HEAD
+[0.2.13]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.12...v0.2.13
 [0.2.12]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.9...v0.2.10

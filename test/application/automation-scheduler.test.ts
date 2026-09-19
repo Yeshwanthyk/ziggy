@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Clock, Deferred, Effect, Fiber } from "effect";
+import { Clock, Deferred, Duration, Effect, Fiber } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
 import {
@@ -578,14 +578,43 @@ describe("automation scheduler engine", () => {
 
   test("empty schedules heartbeat at sixty seconds and interruption stops later ticks", async () => {
     const target = await profile([]);
-    const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+
+    const scheduler = makeAutomationScheduler(
+      { run: () => Effect.never },
+      {
+        // Exercise a delayed continuation between heartbeat commit and sleep registration.
+        afterScheduleCommit: () => eventLoopTurn.pipe(Effect.repeat({ times: 20 })),
+        afterWorkerRegistered: () => Effect.void,
+      },
+    );
 
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(start);
-        const fiber = yield* Effect.forkScoped(runScheduler(scheduler, target));
+        const clock = yield* Clock.Clock;
+        const sleeping = yield* Deferred.make<void>();
+
+        const observedClock: Clock.Clock = {
+          ...clock,
+          sleep: (duration) =>
+            Effect.gen(function* () {
+              const sleep = yield* Effect.forkChild(clock.sleep(duration), {
+                startImmediately: true,
+              });
+
+              if (Duration.toMillis(duration) === 60_000)
+                yield* Deferred.succeed(sleeping, undefined);
+              yield* Fiber.join(sleep);
+            }),
+        };
+
+        const fiber = yield* Effect.forkScoped(
+          runScheduler(scheduler, target).pipe(Effect.provideService(Clock.Clock, observedClock)),
+        );
+
         expect(yield* awaitHeartbeat(target, start)).toBe(start);
-        yield* Effect.yieldNow;
+        // A committed heartbeat does not mean the virtual sleep is registered yet.
+        yield* Deferred.await(sleeping);
         yield* TestClock.adjust(59_000);
         expect((yield* readAutomationStatus(target.path, start + 59_000)).heartbeatAtMs).toBe(
           start,

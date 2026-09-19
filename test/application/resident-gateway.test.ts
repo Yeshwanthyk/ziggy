@@ -559,8 +559,9 @@ describe("gateway CLI", () => {
   const invoke = (...args: ReadonlyArray<string>) =>
     Bun.spawnSync([process.execPath, "src/main.ts", ...args], { stdout: "pipe", stderr: "pipe" });
 
-  test("enforces exact arity and keeps legacy resident words as tombstones", () => {
-    for (const args of [["serve"], ["serve", "test", "extra"]]) {
+  test.each([{ args: ["serve"] }, { args: ["serve", "test", "extra"] }])(
+    "enforces serve arity for %j",
+    ({ args }) => {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe(
@@ -576,21 +577,24 @@ describe("gateway CLI", () => {
           "  ziggy serve uninstall <name|path>",
         ].join("\n"),
       );
-    }
+    },
+  );
 
-    for (const args of [["gateway"], ["gateway", "test", "extra"]]) {
+  test.each([{ args: ["gateway"] }, { args: ["gateway", "test", "extra"] }])(
+    "enforces gateway arity for %j",
+    ({ args }) => {
       const result = invoke(...args);
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString().trim()).toBe("usage: ziggy gateway <name|path>");
-    }
+    },
+  );
 
-    for (const command of ["discord", "slack"] as const) {
-      const result = invoke(command, "ignored");
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr.toString().trim()).toBe(
-        `ziggy ${command} is no longer a resident command; use: ziggy serve <name|path>`,
-      );
-    }
+  test.each(["discord", "slack"])("keeps %s as a resident command tombstone", (command) => {
+    const result = invoke(command, "ignored");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString().trim()).toBe(
+      `ziggy ${command} is no longer a resident command; use: ziggy serve <name|path>`,
+    );
   });
 
   test("serve status reports a stopped process without creating runtime state", async () => {
