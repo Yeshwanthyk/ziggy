@@ -31,8 +31,8 @@ session routing.
   in the next reply supplies those recent images to Pi.
 - Personal direct-message memory is intentionally not admitted into channel conversations.
 - Other Slack users are ignored.
-- Channel activation is mention-only by default. A `channels` entry can opt one channel into
-  `"always"`; root messages and thread replies both inherit the setting for their Slack channel ID.
+- Channel activation is always-on by default. A `channels` entry can restrict one channel to
+  `"mention"`; root messages and thread replies both inherit the setting for their Slack channel ID.
   Direct messages are always active, and every accepted request in a mention-only channel must
   contain the app's real Slack mention.
 - Messages starting a new turn immediately show Slack's native `is thinking...` loading status on the source
@@ -256,9 +256,9 @@ Create `<profile>/slack.json` with these fields:
 }
 ```
 
-`channels` is optional. Any omitted channel defaults to `"mention"`; use an explicit `"always"`
-entry only for a channel where every owner-authored message should activate Ziggy. An explicit
-`"mention"` entry is allowed when documenting policy matters. The former Profile-wide
+`channels` is optional. Any omitted channel defaults to `"always"`; use an explicit `"mention"`
+entry only for a channel where every owner-authored message must include the app's real Slack
+mention. An explicit `"always"` entry is allowed when documenting policy matters. The former Profile-wide
 `channelMode` field is no longer accepted. Channel keys must be Slack channel IDs beginning with
 `C` or `G`; the decoder rejects invalid IDs, unknown modes, missing required fields, empty values,
 and additional fields. Store the file privately:
@@ -332,12 +332,12 @@ Invite the app into each channel where it should receive events:
 /invite @Squarey
 ```
 
-By default, send `@Squarey` followed by the request; Ziggy strips its Slack mention before prompting
-Pi. Every request in a thread must mention Squarey too: one earlier mention does not latch activation
-for later replies. A channel configured as `"always"` treats any ordinary owner-authored message as
-a request, both at the root and in its threads. Messages from other users are ignored in both modes,
-and the channel receives isolated group memory rather than the owner's direct-message memory. A
-top-level request receives its working and final messages in a thread under that request. Later
+By default, send an ordinary owner-authored request; Ziggy accepts it without an app mention. If
+you include `@Squarey`, Ziggy strips that real Slack mention before prompting Pi. A channel
+configured as `"mention"` requires every request in a thread to mention Squarey too: one earlier
+mention does not latch activation for later replies. Messages from other users are ignored in both
+modes, and the channel receives isolated group memory rather than the owner's direct-message memory.
+A top-level request receives its working and final messages in a thread under that request. Later
 accepted replies in that thread continue the same Pi session. Separate top-level requests use
 separate sessions and can run independently. A bare `@Squarey` inside an existing thread means
 "review this thread and help"; a bare top-level mention asks the owner what help they want.
@@ -371,10 +371,11 @@ Check, in order:
 9. The resident was restarted after creating or changing `slack.json`.
 10. `ziggy serve logs <profile>` contains no authentication, socket, or provider failure.
 
-For an owner-authored channel message without a mention in the default mention-only mode, the log says
-`reason:mention-required`. An accepted message logs its chat key and activation mode. A healthy live
-transport logs `socket connected`; repeated `socket connection degraded` lines mean the resident is
-running but Socket Mode is reconnecting.
+For an owner-authored channel message without a mention in the default always-on mode, the message is
+accepted. In an explicitly mention-only channel, the log says `reason:mention-required`. An accepted
+message logs its chat key and activation mode. A healthy live transport logs `socket connected`;
+repeated `socket connection degraded` lines mean the resident is running but Socket Mode is
+reconnecting.
 
 Run the read-only projections before editing files:
 
@@ -393,8 +394,8 @@ the bot in the channel. Public and private channels use different Slack event/sc
 ### The bot sees the channel but ignores a message
 
 This is expected when the sender is not `ownerUserId`, the text is blank, or the event was authored
-by the bot itself. Unless that exact channel is configured as `"always"`, the message must also
-contain the app's real Slack mention; plain text such as `Squarey` is not an activation. Ziggy
+by the bot itself. If that exact channel is explicitly configured as `"mention"`, the message must
+also contain the app's real Slack mention; plain text such as `Squarey` is not an activation. Ziggy
 currently has no multi-user allowlist and intentionally ignores those messages.
 
 ### The reply works but no loading status appears
@@ -456,7 +457,7 @@ On 2026-08-08, the manual path above produced these secret-free observations for
 - `ziggy serve status` reported the supervisor and process running and the scheduler active.
 - Initial resident stdout and stderr were empty, with no Slack authentication or Socket Mode error.
 - A direct message rendered the immediate working message and its edited final Markdown reply.
-- An owner-authored channel message completed without an app mention under compatibility `always`
+- An owner-authored channel message completed without an app mention under the default `always`
   mode, and a real Slack thread used a distinct thread-root Pi session.
 - Two concurrent direct messages visibly moved from working/queued feedback to independent edited
   final replies.

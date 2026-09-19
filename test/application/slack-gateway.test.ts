@@ -11,6 +11,7 @@ import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {
   classifySlackCommand,
+  classifySlackMessage,
   makeSlackGateway,
   normalizeSlackMessage,
   normalizeSlackUserText,
@@ -278,7 +279,7 @@ describe("Slack gateway boundary", () => {
     expect(thread === undefined ? undefined : slackReplyThreadTs(thread)).toBe("0.9");
   });
 
-  test("defaults every channel and thread to mention-only unless that channel is always", () => {
+  test("defaults every channel and thread to always unless that channel is mention", () => {
     const config = {
       channels: {
         C0A06UL1CKW: "always" as const,
@@ -288,8 +289,29 @@ describe("Slack gateway boundary", () => {
 
     expect(resolveSlackChannelMode(config, "C0A06UL1CKW")).toBe("always");
     expect(resolveSlackChannelMode(config, "C0BP3QUQ3CL")).toBe("mention");
-    expect(resolveSlackChannelMode(config, "C9999999999")).toBe("mention");
-    expect(resolveSlackChannelMode({}, "C9999999999")).toBe("mention");
+    expect(resolveSlackChannelMode(config, "C9999999999")).toBe("always");
+    expect(resolveSlackChannelMode({}, "C9999999999")).toBe("always");
+
+    const defaultChannel = message({ channel: "C9999999999", channelType: "channel" });
+
+    expect(classifySlackMessage(defaultChannel, "UBOT", "U123")).toMatchObject({
+      kind: "accepted",
+      message: {
+        chatKey: "group-slC9999999999-thread-1.0",
+        text: "hello",
+      },
+    });
+    expect(normalizeSlackMessage(defaultChannel, "UBOT", "U123")).toMatchObject({
+      chatKey: "group-slC9999999999-thread-1.0",
+      text: "hello",
+    });
+    expect(classifySlackCommand(defaultChannel, "UBOT", "U123")).toMatchObject({
+      kind: "turn",
+      message: {
+        chatKey: "group-slC9999999999-thread-1.0",
+        text: "hello",
+      },
+    });
 
     const thread = message({
       channel: "C0BP3QUQ3CL",

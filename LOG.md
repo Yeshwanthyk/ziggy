@@ -887,6 +887,12 @@ results.
 - Archived the completed anti-slop alignment, Effect-native audit, and CLI/filesystem UI-hook reports from the working tree. Their history remains in Git; current behavior belongs to source rules, focused skills, and the web operations/architecture guides.
 - Verification: the full `bun run check` gate passed before the documentation commit; packaged operations references matched their public sources and loaded in the focused resource test.
 
+## Scout Jev decision support
+
+- Three Luna high scouts examined TypeSafe's current API and cookbooks, bounded computer-use decisions, and current Ziggy integration seams. Research notes are in `docs/research/jev-*-scout.md`.
+- Recommend preserving deterministic workflow execution and evaluating optional remote classification, extraction verification, and ranking at decision points. Jev currently accepts text rather than screenshots; provider benchmark numbers are not measured Ziggy speedups.
+- Verification: source and documentation inspection only. No runtime implementation, live Jev call, deployment, or tests were performed.
+
 ## General computer workflow alignment
 
 - Removed the obsolete `browser_workflow_save`, `browser_workflow_list`, `browser_workflow_show`, and `browser_workflow_run` tools with their fixed browser-job runner, schemas, storage adapter, tests, and two-page skill guidance. The adaptable `workflow_task_*` lifecycle and existing compiled semantic workflow support remain.
@@ -968,3 +974,15 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 **0.2.11 pre-deployment proof.** Built and sandbox-smoked the clean merged commit `4582d4e`; the resulting executable successfully reads Squarey's existing scheduler database and historical conversation-target result. Its service-definition drift report is expected while invoked from a temporary build path. A synthetic mixed Choice/Score/Noul request through the Jev client succeeded against `jev-1.13.0` in 479 ms (one attempt; 388 input / 62 output tokens). This is one API smoke measurement, not a LinkedIn workflow benchmark. No LinkedIn data was sent or automation run. The user-authorized credential from `~/.env` was installed only in Squarey's private Jev credentials file; the value was not logged.
 
 **0.2.11 published and Squarey enabled.** Both GitHub Actions attempts timed out the same five-second gateway CLI test (758 passed / 1 timeout). Published the exact clean-tag local artifact after all 759 local tests and standalone smoke passed; release notes disclose the CI timeout. Latest stable is `v0.2.11`; `v0.2.10` is prerelease. Installed executable version and release SHA-256 match (`a2b06f9b732bdb654e8b83b6039409405464b929d275f2a20cd769a7194b85a7`). After checking zero active runs/turns, enabled `jev` in Squarey and restarted its resident from PID 54185 to 73700. Scheduler tick and Slack/Discord are healthy. Other extensions, LinkedIn automation, schedules and workflow definitions were unchanged. Main-worktree `bun run check` also passes. The CI timeout remains an open release-harness issue.
+
+## Slack always-on channel default
+
+- Changed omitted Slack channel policies and the application classifier defaults from `mention` to `always`; explicit per-channel `mention` and `always` entries still override the default. Owner-only filtering, bot filtering, direct messages, threads, and session routing are unchanged.
+- Updated the focused Slack gateway regression coverage, both Slack operations references, and the generated builtin catalog resource.
+- Verification: focused Slack gateway tests and `bun run check` were run; results are reported with this change.
+
+## Release 0.2.12
+
+- Bumped release metadata and version expectations for the Slack default-always change. Existing explicit channel policies remain authoritative; no Profile edits are needed.
+- Resident processes require a restart after installing the new CLI to load the changed Slack default.
+- Release verification passed: `bun run check`, 52 focused Slack/doctor/ACP tests, and `git diff --check`.

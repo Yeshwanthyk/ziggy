@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-09-19
+
+### Changed
+
+- Slack channels now default to `always` for owner-authored root messages and thread replies. Set a channel to `mention` to require an explicit app mention. Restart the resident after upgrading to apply the new default.
+
 ## [0.2.11] - 2026-09-18
 
 ### Added
@@ -156,7 +162,8 @@ First tracked release. Ziggy is a folder that is an assistant: one Bun/TypeScrip
 - Standalone compiled binary, `ziggy version`, `ziggy update`, `doctor`, `auth`, `models`, and transcript-free `sessions` list/show
 - Curl install for macOS Apple Silicon: `curl -fsSL https://github.com/Yeshwanthyk/ziggy/releases/latest/download/install.sh | sh`
 
-[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.11...HEAD
+[Unreleased]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.12...HEAD
+[0.2.12]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/Yeshwanthyk/ziggy/compare/v0.2.8...v0.2.9

@@ -255,13 +255,13 @@ export const slackReplyThreadTs = (
 export const resolveSlackChannelMode = (
   config: Pick<SlackGatewayConfig, "channels">,
   channel: string,
-): typeof SlackChannelMode.Type => config.channels?.[channel] ?? "mention";
+): typeof SlackChannelMode.Type => config.channels?.[channel] ?? "always";
 
 export const classifySlackMessage = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "mention",
+  channelMode: typeof SlackChannelMode.Type = "always",
 ): SlackAdmission => {
   if (message.userId === botUserId) {
     return { kind: "ignored", reason: "bot-message" };
@@ -341,7 +341,7 @@ export const normalizeSlackMessage = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "mention",
+  channelMode: typeof SlackChannelMode.Type = "always",
 ): InboundMessage | undefined => {
   const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
 
@@ -352,7 +352,7 @@ export const classifySlackCommand = (
   message: SlackInboundMessage,
   botUserId: string,
   ownerUserId: string,
-  channelMode: typeof SlackChannelMode.Type = "mention",
+  channelMode: typeof SlackChannelMode.Type = "always",
 ): SlackCommandAdmission => {
   const admission = classifySlackMessage(message, botUserId, ownerUserId, channelMode);
 
@@ -1035,7 +1035,7 @@ export const makeSlackGateway = (
           Effect.mapError(socketFailure),
         );
 
-        const channelPolicySummary = `default:mention overrides:${Object.keys(config.channels ?? {}).length}`;
+        const channelPolicySummary = `default:always overrides:${Object.keys(config.channels ?? {}).length}`;
         console.log(
           `[slack] authenticated; socket supervisor started; channel-policy:${channelPolicySummary}`,
         );
