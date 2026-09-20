@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.14 — 2026-09-20
+
+- Restore mention-only Slack channel defaults. Explicit per-channel `always` overrides and direct messages remain unchanged.
+
 All notable changes to Ziggy are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

@@ -994,3 +994,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Reproduced the scheduler timeout by delaying the continuation after heartbeat commit. The test advanced virtual time before the scheduler registered its sleep, moving the expected wakeup beyond the tested interval. Wait for the registered 60-second sleep through a test Clock service; retain the delayed continuation to exercise the race. The focused delayed test failed before this change and passed afterward.
 - No production scheduler changes, skipped checks, or increased timeout limits. Existing tags remain unchanged.
 - Verification passed: `bun run check`, all 764 tests, `git diff --check`, and ten repeated delayed-heartbeat regression runs. Release publication, local CLI installation, and Squarey restart follow the verified commit.
+
+## 2026-09-20 — Restore Slack mention defaults / 0.2.14
+
+- Reverted the 0.2.12 always-on default in Slack admission helpers and startup diagnostics; preserved explicit channel overrides and direct-message behavior.
+- Restored mention-default tests and operational guidance, and bumped CLI release metadata to 0.2.14.
+- Verification: `bun run check`, `bun run fmt`, and `bun run test` passed (764 Bun tests; web check includes 69 passing tests). Regenerated the bundled operational reference.
