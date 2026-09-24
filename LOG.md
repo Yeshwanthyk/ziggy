@@ -1000,3 +1000,15 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Reverted the 0.2.12 always-on default in Slack admission helpers and startup diagnostics; preserved explicit channel overrides and direct-message behavior.
 - Restored mention-default tests and operational guidance, and bumped CLI release metadata to 0.2.14.
 - Verification: `bun run check`, `bun run fmt`, and `bun run test` passed (764 Bun tests; web check includes 69 passing tests). Regenerated the bundled operational reference.
+
+## 2026-09-22 — OpenMuse connector research
+
+- Inspected OpenMuse at `ef8f608bb0305ff97114983de5c9db7ebcd816e2` and Ziggy at `2d3bf4a`; recorded direct Google/OAuth reuse patterns, existing Executor/Code Mode/Jev seams, and a proposed Profile-owned connector base in `docs/research/openmuse-connectors-scout.md`.
+- Compared the current official MCP client and Pi MCP adapter ownership boundaries. This is source research only: no runtime implementation, account connection, external API action, or live compatibility test.
+- Verified source link line bounds and whitespace; no application tests were needed for these documentation-only changes.
+- Follow-up web research clarified the direct-first scope: no MCP dependency is required. Added native SDK, Nango auth, and Composio direct-tool options; revised the first slice to a Google extension only.
+
+## 2026-09-22 — Composio in OpenClaw and Hermes
+
+- Inspected the current Composio OpenClaw plugin, Hermes MCP/OAuth sources, and Composio CLI/SDK documentation. Recorded the plugin's CLI route, the setup pages' HTTP MCP route, and Profile/account ownership implications in `docs/research/composio-openclaw-hermes-scout.md`.
+- Recommended evaluating one optional Composio adapter for broad app coverage before building a general connector framework. No installation, login, live account action, or runtime code change was performed; documentation whitespace check passed.
