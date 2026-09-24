@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the optional bundled Jev extension; it rejected valid Score answers from the live API.
+
 ## [0.2.13] - 2026-09-19
 
 ### Fixed

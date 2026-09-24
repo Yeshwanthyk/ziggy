@@ -86,12 +86,6 @@
       "path": "./extensions/imsg"
     },
     {
-      "id": "jev",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/jev"
-    },
-    {
       "id": "lossless-claw",
       "version": "0.1.0",
       "source": "bundled",

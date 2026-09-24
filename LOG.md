@@ -1012,3 +1012,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 
 - Inspected the current Composio OpenClaw plugin, Hermes MCP/OAuth sources, and Composio CLI/SDK documentation. Recorded the plugin's CLI route, the setup pages' HTTP MCP route, and Profile/account ownership implications in `docs/research/composio-openclaw-hermes-scout.md`.
 - Recommended evaluating one optional Composio adapter for broad app coverage before building a general connector framework. No installation, login, live account action, or runtime code change was performed; documentation whitespace check passed.
+
+## 2026-09-24 — Remove bundled Jev extension
+
+- A live probe against api.typesafe.ai showed the extension rejected valid Score answers: it required |score - Σ i·p_i| <= 0.005 and probability sums within 1e-6, but the API returns probabilities rounded to 2 decimals while score comes from unrounded values; score10 and a 12-question mixed request failed 3/3.
+- No repository code consumed its ziggy:jev:judgment:v1 bridge.
+- Jev integration is owned by pi-computer-use and will arrive through a future vendored computer-use release. Profiles that already shelved jev keep their copy until `ziggy extensions remove <profile> jev`.
