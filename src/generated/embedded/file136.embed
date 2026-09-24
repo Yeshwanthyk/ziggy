@@ -1,348 +1,120 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Process-group signaling falls back when group termination races with process exit. */
-/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution and child_process are Promise adapter boundaries. */
-/* eslint-disable ziggy-effect/no-error-constructor -- Pi marks rejected tool Promises as tool failures. */
-import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+---
+name: extension-authoring
+description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; new packages are admitted through profile_extensions.
+---
 
-const PROFILE_PATTERN = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
+# Ziggy extension authoring
 
-const IDLE_TIMEOUT_PATTERN = "^(?:0|[1-9][0-9]{0,8}(?:ms|s|m|h)?)$";
+Profile-owned extension packages live at `<profile>/extensions/<id>/` and use Pi's package contract
+directly. The lowercase kebab-case folder name and matching `extensions.json` entry are Ziggy's
+local shelf identity; `package.json.name` is independent upstream package metadata and may be
+scoped or unscoped. For example, `<profile>/extensions/computer-use/` is selected as
+`"computer-use"` while its manifest can retain `"name": "@injaneity/pi-computer-use"`.
 
-const MAX_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+A Ziggy Profile agent runs with the Profile as its working directory, so create the package at
+`extensions/<id>/`. Never write generated or Profile-specific packages into Ziggy's repository
+extension catalogue.
+Keep each package self-contained and give it only the resources it needs.
+Do not require tools owned by another package. Agents may compose capabilities that are present,
+but each package must remain useful when every other optional package is absent.
 
-const EXECUTE_TIMEOUT_MS = 120_000;
+## Package shape
 
-const MAINTENANCE_TIMEOUT_MS = 15_000;
+```text
+extensions/computer-use/
+├── package.json
+├── index.ts                 # only when the package registers executable Pi behavior
+└── skills/
+    └── computer-use/
+        ├── SKILL.md
+        └── scripts/         # optional skill-relative support files
+```
 
-const TERMINATION_GRACE_MS = 500;
+Use this manifest for a skill-only package:
 
-const OUTPUT_LIMIT = 24 * 1024;
-
-const ExecuteParameters = Type.Object(
-  {
-    action: Type.Literal("execute"),
-    profile: Type.String({
-      description: "Logical persistent browser profile slug.",
-      minLength: 1,
-      maxLength: 48,
-      pattern: PROFILE_PATTERN,
-    }),
-    script: Type.String({
-      description: "Sandboxed dev-browser JavaScript sent on stdin, never through a shell.",
-      minLength: 1,
-      maxLength: 128 * 1024,
-    }),
-    headless: Type.Optional(
-      Type.Boolean({ description: "Launch managed Chromium headless; false is headed." }),
-    ),
-    connect: Type.Optional(
-      Type.Boolean({
-        description: "Auto-connect to a local Chrome; remote URLs are not accepted.",
-      }),
-    ),
-    idleTimeout: Type.Optional(
-      Type.String({
-        description: "Idle cleanup duration up to 24h, such as 30s, 5m, 1h, or raw ms; 0 disables.",
-        pattern: IDLE_TIMEOUT_PATTERN,
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const BrowsersParameters = Type.Object(
-  { action: Type.Literal("browsers") },
-  { additionalProperties: false },
-);
-
-const StatusParameters = Type.Object(
-  { action: Type.Literal("status") },
-  { additionalProperties: false },
-);
-
-const StopParameters = Type.Object(
-  {
-    action: Type.Literal("stop"),
-    confirmed: Type.Literal(true, {
-      description:
-        "Required confirmation that this stops the daemon and all managed browsers globally.",
-    }),
-  },
-  { additionalProperties: false },
-);
-
-export const Parameters = Type.Union([
-  ExecuteParameters,
-  BrowsersParameters,
-  StatusParameters,
-  StopParameters,
-]);
-
-type Parameters = Static<typeof Parameters>;
-
-type ExecuteInput = Static<typeof ExecuteParameters>;
-
-interface CapturedOutput {
-  readonly text: string;
-  readonly truncated: boolean;
-}
-
-interface CliResult {
-  readonly stdout: CapturedOutput;
-  readonly stderr: CapturedOutput;
-}
-
-interface OutputCollector {
-  readonly append: (chunk: Buffer | string) => void;
-  readonly value: () => CapturedOutput;
-}
-
-const durationMilliseconds = (duration: string): number => {
-  const match = /^(0|[1-9][0-9]{0,8})(ms|s|m|h)?$/.exec(duration);
-
-  if (match === null) throw new Error(`Invalid idleTimeout: ${duration}`);
-  const value = Number(match[1]);
-
-  const multiplier =
-    match[2] === "h" ? 3_600_000 : match[2] === "m" ? 60_000 : match[2] === "s" ? 1_000 : 1;
-
-  const milliseconds = value * multiplier;
-
-  if (milliseconds > MAX_IDLE_TIMEOUT_MS) {
-    throw new Error(`idleTimeout must be at most 24h; received ${duration}`);
+```json
+{
+  "name": "@injaneity/pi-computer-use",
+  "private": true,
+  "type": "module",
+  "keywords": ["pi-package"],
+  "pi": {
+    "skills": ["./skills"]
   }
-
-  return milliseconds;
-};
-
-export const managedBrowserName = (cwd: string, logicalProfile: string): string => {
-  const namespace = createHash("sha256")
-    .update(resolve(cwd))
-    .update("\0")
-    .update(logicalProfile)
-    .digest("hex")
-    .slice(0, 20);
-
-  return `ziggy-${logicalProfile}-${namespace}`;
-};
-
-const binary = (): string => process.env.ZIGGY_DEV_BROWSER_BIN?.trim() || "dev-browser";
-
-const signalProcessTree = (child: ChildProcess, signal: NodeJS.Signals): void => {
-  if (child.pid === undefined) return;
-
-  if (process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, signal);
-
-      return;
-    } catch {
-      // Fall back if the process group has already changed or exited.
-    }
-  }
-
-  child.kill(signal);
-};
-
-const createCollector = (): OutputCollector => {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let truncated = false;
-
-  return {
-    append(chunk) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      const available = OUTPUT_LIMIT - size;
-
-      if (available <= 0) {
-        truncated = true;
-
-        return;
-      }
-
-      const selected = buffer.subarray(0, available);
-      chunks.push(selected);
-      size += selected.byteLength;
-
-      if (selected.byteLength < buffer.byteLength) truncated = true;
-    },
-    value: () => ({ text: Buffer.concat(chunks).toString("utf8"), truncated }),
-  };
-};
-
-const display = (output: CapturedOutput): string =>
-  output.truncated ? `${output.text}\n[output truncated]` : output.text;
-
-const streamSummary = (result: CliResult): string =>
-  `stdout:\n${display(result.stdout) || "(empty)"}\nstderr:\n${display(result.stderr) || "(empty)"}`;
-
-const runCli = (
-  args: readonly string[],
-  stdin: string,
-  cwd: string,
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-): Promise<CliResult> =>
-  new Promise((resolvePromise, reject) => {
-    const child = spawn(binary(), args, {
-      cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
-
-    const stdout = createCollector();
-    const stderr = createCollector();
-    let settled = false;
-    let timedOut = false;
-    let cancelled = false;
-    let terminating = false;
-    let escalation: ReturnType<typeof setTimeout> | undefined;
-
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-
-      if (escalation !== undefined) clearTimeout(escalation);
-      signal?.removeEventListener("abort", cancel);
-    };
-
-    const terminate = (): void => {
-      if (terminating) return;
-      terminating = true;
-      signalProcessTree(child, "SIGTERM");
-      escalation = setTimeout(() => signalProcessTree(child, "SIGKILL"), TERMINATION_GRACE_MS);
-      escalation.unref();
-    };
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      terminate();
-    }, timeoutMs);
-
-    timeout.unref();
-
-    const cancel = (): void => {
-      cancelled = true;
-      terminate();
-    };
-
-    if (signal?.aborted) cancel();
-    else signal?.addEventListener("abort", cancel, { once: true });
-    child.stdout.on("data", stdout.append);
-    child.stderr.on("data", stderr.append);
-    child.on("error", (cause) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error(`dev_browser failed to start ${binary()}: ${cause.message}`));
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      const result = { stdout: stdout.value(), stderr: stderr.value() };
-      const streams = streamSummary(result);
-
-      if (cancelled) return reject(new Error(`dev_browser was cancelled.\n${streams}`));
-
-      if (timedOut)
-        return reject(new Error(`dev_browser timed out after ${timeoutMs}ms.\n${streams}`));
-
-      if (code !== 0)
-        return reject(new Error(`dev_browser exited with code ${code ?? "unknown"}.\n${streams}`));
-      resolvePromise(result);
-    });
-    child.stdin.on("error", () => {
-      // A fast-exiting CLI reports the useful failure through close/stderr.
-    });
-    child.stdin.end(stdin);
-  });
-
-const executeArgs = (input: ExecuteInput, cwd: string): string[] => {
-  if (input.idleTimeout !== undefined) durationMilliseconds(input.idleTimeout);
-  const args = ["--browser", managedBrowserName(cwd, input.profile)];
-
-  if (input.headless === true) args.push("--headless");
-
-  if (input.connect === true) args.push("--connect");
-
-  if (input.idleTimeout !== undefined) args.push("--idle-timeout", input.idleTimeout);
-
-  return args;
-};
-
-const resultText = (result: CliResult): string => {
-  const stdout = display(result.stdout);
-  const stderr = display(result.stderr);
-
-  return stderr ? `${stdout}\n\nstderr:\n${stderr}`.trim() : stdout || "dev-browser completed.";
-};
-
-export const executeDevBrowser = async (input: Parameters, cwd: string, signal?: AbortSignal) => {
-  if (input.action === "execute") {
-    let result: CliResult;
-
-    try {
-      result = await runCli(executeArgs(input, cwd), input.script, cwd, signal, EXECUTE_TIMEOUT_MS);
-    } catch (cause) {
-      const message = String(cause);
-
-      if (input.idleTimeout !== undefined && message.includes("--idle-timeout")) {
-        throw new Error(
-          "This installed dev-browser does not support idleTimeout. Upgrade dev-browser to 0.2.9 or newer, or omit idleTimeout; persistent profile reuse still works without idle cleanup.",
-        );
-      }
-
-      throw cause;
-    }
-
-    return {
-      content: [{ type: "text" as const, text: resultText(result) }],
-      details: {
-        action: input.action,
-        profile: input.profile,
-        stdoutTruncated: result.stdout.truncated,
-        stderrTruncated: result.stderr.truncated,
-      },
-    };
-  }
-
-  if (input.action === "stop" && input.confirmed !== true) {
-    throw new Error(
-      "dev_browser stop requires confirmed:true because it stops the daemon and all managed browsers globally.",
-    );
-  }
-
-  const result = await runCli([input.action], "", cwd, signal, MAINTENANCE_TIMEOUT_MS);
-
-  const prefix =
-    input.action === "stop"
-      ? "Stopped the dev-browser daemon and all managed browser connections. Persistent browser profile directories were preserved.\n\n"
-      : "";
-
-  return {
-    content: [{ type: "text" as const, text: `${prefix}${resultText(result)}`.trim() }],
-    details: {
-      action: input.action,
-      stdoutTruncated: result.stdout.truncated,
-      stderrTruncated: result.stderr.truncated,
-    },
-  };
-};
-
-export default function devBrowser(pi: Pick<ExtensionAPI, "registerTool">): void {
-  pi.registerTool({
-    name: "dev_browser",
-    label: "dev_browser",
-    description:
-      "Run sandboxed JavaScript in a named persistent dev-browser profile, inspect global daemon state, or explicitly stop the daemon and all managed browser connections while preserving profile directories.",
-    parameters: Parameters,
-    executionMode: "sequential",
-    async execute(_toolCallId, input, signal, _onUpdate, ctx) {
-      return executeDevBrowser(input, ctx.cwd, signal);
-    },
-  });
 }
+```
+
+When `index.ts` exists, add `"extensions": ["./index.ts"]` and these peer dependencies:
+
+```json
+{
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
+```
+
+## Executable extension
+
+Export one Pi `ExtensionFactory` from `index.ts`. Register tools with `pi.registerTool`; use
+TypeBox parameters and bounded text results. Resolve package files from `import.meta.url`, while
+tool subprocesses run in the Profile cwd supplied by Pi.
+
+Before using a Pi API, query the pinned `pi_docs` tool. Search for the API name, then read the
+matching section of `docs/extensions.md` or another listed README/docs path. These documents match
+the Pi version running inside Ziggy. If a specialist does not have `pi_docs` in its explicit tool
+allowlist, hand the API lookup to the parent Profile agent.
+
+Do not create a second manifest, registry, alias layer, installer, or tool allowlist. Ziggy admits
+only paths declared by `pi.extensions` and `pi.skills`. After writing an agent-authored package,
+call the in-process `profile_extensions` tool with `action: "add"` for its shelf ID. Do not shell
+into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. Claim
+admission only from that tool's structured success result; preserve and report its operation,
+stage, code, and message fields on failure. Profile-owned packages take precedence over approved
+catalogue packages with the same ID. Reopening that Profile or restarting its resident Ziggy
+process applies the change. All registered tools must be usable from TUI, print runs, gateway
+chats, and automations when the package is selected.
+
+Specialists never receive `profile_extensions`. A specialist may prepare or review package files,
+then must return the shelf ID, changed paths, and proof results to the parent Profile agent for
+validation and admission.
+
+## Third-party package adoption
+
+To adopt a package from upstream, clone or download its source into an OS temporary directory
+(never into the repository or Profile) and inspect `package.json` and its declared `pi` paths
+there. Never run install or lifecycle scripts. Choose a lowercase kebab-case shelf ID
+independent of `package.json.name`, then copy only the package source into
+`<profile>/extensions/<id>/`, excluding `.git/`, `node_modules/`, and temp artifacts. The copy
+alone leaves the package inactive: call the in-process `profile_extensions` tool with
+`action: "add"` and the shelf ID, and report admission or failure from that tool's structured
+result.
+
+Guardrails: never delete or replace an existing `<profile>/extensions/<id>/`. If the destination
+already exists, stop and report the collision rather than overwriting it. Remove only the OS
+temporary paths this adoption attempt created, and clean them on both success and failure.
+
+## Skills
+
+Agent Skills remain progressive: frontmatter metadata is loaded at startup and the body is read
+only when needed. Put scripts, references, templates, and assets inside the owning skill folder,
+and reference them relative to `SKILL.md`. The package remains the unit passed to
+`profile_extensions`, so those relative files stay next to the skill.
+
+## Proof
+
+For each change:
+
+1. Verify the package manifest points only to files that exist.
+2. Run only package-local checks declared by that package. Do not assume a Profile has Ziggy's
+   repository scripts.
+3. For a new selection, run `profile_extensions` with `action: "add"` and the shelf ID; add performs
+   candidate preflight before admission. For an already selected package, run
+   `profile_extensions` with `action: "validate"`, which validates the current selection. A
+   specialist hands this step to its parent Profile agent.
+4. Reopen a disposable Profile runtime and exercise each registered tool through Pi. A successful
+   import or file copy alone is not runtime proof.
+
+Keep the implementation as one narrow end-to-end capability. Do not add speculative guards or
+shared infrastructure for hypothetical packages.

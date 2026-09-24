@@ -1,146 +1,146 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { CdpPageSnapshot } from "./cdp.mts";
+import type { ImageMode } from "./contract.mts";
+import type { WindowNote } from "./note.mts";
+import { restoreOutline, serializeOutline, type LookResponse, type Outline, type SerializedOutline } from "./outline.mts";
+import { StateStore, type StoredState } from "./runtime.mts";
 
-const PACKAGE_ROOT = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"..",
-	"..",
-);
-const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.mjs");
-const HELPER_SETUP_TIMEOUT_MS = 60_000;
-const COMMAND_TIMEOUT_MS = 15_000;
-
-export const WINDOWS_HELPER_PROTOCOL_VERSION = 4;
-export const WINDOWS_HELPER_PATH = path.join(os.homedir(), ".pi", "agent", "helpers", "pi-computer-use", "windows-bridge.exe");
-
-interface Pending<T> {
-	resolve(value: T): void;
-	reject(error: Error): void;
-	timer: NodeJS.Timeout;
+interface StateTargetSnapshot {
+	pid: number;
+	windowId: number;
+	windowRef?: string;
 }
 
-async function isExecutable(filePath: string): Promise<boolean> {
-	try { await access(filePath, fsConstants.X_OK); return true; } catch { return false; }
+export interface CurrentTarget {
+	appName: string;
+	bundleId?: string;
+	pid: number;
+	windowTitle: string;
+	windowId: number;
+	windowRef?: string;
+	nativeWindowRef?: string;
 }
 
-async function runProcess(command: string, args: string[], timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<void> {
-	if (signal?.aborted) throw new Error("Operation aborted.");
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env });
-		let stdout = "";
-		let stderr = "";
-		const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); };
-		const timer = setTimeout(() => { child.kill("SIGTERM"); cleanup(); reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`)); }, timeoutMs);
-		const onAbort = () => { child.kill("SIGTERM"); cleanup(); reject(new Error("Operation aborted.")); };
-		child.stdout.on("data", (chunk) => { stdout += String(chunk); });
-		child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-		child.on("error", (error) => { cleanup(); reject(error); });
-		child.on("close", (code) => {
-			cleanup();
-			if (code === 0) return resolve();
-			const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-			reject(new Error(`Command failed (${code}): ${command} ${args.join(" ")}\n${output}`.trim()));
-		});
-		signal?.addEventListener("abort", onAbort, { once: true });
-	});
+export interface CurrentCapture {
+	stateId: string;
+	width: number;
+	height: number;
+	scaleFactor: number;
+	timestamp: number;
 }
 
-export class WindowsHelperClient {
-	private installChecked = false;
-	private child?: ChildProcessWithoutNullStreams;
-	private buffer = "";
-	private pending = new Map<string, Pending<unknown>>();
+export interface OperationState {
+	currentTarget?: CurrentTarget;
+	currentCapture?: CurrentCapture;
+	currentStateTarget?: StateTargetSnapshot;
+	currentImageMode?: ImageMode;
+	currentLook?: LookResponse;
+	currentOutline?: Outline;
+	currentNote?: WindowNote;
+	resourceKey?: string;
+	epoch?: number;
+	lastSearchOcrEscalatedLookId?: string;
+	browserSnapshot?: CdpPageSnapshot;
+	contextId?: string;
+}
 
-	dispose(): void {
-		const error = new Error("Windows helper closed because the Pi session ended.");
-		for (const pending of this.pending.values()) {
-			clearTimeout(pending.timer);
-			pending.reject(error);
+interface DesktopObservation {
+	kind: "desktop";
+	target: CurrentTarget;
+	capture: CurrentCapture;
+	look: Omit<LookResponse, "parsedOutline" | "outline">;
+	outline: SerializedOutline;
+	note?: WindowNote;
+	imageMode?: ImageMode;
+}
+
+interface BrowserObservation {
+	kind: "browser";
+	snapshot: CdpPageSnapshot;
+	outline: SerializedOutline;
+}
+
+export type UiObservation = DesktopObservation | BrowserObservation;
+
+export class SavedStates {
+	readonly store = new StateStore<UiObservation>(128);
+	readonly operations = new AsyncLocalStorage<OperationState>();
+
+	current(): OperationState {
+		const state = this.operations.getStore();
+		if (!state) throw new Error("Computer-use operation state is unavailable.");
+		return state;
+	}
+
+	get(stateId: string): StoredState<UiObservation> | undefined {
+		return this.store.get(stateId);
+	}
+
+	set(record: StoredState<UiObservation>): void {
+		this.store.set(record);
+	}
+
+	clear(): void {
+		this.store.clear();
+	}
+
+	hydrate(record: StoredState<UiObservation> | undefined): OperationState {
+		if (!record) return {};
+		if (record.value.kind === "browser") {
+			const outline = restoreOutline(record.value.outline);
+			return {
+				currentCapture: { stateId: record.stateId, width: 0, height: 0, scaleFactor: 1, timestamp: record.value.snapshot.capturedAt },
+				currentLook: {
+					lookId: record.value.snapshot.snapshotId,
+					capturedAt: record.value.snapshot.capturedAt / 1000,
+					window: { windowId: 0, framePoints: { x: 0, y: 0, w: 1, h: 1 }, scaleFactor: 1, isModal: false, role: "document", subrole: "" },
+					outline: outline.root,
+					timings: {},
+					parsedOutline: outline,
+				},
+				currentOutline: outline,
+				resourceKey: record.resourceKey,
+				epoch: record.epoch,
+				browserSnapshot: record.value.snapshot,
+				contextId: record.value.snapshot.contextId,
+			};
 		}
-		this.pending.clear();
-		this.buffer = "";
-
-		const child = this.child;
-		this.child = undefined;
-		if (!child) return;
-		child.stdin.destroy();
-		child.stdout.destroy();
-		child.stderr.destroy();
-		child.kill("SIGTERM");
-		child.unref();
+		const outline = restoreOutline(record.value.outline);
+		return {
+			currentTarget: { ...record.value.target },
+			currentCapture: { ...record.value.capture },
+			currentStateTarget: { pid: record.value.target.pid, windowId: record.value.target.windowId, windowRef: record.value.target.windowRef },
+			currentImageMode: record.value.imageMode,
+			currentLook: { ...record.value.look, outline: outline.root, parsedOutline: outline },
+			currentOutline: outline,
+			currentNote: record.value.note ? structuredClone(record.value.note) : undefined,
+			resourceKey: record.resourceKey,
+			epoch: record.epoch,
+		};
 	}
 
-	async ensureInstalled(signal?: AbortSignal): Promise<void> {
-		if ((await isExecutable(WINDOWS_HELPER_PATH)) && this.installChecked) return;
-		// Re-enter Electron and Bun standalone hosts as their JavaScript runtimes.
-		await runProcess(process.execPath, [SETUP_HELPER_SCRIPT, "--platform", "windows", "--runtime"], HELPER_SETUP_TIMEOUT_MS, signal, { ...process.env, ELECTRON_RUN_AS_NODE: "1", BUN_BE_BUN: "1" });
-		this.installChecked = true;
-		if (!(await isExecutable(WINDOWS_HELPER_PATH))) throw new Error(`Failed to install Windows helper at ${WINDOWS_HELPER_PATH}.`);
-	}
-
-	private async process(signal?: AbortSignal): Promise<ChildProcessWithoutNullStreams> {
-		await this.ensureInstalled(signal);
-		if (this.child && this.child.exitCode === null && !this.child.killed) return this.child;
-		const child = spawn(WINDOWS_HELPER_PATH, [], { stdio: ["pipe", "pipe", "pipe"] });
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdin.setDefaultEncoding("utf8");
-		child.stdout.on("data", (chunk: string) => this.onStdout(chunk));
-		child.on("exit", () => { if (this.child === child) this.child = undefined; });
-		child.on("error", () => { if (this.child === child) this.child = undefined; });
-		this.child = child;
-		this.buffer = "";
-		return child;
-	}
-
-	private onStdout(chunk: string): void {
-		this.buffer += chunk;
-		for (;;) {
-			const newline = this.buffer.indexOf("\n");
-			if (newline < 0) return;
-			const line = this.buffer.slice(0, newline).trim();
-			this.buffer = this.buffer.slice(newline + 1);
-			if (!line) continue;
-			let parsed: any;
-			try { parsed = JSON.parse(line); } catch { continue; }
-			const pending = this.pending.get(parsed.id);
-			if (!pending) continue;
-			this.pending.delete(parsed.id);
-			clearTimeout(pending.timer);
-			if (parsed.protocolVersion !== WINDOWS_HELPER_PROTOCOL_VERSION) {
-				pending.reject(new Error(`Windows helper protocol mismatch: expected ${WINDOWS_HELPER_PROTOCOL_VERSION}, got ${parsed.protocolVersion ?? "unknown"}. Restart Pi to use the installed helper.`));
-			} else if (parsed.ok === true) {
-				pending.resolve(parsed.result);
-			} else {
-				const error = new Error(parsed.error?.message ?? "Windows helper command failed.") as Error & { code?: string };
-				error.code = parsed.error?.code;
-				pending.reject(error);
-			}
-		}
-	}
-
-	async command<T>(cmd: string, args: Record<string, unknown> = {}, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T> {
-		const child = await this.process(options?.signal);
-		const id = randomUUID();
-		const timeoutMs = options?.timeoutMs ?? COMMAND_TIMEOUT_MS;
-		return await new Promise<T>((resolve, reject) => {
-			const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Helper command '${cmd}' timed out after ${timeoutMs}ms.`)); }, timeoutMs);
-			this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
-			child.stdin.write(`${JSON.stringify({ protocolVersion: WINDOWS_HELPER_PROTOCOL_VERSION, id, cmd, args })}\n`, (error) => {
-				if (!error) return;
-				this.pending.delete(id);
-				clearTimeout(timer);
-				reject(error);
-			});
+	saveDesktop(state: OperationState, resourceKey: string, epoch: number): void {
+		if (!state.currentTarget || !state.currentCapture || !state.currentLook || !state.currentOutline) return;
+		this.store.set({
+			stateId: state.currentCapture.stateId,
+			resourceKey,
+			epoch,
+			value: {
+				kind: "desktop",
+				target: { ...state.currentTarget },
+				capture: { ...state.currentCapture },
+				look: {
+					lookId: state.currentLook.lookId,
+					capturedAt: state.currentLook.capturedAt,
+					window: structuredClone(state.currentLook.window),
+					image: state.currentLook.image ? { ...state.currentLook.image } : undefined,
+					timings: { ...state.currentLook.timings },
+					readText: state.currentLook.readText ? { ...state.currentLook.readText } : undefined,
+				},
+				outline: serializeOutline(state.currentOutline),
+				note: state.currentNote ? structuredClone(state.currentNote) : undefined,
+				imageMode: state.currentImageMode,
+			},
 		});
 	}
 }
-
-export const windowsHelper = new WindowsHelperClient();

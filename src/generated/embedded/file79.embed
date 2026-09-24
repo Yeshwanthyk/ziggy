@@ -1,123 +1,65 @@
-# Development
+# Windows Bridge
 
-## Repository layout
+`windows-bridge.exe` is the native helper for the root-forest Windows backend. It is spawned by the TypeScript helper client and speaks stdin/stdout JSON-lines protocol version **3**.
 
-```text
-extensions/computer-use.ts       Public Pi tool registration
-src/bridge.ts                    TypeScript runtime and tool implementation
-src/actions.ts                   Action preparation and result reconciliation
-src/runtime.ts                   Immutable state store and resource scheduler
-src/state.ts                     Saved UI state ownership and restoration
-src/view.ts                      Stable refs and resulting-state change views
-src/outline.ts                   Outline parsing, folding, search, and ref mapping
-src/note.ts                      Disposable running-note generation
-native/macos/bridge.swift        macOS helper for AX, capture, permissions, and input
-native/windows/                 Windows backend/helper code when developing on Windows
-native/linux/bridge-rs/         Linux AT-SPI2 helper (Rust)
-scripts/build-native.mjs         macOS helper build script
-scripts/setup-helper.mjs         macOS helper install script
-scripts/check-invariants.mjs     Architecture invariant checks
-scripts/check-runtime-concurrency.mjs Scheduler/state concurrency checks
-scripts/pi-cubench-agent.mjs     Cubench gateway adapter using registered Pi tools
+## Backend contract
+
+The TypeScript Windows backend is intentionally stateless. It forwards root-forest seam calls to the Rust helper:
+
+- `listRoots({ pid? })`: cheap HWND metadata only. Roots do not fabricate pairing or sheet counts; HWND/class/style diagnostics live under `metadata` when useful.
+- `look`: atomic observe result with `lookId`, outline, window payload (`rootRef`, `kind`, frame, scale), and optional image. Menu/outline-only roots omit `image`; coordinate acts against those roots fail with `coordinate_unavailable_for_root`.
+- `act`: forwards the typed `PlatformActRequest` whole. The helper validates `lookId`, resolves refs from helper-owned look state, applies policy, executes, and returns honest outcome/evidence plus `performed.deltaSource` and shallow `rootDelta`.
+- `uiaReadText` / `uiaWaitFor`: helper-side live UIA reads/polls. No TypeScript screenshot polling or module-level element state is used.
+
+## Root metadata
+
+Windows roots are top-level HWNDs:
+
+- `#32768` class => `kind: "menu"`
+- `#32770` class => `kind: "dialog"`
+- owned popups => `kind: "popover"`
+- other HWNDs => `kind: "window"`
+
+The helper declares per-monitor-v2 DPI awareness at startup and reports `scaleFactor = GetDpiForWindow(hwnd) / 96`.
+
+## Refs, actions, and deltas
+
+Observed `@e` refs store UIA RuntimeId and AutomationId metadata. Ref-targeted actions resolve a live `IUIAutomationElement` first:
+
+- `press`/`click`: `InvokePattern`, then `TogglePattern`, then `SelectionItemPattern`, then `ExpandCollapsePattern`, then LegacyIAccessible default action; successful pattern grounding reports `grounding: "description"`, `delivery: "ax"`. Coordinate fallback is blocked by `ax_only` and preflights occlusion with `ElementFromPoint`.
+- `setText`: `ValuePattern.SetValue`, then `CurrentValue` read-back. `evidence.value` is the value actually read.
+- `scroll`: `ScrollPattern` where exposed; wheel fallback is raw input and policy-gated.
+- `typeText`, `keypress`, `drag`, `moveMouse`, and coordinate targets remain raw input and report `unknown` unless verified.
+
+`readText` resolves the live element and reads TextPattern → ValuePattern → CurrentName. `waitFor` polls the live UIA subtree at about 150ms intervals.
+
+Root deltas are baselined at act time. The helper polls a cheap top-level HWND signature for early settle (`deltaSource: "win-poll"`), then takes short catch-up snapshots before returning the final full before/after diff. If no change is seen before the cap, it returns the full snapshot timeout path (`"snapshot"`).
+
+## Protocol
+
+Request envelope:
+
+```json
+{ "protocolVersion": 3, "id": "req_1", "cmd": "listRoots", "args": {} }
 ```
 
-The public tool surface lives in `extensions/computer-use.ts`. Keep it small. Internal complexity belongs in `src/bridge.ts`, `src/outline.ts`, `src/note.ts`, and the native helper.
+Response envelope:
 
-## Checks
-
-Run all static checks:
-
-```bash
-npm test
+```json
+{ "protocolVersion": 3, "id": "req_1", "ok": true, "result": { } }
 ```
 
-This runs TypeScript, tool-schema compatibility checks, architecture invariants, and native helper checks available on the current platform.
+Diagnostics (`cmd: "diagnostics"`) returns the protocol version and helper process metadata. The TypeScript backend rejects a mismatched version with a “Restart Pi …” error.
 
-On macOS, rebuild the native helper after Swift changes:
+## Remote acceptance notes
 
-```bash
-npm run build:native
-```
+- **Item 5 / menus:** click Notepad's File menu, read `rootDelta`, then observe the `appeared` root's `ref`. Menus are separate roots; observing the original Notepad window will not show the menu contents.
+- **Item 7 / occlusion:** record element coordinates from a fresh look, cover the window, then issue a coordinate act (`target: { "x": ..., "y": ... }`, `policy: "default"`). Expect `occluded_target`. Ref-targeted acts may re-resolve and do not exercise this coordinate preflight path.
+- **Item 8 / ref re-resolve:** fresh look, capture any element ref, move the window, then act on the same ref with the same `lookId`. RuntimeId/AutomationId re-resolution should succeed with refound semantics, not `stale_ref`.
+- **Pressability smoke:** a fresh look at Win11 Notepad must show `canPress: true` on menu bar items and buttons. If not, attach the raw outline dump so the capability matrix can be inspected.
 
-## Architecture rules
+## Local constraints
 
-The runtime is state-scoped and outline-first:
-
-- `observe_ui` returns a folded UI outline and running note.
-- `search_ui`, `expand_ui`, and `inspect_ui` provide progressive disclosure.
-- `act_ui` is the only public desktop action entrypoint.
-- UI observations are immutable records; request-local hydration replaces global current state.
-- Cached queries bypass scheduling; live work is ordered per physical resource.
-- Browser pages and desktop surfaces share the `@r` root forest and `@e` outline contract.
-- The helper owns grounding, preflight, execution, and verification.
-- Removed direct tools such as `screenshot`, `click`, `set_text`, and `computer_actions` should not reappear as public extension tools.
-
-Run invariants after architecture changes:
-
-```bash
-npm run test:invariants
-```
-
-Set `PI_CU_LIVE=1` only when you want live helper checks in addition to static checks.
-
-## Cubench
-
-`scripts/pi-cubench-agent.mjs` drives a headed Cubench Chromium window through the same registered Pi tools used by the extension. Cubench must launch its web driver headed (the current development tree accepts `CUBENCH_HEADLESS=0`):
-
-```bash
-CUBENCH_HEADLESS=0 node ../cubench/bin/cubench.mjs suite run \
-  --suite ../cubench/suites/core.json \
-  --agent "node --experimental-transform-types $PWD/scripts/pi-cubench-agent.mjs" \
-  --driver web \
-  --trials 3 \
-  --label picu
-```
-
-The adapter uses Cubench only for the instruction and final oracle; UI observation and action go through `pi-computer-use`. Gateway action/observation counters therefore do not trigger Cubench interference hooks, so stale/reorder cases need a native-driver integration before their interference timing can be treated as benchmark evidence.
-
-## Native platform helpers
-
-On macOS, the helper installed for permissions is normally:
-
-```text
-~/Applications/pi-computer-use.app
-```
-
-Existing writable system-wide installs remain at `/Applications/pi-computer-use.app`. The macOS helper targets macOS 14+ and uses ScreenCaptureKit. Local development can use ad-hoc signing. Release builds must use the release workflow so the helper app is signed with the stable release certificate.
-
-On Windows, development uses the Windows platform backend/helper and the active desktop session rather than the macOS app bundle or TCC permission model.
-
-On Linux, install Rust/Cargo and run `npm run build:linux`, `npm run test:linux`, and `npm run test:linux-scripts`. Live checks must run inside the target user's graphical D-Bus session. The helper installs to `~/.pi/agent/helpers/pi-computer-use/linux-bridge`.
-
-## Release signing
-
-This section applies to macOS releases. macOS TCC keys Accessibility and Screen Recording grants to an app's code-signing identity. Ad-hoc and locally self-signed development builds may require permission review whenever their native code changes. Only Developer ID-signed release bundles should be treated as having a stable update identity.
-
-Release setup:
-
-1. Run `./scripts/make-signing-cert.sh` once, or use a Developer ID Application certificate.
-2. Add repository secrets:
-   - `APPLICATION_CERT_BASE64`
-   - `CERT_PASSWORD`
-   - `SIGN_IDENTITY`
-3. For Developer ID notarization, set repository variable `NOTARIZE=true` and add:
-   - `TEAM_ID`
-   - `APPLE_ID`
-   - `APP_SPECIFIC_PASSWORD`
-4. Push a `v*` tag or run the `Release` workflow manually.
-
-For macOS, `.github/workflows/publish-npm.yml` builds the universal helper, signs it, optionally notarizes it, stages a draft GitHub Release, injects the same signed helper app into the npm package, publishes npm, and only then publishes the GitHub Release.
-
-For an isolated X11 acceptance run, install Xvfb, xfwm4, the AT-SPI2 runtime,
-xfce4-appfinder, and xfce4-terminal, then build and install the helper before
-running the explicitly gated live suite:
-
-```bash
-npm run build:linux
-node scripts/setup-helper.mjs --platform linux
-npm run test:linux-live
-```
-
-The harness creates its own D-Bus and Xvfb session. It fails rather than
-silently passing when the live flag, helper, accessibility bridge, or required
-X11 applications are unavailable.
+- Local child process only; no service, socket, or network listener.
+- Helper path: `%USERPROFILE%\.pi\agent\helpers\pi-computer-use\windows-bridge.exe`.
+- UIAccess/elevated-window limitations are reported as errors; there is no interactive permission grant loop.

@@ -1,213 +1,144 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Save validation failures become Pi tool failures. */
-/* oxlint-disable ziggy/no-unknown-parameters, ziggy/no-runtime-typeof, ziggy/no-known-value-widening -- Stable canonical JSON is an internal hash serializer over already schema-decoded domain values. */
-/* oxlint-disable ziggy/require-readable-spacing -- Hash and proof predicates remain adjacent for auditability. */
-import { createHash } from "node:crypto";
-import { Parse } from "typebox/value";
-import {
-  WorkflowSaveCandidateSchema,
-  WorkflowSaveProofSchema,
-  type RunSummary,
-  type WorkflowDefinition,
-  type WorkflowDraft,
-  type WorkflowSaveCandidate,
-  type WorkflowSaveProof,
-} from "./schema.ts";
-import { compileExecutionPlan } from "./execution-plan.ts";
-import { resolveWorkflowTemplates, validateWorkflowDefinition } from "./workflows.ts";
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's required Promise adapter boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
+/* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
+import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
+const OUTPUT_LIMIT = 32 * 1024;
+
+const Arguments = Type.Object(
+  {
+    args: Type.Array(Type.String(), {
+      description: "Arguments passed verbatim after the fixed Executor subcommand.",
+      maxItems: 128,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+type RunOptions = {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly signal: AbortSignal | undefined;
+  readonly timeout: number;
 };
 
-const workflowHash = (workflow: WorkflowDefinition): string =>
-  createHash("sha256").update(stableJson(workflow)).digest("hex");
+const truncate = (text: string): string => {
+  if (text.length <= OUTPUT_LIMIT) return text;
+  const omitted = text.length - OUTPUT_LIMIT;
 
-const same = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
+  return `${text.slice(0, OUTPUT_LIMIT)}\n… ${omitted} characters omitted`;
+};
 
-const optimizeWorkflow = (
-  source: WorkflowDefinition,
-): {
-  readonly workflow: WorkflowDefinition;
-  readonly removedRedundantObservations: number;
-  readonly removedRedundantRootLookups: number;
-} => {
-  const steps: WorkflowDefinition["steps"][number][] = [];
-  let removedRedundantObservations = 0;
-  let removedRedundantRootLookups = 0;
+const formatSuccess = (result: ExecResult): string => {
+  const stdout = truncate(result.stdout);
+  const stderr = truncate(result.stderr);
 
-  for (const step of source.steps) {
-    const prior = steps.at(-1);
-    if (step.kind === "observe" && prior?.kind === "observe" && same(step, prior)) {
-      removedRedundantObservations += 1;
-      continue;
-    }
-    if (step.kind === "find_roots" && prior?.kind === "find_roots" && same(step, prior)) {
-      removedRedundantRootLookups += 1;
-      continue;
-    }
-    steps.push(step);
+  if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
+
+  if (stdout.length > 0) return stdout;
+
+  if (stderr.length > 0) return `stderr:\n${stderr}`;
+
+  return "Command completed successfully.";
+};
+
+export const runExecutorCommand = async (exec: ExtensionAPI["exec"], options: RunOptions) => {
+  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
+    cwd: options.cwd,
+    timeout: options.timeout,
+  };
+
+  if (options.signal !== undefined) {
+    execOptions.signal = options.signal;
+  }
+
+  const result = await exec(options.command, [...options.args], execOptions);
+  const stdout = truncate(result.stdout);
+  const stderr = truncate(result.stderr);
+
+  if (result.code !== 0) {
+    const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
+
+    const output = [
+      stderr.length > 0 ? `stderr:\n${stderr}` : "",
+      stdout.length > 0 ? `stdout:\n${stdout}` : "",
+    ]
+      .filter((part) => part.length > 0)
+      .join("\n\n");
+
+    throw new Error(`executor ${reason}${output.length > 0 ? `\n${output}` : ""}`);
   }
 
   return {
-    workflow: validateWorkflowDefinition({ ...source, steps }),
-    removedRedundantObservations,
-    removedRedundantRootLookups,
+    content: [{ type: "text" as const, text: formatSuccess(result) }],
+    details: { code: result.code, killed: result.killed, stdout, stderr },
   };
 };
 
-const observableSteps = (workflow: WorkflowDefinition): readonly unknown[] => {
-  const normalized: unknown[] = [];
-  for (const step of workflow.steps) {
-    if (step.kind === "observe") continue;
-    const prior = normalized.at(-1);
-    if (step.kind === "find_roots" && prior !== undefined && same(step, prior)) continue;
-    normalized.push(step);
-  }
-  return normalized;
+type ExecutorTool = {
+  readonly name:
+    | "executor_tools_search"
+    | "executor_tools_sources"
+    | "executor_tools_describe"
+    | "executor_call"
+    | "executor_resume";
+  readonly description: string;
+  readonly prefix: readonly string[];
+  readonly timeout: number;
 };
 
-export const makeWorkflowSaveCandidate = (input: {
-  readonly workflow: unknown;
-  readonly sourceDraftId: string;
-  readonly baseRevision?: string;
-  readonly bindings: Readonly<Record<string, string>>;
-  readonly draft: WorkflowDraft;
-  readonly now?: Date;
-}): WorkflowSaveCandidate => {
-  const source = validateWorkflowDefinition(input.workflow);
-  const optimized = optimizeWorkflow(source);
-  const sourceObservable = observableSteps(source);
-  const candidateObservable = observableSteps(optimized.workflow);
+const tools: readonly ExecutorTool[] = [
+  {
+    name: "executor_tools_search",
+    description:
+      "Search the configured Executor tool catalog. Pass query and options as separate args.",
+    prefix: ["tools", "search"],
+    timeout: 30_000,
+  },
+  {
+    name: "executor_tools_sources",
+    description: "List configured Executor sources and tool counts.",
+    prefix: ["tools", "sources"],
+    timeout: 30_000,
+  },
+  {
+    name: "executor_tools_describe",
+    description: "Describe an Executor tool path and its input schema.",
+    prefix: ["tools", "describe"],
+    timeout: 30_000,
+  },
+  {
+    name: "executor_call",
+    description: "Invoke an Executor tool path with its input.",
+    prefix: ["call"],
+    timeout: 120_000,
+  },
+  {
+    name: "executor_resume",
+    description: "Resume a paused Executor execution with explicit response arguments.",
+    prefix: ["resume"],
+    timeout: 120_000,
+  },
+];
 
-  if (!same(sourceObservable, candidateObservable)) {
-    throw new Error("Workflow optimization changed an action, checkpoint, or durable root lookup.");
+export default function executor(pi: ExtensionAPI): void {
+  for (const tool of tools) {
+    pi.registerTool({
+      name: tool.name,
+      label: tool.name,
+      description: tool.description,
+      parameters: Arguments,
+      async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
+        return runExecutorCommand(pi.exec.bind(pi), {
+          command: "executor",
+          args: [...tool.prefix, ...args],
+          cwd: ctx.cwd,
+          signal,
+          timeout: tool.timeout,
+        });
+      },
+    });
   }
-
-  const compiled = compileExecutionPlan(optimized.workflow);
-  const resolved = resolveWorkflowTemplates(optimized.workflow, input.bindings);
-  const finalCheckpoint = resolved.steps
-    .toReversed()
-    .map((step) =>
-      step.kind === "wait" ? step.condition : "checkpoint" in step ? step.checkpoint : undefined,
-    )
-    .find((checkpoint) => checkpoint !== undefined);
-  if (finalCheckpoint === undefined)
-    throw new Error("A saved workflow requires a final observable checkpoint.");
-
-  const sameCondition = (condition: {
-    readonly text?: string;
-    readonly role?: string;
-    readonly until?: "present" | "absent";
-  }) =>
-    condition.text === finalCheckpoint.text &&
-    condition.role === finalCheckpoint.role &&
-    (condition.until ?? "present") === finalCheckpoint.until;
-  const finalRecordedOutcome = input.draft.calls
-    .toReversed()
-    .find(
-      (call) =>
-        call.input.kind === "wait_for" ||
-        call.input.kind === "semantic_segment" ||
-        (call.input.kind === "safe_actions" && call.input.expect !== undefined),
-    );
-  const trailingCalls =
-    finalRecordedOutcome === undefined
-      ? input.draft.calls
-      : input.draft.calls.filter((call) => call.sequence > finalRecordedOutcome.sequence);
-  const safeAfterTerminalOutcome = trailingCalls.every(
-    (call) =>
-      call.outcome === "success" &&
-      (call.input.kind === "find_roots" ||
-        call.input.kind === "observe_ui" ||
-        call.input.kind === "search_ui" ||
-        call.toolName === "expand_ui" ||
-        call.toolName === "inspect_ui" ||
-        call.toolName === "read_text" ||
-        call.toolName === "close_browser"),
-  );
-  const hasPendingSourceCall = input.draft.issues.some((issue) =>
-    issue.includes("had not completed when recording stopped"),
-  );
-  const recordedFinalPassed = (() => {
-    if (finalRecordedOutcome?.outcome !== "success") return false;
-    if (finalRecordedOutcome.input.kind === "wait_for")
-      return sameCondition(finalRecordedOutcome.input);
-    if (
-      finalRecordedOutcome.input.kind === "safe_actions" &&
-      finalRecordedOutcome.input.expect !== undefined
-    )
-      return sameCondition(finalRecordedOutcome.input.expect);
-    if (finalRecordedOutcome.input.kind === "semantic_segment") {
-      const final = finalRecordedOutcome.input.steps.at(-1);
-      return final !== undefined && sameCondition("assert" in final ? final.assert : final.expect);
-    }
-    return false;
-  })();
-  if (!recordedFinalPassed || !safeAfterTerminalOutcome || hasPendingSourceCall) {
-    throw new Error(
-      "The candidate final checkpoint is not the terminal successful recorded task outcome.",
-    );
-  }
-  return Parse(WorkflowSaveCandidateSchema, {
-    format: "ziggy-workflow-save-candidate",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateHash: workflowHash(optimized.workflow),
-    sourceHash: workflowHash(source),
-    verificationBindingsHash: createHash("sha256").update(stableJson(input.bindings)).digest("hex"),
-    sourceDraftId: input.sourceDraftId,
-    baseRevision: input.baseRevision ?? null,
-    createdAt: (input.now ?? new Date()).toISOString(),
-    workflow: optimized.workflow,
-    optimization: {
-      removedRedundantObservations: optimized.removedRedundantObservations,
-      removedRedundantRootLookups: optimized.removedRedundantRootLookups,
-      segmentCount: compiled.segments.length,
-    },
-  });
-};
-
-export const proveWorkflowSaveCandidate = (input: {
-  readonly candidate: WorkflowSaveCandidate;
-  readonly summary: RunSummary;
-  readonly now?: Date;
-}): WorkflowSaveProof => {
-  if (workflowHash(input.candidate.workflow) !== input.candidate.candidateHash) {
-    throw new Error("Workflow save candidate content no longer matches its hash.");
-  }
-  if (
-    input.summary.workflowId !== input.candidate.workflow.id ||
-    input.summary.revision !== input.candidate.candidateHash
-  ) {
-    throw new Error("Workflow verification evidence belongs to a different candidate revision.");
-  }
-  if (input.summary.overall !== "passed" || input.summary.stopReason !== "completed") {
-    throw new Error("Workflow verification did not pass every planned segment and checkpoint.");
-  }
-  if (
-    input.summary.segments.planned === 0 ||
-    input.summary.segments.passed !== input.summary.segments.planned ||
-    input.summary.checks.length === 0 ||
-    input.summary.checks.some((check) => check.outcome !== "passed")
-  ) {
-    throw new Error("Workflow verification evidence is incomplete.");
-  }
-
-  return Parse(WorkflowSaveProofSchema, {
-    format: "ziggy-workflow-save-proof",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateId: input.candidate.id,
-    candidateHash: input.candidate.candidateHash,
-    runSummaryId: input.summary.id,
-    verifiedAt: (input.now ?? new Date()).toISOString(),
-    outcome: "passed",
-  });
-};
+}

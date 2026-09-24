@@ -1,82 +1,63 @@
+import { getComputerUseConfig } from "../../config.mjs";
 import { parseLookResponse } from "../../outline.mjs";
-import { assertPlatformArchitecture } from "../architecture.mjs";
 import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.mjs";
-import { LINUX_HELPER_PROTOCOL_VERSION, linuxHelper } from "./helper.mjs";
-function normalizedProcessName(appName) {
-    return appName.toLowerCase().split("/").pop().replace(/\.desktop$/i, "");
-}
-function classifyBrowser(appName) {
-    switch (normalizedProcessName(appName)) {
-        case "chrome":
-        case "google-chrome":
-        case "google-chrome-stable":
-        case "chromium":
-        case "chromium-browser":
-        case "microsoft-edge":
-        case "microsoft-edge-stable":
-        case "brave":
-        case "brave-browser":
-        case "vivaldi":
-        case "vivaldi-stable":
-        case "opera":
-            return "chromium";
-        case "firefox":
-        case "firefox-esr":
-            return "firefox";
-        default:
-            return false;
-    }
+import { macosHelper } from "./helper.mjs";
+function parseApps(result) {
+    const array = Array.isArray(result) ? result : result?.apps;
+    if (!Array.isArray(array))
+        return [];
+    return array
+        .map((raw) => {
+        const pid = Math.trunc(toFiniteNumber(raw?.pid, NaN));
+        if (!Number.isFinite(pid) || pid <= 0)
+            return undefined;
+        const appName = toOptionalString(raw?.appName) ?? "Unknown App";
+        return {
+            appName,
+            bundleId: toOptionalString(raw?.bundleId),
+            pid,
+            isFrontmost: toBoolean(raw?.isFrontmost),
+        };
+    })
+        .filter((item) => Boolean(item));
 }
 function parseFramePoints(raw) {
-    const frame = raw?.framePoints ?? raw?.bounds ?? {};
+    const frame = raw?.framePoints ?? {};
     return {
         x: toFiniteNumber(frame.x, 0),
         y: toFiniteNumber(frame.y, 0),
-        w: Math.max(1, toFiniteNumber(frame.w ?? frame.width, 1)),
-        h: Math.max(1, toFiniteNumber(frame.h ?? frame.height, 1)),
+        w: Math.max(1, toFiniteNumber(frame.w, 1)),
+        h: Math.max(1, toFiniteNumber(frame.h, 1)),
     };
 }
-function parseRootKind(raw) {
-    return raw === "menu" || raw === "sheet" || raw === "dialog" || raw === "popover" || raw === "window" ? raw : "window";
-}
 function parseRoots(result) {
-    const roots = Array.isArray(result) ? result : result?.roots;
-    if (!Array.isArray(roots))
+    const array = Array.isArray(result) ? result : result?.roots;
+    if (!Array.isArray(array))
         return [];
-    return roots.map((raw, index) => ({
-        kind: parseRootKind(raw?.kind),
-        rootRef: toOptionalString(raw?.rootRef ?? raw?.windowRef ?? raw?.ref),
-        windowRef: toOptionalString(raw?.windowRef ?? raw?.rootRef ?? raw?.ref),
-        windowId: Number.isFinite(raw?.windowId) ? Math.trunc(raw.windowId) : undefined,
-        pid: Number.isFinite(raw?.pid) ? Math.trunc(raw.pid) : undefined,
-        appName: toOptionalString(raw?.appName ?? raw?.processName),
-        bundleId: toOptionalString(raw?.bundleId ?? raw?.desktopId),
-        title: toOptionalString(raw?.title) ?? "",
-        role: toOptionalString(raw?.role),
-        subrole: toOptionalString(raw?.subrole),
-        zOrder: Math.trunc(toFiniteNumber(raw?.zOrder, index)),
-        framePoints: parseFramePoints(raw),
-        scaleFactor: Math.max(1, toFiniteNumber(raw?.scaleFactor, 1)),
-        isOnscreen: raw?.isOnscreen === undefined ? true : toBoolean(raw.isOnscreen),
-        isFocused: toBoolean(raw?.isFocused),
-        isMinimized: toBoolean(raw?.isMinimized),
-        isMain: toBoolean(raw?.isMain ?? raw?.isFocused),
-        isModal: toBoolean(raw?.isModal),
-        metadata: raw?.metadata,
-    }));
-}
-function appsFromRoots(roots) {
-    const seen = new Set();
-    return roots.flatMap((root) => {
-        if (!root.pid || seen.has(root.pid))
-            return [];
-        seen.add(root.pid);
-        return [{
-                appName: root.appName ?? "Unknown",
-                bundleId: root.bundleId,
-                pid: root.pid,
-                isFrontmost: root.isFocused,
-            }];
+    return array.map((raw) => {
+        const metadata = typeof raw?.metadata === "object" && raw.metadata !== null ? raw.metadata : {};
+        const kind = ["window", "menu", "sheet", "popover", "dialog"].includes(raw?.kind) ? raw.kind : "window";
+        return {
+            kind,
+            rootRef: toOptionalString(raw?.rootRef ?? raw?.windowRef),
+            windowRef: toOptionalString(raw?.windowRef ?? raw?.rootRef),
+            windowId: Number.isFinite(raw?.windowId) ? Math.trunc(raw.windowId) : undefined,
+            pid: Number.isFinite(raw?.pid) ? Math.trunc(raw.pid) : undefined,
+            appName: toOptionalString(raw?.appName),
+            bundleId: toOptionalString(raw?.bundleId),
+            title: toOptionalString(raw?.title) ?? "",
+            role: toOptionalString(raw?.role),
+            subrole: toOptionalString(raw?.subrole),
+            framePoints: parseFramePoints(raw),
+            scaleFactor: Math.max(1, toFiniteNumber(raw?.scaleFactor, 1)),
+            zOrder: Math.trunc(toFiniteNumber(raw?.zOrder, 0)),
+            isMinimized: toBoolean(raw?.isMinimized),
+            isOnscreen: toBoolean(raw?.isOnscreen),
+            isMain: toBoolean(raw?.isMain),
+            isFocused: toBoolean(raw?.isFocused),
+            isModal: toBoolean(raw?.isModal),
+            metadata,
+        };
     });
 }
 function helperAction(request) {
@@ -84,53 +65,38 @@ function helperAction(request) {
         return { ...request };
     return { ...request, target: request.target.focus, params: { ...request.params, preserveFocus: true } };
 }
-async function ensureReady(_ctx, state, signal) {
-    await linuxHelper.ensureInstalled(signal);
-    const diagnostics = await linuxHelper.command("diagnostics", {}, { signal, timeoutMs: 5_000 });
-    if (diagnostics?.protocolVersion !== LINUX_HELPER_PROTOCOL_VERSION) {
-        throw new Error(`Linux helper protocol mismatch: expected ${LINUX_HELPER_PROTOCOL_VERSION}, got ${diagnostics?.protocolVersion ?? "unknown"}. Restart Pi to use the installed helper.`);
-    }
-    assertPlatformArchitecture("Linux", diagnostics);
-    if (diagnostics?.accessibility === false) {
-        throw new Error("Linux accessibility is unavailable. Ensure AT-SPI is enabled and a D-Bus desktop accessibility bus is running.");
-    }
-    return { ...state, lastPermissionCheckAt: Date.now(), helperDiagnostics: diagnostics };
-}
-export const linuxBackend = {
-    name: "linux",
-    shutdown() {
-        linuxHelper.dispose();
-    },
-    ensureReady,
+export const macosBackend = {
     async listApps(signal) {
-        return appsFromRoots(parseRoots(await linuxHelper.command("listRoots", {}, { signal })));
+        return parseApps(await macosHelper.command("listApps", {}, { signal }));
     },
     async listRoots(query, signal) {
-        const roots = parseRoots(await linuxHelper.command("listRoots", Number.isFinite(query.pid) ? { pid: Math.trunc(query.pid) } : {}, { signal }));
-        const title = query.title?.trim().toLowerCase();
-        return title ? roots.filter((root) => root.title.trim().toLowerCase().includes(title)) : roots;
+        return parseRoots(await macosHelper.command("listRoots", {
+            ...(Number.isFinite(query.pid) ? { pid: Math.trunc(query.pid) } : {}),
+            ...(query.title?.trim() ? { title: query.title.trim() } : {}),
+        }, { signal }));
     },
     async getFrontmost(signal) {
-        const roots = parseRoots(await linuxHelper.command("listRoots", {}, { signal }));
-        const focused = roots.find((root) => root.isFocused) ?? roots[0];
-        if (!focused?.pid)
-            throw new Error("No frontmost window was available.");
+        const result = await macosHelper.command("getFrontmost", {}, { signal });
+        const pid = Math.trunc(toFiniteNumber(result?.pid, NaN));
+        if (!Number.isFinite(pid) || pid <= 0) {
+            throw new Error("No frontmost app was available for screenshot targeting.");
+        }
         return {
-            appName: focused.appName ?? "Unknown",
-            bundleId: focused.bundleId,
-            pid: focused.pid,
-            windowTitle: focused.title,
-            windowId: focused.windowId,
-            rootRef: focused.rootRef,
+            appName: toOptionalString(result?.appName) ?? "Unknown App",
+            bundleId: toOptionalString(result?.bundleId),
+            pid,
+            windowTitle: toOptionalString(result?.windowTitle),
+            windowId: Number.isFinite(result?.windowId) ? Math.trunc(result.windowId) : undefined,
         };
     },
     async focusWindow(target, signal) {
-        return await linuxHelper.command("focusWindow", { ...target }, { signal });
+        return await macosHelper.command("focusWindow", { ...target }, { signal });
     },
     async observe(request, options) {
-        return parseLookResponse(await linuxHelper.command("look", {
-            ...request.target,
+        return parseLookResponse(await macosHelper.command("look", {
             baseLookId: request.baseLookId,
+            windowId: request.target.windowId,
+            windowRef: request.target.rootRef,
             maxDimension: request.maxDimension,
             readText: request.readText,
             scopeRef: request.scopeRef,
@@ -138,25 +104,16 @@ export const linuxBackend = {
         }, options));
     },
     async act(request, options) {
-        return await linuxHelper.command("act", helperAction(request), options);
+        return await macosHelper.command("act", { ...helperAction(request), cursorOverlay: getComputerUseConfig().cursor_overlay }, options);
     },
     async actBatch(requests, options) {
-        return await linuxHelper.command("actBatch", { actions: requests.map(helperAction) }, options);
+        const cursorOverlay = getComputerUseConfig().cursor_overlay;
+        return await macosHelper.command("actBatch", { actions: requests.map((request) => ({ ...helperAction(request), cursorOverlay })) }, options);
     },
     async readText(args, options) {
-        return await linuxHelper.command("atspiReadText", { ...args }, options);
+        return await macosHelper.command("axReadText", { ...args }, options);
     },
     async waitFor(args, options) {
-        return await linuxHelper.command("atspiWaitFor", { ...args }, options);
-    },
-    isBrowserApp(appName) {
-        return classifyBrowser(appName) !== false;
-    },
-    isChromeFamilyApp(appName) {
-        return classifyBrowser(appName) === "chromium";
-    },
-    async openBrowserLocation(target, url, signal) {
-        await linuxHelper.command("openBrowserLocation", { ...target, url }, { signal, timeoutMs: 10_000 });
-        return true;
+        return await macosHelper.command("axWaitFor", { ...args }, options);
     },
 };

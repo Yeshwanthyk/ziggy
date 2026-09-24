@@ -1,310 +1,213 @@
-import type { WorkflowDefinition } from "./schema.ts";
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Save validation failures become Pi tool failures. */
+/* oxlint-disable ziggy/no-unknown-parameters, ziggy/no-runtime-typeof, ziggy/no-known-value-widening -- Stable canonical JSON is an internal hash serializer over already schema-decoded domain values. */
+/* oxlint-disable ziggy/require-readable-spacing -- Hash and proof predicates remain adjacent for auditability. */
+import { createHash } from "node:crypto";
+import { Parse } from "typebox/value";
+import {
+  WorkflowSaveCandidateSchema,
+  WorkflowSaveProofSchema,
+  type RunSummary,
+  type WorkflowDefinition,
+  type WorkflowDraft,
+  type WorkflowSaveCandidate,
+  type WorkflowSaveProof,
+} from "./schema.ts";
+import { compileExecutionPlan } from "./execution-plan.ts";
+import { resolveWorkflowTemplates, validateWorkflowDefinition } from "./workflows.ts";
 
-interface SegmentCondition {
-  readonly text?: string;
-  readonly role?: string;
-  readonly until: "present" | "absent";
-  readonly timeoutMs?: number;
-}
-
-interface CompatibleActionStep {
-  readonly target: { readonly text?: string; readonly role?: string; readonly capability?: string };
-  readonly actions: readonly CompatibleSegmentAction[];
-  readonly expect: SegmentCondition;
-}
-
-interface CompatibleAssertionStep {
-  readonly assert: SegmentCondition;
-}
-
-type CompatibleSegmentStep = CompatibleActionStep | CompatibleAssertionStep;
-
-interface MutableSemanticTarget {
-  text?: string;
-  role?: string;
-  capability?: string;
-}
-
-type CompatibleSegmentAction =
-  | {
-      action: "click";
-      button?: "left" | "right" | "middle";
-      clickCount?: number;
-    }
-  | { action: "keypress"; keys: readonly string[] }
-  | { action: "scroll"; scrollX?: number; scrollY?: number };
-
-export interface WorkflowExecutionPlan {
-  readonly tool: "run_ui_segment";
-  readonly input: {
-    readonly rootQuery?: RootQuery;
-    readonly steps: readonly CompatibleSegmentStep[];
-  };
-  readonly sourceSteps: readonly number[];
-}
-
-interface RootQuery {
-  text?: string;
-  app?: string;
-  bundleId?: string;
-  kind?: "window" | "menu" | "sheet" | "popover" | "dialog" | "browser_page";
-}
-
-const PRIMARY_MODIFIERS = new Set(["CMD", "COMMAND", "CTRL", "CONTROL", "META"]);
-
-const SECONDARY_MODIFIERS = new Set(["SHIFT", "ALT", "OPTION"]);
-
-const CONTROL_KEYS = new Set([
-  "ENTER",
-  "RETURN",
-  "ESC",
-  "ESCAPE",
-  "TAB",
-  "BACKSPACE",
-  "DELETE",
-  "FORWARDDELETE",
-  "ARROWUP",
-  "ARROWDOWN",
-  "ARROWLEFT",
-  "ARROWRIGHT",
-  "UP",
-  "DOWN",
-  "LEFT",
-  "RIGHT",
-  "HOME",
-  "END",
-  "PAGEUP",
-  "PAGEDOWN",
-  ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
-]);
-
-export const normalizeSafeControlKeypress = (
-  keys: readonly string[],
-): readonly string[] | undefined => {
-  const normalized = keys.map((key) => key.trim().toUpperCase());
-
-  if (normalized.some((key) => key.length === 0)) return undefined;
-
-  const modifiers = normalized.filter(
-    (key) => PRIMARY_MODIFIERS.has(key) || SECONDARY_MODIFIERS.has(key),
-  );
-
-  const baseKeys = normalized.filter(
-    (key) => !PRIMARY_MODIFIERS.has(key) && !SECONDARY_MODIFIERS.has(key),
-  );
-
-  if (baseKeys.length !== 1 || modifiers.length !== normalized.length - 1) return undefined;
-  const base = baseKeys[0];
-
-  if (base === undefined) return undefined;
-
-  if (CONTROL_KEYS.has(base)) return normalized.length <= 4 ? normalized : undefined;
-
-  if (!/^[A-Z0-9]$/.test(base)) return undefined;
-
-  if (!modifiers.some((key) => PRIMARY_MODIFIERS.has(key))) return undefined;
-
-  return normalized.length >= 2 && normalized.length <= 4 ? normalized : undefined;
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 };
 
-interface ManualWorkflowStep {
-  readonly sourceStep: number;
-  readonly reason: string;
-}
+const workflowHash = (workflow: WorkflowDefinition): string =>
+  createHash("sha256").update(stableJson(workflow)).digest("hex");
 
-export interface CompiledWorkflowExecution {
-  readonly segments: readonly WorkflowExecutionPlan[];
-  readonly manual: readonly ManualWorkflowStep[];
-}
+const same = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
 
-const segmentTarget = (target: {
-  readonly text?: string;
-  readonly role?: string;
-  readonly capability?: string;
-}): CompatibleActionStep["target"] => {
-  const projected: MutableSemanticTarget = {};
+const optimizeWorkflow = (
+  source: WorkflowDefinition,
+): {
+  readonly workflow: WorkflowDefinition;
+  readonly removedRedundantObservations: number;
+  readonly removedRedundantRootLookups: number;
+} => {
+  const steps: WorkflowDefinition["steps"][number][] = [];
+  let removedRedundantObservations = 0;
+  let removedRedundantRootLookups = 0;
 
-  if (target.text !== undefined) projected.text = target.text;
-
-  if (target.role !== undefined) projected.role = target.role;
-
-  if (target.capability !== undefined) projected.capability = target.capability;
-
-  return projected;
-};
-
-export const compileExecutionPlan = (workflow: WorkflowDefinition): CompiledWorkflowExecution => {
-  const segments: WorkflowExecutionPlan[] = [];
-  let compatible: CompatibleSegmentStep[] = [];
-  let sourceSteps: number[] = [];
-  const manual: ManualWorkflowStep[] = [];
-  let rootQuery: RootQuery | undefined;
-
-  const flushSegment = (): void => {
-    if (compatible.length === 0) return;
-    segments.push({
-      tool: "run_ui_segment",
-      input: rootQuery === undefined ? { steps: compatible } : { rootQuery, steps: compatible },
-      sourceSteps,
-    });
-    compatible = [];
-    sourceSteps = [];
-  };
-
-  const appendCompatible = (step: CompatibleSegmentStep, sourceStep: number): void => {
-    if (compatible.length === 20) flushSegment();
-    compatible.push(step);
-    sourceSteps.push(sourceStep);
-  };
-
-  for (const [index, step] of workflow.steps.entries()) {
-    const sourceStep = index + 1;
-
-    if (step.kind === "find_roots") {
-      flushSegment();
-      const nextRootQuery: RootQuery = {};
-
-      if (step.text !== undefined) nextRootQuery.text = step.text;
-
-      if (step.app !== undefined) nextRootQuery.app = step.app;
-
-      if (step.bundleId !== undefined) nextRootQuery.bundleId = step.bundleId;
-
-      if (step.rootKind !== undefined) nextRootQuery.kind = step.rootKind;
-
-      if (Object.keys(nextRootQuery).length === 0) {
-        rootQuery = undefined;
-        manual.push({
-          sourceStep,
-          reason: "This find_roots setup has no durable root query.",
-        });
-      } else {
-        rootQuery = nextRootQuery;
-      }
-
+  for (const step of source.steps) {
+    const prior = steps.at(-1);
+    if (step.kind === "observe" && prior?.kind === "observe" && same(step, prior)) {
+      removedRedundantObservations += 1;
       continue;
     }
-
-    if (step.kind === "observe") continue;
-
-    if (step.kind === "wait") {
-      if (rootQuery === undefined) {
-        manual.push({
-          sourceStep,
-          reason: "This assertion has no active durable find_roots query.",
-        });
-        continue;
-      }
-
-      appendCompatible({ assert: step.condition }, sourceStep);
+    if (step.kind === "find_roots" && prior?.kind === "find_roots" && same(step, prior)) {
+      removedRedundantRootLookups += 1;
       continue;
     }
-
-    if (step.kind === "click" && step.checkpoint !== undefined) {
-      if (rootQuery === undefined) {
-        manual.push({
-          sourceStep,
-          reason: "This action has no active durable find_roots query.",
-        });
-        continue;
-      }
-
-      const target = segmentTarget(step.target);
-
-      if (Object.keys(target).length === 0) {
-        manual.push({
-          sourceStep,
-          reason:
-            "An app-only action target is not a semantic control target; use app in find_roots.",
-        });
-        continue;
-      }
-
-      const action: CompatibleSegmentAction = { action: "click" };
-
-      if (step.button !== undefined) action.button = step.button;
-
-      if (step.clickCount !== undefined) action.clickCount = step.clickCount;
-      appendCompatible(
-        {
-          target,
-          actions: [action],
-          expect: step.checkpoint,
-        },
-        sourceStep,
-      );
-      continue;
-    }
-
-    if (
-      (step.kind === "keypress" || step.kind === "scroll") &&
-      step.target !== undefined &&
-      step.checkpoint !== undefined
-    ) {
-      if (rootQuery === undefined) {
-        manual.push({
-          sourceStep,
-          reason: "This action has no active durable find_roots query.",
-        });
-        continue;
-      }
-
-      const target = segmentTarget(step.target);
-
-      if (Object.keys(target).length === 0) {
-        manual.push({
-          sourceStep,
-          reason:
-            "An app-only action target is not a semantic control target; use app in find_roots.",
-        });
-        continue;
-      }
-
-      let action: CompatibleSegmentAction;
-
-      if (step.kind === "keypress") {
-        const keys = normalizeSafeControlKeypress(step.keys);
-
-        if (keys === undefined) {
-          manual.push({
-            sourceStep,
-            reason: "Text-producing keypresses are not replayable; use a user-entered variable.",
-          });
-          continue;
-        }
-
-        action = { action: "keypress", keys };
-      } else {
-        action = { action: "scroll" };
-
-        if (step.scrollX !== undefined) action.scrollX = step.scrollX;
-
-        if (step.scrollY !== undefined) action.scrollY = step.scrollY;
-      }
-
-      appendCompatible(
-        {
-          target,
-          actions: [action],
-          expect: step.checkpoint,
-        },
-        sourceStep,
-      );
-      continue;
-    }
-
-    const reason =
-      step.kind === "type"
-        ? "Text and secret values are never accepted by run_ui_segment; the user must enter the value directly."
-        : "This step lacks a semantic target with a mandatory postcondition or is not in the segment allowlist.";
-
-    manual.push({ sourceStep, reason });
+    steps.push(step);
   }
 
-  flushSegment();
-
   return {
-    segments,
-    manual,
+    workflow: validateWorkflowDefinition({ ...source, steps }),
+    removedRedundantObservations,
+    removedRedundantRootLookups,
   };
+};
+
+const observableSteps = (workflow: WorkflowDefinition): readonly unknown[] => {
+  const normalized: unknown[] = [];
+  for (const step of workflow.steps) {
+    if (step.kind === "observe") continue;
+    const prior = normalized.at(-1);
+    if (step.kind === "find_roots" && prior !== undefined && same(step, prior)) continue;
+    normalized.push(step);
+  }
+  return normalized;
+};
+
+export const makeWorkflowSaveCandidate = (input: {
+  readonly workflow: unknown;
+  readonly sourceDraftId: string;
+  readonly baseRevision?: string;
+  readonly bindings: Readonly<Record<string, string>>;
+  readonly draft: WorkflowDraft;
+  readonly now?: Date;
+}): WorkflowSaveCandidate => {
+  const source = validateWorkflowDefinition(input.workflow);
+  const optimized = optimizeWorkflow(source);
+  const sourceObservable = observableSteps(source);
+  const candidateObservable = observableSteps(optimized.workflow);
+
+  if (!same(sourceObservable, candidateObservable)) {
+    throw new Error("Workflow optimization changed an action, checkpoint, or durable root lookup.");
+  }
+
+  const compiled = compileExecutionPlan(optimized.workflow);
+  const resolved = resolveWorkflowTemplates(optimized.workflow, input.bindings);
+  const finalCheckpoint = resolved.steps
+    .toReversed()
+    .map((step) =>
+      step.kind === "wait" ? step.condition : "checkpoint" in step ? step.checkpoint : undefined,
+    )
+    .find((checkpoint) => checkpoint !== undefined);
+  if (finalCheckpoint === undefined)
+    throw new Error("A saved workflow requires a final observable checkpoint.");
+
+  const sameCondition = (condition: {
+    readonly text?: string;
+    readonly role?: string;
+    readonly until?: "present" | "absent";
+  }) =>
+    condition.text === finalCheckpoint.text &&
+    condition.role === finalCheckpoint.role &&
+    (condition.until ?? "present") === finalCheckpoint.until;
+  const finalRecordedOutcome = input.draft.calls
+    .toReversed()
+    .find(
+      (call) =>
+        call.input.kind === "wait_for" ||
+        call.input.kind === "semantic_segment" ||
+        (call.input.kind === "safe_actions" && call.input.expect !== undefined),
+    );
+  const trailingCalls =
+    finalRecordedOutcome === undefined
+      ? input.draft.calls
+      : input.draft.calls.filter((call) => call.sequence > finalRecordedOutcome.sequence);
+  const safeAfterTerminalOutcome = trailingCalls.every(
+    (call) =>
+      call.outcome === "success" &&
+      (call.input.kind === "find_roots" ||
+        call.input.kind === "observe_ui" ||
+        call.input.kind === "search_ui" ||
+        call.toolName === "expand_ui" ||
+        call.toolName === "inspect_ui" ||
+        call.toolName === "read_text" ||
+        call.toolName === "close_browser"),
+  );
+  const hasPendingSourceCall = input.draft.issues.some((issue) =>
+    issue.includes("had not completed when recording stopped"),
+  );
+  const recordedFinalPassed = (() => {
+    if (finalRecordedOutcome?.outcome !== "success") return false;
+    if (finalRecordedOutcome.input.kind === "wait_for")
+      return sameCondition(finalRecordedOutcome.input);
+    if (
+      finalRecordedOutcome.input.kind === "safe_actions" &&
+      finalRecordedOutcome.input.expect !== undefined
+    )
+      return sameCondition(finalRecordedOutcome.input.expect);
+    if (finalRecordedOutcome.input.kind === "semantic_segment") {
+      const final = finalRecordedOutcome.input.steps.at(-1);
+      return final !== undefined && sameCondition("assert" in final ? final.assert : final.expect);
+    }
+    return false;
+  })();
+  if (!recordedFinalPassed || !safeAfterTerminalOutcome || hasPendingSourceCall) {
+    throw new Error(
+      "The candidate final checkpoint is not the terminal successful recorded task outcome.",
+    );
+  }
+  return Parse(WorkflowSaveCandidateSchema, {
+    format: "ziggy-workflow-save-candidate",
+    formatVersion: 1,
+    id: crypto.randomUUID(),
+    candidateHash: workflowHash(optimized.workflow),
+    sourceHash: workflowHash(source),
+    verificationBindingsHash: createHash("sha256").update(stableJson(input.bindings)).digest("hex"),
+    sourceDraftId: input.sourceDraftId,
+    baseRevision: input.baseRevision ?? null,
+    createdAt: (input.now ?? new Date()).toISOString(),
+    workflow: optimized.workflow,
+    optimization: {
+      removedRedundantObservations: optimized.removedRedundantObservations,
+      removedRedundantRootLookups: optimized.removedRedundantRootLookups,
+      segmentCount: compiled.segments.length,
+    },
+  });
+};
+
+export const proveWorkflowSaveCandidate = (input: {
+  readonly candidate: WorkflowSaveCandidate;
+  readonly summary: RunSummary;
+  readonly now?: Date;
+}): WorkflowSaveProof => {
+  if (workflowHash(input.candidate.workflow) !== input.candidate.candidateHash) {
+    throw new Error("Workflow save candidate content no longer matches its hash.");
+  }
+  if (
+    input.summary.workflowId !== input.candidate.workflow.id ||
+    input.summary.revision !== input.candidate.candidateHash
+  ) {
+    throw new Error("Workflow verification evidence belongs to a different candidate revision.");
+  }
+  if (input.summary.overall !== "passed" || input.summary.stopReason !== "completed") {
+    throw new Error("Workflow verification did not pass every planned segment and checkpoint.");
+  }
+  if (
+    input.summary.segments.planned === 0 ||
+    input.summary.segments.passed !== input.summary.segments.planned ||
+    input.summary.checks.length === 0 ||
+    input.summary.checks.some((check) => check.outcome !== "passed")
+  ) {
+    throw new Error("Workflow verification evidence is incomplete.");
+  }
+
+  return Parse(WorkflowSaveProofSchema, {
+    format: "ziggy-workflow-save-proof",
+    formatVersion: 1,
+    id: crypto.randomUUID(),
+    candidateId: input.candidate.id,
+    candidateHash: input.candidate.candidateHash,
+    runSummaryId: input.summary.id,
+    verifiedAt: (input.now ?? new Date()).toISOString(),
+    outcome: "passed",
+  });
 };

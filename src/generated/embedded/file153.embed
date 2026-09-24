@@ -1,98 +1,62 @@
 ---
-name: imsg
-description: "iMessage/SMS CLI for listing chats, history, and sending messages via Messages.app."
+name: obsidian
+description: "Work with Obsidian vaults (plain Markdown notes) and automate via obsidian-cli."
 ---
 
-# imsg
+# Obsidian
 
-Use `imsg` to read and send iMessage/SMS via macOS Messages.app.
+Obsidian vault = a normal folder on disk.
 
-## When to Use
+Vault structure (typical)
 
-✅ **USE this skill when:**
+- Notes: `*.md` (plain text Markdown; edit with any editor)
+- Config: `.obsidian/` (workspace + plugin settings; usually don’t touch from scripts)
+- Canvases: `*.canvas` (JSON)
+- Attachments: whatever folder you chose in Obsidian settings (images/PDFs/etc.)
 
-- User explicitly asks to send iMessage or SMS
-- Reading iMessage conversation history
-- Checking recent Messages.app chats
-- Sending to phone numbers or Apple IDs
+## Find the active vault(s)
 
-## When NOT to Use
+Obsidian desktop tracks vaults here (source of truth):
 
-❌ **DON'T use this skill when:**
+- `~/Library/Application Support/obsidian/obsidian.json`
 
-- Messages on services other than iMessage or SMS
-- Group chat management (adding/removing members) → not supported
-- Bulk/mass messaging → always confirm with user first
-- Replying in the current conversation
+`obsidian-cli` resolves vaults from that file; vault name is typically the **folder name** (path suffix).
 
-## Requirements
+Fast “what vault is active / where are the notes?”
 
-- macOS with Messages.app signed in
-- Full Disk Access for terminal
-- Automation permission for Messages.app (for sending)
+- If you’ve already set a default: `obsidian-cli print-default --path-only`
+- Otherwise, read `~/Library/Application Support/obsidian/obsidian.json` and use the vault entry with `"open": true`.
 
-## Common Commands
+Notes
 
-### List Chats
+- Multiple vaults common (iCloud vs `~/Documents`, work/personal, etc.). Don’t guess; read config.
+- Avoid writing hardcoded vault paths into scripts; prefer reading the config or using `print-default`.
 
-```bash
-imsg chats --limit 10 --json
-```
+## obsidian-cli quick start
 
-### View History
+Pick a default vault (once):
 
-```bash
-# By chat ID
-imsg history --chat-id 1 --limit 20 --json
+- `obsidian-cli set-default "<vault-folder-name>"`
+- `obsidian-cli print-default` / `obsidian-cli print-default --path-only`
 
-# With attachments info
-imsg history --chat-id 1 --limit 20 --attachments --json
-```
+Search
 
-### Watch for New Messages
+- `obsidian-cli search "query"` (note names)
+- `obsidian-cli search-content "query"` (inside notes; shows snippets + lines)
 
-```bash
-imsg watch --chat-id 1 --attachments
-```
+Create
 
-### Send Messages
+- `obsidian-cli create "Folder/New note" --content "..." --open`
+- Requires Obsidian URI handler (`obsidian://…`) working (Obsidian installed).
+- Avoid creating notes under “hidden” dot-folders (e.g. `.something/...`) via URI; Obsidian may refuse.
 
-```bash
-# Text only
-imsg send --to "+14155551212" --text "Hello!"
+Move/rename (safe refactor)
 
-# With attachment
-imsg send --to "+14155551212" --text "Check this out" --file /path/to/image.jpg
+- `obsidian-cli move "old/path/note" "new/path/note"`
+- Updates `[[wikilinks]]` and common Markdown links across the vault (this is the main win vs `mv`).
 
-# Specify service
-imsg send --to "+14155551212" --text "Hi" --service imessage
-imsg send --to "+14155551212" --text "Hi" --service sms
-```
+Delete
 
-## Service Options
+- `obsidian-cli delete "path/note"`
 
-- `--service imessage` — Force iMessage (requires recipient has iMessage)
-- `--service sms` — Force SMS (green bubble)
-- `--service auto` — Let Messages.app decide (default)
-
-## Safety Rules
-
-1. **Always confirm recipient and message content** before sending
-2. **Never send to unknown numbers** without explicit user approval
-3. **Be careful with attachments** — confirm file path exists
-4. **Rate limit yourself** — don't spam
-
-## Example Workflow
-
-User: "Text mom that I'll be late"
-
-```bash
-# 1. Find mom's chat
-imsg chats --limit 20 --json | jq '.[] | select(.displayName | contains("Mom"))'
-
-# 2. Confirm with user
-# "Found Mom at +1555123456. Send 'I'll be late' via iMessage?"
-
-# 3. Send after confirmation
-imsg send --to "+1555123456" --text "I'll be late"
-```
+Prefer direct edits when appropriate: open the `.md` file and change it; Obsidian will pick it up.

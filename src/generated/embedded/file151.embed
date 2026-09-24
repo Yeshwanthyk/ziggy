@@ -1,32 +1,42 @@
 ---
-name: goplaces
-description: "Query Google Places for text search, place details, resolve, reviews, or scriptable JSON via goplaces."
+name: mcporter
+description: "List, configure, authenticate, call, and inspect MCP servers/tools with mcporter over HTTP or stdio."
 ---
 
-# goplaces
+# mcporter
 
-Modern Google Places API (New) CLI. Human output by default, `--json` for scripts.
+Use `mcporter` to work with MCP servers directly.
 
-Install
+Quick start
 
-- Homebrew: `brew install steipete/tap/goplaces`
+- `mcporter list`
+- `mcporter list <server> --schema`
+- `mcporter call <server.tool> key=value`
 
-Config
+Call tools
 
-- `GOOGLE_PLACES_API_KEY` required.
-- Optional: `GOOGLE_PLACES_BASE_URL` for testing/proxying.
+- Selector: `mcporter call linear.list_issues team=ENG limit:5`
+- Function syntax: `mcporter call "linear.create_issue(title: \"Bug\")"`
+- Full URL: `mcporter call https://api.example.com/mcp.fetch url:https://example.com`
+- Stdio: `mcporter call --stdio "bun run ./server.ts" scrape url=https://example.com`
+- JSON payload: `mcporter call <server.tool> --args '{"limit":5}'`
 
-Common commands
+Auth + config
 
-- Search: `goplaces search "coffee" --open-now --min-rating 4 --limit 5`
-- Bias: `goplaces search "pizza" --lat 40.8 --lng -73.9 --radius-m 3000`
-- Pagination: `goplaces search "pizza" --page-token "NEXT_PAGE_TOKEN"`
-- Resolve: `goplaces resolve "Soho, London" --limit 5`
-- Details: `goplaces details <place_id> --reviews`
-- JSON: `goplaces search "sushi" --json`
+- OAuth: `mcporter auth <server | url> [--reset]`
+- Config: `mcporter config list|get|add|remove|import|login|logout`
+
+Daemon
+
+- `mcporter daemon start|status|stop|restart`
+
+Codegen
+
+- CLI: `mcporter generate-cli --server <name>` or `--command <url>`
+- Inspect: `mcporter inspect-cli <path> [--json]`
+- TS: `mcporter emit-ts <server> --mode client|types`
 
 Notes
 
-- `--no-color` or `NO_COLOR` disables ANSI color.
-- Price levels: 0..4 (free → very expensive).
-- Type filter sends only the first `--type` value (API accepts one).
+- Config default: `./config/mcporter.json` (override with `--config`).
+- Prefer `--output json` for machine-readable results.

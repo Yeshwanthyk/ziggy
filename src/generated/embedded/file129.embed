@@ -1,282 +1,699 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Task boundary failures become Pi tool failures. */
-/* oxlint-disable ziggy/no-runtime-typeof, ziggy/no-unknown-parameters -- Canonical hashing accepts schema-decoded domain values only. */
-/* oxlint-disable ziggy/require-readable-spacing -- Validation predicates remain adjacent for auditability. */
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Artifact verification is the bounded filesystem evidence adapter. */
-/* oxlint-disable ziggy/no-conditional-empty-object-spread, ziggy/no-known-value-widening -- Exact optional candidate fields and resolved input evidence are preserved. */
-import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
-import { resolve } from "node:path";
-import { Parse } from "typebox/value";
-import {
-  GeneralTaskCandidateSchema,
-  GeneralTaskDefinitionSchema,
-  GeneralTaskRunSchema,
-  type GeneralTaskCandidate,
-  type GeneralTaskDefinition,
-  type GeneralTaskRun,
-} from "./schema.ts";
+/* oxlint-disable ziggy/require-readable-spacing -- Declarative schemas are intentionally compact. */
+import { Type, type Static } from "typebox";
 
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
+const Id = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 1, maxLength: 80 });
+
+const Text = Type.String({ minLength: 1, maxLength: 1_024 });
+
+const ShortText = Type.String({ minLength: 1, maxLength: 256 });
+
+const Timestamp = Type.String({ format: "date-time" });
+
+const Button = Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]);
+
+const PrimaryModifierKey = Type.String({ pattern: "^(?:CMD|COMMAND|CTRL|CONTROL|META)$" });
+
+const SecondaryModifierKey = Type.String({ pattern: "^(?:SHIFT|ALT|OPTION)$" });
+
+const ControlKey = Type.String({
+  pattern:
+    "^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$",
+});
+
+const ChordKey = Type.Union([ControlKey, Type.String({ pattern: "^[A-Z0-9]$" })]);
+
+export const SafeKeypressKeysSchema = Type.Array(
+  Type.Union([PrimaryModifierKey, SecondaryModifierKey, ChordKey]),
+  { minItems: 1, maxItems: 4 },
+);
+
+const SemanticTargetSchema = Type.Object(
+  {
+    text: Type.Optional(ShortText),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    app: Type.Optional(ShortText),
+  },
+  { additionalProperties: false },
+);
+
+const CheckpointSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+
+const VariableSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    secret: Type.Boolean(),
+    source: Type.Union([Type.Literal("user"), Type.Literal("agent")]),
+  },
+  { additionalProperties: false },
+);
+
+const VariableReferenceSchema = Type.Object({ variable: Id }, { additionalProperties: false });
+
+const StepMetadata = {
+  checkpoint: Type.Optional(CheckpointSchema),
 };
 
-const sha256 = (value: string | Uint8Array): string =>
-  createHash("sha256").update(value).digest("hex");
+const WorkflowStepSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("click"),
+      target: SemanticTargetSchema,
+      button: Type.Optional(Button),
+      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("type"),
+      target: Type.Optional(SemanticTargetSchema),
+      value: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("keypress"),
+      target: Type.Optional(SemanticTargetSchema),
+      keys: SafeKeypressKeysSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("scroll"),
+      target: Type.Optional(SemanticTargetSchema),
+      scrollX: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      scrollY: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait"),
+      condition: CheckpointSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      url: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-const validateGeneralTask = (value: unknown): GeneralTaskDefinition => {
-  const task = Parse(GeneralTaskDefinitionSchema, value);
-  const inputIds = new Set<string>();
-  for (const input of task.inputs) {
-    if (inputIds.has(input.id)) throw new Error(`Duplicate task input '${input.id}'.`);
-    inputIds.add(input.id);
-  }
-  if (task.startContext.urlInput !== undefined && !inputIds.has(task.startContext.urlInput)) {
-    throw new Error(
-      `Browser start context references unknown input '${task.startContext.urlInput}'.`,
-    );
-  }
-  if (task.startContext.kind === "browser" && task.startContext.browserProfile === undefined) {
-    throw new Error("Browser tasks require a named browserProfile.");
-  }
-  const criterionIds = new Set<string>();
-  for (const criterion of task.completionCriteria) {
-    if (criterionIds.has(criterion.id)) throw new Error(`Duplicate criterion '${criterion.id}'.`);
-    criterionIds.add(criterion.id);
-  }
-  return task;
-};
+export const WorkflowDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    description: Type.Optional(Type.String({ maxLength: 2_000 })),
+    variables: Type.Array(VariableSchema, { maxItems: 50 }),
+    steps: Type.Array(WorkflowStepSchema, { minItems: 1, maxItems: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-export const makeGeneralTaskCandidate = (input: {
-  readonly task: unknown;
-  readonly sourceDraftId: string;
-  readonly baseRevision?: string;
-  readonly now?: Date;
-}): GeneralTaskCandidate => {
-  const task = validateGeneralTask(input.task);
-  return Parse(GeneralTaskCandidateSchema, {
-    format: "ziggy-general-task-candidate",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateHash: sha256(stableJson(task)),
-    sourceDraftId: input.sourceDraftId,
-    baseRevision: input.baseRevision ?? null,
-    createdAt: (input.now ?? new Date()).toISOString(),
-    task,
-  });
-};
+export const PublishedWorkflowSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    publishedAt: Timestamp,
+    sourceDraftId: Id,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
 
-const validateTaskInputs = (
-  task: GeneralTaskDefinition,
-  inputs: Readonly<Record<string, string>>,
-): string => {
-  const expected = task.inputs.map(({ id }) => id).toSorted();
-  const actual = Object.keys(inputs).toSorted();
-  if (stableJson(expected) !== stableJson(actual)) {
-    throw new Error(`Task inputs must exactly match: ${expected.join(", ") || "none"}.`);
-  }
-  if (Object.values(inputs).some((value) => value.length === 0 || value.length > 8_192)) {
-    throw new Error("Task input values must be non-empty and at most 8192 characters.");
-  }
-  return sha256(stableJson(inputs));
-};
+const RecordedInputSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe_ui"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("search_ui"),
+      text: Type.Optional(ShortText),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("safe_actions"),
+      expect: Type.Optional(CheckpointSchema),
+      actions: Type.Array(
+        Type.Union([
+          Type.Object(
+            {
+              action: Type.Literal("keypress"),
+              keys: SafeKeypressKeysSchema,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("scroll"),
+              scrollX: Type.Optional(Type.Number()),
+              scrollY: Type.Optional(Type.Number()),
+              target: Type.Union([Type.Literal("root"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("variable-input"),
+              variable: Id,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("requires-review"),
+              reason: Type.Union([
+                Type.Literal("transient-target"),
+                Type.Literal("coordinate-action"),
+                Type.Literal("unsupported-action"),
+              ]),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("semantic_segment"),
+      rootQuery: Type.Optional(
+        Type.Object(
+          {
+            text: Type.Optional(ShortText),
+            app: Type.Optional(ShortText),
+            bundleId: Type.Optional(ShortText),
+            kind: Type.Optional(
+              Type.Union([
+                Type.Literal("window"),
+                Type.Literal("menu"),
+                Type.Literal("sheet"),
+                Type.Literal("popover"),
+                Type.Literal("dialog"),
+                Type.Literal("browser_page"),
+              ]),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      steps: Type.Array(
+        Type.Union([
+          Type.Object({ assert: CheckpointSchema }, { additionalProperties: false }),
+          Type.Object(
+            {
+              target: SemanticTargetSchema,
+              actions: Type.Array(
+                Type.Union([
+                  Type.Object(
+                    {
+                      action: Type.Literal("click"),
+                      button: Type.Optional(Button),
+                      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+                    },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    {
+                      action: Type.Literal("scroll"),
+                      scrollX: Type.Optional(Type.Number()),
+                      scrollY: Type.Optional(Type.Number()),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ]),
+                { minItems: 1, maxItems: 20 },
+              ),
+              expect: CheckpointSchema,
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait_for"),
+      text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")])),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      urlVariable: Id,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("withheld"),
+      reason: Type.Union([
+        Type.Literal("transient-reference"),
+        Type.Literal("arbitrary-code"),
+        Type.Literal("unsupported-input"),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-export const resolveTaskInputs = (
-  task: GeneralTaskDefinition,
-  provided: Readonly<Record<string, string>>,
-): { readonly inputs: Readonly<Record<string, string>>; readonly hash: string } => {
-  const resolved: Record<string, string> = {};
-  const allowed = new Set(task.inputs.map(({ id }) => id));
-  for (const key of Object.keys(provided)) {
-    if (!allowed.has(key)) throw new Error(`Unknown task input '${key}'.`);
-  }
-  for (const declaration of task.inputs) {
-    const value = provided[declaration.id] ?? declaration.default;
-    if (value === undefined) throw new Error(`Missing required task input '${declaration.id}'.`);
-    resolved[declaration.id] = value;
-  }
-  return { inputs: resolved, hash: validateTaskInputs(task, resolved) };
-};
+const RecordedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Timestamp,
+    outcome: Type.Union([Type.Literal("success"), Type.Literal("error")]),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+  },
+  { additionalProperties: false },
+);
 
-export const makeGeneralTaskRun = (input: {
-  readonly task: GeneralTaskDefinition;
-  readonly revision: string;
-  readonly candidateId?: string;
-  readonly mode: "verification" | "run";
-  readonly sessionId: string;
-  readonly inputsHash: string;
-  readonly now?: Date;
-}): GeneralTaskRun => {
-  const timestamp = (input.now ?? new Date()).toISOString();
-  return Parse(GeneralTaskRunSchema, {
-    format: "ziggy-general-task-run",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    taskId: input.task.id,
-    ...(input.candidateId === undefined ? {} : { candidateId: input.candidateId }),
-    revision: input.revision,
-    mode: input.mode,
-    sessionId: input.sessionId,
-    inputsHash: input.inputsHash,
-    startedAt: timestamp,
-    updatedAt: timestamp,
-    state: "active",
-    calls: [],
-    criteria: [],
-  });
-};
+export const WorkflowDraftSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-draft"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    startedAt: Timestamp,
+    stoppedAt: Timestamp,
+    status: Type.Literal("review-required"),
+    calls: Type.Array(RecordedCallSchema, { maxItems: 1_000 }),
+    issues: Type.Array(Text, { maxItems: 1_000 }),
+  },
+  { additionalProperties: false },
+);
 
-type CriterionSubmission = {
-  readonly criterionId: string;
-  readonly outcome: "passed" | "failed";
-  readonly toolCallIds?: readonly string[];
-  readonly artifactPaths?: readonly string[];
-  readonly assessment?: string;
-};
+export const RunRecordSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    status: Type.Literal("planned"),
+    plannedSegmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+    manualStepCount: Type.Integer({ minimum: 0, maximum: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-const verifyArtifact = async (cwd: string, path: string, startedAt: string) => {
-  const absolute = resolve(cwd, path);
-  const handle = await open(absolute, "r");
-  try {
-    const before = await handle.stat();
-    if (!before.isFile()) throw new Error(`Artifact '${path}' is not a regular file.`);
-    if (before.size > 512 * 1024 * 1024)
-      throw new Error(`Artifact '${path}' exceeds the 512 MiB evidence limit.`);
-    if (before.mtimeMs < Date.parse(startedAt))
-      throw new Error(`Artifact '${path}' predates this run.`);
-    const hash = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let position = 0;
-    while (position < before.size) {
-      const { bytesRead } = await handle.read(
-        buffer,
-        0,
-        Math.min(buffer.length, before.size - position),
-        position,
-      );
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-      position += bytesRead;
-    }
-    const after = await handle.stat();
-    if (
-      position !== before.size ||
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ino !== before.ino
-    )
-      throw new Error(`Artifact '${path}' changed while evidence was collected.`);
-    return {
-      path: absolute,
-      size: before.size,
-      sha256: hash.digest("hex"),
-      modifiedAt: before.mtime.toISOString(),
-    };
-  } finally {
-    await handle.close();
-  }
-};
-
-export const finishGeneralTaskRun = async (input: {
-  readonly cwd: string;
-  readonly task: GeneralTaskDefinition;
-  readonly run: GeneralTaskRun;
-  readonly criteria: readonly CriterionSubmission[];
-  readonly now?: Date;
-}): Promise<GeneralTaskRun> => {
-  if (input.run.state !== "active") throw new Error("Only an active task run can finish.");
-  const expectedIds = input.task.completionCriteria.map(({ id }) => id).toSorted();
-  const submittedIds = input.criteria.map(({ criterionId }) => criterionId).toSorted();
-  if (stableJson(expectedIds) !== stableJson(submittedIds)) {
-    throw new Error("Every completion criterion must be covered exactly once.");
-  }
-  const successfulCalls = new Set(
-    input.run.calls
-      .filter(({ status }) => status === "succeeded")
-      .map(({ toolCallId }) => toolCallId),
-  );
-  const observedCalls = new Set(input.run.calls.map(({ toolCallId }) => toolCallId));
-  const evidence = [];
-  for (const criterion of input.task.completionCriteria) {
-    const submission = input.criteria.find(({ criterionId }) => criterionId === criterion.id);
-    if (submission === undefined) throw new Error(`Missing criterion '${criterion.id}'.`);
-    const toolCallIds = [...(submission.toolCallIds ?? [])];
-    if (toolCallIds.some((id) => !observedCalls.has(id))) {
-      throw new Error(`Criterion '${criterion.id}' references a tool call outside this run.`);
-    }
-    if (criterion.evidence === "tool-result") {
-      if (submission.assessment === undefined)
-        throw new Error(
-          `Criterion '${criterion.id}' requires an assessment of what the tool result establishes.`,
-        );
-      if (
-        toolCallIds.length === 0 ||
-        (submission.outcome === "passed" && toolCallIds.some((id) => !successfulCalls.has(id)))
-      ) {
-        throw new Error(
-          `Criterion '${criterion.id}' requires observed tool results from this run.`,
-        );
-      }
-      evidence.push({ ...submission, toolCallIds, evidenceLabel: "observed-tool-result" as const });
-    } else if (criterion.evidence === "artifact") {
-      const paths = submission.artifactPaths ?? [];
-      if (submission.assessment === undefined) {
-        throw new Error(
-          `Criterion '${criterion.id}' requires an agent assessment of artifact semantics.`,
-        );
-      }
-      if (submission.outcome === "failed") {
-        evidence.push({
-          ...submission,
-          toolCallIds,
-          artifactPaths: paths,
-          artifacts: [],
-          evidenceLabel: "agent-assessed" as const,
-        });
-        continue;
-      }
-      if (paths.length === 0) throw new Error(`Criterion '${criterion.id}' requires an artifact.`);
-      const artifacts = await Promise.all(
-        paths.map(async (path) => await verifyArtifact(input.cwd, path, input.run.startedAt)),
-      );
-      evidence.push({
-        ...submission,
-        toolCallIds,
-        artifactPaths: paths,
-        artifacts,
-        evidenceLabel: "verified-artifact" as const,
-      });
-    } else {
-      if (submission.assessment === undefined) {
-        throw new Error(`Criterion '${criterion.id}' requires an explicit agent assessment.`);
-      }
-      evidence.push({ ...submission, toolCallIds, evidenceLabel: "agent-assessed" as const });
-    }
-  }
-  const unresolved = input.run.calls.some(
-    ({ status }) => status === "pending" || status === "unknown",
-  );
-  const failed = evidence.some(({ outcome }) => outcome === "failed");
-  return Parse(GeneralTaskRunSchema, {
-    ...input.run,
-    updatedAt: (input.now ?? new Date()).toISOString(),
-    state: unresolved ? "incomplete" : failed ? "failed" : "passed",
-    criteria: evidence,
-  });
-};
-
-export const cancelGeneralTaskRun = (run: GeneralTaskRun, now = new Date()): GeneralTaskRun =>
-  Parse(GeneralTaskRunSchema, {
-    ...run,
-    updatedAt: now.toISOString(),
-    state: "cancelled",
-    calls: run.calls.map((call) =>
-      call.status === "pending" ? { ...call, status: "unknown" as const } : call,
+export const WorkflowSaveCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    verificationBindingsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+    optimization: Type.Object(
+      {
+        removedRedundantObservations: Type.Integer({ minimum: 0, maximum: 200 }),
+        removedRedundantRootLookups: Type.Integer({ minimum: 0, maximum: 200 }),
+        segmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
     ),
-  });
+  },
+  { additionalProperties: false },
+);
+
+export const WorkflowSaveProofSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-proof"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateId: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    runSummaryId: Id,
+    verifiedAt: Timestamp,
+    outcome: Type.Literal("passed"),
+  },
+  { additionalProperties: false },
+);
+
+const TaskInputSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    default: Type.Optional(Type.String({ minLength: 1, maxLength: 8_192 })),
+  },
+  { additionalProperties: false },
+);
+
+const TaskCriterionSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    evidence: Type.Union([
+      Type.Literal("tool-result"),
+      Type.Literal("artifact"),
+      Type.Literal("agent-assessment"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    inputs: Type.Array(TaskInputSchema, { maxItems: 50 }),
+    startContext: Type.Object(
+      {
+        kind: Type.Union([Type.Literal("browser"), Type.Literal("desktop")]),
+        browserProfile: Type.Optional(ShortText),
+        urlInput: Type.Optional(Id),
+        app: Type.Optional(ShortText),
+      },
+      { additionalProperties: false },
+    ),
+    procedure: Type.Array(Text, { minItems: 1, maxItems: 100 }),
+    output: Type.Object(
+      {
+        format: Type.Union([
+          Type.Literal("text"),
+          Type.Literal("json"),
+          Type.Literal("artifact"),
+          Type.Literal("artifacts"),
+        ]),
+        description: Text,
+      },
+      { additionalProperties: false },
+    ),
+    completionCriteria: Type.Array(TaskCriterionSchema, {
+      minItems: 1,
+      maxItems: 50,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PublishedGeneralTaskSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    savedAt: Timestamp,
+    sourceDraftId: Id,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+const TaskObservedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Type.Optional(Timestamp),
+    status: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("succeeded"),
+      Type.Literal("failed"),
+      Type.Literal("unknown"),
+    ]),
+    resultDigest: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+    reconciliation: Type.Optional(
+      Type.Object(
+        {
+          assessment: Text,
+          evidenceToolCallIds: Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
+            minItems: 1,
+            maxItems: 20,
+          }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const TaskCriterionEvidenceSchema = Type.Object(
+  {
+    criterionId: Id,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed")]),
+    toolCallIds: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 256 }), { maxItems: 100 }),
+    ),
+    artifactPaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 8_192 }), { maxItems: 100 }),
+    ),
+    artifacts: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            path: Type.String({ minLength: 1, maxLength: 8_192 }),
+            size: Type.Integer({ minimum: 0 }),
+            sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+            modifiedAt: Timestamp,
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 100 },
+      ),
+    ),
+    assessment: Type.Optional(Text),
+    evidenceLabel: Type.Union([
+      Type.Literal("observed-tool-result"),
+      Type.Literal("verified-artifact"),
+      Type.Literal("agent-assessed"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskRunSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    taskId: Id,
+    candidateId: Type.Optional(Id),
+    revision: Id,
+    mode: Type.Union([Type.Literal("verification"), Type.Literal("run")]),
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    inputsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    startedAt: Timestamp,
+    updatedAt: Timestamp,
+    state: Type.Union([
+      Type.Literal("active"),
+      Type.Literal("cancelled"),
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    calls: Type.Array(TaskObservedCallSchema, { maxItems: 1_000 }),
+    criteria: Type.Array(TaskCriterionEvidenceSchema, { maxItems: 50 }),
+  },
+  { additionalProperties: false },
+);
+
+const RunCheckSchema = Type.Object(
+  {
+    sourceStep: Type.Integer({ minimum: 1, maximum: 200 }),
+    expected: CheckpointSchema,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("not-run")]),
+  },
+  { additionalProperties: false },
+);
+
+export const RunSummarySchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run-summary"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    finishedAt: Timestamp,
+    overall: Type.Union([
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    checks: Type.Array(RunCheckSchema, { maxItems: 200 }),
+    segments: Type.Object(
+      {
+        planned: Type.Integer({ minimum: 0, maximum: 200 }),
+        matched: Type.Integer({ minimum: 0, maximum: 200 }),
+        passed: Type.Integer({ minimum: 0, maximum: 200 }),
+        failed: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
+    ),
+    stopReason: Type.Union([
+      Type.Literal("completed"),
+      Type.Literal("manual-steps"),
+      Type.Literal("tool-error"),
+      Type.Literal("invalid-result"),
+      Type.Literal("input-mismatch"),
+      Type.Literal("unfinished-segments"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const PublishApprovalSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-publish-approval"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    sourceDraftId: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    cwd: Type.String({ minLength: 1, maxLength: 8_192 }),
+    preparedAtUserInput: Type.Integer({ minimum: 0 }),
+    preparedAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
+
+export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
+
+export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
+export type WorkflowSaveCandidate = Static<typeof WorkflowSaveCandidateSchema>;
+export type WorkflowSaveProof = Static<typeof WorkflowSaveProofSchema>;
+export type GeneralTaskDefinition = Static<typeof GeneralTaskDefinitionSchema>;
+export type GeneralTaskCandidate = Static<typeof GeneralTaskCandidateSchema>;
+export type PublishedGeneralTask = Static<typeof PublishedGeneralTaskSchema>;
+export type GeneralTaskRun = Static<typeof GeneralTaskRunSchema>;
+
+export type RecordedCall = Static<typeof RecordedCallSchema>;
+
+export type RecordedInput = Static<typeof RecordedInputSchema>;
+
+export type RunRecord = Static<typeof RunRecordSchema>;
+
+export type RunSummary = Static<typeof RunSummarySchema>;
+
+export type PublishApproval = Static<typeof PublishApprovalSchema>;
+
+export const WorkflowIdSchema = Id;

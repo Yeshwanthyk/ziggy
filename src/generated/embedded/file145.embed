@@ -1,86 +1,98 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's required Promise adapter boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
-/* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
-import type { ExecResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+---
+name: imsg
+description: "iMessage/SMS CLI for listing chats, history, and sending messages via Messages.app."
+---
 
-const OUTPUT_LIMIT = 32 * 1024;
+# imsg
 
-const Parameters = Type.Object(
-  {
-    args: Type.Array(Type.String(), {
-      description: "GitHub CLI subcommand and arguments, one array item per argv value.",
-      maxItems: 128,
-    }),
-  },
-  { additionalProperties: false },
-);
+Use `imsg` to read and send iMessage/SMS via macOS Messages.app.
 
-const truncate = (text: string): string =>
-  text.length <= OUTPUT_LIMIT
-    ? text
-    : `${text.slice(0, OUTPUT_LIMIT)}\n… ${text.length - OUTPUT_LIMIT} characters omitted`;
+## When to Use
 
-const successfulText = (result: ExecResult): string => {
-  const stdout = truncate(result.stdout);
-  const stderr = truncate(result.stderr);
+✅ **USE this skill when:**
 
-  if (stdout.length > 0 && stderr.length > 0) return `${stdout}\n\nstderr:\n${stderr}`;
+- User explicitly asks to send iMessage or SMS
+- Reading iMessage conversation history
+- Checking recent Messages.app chats
+- Sending to phone numbers or Apple IDs
 
-  if (stdout.length > 0) return stdout;
+## When NOT to Use
 
-  if (stderr.length > 0) return `stderr:\n${stderr}`;
+❌ **DON'T use this skill when:**
 
-  return "Command completed successfully.";
-};
+- Messages on services other than iMessage or SMS
+- Group chat management (adding/removing members) → not supported
+- Bulk/mass messaging → always confirm with user first
+- Replying in the current conversation
 
-export const runGithubCommand = async (
-  exec: ExtensionAPI["exec"],
-  args: readonly string[],
-  cwd: string,
-  signal: AbortSignal | undefined,
-) => {
-  const execOptions: Parameters<ExtensionAPI["exec"]>[2] = {
-    cwd,
-    timeout: 30_000,
-  };
+## Requirements
 
-  if (signal !== undefined) {
-    execOptions.signal = signal;
-  }
+- macOS with Messages.app signed in
+- Full Disk Access for terminal
+- Automation permission for Messages.app (for sending)
 
-  const result = await exec("gh", [...args], execOptions);
-  const stdout = truncate(result.stdout);
-  const stderr = truncate(result.stderr);
+## Common Commands
 
-  if (result.code !== 0) {
-    const reason = result.killed ? "was terminated" : `exited with code ${result.code}`;
+### List Chats
 
-    const output = [
-      stderr.length > 0 ? `stderr:\n${stderr}` : "",
-      stdout.length > 0 ? `stdout:\n${stdout}` : "",
-    ]
-      .filter((part) => part.length > 0)
-      .join("\n\n");
+```bash
+imsg chats --limit 10 --json
+```
 
-    throw new Error(`gh ${reason}${output.length > 0 ? `\n${output}` : ""}`);
-  }
+### View History
 
-  return {
-    content: [{ type: "text" as const, text: successfulText(result) }],
-    details: { code: result.code, killed: result.killed, stdout, stderr },
-  };
-};
+```bash
+# By chat ID
+imsg history --chat-id 1 --limit 20 --json
 
-export default function github(pi: ExtensionAPI): void {
-  pi.registerTool({
-    name: "github",
-    label: "github",
-    description:
-      "Run the authenticated GitHub CLI for repositories, issues, pull requests, workflows, releases, and API calls.",
-    parameters: Parameters,
-    async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
-      return runGithubCommand(pi.exec.bind(pi), args, ctx.cwd, signal);
-    },
-  });
-}
+# With attachments info
+imsg history --chat-id 1 --limit 20 --attachments --json
+```
+
+### Watch for New Messages
+
+```bash
+imsg watch --chat-id 1 --attachments
+```
+
+### Send Messages
+
+```bash
+# Text only
+imsg send --to "+14155551212" --text "Hello!"
+
+# With attachment
+imsg send --to "+14155551212" --text "Check this out" --file /path/to/image.jpg
+
+# Specify service
+imsg send --to "+14155551212" --text "Hi" --service imessage
+imsg send --to "+14155551212" --text "Hi" --service sms
+```
+
+## Service Options
+
+- `--service imessage` — Force iMessage (requires recipient has iMessage)
+- `--service sms` — Force SMS (green bubble)
+- `--service auto` — Let Messages.app decide (default)
+
+## Safety Rules
+
+1. **Always confirm recipient and message content** before sending
+2. **Never send to unknown numbers** without explicit user approval
+3. **Be careful with attachments** — confirm file path exists
+4. **Rate limit yourself** — don't spam
+
+## Example Workflow
+
+User: "Text mom that I'll be late"
+
+```bash
+# 1. Find mom's chat
+imsg chats --limit 20 --json | jq '.[] | select(.displayName | contains("Mom"))'
+
+# 2. Confirm with user
+# "Found Mom at +1555123456. Send 'I'll be late' via iMessage?"
+
+# 3. Send after confirmation
+imsg send --to "+1555123456" --text "I'll be late"
+```

@@ -20,7 +20,7 @@ import type {
 } from "ziggy/domain/profile-extension";
 import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { bundledFilePath } from "ziggy/generated/builtin-files";
-import { REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
+import { BUILTIN_PACKAGE_METADATA, REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
 
 const temporaryPaths: Array<string> = [];
 
@@ -468,114 +468,24 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   const extensionsRoot = join(repositoryRoot, "extensions");
   expect(existsSync(join(repositoryRoot, "skills"))).toBe(false);
 
-  const expectedPackages = [
-    "agent-browser",
-    "apple-notes",
-    "apple-reminders",
-    "codemode",
-    "coding-agent",
-    "computer-use",
-    "computer-workflows",
-    "dev-browser",
-    "executor",
-    "extension-authoring",
-    "github",
-    "gog",
-    "goplaces",
-    "imsg",
-    "lossless-claw",
-    "mcporter",
-    "obsidian",
-    "pi-packages",
-    "qmd",
-    "self-improvement",
-    "weather",
-    "web-search",
-    "ziggy-operations",
-  ];
+  const catalogIds = BUILTIN_PACKAGE_METADATA.map((entry) => entry.id).sort((left, right) =>
+    left.localeCompare(right),
+  );
 
-  const expectedTools = [
-    "agent_browser",
-    "apple_reminders_complete",
-    "apple_reminders_create",
-    "apple_reminders_delete",
-    "apple_reminders_list_due",
-    "apple_reminders_list_incomplete",
-    "apple_reminders_move",
-    "apple_reminders_reschedule",
-    "codemode_execute",
-    "dev_browser",
-    "find_roots",
-    "observe_ui",
-    "search_ui",
-    "expand_ui",
-    "inspect_ui",
-    "act_ui",
-    "read_text",
-    "run_ui_segment",
-    "wait_for",
-    "launch_browser",
-    "close_browser",
-    "navigate_browser",
-    "evaluate_browser",
-    "workflow_record_start",
-    "workflow_record_stop",
-    "workflow_record_cancel",
-    "workflow_draft_show",
-    "workflow_draft_recent",
-    "workflow_task_record_begin",
-    "workflow_task_record_finish",
-    "workflow_task_prepare",
-    "workflow_task_run_start",
-    "workflow_task_run_status",
-    "workflow_task_run_finish",
-    "workflow_task_run_cancel",
-    "workflow_task_run_resume",
-    "workflow_task_save",
-    "workflow_task_list",
-    "workflow_task_show",
-    "workflow_save",
-    "workflow_save_prepare",
-    "workflow_list",
-    "workflow_show",
-    "workflow_plan",
-    "workflow_run_finish",
-    "executor_call",
-    "executor_resume",
-    "executor_tools_describe",
-    "executor_tools_search",
-    "executor_tools_sources",
-    "github",
-    "lcm_describe",
-    "lcm_expand_query",
-    "lcm_grep",
-    "lcm_sessions",
-    "self_improvement_extension_write",
-    "self_improvement_log",
-    "self_improvement_status",
-    "web_search",
-  ].sort((left, right) => left.localeCompare(right));
+  const executablePackages = BUILTIN_PACKAGE_METADATA.filter(
+    (entry) => entry.executables.length > 0,
+  ).map((entry) => entry.id);
 
-  const executablePackages = [
-    "agent-browser",
-    "apple-reminders",
-    "codemode",
-    "computer-use",
-    "computer-workflows",
-    "dev-browser",
-    "executor",
-    "github",
-    "lossless-claw",
-    "self-improvement",
-    "web-search",
-  ];
+  const catalogSkillNames = BUILTIN_PACKAGE_METADATA.flatMap((entry) =>
+    entry.skills.map((skill) => skill.name),
+  ).sort((left, right) => left.localeCompare(right));
 
   const packageNames = (await readdir(extensionsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
 
-  expect(packageNames).toEqual(expectedPackages);
+  expect(packageNames).toEqual(catalogIds);
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
   await writeFile(
     join(profilePath, "extensions.json"),
@@ -604,10 +514,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
       },
     });
 
-  const assertCatalog = (
-    services: Awaited<ReturnType<typeof loadCatalog>>,
-    skillCount: number,
-  ): void => {
+  const assertCatalog = (services: Awaited<ReturnType<typeof loadCatalog>>): string[] => {
     const loadedSkills = services.resourceLoader.getSkills();
     const loadedExtensions = services.resourceLoader.getExtensions();
 
@@ -617,8 +524,14 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
 
     expect(loadedExtensions.errors).toEqual([]);
     expect(loadedSkills.diagnostics).toEqual([]);
-    expect(loadedSkills.skills).toHaveLength(skillCount);
-    expect(toolNames).toEqual(expectedTools);
+    expect(
+      loadedSkills.skills
+        .map((skill) => skill.name)
+        .sort((left, right) => left.localeCompare(right)),
+    ).toEqual(catalogSkillNames);
+    expect(new Set(toolNames).size).toBe(toolNames.length);
+
+    return toolNames;
   };
 
   const productionResources = await resolveResources(profilePath, repositoryRoot);
@@ -626,7 +539,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   expect(productionResources.extensionPaths).toEqual(
     executablePackages.map((id) => join(profilePath, "extensions", id)),
   );
-  expect(productionResources.skillPaths).toHaveLength(21);
+  expect(productionResources.skillPaths).toHaveLength(catalogSkillNames.length);
   expect(
     productionResources.skillPaths.every((skillPath) => skillPath.startsWith(profilePath)),
   ).toBe(true);
@@ -637,7 +550,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     [...productionResources.extensionFactories],
   );
 
-  assertCatalog(productionServices, 21);
+  const toolNames = assertCatalog(productionServices);
 
   const { session } = await createAgentSessionFromServices({
     services: productionServices,
@@ -645,7 +558,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
   });
 
   expect(session.getActiveToolNames()).toEqual(
-    expect.arrayContaining(["read", "bash", "write", ...expectedTools]),
+    expect.arrayContaining(["read", "bash", "write", ...toolNames]),
   );
   session.dispose();
 });

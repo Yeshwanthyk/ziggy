@@ -1,690 +1,532 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Invalid observed tool inputs are withheld instead of entering durable state. */
-/* oxlint-disable ziggy/no-conditional-empty-object-spread -- Exact optional properties are assembled from schema-decoded optional inputs. */
-/* oxlint-disable ziggy/no-unsafe-dictionary-type -- Pi's public custom-tool event contract supplies Record<string, unknown>; every supported input is immediately schema-decoded. */
-/* oxlint-disable ziggy/no-runtime-typeof -- Tool-result details are an untrusted event boundary probed only to fail wait evidence closed. */
-/* oxlint-disable ziggy/require-readable-spacing -- Sanitization branches keep decode and projection together. */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem adapter boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Boundary failures become Pi tool failures. */
+/* oxlint-disable ziggy-effect/no-json-parse -- JSON is decoded immediately through the complete TypeBox schema. */
+/* oxlint-disable ziggy/no-unknown-parameters -- Unknown JSON exists only at the decoder and serializer boundary. */
+/* oxlint-disable ziggy/no-runtime-typeof -- Node filesystem errors require a narrow code probe at this adapter boundary. */
+/* oxlint-disable ziggy/require-readable-spacing -- Filesystem transaction steps remain adjacent. */
+import { createHash } from "node:crypto";
+import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
+import type { Static, TSchema } from "typebox";
 import { Parse } from "typebox/value";
-import { Type, type Static } from "typebox";
-import { normalizeSafeControlKeypress } from "./execution-plan.ts";
 import {
-  SafeKeypressKeysSchema,
-  type RecordedCall,
-  type RecordedInput,
+  PublishApprovalSchema,
+  PublishedWorkflowSchema,
+  RunRecordSchema,
+  RunSummarySchema,
+  WorkflowDraftSchema,
+  WorkflowSaveCandidateSchema,
+  WorkflowSaveProofSchema,
+  GeneralTaskCandidateSchema,
+  GeneralTaskRunSchema,
+  PublishedGeneralTaskSchema,
+  type PublishApproval,
+  type PublishedWorkflow,
+  type RunRecord,
+  type RunSummary,
   type WorkflowDraft,
+  type WorkflowSaveCandidate,
+  type WorkflowSaveProof,
+  type GeneralTaskCandidate,
+  type GeneralTaskRun,
+  type PublishedGeneralTask,
 } from "./schema.ts";
 
-const COMPUTER_USE_TOOLS = new Set([
-  "find_roots",
-  "observe_ui",
-  "search_ui",
-  "expand_ui",
-  "inspect_ui",
-  "act_ui",
-  "read_text",
-  "wait_for",
-  "launch_browser",
-  "navigate_browser",
-  "evaluate_browser",
-  "close_browser",
-  "run_ui_segment",
-]);
+const durableRoot = (profilePath: string): string => join(profilePath, "workflows");
 
-const Ref = Type.String({ pattern: "^@[ero][A-Za-z0-9._:-]*$" });
+const runtimeRoot = (profilePath: string): string =>
+  join(profilePath, ".runtime", "computer-workflows");
 
-const StateId = Type.String({ minLength: 1, maxLength: 256 });
+const generalTasksRoot = (profilePath: string): string => join(profilePath, "tasks");
 
-const FindInput = Type.Object(
-  {
-    text: Type.Optional(Type.String({ maxLength: 256 })),
-    app: Type.Optional(Type.String({ maxLength: 256 })),
-    bundleId: Type.Optional(Type.String({ maxLength: 256 })),
-    pid: Type.Optional(Type.Number()),
-    kind: Type.Optional(
-      Type.Union([
-        Type.Literal("window"),
-        Type.Literal("menu"),
-        Type.Literal("sheet"),
-        Type.Literal("popover"),
-        Type.Literal("dialog"),
-        Type.Literal("browser_page"),
-      ]),
-    ),
-  },
-  { additionalProperties: false },
-);
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
 
-const ObserveInput = Type.Object(
-  {
-    root: Type.Optional(Ref),
-    mode: Type.Optional(
-      Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const SearchInput = Type.Object(
-  {
-    text: Type.Optional(Type.String({ maxLength: 256 })),
-    role: Type.Optional(Type.String({ maxLength: 128 })),
-    capability: Type.Optional(Type.String({ maxLength: 128 })),
-    stateId: StateId,
-  },
-  { additionalProperties: false },
-);
-
-const Condition = {
-  ref: Type.Optional(Ref),
-  scopeRef: Type.Optional(Ref),
-  text: Type.Optional(Type.String({ maxLength: 512 })),
-  role: Type.Optional(Type.String({ maxLength: 128 })),
-  value: Type.Optional(Type.String()),
-  until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")])),
-  timeoutMs: Type.Optional(Type.Number({ minimum: 100, maximum: 60_000 })),
+  return typeof cause.code === "string" ? cause.code : undefined;
 };
 
-const Point = { x: Type.Number(), y: Type.Number() };
-
-const Action = Type.Union([
-  Type.Object({ action: Type.Literal("press"), ref: Ref }, { additionalProperties: false }),
-  Type.Object(
-    {
-      action: Type.Literal("click"),
-      ref: Ref,
-      button: Type.Optional(Type.String()),
-      clickCount: Type.Optional(Type.Number()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("click"),
-      ...Point,
-      button: Type.Optional(Type.String()),
-      clickCount: Type.Optional(Type.Number()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { action: Type.Literal("setText"), ref: Ref, text: Type.String() },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { action: Type.Literal("typeText"), ref: Type.Optional(Ref), text: Type.String() },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("keypress"),
-      ref: Type.Optional(Ref),
-      keys: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("scroll"),
-      ref: Type.Optional(Ref),
-      scrollX: Type.Optional(Type.Number()),
-      scrollY: Type.Optional(Type.Number()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("drag"),
-      path: Type.Array(Type.Object(Point, { additionalProperties: false }), { minItems: 2 }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object({ action: Type.Literal("moveMouse"), ...Point }, { additionalProperties: false }),
-]);
-
-const ActInput = Type.Object(
-  {
-    stateId: StateId,
-    expect: Type.Optional(Type.Object(Condition, { additionalProperties: false })),
-    actions: Type.Array(Action, { minItems: 1, maxItems: 20 }),
-  },
-  { additionalProperties: false },
-);
-
-const WaitInput = Type.Object({ ...Condition, stateId: StateId }, { additionalProperties: false });
-
-const BrowserInput = Type.Object(
-  {
-    url: Type.Optional(Type.String({ maxLength: 8_192 })),
-    stateId: Type.Optional(StateId),
-    profile: Type.Optional(Type.String({ maxLength: 64 })),
-    mode: Type.Optional(Type.Union([Type.Literal("headed"), Type.Literal("background")])),
-  },
-  { additionalProperties: false },
-);
-
-const RecordedCondition = Type.Object(
-  {
-    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
-    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
-    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
-  },
-  { additionalProperties: false },
-);
-
-const SegmentInput = Type.Object(
-  {
-    rootQuery: Type.Optional(
-      Type.Object(
-        {
-          text: Type.Optional(Type.String({ maxLength: 256 })),
-          app: Type.Optional(Type.String({ maxLength: 256 })),
-          bundleId: Type.Optional(Type.String({ maxLength: 256 })),
-          kind: Type.Optional(
-            Type.Union([
-              Type.Literal("window"),
-              Type.Literal("menu"),
-              Type.Literal("sheet"),
-              Type.Literal("popover"),
-              Type.Literal("dialog"),
-              Type.Literal("browser_page"),
-            ]),
-          ),
-        },
-        { additionalProperties: false },
-      ),
-    ),
-    steps: Type.Array(
-      Type.Union([
-        Type.Object({ assert: RecordedCondition }, { additionalProperties: false }),
-        Type.Object(
-          {
-            target: Type.Object(
-              {
-                text: Type.Optional(Type.String({ maxLength: 256 })),
-                role: Type.Optional(Type.String({ maxLength: 128 })),
-                capability: Type.Optional(Type.String({ maxLength: 128 })),
-              },
-              { additionalProperties: false },
-            ),
-            actions: Type.Array(
-              Type.Union([
-                Type.Object(
-                  {
-                    action: Type.Literal("click"),
-                    button: Type.Optional(
-                      Type.Union([
-                        Type.Literal("left"),
-                        Type.Literal("right"),
-                        Type.Literal("middle"),
-                      ]),
-                    ),
-                    clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
-                  },
-                  { additionalProperties: false },
-                ),
-                Type.Object(
-                  { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
-                  { additionalProperties: false },
-                ),
-                Type.Object(
-                  {
-                    action: Type.Literal("scroll"),
-                    scrollX: Type.Optional(Type.Number()),
-                    scrollY: Type.Optional(Type.Number()),
-                  },
-                  { additionalProperties: false },
-                ),
-              ]),
-              { minItems: 1, maxItems: 20 },
-            ),
-            expect: RecordedCondition,
-          },
-          { additionalProperties: false },
-        ),
-      ]),
-      { minItems: 1, maxItems: 20 },
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const SegmentResult = Type.Object(
-  {
-    tool: Type.Literal("run_ui_segment"),
-    status: Type.Literal("completed"),
-    completed: Type.Array(
-      Type.Object(
-        {
-          step: Type.Integer({ minimum: 1, maximum: 20 }),
-          stateId: Type.String({ minLength: 1 }),
-          ref: Type.Optional(Type.String({ minLength: 1 })),
-          kind: Type.Optional(Type.Literal("assert")),
-          actionCount: Type.Integer({ minimum: 0, maximum: 20 }),
-        },
-        { additionalProperties: false },
-      ),
-      { minItems: 1, maxItems: 20 },
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const ActResult = Type.Union([
-  Type.Object(
-    {
-      tool: Type.Literal("act_ui"),
-      execution: Type.Object(
-        {
-          verification: Type.Object(
-            { status: Type.Union([Type.Literal("verified"), Type.Literal("preexisting")]) },
-            { additionalProperties: true },
-          ),
-        },
-        { additionalProperties: true },
-      ),
-    },
-    { additionalProperties: true },
-  ),
-  Type.Object(
-    {
-      tool: Type.Literal("act_ui"),
-      kind: Type.Literal("browser_page"),
-      stateId: Type.String({ minLength: 1 }),
-      baseStateId: Type.String({ minLength: 1 }),
-    },
-    { additionalProperties: true },
-  ),
-]);
-
-type PendingCall = {
-  readonly sequence: number;
-  readonly toolCallId: string;
-  readonly toolName: string;
-  readonly startedAt: string;
-  readonly input: RecordedInput;
-  readonly issues: string[];
-};
-
-export type ActiveRecording = {
-  readonly id: string;
-  readonly name: string;
-  readonly goal: string;
-  readonly sessionId: string;
-  readonly startedAt: string;
-  readonly pending: Map<string, PendingCall>;
-  readonly completed: RecordedCall[];
-  nextSequence: number;
-};
-
-const withoutTransientText = (value: string | undefined): string | undefined =>
-  value === undefined || /@[ero][A-Za-z0-9._:-]*/.test(value) ? undefined : value;
-
-const withheld = (reason: "transient-reference" | "arbitrary-code" | "unsupported-input") =>
-  ({ kind: "withheld", reason }) as const;
-
-type SanitizedInput = { readonly input: RecordedInput; readonly issues: string[] };
-
-const sanitizeActions = (
-  actions: Static<typeof ActInput>["actions"],
-  sequence: number,
-): SanitizedInput => {
-  const safeActions: Static<typeof Action>[] = actions;
-  const sanitized: Extract<RecordedInput, { kind: "safe_actions" }>["actions"] = [];
-  const issues: string[] = [];
-  let variableIndex = 0;
-
-  for (const action of safeActions) {
-    if (action.action === "setText" || action.action === "typeText") {
-      variableIndex += 1;
-      sanitized.push({
-        action: "variable-input",
-        variable: `input-${sequence}-${variableIndex}`,
-        target: action.ref === undefined ? "focused" : "requires-review",
-      });
-      issues.push(
-        "Typed text was not recorded; define and bind the generated variable during review.",
-      );
-    } else if (action.action === "keypress") {
-      const normalized = normalizeSafeControlKeypress(action.keys);
-
-      if (normalized === undefined) {
-        sanitized.push({ action: "requires-review", reason: "unsupported-action" });
-        issues.push(
-          "A text-producing keypress was withheld; only control/navigation keys and explicit modifier chords are recordable.",
-        );
-      } else {
-        sanitized.push({
-          action: "keypress",
-          keys: Parse(SafeKeypressKeysSchema, normalized),
-          target: action.ref === undefined ? "focused" : "requires-review",
-        });
-      }
-    } else if (action.action === "scroll") {
-      sanitized.push({
-        action: "scroll",
-        ...(action.scrollX === undefined ? {} : { scrollX: action.scrollX }),
-        ...(action.scrollY === undefined ? {} : { scrollY: action.scrollY }),
-        target: action.ref === undefined ? "root" : "requires-review",
-      });
-
-      if (action.ref !== undefined) issues.push("Replace the transient scroll ref with a target.");
-    } else if (action.action === "press" || (action.action === "click" && "ref" in action)) {
-      sanitized.push({ action: "requires-review", reason: "transient-target" });
-      issues.push("Replace the transient UI ref with a semantic target.");
-    } else if (
-      action.action === "click" ||
-      action.action === "drag" ||
-      action.action === "moveMouse"
-    ) {
-      sanitized.push({ action: "requires-review", reason: "coordinate-action" });
-      issues.push(
-        "Coordinate actions are not publishable; replace this action with a semantic target.",
-      );
-    }
-  }
-
-  return {
-    input: {
-      kind: "safe_actions",
-      actions: sanitized,
-      ...(actions.length > 0 ? {} : {}),
-    },
-    issues,
-  };
-};
-
-const sanitizeComputerUseInput = (
-  toolName: string,
-  input: Record<string, unknown>,
-  sequence: number,
-): SanitizedInput => {
+const assertDirectory = async (path: string): Promise<void> => {
   try {
-    if (toolName === "find_roots") {
-      const decoded = Parse(FindInput, input);
+    const stat = await lstat(path);
 
-      return {
-        input: {
-          kind: "find_roots",
-          ...(withoutTransientText(decoded.text) === undefined ? {} : { text: decoded.text }),
-          ...(withoutTransientText(decoded.app) === undefined ? {} : { app: decoded.app }),
-          ...(withoutTransientText(decoded.bundleId) === undefined
-            ? {}
-            : { bundleId: decoded.bundleId }),
-          ...(decoded.kind === undefined ? {} : { rootKind: decoded.kind }),
-        },
-        issues:
-          decoded.pid === undefined
-            ? []
-            : ["Process ids are session-specific and were not recorded."],
-      };
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
     }
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+    await mkdir(path, { recursive: true });
+    const stat = await lstat(path);
 
-    if (toolName === "observe_ui") {
-      const decoded = Parse(ObserveInput, input);
-
-      return {
-        input: {
-          kind: "observe_ui",
-          ...(decoded.mode === undefined ? {} : { mode: decoded.mode }),
-        },
-        issues: decoded.root === undefined ? [] : ["The transient root ref was not recorded."],
-      };
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Refusing non-directory workflow path: ${path}`);
     }
-
-    if (toolName === "search_ui") {
-      const decoded = Parse(SearchInput, input);
-
-      return {
-        input: {
-          kind: "search_ui",
-          ...(withoutTransientText(decoded.text) === undefined ? {} : { text: decoded.text }),
-          ...(decoded.role === undefined ? {} : { role: decoded.role }),
-          ...(decoded.capability === undefined ? {} : { capability: decoded.capability }),
-        },
-        issues: [],
-      };
-    }
-
-    if (toolName === "act_ui") {
-      const decoded = Parse(ActInput, input);
-      const sanitized = sanitizeActions(decoded.actions, sequence);
-      return {
-        ...sanitized,
-        input: {
-          ...sanitized.input,
-          ...(decoded.expect === undefined
-            ? {}
-            : {
-                expect: {
-                  ...(withoutTransientText(decoded.expect.text) === undefined
-                    ? {}
-                    : { text: decoded.expect.text }),
-                  ...(decoded.expect.role === undefined ? {} : { role: decoded.expect.role }),
-                  until: decoded.expect.until ?? "present",
-                  ...(decoded.expect.timeoutMs === undefined
-                    ? {}
-                    : { timeoutMs: decoded.expect.timeoutMs }),
-                },
-              }),
-        },
-      };
-    }
-
-    if (toolName === "wait_for") {
-      const decoded = Parse(WaitInput, input);
-      const text = withoutTransientText(decoded.text);
-
-      return {
-        input: {
-          kind: "wait_for",
-          ...(text === undefined ? {} : { text }),
-          ...(decoded.role === undefined ? {} : { role: decoded.role }),
-          ...(decoded.until === undefined ? {} : { until: decoded.until }),
-          ...(decoded.timeoutMs === undefined ? {} : { timeoutMs: decoded.timeoutMs }),
-        },
-        issues:
-          decoded.ref === undefined && decoded.scopeRef === undefined && decoded.value === undefined
-            ? []
-            : ["Transient refs and exact values were not recorded; review the wait condition."],
-      };
-    }
-
-    if (toolName === "launch_browser" || toolName === "navigate_browser") {
-      Parse(BrowserInput, input);
-
-      return {
-        input: { kind: toolName, urlVariable: `url-${sequence}` },
-        issues: ["The browser URL was not recorded; define and bind the generated variable."],
-      };
-    }
-
-    if (toolName === "run_ui_segment") {
-      const decoded = Parse(SegmentInput, input);
-      return { input: { kind: "semantic_segment", ...decoded }, issues: [] };
-    }
-
-    if (toolName === "close_browser") {
-      return {
-        input: withheld("unsupported-input"),
-        issues: ["Browser cleanup was observed but is not a replay step."],
-      };
-    }
-
-    if (toolName === "evaluate_browser") {
-      return {
-        input: withheld("arbitrary-code"),
-        issues: ["Arbitrary browser code is never recorded."],
-      };
-    }
-
-    if (toolName === "expand_ui" || toolName === "inspect_ui" || toolName === "read_text") {
-      return {
-        input: withheld("transient-reference"),
-        issues: ["A transient inspection reference was not recorded."],
-      };
-    }
-  } catch {
-    return {
-      input: withheld("unsupported-input"),
-      issues: ["The observed tool input failed strict decoding and was withheld."],
-    };
   }
-
-  return { input: withheld("unsupported-input"), issues: ["Unsupported tool input was withheld."] };
 };
 
-const isComputerUseTool = (toolName: string): boolean => COMPUTER_USE_TOOLS.has(toolName);
-
-export const startRecording = (
-  name: string,
-  goal: string,
-  sessionId: string,
-  now = new Date(),
-): ActiveRecording => ({
-  id: crypto.randomUUID(),
-  name,
-  goal,
-  sessionId,
-  startedAt: now.toISOString(),
-  pending: new Map(),
-  completed: [],
-  nextSequence: 1,
-});
-
-export const observeToolCall = (
-  recording: ActiveRecording,
-  event: {
-    readonly toolCallId: string;
-    readonly toolName: string;
-    readonly input: Record<string, unknown>;
-  },
-  now = new Date(),
-  allTools = false,
-): void => {
-  if (
-    (!isComputerUseTool(event.toolName) && !allTools) ||
-    event.toolName.startsWith("workflow_task_") ||
-    recording.pending.has(event.toolCallId)
-  )
-    return;
-  const sequence = recording.nextSequence;
-  recording.nextSequence += 1;
-  const sanitized = sanitizeComputerUseInput(event.toolName, event.input, sequence);
-  recording.pending.set(event.toolCallId, {
-    sequence,
-    toolCallId: event.toolCallId,
-    toolName: event.toolName,
-    startedAt: now.toISOString(),
-    ...sanitized,
-  });
-};
-
-export const observeToolResult = (
-  recording: ActiveRecording,
-  event: {
-    readonly toolCallId: string;
-    readonly toolName: string;
-    readonly isError: boolean;
-    readonly details?: unknown;
-    readonly input?: Record<string, unknown>;
-  },
-  now = new Date(),
-): void => {
-  const pending = recording.pending.get(event.toolCallId);
-
-  if (pending === undefined || pending.toolName !== event.toolName) return;
-  recording.pending.delete(event.toolCallId);
-  const executed =
-    event.input === undefined
-      ? { input: pending.input, issues: pending.issues }
-      : sanitizeComputerUseInput(pending.toolName, event.input, pending.sequence);
-  let successful = !event.isError;
+const writeExclusiveJson = async (path: string, value: unknown): Promise<void> => {
+  const handle = await open(path, "wx", 0o600);
 
   try {
-    if (successful && pending.toolName === "wait_for") {
-      successful =
-        typeof event.details === "object" &&
-        event.details !== null &&
-        "found" in event.details &&
-        event.details.found === true &&
-        (!("timedOut" in event.details) || event.details.timedOut !== true);
-    } else if (successful && pending.toolName === "run_ui_segment") {
-      const decoded = Parse(SegmentResult, event.details);
-      if (pending.input.kind !== "semantic_segment") successful = false;
-      else {
-        successful =
-          decoded.completed.length === pending.input.steps.length &&
-          decoded.completed.every((entry, index) => {
-            const planned =
-              pending.input.kind === "semantic_segment" ? pending.input.steps[index] : undefined;
-            if (planned === undefined || entry.step !== index + 1) return false;
-            return "assert" in planned
-              ? entry.kind === "assert" && entry.actionCount === 0
-              : entry.kind === undefined && entry.actionCount === planned.actions.length;
-          });
-      }
-    } else if (
-      successful &&
-      pending.toolName === "act_ui" &&
-      pending.input.kind === "safe_actions" &&
-      pending.input.expect !== undefined
-    ) {
-      Parse(ActResult, event.details);
-    }
-  } catch {
-    successful = false;
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
-
-  recording.completed.push({
-    ...pending,
-    ...executed,
-    completedAt: now.toISOString(),
-    outcome: successful ? "success" : "error",
-  });
 };
 
-export const snapshotRecording = (recording: ActiveRecording) =>
-  [
-    ...recording.completed.map((call) => ({
-      sequence: call.sequence,
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      startedAt: call.startedAt,
-      completedAt: call.completedAt,
-      status: call.outcome === "success" ? ("succeeded" as const) : ("failed" as const),
-      input: call.input,
-      issues: call.issues,
-    })),
-    ...[...recording.pending.values()].map((call) => ({
-      sequence: call.sequence,
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      startedAt: call.startedAt,
-      status: "pending" as const,
-      input: call.input,
-      issues: call.issues,
-    })),
-  ].toSorted((left, right) => left.sequence - right.sequence);
+const replaceJsonAtomically = async (path: string, value: unknown): Promise<void> => {
+  const temporary = `${path}.tmp-${crypto.randomUUID()}`;
+  await writeExclusiveJson(temporary, value);
+  await rename(temporary, path);
+};
 
-export const finishRecording = (recording: ActiveRecording, now = new Date()): WorkflowDraft => {
-  const pendingIssues = [...recording.pending.values()].map(
-    (call) =>
-      `Tool call ${call.sequence} had not completed when recording stopped and was omitted.`,
+const readDecoded = async <const Schema extends TSchema>(
+  path: string,
+  schema: Schema,
+): Promise<Static<Schema>> => Parse(schema, JSON.parse(await readFile(path, "utf8")));
+
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const storedValueHash = (value: unknown): string =>
+  createHash("sha256").update(canonicalJson(value)).digest("hex");
+
+export const writeDraft = async (profilePath: string, draft: WorkflowDraft): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await writeExclusiveJson(path, draft);
+
+  return path;
+};
+
+export const writeDraftSnapshot = async (
+  profilePath: string,
+  draft: WorkflowDraft,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "drafts");
+  await assertDirectory(root);
+  const path = join(root, `${draft.id}.json`);
+  await replaceJsonAtomically(path, Parse(WorkflowDraftSchema, draft));
+  return path;
+};
+
+export const readDraft = async (profilePath: string, draftId: string): Promise<WorkflowDraft> =>
+  readDecoded(join(runtimeRoot(profilePath), "drafts", `${draftId}.json`), WorkflowDraftSchema);
+
+export const writeGeneralTaskCandidate = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-candidates");
+  await assertDirectory(root);
+  const path = join(root, `${candidate.id}.json`);
+  await writeExclusiveJson(path, Parse(GeneralTaskCandidateSchema, candidate));
+  return path;
+};
+
+export const readGeneralTaskCandidate = async (
+  profilePath: string,
+  candidateId: string,
+): Promise<GeneralTaskCandidate> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "task-candidates", `${candidateId}.json`),
+    GeneralTaskCandidateSchema,
   );
 
-  const calls = recording.completed.toSorted((left, right) => left.sequence - right.sequence);
-
-  return {
-    format: "ziggy-computer-workflow-draft",
-    formatVersion: 1,
-    id: recording.id,
-    name: recording.name,
-    goal: recording.goal,
-    sessionId: recording.sessionId,
-    startedAt: recording.startedAt,
-    stoppedAt: now.toISOString(),
-    status: "review-required",
-    calls,
-    issues: [...calls.flatMap((call) => call.issues), ...pendingIssues],
-  };
+export const writeGeneralTaskRun = async (
+  profilePath: string,
+  run: GeneralTaskRun,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "task-runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await replaceJsonAtomically(path, Parse(GeneralTaskRunSchema, run));
+  return path;
 };
+
+export const readGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+): Promise<GeneralTaskRun> =>
+  readDecoded(join(runtimeRoot(profilePath), "task-runs", `${runId}.json`), GeneralTaskRunSchema);
+
+export const claimGeneralTaskRun = async (
+  profilePath: string,
+  runId: string,
+  sessionId: string,
+): Promise<GeneralTaskRun> => {
+  const locksRoot = join(runtimeRoot(profilePath), "task-run-claims");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, runId);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST")
+      throw new Error("Task run is being claimed by another session.");
+    throw cause;
+  }
+  try {
+    const prior = await readGeneralTaskRun(profilePath, runId);
+    if (prior.state === "active" && prior.sessionId !== sessionId) {
+      throw new Error("Task run is active in another session.");
+    }
+    if (prior.state !== "active" && prior.state !== "cancelled" && prior.state !== "incomplete") {
+      throw new Error("Only active-orphaned, cancelled, or incomplete runs can resume.");
+    }
+    const claimed = Parse(GeneralTaskRunSchema, {
+      ...prior,
+      sessionId,
+      updatedAt: new Date().toISOString(),
+      state: "active",
+      calls: prior.calls.map((call) =>
+        call.status === "pending" ? { ...call, status: "unknown" } : call,
+      ),
+    });
+    await writeGeneralTaskRun(profilePath, claimed);
+    return claimed;
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
+export const readGeneralTask = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(join(generalTasksRoot(profilePath), taskId, "task.json"), PublishedGeneralTaskSchema);
+
+export const readGeneralTaskRevision = async (
+  profilePath: string,
+  taskId: string,
+  revision: string,
+): Promise<PublishedGeneralTask> =>
+  readDecoded(
+    join(generalTasksRoot(profilePath), taskId, "revisions", `${revision}.json`),
+    PublishedGeneralTaskSchema,
+  );
+
+export const readGeneralTaskIfPresent = async (
+  profilePath: string,
+  taskId: string,
+): Promise<PublishedGeneralTask | undefined> => {
+  try {
+    return await readGeneralTask(profilePath, taskId);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+export const listGeneralTasks = async (profilePath: string): Promise<PublishedGeneralTask[]> => {
+  let entries: string[];
+  try {
+    entries = await readdir(generalTasksRoot(profilePath));
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+  const tasks: PublishedGeneralTask[] = [];
+  for (const entry of entries.slice(0, 500)) {
+    try {
+      tasks.push(await readGeneralTask(profilePath, entry));
+    } catch {
+      // Invalid entries remain available through workflow_task_show for exact diagnosis.
+    }
+  }
+  return tasks.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+};
+
+export const promoteGeneralTask = async (
+  profilePath: string,
+  candidate: GeneralTaskCandidate,
+  verification: GeneralTaskRun,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  if (
+    verification.mode !== "verification" ||
+    verification.state !== "passed" ||
+    verification.candidateId !== candidate.id ||
+    verification.revision !== candidate.candidateHash ||
+    verification.taskId !== candidate.task.id ||
+    storedValueHash(candidate.task) !== candidate.candidateHash
+  ) {
+    throw new Error("A passed verification of this exact task candidate is required.");
+  }
+  const locksRoot = join(runtimeRoot(profilePath), "task-save-locks");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, candidate.task.id);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") throw new Error("Task save is already in progress.");
+    throw cause;
+  }
+  try {
+    const current = await readGeneralTaskIfPresent(profilePath, candidate.task.id);
+    if (current?.revision === candidate.candidateHash) {
+      return {
+        manifestPath: join(generalTasksRoot(profilePath), candidate.task.id, "task.json"),
+        revisionPath: join(
+          generalTasksRoot(profilePath),
+          candidate.task.id,
+          "revisions",
+          `${candidate.candidateHash}.json`,
+        ),
+      };
+    }
+    if ((current?.revision ?? null) !== candidate.baseRevision)
+      throw new Error("The saved task changed after this candidate was prepared.");
+    const published = Parse(PublishedGeneralTaskSchema, {
+      format: "ziggy-general-task",
+      formatVersion: 1,
+      revision: candidate.candidateHash,
+      savedAt: verification.updatedAt,
+      sourceDraftId: candidate.sourceDraftId,
+      task: candidate.task,
+    });
+    const taskRoot = join(generalTasksRoot(profilePath), candidate.task.id);
+    await assertDirectory(taskRoot);
+    const revisionsRoot = join(taskRoot, "revisions");
+    await assertDirectory(revisionsRoot);
+    const revisionPath = join(revisionsRoot, `${candidate.candidateHash}.json`);
+    try {
+      const existing = await readDecoded(revisionPath, PublishedGeneralTaskSchema);
+      if (
+        existing.revision !== candidate.candidateHash ||
+        storedValueHash(existing.task) !== candidate.candidateHash
+      )
+        throw new Error("Existing task revision does not match the candidate hash.");
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      await writeExclusiveJson(revisionPath, published);
+    }
+    const manifestPath = join(taskRoot, "task.json");
+    await replaceJsonAtomically(manifestPath, published);
+    return { manifestPath, revisionPath };
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
+export const writeSaveCandidate = async (
+  profilePath: string,
+  candidate: WorkflowSaveCandidate,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "save-candidates");
+  await assertDirectory(root);
+  const path = join(root, `${candidate.id}.json`);
+  await writeExclusiveJson(path, Parse(WorkflowSaveCandidateSchema, candidate));
+  return path;
+};
+
+export const readSaveCandidate = async (
+  profilePath: string,
+  candidateId: string,
+): Promise<WorkflowSaveCandidate> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "save-candidates", `${candidateId}.json`),
+    WorkflowSaveCandidateSchema,
+  );
+
+export const writeSaveProof = async (
+  profilePath: string,
+  proof: WorkflowSaveProof,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "save-proofs");
+  await assertDirectory(root);
+  const path = join(root, `${proof.id}.json`);
+  await writeExclusiveJson(path, Parse(WorkflowSaveProofSchema, proof));
+  return path;
+};
+
+export const publishWorkflow = async (
+  profilePath: string,
+  published: PublishedWorkflow,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  const root = durableRoot(profilePath);
+  await assertDirectory(root);
+  const workflowRoot = join(root, published.workflow.id);
+  await assertDirectory(workflowRoot);
+  const revisionsRoot = join(workflowRoot, "revisions");
+  await assertDirectory(revisionsRoot);
+  const revisionPath = join(revisionsRoot, `${published.revision}.json`);
+  await writeExclusiveJson(revisionPath, published);
+  const manifestPath = join(workflowRoot, "workflow.json");
+  await replaceJsonAtomically(manifestPath, published);
+
+  return { manifestPath, revisionPath };
+};
+
+export const promoteVerifiedWorkflow = async (
+  profilePath: string,
+  candidate: WorkflowSaveCandidate,
+  proof: WorkflowSaveProof,
+): Promise<{ readonly manifestPath: string; readonly revisionPath: string }> => {
+  if (
+    proof.candidateId !== candidate.id ||
+    proof.candidateHash !== candidate.candidateHash ||
+    proof.outcome !== "passed"
+  ) {
+    throw new Error("Workflow save proof does not authorize this exact candidate.");
+  }
+
+  const locksRoot = join(runtimeRoot(profilePath), "save-locks");
+  await assertDirectory(locksRoot);
+  const lockPath = join(locksRoot, candidate.workflow.id);
+  try {
+    await mkdir(lockPath, { mode: 0o700 });
+  } catch (cause) {
+    if (errorCode(cause) === "EEXIST") throw new Error("Workflow save is already in progress.");
+    throw cause;
+  }
+
+  try {
+    let currentRevision: string | null = null;
+    try {
+      currentRevision = (await readWorkflow(profilePath, candidate.workflow.id)).revision;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+    }
+    if (currentRevision === candidate.candidateHash) {
+      return {
+        manifestPath: join(durableRoot(profilePath), candidate.workflow.id, "workflow.json"),
+        revisionPath: join(
+          durableRoot(profilePath),
+          candidate.workflow.id,
+          "revisions",
+          `${candidate.candidateHash}.json`,
+        ),
+      };
+    }
+    if (currentRevision !== candidate.baseRevision) {
+      throw new Error("The saved workflow changed after this candidate was prepared.");
+    }
+
+    const published: PublishedWorkflow = Parse(PublishedWorkflowSchema, {
+      format: "ziggy-computer-workflow",
+      formatVersion: 1,
+      revision: candidate.candidateHash,
+      publishedAt: proof.verifiedAt,
+      sourceDraftId: candidate.sourceDraftId,
+      workflow: candidate.workflow,
+    });
+    const workflowRoot = join(durableRoot(profilePath), candidate.workflow.id);
+    await assertDirectory(workflowRoot);
+    const revisionsRoot = join(workflowRoot, "revisions");
+    await assertDirectory(revisionsRoot);
+    const revisionPath = join(revisionsRoot, `${candidate.candidateHash}.json`);
+    let immutable = published;
+    try {
+      immutable = await readDecoded(revisionPath, PublishedWorkflowSchema);
+      if (
+        immutable.revision !== candidate.candidateHash ||
+        storedValueHash(immutable.workflow) !== candidate.candidateHash
+      ) {
+        throw new Error("Existing immutable revision does not match the verified candidate.");
+      }
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      await writeExclusiveJson(revisionPath, published);
+    }
+    const manifestPath = join(workflowRoot, "workflow.json");
+    await replaceJsonAtomically(manifestPath, immutable);
+    return { manifestPath, revisionPath };
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+};
+
+export const readWorkflow = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<PublishedWorkflow> =>
+  readDecoded(join(durableRoot(profilePath), workflowId, "workflow.json"), PublishedWorkflowSchema);
+
+export const readWorkflowIfPresent = async (
+  profilePath: string,
+  workflowId: string,
+): Promise<PublishedWorkflow | undefined> => {
+  try {
+    return await readWorkflow(profilePath, workflowId);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return undefined;
+    throw cause;
+  }
+};
+
+export const listWorkflows = async (profilePath: string): Promise<PublishedWorkflow[]> => {
+  const root = durableRoot(profilePath);
+  let entries: string[];
+
+  try {
+    entries = await readdir(root);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw cause;
+  }
+
+  const workflows: PublishedWorkflow[] = [];
+
+  for (const entry of entries.slice(0, 500)) {
+    try {
+      workflows.push(await readWorkflow(profilePath, entry));
+    } catch {
+      // Malformed entries are excluded from the index; workflow_show reports their exact failure.
+    }
+  }
+
+  return workflows.sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+};
+
+export const writeRunRecord = async (profilePath: string, run: RunRecord): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "runs");
+  await assertDirectory(root);
+  const path = join(root, `${run.id}.json`);
+  await writeExclusiveJson(path, Parse(RunRecordSchema, run));
+
+  return path;
+};
+
+export const writeRunSummary = async (
+  profilePath: string,
+  summary: RunSummary,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "run-summaries");
+  await assertDirectory(root);
+  const path = join(root, `${summary.id}.json`);
+  await writeExclusiveJson(path, Parse(RunSummarySchema, summary));
+
+  return path;
+};
+
+export const writePublishApproval = async (
+  profilePath: string,
+  approval: PublishApproval,
+): Promise<string> => {
+  const root = join(runtimeRoot(profilePath), "publish-approvals");
+  await assertDirectory(root);
+  const path = join(root, `${approval.id}.json`);
+  await writeExclusiveJson(path, approval);
+
+  return path;
+};
+
+export const readPublishApproval = async (
+  profilePath: string,
+  approvalId: string,
+): Promise<PublishApproval> =>
+  readDecoded(
+    join(runtimeRoot(profilePath), "publish-approvals", `${approvalId}.json`),
+    PublishApprovalSchema,
+  );
+
+export const decodePublishedWorkflow = (value: unknown): PublishedWorkflow =>
+  Parse(PublishedWorkflowSchema, value);

@@ -1,131 +1,95 @@
----
-name: coding-agent
-description: "Delegate substantial repository work to Codex, Claude Code, OpenCode, or Pi coding agents. Use for feature implementation, large refactors, isolated pull-request reviews, and parallel issue work when the user names or approves an external coding-agent CLI."
----
-
-# Coding agents
-
-Run the coding agent the user requested inside the intended repository. Use direct editing for
-small changes unless delegation was explicitly requested.
-
-## Choose the CLI
-
-| Agent | Typical command |
-| --- | --- |
-| Codex | `codex exec "task"` |
-| Claude Code | `claude --print "task"` |
-| OpenCode | `opencode run "task"` |
-| Pi | `pi -p "task"` |
-
-Check each installed CLI's `--help` before relying on optional flags. Preserve the user's agent
-choice; do not silently switch agents after a failure.
-
-## Prepare the task
-
-1. Resolve the exact working directory.
-2. Read repository instructions before starting the agent.
-3. Put acceptance criteria, ownership boundaries, and required checks in the prompt.
-4. Tell the agent which external mutations are authorized: commit, push, comment, or open a
-   pull request.
-5. Keep unrelated user changes intact.
-
-For scratch work, use a temporary git repository:
-
-```bash
-AGENT_WORK_DIR=$(mktemp -d)
-git -C "$AGENT_WORK_DIR" init
-cd "$AGENT_WORK_DIR"
-codex exec "Create a minimal example and verify it."
-```
-
-## Run and monitor
-
-Use the host's background-process capability for long tasks. Follow the host tool's actual
-schema rather than assuming particular field names.
-
-- Use a PTY only when the selected command is interactive.
-- Capture output and exit status.
-- Send input only when the agent asks a concrete question.
-- Do not kill a healthy process merely because it is slow.
-- Report milestones, questions, failures, and completion to the user from the current session.
-
-Do not instruct a child process to call a product-specific notification command.
-
-## Agent examples
-
-### Codex
-
-```bash
-cd /path/to/repository
-codex exec --full-auto "Implement the approved change. Run focused checks and summarize the diff."
-```
-
-Use `--yolo` only with explicit authorization for unsandboxed execution.
-
-### Claude Code
-
-```bash
-cd /path/to/repository
-claude --print "Review the current diff and report correctness issues."
-```
-
-Do not bypass permissions unless the user explicitly authorized that risk.
-
-### OpenCode
-
-```bash
-cd /path/to/repository
-opencode run "Refactor the parser without changing behavior. Run focused tests."
-```
-
-### Pi
-
-```bash
-cd /path/to/repository
-pi -p "Summarize the architecture and identify the narrowest implementation path."
-```
-
-Install Pi from its upstream package when needed:
-
-```bash
-npm install --global @earendil-works/pi-coding-agent
-```
-
-## Isolated reviews
-
-Use a temporary clone or git worktree:
-
-```bash
-REVIEW_DIR=$(mktemp -d)
-git clone https://github.com/owner/repository.git "$REVIEW_DIR"
-cd "$REVIEW_DIR"
-gh pr checkout 130
-codex review --base origin/main
-```
-
-Do not post review findings unless the user requested it.
-
-## Parallel issue fixes
-
-Create one worktree and branch per issue:
-
-```bash
-git worktree add -b fix/issue-78 /tmp/issue-78 main
-git worktree add -b fix/issue-99 /tmp/issue-99 main
-
-(cd /tmp/issue-78 && codex exec "Fix issue #78 and run focused checks.") &
-(cd /tmp/issue-99 && codex exec "Fix issue #99 and run focused checks.") &
-wait
-```
-
-Review each result independently. Avoid overlapping file ownership between workers. Push,
-commit, or create pull requests only within the user's authorization.
-
-## Completion
-
-Return:
-
-- the agent and working directory used;
-- the outcome and changed files;
-- checks run and their results;
-- any remaining question or failure.
+import { toFiniteNumber } from "./platform/coerce.mjs";
+function mouseButton(value) {
+    return value === "right" || value === "middle" ? value : "left";
+}
+function clickCount(value, fallback = 1) {
+    return Math.max(1, Math.min(3, Math.round(toFiniteNumber(value, fallback))));
+}
+function scrollDelta(value) {
+    return Math.max(-10_000, Math.min(10_000, Math.round(toFiniteNumber(value, 0))));
+}
+function keys(value) {
+    if (!Array.isArray(value) || value.length === 0)
+        throw new Error("keypress.keys must contain at least one key.");
+    return value.map((key) => String(key));
+}
+function path(value, env) {
+    if (!Array.isArray(value) || value.length < 2)
+        throw new Error("drag.path must contain at least two points.");
+    return value.map((point, index) => {
+        const x = Array.isArray(point) ? toFiniteNumber(point[0], NaN) : toFiniteNumber(point?.x, NaN);
+        const y = Array.isArray(point) ? toFiniteNumber(point[1], NaN) : toFiniteNumber(point?.y, NaN);
+        env.validatePoint(x, y, `Drag point ${index + 1}`);
+        return { x, y };
+    });
+}
+function nativeTarget(action, operation, env) {
+    if (action.ref?.trim()) {
+        const node = env.node(action.ref.trim());
+        const semanticClick = operation === "click" || operation === "press";
+        if (semanticClick && node.isTextInput) {
+            const point = env.center(node);
+            env.validatePoint(point.x, point.y);
+            return point;
+        }
+        const onlyIncidentalActions = node.actions.every((candidate) => candidate === "AXShowMenu" || candidate === "AXScrollToVisible");
+        if (node.wireRef && !node.pictureOnly && (!semanticClick || node.canPress || node.canFocus || node.canSetValue || !onlyIncidentalActions)) {
+            return { ref: node.wireRef };
+        }
+        const point = env.center(node);
+        env.validatePoint(point.x, point.y);
+        return point;
+    }
+    const x = toFiniteNumber(action.x, NaN);
+    const y = toFiniteNumber(action.y, NaN);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+        env.validatePoint(x, y);
+        return { x, y };
+    }
+    if (operation === "drag" && action.path?.length)
+        return path(action.path, env)[0];
+    throw new Error(`${operation} requires either ref or both x and y.`);
+}
+function focusedTarget(env) {
+    if (!env.image)
+        throw new Error("Focused keyboard input requires an image-bearing state.");
+    return { focus: { x: Math.floor(env.image.width / 2), y: Math.floor(env.image.height / 2) } };
+}
+function containsEditable(node) {
+    if (node.canSetValue || node.role.toLowerCase().includes("text"))
+        return true;
+    return node.children.some(containsEditable);
+}
+export function prepareAction(action, state, env) {
+    const operation = action.action;
+    const usesCurrentFocus = !env.headless && state.currentFocus && !action.ref && (operation === "typeText" || operation === "keypress");
+    const target = usesCurrentFocus ? focusedTarget(env) : nativeTarget(action, operation, env);
+    const establishesFocus = !env.headless && Boolean(action.ref) && (operation === "click" || operation === "press") && containsEditable(env.node(action.ref));
+    const needsForeground = !env.headless && (operation === "click" || operation === "press") && "x" in target;
+    switch (operation) {
+        case "press":
+        case "click": return { action: operation, target, params: { button: mouseButton(action.button), clickCount: clickCount(action.clickCount) }, establishesFocus, usesCurrentFocus: false, needsForeground };
+        case "setText": return { action: operation, target, params: { text: action.text ?? "" }, establishesFocus: false, usesCurrentFocus: false, needsForeground: false };
+        case "typeText": return { action: operation, target, params: { text: action.text ?? "" }, establishesFocus: false, usesCurrentFocus, needsForeground: false };
+        case "keypress": return { action: operation, target, params: { keys: keys(action.keys) }, establishesFocus: false, usesCurrentFocus, needsForeground: false };
+        case "scroll": return { action: operation, target, params: { scrollX: scrollDelta(action.scrollX), scrollY: scrollDelta(action.scrollY) }, establishesFocus: false, usesCurrentFocus: false, needsForeground: false };
+        case "drag": return { action: operation, target, params: { path: path(action.path, env) }, establishesFocus: false, usesCurrentFocus: false, needsForeground: false };
+        case "moveMouse": return { action: operation, target, params: {}, establishesFocus: false, usesCurrentFocus: false, needsForeground: false };
+    }
+}
+export function canRetryInForeground(action, outcome, headless) {
+    return !headless && outcome === "didnt" && (action.action === "typeText" || action.action === "keypress");
+}
+export function outcomeAfterCheck(current, check) {
+    if (check === "verified")
+        return "worked";
+    if (check === "failed")
+        return "didnt";
+    return current;
+}
+export function outcomeAfterObservedValues(current, actions, valueForRef) {
+    if (actions.length === 0 || actions.some((action) => action.action !== "setText" || !action.ref))
+        return current;
+    const matches = actions.every((action) => valueForRef(action.ref) === (action.text ?? ""));
+    return matches ? "worked" : current;
+}

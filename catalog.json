@@ -2,12 +2,6 @@
   "version": 1,
   "extensions": [
     {
-      "id": "agent-browser",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/agent-browser"
-    },
-    {
       "id": "apple-notes",
       "version": "0.1.0",
       "source": "bundled",
@@ -42,12 +36,6 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/computer-workflows"
-    },
-    {
-      "id": "dev-browser",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/dev-browser"
     },
     {
       "id": "executor",

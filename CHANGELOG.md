@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Removed the optional bundled Jev extension; it rejected valid Score answers from the live API.
+- Removed the bundled `dev-browser` and `agent-browser` extensions; browser control is provided by `computer-use`.
 
 ## [0.2.13] - 2026-09-19
 

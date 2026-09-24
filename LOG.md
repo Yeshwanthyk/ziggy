@@ -1018,3 +1018,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - A live probe against api.typesafe.ai showed the extension rejected valid Score answers: it required |score - Σ i·p_i| <= 0.005 and probability sums within 1e-6, but the API returns probabilities rounded to 2 decimals while score comes from unrounded values; score10 and a 12-question mixed request failed 3/3.
 - No repository code consumed its ziggy:jev:judgment:v1 bridge.
 - Jev integration is owned by pi-computer-use and will arrive through a future vendored computer-use release. Profiles that already shelved jev keep their copy until `ziggy extensions remove <profile> jev`.
+
+## 2026-09-24 — Remove dev-browser and agent-browser; catalog test invariants
+
+- Removed the bundled `dev-browser` and `agent-browser` extensions; browser control belongs to `computer-use` (pi-computer-use). No Profile enabled either.
+- The bundled-catalog resource test now derives packages, executables, and skills from `BUILTIN_PACKAGE_METADATA` and asserts invariants (extension folders match the catalog, loaded skills match declared skills, tool names are unique and active) instead of hardcoded counts and tool lists.
+- Verification: `bun run check` and `bun run test` passed.
