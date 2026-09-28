@@ -36,6 +36,7 @@ import { ResidentGateway, makeResidentGatewayLive } from "./application/resident
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
 import { Sessions, SessionsLive } from "./application/sessions";
+import { listProfileExtensionsWithHealth } from "./adapters/pi/profile-extension-preflight";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
@@ -166,6 +167,7 @@ const MemoryProvided = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
 const ResidentProvided = makeResidentGatewayLive(
   repositoryRoot,
   resolveProfilesRegistry(resolutionOptions),
+  listProfileExtensionsWithHealth,
 ).pipe(
   Layer.provide(
     Layer.mergeAll(

@@ -151,6 +151,7 @@ export interface ChatRegistryApi {
     afterSeq?: number,
   ) => Effect.Effect<ChatRegistryReplay, UiGatewayError>;
   readonly publish: (key: UiSessionKey, event: ChatEvent) => Effect.Effect<void, UiGatewayError>;
+  readonly resetTranscript: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
   readonly submit: (
     key: UiSessionKey,
     text: string,
@@ -695,6 +696,16 @@ export const makeChatRegistry = (
         requireLive(key).pipe(
           Effect.tap((entry) => Effect.sync(() => emit(entry, event))),
           Effect.asVoid,
+        ),
+      resetTranscript: (key) =>
+        statePermit.withPermit(
+          Effect.gen(function* () {
+            const entry = entries.get(key);
+
+            if (entry === undefined || entry._tag !== "Live") return yield* unknownSession(key);
+            entry.replay.length = 0;
+            emit(entry, { kind: "session-state", scope: "transcript" });
+          }),
         ),
       submit: (key, text, options) =>
         Effect.uninterruptible(

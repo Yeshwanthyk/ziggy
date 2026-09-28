@@ -128,7 +128,7 @@ export interface ZiggyGatewayClient {
   listGroups(profileId: ZiggyProfileId): Promise<ZiggyGroupListResult>;
   listSessions(profileId: ZiggyProfileId): Promise<ZiggySessionListResult>;
   showSession(ref: ZiggySessionRef): Promise<ZiggySessionShowResult>;
-  listSessionSummaries(profileId: ZiggyProfileId): Promise<ZiggySessionSummaryResult>;
+  listSessionSummaries(ref: ZiggySessionRef): Promise<ZiggySessionSummaryResult>;
   resumeSession(
     ref: ZiggySessionRef,
     sessionId: string,
@@ -288,7 +288,7 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
     listGroups: (profileId) => connection.request("group.list", { profileId }),
     listSessions: (profileId) => connection.request("session.list", { profileId }),
     showSession: (ref) => connection.request("session.show", { ref }),
-    listSessionSummaries: (profileId) => connection.request("session.summaries", { profileId }),
+    listSessionSummaries: (ref) => connection.request("session.summaries", { ref }),
     resumeSession: (ref, sessionId, commandId) =>
       connection.request(
         "session.resume",

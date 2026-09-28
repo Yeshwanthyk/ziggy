@@ -129,6 +129,8 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     listSessions: vi.fn(async () => sessionListResult()),
     listSessionSummaries: vi.fn(async () => ({
       profileId: profile.profileId,
+      canResume: true,
+      currentSessionId: null,
       sessions: [],
       truncated: false,
     })),

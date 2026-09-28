@@ -108,7 +108,7 @@ export const isMethodResult = <Method extends ZiggyMethod>(
         profileMatches(value.ref.profileId, params)
       );
     case "session.summaries":
-      return isSessionSummaryResult(value) && profileMatches(value.profileId, params);
+      return isSessionSummaryResult(value) && refProfileMatches(value.profileId, params);
     case "session.resume":
       return (
         isSessionResumeResult(value) &&
@@ -285,7 +285,7 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         (value.commandId === undefined || isCommandId(value.commandId))
       );
     case "session.summaries":
-      return hasProfileIdOnly(value);
+      return hasRef(value) && hasOnlyKeys(value, ["ref"]);
     case "session.resume":
       return (
         hasRef(value) &&

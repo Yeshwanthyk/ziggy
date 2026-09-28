@@ -59,6 +59,10 @@ export const eventFrame = (
   };
 
   switch (event.event.kind) {
+    case "session-state":
+      return decodeEventFrame(
+        withCorrelation({ ...base, event: "session-state", payload: { scope: event.event.scope } }),
+      );
     case "assistant-text":
       return decodeEventFrame(
         withCorrelation({

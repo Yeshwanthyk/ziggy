@@ -75,6 +75,7 @@ const makeDirectory = (): ProfileDirectoryApi => {
 };
 
 const makeSessions = (): SessionsApi => ({
+  summaries: () => Effect.succeed([]),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
   resolve: (_target, reference) =>
@@ -162,6 +163,8 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
             { profileId: betaId, target: betaTarget, registry: betaRegistry },
           ],
           repositoryRoot: "/private/repository",
+          extensionHealth: () =>
+            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: makeSessions(),
           agent,
           profileExtensions: makeExtensions(),

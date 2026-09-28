@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { listProfileSessionSummaries } from "../../adapters/pi/sessions";
 import { Effect, Option, Predicate, Schema } from "effect";
 import {
   UiSessionHistoryParams,
@@ -10,6 +9,7 @@ import {
   UiSessionRefParams,
   UiSessionTextParams,
   UiSessionKey,
+  UiSessionSummary,
   UiGatewayError,
   UiEventFrame,
   UiProfileScopedParams,
@@ -115,6 +115,31 @@ const liveSessionProjection = (profileId: ProfileId, entry: ChatRegistryListEntr
 
 const validSessionKey = (key: string): Effect.Effect<UiSessionKey, UiGatewayError> =>
   decodeSessionKey(key).pipe(Effect.mapError((cause) => badParams("session", cause)));
+
+const isSessionSummary = Schema.is(UiSessionSummary);
+
+const resumableTranscript = (path: string): boolean => {
+  const parts = path.split("/");
+
+  return (
+    parts.length === 3 &&
+    parts[2]?.endsWith(".jsonl") === true &&
+    ((parts[0] === "local" && parts[1] === "main") ||
+      (parts[0] === "ui" &&
+        parts[1] !== undefined &&
+        !parts[1].startsWith("group-") &&
+        /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u.test(parts[1])))
+  );
+};
+
+const resumableEntry = (entry: ChatRegistryListEntry): boolean =>
+  entry.kind === "ui" &&
+  entry.context?.kind === "local" &&
+  entry.agentId === undefined &&
+  (entry.key === "local/main" ||
+    (entry.key.startsWith("ui/") &&
+      !entry.key.startsWith("ui/group-") &&
+      entry.key.split("/").length === 2));
 
 export const makeSessionDispatcher = (
   config: UiGatewayDependencies,
@@ -379,25 +404,44 @@ export const makeSessionDispatcher = (
         });
       case "session.summaries":
         return Effect.gen(function* () {
-          const params = yield* decodeScoped(request.params).pipe(
+          const params = yield* decodeRef(request.params).pipe(
             Effect.mapError((cause) => badParams(request.method, cause)),
           );
 
-          const branch = yield* route(params.profileId);
+          const branch = yield* route(params.ref.profileId);
 
-          const summaries = yield* listProfileSessionSummaries(branch.target.path).pipe(
-            Effect.mapError((cause) => toGatewayError(request.method, cause)),
-          );
+          const entry =
+            params.ref.kind === "live" ? yield* branch.registry.get(params.ref.key) : undefined;
 
-          return {
-            profileId: branch.profileId,
-            sessions: summaries.slice(0, 32).map((session) => ({
+          const canResume = entry !== undefined && resumableEntry(entry);
+
+          const current =
+            canResume && entry.handle.currentSession !== undefined
+              ? yield* entry.handle.currentSession.pipe(
+                  Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                )
+              : undefined;
+
+          const summaries = yield* config.sessions
+            .summaries(branch.target)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          const valid = summaries
+            .filter((session) => resumableTranscript(session.path))
+            .map((session) => ({
               id: session.id,
               title: boundedText(session.title ?? "Untitled session", 160, "Untitled session"),
               updatedAt: session.updatedAt,
               held: session.held,
-            })),
-            truncated: summaries.length > 32,
+            }))
+            .filter(isSessionSummary);
+
+          return {
+            profileId: branch.profileId,
+            canResume,
+            currentSessionId: current?.id ?? null,
+            sessions: valid.slice(0, 32),
+            truncated: valid.length > 32,
           };
         });
       case "session.resume":
@@ -412,12 +456,24 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
           const entry = yield* branch.registry.get(params.ref.key);
 
-          if (entry.kind !== "ui")
-            return yield* protocolFailure("watch_only", "channel sessions cannot resume here");
+          if (!resumableEntry(entry))
+            return yield* protocolFailure(
+              "watch_only",
+              "Only plain local web sessions can resume here",
+            );
+
+          const target = yield* config.sessions
+            .show(branch.target, params.sessionId)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          if (!resumableTranscript(target.path))
+            return yield* protocolFailure("watch_only", "Only web transcripts can be resumed here");
 
           const result = yield* entry.handle
-            .resume(params.sessionId)
+            .resume(target.path)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          if (!result.cancelled) yield* branch.registry.resetTranscript(params.ref.key);
 
           return {
             profileId: branch.profileId,
@@ -469,6 +525,12 @@ export const makeSessionDispatcher = (
                 ? entry.handle.setThinkingLevel(params.thinking)
                 : entry.handle.modelState
           ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          if (params.operation !== "status")
+            yield* branch.registry.publish(params.ref.key, {
+              kind: "session-state",
+              scope: "model",
+            });
 
           return {
             profileId: branch.profileId,

@@ -442,6 +442,7 @@ describe("resident gateway supervision", () => {
     };
 
     const sessions: SessionsApi = {
+      summaries: () => Effect.succeed([]),
       list: () => Effect.succeed([]),
       show: () => Effect.never,
       resolve: () => Effect.never,
@@ -506,7 +507,11 @@ describe("resident gateway supervision", () => {
         yield* Effect.promise(() => closeUi(socket));
         yield* Fiber.interrupt(fiber);
       }).pipe(
-        Effect.provide(makeResidentGatewayLive("/repository").pipe(Layer.provide(dependencies))),
+        Effect.provide(
+          makeResidentGatewayLive("/repository", undefined, () =>
+            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
+          ).pipe(Layer.provide(dependencies)),
+        ),
       ),
     );
 

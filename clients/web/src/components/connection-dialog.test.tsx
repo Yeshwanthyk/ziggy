@@ -240,6 +240,8 @@ it("marks held transcripts and does not offer them for resume", () => {
         value: {
           profileId: "prf_squarey",
           truncated: false,
+          canResume: true,
+          currentSessionId: "held-1",
           sessions: [
             { id: "held-1", title: "Held session", updatedAt: "2026-01-01", held: true },
             { id: "free-1", title: "Free session", updatedAt: "2026-01-02", held: false },

@@ -56,6 +56,7 @@ export type ChatEvent =
       readonly text: string;
       readonly timestamp: string;
     }
+  | { readonly kind: "session-state"; readonly scope: "transcript" | "model" }
   | { readonly kind: "settled" }
   | { readonly kind: "error"; readonly message: string };
 

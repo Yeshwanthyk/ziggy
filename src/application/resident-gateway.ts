@@ -49,6 +49,7 @@ import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
 import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
 import { ProfileExtensions } from "./profile-extensions";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
+import type { UiGatewayDependencies } from "./ui-gateway/types";
 import { Sessions, type SessionsApi } from "./sessions";
 import {
   makeSharedUiGateway,
@@ -130,6 +131,7 @@ const makeLiveUiRuntime = (
     readonly sessions: SessionsApi;
     readonly agent: ZiggyAgentApi;
     readonly profileExtensions: ProfileExtensionsApi;
+    readonly extensionHealth: UiGatewayDependencies["extensionHealth"];
     readonly profileAgents: ProfileAgentsApi;
     readonly models: ModelsApi;
     readonly auth: AuthApi;
@@ -334,7 +336,11 @@ export const makeResidentGateway = (
     }),
 });
 
-export const makeResidentGatewayLive = (repositoryRoot: string, profileRegistryPath?: string) =>
+export const makeResidentGatewayLive = (
+  repositoryRoot: string,
+  profileRegistryPath: string | undefined,
+  extensionHealth: UiGatewayDependencies["extensionHealth"],
+) =>
   Layer.effect(
     ResidentGateway,
     Effect.gen(function* () {
@@ -350,6 +356,7 @@ export const makeResidentGatewayLive = (repositoryRoot: string, profileRegistryP
             sessions: yield* Sessions,
             agent: yield* ZiggyAgent,
             profileExtensions: yield* ProfileExtensions,
+            extensionHealth,
             profileAgents: yield* ProfileAgents,
             models: yield* Models,
             auth: yield* Auth,

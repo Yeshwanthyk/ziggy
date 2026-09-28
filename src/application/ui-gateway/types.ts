@@ -30,7 +30,7 @@ export interface UiGatewayDependencies {
   readonly sessions: SessionsApi;
   readonly agent: ZiggyAgentApi;
   readonly profileExtensions: ProfileExtensionsApi;
-  readonly extensionHealth?: (
+  readonly extensionHealth: (
     profilePath: string,
     repositoryRoot: string,
     extensions: ProfileExtensionsApi,

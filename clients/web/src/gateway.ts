@@ -418,6 +418,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const loadHistoryRef = useRef<
     ((ref: ZiggySessionRef, before?: string) => Promise<void>) | undefined
   >(undefined);
+  const loadSessionModelRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  const loadSessionSummariesRef = useRef<(() => Promise<void>) | undefined>(undefined);
 
   useEffect(() => {
     selectedRefRef.current = selectedRef;
@@ -492,6 +494,22 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
 
   const replaceConversationActivity = useCallback((event: ZiggyGatewayEvent): void => {
     if (!sameRef(selectedRefRef.current, event.session)) return;
+    if (event.event === "session-state") {
+      if (event.payload.scope === "transcript") {
+        historyGenerationRef.current += 1;
+        setHistory([]);
+        setHistoryCursor(undefined);
+        setHasMoreHistory(false);
+        setPendingUser(undefined);
+        setStreamText("");
+        setTools([]);
+        setBusy(false);
+        void loadHistoryRef.current?.(event.session);
+        void loadSessionSummariesRef.current?.();
+      }
+      void loadSessionModelRef.current?.();
+      return;
+    }
     if (event.event === "assistant-text") {
       activityActiveRef.current = true;
       setStreamText(event.payload.snapshot);
@@ -1535,26 +1553,34 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const loadSessionSummaries = useCallback(async (): Promise<void> => {
     const client = clientRef.current;
     const profile = profileRef.current;
+    const ref = selectedRefRef.current;
     const generation = ++sessionSummariesGenerationRef.current;
-    if (client === undefined || client.state !== "open" || profile === undefined) {
+    if (
+      client === undefined ||
+      client.state !== "open" ||
+      profile === undefined ||
+      ref?.kind !== "live"
+    ) {
       setSessionSummaries({ pending: false });
       return;
     }
 
     setSessionSummaries((current) => ({ ...current, pending: true, error: undefined }));
     try {
-      const value = await client.listSessionSummaries(profile.profileId);
+      const value = await client.listSessionSummaries(ref);
       if (
         generation === sessionSummariesGenerationRef.current &&
         clientRef.current === client &&
-        profileRef.current?.profileId === profile.profileId
+        profileRef.current?.profileId === profile.profileId &&
+        sameRef(selectedRefRef.current, ref)
       )
         setSessionSummaries({ value, pending: false });
     } catch (cause) {
       if (
         generation === sessionSummariesGenerationRef.current &&
         clientRef.current === client &&
-        profileRef.current?.profileId === profile.profileId
+        profileRef.current?.profileId === profile.profileId &&
+        sameRef(selectedRefRef.current, ref)
       )
         setSessionSummaries((current) => ({
           ...current,
@@ -1563,6 +1589,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         }));
     }
   }, []);
+
+  useEffect(() => {
+    loadSessionSummariesRef.current = loadSessionSummaries;
+  }, [loadSessionSummaries]);
 
   const loadSessionModel = useCallback(async (): Promise<void> => {
     const client = clientRef.current;
@@ -1594,6 +1624,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         });
     }
   }, []);
+
+  useEffect(() => {
+    loadSessionModelRef.current = loadSessionModel;
+  }, [loadSessionModel]);
 
   const changeSessionModel = useCallback(
     async (providerId: string, modelId: string): Promise<void> => {

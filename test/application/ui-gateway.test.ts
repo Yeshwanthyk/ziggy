@@ -9,7 +9,7 @@ import {
   type ChatSessionModelState,
   type ZiggyAgentApi,
 } from "ziggy/application/agent";
-import { SessionHeld } from "ziggy/domain/agent";
+import { SessionBusy, SessionHeld } from "ziggy/domain/agent";
 import {
   CHAT_REPLAY_LIMIT,
   makeChatRegistry,
@@ -29,7 +29,12 @@ import {
 import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
 import { SessionNotFound, SessionReadFailed } from "ziggy/domain/session";
 import { ProfileAgentEditConflict } from "ziggy/domain/profile";
-import { UiEventFrame, UiResponseFrame, type UiGroupRecord } from "ziggy/domain/ui-gateway";
+import {
+  UiEventFrame,
+  UiResponseFrame,
+  UiSessionSummaryResult,
+  type UiGroupRecord,
+} from "ziggy/domain/ui-gateway";
 import { UiGroupState, type UiGroupState as UiGroupStateValue } from "ziggy/domain/ui-state";
 
 const target = { path: "/profile", name: "Profile" } as const;
@@ -41,6 +46,8 @@ const repositoryRoot = "/repository";
 const decodeResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
 
 const decodeEventResult = Schema.decodeUnknownResult(Schema.fromJsonString(UiEventFrame));
+
+const decodeSummaryResult = Schema.decodeUnknownSync(UiSessionSummaryResult);
 
 const decodeEmptyGroupState = Schema.decodeUnknownSync(UiGroupState);
 
@@ -66,6 +73,7 @@ const makeProfileExtensions = (
 });
 
 const makeSessions = (): SessionsApi => ({
+  summaries: () => Effect.succeed([]),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
   resolve: (_target, reference) =>
@@ -1400,6 +1408,24 @@ test("UI gateway routes all management operations through decoded explicit Profi
   expect(JSON.stringify(responses)).not.toContain("profilePath");
 });
 
+const sessionAt = (
+  id: string,
+  path: string,
+): import("../../src/domain/session").SessionMetadata => ({
+  id,
+  path,
+  kind: "root",
+  createdAt: "2026-01-01",
+  entryCount: 0,
+  parent: undefined,
+  parentUnknown: false,
+  children: [],
+  modelChanges: [],
+  thinkingChanges: [],
+  usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 },
+  terminalState: "incomplete",
+});
+
 test("held resume refuses without replacing the current UI session", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
   const ref = { profileId, kind: "live" as const, key: "local/main" as const };
@@ -1416,9 +1442,14 @@ test("held resume refuses without replacing the current UI session", async () =>
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
-          (frame) => responses.push(decodeResponse(frame)),
-        );
+        const connection = (yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: () => Effect.succeed(sessionAt("older-1", "local/main/older-1.jsonl")),
+            },
+          }),
+        )).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
           id: "open",
@@ -1504,7 +1535,9 @@ test("session model and thinking mutations stay on the open handle, not the Prof
 
         const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { models }),
-        )).connect((frame) => responses.push(decodeResponse(frame)));
+        )).connect((frame) => {
+          if (Result.isFailure(decodeEventResult(frame))) responses.push(decodeResponse(frame));
+        });
 
         yield* connection.request({
           id: "open",
@@ -1772,4 +1805,335 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
   });
   expect(JSON.stringify(response)).toContain('"providerId":"provider-0"');
   expect(JSON.stringify(response)).toContain('"providerId":"provider-11"');
+});
+
+test("session picker filters channel, group, and specialist transcripts before its bound", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  const summaries = [
+    ...Array.from({ length: 40 }, (_, i) => ({
+      id: `channel-${i}`,
+      path: `telegram/chat/${i}.jsonl`,
+      title: "Channel",
+      updatedAt: "2026-01-01",
+      held: false,
+    })),
+    ...Array.from({ length: 33 }, (_, i) => ({
+      id: `web-${i}`,
+      path: `ui/work/${i}.jsonl`,
+      title: "Web",
+      updatedAt: "2026-01-01",
+      held: false,
+    })),
+    {
+      id: "group",
+      path: "ui/group-work/group.jsonl",
+      title: "Group",
+      updatedAt: "2026-01-01",
+      held: false,
+    },
+    {
+      id: "agent",
+      path: "local/agents/agent.jsonl",
+      title: "Agent",
+      updatedAt: "2026-01-01",
+      held: false,
+    },
+    {
+      id: ".invalid",
+      path: "local/main/invalid.jsonl",
+      title: "Invalid",
+      updatedAt: "2026-01-01",
+      held: false,
+    },
+  ];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const gateway = yield* makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
+            undefined,
+            {
+              sessions: { ...makeSessions(), summaries: () => Effect.succeed(summaries) },
+            },
+          ),
+        );
+
+        const connection = gateway.connect((frame) => responses.push(decodeResponse(frame)));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({ id: "picker", method: "session.summaries", params: { ref } });
+      }),
+    ),
+  );
+  expect(responses[1]).toMatchObject({ ok: true, result: { canResume: true, truncated: true } });
+
+  const result = decodeSummaryResult(responses[1]?.ok ? responses[1].result : undefined);
+
+  expect(result.sessions).toHaveLength(32);
+  expect(result.sessions.every((item) => item.id.startsWith("web-"))).toBe(true);
+});
+
+test("resume rejects non-web targets and non-plain web contexts without touching the handle", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const resumed: string[] = [];
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed(""),
+    resume: (path) =>
+      Effect.sync(() => {
+        resumed.push(path);
+
+        return { cancelled: false };
+      }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const gateway = yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: (_target, id) =>
+                Effect.succeed(
+                  sessionAt(
+                    id,
+                    id === "channel" ? "telegram/chat/channel.jsonl" : "local/main/allowed.jsonl",
+                  ),
+                ),
+            },
+          }),
+        );
+
+        const connection = gateway.connect((frame) => responses.push(decodeResponse(frame)));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "channel",
+          method: "session.resume",
+          params: { ref: { profileId, kind: "live", key: "local/main" }, sessionId: "channel" },
+        });
+        yield* registry.getOrOpenUi("ui/group-test", Effect.succeed(handle), {
+          context: { kind: "group", groupId: "test" },
+        });
+        yield* connection.request({
+          id: "group",
+          method: "session.resume",
+          params: { ref: { profileId, kind: "live", key: "ui/group-test" }, sessionId: "allowed" },
+        });
+        yield* registry.getOrOpenUi("local/agents/specialist", Effect.succeed(handle), {
+          context: { kind: "local" },
+          agentId: "specialist",
+        });
+        yield* connection.request({
+          id: "specialist",
+          method: "session.resume",
+          params: {
+            ref: { profileId, kind: "live", key: "local/agents/specialist" },
+            sessionId: "allowed",
+          },
+        });
+      }),
+    ),
+  );
+  expect(
+    responses.filter((response) => !response.ok).map((response) => response.error.code),
+  ).toEqual(["watch_only", "watch_only", "watch_only"]);
+  expect(resumed).toEqual([]);
+});
+
+test("successful resume selects the resolved web transcript and resets live history and replay", async () => {
+  const frames: string[] = [];
+  let current = "old";
+  let resumeCalled = false;
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed(""),
+    currentSession: Effect.sync(() => ({ id: current, file: `${current}.jsonl` })),
+    resume: (path) =>
+      Effect.sync(() => {
+        expect(path).toBe("ui/work/new.jsonl");
+        current = "new";
+        resumeCalled = true;
+
+        return { cancelled: false };
+      }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const gateway = yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: () => Effect.succeed(sessionAt("new", "ui/work/new.jsonl")),
+              history: (_target, id) =>
+                Effect.succeed({
+                  entries: [{ kind: "assistant" as const, timestamp: "2026-01-01", text: id }],
+                  terminalState: "completed" as const,
+                  truncated: false,
+                  hasMore: false,
+                }),
+            },
+          }),
+        );
+
+        const connection = gateway.connect((frame) => frames.push(frame));
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* registry.publish("local/main", {
+          kind: "assistant-text",
+          delta: "old",
+          snapshot: "old",
+        });
+        yield* connection.request({
+          id: "resume",
+          method: "session.resume",
+          params: { ref, sessionId: "new" },
+        });
+        yield* connection.request({ id: "history", method: "session.history", params: { ref } });
+        const replay = yield* registry.replay("local/main", 0).pipe(Effect.result);
+        expect(replay._tag).toBe("Failure");
+      }),
+    ),
+  );
+  expect(resumeCalled).toBe(true);
+
+  const responses = frames.flatMap((frame) =>
+    Result.isSuccess(decodeEventResult(frame)) ? [] : [decodeResponse(frame)],
+  );
+
+  const history = responses.find((response) => response.id === "history");
+  expect(history?.ok && history.result).toMatchObject({ entries: [{ text: "new" }] });
+  expect(
+    frames
+      .map((frame) => decodeEventResult(frame))
+      .filter(Result.isSuccess)
+      .some(
+        (event) =>
+          event.success.event === "session-state" && event.success.payload.scope === "transcript",
+      ),
+  ).toBe(true);
+});
+
+test("a streaming model switch reports SessionBusy without changing the session", async () => {
+  const frames: string[] = [];
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed(""),
+    setModel: () => Effect.fail(new SessionBusy({ profilePath: "/secret", message: "streaming" })),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+          (frame) => frames.push(frame),
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "busy",
+          method: "session.model.set",
+          params: {
+            ref: { profileId, kind: "live", key: "local/main" },
+            providerId: "openai",
+            modelId: "new",
+          },
+        });
+      }),
+    ),
+  );
+  expect(
+    frames.map((frame) => decodeResponse(frame)).find((response) => response.id === "busy"),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      code: "session_busy",
+      message: "Session is busy; wait for the current turn to finish",
+    },
+  });
+  expect(JSON.stringify(frames)).not.toContain("/secret");
+});
+
+test("health inspection failure still lists selected extensions with a diagnostic", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const extensions = makeProfileExtensions({
+          listForProfile: () => Effect.succeed({ selected: ["weather"], available: [] }),
+        });
+
+        const connection = (yield* makeUiGateway({
+          ...makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
+            extensions,
+          ),
+          extensionHealth: () =>
+            Effect.fail(
+              new ProfileExtensionPreflightFailed({
+                profilePath: "/secret",
+                stage: "extensions",
+                diagnostics: [],
+                message: "health inspection failed",
+                cause: undefined,
+              }),
+            ),
+        })).connect((frame) => responses.push(decodeResponse(frame)));
+
+        yield* connection.request({
+          id: "health",
+          method: "extension.list-for-profile",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(responses[0]).toMatchObject({
+    ok: true,
+    result: {
+      selected: ["weather"],
+      skipped: [
+        {
+          id: "health-inspection",
+          diagnostics: [{ message: "Could not inspect extension health" }],
+        },
+      ],
+    },
+  });
+  expect(JSON.stringify(responses)).not.toContain("/secret");
 });

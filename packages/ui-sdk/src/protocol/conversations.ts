@@ -68,6 +68,8 @@ export interface ZiggyStoredSession {
 
 export interface ZiggySessionSummaryResult {
   readonly profileId: ZiggyProfileId;
+  readonly canResume: boolean;
+  readonly currentSessionId: string | null;
   readonly sessions: ReadonlyArray<{
     readonly id: string;
     readonly title: string;
@@ -211,7 +213,7 @@ export interface ZiggyConversationRequestMap {
     readonly thinking: import("./models").ZiggyModelThinkingLevel;
     readonly commandId?: string;
   };
-  readonly "session.summaries": { readonly profileId: ZiggyProfileId };
+  readonly "session.summaries": { readonly ref: ZiggySessionRef };
   readonly "session.resume": {
     readonly ref: ZiggySessionRef;
     readonly sessionId: string;
@@ -315,6 +317,17 @@ export interface ZiggyAutomationResultEvent {
   };
 }
 
+export interface ZiggySessionStateEvent {
+  readonly event: "session-state";
+  readonly eventId: string;
+  readonly epoch: string;
+  readonly seq: number;
+  readonly profileId: ZiggyProfileId;
+  readonly session: ZiggySessionRef;
+  readonly correlationId?: string;
+  readonly payload: { readonly scope: "transcript" | "model" };
+}
+
 export interface ZiggySettledEvent {
   readonly event: "settled";
   readonly eventId: string;
@@ -359,6 +372,7 @@ export type ZiggyGatewayEvent =
   | ZiggyToolEvent
   | ZiggyVoiceEvent
   | ZiggyAutomationResultEvent
+  | ZiggySessionStateEvent
   | ZiggySettledEvent
   | ZiggyErrorEvent
   | ZiggyReplayGapEvent;
@@ -486,8 +500,10 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
 
 export const isSessionSummaryResult = (value: unknown): value is ZiggySessionSummaryResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "sessions", "truncated"]) &&
+  hasOnlyKeys(value, ["profileId", "sessions", "truncated", "canResume", "currentSessionId"]) &&
   isProfileId(value.profileId) &&
+  typeof value.canResume === "boolean" &&
+  (value.currentSessionId === null || (isBoundedString(value.currentSessionId, 256) && !value.currentSessionId.includes("/") && !value.currentSessionId.includes("\\") && !value.currentSessionId.includes("..") && !value.currentSessionId.startsWith("."))) &&
   typeof value.truncated === "boolean" &&
   Array.isArray(value.sessions) &&
   value.sessions.length <= 32 &&
@@ -514,6 +530,8 @@ export const isSessionResumeResult = (value: unknown): value is ZiggySessionResu
   isBoundedString(value.sessionId, 256) &&
   !value.sessionId.includes("/") &&
   !value.sessionId.includes("\\") &&
+  !value.sessionId.includes("..") &&
+  !value.sessionId.startsWith(".") &&
   typeof value.cancelled === "boolean";
 
 export const isSessionModelResult = (value: unknown): value is ZiggySessionModelResult =>
@@ -665,6 +683,9 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
       isBoundedCodePointString(payload.text, 1_024, 0) &&
       isBoundedString(payload.timestamp, 128)
     );
+  }
+  if (value.event === "session-state") {
+    return hasOnlyKeys(payload, ["scope"]) && (payload.scope === "transcript" || payload.scope === "model");
   }
   if (value.event === "settled") {
     return hasOnlyKeys(payload, []);

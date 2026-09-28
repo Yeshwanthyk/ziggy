@@ -410,7 +410,7 @@ export function SettingsDialog({
 
           {connected &&
           selectedRef?.kind === "live" &&
-          (selectedRef.key.startsWith("local/") || selectedRef.key.startsWith("ui/")) ? (
+          sessionSummaries.value?.canResume !== false ? (
             <section className="ziggy-settings-block" aria-label="Resume past session">
               <h3>Resume past session</h3>
               <p className="ziggy-settings-muted">
@@ -444,7 +444,11 @@ export function SettingsDialog({
                         {session.updatedAt} · {session.id}
                       </small>
                     </span>
-                    {session.held ? <span className="settings-status">Held</span> : null}
+                    {session.id === sessionSummaries.value?.currentSessionId ? (
+                      <span className="settings-status">Open here</span>
+                    ) : session.held ? (
+                      <span className="settings-status">Held</span>
+                    ) : null}
                     <Button
                       type="button"
                       variant="secondary"
@@ -577,8 +581,8 @@ export function SettingsDialog({
                       Some packages were skipped. Fix them, then restart the resident:{" "}
                       <code>ziggy serve restart &lt;profile&gt;</code>
                     </strong>
-                    {modelSettings.extensions.skipped.map((item) => (
-                      <div key={item.id}>
+                    {modelSettings.extensions.skipped.map((item, index) => (
+                      <div key={`${item.id}-${index}`}>
                         <strong>{item.id}</strong>
                         {item.diagnostics.map((diagnostic, index) => (
                           <p key={`${item.id}-${index}`}>

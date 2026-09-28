@@ -256,6 +256,7 @@ export const ZIGGY_EVENT_NAMES: ReadonlyArray<ZiggyEventName> = [
   "settled",
   "error",
   "replay-gap",
+  "session-state",
 ];
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -645,16 +645,18 @@ export const UiProfileHealthResult = Schema.Struct({
 
 export type UiProfileHealthResult = typeof UiProfileHealthResult.Type;
 
+export const UiSessionSummary = Schema.Struct({
+  id: UiStoredSessionId,
+  title: boundedCodePointString("session title", 160),
+  updatedAt: boundedString("session updated time", 128),
+  held: Schema.Boolean,
+});
+
 export const UiSessionSummaryResult = Schema.Struct({
   profileId: ProfileId,
-  sessions: Schema.Array(
-    Schema.Struct({
-      id: UiStoredSessionId,
-      title: boundedCodePointString("session title", 160),
-      updatedAt: boundedString("session updated time", 128),
-      held: Schema.Boolean,
-    }),
-  ).check(Schema.isMaxLength(32)),
+  canResume: Schema.Boolean,
+  currentSessionId: Schema.NullOr(UiStoredSessionId),
+  sessions: Schema.Array(UiSessionSummary).check(Schema.isMaxLength(32)),
   truncated: Schema.Boolean,
 }).check(resultWithinWireBudget);
 
@@ -1246,6 +1248,7 @@ export const UI_EVENTS = [
   "settled",
   "error",
   "replay-gap",
+  "session-state",
 ] as const;
 
 export type UiEventName = (typeof UI_EVENTS)[number];
@@ -1306,6 +1309,12 @@ const UiAutomationResultEvent = Schema.Struct({
   }),
 });
 
+const UiSessionStateEvent = Schema.Struct({
+  ...UiEventBase,
+  event: Schema.Literal("session-state"),
+  payload: Schema.Struct({ scope: Schema.Literals(["transcript", "model"]) }),
+});
+
 const UiSettledEvent = Schema.Struct({
   ...UiEventBase,
   event: Schema.Literal("settled"),
@@ -1335,6 +1344,7 @@ export const UiEventFrame = Schema.Union([
   UiToolEvent,
   UiVoiceEvent,
   UiAutomationResultEvent,
+  UiSessionStateEvent,
   UiSettledEvent,
   UiErrorEvent,
   UiReplayGapEvent,

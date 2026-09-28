@@ -221,10 +221,13 @@ const applyEvent = (state: ZiggyGatewayState, event: ZiggyGatewayEvent): ZiggyGa
   const current = sessionStateForEvent(state, event);
   const eventId = keyOfEvent(event);
   if (current.seenEventIds.includes(eventId)) return state;
-  const events = sortEvents([...current.events, event]);
-  const seenEventIds = [...current.seenEventIds, eventId].slice(-4_096);
+  const transcriptReset = event.event === "session-state" && event.payload.scope === "transcript";
+  const events = transcriptReset ? [event] : sortEvents([...current.events, event]);
+  const seenEventIds = transcriptReset ? [eventId] : [...current.seenEventIds, eventId].slice(-4_096);
   const nextStatus =
-    event.event === "automation-result"
+    transcriptReset
+      ? "idle"
+      : event.event === "automation-result"
       ? current.status
       : event.event === "settled" || event.event === "error"
         ? event.event === "error"
@@ -238,7 +241,7 @@ const applyEvent = (state: ZiggyGatewayState, event: ZiggyGatewayEvent): ZiggyGa
     status: nextStatus,
     events,
     history:
-      event.event === "automation-result"
+      transcriptReset ? [] : event.event === "automation-result"
         ? dedupeSessionHistoryEntries([
             ...current.history,
             {

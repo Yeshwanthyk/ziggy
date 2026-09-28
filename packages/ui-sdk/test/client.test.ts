@@ -297,9 +297,11 @@ const methodFixtures = (): ReadonlyArray<{
     })),
     {
       method: "session.summaries",
-      params: { profileId: PROFILE_A },
+      params: { ref: MAIN_A },
       result: {
         profileId: PROFILE_A,
+        canResume: true,
+        currentSessionId: null,
         sessions: [
           { id: "older-1", title: "Earlier chat", updatedAt: "2026-01-01T00:00:00Z", held: false },
         ],
@@ -1154,4 +1156,12 @@ describe("protocol decoder parity", () => {
       }),
     ).toBe(true);
   });
+});
+
+test("resume result rejects leading-dot and traversal session ids", () => {
+  for (const sessionId of [".hidden", "a..b", "../other"]) {
+    expect(isMethodResult("session.resume", {
+      profileId: PROFILE_A, ref: MAIN_A, sessionId, cancelled: false,
+    }, { ref: MAIN_A, sessionId })).toBe(false);
+  }
 });

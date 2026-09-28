@@ -1,8 +1,5 @@
 import { Effect, Schema } from "effect";
-import {
-  listProfileExtensionsWithHealth,
-  type ProfileExtensionHealthListing,
-} from "../../adapters/pi/profile-extension-preflight";
+import type { ProfileExtensionHealthListing } from "../../adapters/pi/profile-extension-preflight";
 
 import {
   UiExtensionAddParams,
@@ -190,27 +187,48 @@ export const dispatchExtensions = (
         Effect.mapError((cause) => badParams(request.method, cause)),
         Effect.flatMap((params) => route(params.profileId)),
         Effect.flatMap((branch) =>
-          (config.extensionHealth ?? listProfileExtensionsWithHealth)(
-            branch.target.path,
-            config.repositoryRoot,
-            config.profileExtensions,
-          ).pipe(
-            Effect.mapError((cause) =>
-              protocolFailure(
-                "internal",
-                `could not ${operation} Profile extensions`,
-                cause,
-                extensionFailure(operation, cause),
+          config
+            .extensionHealth(branch.target.path, config.repositoryRoot, config.profileExtensions)
+            .pipe(
+              Effect.catchTag("ProfileExtensionPreflightFailed", (cause) =>
+                config.profileExtensions
+                  .listForProfile(branch.target.path, config.repositoryRoot)
+                  .pipe(
+                    Effect.map((listing) => ({
+                      listing,
+                      skipped: [
+                        {
+                          id: "health-inspection",
+                          diagnostics: [
+                            {
+                              source: "Profile extensions",
+                              message: safeFailureMessage(
+                                cause,
+                                "Could not inspect extension health",
+                              ),
+                            },
+                          ],
+                        },
+                      ],
+                    })),
+                  ),
               ),
-            ),
-            Effect.flatMap((result) =>
-              decodeExtensionListResult(projectExtensionList(branch.profileId, result)).pipe(
-                Effect.mapError((cause) =>
-                  protocolFailure("internal", "invalid Profile extension response", cause),
+              Effect.mapError((cause) =>
+                protocolFailure(
+                  "internal",
+                  `could not ${operation} Profile extensions`,
+                  cause,
+                  extensionFailure(operation, cause),
+                ),
+              ),
+              Effect.flatMap((result) =>
+                decodeExtensionListResult(projectExtensionList(branch.profileId, result)).pipe(
+                  Effect.mapError((cause) =>
+                    protocolFailure("internal", "invalid Profile extension response", cause),
+                  ),
                 ),
               ),
             ),
-          ),
         ),
       );
     case "extension.add":
