@@ -37,7 +37,7 @@ back, and the integrator merges one stream at a time with `bun run check`.
 | `adapter` | 4, 5 (diagnostics), 9, 11a | the rest of `src/adapters/pi/`, the runtime interface, resident service | after `tui` |
 | `cli` | 3, 10 | domain setup, `src/faces/cli`, the CLI parts of `main.ts` | after `tui` |
 | `webui` | 13 | `clients/web`, `packages/ui-sdk`, `src/application/ui-gateway*`, `src/adapters/bun/ui-server.ts` | now |
-| `headless` | 12 | `ziggy wake`, `ziggy tick`, `extensions update`, the `deliver` lanes in `automations.ts`, `automations status` | after `auto` and `adapter` |
+| `headless` | 12 | `ziggy wake`, `extensions update`, the `deliver` lanes in `automations.ts`, `automations status` | after `auto` and `adapter` |
 
 ## 0. Pi 0.87.1 upgrade
 
