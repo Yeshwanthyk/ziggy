@@ -43,6 +43,7 @@
   --dur-modal: 200ms;
   --dur-modal-exit: 150ms;
   --dur-drawer: 250ms;
+  --dur-drawer-exit: 200ms;
 
   /* light colours */
   --background: oklch(1 0 0);
@@ -1666,9 +1667,10 @@
     position: fixed;
     top: 0;
     transform: translateX(-102%);
+    /* Closing runs faster than opening. */
     transition:
-      transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
-      visibility 0s linear 180ms;
+      transform var(--dur-drawer-exit) var(--ease-drawer),
+      visibility 0s linear var(--dur-drawer-exit);
     visibility: hidden;
     width: 100%;
     z-index: 30;
@@ -1676,7 +1678,9 @@
 
   .sidebar[data-open] {
     transform: translateX(0);
-    transition-delay: 0s;
+    transition:
+      transform var(--dur-drawer) var(--ease-drawer),
+      visibility 0s;
     visibility: visible;
   }
 
@@ -1686,7 +1690,14 @@
     display: block;
     inset: 0;
     position: fixed;
+    transition: opacity var(--dur-drawer) var(--ease-out);
     z-index: 20;
+  }
+
+  @starting-style {
+    .sidebar-backdrop {
+      opacity: 0;
+    }
   }
 
   .mobile-only {
@@ -1715,7 +1726,12 @@
   }
 
   .composer-hint {
-    margin-top: 3px;
+    display: none;
+  }
+
+  /* 16px keeps iOS from zooming the page when the composer takes focus. */
+  .composer textarea {
+    font-size: 16px;
   }
 
   .definition-fields {

@@ -24,7 +24,9 @@ const buttonVariants = cva(
         xs: "h-7 px-2.5 text-[13px]",
         lg: "h-10 px-6",
         icon: "size-9",
-        "icon-sm": "size-7 rounded-[var(--radius-sm)] [&_svg]:size-4",
+        // On touch screens a transparent ::after grows the hit area to 40px without changing layout.
+        "icon-sm":
+          "relative size-7 rounded-[var(--radius-sm)] [&_svg]:size-4 pointer-coarse:after:absolute pointer-coarse:after:-inset-1.5 pointer-coarse:after:content-['']",
       },
     },
     defaultVariants: {
