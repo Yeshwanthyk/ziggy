@@ -34,6 +34,7 @@ import { Profiles, ProfilesLive } from "./application/profiles";
 import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ResidentGateway, makeResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
+import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
 import { Sessions, SessionsLive } from "./application/sessions";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
@@ -187,7 +188,11 @@ const ResidentProvided = makeResidentGatewayLive(
 );
 
 const ResidentServiceProvided = ResidentServiceLive.pipe(
-  Layer.provide(Layer.merge(ResidentProvided, SchedulerProvided)),
+  Layer.provide(
+    ResidentServiceOperationsLive.pipe(
+      Layer.provide(Layer.merge(ResidentProvided, SchedulerProvided)),
+    ),
+  ),
 );
 
 const SelfUpdateProvided = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));

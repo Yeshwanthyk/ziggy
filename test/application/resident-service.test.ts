@@ -10,10 +10,11 @@ import { AutomationProjectionError } from "ziggy/domain/automation";
 import { ResidentServiceError, type ResidentLaunchVector } from "ziggy/domain/resident-service";
 import type { AutomationSchedulerApi } from "ziggy/application/automation-scheduler";
 import type { ResidentGatewayApi } from "ziggy/application/resident-gateway";
+import {} from "ziggy/application/resident-service";
 import {
   makeResidentService,
   type ResidentServiceRuntime,
-} from "ziggy/application/resident-service";
+} from "ziggy/adapters/bun/resident-service-operations";
 
 const paths: Array<string> = [];
 
