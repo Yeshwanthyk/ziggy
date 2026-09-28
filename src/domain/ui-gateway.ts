@@ -174,6 +174,19 @@ export const UiSessionOpenParams = Schema.Struct({
 
 export type UiSessionOpenParams = typeof UiSessionOpenParams.Type;
 
+export const UiSessionModelSetParams = Schema.Struct({
+  ref: UiSessionRef,
+  providerId: boundedString("provider id", 128),
+  modelId: boundedString("model id", 256),
+  commandId: Schema.optionalKey(UiCommandId),
+});
+
+export const UiSessionThinkingSetParams = Schema.Struct({
+  ref: UiSessionRef,
+  thinking: ProfileAgentThinking,
+  commandId: Schema.optionalKey(UiCommandId),
+});
+
 export const UiSessionRefParams = Schema.Struct({
   ref: UiSessionRef,
   commandId: Schema.optionalKey(UiCommandId),
@@ -470,6 +483,9 @@ export const UI_METHODS = [
   "session.show",
   "session.history",
   "session.open",
+  "session.model.status",
+  "session.model.set",
+  "session.thinking.set",
   "session.watch",
   "session.unwatch",
   "session.close",
@@ -620,6 +636,14 @@ export const UiProfileHealthResult = Schema.Struct({
 }).check(resultWithinWireBudget);
 
 export type UiProfileHealthResult = typeof UiProfileHealthResult.Type;
+
+export const UiSessionModelResult = Schema.Struct({
+  profileId: ProfileId,
+  ref: UiSessionRef,
+  providerId: Schema.NullOr(boundedString("provider id", 128)),
+  modelId: Schema.NullOr(boundedString("model id", 256)),
+  thinking: ProfileAgentThinking,
+});
 
 export const UiSessionListResult = Schema.Struct({
   profileId: ProfileId,
@@ -1111,6 +1135,7 @@ export const UiGatewayResult = Schema.Union([
   UiProfileCurrentResult,
   UiProfileHealthResult,
   UiSessionListResult,
+  UiSessionModelResult,
   UiSessionShowResult,
   UiSessionHistoryResult,
   UiDestinationListResult,

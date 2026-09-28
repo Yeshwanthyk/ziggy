@@ -44,6 +44,11 @@ describe("SettingsDialog", () => {
       <SettingsDialog
         onRetrySettings={vi.fn(async () => undefined)}
         onToggleExtension={vi.fn(async () => undefined)}
+        sessionModel={{ pending: false }}
+        sessionBusy={false}
+        onLoadSessionModel={vi.fn(async () => undefined)}
+        onChangeSessionModel={vi.fn(async () => undefined)}
+        onChangeSessionThinking={vi.fn(async () => undefined)}
         connected
         connectionPending={false}
         modelSettings={modelSettings}
@@ -83,6 +88,11 @@ it("offers retry instead of an empty model form when settings are unavailable", 
       onSaveModel={vi.fn(async () => undefined)}
       onRetrySettings={retry}
       onToggleExtension={vi.fn(async () => undefined)}
+      sessionModel={{ pending: false }}
+      sessionBusy={false}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
   expect(screen.getByText("Model settings could not be loaded.")).not.toBeNull();
@@ -116,6 +126,11 @@ it("offers both selected and unselected extensions without optimistic selection"
       onSaveModel={vi.fn(async () => undefined)}
       onRetrySettings={vi.fn(async () => undefined)}
       onToggleExtension={toggle}
+      sessionModel={{ pending: false }}
+      sessionBusy={false}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
   const selected = screen.getByRole("checkbox", { name: "bundled-one" }) as HTMLInputElement;
@@ -150,6 +165,11 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
       onSaveModel={vi.fn(async () => undefined)}
       onRetrySettings={vi.fn(async () => undefined)}
       onToggleExtension={toggle}
+      sessionModel={{ pending: false }}
+      sessionBusy={false}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
   expect((screen.getByRole("checkbox", { name: "missing-one" }) as HTMLInputElement).checked).toBe(
@@ -159,4 +179,45 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
   expect(screen.getByText(/ziggy serve restart <profile>/u)).not.toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
+});
+
+it("keeps live session switches disabled while streaming, without changing Profile defaults", () => {
+  const switchModel = vi.fn(async () => undefined);
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      selectedRef={{ profileId: "prf_squarey", kind: "live", key: "local/main" }}
+      sessionBusy
+      sessionModel={{
+        pending: false,
+        value: {
+          profileId: "prf_squarey",
+          ref: { profileId: "prf_squarey", kind: "live", key: "local/main" },
+          providerId: "openai-codex",
+          modelId: "gpt-5.6-sol",
+          thinking: "medium",
+        },
+      }}
+      modelSettings={modelSettings}
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={vi.fn(async () => undefined)}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={switchModel}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
+    />,
+  );
+  expect(
+    (screen.getByRole("combobox", { name: "Session model" }) as HTMLSelectElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("combobox", { name: "Session thinking" }) as HTMLSelectElement).disabled,
+  ).toBe(true);
+  expect(screen.getByRole("button", { name: "Save model" })).not.toBeNull();
+  expect(switchModel).not.toHaveBeenCalled();
 });

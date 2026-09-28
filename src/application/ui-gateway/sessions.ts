@@ -3,6 +3,8 @@ import { Effect, Option, Predicate, Schema } from "effect";
 import {
   UiSessionHistoryParams,
   UiSessionOpenParams,
+  UiSessionModelSetParams,
+  UiSessionThinkingSetParams,
   UiSessionRefParams,
   UiSessionTextParams,
   UiSessionKey,
@@ -50,6 +52,14 @@ const isKnownMethod = Schema.is(Schema.Literals(UI_METHODS));
 const decodeOpen = Schema.decodeUnknownEffect(UiSessionOpenParams, { onExcessProperty: "error" });
 
 const decodeRef = Schema.decodeUnknownEffect(UiSessionRefParams, { onExcessProperty: "error" });
+
+const decodeModelSet = Schema.decodeUnknownEffect(UiSessionModelSetParams, {
+  onExcessProperty: "error",
+});
+
+const decodeThinkingSet = Schema.decodeUnknownEffect(UiSessionThinkingSetParams, {
+  onExcessProperty: "error",
+});
 
 const decodeText = Schema.decodeUnknownEffect(UiSessionTextParams, { onExcessProperty: "error" });
 
@@ -360,6 +370,57 @@ export const makeSessionDispatcher = (
           } else unsubscribe();
 
           return { ref };
+        });
+      case "session.model.status":
+      case "session.model.set":
+      case "session.thinking.set":
+        return Effect.gen(function* () {
+          const params =
+            request.method === "session.model.status"
+              ? {
+                  ...(yield* decodeRef(request.params).pipe(
+                    Effect.mapError((cause) => badParams(request.method, cause)),
+                  )),
+                  operation: "status" as const,
+                }
+              : request.method === "session.model.set"
+                ? {
+                    ...(yield* decodeModelSet(request.params).pipe(
+                      Effect.mapError((cause) => badParams(request.method, cause)),
+                    )),
+                    operation: "model" as const,
+                  }
+                : {
+                    ...(yield* decodeThinkingSet(request.params).pipe(
+                      Effect.mapError((cause) => badParams(request.method, cause)),
+                    )),
+                    operation: "thinking" as const,
+                  };
+
+          if (params.ref.kind !== "live")
+            return yield* protocolFailure("watch_only", "stored sessions cannot be switched");
+
+          const branch = yield* route(params.ref.profileId);
+          const entry = yield* branch.registry.get(params.ref.key);
+
+          if (entry.kind !== "ui")
+            return yield* protocolFailure("watch_only", "channel sessions cannot be switched here");
+
+          const state = yield* (
+            params.operation === "model"
+              ? entry.handle.setModel(params.providerId, params.modelId)
+              : params.operation === "thinking"
+                ? entry.handle.setThinkingLevel(params.thinking)
+                : entry.handle.modelState
+          ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          return {
+            profileId: branch.profileId,
+            ref: params.ref,
+            providerId: state.providerId ?? null,
+            modelId: state.modelId ?? null,
+            thinking: state.thinking,
+          };
         });
       case "session.watch":
         return Effect.gen(function* () {

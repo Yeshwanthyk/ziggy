@@ -961,6 +961,12 @@ export function App() {
         connectionError={gateway.localError}
         connectionPending={gateway.connection === "connecting"}
         modelSettings={gateway.modelSettings}
+        sessionModel={gateway.sessionModel}
+        selectedRef={gateway.selectedRef}
+        sessionBusy={gateway.busy}
+        onLoadSessionModel={gateway.loadSessionModel}
+        onChangeSessionModel={gateway.changeSessionModel}
+        onChangeSessionThinking={gateway.changeSessionThinking}
         hosted={hosted}
         pairingRequired={pairingRequired}
         onConnect={connect}

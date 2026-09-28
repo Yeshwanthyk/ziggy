@@ -127,6 +127,27 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     openMain: vi.fn(async () => mainRef),
     openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
+    sessionModelStatus: vi.fn(async (ref) => ({
+      profileId: profile.profileId,
+      ref,
+      providerId: "openai",
+      modelId: "gpt-5",
+      thinking: "medium" as const,
+    })),
+    setSessionModel: vi.fn(async (ref, providerId, modelId) => ({
+      profileId: profile.profileId,
+      ref,
+      providerId,
+      modelId,
+      thinking: "medium" as const,
+    })),
+    setSessionThinking: vi.fn(async (ref, thinking) => ({
+      profileId: profile.profileId,
+      ref,
+      providerId: "openai",
+      modelId: "gpt-5",
+      thinking,
+    })),
     listDestinations: vi.fn(async () => ({
       profileId: profile.profileId,
       entries: [],

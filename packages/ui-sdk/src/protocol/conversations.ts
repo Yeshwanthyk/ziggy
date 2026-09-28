@@ -66,6 +66,14 @@ export interface ZiggyStoredSession {
   readonly terminalState: ZiggyTerminalState;
 }
 
+export interface ZiggySessionModelResult {
+  readonly profileId: ZiggyProfileId;
+  readonly ref: ZiggySessionRef;
+  readonly providerId: string | null;
+  readonly modelId: string | null;
+  readonly thinking: import("./models").ZiggyModelThinkingLevel;
+}
+
 export interface ZiggySessionListResult {
   readonly profileId: ZiggyProfileId;
   readonly live: ReadonlyArray<ZiggyLiveSession>;
@@ -173,6 +181,18 @@ export interface ZiggyConversationRequestMap {
   readonly "session.show": { readonly ref: ZiggySessionRef };
   readonly "session.history": ZiggySessionHistoryParams;
   readonly "session.open": ZiggySessionOpenParams;
+  readonly "session.model.status": { readonly ref: ZiggySessionRef };
+  readonly "session.model.set": {
+    readonly ref: ZiggySessionRef;
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly commandId?: string;
+  };
+  readonly "session.thinking.set": {
+    readonly ref: ZiggySessionRef;
+    readonly thinking: import("./models").ZiggyModelThinkingLevel;
+    readonly commandId?: string;
+  };
   readonly "session.watch": ZiggySessionWatchParams;
   readonly "session.unwatch": ZiggySessionCommandParams;
   readonly "session.close": ZiggySessionCommandParams;
@@ -187,6 +207,9 @@ export interface ZiggyConversationResultMap {
   readonly "session.show": ZiggySessionShowResult;
   readonly "session.history": ZiggySessionHistoryResult;
   readonly "session.open": { readonly ref: Extract<ZiggySessionRef, { readonly kind: "live" }> };
+  readonly "session.model.status": ZiggySessionModelResult;
+  readonly "session.model.set": ZiggySessionModelResult;
+  readonly "session.thinking.set": ZiggySessionModelResult;
   readonly "session.watch": ZiggyAcknowledgedResult;
   readonly "session.unwatch": ZiggyAcknowledgedResult;
   readonly "session.close": ZiggyAcknowledgedResult;
@@ -434,6 +457,22 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   }
   return false;
 };
+
+export const isSessionModelResult = (value: unknown): value is ZiggySessionModelResult =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "ref", "providerId", "modelId", "thinking"]) &&
+  isProfileId(value.profileId) &&
+  isSessionRef(value.ref) &&
+  value.ref.profileId === value.profileId &&
+  (value.providerId === null || isBoundedString(value.providerId, 128)) &&
+  (value.modelId === null || isBoundedString(value.modelId, 256)) &&
+  (value.thinking === "off" ||
+    value.thinking === "minimal" ||
+    value.thinking === "low" ||
+    value.thinking === "medium" ||
+    value.thinking === "high" ||
+    value.thinking === "xhigh" ||
+    value.thinking === "max");
 
 export const isSessionListResult = (value: unknown): value is ZiggySessionListResult =>
   isRecord(value) &&

@@ -3,7 +3,12 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Deferred, Effect, Fiber, Result, Schema } from "effect";
-import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/application/agent";
+import {
+  makeChatHandle,
+  type ChatEvent,
+  type ChatSessionModelState,
+  type ZiggyAgentApi,
+} from "ziggy/application/agent";
 import { SessionHeld } from "ziggy/domain/agent";
 import {
   CHAT_REPLAY_LIMIT,
@@ -1389,6 +1394,104 @@ test("UI gateway routes all management operations through decoded explicit Profi
   expect(responses[0]).toMatchObject({ ok: true, result: { profileId } });
   expect(responses[1]).toMatchObject({ ok: true, result: { profileId, id: "weather" } });
   expect(JSON.stringify(responses)).not.toContain("profilePath");
+});
+
+test("session model and thinking mutations stay on the open handle, not the Profile default", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  let sessionState: ChatSessionModelState = {
+    providerId: "openai",
+    modelId: "first",
+    thinking: "low",
+  };
+
+  let defaultWrites = 0;
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed(""),
+    modelState: Effect.sync(() => sessionState),
+    setModel: (providerId, modelId) =>
+      Effect.sync(() => {
+        sessionState = { providerId, modelId, thinking: "low" };
+
+        return sessionState;
+      }),
+    setThinkingLevel: (thinking) =>
+      Effect.sync(() => {
+        sessionState = { ...sessionState, thinking };
+
+        return sessionState;
+      }),
+  });
+
+  const models: ModelsApi = {
+    status: () =>
+      Effect.succeed({
+        providerId: "default",
+        modelId: "unchanged",
+        thinking: "medium",
+        authConfigured: true,
+      }),
+    readOnlyStatus: () =>
+      Effect.succeed({
+        providerId: "default",
+        modelId: "unchanged",
+        thinking: "medium",
+        authConfigured: true,
+      }),
+    list: () => Effect.succeed([]),
+    available: () => Effect.succeed([]),
+    set: () =>
+      Effect.sync(() => {
+        defaultWrites += 1;
+
+        return { providerId: "changed", modelId: "changed", thinking: "low" };
+      }),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { models }),
+        )).connect((frame) => responses.push(decodeResponse(frame)));
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+
+        yield* connection.request({
+          id: "switch",
+          method: "session.model.set",
+          params: { ref, providerId: "anthropic", modelId: "second" },
+        });
+
+        yield* connection.request({
+          id: "thinking",
+          method: "session.thinking.set",
+          params: { ref, thinking: "high" },
+        });
+
+        yield* connection.request({ id: "default", method: "model.status", params: { profileId } });
+      }),
+    ),
+  );
+
+  expect(responses[1]).toMatchObject({
+    ok: true,
+    result: { providerId: "anthropic", modelId: "second" },
+  });
+  expect(responses[2]).toMatchObject({ ok: true, result: { thinking: "high" } });
+  expect(responses[3]).toMatchObject({
+    ok: true,
+    result: { providerId: "default", modelId: "unchanged" },
+  });
+  expect(defaultWrites).toBe(0);
 });
 
 test("UI extension listing respects the frame budget and reports truncation", async () => {

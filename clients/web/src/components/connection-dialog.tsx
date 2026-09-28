@@ -9,7 +9,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ModelSettingsState } from "@/gateway";
-import type { ZiggyModelThinkingLevel } from "../../../../packages/ui-sdk/src/index";
+import type {
+  ZiggyModelThinkingLevel,
+  ZiggySessionModelResult,
+  ZiggySessionRef,
+} from "../../../../packages/ui-sdk/src/index";
 import { Info } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import "./connection-dialog.css";
@@ -19,6 +23,16 @@ interface SettingsDialogProps {
   readonly connectionError?: string;
   readonly connectionPending: boolean;
   readonly modelSettings?: ModelSettingsState;
+  readonly sessionModel: {
+    readonly value?: ZiggySessionModelResult;
+    readonly error?: string;
+    readonly pending: boolean;
+  };
+  readonly selectedRef?: ZiggySessionRef;
+  readonly sessionBusy: boolean;
+  readonly onLoadSessionModel: () => Promise<void>;
+  readonly onChangeSessionModel: (providerId: string, modelId: string) => Promise<void>;
+  readonly onChangeSessionThinking: (level: ZiggyModelThinkingLevel) => Promise<void>;
   readonly hosted?: boolean;
   readonly pairingRequired?: boolean;
   readonly open: boolean;
@@ -71,6 +85,12 @@ export function SettingsDialog({
   connectionError,
   connectionPending,
   modelSettings,
+  sessionModel,
+  selectedRef,
+  sessionBusy,
+  onLoadSessionModel,
+  onChangeSessionModel,
+  onChangeSessionThinking,
   hosted = false,
   pairingRequired = false,
   open,
@@ -111,6 +131,16 @@ export function SettingsDialog({
       statusThinking !== undefined && isThinkingLevel(statusThinking) ? statusThinking : "",
     );
   }, [open, statusModel, statusProvider, statusThinking]);
+
+  useEffect(() => {
+    if (open && connected && selectedRef?.kind === "live") void onLoadSessionModel();
+  }, [
+    open,
+    connected,
+    selectedRef?.kind,
+    selectedRef?.kind === "live" ? selectedRef.key : undefined,
+    onLoadSessionModel,
+  ]);
 
   const availableModels = modelSettings?.availableModels ?? [];
   const configuredProviders = (modelSettings?.providers ?? []).filter(
@@ -266,6 +296,94 @@ export function SettingsDialog({
                     </Button>
                   </DialogFooter>
                 </form>
+              ) : null}
+            </section>
+          ) : null}
+
+          {connected && selectedRef?.kind === "live" ? (
+            <section className="ziggy-settings-block" aria-label="Current session model">
+              <h3>Current session</h3>
+              <p className="ziggy-settings-muted">
+                Changes here affect only this open session, not the Profile default.
+              </p>
+              {sessionBusy ? (
+                <p role="status">Wait for the current turn to finish before switching.</p>
+              ) : null}
+              {sessionModel.error ? (
+                <p className="form-error" role="alert">
+                  {sessionModel.error}
+                </p>
+              ) : null}
+              {sessionModel.value ? (
+                <>
+                  <p>
+                    Current: {sessionModel.value.providerId ?? "No model"}/
+                    {sessionModel.value.modelId ?? "—"} · {sessionModel.value.thinking}
+                  </p>
+                  <label>
+                    Session model
+                    <select
+                      aria-label="Session model"
+                      disabled={sessionBusy || sessionModel.pending}
+                      value={modelKey(
+                        sessionModel.value.providerId ?? "",
+                        sessionModel.value.modelId ?? "",
+                      )}
+                      onChange={(event) => {
+                        const model = availableModels.find(
+                          (item) => modelKey(item.providerId, item.modelId) === event.target.value,
+                        );
+                        if (model) void onChangeSessionModel(model.providerId, model.modelId);
+                      }}
+                    >
+                      {!availableModels.some(
+                        (item) =>
+                          modelKey(item.providerId, item.modelId) ===
+                          modelKey(
+                            sessionModel.value?.providerId ?? "",
+                            sessionModel.value?.modelId ?? "",
+                          ),
+                      ) ? (
+                        <option
+                          value={modelKey(
+                            sessionModel.value.providerId ?? "",
+                            sessionModel.value.modelId ?? "",
+                          )}
+                        >
+                          Current model
+                        </option>
+                      ) : null}
+                      {availableModels.map((model) => (
+                        <option
+                          key={modelKey(model.providerId, model.modelId)}
+                          value={modelKey(model.providerId, model.modelId)}
+                        >
+                          {model.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Session thinking
+                    <select
+                      aria-label="Session thinking"
+                      disabled={sessionBusy || sessionModel.pending}
+                      value={sessionModel.value.thinking}
+                      onChange={(event) => {
+                        if (isThinkingLevel(event.target.value))
+                          void onChangeSessionThinking(event.target.value);
+                      }}
+                    >
+                      {thinkingLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : sessionModel.pending ? (
+                <p role="status">Loading session model…</p>
               ) : null}
             </section>
           ) : null}

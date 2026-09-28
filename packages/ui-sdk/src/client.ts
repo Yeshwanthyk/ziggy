@@ -19,6 +19,7 @@ import {
   type ZiggySessionHistoryResult,
   type ZiggySessionRef,
   type ZiggySessionListResult,
+  type ZiggySessionModelResult,
   type ZiggySessionShowResult,
 } from "./protocol/conversations";
 import type {
@@ -125,6 +126,18 @@ export interface ZiggyGatewayClient {
   listGroups(profileId: ZiggyProfileId): Promise<ZiggyGroupListResult>;
   listSessions(profileId: ZiggyProfileId): Promise<ZiggySessionListResult>;
   showSession(ref: ZiggySessionRef): Promise<ZiggySessionShowResult>;
+  sessionModelStatus(ref: ZiggySessionRef): Promise<ZiggySessionModelResult>;
+  setSessionModel(
+    ref: ZiggySessionRef,
+    providerId: string,
+    modelId: string,
+    commandId?: string,
+  ): Promise<ZiggySessionModelResult>;
+  setSessionThinking(
+    ref: ZiggySessionRef,
+    thinking: ZiggyModelThinkingLevel,
+    commandId?: string,
+  ): Promise<ZiggySessionModelResult>;
   getSessionHistory(ref: ZiggySessionRef, before?: string): Promise<ZiggySessionHistoryResult>;
   openMain(profileId: ZiggyProfileId, context?: ZiggyConversationContext): Promise<ZiggySessionRef>;
   openSpecialist(
@@ -267,6 +280,19 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
     listGroups: (profileId) => connection.request("group.list", { profileId }),
     listSessions: (profileId) => connection.request("session.list", { profileId }),
     showSession: (ref) => connection.request("session.show", { ref }),
+    sessionModelStatus: (ref) => connection.request("session.model.status", { ref }),
+    setSessionModel: (ref, providerId, modelId, commandId) =>
+      connection.request(
+        "session.model.set",
+        commandId === undefined
+          ? { ref, providerId, modelId }
+          : { ref, providerId, modelId, commandId },
+      ),
+    setSessionThinking: (ref, thinking, commandId) =>
+      connection.request(
+        "session.thinking.set",
+        commandId === undefined ? { ref, thinking } : { ref, thinking, commandId },
+      ),
     getSessionHistory: (ref, before) =>
       connection.request("session.history", before === undefined ? { ref } : { ref, before }),
     openMain: async (profileId, context = { kind: "local" }) => {

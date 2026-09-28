@@ -26,6 +26,7 @@ import {
   type ZiggyRecipientId,
   type ZiggySessionHistoryEntry,
   type ZiggySessionListResult,
+  type ZiggySessionModelResult,
   type ZiggySessionRef,
 } from "../../../packages/ui-sdk/src/index";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -150,6 +151,9 @@ export type GatewayClient = Pick<
   | "listPins"
   | "listProfiles"
   | "listSessions"
+  | "sessionModelStatus"
+  | "setSessionModel"
+  | "setSessionThinking"
   | "modelStatus"
   | "onAny"
   | "openMain"
@@ -339,6 +343,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [startingAutomation, setStartingAutomation] = useState<string>();
   const [automationDetail, setAutomationDetail] = useState<AutomationDetail>();
   const [modelSettings, setModelSettings] = useState<ModelSettingsState>();
+  const [sessionModel, setSessionModel] = useState<{
+    readonly value?: ZiggySessionModelResult;
+    readonly error?: string;
+    readonly pending: boolean;
+  }>({ pending: false });
+  const sessionModelGenerationRef = useRef(0);
   const extensionGenerationRef = useRef(0);
   const extensionMutationRef = useRef(false);
   const [sidebarLoading, setSidebarLoading] = useState(false);
@@ -1513,6 +1523,124 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     }
   }, []);
 
+  const loadSessionModel = useCallback(async (): Promise<void> => {
+    const client = clientRef.current;
+    const ref = selectedRefRef.current;
+    const generation = ++sessionModelGenerationRef.current;
+    if (client === undefined || client.state !== "open" || ref?.kind !== "live") {
+      setSessionModel({ pending: false });
+      return;
+    }
+
+    setSessionModel({ pending: true });
+    try {
+      const value = await client.sessionModelStatus(ref);
+      if (
+        generation === sessionModelGenerationRef.current &&
+        clientRef.current === client &&
+        sameRef(selectedRefRef.current, ref)
+      )
+        setSessionModel({ value, pending: false });
+    } catch (cause) {
+      if (
+        generation === sessionModelGenerationRef.current &&
+        clientRef.current === client &&
+        sameRef(selectedRefRef.current, ref)
+      )
+        setSessionModel({
+          error: cause instanceof Error ? cause.message : "Session model unavailable",
+          pending: false,
+        });
+    }
+  }, []);
+
+  const changeSessionModel = useCallback(
+    async (providerId: string, modelId: string): Promise<void> => {
+      const client = clientRef.current;
+      const ref = selectedRefRef.current;
+      if (
+        client === undefined ||
+        ref?.kind !== "live" ||
+        client.state !== "open" ||
+        busy ||
+        sessionModel.pending
+      )
+        return;
+
+      const generation = ++sessionModelGenerationRef.current;
+      setSessionModel((current) => ({ ...current, pending: true, error: undefined }));
+      try {
+        const value = await client.setSessionModel(
+          ref,
+          providerId,
+          modelId,
+          `web-session-model-${crypto.randomUUID()}`,
+        );
+        if (
+          generation === sessionModelGenerationRef.current &&
+          clientRef.current === client &&
+          sameRef(selectedRefRef.current, ref)
+        )
+          setSessionModel({ value, pending: false });
+      } catch (cause) {
+        if (
+          generation === sessionModelGenerationRef.current &&
+          clientRef.current === client &&
+          sameRef(selectedRefRef.current, ref)
+        )
+          setSessionModel((current) => ({
+            ...current,
+            pending: false,
+            error: cause instanceof Error ? cause.message : "Session model switch failed",
+          }));
+      }
+    },
+    [busy, sessionModel.pending],
+  );
+
+  const changeSessionThinking = useCallback(
+    async (thinking: ZiggyModelThinkingLevel): Promise<void> => {
+      const client = clientRef.current;
+      const ref = selectedRefRef.current;
+      if (
+        client === undefined ||
+        ref?.kind !== "live" ||
+        client.state !== "open" ||
+        busy ||
+        sessionModel.pending
+      )
+        return;
+
+      const generation = ++sessionModelGenerationRef.current;
+      setSessionModel((current) => ({ ...current, pending: true, error: undefined }));
+      try {
+        const value = await client.setSessionThinking(
+          ref,
+          thinking,
+          `web-session-thinking-${crypto.randomUUID()}`,
+        );
+        if (
+          generation === sessionModelGenerationRef.current &&
+          clientRef.current === client &&
+          sameRef(selectedRefRef.current, ref)
+        )
+          setSessionModel({ value, pending: false });
+      } catch (cause) {
+        if (
+          generation === sessionModelGenerationRef.current &&
+          clientRef.current === client &&
+          sameRef(selectedRefRef.current, ref)
+        )
+          setSessionModel((current) => ({
+            ...current,
+            pending: false,
+            error: cause instanceof Error ? cause.message : "Session thinking switch failed",
+          }));
+      }
+    },
+    [busy, sessionModel.pending],
+  );
+
   const loadAutomationDetail = useCallback(
     async (automationId: string): Promise<void> => {
       const client = clientRef.current;
@@ -1977,6 +2105,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     localError,
     maxPromptCodePoints,
     modelSettings,
+    sessionModel,
+    loadSessionModel,
+    changeSessionModel,
+    changeSessionThinking,
     openGroup,
     openSpecialist,
     pauseAutomation,

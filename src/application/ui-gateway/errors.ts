@@ -41,6 +41,11 @@ export const safeFailureMessage = (cause: unknown, fallback: string): string => 
   )
     return "the resource changed; reload before retrying";
 
+  if (Predicate.isTagged(cause, "SessionBusy"))
+    return "Session is busy; wait for the current turn to finish";
+
+  if (Predicate.isTagged(cause, "SessionHeld")) return "Session is held by another process";
+
   if (Predicate.isTagged(cause, "ChatNotStreaming")) return "the session is not streaming";
 
   if (Predicate.isTagged(cause, "ProfileNotInitialized")) return "the Profile is not initialized";
@@ -94,6 +99,9 @@ export const errorCode = (cause: unknown): UiGatewayError["code"] => {
   if (Predicate.isTagged(cause, "SessionNotFound")) return "unknown_session";
 
   if (Predicate.isTagged(cause, "SessionHistoryCursorInvalid")) return "stale_cursor";
+
+  if (Predicate.isTagged(cause, "SessionBusy") || Predicate.isTagged(cause, "SessionHeld"))
+    return "session_busy";
 
   if (Predicate.isTagged(cause, "ChatNotStreaming")) return "not_streaming";
 

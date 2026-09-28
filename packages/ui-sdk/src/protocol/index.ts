@@ -49,6 +49,7 @@ import {
   isRecipient,
   isSessionHistoryResult,
   isSessionListResult,
+  isSessionModelResult,
   isSessionNameValue,
   isSessionReference,
   isSessionShowResult,
@@ -103,6 +104,20 @@ export const isMethodResult = <Method extends ZiggyMethod>(
         isSessionReference(value.ref) &&
         value.ref.kind === "live" &&
         profileMatches(value.ref.profileId, params)
+      );
+    case "session.model.status":
+    case "session.model.set":
+    case "session.thinking.set":
+      return (
+        isSessionModelResult(value) &&
+        refProfileMatches(value.profileId, params) &&
+        isRecord(params) &&
+        isSessionReference(params.ref) &&
+        (value.ref.kind === "live" && params.ref.kind === "live"
+          ? value.ref.key === params.ref.key
+          : value.ref.kind === "stored" &&
+            params.ref.kind === "stored" &&
+            value.ref.id === params.ref.id)
       );
     case "session.watch":
     case "session.unwatch":
@@ -256,6 +271,23 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         isConversationContextValue(value.context) &&
         (value.name === undefined || isSessionNameValue(value.name)) &&
         (value.agentId === undefined || isAgentId(value.agentId)) &&
+        (value.commandId === undefined || isCommandId(value.commandId))
+      );
+    case "session.model.status":
+      return hasRefOnly(value);
+    case "session.model.set":
+      return (
+        hasRef(value) &&
+        hasOnlyKeys(value, ["ref", "providerId", "modelId", "commandId"]) &&
+        isBoundedString(value.providerId, 128) &&
+        isBoundedString(value.modelId, 256) &&
+        (value.commandId === undefined || isCommandId(value.commandId))
+      );
+    case "session.thinking.set":
+      return (
+        hasRef(value) &&
+        hasOnlyKeys(value, ["ref", "thinking", "commandId"]) &&
+        isThinkingLevelValue(value.thinking) &&
         (value.commandId === undefined || isCommandId(value.commandId))
       );
     case "session.watch":

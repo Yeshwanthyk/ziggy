@@ -275,6 +275,26 @@ const methodFixtures = (): ReadonlyArray<{
       params: { profileId: PROFILE_A, context: { kind: "local" } },
       result: { ref: MAIN_A },
     },
+    ...(
+      [
+        { method: "session.model.status", params: { ref: MAIN_A } },
+        {
+          method: "session.model.set",
+          params: { ref: MAIN_A, providerId: "openai", modelId: "gpt-5" },
+        },
+        { method: "session.thinking.set", params: { ref: MAIN_A, thinking: "low" } },
+      ] as const
+    ).map(({ method, params }) => ({
+      method,
+      params,
+      result: {
+        profileId: PROFILE_A,
+        ref: MAIN_A,
+        providerId: "openai",
+        modelId: "gpt-5",
+        thinking: "low",
+      },
+    })),
     ...emptyResultMethods.map((method) => ({
       method,
       params:
