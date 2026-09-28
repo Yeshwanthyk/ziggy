@@ -19,7 +19,6 @@ import {
   resolveSlackChannelMode,
   retrySlackDelivery,
   slackReplyThreadTs,
-  slackHeartbeat,
   slackIngressTerminalState,
   slackMessageChunks,
   shouldUpdateSlackProgress,
@@ -612,34 +611,6 @@ describe("Slack gateway boundary", () => {
     expect(shouldUpdateSlackProgress(previous, "a".repeat(90), 3_000)).toBe(false);
     expect(shouldUpdateSlackProgress(previous, "a".repeat(120), 3_000)).toBe(true);
     expect(shouldUpdateSlackProgress(previous, "replacement ".repeat(8), 3_000)).toBe(true);
-  });
-
-  test("emits a bounded long-running heartbeat", async () => {
-    const statuses: Array<string> = [];
-    let waits = 0;
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const emitted = yield* Deferred.make<void>();
-
-        const heartbeat = slackHeartbeat(
-          (status) =>
-            Effect.gen(function* () {
-              statuses.push(status);
-              yield* Deferred.succeed(emitted, undefined);
-            }),
-          () => {
-            waits += 1;
-
-            return waits === 1 ? Effect.void : Effect.never;
-          },
-        );
-
-        yield* Effect.raceFirst(heartbeat, Deferred.await(emitted));
-      }),
-    );
-
-    expect(statuses).toEqual(["is still working... (30s)"]);
   });
 
   test("shows queued feedback before serializing turns in one chat", () => {

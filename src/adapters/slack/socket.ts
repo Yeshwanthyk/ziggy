@@ -89,6 +89,7 @@ export interface SlackSocketDependencies {
 type Command =
   | { readonly _tag: "Connect" }
   | { readonly _tag: "Frame"; readonly connection: SlackSocketConnection; readonly text: string }
+  | { readonly _tag: "FrameTooLarge"; readonly connection: SlackSocketConnection }
   | { readonly _tag: "SocketError"; readonly connection: SlackSocketConnection }
   | { readonly _tag: "SocketClosed"; readonly connection: SlackSocketConnection };
 
@@ -130,7 +131,7 @@ const MessageSchema = Schema.Struct({
   channel: Schema.String,
   channel_type: Schema.Literals(["im", "channel", "group", "mpim"]),
   user: Schema.String.check(Schema.isMinLength(1)),
-  text: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(16_000))),
   ts: Schema.String,
   thread_ts: Schema.optional(Schema.String),
   files: Schema.optional(Schema.Array(Schema.Unknown)),
@@ -174,6 +175,12 @@ const MAX_EVENT_IDS = 1_000;
 const MAX_FILES_PER_TURN = 4;
 
 const MAX_FILES_TO_DECODE = 20;
+
+const MAX_FRAME_BYTES = 1_048_576;
+
+// A UTF-16 code unit can encode up to three UTF-8 bytes; this conservative
+// limit avoids encoding/copying attacker-controlled strings in the listener.
+const MAX_FRAME_TEXT_LENGTH = 262_144;
 
 const SOCKET_OPEN = 1;
 
@@ -417,7 +424,15 @@ export const openSlackSocket = (
               );
               removers.push(
                 connection.onMessage((data) => {
-                  offerCommand({ _tag: "Frame", connection, text: websocketMessageText(data) });
+                  offerCommand(
+                    (
+                      ArrayBuffer.isView(data)
+                        ? data.byteLength > MAX_FRAME_BYTES
+                        : data.length > MAX_FRAME_TEXT_LENGTH
+                    )
+                      ? { _tag: "FrameTooLarge", connection }
+                      : { _tag: "Frame", connection, text: websocketMessageText(data) },
+                  );
                 }),
               );
               removers.push(
@@ -642,6 +657,12 @@ export const openSlackSocket = (
           return connect();
         case "Frame":
           return handleFrame(command.connection, command.text);
+        case "FrameTooLarge":
+          return command.connection === current?.connection
+            ? terminalFailure(
+                error("receive", "queue-overflow", false, new Error("Slack frame too large")),
+              )
+            : Effect.void;
         case "SocketError":
           return Effect.sync(() => {
             dependencies.reportConnectionFailure(

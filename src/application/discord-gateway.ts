@@ -79,6 +79,10 @@ const MAX_RETRY_SECONDS = 30;
 
 const MAX_DELIVERY_ATTEMPTS = 4;
 
+const MAX_PENDING_TURNS_PER_CHAT = 8;
+
+const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
+
 const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
 
 const PROGRESS_UPDATE_GROWTH = 48;
@@ -1174,7 +1178,28 @@ export const makeDiscordGateway = (
 
             if (!started) return;
             const chatState = chatStateFor(message.chatKey);
+
+            if (chatState.pending >= MAX_PENDING_TURNS_PER_CHAT) {
+              yield* ingressRuntime.finish(
+                target.path,
+                message,
+                ingressOwnerId,
+                "failed",
+                healthRuntime.now(),
+              );
+              yield* transport
+                .createMessage(config.botToken, message.channelId, BUSY_MESSAGE)
+                .pipe(
+                  Effect.catch((failure) =>
+                    Effect.logWarning("Discord busy response failed", { failure }),
+                  ),
+                );
+
+              return;
+            }
+
             const queued = chatState.pending > 0;
+
             const cancellation = yield* Deferred.make<void>();
 
             const turn: ScheduledDiscordTurn = {

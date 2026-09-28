@@ -97,6 +97,7 @@ type ConnectMode = "auto" | "fresh" | "resume";
 type Command =
   | { readonly _tag: "Connect"; readonly mode: ConnectMode }
   | { readonly _tag: "Frame"; readonly connection: DiscordSocketConnection; readonly text: string }
+  | { readonly _tag: "FrameTooLarge"; readonly connection: DiscordSocketConnection }
   | { readonly _tag: "SocketError"; readonly connection: DiscordSocketConnection }
   | {
       readonly _tag: "SocketClosed";
@@ -137,7 +138,7 @@ const MessageSchema = Schema.Struct({
     id: Schema.String,
     bot: Schema.optional(Schema.Boolean),
   }),
-  content: Schema.optional(Schema.String),
+  content: Schema.optional(Schema.String.check(Schema.isMaxLength(16_000))),
   attachments: Schema.optional(Schema.Array(Schema.Unknown)),
 });
 
@@ -237,6 +238,11 @@ const GATEWAY_QUERY = "v=10&encoding=json";
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
 const MAX_MESSAGE_IDS = 1_000;
+
+const MAX_FRAME_BYTES = 1_048_576;
+
+// Bound string frames without encoding/copying their attacker-controlled content.
+const MAX_FRAME_TEXT_LENGTH = 262_144;
 
 const SOCKET_OPEN = 1;
 
@@ -551,11 +557,15 @@ export const openDiscordSocket = (
             try: () => {
               removers.push(
                 connection.onMessage((data) => {
-                  offerCommand({
-                    _tag: "Frame",
-                    connection,
-                    text: websocketMessageText(data),
-                  });
+                  offerCommand(
+                    (
+                      ArrayBuffer.isView(data)
+                        ? data.byteLength > MAX_FRAME_BYTES
+                        : data.length > MAX_FRAME_TEXT_LENGTH
+                    )
+                      ? { _tag: "FrameTooLarge", connection }
+                      : { _tag: "Frame", connection, text: websocketMessageText(data) },
+                  );
                 }),
               );
               removers.push(
@@ -890,6 +900,12 @@ export const openDiscordSocket = (
           return connect(command.mode);
         case "Frame":
           return handleFrame(command.connection, command.text);
+        case "FrameTooLarge":
+          return command.connection === current?.connection
+            ? terminalFailure(
+                error("receive", "queue-overflow", false, new Error("Discord frame too large")),
+              )
+            : Effect.void;
         case "SocketError":
           return Effect.sync(() => reconnect(command.connection));
         case "SocketClosed":

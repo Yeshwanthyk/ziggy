@@ -141,6 +141,62 @@ describe("Slack socket Effect boundary", () => {
     expect(state).toEqual({ state: "reconnecting", failure: "connection" });
   });
 
+  test("rejects an oversized frame before decoding or retaining it", async () => {
+    const fixture = dependencies();
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage("x".repeat(1_048_577));
+
+          return yield* socket.next.pipe(Effect.result);
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SlackSocketError", reason: "queue-overflow" },
+    });
+  });
+
+  test("does not admit oversized inbound text", async () => {
+    const fixture = dependencies();
+
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(
+            JSON.stringify({
+              type: "events_api",
+              envelope_id: "large",
+              payload: {
+                event_id: "large",
+                event: {
+                  type: "message",
+                  channel: "C1",
+                  channel_type: "im",
+                  user: "U1",
+                  text: "x".repeat(16_001),
+                  ts: "large",
+                },
+              },
+            }),
+          );
+          fixture.connections[0]?.emitMessage(envelope("small"));
+
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received.ts).toBe("small");
+  });
+
   test("fails authentication once with a typed socket error", async () => {
     const fixture = dependencies({
       connectionsOpen: () => Effect.fail(apiFailure("authentication")),

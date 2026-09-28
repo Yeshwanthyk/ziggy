@@ -82,6 +82,10 @@ const MAX_RETRY_SECONDS = 30;
 
 const MAX_DELIVERY_ATTEMPTS = 4;
 
+const MAX_PENDING_TURNS_PER_CHAT = 8;
+
+const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
+
 const HEARTBEAT_SECONDS = 30;
 
 const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
@@ -414,20 +418,6 @@ export const slackIngressTerminalState = (
   turnSucceeded: boolean,
 ): SlackIngressTerminalState =>
   deliveryUnknown ? "unknown" : turnSucceeded ? "completed" : "failed";
-
-export const slackHeartbeat = (
-  updateStatus: (status: string) => Effect.Effect<void>,
-  wait: () => Effect.Effect<void> = () => Effect.sleep(Duration.seconds(HEARTBEAT_SECONDS)),
-): Effect.Effect<never> =>
-  Effect.gen(function* () {
-    let elapsedSeconds = HEARTBEAT_SECONDS;
-
-    while (true) {
-      yield* wait();
-      yield* updateStatus(`is still working... (${elapsedSeconds}s)`);
-      elapsedSeconds += HEARTBEAT_SECONDS;
-    }
-  });
 
 export interface SlackProgressUpdateState {
   readonly atMs: number;
@@ -1099,6 +1089,7 @@ export const makeSlackGateway = (
             const replyThreadTs = slackReplyThreadTs(message);
             const isFresh = () => !turn.cancelled && chatState.generation === turn.generation;
             let deliveryUnknown = false;
+            let started = false;
 
             const accepted = observe({
               _tag: "accepted",
@@ -1383,6 +1374,7 @@ export const makeSlackGateway = (
                 chatState.semaphore.withPermit(
                   Effect.gen(function* () {
                     if (!isFresh()) return yield* Effect.interrupt;
+                    started = true;
                     yield* observe({
                       _tag: "started",
                       atMs: healthRuntime.now(),
@@ -1708,7 +1700,11 @@ export const makeSlackGateway = (
                   );
                   yield* observe(
                     terminalState === "cancelled"
-                      ? { _tag: "cancelled", atMs: healthRuntime.now() }
+                      ? {
+                          _tag: "cancelled",
+                          atMs: healthRuntime.now(),
+                          wasQueued: queued && !started,
+                        }
                       : {
                           _tag: "completed",
                           atMs: healthRuntime.now(),
@@ -1807,6 +1803,30 @@ export const makeSlackGateway = (
                 chatKey: message.chatKey,
                 failure: steered.failure,
               });
+            }
+
+            if (chatState.pending >= MAX_PENDING_TURNS_PER_CHAT) {
+              yield* ingressRuntime.finish(
+                target.path,
+                message,
+                ingressOwnerId,
+                "failed",
+                healthRuntime.now(),
+              );
+              yield* transport
+                .postMessage(
+                  config.botToken,
+                  message.channel,
+                  BUSY_MESSAGE,
+                  slackReplyThreadTs(message),
+                )
+                .pipe(
+                  Effect.catch((failure) =>
+                    Effect.logWarning("Slack busy response failed", { failure }),
+                  ),
+                );
+
+              return;
             }
 
             const cancellation = yield* Deferred.make<void>();

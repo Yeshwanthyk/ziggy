@@ -1451,6 +1451,90 @@ describe("Discord gateway boundary", () => {
     expect(finishedStates).toEqual([]);
   });
 
+  test("settles replay beyond the per-chat turn cap instead of spawning unbounded work", async () => {
+    const settled: Array<string> = [];
+    const posts: Array<string> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const overflow = yield* Deferred.make<void>();
+
+        const replay: ReadonlyArray<DiscordIngressPayload> = Array.from(
+          { length: 9 },
+          (_, index) => ({
+            messageId: `replay-${index}`,
+            sourceChannelId: "456",
+            channelId: "456",
+            authorId: "123",
+            text: `request ${index}`,
+            chatKey: "user-123",
+            context: { kind: "user", userId: "owner" },
+          }),
+        );
+
+        const transport: DiscordTransport = {
+          ...silentDiscordFeedback,
+          openSocket: () =>
+            Effect.succeed({
+              next: Effect.never,
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          getChannel: () => unexpectedDiscordApiCall("getChannel"),
+          startThreadFromMessage: () => unexpectedDiscordApiCall("startThreadFromMessage"),
+          createMessage: (_token, _channel, text) =>
+            Effect.gen(function* () {
+              posts.push(text);
+
+              if (text === "This conversation is busy. Please try again later.") {
+                yield* Deferred.succeed(overflow, undefined);
+              }
+
+              return { id: "placeholder" };
+            }),
+          updateMessage: () => Effect.void,
+        };
+
+        const ingress: DiscordIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          readReplayable: () => Effect.succeed(replay),
+          admit: () => Effect.succeed("duplicate"),
+          start: () => Effect.succeed(true),
+          requeue: () => Effect.void,
+          finish: (_path, payload, _owner, state) =>
+            Effect.sync(() => {
+              settled.push(`${payload.messageId}:${state}`);
+            }),
+        };
+
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
+        };
+
+        yield* Effect.raceFirst(
+          makeDiscordGateway(agent, transport, undefined, ingress).runLoop(
+            { path: "/tmp/ziggy-discord-cap-test", name: "Test" },
+            { botToken: "token", ownerUserId: "123" },
+          ),
+          Deferred.await(overflow),
+        );
+      }),
+    );
+
+    expect(settled).toContain("replay-8:failed");
+    expect(posts).toContain("This conversation is busy. Please try again later.");
+  });
+
   test("replays accepted Discord ingress before waiting for new socket messages", async () => {
     const lifecycle: Array<string> = [];
 

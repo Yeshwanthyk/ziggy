@@ -144,6 +144,59 @@ const yieldToSupervisor = Effect.gen(function* () {
 });
 
 describe("Discord socket Effect boundary", () => {
+  test("rejects an oversized frame before decoding or retaining it", async () => {
+    const fixture = dependencies();
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage("x".repeat(1_048_577));
+
+          return yield* socket.next.pipe(Effect.result);
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "DiscordSocketError", reason: "queue-overflow" },
+    });
+  });
+
+  test("does not admit oversized inbound text", async () => {
+    const fixture = dependencies();
+
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(ready);
+          fixture.connections[0]?.emitMessage(
+            JSON.stringify({
+              op: 0,
+              s: 43,
+              t: "MESSAGE_CREATE",
+              d: {
+                id: "large",
+                channel_id: "channel",
+                author: { id: "owner" },
+                content: "x".repeat(16_001),
+              },
+            }),
+          );
+          fixture.connections[0]?.emitMessage(message("small"));
+
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received.id).toBe("small");
+  });
+
   test("projects connected and reconnecting lifecycle without Discord content", async () => {
     const fixture = dependencies({
       schedule: () => () => undefined,
