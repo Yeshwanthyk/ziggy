@@ -987,31 +987,31 @@ export const askOnce = (
     Effect.gen(function* () {
       const soulPath = yield* requireSoul(target.path);
 
-      const { manager: sessionManager, release } = yield* prepareLeasedSession(
-        target.path,
-        options?.sessionPath === undefined
-          ? continueSession
-            ? localMainSessionDirectory(target.path)
-            : join(target.path, "sessions")
-          : dirname(options.sessionPath),
-        continueSession ? "continue" : "fresh",
-        options?.sessionPath,
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+      const { manager: sessionManager, lease } = yield* Effect.acquireRelease(
+        prepareLeasedSession(
+          target.path,
+          options?.sessionPath === undefined
+            ? continueSession
+              ? localMainSessionDirectory(target.path)
+              : join(target.path, "sessions")
+            : dirname(options.sessionPath),
+          continueSession ? "continue" : "fresh",
+          options?.sessionPath,
+        ).pipe(
+          Effect.mapError((cause) =>
+            cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+          ),
+          Effect.map(({ manager, release }) => ({
+            manager,
+            lease: makeSessionLeaseTransitions(target.path, manager.getSessionId(), release),
+          })),
         ),
-      );
-
-      const lease = makeSessionLeaseTransitions(
-        target.path,
-        sessionManager.getSessionId(),
-        release,
-      );
-
-      yield* Effect.addFinalizer(() =>
-        lease.close.pipe(
-          Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
-        ),
+        ({ lease }) =>
+          lease.close.pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Session lease release failed", { failure }),
+            ),
+          ),
       );
 
       const runtimeOptions: ProfileRuntimeOptions = {

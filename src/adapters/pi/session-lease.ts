@@ -251,6 +251,8 @@ export const makeSessionLeaseTransitions = (
         return;
       }
 
+      if (reserved !== undefined && reserved.id !== id) yield* cancelReservation;
+
       const next =
         reserved?.id === id ? reserved.release : yield* acquireSessionLease(profilePath, id);
 
