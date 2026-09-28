@@ -46,7 +46,7 @@ Status: done; on main (d5bb377).
 
 ## 1. Correctness fixes
 
-Status: pending.
+Status: Slack health done (review/chat); command cache and fingerprint in review.
 
 - UI gateway command cache (`src/application/ui-gateway.ts:1531`). A defect in `run` never completes
   the `Deferred`, so retries hang. The whole run is uninterruptible, and FIFO eviction can drop
@@ -125,7 +125,7 @@ Status: pending (the fingerprint recheck is in section 1).
 
 ## 7. Chat gateways
 
-Status: pending.
+Status: done (review/chat). Merging the Slack and Discord turn schedulers stays deferred.
 
 - Bound the per-chat queue and the WebSocket frame and text sizes.
 - Remove the unused `slackHeartbeat` and its test.

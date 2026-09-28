@@ -1053,3 +1053,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Offline `pi_docs` includes Ziggy's Profile resource rules.
 - Replaced TUI instructions in `docs/operations/*.md` and the preloaded skills with resident web UI and CLI flows, and regenerated the packaged references. The extension-authoring skill says extensions run headless: `ctx.ui` confirm returns `false`, select and input return `undefined`.
 - Verification: `bun run check` and `bun run test` (714 pass) passed. Opus re-review: merge.
+
+## 2026-09-28 — Chat gateway health, bounds, and recoverable sockets
+
+- Slack: a cancelled queued turn now decrements `queuedTurnCount`. A model-based property test checks that health counts never go negative and that queued ≤ active.
+- Both gateways cap pending turns at 8 per chat. The overflow "busy" reply is forked into the gateway scope, at most one per chat until there is room again. WebSocket frames are bounded at 8 MiB; Slack text is accepted up to 40,000 characters.
+- Oversized or undecodable frames no longer stop a gateway. Slack drops the frame without acknowledging it, and Slack's bounded retry stops redelivery. Discord reconnects with a fresh session (resuming would replay the bad event), using the existing backoff capped at 30s.
+- Removed the unused `slackHeartbeat` and its test. The Slack and Discord turn schedulers were not merged: steering and ingress settlement differ.
+- Verification: `bun run check` and `bun run test` (720 pass) passed. Opus re-review: merge.
