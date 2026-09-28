@@ -2233,7 +2233,9 @@ export const openChat = (
         target.path,
         () => runtime.session,
         {
-          currentSession: currentPiSessionReference(target.path, runtime.session.sessionManager),
+          currentSession: Effect.suspend(() =>
+            currentPiSessionReference(target.path, runtime.session.sessionManager),
+          ),
           prompt: (text, options) =>
             Effect.suspend(() => {
               if (!lease.owns(runtime.session.sessionManager.getSessionId())) {
@@ -2420,9 +2422,8 @@ export const openSpecialistChat = (
           target.path,
           () => liveRuntime.session,
           {
-            currentSession: currentPiSessionReference(
-              target.path,
-              liveRuntime.session.sessionManager,
+            currentSession: Effect.suspend(() =>
+              currentPiSessionReference(target.path, liveRuntime.session.sessionManager),
             ),
             prompt: (text, options) =>
               Effect.suspend(() =>
