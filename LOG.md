@@ -1024,3 +1024,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Removed the bundled `dev-browser` and `agent-browser` extensions; browser control belongs to `computer-use` (pi-computer-use). No Profile enabled either.
 - The bundled-catalog resource test now derives packages, executables, and skills from `BUILTIN_PACKAGE_METADATA` and asserts invariants (extension folders match the catalog, loaded skills match declared skills, tool names are unique and active) instead of hardcoded counts and tool lists.
 - Verification: `bun run check` and `bun run test` passed.
+
+## 2026-09-28 — Pi family upgrade to 0.87.1
+
+- Pinned `@earendil-works/pi-coding-agent@0.87.1` (lockfile resolves `pi-ai`, `pi-agent-core`, `pi-tui` and siblings at 0.87.1) and bumped extension peer pins to Pi 0.87.1 and Pi's bundled `typebox@1.3.27`.
+- Reason: Pi 0.84.1's static catalog lacked GPT-6 models, and Ziggy never enables Pi's network catalog refresh, so `gpt-6-luna` was "unknown model" and `models status` reported a working `gpt-6-astra` Profile as unconfigured.
+- Breaking changes in 0.86/0.87 (`shouldStopAfterTurn`, canonical `SessionManager` context, `TurnEndEvent`, `TranscriptContext`) touch no Ziggy source. Only a TUI-extension test fixture needed the new `NormalizedBuildSystemPromptOptions` shape.
+- Regenerated pi-docs embeds and the builtin catalog; version strings in pi-docs, tui-themes, and their tests follow the pin.
+- Verification: `bun run check` and `bun run test` (733 pass) passed. Live: a fresh Profile on `openai-codex/gpt-6-luna` high answered in 2.5–4s; one first request stalled until the 300s Codex WebSocket idle timeout before Pi's retry succeeded. The installed binary and `~/.ziggy` were not touched.

@@ -110,7 +110,7 @@ test("build report decode requires catalog and Pi docs fingerprints", () => {
     lockSha256: "b".repeat(64),
     catalogFingerprint: "c".repeat(64),
     piDocsFingerprint: "d".repeat(64),
-    piVersion: "0.84.1",
+    piVersion: "0.87.1",
     piDocsCount: 31,
   };
 

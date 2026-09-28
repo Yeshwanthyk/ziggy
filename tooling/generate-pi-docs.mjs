@@ -5,7 +5,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PINNED_VERSION = "0.84.1";
+const PINNED_VERSION = "0.87.1";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

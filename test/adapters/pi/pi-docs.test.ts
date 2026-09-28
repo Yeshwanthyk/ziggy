@@ -193,8 +193,8 @@ describe("pinned Pi docs search and read", () => {
     const read = await resultText({
       action: "read",
       path: "docs/extensions.md",
-      startLine: 3,
-      endLine: 5,
+      startLine: 1,
+      endLine: 3,
     });
 
     expect(read).toContain("# Extensions");
@@ -225,7 +225,7 @@ describe("pi docs generator freshness", () => {
         .update(
           JSON.stringify({
             package: "@earendil-works/pi-coding-agent",
-            version: "0.84.1",
+            version: "0.87.1",
             files,
           }),
         )

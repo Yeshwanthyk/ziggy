@@ -2,9 +2,9 @@
 import { describe, expect, test } from "bun:test";
 import type {
   BeforeAgentStartEvent,
-  BuildSystemPromptOptions,
   InputEvent,
   KeybindingsManager,
+  NormalizedBuildSystemPromptOptions,
   SessionInfoChangedEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -35,7 +35,17 @@ type Ui = {
   addAutocompleteProvider(factory: (current: TestProvider) => TestProvider): void;
 };
 
-const emptySystemPromptOptions = { cwd: "/profiles/ziggy-dev" } satisfies BuildSystemPromptOptions;
+const emptySystemPromptOptions = {
+  cwd: "/profiles/ziggy-dev",
+  selectedTools: [],
+  toolSnippets: {},
+  toolGuidelines: {},
+  promptGuidelines: [],
+  appendSystemPrompt: "",
+  sections: {},
+  contextFiles: [],
+  skills: [],
+} satisfies NormalizedBuildSystemPromptOptions;
 
 const sessionStartEvent: SessionStartEvent = {
   type: "session_start",

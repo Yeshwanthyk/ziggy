@@ -31,7 +31,7 @@ export const piBuiltinMarkedJsPath: string = `${markedJsFile}`;
 
 export const piBuiltinPhotonWasmPath: string = `${photonWasmFile}`;
 
-/** Compiled Bun TUI layout under `PI_PACKAGE_DIR` (`isBunBinary` in Pi 0.84.1). */
+/** Compiled Bun TUI layout under `PI_PACKAGE_DIR` (`isBunBinary` in Pi 0.87.1). */
 export const compiledPiTuiPackageLayout = [
   "theme/dark.json",
   "theme/light.json",

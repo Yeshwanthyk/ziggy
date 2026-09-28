@@ -38,7 +38,7 @@ const decodeThemeName = Schema.decodeUnknownSync(
 );
 
 describe("compiled Pi TUI package layout", () => {
-  test("writes Pi 0.84.1 compiled sidecar files under the package root", async () => {
+  test("writes Pi 0.87.1 compiled sidecar files under the package root", async () => {
     const destRoot = await mkdtemp(join(tmpdir(), "ziggy-pi-tui-assets-"));
 
     try {
