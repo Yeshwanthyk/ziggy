@@ -11,7 +11,7 @@ import {
   type AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { Cause, Effect, Exit, Fiber, Predicate, Result } from "effect";
+import { Cause, Effect, Exit, Fiber, Option, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProviderCallError,
@@ -28,6 +28,7 @@ import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineag
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { specialistRuntime } from "ziggy/adapters/pi/specialist";
 import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
+import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   askOnce,
@@ -186,6 +187,50 @@ test("current Pi session reference is empty until materialized and follows sessi
     id: "switched-session",
     file: switchedFile,
   });
+});
+
+test("run --session refuses a session held by another writer before creating Pi", async () => {
+  const profilePath = await temporaryProfile();
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
+  const manager = createLocalSessionManager(profilePath, "main");
+  const file = manager.getSessionFile();
+
+  if (file === undefined) throw new Error("expected persistent session file");
+  await mkdir(join(profilePath, "sessions", "local", "main"), { recursive: true });
+  await writeFile(
+    file,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: manager.getSessionId(),
+      timestamp: new Date().toISOString(),
+      cwd: profilePath,
+    })}\n`,
+  );
+  const release = await Effect.runPromise(acquireSessionLease(profilePath, manager.getSessionId()));
+
+  try {
+    const exit = await Effect.runPromiseExit(
+      askOnce(
+        { path: profilePath, name: "Profile" },
+        "hello",
+        false,
+        { kind: "local" },
+        profilePath,
+        { sessionPath: file },
+      ),
+    );
+
+    const message = Exit.isFailure(exit)
+      ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))?.message
+      : undefined;
+
+    expect(message).toBe(
+      "this session is open in the resident; use the UI, or start a new session",
+    );
+  } finally {
+    await Effect.runPromise(release);
+  }
 });
 
 describe("Pi provider failure classification", () => {
