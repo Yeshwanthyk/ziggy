@@ -1,6 +1,12 @@
 import { Schema } from "effect";
-import type { ModelStatus } from "../adapters/pi/models";
 import type { DoctorReport } from "./doctor";
+
+export interface SetupModelStatus {
+  readonly providerId: string | undefined;
+  readonly modelId: string | undefined;
+  readonly thinking: string;
+  readonly authConfigured: boolean;
+}
 
 export class SetupIncomplete extends Schema.TaggedErrorClass<SetupIncomplete>()("SetupIncomplete", {
   profilePath: Schema.String,
@@ -12,6 +18,6 @@ export interface SetupResult {
   readonly soulCreated: boolean;
   readonly createdDirectories: ReadonlyArray<"agents" | "automations">;
   readonly minimal: boolean;
-  readonly modelStatus?: ModelStatus;
+  readonly modelStatus?: SetupModelStatus;
   readonly doctor?: DoctorReport;
 }

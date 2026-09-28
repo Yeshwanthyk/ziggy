@@ -38,7 +38,7 @@ import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-up
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId } from "./domain/automation";
-import { CliInputInvalid } from "./domain/cli";
+import { CliInputInvalid } from "./faces/cli-command";
 import { parseMemoryScopeReference } from "./domain/memory";
 import {
   resolveProfileTarget,

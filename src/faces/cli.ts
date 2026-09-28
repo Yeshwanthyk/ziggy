@@ -1,5 +1,5 @@
 import { Effect, Predicate, Schema } from "effect";
-import { CliInputInvalid, type CliCommand } from "../domain/cli";
+import { CliInputInvalid, type CliCommand } from "./cli-command";
 import { isZiggyHelpTopic, renderZiggyHelp, ziggyHelpTopics } from "../domain/cli-help";
 import { MemoryScopeReference } from "../domain/memory";
 

@@ -1,26 +1,6 @@
 import { Schema } from "effect";
-import type { MemoryScopeReference } from "./memory";
-
-export type HelpTopic =
-  | "help"
-  | "version"
-  | "update"
-  | "init"
-  | "profiles"
-  | "extensions"
-  | "auth"
-  | "models"
-  | "agents"
-  | "doctor"
-  | "run"
-  | "acp"
-  | "automations"
-  | "wake"
-  | "sessions"
-  | "memory"
-  | "serve"
-  | "web"
-  | "gateway";
+import type { MemoryScopeReference } from "../domain/memory";
+import type { HelpTopic } from "../domain/cli-help";
 
 export type CliCommand =
   | { readonly _tag: "Help"; readonly topic?: HelpTopic }

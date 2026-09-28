@@ -1,4 +1,23 @@
-import type { HelpTopic } from "./cli";
+export type HelpTopic =
+  | "help"
+  | "version"
+  | "update"
+  | "init"
+  | "profiles"
+  | "extensions"
+  | "auth"
+  | "models"
+  | "agents"
+  | "doctor"
+  | "run"
+  | "acp"
+  | "automations"
+  | "wake"
+  | "sessions"
+  | "memory"
+  | "serve"
+  | "web"
+  | "gateway";
 
 export const ziggyHelpTopics = [
   "help",
