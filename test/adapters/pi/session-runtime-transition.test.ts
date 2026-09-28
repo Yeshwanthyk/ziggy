@@ -72,6 +72,8 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
       >
     | undefined;
 
+  let rejectTargetBind = false;
+
   const createRuntime: Parameters<typeof createAgentSessionRuntime>[0] = async ({
     cwd,
     agentDir,
@@ -110,6 +112,9 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
     const bind = result.session.bindExtensions.bind(result.session);
 
     result.session.bindExtensions = async (bindings) => {
+      if (rejectTargetBind && sessionManager.getSessionId() === "target")
+        throw new Error("target bind failed");
+
       actions = bindings.commandContextActions;
       await bind(bindings);
     };
@@ -269,6 +274,77 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
     expect(lease.owns("target")).toBe(true);
     const thirdAfter = await Effect.runPromise(acquireSessionLease(profilePath, "third"));
     await Effect.runPromise(thirdAfter);
+
+    let notified = 0;
+
+    const removeFirst = binding.onRebind(() => {
+      throw new Error("removed callback ran");
+    });
+
+    binding.onRebind(() => {
+      notified += 1;
+    });
+    removeFirst();
+
+    let enteredSwitch: () => void = () => undefined;
+    let releaseSwitch: () => void = () => undefined;
+
+    const entered = new Promise<void>((resolve) => {
+      enteredSwitch = resolve;
+    });
+
+    const blocked = new Promise<void>((resolve) => {
+      releaseSwitch = resolve;
+    });
+
+    const originalSwitch = runtime.switchSession.bind(runtime);
+    runtime.switchSession = async (file, options) => {
+      enteredSwitch();
+      await blocked;
+
+      return originalSwitch(file, options);
+    };
+
+    const pending = Effect.runPromise(controls.resume("third"));
+    await entered;
+
+    try {
+      expect(binding.isSwitching()).toBe(true);
+
+      for (const operation of [handle.prompt("hello"), handle.steer("hi"), handle.followUp("hi")]) {
+        expect(await Effect.runPromise(Effect.result(operation))).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "SessionBusy" },
+        });
+      }
+
+      const commands = actions;
+
+      if (commands === undefined) throw new Error("Pi command actions not bound");
+      await expect(commands.newSession()).rejects.toMatchObject({ _tag: "SessionBusy" });
+      await expect(commands.fork("entry")).rejects.toMatchObject({ _tag: "SessionBusy" });
+      await expect(commands.switchSession(targetFile)).rejects.toMatchObject({
+        _tag: "SessionBusy",
+      });
+      expect(lease.owns("target")).toBe(true);
+    } finally {
+      releaseSwitch();
+    }
+
+    expect(await pending).toEqual({ cancelled: false });
+    expect(binding.isSwitching()).toBe(false);
+    expect(notified).toBe(1);
+    expect(lease.owns("third")).toBe(true);
+    emitTool("third");
+    expect(events).toHaveLength(5);
+
+    rejectTargetBind = true;
+    expect(await Effect.runPromise(Effect.result(controls.resume("target")))).toMatchObject({
+      _tag: "Failure",
+    });
+    emitTool("third");
+    emitTool("target");
+    expect(events).toHaveLength(6);
 
     unsubscribe();
     await Effect.runPromise(handle.dispose);

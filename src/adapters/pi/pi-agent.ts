@@ -1482,6 +1482,8 @@ export interface ChatRuntimeBinding {
   readonly switchSession: AgentSessionRuntime["switchSession"];
   readonly switchSessionUnderControl: AgentSessionRuntime["switchSession"];
   readonly withControl: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  readonly withSessionSwitch: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  readonly isSwitching: () => boolean;
   readonly onRebind: (callback: () => void) => () => void;
 }
 
@@ -1491,13 +1493,21 @@ export const bindChatRuntime = async (
 ): Promise<ChatRuntimeBinding> => {
   const semaphore = Semaphore.makeUnsafe(1);
 
-  let rebindListener: (() => void) | undefined;
+  const rebindListeners = new Set<() => void>();
+  let switching = false;
 
   const serialized = <A>(operation: () => Promise<A>): Promise<A> =>
-    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-    Effect.runPromise(
-      semaphore.withPermit(Effect.tryPromise({ try: operation, catch: (cause) => cause })),
-    );
+    switching
+      ? Promise.reject(
+          new SessionBusy({
+            profilePath: runtime.session.sessionManager.getCwd(),
+            message: "session is switching; wait for the resume to finish",
+          }),
+        )
+      : // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+        Effect.runPromise(
+          semaphore.withPermit(Effect.tryPromise({ try: operation, catch: (cause) => cause })),
+        );
 
   let invalidatedSession: AgentSessionRuntime["session"] | undefined;
   runtime.setBeforeSessionInvalidate(() => {
@@ -1551,6 +1561,9 @@ export const bindChatRuntime = async (
 
   const bindSession = async (): Promise<void> => {
     const session = runtime.session;
+
+    for (const listener of rebindListeners) listener();
+
     await session.bindExtensions({
       mode: "print",
       commandContextActions: {
@@ -1637,7 +1650,6 @@ export const bindChatRuntime = async (
         console.error(`Extension error (${error.extensionPath}): ${error.error}`);
       },
     });
-    rebindListener?.();
   };
 
   runtime.setRebindSession(bindSession);
@@ -1647,11 +1659,25 @@ export const bindChatRuntime = async (
     switchSession,
     switchSessionUnderControl: switchSessionUnserialized,
     withControl: (effect) => semaphore.withPermit(effect),
+    withSessionSwitch: (effect) =>
+      semaphore.withPermit(
+        Effect.sync(() => {
+          switching = true;
+        }).pipe(
+          Effect.andThen(effect),
+          Effect.ensuring(
+            Effect.sync(() => {
+              switching = false;
+            }),
+          ),
+        ),
+      ),
+    isSwitching: () => switching,
     onRebind: (callback) => {
-      rebindListener = callback;
+      rebindListeners.add(callback);
 
       return () => {
-        if (rebindListener === callback) rebindListener = undefined;
+        rebindListeners.delete(callback);
       };
     },
   };
@@ -1893,12 +1919,13 @@ export const makeLiveChatControls = (
           }),
         );
 
-  const withIdleControl = <A, E>(effect: Effect.Effect<A, E>) =>
-    binding.withControl(
-      Effect.suspend(() =>
-        requireWriter().pipe(Effect.andThen(requireIdle()), Effect.andThen(effect)),
-      ),
+  const withIdleControl = <A, E>(effect: Effect.Effect<A, E>, switchSession = false) => {
+    const guarded = Effect.suspend(() =>
+      requireWriter().pipe(Effect.andThen(requireIdle()), Effect.andThen(effect)),
     );
+
+    return switchSession ? binding.withSessionSwitch(guarded) : binding.withControl(guarded);
+  };
 
   return {
     modelState: Effect.sync(modelState),
@@ -1961,6 +1988,7 @@ export const makeLiveChatControls = (
             }),
           ),
         ),
+        true,
       ),
   };
 };
@@ -1975,7 +2003,7 @@ export const makeSessionChatHandle = (
   abortSession: () => Promise<void> = sharePiAbort(() => liveSession().abort()),
   voiceHub?: SpecialistVoiceHub,
   lease?: SessionLeaseTransitions,
-  binding?: Pick<ChatRuntimeBinding, "onRebind">,
+  binding?: Pick<ChatRuntimeBinding, "onRebind" | "isSwitching">,
 ): ChatHandle => {
   const listeners = new Set<(event: ChatEvent) => void>();
   const project = createChatEventProjector();
@@ -2027,6 +2055,21 @@ export const makeSessionChatHandle = (
       ? new AutomationConversationDeliveryFailed({ category, retriable, message })
       : new AutomationConversationDeliveryFailed({ category, retriable, message, cause });
 
+  const whileNotSwitching = <A, E>(
+    effect: () => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | SessionBusy> =>
+    Effect.suspend(
+      (): Effect.Effect<A, E | SessionBusy> =>
+        binding?.isSwitching()
+          ? Effect.fail(
+              new SessionBusy({
+                profilePath,
+                message: "session is switching; wait for the resume to finish",
+              }),
+            )
+          : effect(),
+    );
+
   return {
     get isIdle() {
       return liveSession().isIdle;
@@ -2062,7 +2105,7 @@ export const makeSessionChatHandle = (
         Effect.fail(
           providerError(profilePath, "resume session", new Error("session controls unavailable")),
         )),
-    prompt: methods.prompt,
+    prompt: (text, options) => whileNotSwitching(() => methods.prompt(text, options)),
     ...currentSession,
     appendAutomationResult: (result) =>
       Effect.gen(function* () {
@@ -2200,27 +2243,35 @@ export const makeSessionChatHandle = (
       }),
     abort: piPromise(profilePath, "abort agent session", abortSession),
     steer: (text) =>
-      lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
-        ? Effect.fail(
-            sessionLeaseError(
-              profilePath,
-              new Error("live session no longer holds its writer lease"),
-            ),
-          )
-        : liveSession().isIdle
-          ? Effect.fail(chatNotStreaming(profilePath, "steer"))
-          : piPromise(profilePath, "steer agent session", () => liveSession().steer(text)),
+      whileNotSwitching(
+        (): Effect.Effect<void, ZiggyAgentError | ChatNotStreaming> =>
+          lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
+            ? Effect.fail(
+                sessionLeaseError(
+                  profilePath,
+                  new Error("live session no longer holds its writer lease"),
+                ),
+              )
+            : liveSession().isIdle
+              ? Effect.fail(chatNotStreaming(profilePath, "steer"))
+              : piPromise(profilePath, "steer agent session", () => liveSession().steer(text)),
+      ),
     followUp: (text) =>
-      lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
-        ? Effect.fail(
-            sessionLeaseError(
-              profilePath,
-              new Error("live session no longer holds its writer lease"),
-            ),
-          )
-        : liveSession().isIdle
-          ? Effect.fail(chatNotStreaming(profilePath, "followUp"))
-          : piPromise(profilePath, "follow up agent session", () => liveSession().followUp(text)),
+      whileNotSwitching(
+        (): Effect.Effect<void, ZiggyAgentError | ChatNotStreaming> =>
+          lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
+            ? Effect.fail(
+                sessionLeaseError(
+                  profilePath,
+                  new Error("live session no longer holds its writer lease"),
+                ),
+              )
+            : liveSession().isIdle
+              ? Effect.fail(chatNotStreaming(profilePath, "followUp"))
+              : piPromise(profilePath, "follow up agent session", () =>
+                  liveSession().followUp(text),
+                ),
+      ),
     subscribe: (listener) => {
       listeners.add(listener);
 
