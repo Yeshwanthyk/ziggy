@@ -156,7 +156,7 @@ it("offers both selected and unselected extensions without optimistic selection"
   expect(unselected.checked).toBe(false);
 });
 
-it("renders a selected id absent from the catalog so it can be disabled", () => {
+it("renders a selected id absent from the catalog so it can be disabled", async () => {
   const toggle = vi.fn(async () => undefined);
   render(
     <SettingsDialog
@@ -197,6 +197,19 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
   expect(screen.getByText("ziggy serve restart '/Users/me/Ziggy Profiles/Squarey'")).not.toBeNull();
   fireEvent.click(screen.getByRole("switch", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
+  // A rejected clipboard write falls back to selecting the command.
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Copy restart command" }));
+  await waitFor(() => expect(screen.getByText("Select and copy")).not.toBeNull());
+  expect(window.getSelection()?.toString()).toBe(
+    "ziggy serve restart '/Users/me/Ziggy Profiles/Squarey'",
+  );
+  if (clipboard === undefined) Reflect.deleteProperty(navigator, "clipboard");
+  else Object.defineProperty(navigator, "clipboard", clipboard);
 });
 
 it("keeps live session switches disabled while streaming, without changing Profile defaults", () => {

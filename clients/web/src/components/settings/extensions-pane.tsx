@@ -24,7 +24,7 @@ const sourceLabels: Readonly<Record<ZiggyExtensionChoice["source"], string>> = {
 interface Row {
   readonly id: string;
   readonly description: string;
-  readonly source?: ZiggyExtensionChoice["source"];
+  readonly source: ZiggyExtensionChoice["source"];
   readonly problem?: string;
 }
 
@@ -53,15 +53,15 @@ export function ExtensionsPane({
             .map((id) => ({
               id,
               description: "",
+              // Selected ids outside the catalog come from the Profile's own extension list.
+              source: "profile" as const,
               problem: skipped.has(id)
                 ? "Skipped at load; see above."
                 : "Not in the current catalog",
             })),
         ];
 
-  const sources = [
-    ...new Set(rows.flatMap((row) => (row.source === undefined ? [] : [row.source]))),
-  ];
+  const sources = [...new Set(rows.map((row) => row.source))];
   const filters: ReadonlyArray<{ readonly id: Filter; readonly label: string }> = [
     { id: "all", label: "All" },
     { id: "enabled", label: "Enabled" },
@@ -146,9 +146,7 @@ export function ExtensionsPane({
                       <span className="settings-row-text">
                         <span className="settings-extension-name">
                           <strong>{row.id}</strong>
-                          {row.source === undefined ? null : (
-                            <Badge>{sourceLabels[row.source]}</Badge>
-                          )}
+                          <Badge>{sourceLabels[row.source]}</Badge>
                         </span>
                         {row.problem === undefined ? (
                           <small title={row.description}>{row.description}</small>
@@ -193,26 +191,53 @@ export function ExtensionsPane({
 
 function RestartBar({ cliTarget }: { readonly cliTarget: string | undefined }) {
   const command = `ziggy serve restart ${profileCommandArgument(cliTarget)}`;
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
+  const codeRef = useRef<HTMLElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), 1500);
+  // Without clipboard access, select the command so the person can copy it themselves.
+  const selectCommand = (): void => {
+    const code = codeRef.current;
+    const selection = window.getSelection();
+    if (code === null || selection === null) return;
+    const range = document.createRange();
+    range.selectNodeContents(code);
+    selection.removeAllRanges();
+    selection.addRange(range);
   };
+
+  const copy = async (): Promise<void> => {
+    clearTimeout(timer.current);
+    try {
+      if (navigator.clipboard === undefined) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(command);
+      setCopyState("copied");
+      timer.current = setTimeout(() => setCopyState("idle"), 1500);
+    } catch {
+      selectCommand();
+      setCopyState("manual");
+    }
+  };
+
+  const copied = copyState === "copied";
 
   return (
     <div className="settings-pane-footer settings-restart">
       <div className="settings-restart-text">
         <p role="status">Restart the resident to apply extension changes.</p>
-        <code>{command}</code>
+        <code ref={codeRef} title={command}>
+          {command}
+        </code>
+        {copyState === "manual" ? (
+          <small className="settings-muted" role="status">
+            Select and copy
+          </small>
+        ) : null}
       </div>
       <Button
         aria-label={copied ? "Copied restart command" : "Copy restart command"}
-        onClick={() => void copy().catch(() => undefined)}
+        onClick={() => void copy()}
         size="sm"
         type="button"
         variant="outline"
