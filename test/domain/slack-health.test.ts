@@ -48,7 +48,7 @@ describe("Slack health projection", () => {
       queued: false,
     });
 
-    const cancelled = evolveSlackHealth(accepted, { _tag: "cancelled", atMs: 3 });
+    const cancelled = evolveSlackHealth(accepted, { _tag: "cancelled", atMs: 3, wasQueued: false });
 
     expect(cancelled.activeTurnCount).toBe(0);
     expect(cancelled.cancelledTurnCount).toBe(1);

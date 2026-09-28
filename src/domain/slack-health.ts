@@ -63,7 +63,7 @@ export type SlackHealthEvent =
   | { readonly _tag: "accepted"; readonly atMs: number; readonly queued: boolean }
   | { readonly _tag: "started"; readonly atMs: number; readonly wasQueued: boolean }
   | { readonly _tag: "completed"; readonly atMs: number; readonly succeeded: boolean }
-  | { readonly _tag: "cancelled"; readonly atMs: number }
+  | { readonly _tag: "cancelled"; readonly atMs: number; readonly wasQueued: boolean }
   | { readonly _tag: "stopped"; readonly atMs: number };
 
 export const initialSlackHealth = (atMs: number): SlackHealthSnapshot => ({
@@ -128,6 +128,9 @@ export const evolveSlackHealth = (
         ...base,
         lastTurnCompletedAtMs: event.atMs,
         activeTurnCount: Math.max(0, current.activeTurnCount - 1),
+        queuedTurnCount: event.wasQueued
+          ? Math.max(0, current.queuedTurnCount - 1)
+          : current.queuedTurnCount,
         cancelledTurnCount: current.cancelledTurnCount + 1,
       };
     case "stopped":
