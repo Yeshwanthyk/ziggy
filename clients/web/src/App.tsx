@@ -35,7 +35,7 @@ import { readSavedConnection } from "@/components/settings/connection-pane";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { type ConversationSummary, useZiggyGateway } from "@/gateway";
 
-const avatar = (name: string, active = false, size = 36) => (
+const avatar = (name: string, active = false, size = 32) => (
   <BotAvatar active={active} className="bot-avatar" name={name} size={size} />
 );
 
@@ -445,10 +445,9 @@ export function App() {
           <Stack alignCenter gap={2}>
             <Button
               aria-label="Refresh sidebar"
-              className="compact-icon"
               disabled={!connected || gateway.sidebarLoading}
               onClick={() => void gateway.refreshSidebar()}
-              size="icon"
+              size="icon-sm"
               variant="ghost"
             >
               <RefreshCw className={gateway.sidebarLoading ? "is-spinning" : ""} />
@@ -662,7 +661,7 @@ export function App() {
               setConnectionOpen(true);
               if (connected) void gateway.loadModelSettings();
             }}
-            size="sm"
+            size="xs"
             variant="ghost"
           >
             <Settings2 />

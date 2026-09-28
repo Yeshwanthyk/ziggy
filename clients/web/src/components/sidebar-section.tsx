@@ -22,10 +22,9 @@ export function SidebarSection({ action, children, empty, title }: SidebarSectio
         {action === undefined ? null : (
           <Button
             aria-label={action.label}
-            className="compact-icon"
             disabled={action.disabled}
             onClick={action.onClick}
-            size="icon"
+            size="icon-sm"
             type="button"
             variant="ghost"
           >

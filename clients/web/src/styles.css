@@ -245,8 +245,9 @@
 }
 
 .sidebar {
-  --row-leading-width: 36px;
-  --row-content-gap: 11px;
+  --rail-pad-x: 8px;
+  --row-leading-width: 32px;
+  --row-content-gap: 12px;
   background: var(--rail);
   border-right: 1px solid var(--border);
   display: flex;
@@ -285,8 +286,8 @@
   padding: 1px 2px;
   position: relative;
   transition:
-    background-color 150ms ease-out,
-    color 150ms ease-out;
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 .profile-switcher span {
@@ -308,9 +309,11 @@
   outline-offset: 2px;
 }
 
-.profile-switcher:hover:has(select:not(:disabled)) {
-  background: var(--accent);
-  color: var(--accent-foreground);
+@media (hover: hover) and (pointer: fine) {
+  .profile-switcher:hover:has(select:not(:disabled)) {
+    background: var(--hover);
+    color: var(--foreground);
+  }
 }
 
 .profile-switcher select {
@@ -382,7 +385,6 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  padding-right: 6px;
   width: 100%;
 }
 
@@ -396,19 +398,14 @@
   display: flex;
   font-size: 12px;
   font-weight: 600;
+  height: 28px;
   justify-content: space-between;
   letter-spacing: normal;
-  min-height: 26px;
-  padding: 0 8px;
+  padding: 0 2px 0 var(--rail-pad-x);
   text-transform: none;
 }
 
-.compact-icon {
-  height: 28px;
-  width: 28px;
-}
-
-.compact-icon svg {
+.sidebar-section-heading svg {
   height: 14px;
   width: 14px;
 }
@@ -418,7 +415,8 @@
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.4;
-  margin: 5px 8px 8px;
+  margin: 4px 0 8px;
+  padding-inline: var(--rail-pad-x);
 }
 
 .conversation-row {
@@ -430,15 +428,11 @@
   cursor: pointer;
   display: flex;
   gap: var(--row-content-gap);
-  min-height: 50px;
-  padding: 6px 8px;
+  min-height: 44px;
+  padding: 4px var(--rail-pad-x);
   text-align: left;
-  transition: background-color 160ms ease-out;
+  transition: background-color var(--dur-fast) var(--ease-out);
   width: 100%;
-}
-
-.conversation-row:hover {
-  background: var(--hover);
 }
 
 .conversation-row:disabled {
@@ -446,16 +440,17 @@
   opacity: 0.5;
 }
 
-.conversation-row:disabled:hover {
-  background: transparent;
-}
-
-.conversation-row[data-selected]:disabled:hover {
-  background: var(--selected);
-}
-
 .conversation-row[data-selected] {
   background: var(--selected);
+}
+
+/* Hover lands instantly and fades out; only background-color moves. */
+@media (hover: hover) and (pointer: fine) {
+  .conversation-row:not(:disabled, [data-selected]):hover,
+  .automation-row:hover {
+    background: var(--hover);
+    transition-duration: 0s;
+  }
 }
 
 .conversation-row:focus-visible,
@@ -468,7 +463,7 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -480,27 +475,32 @@
 }
 
 .automation-row {
-  position: relative;
   align-items: center;
   border-radius: var(--radius-md);
+  column-gap: var(--row-content-gap);
   display: grid;
   grid-template-columns: var(--row-leading-width) minmax(0, 1fr);
-  column-gap: var(--row-content-gap);
   min-height: 44px;
-  padding: 5px 4px 5px 8px;
+  padding: 4px var(--rail-pad-x);
+  position: relative;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
-.automation-row:hover {
-  background: var(--hover);
+/* A 16px slot centred in the avatar column, so labels line up with conversation rows. */
+.automation-leading {
+  align-items: center;
+  display: flex;
+  height: 16px;
+  justify-content: center;
+  justify-self: center;
+  width: 16px;
 }
 
 .automation-status {
-  justify-self: center;
   background: var(--muted-foreground);
   border-radius: 50%;
-  flex: 0 0 auto;
-  height: 7px;
-  width: 7px;
+  height: 8px;
+  width: 8px;
 }
 
 .automation-status.is-active {
@@ -511,11 +511,19 @@
   background: var(--destructive);
 }
 
+.automation-warning,
+.automation-spinner {
+  height: 14px;
+  width: 14px;
+}
+
 .automation-warning {
   color: var(--destructive);
-  height: 16px;
-  width: 16px;
-  justify-self: center;
+}
+
+.automation-spinner {
+  animation: spin 800ms linear infinite;
+  color: var(--muted-foreground);
 }
 
 .automation-copy {
@@ -524,8 +532,8 @@
   color: inherit;
   cursor: pointer;
   display: flex;
-  flex: 1;
   flex-direction: column;
+  gap: 1px;
   min-width: 0;
   padding: 0;
   text-align: left;
@@ -551,45 +559,50 @@
 .automation-copy strong {
   font-size: 13px;
   font-weight: 600;
+  line-height: 18px;
 }
 
 .automation-copy small {
   color: var(--muted-foreground);
   font-size: 12px;
+  line-height: 16px;
 }
 
+/* Actions overlay the row end; the label keeps its width and never reflows. */
 .automation-actions {
+  align-items: center;
+  background: linear-gradient(to right, transparent, var(--rail) 16px);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  bottom: 0;
   display: flex;
-  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0 6px 0 20px;
   position: absolute;
-  right: 4px;
-  background: var(--rail);
+  right: 0;
+  top: 0;
 }
 
-.automation-copy {
-  padding-right: 64px;
+@media (hover: none), (pointer: coarse) {
+  .automation-copy {
+    padding-right: 64px;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
   .automation-actions {
     opacity: 0;
     pointer-events: none;
-  }
-
-  .automation-copy {
-    padding-right: 4px;
-  }
-
-  .automation-row:hover .automation-copy,
-  .automation-row:focus-within .automation-copy {
-    padding-right: 64px;
+    transition: opacity var(--dur-fast) var(--ease-out);
   }
 
   .automation-row:hover .automation-actions,
   .automation-row:focus-within .automation-actions {
-    background: var(--hover);
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .automation-row:hover .automation-actions {
+    background: linear-gradient(to right, transparent, var(--hover) 16px);
   }
 }
 
@@ -1051,11 +1064,13 @@
 .conversation-copy strong {
   font-size: 14px;
   font-weight: 600;
+  line-height: 18px;
 }
 
 .conversation-copy span {
   color: var(--muted-foreground);
   font-size: 13px;
+  line-height: 16px;
 }
 
 .bot-avatar {
@@ -1065,8 +1080,8 @@
 
 .profile-footer {
   border-top: 1px solid var(--border);
-  margin-top: 10px;
-  padding: 13px 7px 2px;
+  margin-top: 8px;
+  padding: 12px 0 0 var(--rail-pad-x);
 }
 
 .profile-footer > span:nth-child(2) {
@@ -1088,7 +1103,6 @@
 
 .settings-button {
   color: var(--muted-foreground);
-  font-size: 12px;
 }
 
 .conversation-main {
@@ -1624,6 +1638,10 @@
 
   .mobile-only {
     display: inline-flex;
+  }
+
+  .settings-button > span {
+    display: none;
   }
 
   .conversation-main {

@@ -64,16 +64,15 @@ export function AutomationRow({
           : `Enabled · ${scheduleLabel(automation.schedule)}`));
   return (
     <div className="automation-row">
-      {running ? (
-        <LoaderCircle
-          className="size-3 animate-spin motion-reduce:animate-none"
-          aria-hidden="true"
-        />
-      ) : needsAttention ? (
-        <CircleAlert className="automation-warning" aria-hidden="true" />
-      ) : (
-        <span className={`automation-status is-${automation.lifecycle}`} aria-hidden="true" />
-      )}
+      <span className="automation-leading" aria-hidden="true">
+        {running ? (
+          <LoaderCircle className="automation-spinner" />
+        ) : needsAttention ? (
+          <CircleAlert className="automation-warning" />
+        ) : (
+          <span className={`automation-status is-${automation.lifecycle}`} />
+        )}
+      </span>
       <button
         className="automation-copy"
         onClick={onInspect}
@@ -90,8 +89,7 @@ export function AutomationRow({
             title={running ? "Already running" : "Run now"}
             disabled={busy || running}
             onClick={onRun}
-            className="compact-icon"
-            size="icon"
+            size="icon-sm"
             type="button"
             variant="ghost"
           >
@@ -103,8 +101,7 @@ export function AutomationRow({
               title="Resume schedule"
               disabled={busy}
               onClick={onResume}
-              className="compact-icon"
-              size="icon"
+              size="icon-sm"
               type="button"
               variant="ghost"
             >
@@ -116,8 +113,7 @@ export function AutomationRow({
               title="Pause schedule"
               disabled={busy}
               onClick={onPause}
-              className="compact-icon"
-              size="icon"
+              size="icon-sm"
               type="button"
               variant="ghost"
             >
