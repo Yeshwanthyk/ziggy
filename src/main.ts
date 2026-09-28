@@ -65,7 +65,7 @@ import {
   renderAutomationValidation,
 } from "./faces/automation-cli";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "./faces/cli";
-import { renderDoctor } from "./faces/doctor-cli";
+import { renderDoctor, renderSetupRecovery } from "./faces/doctor-cli";
 import {
   renderExtension,
   renderExtensionManagerResult,
@@ -286,9 +286,7 @@ const program = Effect.gen(function* () {
 
         if (rendered.exitCode !== 0) {
           process.exitCode = rendered.exitCode;
-          console.error(
-            `setup incomplete; inspect with: ziggy doctor ${JSON.stringify(result.profilePath)}; fix the reported issues, then open: ziggy ${JSON.stringify(result.profilePath)}`,
-          );
+          console.error(renderSetupRecovery(result.doctor));
 
           return;
         }
