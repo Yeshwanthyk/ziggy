@@ -214,10 +214,11 @@ export const createPiDocsTool = (): ToolDefinition<typeof piDocsParameters> => (
   name: "pi_docs",
   label: "pi_docs",
   description:
-    "Look up the pinned offline Pi documentation compiled into Ziggy (README.md and docs/*.md for @earendil-works/pi-coding-agent@0.87.1). Use list, search, or read. Do not fetch Pi docs from the network.",
-  promptSnippet: "Pinned offline Pi README and docs/*.md lookup (list, search, read).",
+    "Look up offline Pi documentation (README.md and docs/*.md for @earendil-works/pi-coding-agent@0.87.1) and Ziggy's Profile resource rules (ziggy/resources.md). Use list, search, or read. Do not fetch Pi docs from the network.",
+  promptSnippet:
+    "Offline Pi README, docs/*.md, and Ziggy Profile resource rules (list, search, read).",
   promptGuidelines: [
-    "Use pi_docs for Pi README and docs/*.md instead of network fetches or source checkout paths.",
+    "Use pi_docs for Pi README and docs/*.md instead of network fetches; use ziggy/resources.md for Profile extension and skill selection rules.",
   ],
   parameters: piDocsParameters,
   execute(_toolCallId, params) {

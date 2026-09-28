@@ -37,10 +37,11 @@ import fileDocsTmux from "../../../../node_modules/@earendil-works/pi-coding-age
 import fileDocsTui from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/tui.md" with { type: "file" };
 import fileDocsUsage from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/usage.md" with { type: "file" };
 import fileDocsWindows from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/windows.md" with { type: "file" };
+import fileZiggyResources from "../../../../tooling/pi-docs/ziggy-resources.md" with { type: "file" };
 
 export const PI_DOCS_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_DOCS_VERSION = "0.87.1";
-export const PI_DOCS_FINGERPRINT = "5dedba01a424835acac65233f5e4f7da8134dc5e3983864512445c5524abcb2f";
+export const PI_DOCS_FINGERPRINT = "efda9f4a6e83cc239338c7bada0986e8372adc88f655d92af03f2eb98990296f";
 
 export const PI_DOC_FILES = new Map<string, string>([
   ["README.md", fileReadme],
@@ -81,4 +82,5 @@ export const PI_DOC_FILES = new Map<string, string>([
   ["docs/tui.md", fileDocsTui],
   ["docs/usage.md", fileDocsUsage],
   ["docs/windows.md", fileDocsWindows],
+  ["ziggy/resources.md", fileZiggyResources],
 ]);

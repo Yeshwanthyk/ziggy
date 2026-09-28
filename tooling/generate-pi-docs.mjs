@@ -74,7 +74,12 @@ const docs = readdirSync(docsRoot)
   .sort((left, right) => left.localeCompare(right))
   .map((name) => collectMarkdown(join(docsRoot, name), `docs/${name}`));
 
-const files = [readme, ...docs];
+const ziggyResources = collectMarkdown(
+  join(repositoryRoot, "tooling/pi-docs/ziggy-resources.md"),
+  "ziggy/resources.md",
+);
+
+const files = [readme, ...docs, ziggyResources];
 
 if (files.length < 2) fail("pi-docs generator found no pinned markdown");
 

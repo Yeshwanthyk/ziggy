@@ -73,6 +73,7 @@ describe("pinned Pi docs inventory", () => {
     expect(paths).toContain("docs/extensions.md");
     expect(paths).toContain("docs/sdk.md");
     expect(paths).toContain("docs/skills.md");
+    expect(paths).toContain("ziggy/resources.md");
     expect(paths.some((path) => path.startsWith("examples/"))).toBe(false);
     expect(paths).not.toContain("docs.json");
     expect(paths.some((path) => path.endsWith(".png"))).toBe(false);
@@ -198,6 +199,10 @@ describe("pinned Pi docs search and read", () => {
     });
 
     expect(read).toContain("# Extensions");
+
+    const resources = await resultText({ action: "read", path: "ziggy/resources.md" });
+    expect(resources).toContain("<profile>/extensions.json");
+    expect(resources).toContain("restart its resident");
 
     const unknown = await resultText({ action: "read", path: "docs/not-real.md" });
     expect(unknown).toBe(
