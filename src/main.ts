@@ -42,7 +42,7 @@ import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
-import { validateAutomationId } from "./domain/automation";
+import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { CliInputInvalid } from "./faces/cli-command";
 import { parseMemoryScopeReference } from "./domain/memory";
 import {
@@ -736,6 +736,7 @@ const program = Effect.gen(function* () {
     case "Wake": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
       const owner = yield* residentGateway.status(target);
+      let outcome: AutomationRunOutcome;
 
       if (owner._tag === "running") {
         const projection = yield* readUiServerProjection(target.path).pipe(
@@ -749,14 +750,12 @@ const program = Effect.gen(function* () {
         if (projection === undefined) return;
 
         const result = yield* wakeInResident(target, command.automationId, projection);
-        console.log(`${result.automationId}: ${result.outcome}`);
-
-        return;
+        outcome = result.runOutcome;
+      } else {
+        outcome = yield* automations.run(target, command.automationId, {
+          kind: "manual-force",
+        });
       }
-
-      const outcome = yield* automations.run(target, command.automationId, {
-        kind: "manual-force",
-      });
 
       const rendered = renderAutomationOutcome(outcome);
 

@@ -259,6 +259,7 @@ export const dispatchAutomation = (
           automationId: params.automationId,
           accepted: true,
           outcome: outcome.kind,
+          runOutcome: outcome,
         };
       });
     case "automation.status":

@@ -261,15 +261,29 @@ export type AutomationTrigger =
       readonly residentOwnerId: string;
     };
 
-export type AutomationRunOutcome =
-  | { readonly kind: "skipped-busy" }
-  | { readonly kind: "declined"; readonly reason: "gate-nonzero"; readonly exitCode: number }
-  | {
-      readonly kind: "executed";
-      readonly delivery:
-        | { readonly kind: "resolved"; readonly targets: ReadonlyArray<AutomationTargetOutcome> }
-        | { readonly kind: "resolution-failed"; readonly category: AutomationResolutionCategory };
-    };
+export const AutomationRunOutcome = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("skipped-busy") }),
+  Schema.Struct({
+    kind: Schema.Literal("declined"),
+    reason: Schema.Literal("gate-nonzero"),
+    exitCode: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("executed"),
+    delivery: Schema.Union([
+      Schema.Struct({
+        kind: Schema.Literal("resolved"),
+        targets: Schema.Array(AutomationTargetOutcome),
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("resolution-failed"),
+        category: AutomationResolutionCategorySchema,
+      }),
+    ]),
+  }),
+]);
+
+export type AutomationRunOutcome = typeof AutomationRunOutcome.Type;
 
 const Millis = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 

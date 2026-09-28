@@ -475,7 +475,21 @@ const methodFixtures = (): ReadonlyArray<{
         profileId: PROFILE_A,
         automationId: "daily-report",
         accepted: true,
-        outcome: "accepted",
+        outcome: "executed",
+        runOutcome: {
+          kind: "executed",
+          delivery: {
+            kind: "resolved",
+            targets: [
+              {
+                target: "telegram:chat:1",
+                status: "failed",
+                category: "transport",
+                retriable: true,
+              },
+            ],
+          },
+        },
       },
     },
     {

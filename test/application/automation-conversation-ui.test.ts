@@ -391,7 +391,24 @@ test("a missing destination records a terminal failure without a fallback conver
         expect(response).toMatchObject({
           id: "missing",
           ok: true,
-          result: { accepted: true, outcome: "executed" },
+          result: {
+            accepted: true,
+            outcome: "executed",
+            runOutcome: {
+              kind: "executed",
+              delivery: {
+                kind: "resolved",
+                targets: [
+                  {
+                    target: "conversation:deleted-session",
+                    status: "failed",
+                    category: "destination-missing",
+                    retriable: false,
+                  },
+                ],
+              },
+            },
+          },
         });
       }),
     ),

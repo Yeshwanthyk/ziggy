@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { AutomationTargetString } from "./automation";
+import { AutomationRunOutcome, AutomationTargetString } from "./automation";
 import { ProfileAgentId, ProfileAgentThinking } from "./profile";
 import { ProfileId } from "./profile-directory";
 import { ProfileExtensionId } from "./profile-extension";
@@ -1071,7 +1071,8 @@ export const UiAutomationRunCommandResult = Schema.Struct({
   automationId: UiAutomationId,
   accepted: Schema.Boolean,
   outcome: boundedString("automation outcome", 64),
-});
+  runOutcome: AutomationRunOutcome,
+}).check(resultWithinWireBudget);
 
 export type UiAutomationRunCommandResult = typeof UiAutomationRunCommandResult.Type;
 

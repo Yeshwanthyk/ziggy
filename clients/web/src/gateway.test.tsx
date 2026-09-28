@@ -305,7 +305,11 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
       profileId: profile.profileId,
       automationId,
       accepted: true,
-      outcome: "queued",
+      outcome: "executed",
+      runOutcome: {
+        kind: "executed" as const,
+        delivery: { kind: "resolved" as const, targets: [] },
+      },
     })),
     onAny: vi.fn(() => () => undefined),
     close: vi.fn(),

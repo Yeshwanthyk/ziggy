@@ -110,11 +110,53 @@ export interface ZiggyAutomationRun {
   readonly targets: ReadonlyArray<ZiggyAutomationTargetOutcome>;
 }
 
+const deliveryFailures = [
+  "session-held",
+  "configuration",
+  "authentication",
+  "rate-limited",
+  "transport",
+  "remote",
+  "invalid-response",
+  "owner-unavailable",
+  "session-busy",
+  "destination-invalid",
+  "destination-missing",
+  "write",
+] as const;
+
+export type ZiggyAutomationDeliveryFailureCategory = (typeof deliveryFailures)[number];
+
+export type ZiggyAutomationRunOutcome =
+  | { readonly kind: "skipped-busy" }
+  | { readonly kind: "declined"; readonly reason: "gate-nonzero"; readonly exitCode: number }
+  | {
+      readonly kind: "executed";
+      readonly delivery:
+        | {
+            readonly kind: "resolved";
+            readonly targets: ReadonlyArray<
+              | { readonly target: string; readonly status: "delivered" }
+              | {
+                  readonly target: string;
+                  readonly status: "failed";
+                  readonly category: ZiggyAutomationDeliveryFailureCategory;
+                  readonly retriable: boolean;
+                }
+            >;
+          }
+        | {
+            readonly kind: "resolution-failed";
+            readonly category: "broadcasts-unreadable" | "broadcasts-invalid" | "all-empty";
+          };
+    };
+
 export interface ZiggyAutomationRunCommandResult {
   readonly profileId: ZiggyProfileId;
   readonly automationId: ZiggyAutomationId;
   readonly accepted: boolean;
   readonly outcome: string;
+  readonly runOutcome: ZiggyAutomationRunOutcome;
 }
 
 export interface ZiggyAutomationStatusResult {
@@ -373,15 +415,59 @@ const isAutomationRun = (value: unknown): value is ZiggyAutomationRun =>
   value.targets.length <= 8 &&
   value.targets.every(isAutomationTargetOutcome);
 
+const isRunTargetOutcome = (value: unknown): boolean =>
+  isRecord(value) &&
+  isAutomationTarget(value.target) &&
+  (value.status === "delivered"
+    ? hasOnlyKeys(value, ["target", "status"])
+    : value.status === "failed" &&
+      hasOnlyKeys(value, ["target", "status", "category", "retriable"]) &&
+      typeof value.category === "string" &&
+      deliveryFailures.some((category) => category === value.category) &&
+      typeof value.retriable === "boolean");
+
+const isRunOutcome = (value: unknown): value is ZiggyAutomationRunOutcome => {
+  if (!isRecord(value)) return false;
+  if (value.kind === "skipped-busy") return hasOnlyKeys(value, ["kind"]);
+  if (value.kind === "declined")
+    return (
+      hasOnlyKeys(value, ["kind", "reason", "exitCode"]) &&
+      value.reason === "gate-nonzero" &&
+      isSafeInteger(value.exitCode)
+    );
+  if (
+    value.kind !== "executed" ||
+    !hasOnlyKeys(value, ["kind", "delivery"]) ||
+    !isRecord(value.delivery)
+  )
+    return false;
+  const delivery = value.delivery;
+  if (delivery.kind === "resolution-failed")
+    return (
+      hasOnlyKeys(delivery, ["kind", "category"]) &&
+      (delivery.category === "broadcasts-unreadable" ||
+        delivery.category === "broadcasts-invalid" ||
+        delivery.category === "all-empty")
+    );
+  return (
+    delivery.kind === "resolved" &&
+    hasOnlyKeys(delivery, ["kind", "targets"]) &&
+    Array.isArray(delivery.targets) &&
+    delivery.targets.every(isRunTargetOutcome)
+  );
+};
+
 export const isAutomationRunCommandResult = (
   value: unknown,
 ): value is ZiggyAutomationRunCommandResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "automationId", "accepted", "outcome"]) &&
+  hasOnlyKeys(value, ["profileId", "automationId", "accepted", "outcome", "runOutcome"]) &&
   isProfileId(value.profileId) &&
   isAutomationId(value.automationId) &&
   typeof value.accepted === "boolean" &&
-  isBoundedString(value.outcome, 64);
+  isBoundedString(value.outcome, 64) &&
+  isRunOutcome(value.runOutcome) &&
+  value.outcome === value.runOutcome.kind;
 
 const isAutomationStatus = (value: unknown): value is ZiggyAutomationStatusResult =>
   isRecord(value) &&

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { Schema } from "effect";
 import type { AutomationRunProjection, AutomationStatusProjection } from "ziggy/domain/automation";
+import { UiAutomationRunCommandResult } from "ziggy/domain/ui-gateway";
 import {
   renderAutomationCreated,
   renderAutomationDefinitions,
@@ -12,6 +14,8 @@ import {
   renderAutomationTransition,
   renderAutomationValidation,
 } from "ziggy/faces/automation-cli";
+
+const decodeRunCommand = Schema.decodeUnknownSync(UiAutomationRunCommandResult);
 
 describe("automation definition CLI", () => {
   const validDefinition = {
@@ -64,6 +68,40 @@ describe("automation definition CLI", () => {
 });
 
 describe("automation CLI outcome", () => {
+  test("resident result decode renders failed delivery exactly as a local outcome", () => {
+    const outcome = {
+      kind: "executed" as const,
+      delivery: {
+        kind: "resolved" as const,
+        targets: [
+          {
+            target: "telegram:chat:1",
+            status: "failed" as const,
+            category: "transport" as const,
+            retriable: true,
+          },
+        ],
+      },
+    };
+
+    const wire = decodeRunCommand({
+      profileId: `prf_${"a".repeat(24)}`,
+      automationId: "daily-note",
+      accepted: true,
+      outcome: "executed",
+      runOutcome: outcome,
+    });
+
+    expect(renderAutomationOutcome(wire.runOutcome)).toEqual(renderAutomationOutcome(outcome));
+    expect(renderAutomationOutcome(wire.runOutcome)).toEqual({
+      exitCode: 1,
+      stderr: [
+        "wake delivery resolved: 1 targets",
+        "wake delivery failed: telegram:chat:1 (transport, retriable)",
+      ],
+    });
+  });
+
   test("renders busy, decline, and no-target success", () => {
     expect(renderAutomationOutcome({ kind: "skipped-busy" })).toEqual({
       exitCode: 1,
