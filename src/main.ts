@@ -40,6 +40,7 @@ import { Sessions, SessionsLive } from "./application/sessions";
 import { listProfileExtensionsWithHealth } from "./adapters/pi/profile-extension-preflight";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
 import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
+import { refreshRequiredExtensions } from "./application/extension-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
@@ -280,7 +281,9 @@ const program = Effect.gen(function* () {
       }
 
       if (result.minimal) {
-        console.log(`next: ziggy ${JSON.stringify(result.profilePath)}`);
+        console.log(
+          `next: ziggy serve install ${JSON.stringify(result.profilePath)}\nthen: ziggy web pair ${JSON.stringify(result.profilePath)}`,
+        );
 
         return;
       }
@@ -306,7 +309,9 @@ const program = Effect.gen(function* () {
         }
       }
 
-      console.log(`ready: ziggy ${JSON.stringify(result.profilePath)}`);
+      console.log(
+        `ready: ziggy serve install ${JSON.stringify(result.profilePath)}\nthen: ziggy web pair ${JSON.stringify(result.profilePath)}`,
+      );
 
       return;
     }
@@ -465,7 +470,12 @@ const program = Effect.gen(function* () {
           const service = yield* residentService.status(target);
 
           if (Result.isSuccess(service.managed) && service.managed.success._tag === "not-installed")
-            console.log(RESIDENT_SCHEDULE_HINT);
+            console.log(
+              RESIDENT_SCHEDULE_HINT(
+                target.path,
+                (yield* residentGateway.status(target))._tag === "running",
+              ),
+            );
         }
       }
 
@@ -712,7 +722,12 @@ const program = Effect.gen(function* () {
         const service = yield* residentService.status(target);
 
         if (Result.isSuccess(service.managed) && service.managed.success._tag === "not-installed")
-          console.log(RESIDENT_SCHEDULE_HINT);
+          console.log(
+            RESIDENT_SCHEDULE_HINT(
+              target.path,
+              (yield* residentGateway.status(target))._tag === "running",
+            ),
+          );
       }
 
       return;
@@ -871,8 +886,15 @@ const program = Effect.gen(function* () {
     }
 
     case "Serve":
-    case "Gateway":
-      return yield* residentGateway.run(resolveProfileTarget(command.target, resolutionOptions));
+    case "Gateway": {
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      yield* refreshRequiredExtensions(target, (profile, id) =>
+        extensionUpdate.update(profile, id),
+      );
+
+      return yield* residentGateway.run(target);
+    }
+
     case "UnsupportedResidentAlias":
       return yield* fail(
         `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
@@ -948,7 +970,7 @@ const program = Effect.gen(function* () {
       );
 
       console.log(
-        `http://127.0.0.1:${ui.port}\nNew browser? Run: ziggy web pair ${JSON.stringify(command.target)}`,
+        `http://127.0.0.1:${ui.port}\nNew browser? Run: ziggy web pair ${JSON.stringify(target.path)}`,
       );
 
       return;

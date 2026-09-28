@@ -32,6 +32,33 @@ import type {
 
 const decodeId = Schema.decodeUnknownEffect(ProfileExtensionId);
 
+/** Refresh only tracked, unchanged required copies before the resident acquires ownership. */
+export const refreshRequiredExtensions = (
+  target: ProfileTarget,
+  update: (target: ProfileTarget, id: string) => Effect.Effect<ExtensionUpdateResult, unknown>,
+) =>
+  Effect.forEach(
+    [...BUILTIN_EXTENSION_CATALOG.extensions].filter(
+      (entry) => isRequiredBundledExtension(entry.id) && entry.source === "bundled",
+    ),
+    (entry) =>
+      Effect.gen(function* () {
+        const store = makeExtensionUpdateStore(target.path, entry.id);
+        const receipt = yield* store.readReceipt();
+
+        if (receipt === undefined || receipt.packageVersion === entry.version) return;
+        const hash = yield* store.hash(join(target.path, "extensions", entry.id));
+
+        if (hash !== receipt.contentHash) return;
+        yield* update(target, entry.id);
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning(`Required extension ${entry.id} was not refreshed`, { cause }),
+        ),
+      ),
+    { concurrency: 1 },
+  );
+
 export const makeExtensionUpdate = (
   archiveClient: ExtensionArchiveClientApi,
   profiles: Pick<ProfileExtensionsApi, "validate">,

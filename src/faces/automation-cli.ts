@@ -1,5 +1,9 @@
-export const RESIDENT_SCHEDULE_HINT =
-  "schedules will not fire: run `ziggy serve install <profile>`; `ziggy wake <id>` runs one now";
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+export const RESIDENT_SCHEDULE_HINT = (profilePath: string, running: boolean): string =>
+  running
+    ? `schedules fire only while this resident runs; install a service with ziggy serve install ${shellQuote(profilePath)}`
+    : `schedules will not fire: run ziggy serve install ${shellQuote(profilePath)} (or ziggy serve ${shellQuote(profilePath)})`;
 
 import { Schema } from "effect";
 import type {

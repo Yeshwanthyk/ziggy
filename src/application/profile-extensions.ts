@@ -65,6 +65,7 @@ import {
   type AutomationFileStore,
 } from "../adapters/fs/automation-files";
 import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { makeExtensionUpdateStore } from "../adapters/fs/extension-update";
 import { parseAutomationFile, validateAutomationId } from "../domain/automation";
 
 /** File operations owned by Profile extension activation; injectable for rollback proofs. */
@@ -700,6 +701,26 @@ export const makeProfileExtensions = (
         yield* installer.installGitHub(profilePath, entry);
       } else {
         yield* installer.installBundled(profilePath, entry);
+      }
+
+      if (REQUIRED_BUNDLED_EXTENSION_IDS.has(id)) {
+        const store = makeExtensionUpdateStore(profilePath, id);
+        yield* Effect.gen(function* () {
+          const prepared = yield* store.prepare();
+
+          yield* store.adoptCurrent(yield* store.hash(packagePath), entry.version);
+          yield* store.discard(prepared.transactionId);
+        }).pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              id,
+              packagePath,
+              "validation",
+              "could not record bundled extension receipt",
+              cause,
+            ),
+          ),
+        );
       }
 
       return yield* readInstalledPackage(profilePath, id).pipe(

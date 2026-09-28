@@ -279,6 +279,24 @@ export const recoverExtensionUpdates = (profilePath: string) =>
   });
 
 export const makeExtensionUpdateStore = (profilePath: string, id: string) => ({
+  readReceipt: () =>
+    Effect.gen(function* () {
+      const path = join(packageRoot(profilePath, id), "receipt.json");
+
+      if (!(yield* exists(profilePath, id, path))) return undefined;
+
+      const receipt = yield* readState(profilePath, id, path).pipe(
+        Effect.flatMap((text) => decodeReceipt(text, { onExcessProperty: "error" })),
+        Effect.mapError((cause) =>
+          failure(profilePath, id, "Managed extension receipt is invalid.", cause),
+        ),
+      );
+
+      if (receipt.id !== id)
+        return yield* failure(profilePath, id, "Managed extension receipt identity mismatch.");
+
+      return receipt;
+    }),
   stageContext: (stagingProfile: string) =>
     disk(profilePath, id, "Could not copy Profile context for staged validation.", () =>
       cp(join(profilePath, "SOUL.md"), join(stagingProfile, "SOUL.md"), {

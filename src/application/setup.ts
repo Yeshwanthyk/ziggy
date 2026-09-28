@@ -43,10 +43,14 @@ export interface SetupApi {
 
 export class Setup extends Context.Service<Setup, SetupApi>()("ziggy/Setup") {}
 
-const incomplete = (profilePath: string, message: string): SetupIncomplete =>
+const incomplete = (
+  profilePath: string,
+  message: string,
+  options?: SetupOptions,
+): SetupIncomplete =>
   new SetupIncomplete({
     profilePath,
-    message: `${message}; resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive --provider <id> --model <id> [--thinking <level>]`,
+    message: `${message}; authenticate with ziggy auth ${JSON.stringify(profilePath)}${options?.providerId === undefined ? "" : ` ${JSON.stringify(options.providerId)}`}; then resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive${options?.providerId === undefined ? "" : ` --provider ${JSON.stringify(options.providerId)}`}${options?.modelId === undefined ? "" : ` --model ${JSON.stringify(options.modelId)}`}${options?.thinking === undefined ? "" : ` --thinking ${JSON.stringify(options.thinking)}`}`,
   });
 
 const choose = (
@@ -124,7 +128,11 @@ export const makeSetup = (
 
       if (provider.configured === undefined) {
         if (!options.interactive) {
-          return yield* incomplete(target.path, `provider ${providerId} is not authenticated`);
+          return yield* incomplete(
+            target.path,
+            `provider ${providerId} is not authenticated`,
+            options,
+          );
         }
 
         yield* auth.login(target, providerId, undefined, interaction.auth);

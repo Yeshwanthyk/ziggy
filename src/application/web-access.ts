@@ -1,5 +1,7 @@
 import { Effect } from "effect";
 import { openWebAccessStore } from "../adapters/bun/web-access-sqlite";
+import { inspectGatewayOwner } from "../adapters/bun/gateway-owner";
+import { readUiServerProjection } from "../adapters/bun/ui-server";
 import { readWebAccessConfig, writeWebAccessConfig } from "../adapters/fs/web-access-config";
 import type { ProfileTarget } from "../domain/profile";
 import { WebAccessError, type WebPairing } from "../domain/web-access";
@@ -30,13 +32,48 @@ export const issueWebPairing = (target: ProfileTarget): Effect.Effect<WebPairing
   Effect.gen(function* () {
     const config = yield* readWebAccessConfig(target.path);
 
+    const owner = yield* inspectGatewayOwner(target).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WebAccessError({
+            operation: "issue web pairing",
+            path: target.path,
+            message: "could not inspect resident",
+            cause,
+          }),
+      ),
+    );
+
+    const port =
+      owner._tag === "running"
+        ? (yield* readUiServerProjection(target.path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WebAccessError({
+                  operation: "issue web pairing",
+                  path: target.path,
+                  message: "resident UI is not ready",
+                  cause,
+                }),
+            ),
+          )).port
+        : config.port;
+
+    if (port === 0 && config.publicUrl === undefined) {
+      return yield* new WebAccessError({
+        operation: "issue web pairing",
+        path: target.path,
+        message: `resident must be running to pair with an ephemeral port; start ziggy serve ${JSON.stringify(target.path)} or configure a port with ziggy web configure ${JSON.stringify(target.path)} --port <n>`,
+      });
+    }
+
     return yield* Effect.acquireUseRelease(
       openStore(target, "issue web pairing"),
       (store) =>
         Effect.try({
           try: () => {
             const pairing = store.issuePairing();
-            const base = config.publicUrl ?? `http://127.0.0.1:${config.port}`;
+            const base = config.publicUrl ?? `http://127.0.0.1:${port}`;
             const url = new URL(base);
             url.hash = `code=${pairing.token}`;
 

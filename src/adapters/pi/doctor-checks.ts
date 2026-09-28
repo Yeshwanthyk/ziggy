@@ -2,6 +2,8 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../fs/cause";
+import { makeExtensionUpdateStore } from "../fs/extension-update";
+import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../../catalog";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import {
   gatewayConfigPresent,
@@ -274,6 +276,22 @@ const resourcesCheck = (
       );
 
     const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);
+
+    for (const entry of BUILTIN_EXTENSION_CATALOG.extensions) {
+      if (!isRequiredBundledExtension(entry.id) || entry.source !== "bundled") continue;
+      const store = makeExtensionUpdateStore(target.path, entry.id);
+      const receipt = yield* store.readReceipt();
+
+      if (receipt?.packageVersion !== undefined && receipt.packageVersion !== entry.version) {
+        const currentHash = yield* store.hash(path.join(target.path, "extensions", entry.id));
+
+        if (currentHash !== receipt.contentHash)
+          return warn(
+            "resources",
+            `${entry.id} is behind the bundle and locally modified; run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id} --adopt after resolving local changes`,
+          );
+      }
+    }
 
     return ok(
       "resources",
