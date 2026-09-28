@@ -68,6 +68,11 @@ describe("SettingsDialog", () => {
     expect(modelTrigger.textContent).toContain("GPT-5.6 Sol");
     fireEvent.click(modelTrigger);
     fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4/u }));
+    openTab("Session");
+    openTab("Model");
+    expect(screen.getByRole("combobox", { name: "Model" }).textContent).toContain(
+      "Claude Sonnet 4",
+    );
 
     expect(onSaveModel).not.toHaveBeenCalled();
     const thinking = screen.getByRole("slider", { name: "Thinking" });

@@ -13,7 +13,15 @@ import type {
   ZiggySessionSummaryResult,
 } from "../../../../../packages/ui-sdk/src/index";
 import { Blocks, Cpu, KeyRound, MessageSquare, Plug } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { ConnectionPane } from "./connection-pane";
 import { ExtensionsPane } from "./extensions-pane";
 import { ModelPane } from "./model-pane";
@@ -60,6 +68,25 @@ interface SettingsDialogProps {
   ) => Promise<void>;
 }
 
+/** Matches the settings.css breakpoint where the tab list becomes a horizontal strip. */
+const STACKED_QUERY = "(max-width: 720px)";
+
+const stackedQuery = (): MediaQueryList | undefined =>
+  typeof window.matchMedia === "function" ? window.matchMedia(STACKED_QUERY) : undefined;
+
+const subscribeStacked = (onChange: () => void): (() => void) => {
+  const query = stackedQuery();
+  query?.addEventListener("change", onChange);
+  return () => query?.removeEventListener("change", onChange);
+};
+
+const useStackedLayout = (): boolean =>
+  useSyncExternalStore(
+    subscribeStacked,
+    () => stackedQuery()?.matches ?? false,
+    () => false,
+  );
+
 type Tab = "model" | "session" | "extensions" | "providers" | "connection";
 
 const tabs: ReadonlyArray<{ readonly id: Tab; readonly label: string; readonly icon: ReactNode }> =
@@ -103,6 +130,7 @@ export function SettingsDialog({
     ? requestedTab
     : (visibleTabs[0]?.id ?? "connection");
   const tabRefs = useRef(new Map<Tab, HTMLButtonElement>());
+  const stacked = useStackedLayout();
   const live = connected && selectedRef?.kind === "live";
   const liveKey = selectedRef?.kind === "live" ? selectedRef.key : undefined;
 
@@ -147,7 +175,7 @@ export function SettingsDialog({
   };
 
   const tabId = (id: Tab): string => `${baseId}-tab-${id}`;
-  const panelId = `${baseId}-panel`;
+  const panelId = (id: Tab): string => `${baseId}-panel-${id}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -161,14 +189,14 @@ export function SettingsDialog({
         <div className="settings-layout">
           <div
             aria-label="Settings sections"
-            aria-orientation="vertical"
+            aria-orientation={stacked ? "horizontal" : "vertical"}
             className="settings-tabs"
             onKeyDown={onTabKeyDown}
             role="tablist"
           >
             {visibleTabs.map((entry) => (
               <button
-                aria-controls={panelId}
+                aria-controls={panelId(entry.id)}
                 aria-selected={entry.id === tab}
                 className="settings-tab"
                 id={tabId(entry.id)}
@@ -187,46 +215,56 @@ export function SettingsDialog({
               </button>
             ))}
           </div>
-          <div aria-labelledby={tabId(tab)} className="settings-panel" id={panelId} role="tabpanel">
-            {tab === "model" ? (
-              <ModelPane
-                modelSettings={modelSettings}
-                onRetrySettings={onRetrySettings}
-                onSaveModel={onSaveModel}
-              />
-            ) : tab === "session" ? (
-              <SessionPane
-                availableModels={modelSettings?.availableModels ?? []}
-                live={live}
-                onChangeSessionModel={onChangeSessionModel}
-                onChangeSessionThinking={onChangeSessionThinking}
-                onLoadSessionSummaries={onLoadSessionSummaries}
-                onResumePastSession={onResumePastSession}
-                sessionBusy={sessionBusy}
-                sessionModel={sessionModel}
-                sessionSummaries={sessionSummaries}
-              />
-            ) : tab === "extensions" ? (
-              <ExtensionsPane
-                modelSettings={modelSettings}
-                cliTarget={cliTarget}
-                onToggleExtension={onToggleExtension}
-              />
-            ) : tab === "providers" ? (
-              <ProvidersPane modelSettings={modelSettings} />
-            ) : (
-              <ConnectionPane
-                cliTarget={cliTarget}
-                connected={connected}
-                connectionError={connectionError}
-                connectionPending={connectionPending}
-                hosted={hosted}
-                onConnect={onConnect}
-                pairingRequired={pairingRequired}
-                profileName={profileName}
-              />
-            )}
-          </div>
+          {visibleTabs.map((entry) => (
+            <div
+              aria-labelledby={tabId(entry.id)}
+              className="settings-panel"
+              hidden={entry.id !== tab}
+              id={panelId(entry.id)}
+              key={entry.id}
+              role="tabpanel"
+              tabIndex={0}
+            >
+              {entry.id === "model" ? (
+                <ModelPane
+                  modelSettings={modelSettings}
+                  onRetrySettings={onRetrySettings}
+                  onSaveModel={onSaveModel}
+                />
+              ) : entry.id === "session" ? (
+                <SessionPane
+                  availableModels={modelSettings?.availableModels ?? []}
+                  live={live}
+                  onChangeSessionModel={onChangeSessionModel}
+                  onChangeSessionThinking={onChangeSessionThinking}
+                  onLoadSessionSummaries={onLoadSessionSummaries}
+                  onResumePastSession={onResumePastSession}
+                  sessionBusy={sessionBusy}
+                  sessionModel={sessionModel}
+                  sessionSummaries={sessionSummaries}
+                />
+              ) : entry.id === "extensions" ? (
+                <ExtensionsPane
+                  cliTarget={cliTarget}
+                  modelSettings={modelSettings}
+                  onToggleExtension={onToggleExtension}
+                />
+              ) : entry.id === "providers" ? (
+                <ProvidersPane modelSettings={modelSettings} />
+              ) : (
+                <ConnectionPane
+                  cliTarget={cliTarget}
+                  connected={connected}
+                  connectionError={connectionError}
+                  connectionPending={connectionPending}
+                  hosted={hosted}
+                  onConnect={onConnect}
+                  pairingRequired={pairingRequired}
+                  profileName={profileName}
+                />
+              )}
+            </div>
+          ))}
         </div>
       </DialogContent>
     </Dialog>
