@@ -91,7 +91,7 @@ Status: done (review/ext).
 
 ## 3. Domain
 
-Status: pending.
+Status: done (review/cli).
 
 - `domain/setup.ts` imports `ModelStatus` from `adapters/pi/models`.
 - Move the CLI command union and `CliInputInvalid` to faces.
@@ -153,7 +153,7 @@ Status: pending. The TUI and resident question is settled by 1b.
 
 ## 10. CLI first run
 
-Status: pending.
+Status: done (review/cli). Codex OAuth import is on hold for an owner decision.
 
 - The resume hint after a failed non-interactive `init` repeats the same failing command.
 - `extensions list <profile>` is rejected, and its usage text omits `update` and `--json`.

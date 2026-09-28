@@ -1088,3 +1088,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
   - a scheduler property: cursors move forward, due run ids never repeat, a fingerprint change resets the cursor;
   - removed a test that only restated an error class.
 - Verification: `bun run check` and `bun run test` (735 pass) passed. Opus review findings resolved.
+
+## CLI contracts, first-run recovery and profile-aware extensions
+
+- Moved the CLI command union and `CliInputInvalid` to faces. Setup model status no longer imports the adapter. Removed the redundant `ProfileAgentInvalid` from the unions and deduped the `SessionTerminalState` literals.
+- A failed non-interactive init maps doctor errors to the commands that fix them (`ziggy auth`, `ziggy models set`) and never suggests opening a broken Profile.
+- `extensions list|show <profile>`: checks that the Profile is initialized, resolves Profile-local packages, lists selected-but-missing ids, labels them "selected in", and encodes `--json` through Schemas.
+- A bounded fast-check property says argv decoding always ends in success or exactly one typed input error. It covers subcommand vocabulary.
+- Codex OAuth import is on hold for an owner decision (read in place, not copy).
