@@ -313,3 +313,31 @@ test("preflight aggregates a service error without creating an AgentSession or p
   expect(await readFile(join(profilePath, "SOUL.md"), "utf8")).toBe("# Preflight profile\n");
   expect(await readFile(join(profilePath, "extensions.json"), "utf8")).toBe(selectionBytes);
 });
+
+test("an inline Ziggy failure remains fatal even when an optional package is broken", async () => {
+  const profilePath = await makeProfile();
+  await writePackage(profilePath, "broken", { brokenImport: true });
+  await stageRequiredPackages(profilePath);
+
+  const preflight = makeProfileExtensionPreflight(createAgentSessionServices, () => [
+    {
+      name: "ziggy-broken-core",
+      hidden: true,
+      factory: () => {
+        throw new Error("core failure");
+      },
+    },
+  ]);
+
+  const failure = await Effect.runPromise(
+    preflight.preflight(profilePath, "/repository", ["broken"]).pipe(Effect.flip),
+  );
+
+  expect(failure).toMatchObject({ _tag: "ProfileExtensionPreflightFailed", stage: "extensions" });
+
+  if (failure._tag !== "ProfileExtensionPreflightFailed")
+    throw new Error("expected typed preflight failure");
+  expect(failure.diagnostics.some((item) => item.source.includes("inline:ziggy-broken-core"))).toBe(
+    true,
+  );
+});
