@@ -16,10 +16,7 @@ import {
   runPrintMode,
   type AgentSessionEvent,
   type AgentSessionRuntime,
-  type BeforeAgentStartEvent,
-  type BeforeAgentStartEventResult,
   type CreateAgentSessionFromServicesOptions,
-  type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
@@ -46,10 +43,9 @@ import {
   MemoryBackupError,
   MemoryDocumentInvalid,
   memoryFilePaths,
-  renderMemoryForPrompt,
   type ChatContext,
-  type MemoryDocument,
   type MemoryScope,
+  type MemoryDocument,
 } from "../../domain/memory";
 import {
   prepareProfileAgentPrompt,
@@ -127,9 +123,6 @@ export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAge
 
 export type ChatSessionMode = "continue" | "fresh";
 
-const causeMessage = (cause: unknown): string =>
-  (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/g, " ").trim();
-
 export const providerError = (
   profilePath: string,
   operation: string,
@@ -160,7 +153,7 @@ export const providerError = (
   return new ProviderConfigError({
     profilePath,
     operation,
-    message: `${operation} failed: ${causeMessage(cause)}`,
+    message: `${operation} failed`,
     cause,
   });
 };
@@ -864,104 +857,10 @@ const readMemoryDocument = (
         : new MemoryWriteIoError({ operation: "read", path: document.absolutePath, cause }),
   });
 
-const buildMemoryPrompt = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
-): Effect.Effect<string, ProviderConfigError> =>
-  Effect.forEach(documents, (document) =>
-    readMemoryDocument(document).pipe(
-      Effect.mapError(
-        (failure) =>
-          new ProviderConfigError({
-            profilePath,
-            operation: "read memory",
-            message: `could not read ${document.absolutePath}`,
-            cause: failure.cause,
-          }),
-      ),
-      Effect.map((loaded) => ({
-        document,
-        content:
-          loaded === undefined || loaded.content.trim().length === 0 ? undefined : loaded.content,
-      })),
-    ),
-  ).pipe(
-    Effect.map((loaded) => {
-      const sections = loaded.flatMap(({ document, content }) =>
-        content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
-      );
-
-      sections.push(
-        "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
-      );
-
-      return sections.join("\n\n");
-    }),
-  );
-
-const memoryReadFailurePrompt = (profilePath: string, cause: unknown): string =>
-  [
-    "PROFILE MEMORY UNAVAILABLE FOR THIS TURN.",
-    `Ziggy could not read the admitted Profile memory under ${profilePath}: ${causeMessage(cause)}`,
-    "Do not claim to remember Profile facts or call memory_write this turn. Tell the user that Profile memory is unavailable.",
-  ].join("\n");
-
-export const refreshProfileMemory = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
-  event: Pick<BeforeAgentStartEvent, "systemPrompt">,
-): Promise<BeforeAgentStartEventResult> => {
-  const program = buildMemoryPrompt(profilePath, documents).pipe(
-    Effect.match({
-      onFailure: (cause) => ({
-        systemPrompt: `${event.systemPrompt}\n\n${memoryReadFailurePrompt(profilePath, cause)}`,
-      }),
-      onSuccess: (memoryPrompt) => ({
-        systemPrompt: `${event.systemPrompt}\n\n${memoryPrompt}`,
-      }),
-    }),
-  );
-
-  // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi permits a Promise-returning before_agent_start callback; this is the single adapter bridge.
-  return Effect.runPromise(program);
-};
-
-export const createProfileMemoryExtension = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
-): InlineExtension => ({
-  name: "ziggy-profile-memory",
-  hidden: true,
-  factory: (pi) => {
-    pi.on("before_agent_start", (event) => refreshProfileMemory(profilePath, documents, event));
-  },
-});
-
 interface EphemeralPromptContextState {
   generation: number;
   value?: string;
 }
-
-export const appendEphemeralPromptContext = (
-  event: Pick<BeforeAgentStartEvent, "systemPrompt">,
-  context: string,
-): BeforeAgentStartEventResult => ({
-  systemPrompt: `${event.systemPrompt}\n\n${context}`,
-});
-
-export const createEphemeralPromptContextExtension = (
-  current: () => string | undefined,
-): InlineExtension => ({
-  name: "ziggy-ephemeral-prompt-context",
-  hidden: true,
-  factory: (pi) => {
-    pi.on("before_agent_start", (event) => {
-      const context = current();
-
-      return context === undefined ? undefined : appendEphemeralPromptContext(event, context);
-    });
-  },
-});
 
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");

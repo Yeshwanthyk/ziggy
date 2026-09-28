@@ -9,7 +9,6 @@ import {
   createAgentSessionRuntime,
   type AgentSessionEventListener,
   type AgentSessionRuntime,
-  type BeforeAgentStartEventResult,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { Cause, Effect, Exit, Fiber, Predicate, Result } from "effect";
@@ -24,7 +23,6 @@ import {
   ProfileExtensionRollbackFailed,
   type ProfileExtensionsApi,
 } from "ziggy/domain/profile-extension";
-import { memoryFilePaths, type ChatContext } from "ziggy/domain/memory";
 import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
@@ -32,11 +30,9 @@ import { specialistRuntime } from "ziggy/adapters/pi/specialist";
 import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
-  appendEphemeralPromptContext,
   askOnce,
   createChatEventProjector,
   createLocalSessionManager,
-  createProfileMemoryExtension,
   currentPiSessionReference,
   localMainSessionDirectory,
   localSpecialistSessionDirectory,
@@ -47,7 +43,6 @@ import {
   progressToolDetail,
   runSpecialist,
   providerError,
-  refreshProfileMemory,
 } from "ziggy/adapters/pi/pi-agent";
 
 const assistantMessage = (
@@ -192,27 +187,6 @@ test("current Pi session reference is empty until materialized and follows sessi
     file: switchedFile,
   });
 });
-
-const invokeMemoryHandler = async (
-  profilePath: string,
-  context: ChatContext,
-): Promise<(systemPrompt: string) => Promise<BeforeAgentStartEventResult | undefined>> => {
-  const paths = memoryFilePaths(profilePath, context);
-
-  if (!paths.ok) {
-    throw paths.error;
-  }
-
-  const extension = createProfileMemoryExtension(profilePath, paths.documents);
-
-  if (!("hidden" in extension)) {
-    throw new Error("expected named inline extension");
-  }
-
-  expect(extension.hidden).toBe(true);
-
-  return (systemPrompt) => refreshProfileMemory(profilePath, paths.documents, { systemPrompt });
-};
 
 describe("Pi provider failure classification", () => {
   test("extracts a bounded command or path from tool args", () => {
@@ -457,17 +431,6 @@ describe("Pi provider failure classification", () => {
 });
 
 describe("Pi ephemeral prompt context", () => {
-  test("appends turn-only context to the provider system prompt", () => {
-    expect(
-      appendEphemeralPromptContext(
-        { systemPrompt: "SOUL" },
-        "[Slack thread context]\nquoted history\n[/Slack thread context]",
-      ),
-    ).toEqual({
-      systemPrompt: "SOUL\n\n[Slack thread context]\nquoted history\n[/Slack thread context]",
-    });
-  });
-
   test("uses context for one real provider turn without persisting or replaying it", async () => {
     const requestBodies: Array<string> = [];
 
@@ -856,72 +819,6 @@ describe("Pi prompt cancellation", () => {
     expect(promptOptions).toEqual({
       images: [{ type: "image", data: "AQID", mimeType: "image/png" }],
     });
-  });
-});
-
-describe("Profile memory refresh", () => {
-  test("the same handler observes disk changes on successive turns", async () => {
-    const profilePath = await temporaryProfile();
-    await mkdir(join(profilePath, "memory", "users"), { recursive: true });
-    await writeFile(join(profilePath, "MEMORY.md"), "shared-one\n", "utf8");
-    await writeFile(join(profilePath, "memory", "users", "owner.md"), "owner-only\n", "utf8");
-    const invoke = await invokeMemoryHandler(profilePath, { kind: "local" });
-
-    const first = await invoke("SOUL");
-    await writeFile(join(profilePath, "MEMORY.md"), "shared-two\n", "utf8");
-    const second = await invoke("SOUL");
-
-    expect(first).toEqual({
-      systemPrompt:
-        "SOUL\n\n## Memory (shared)\nshared-one\n\n## Memory (this person)\nowner-only\n\nDurable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
-    });
-    expect(second).toEqual({
-      systemPrompt:
-        "SOUL\n\n## Memory (shared)\nshared-two\n\n## Memory (this person)\nowner-only\n\nDurable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
-    });
-  });
-
-  test("local, user, and group handlers admit only their scoped memory", async () => {
-    const profilePath = await temporaryProfile();
-    await mkdir(join(profilePath, "memory", "users"), { recursive: true });
-    await mkdir(join(profilePath, "memory", "groups"), { recursive: true });
-    await writeFile(join(profilePath, "MEMORY.md"), "shared\n", "utf8");
-    await writeFile(join(profilePath, "memory", "users", "owner.md"), "local-person\n", "utf8");
-    await writeFile(join(profilePath, "memory", "users", "alice.md"), "alice-person\n", "utf8");
-    await writeFile(join(profilePath, "memory", "groups", "team.md"), "team-group\n", "utf8");
-
-    const local = await (await invokeMemoryHandler(profilePath, { kind: "local" }))("SOUL");
-
-    const user = await (
-      await invokeMemoryHandler(profilePath, { kind: "user", userId: "alice" })
-    )("SOUL");
-
-    const group = await (
-      await invokeMemoryHandler(profilePath, { kind: "group", groupId: "team" })
-    )("SOUL");
-
-    expect(local?.systemPrompt).toContain("shared");
-    expect(local?.systemPrompt).toContain("local-person");
-    expect(local?.systemPrompt).not.toContain("alice-person");
-    expect(local?.systemPrompt).not.toContain("team-group");
-    expect(user?.systemPrompt).toContain("shared");
-    expect(user?.systemPrompt).toContain("alice-person");
-    expect(user?.systemPrompt).not.toContain("local-person");
-    expect(user?.systemPrompt).not.toContain("team-group");
-    expect(group?.systemPrompt).toContain("shared");
-    expect(group?.systemPrompt).toContain("team-group");
-    expect(group?.systemPrompt).not.toContain("local-person");
-    expect(group?.systemPrompt).not.toContain("alice-person");
-  });
-
-  test("a read failure is explicit in the turn prompt", async () => {
-    const profilePath = await temporaryProfile();
-    await mkdir(join(profilePath, "MEMORY.md"));
-    const result = await (await invokeMemoryHandler(profilePath, { kind: "local" }))("SOUL");
-
-    expect(result?.systemPrompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN.");
-    expect(result?.systemPrompt).toContain("Do not claim to remember Profile facts");
-    expect(result?.systemPrompt).not.toContain("Durable facts should be saved");
   });
 });
 

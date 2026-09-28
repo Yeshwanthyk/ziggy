@@ -132,12 +132,12 @@ describe("Pi-backed model operations", () => {
     const selected = listed[0];
     expect(selected).toBeDefined();
 
-    if (selected === undefined) return;
+    if (selected === undefined) throw new Error("expected an available anthropic model");
 
     const thinking = selected.thinkingLevels[0];
     expect(thinking).toBeDefined();
 
-    if (thinking === undefined) return;
+    if (thinking === undefined) throw new Error("expected a supported thinking level");
     await Effect.runPromise(
       models.set(profilePath, selected.providerId, selected.modelId, thinking),
     );
