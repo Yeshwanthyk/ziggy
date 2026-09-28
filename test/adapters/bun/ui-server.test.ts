@@ -101,6 +101,35 @@ describe("Bun UI server projection and authentication", () => {
     expect(await Bun.file(path).exists()).toBe(false);
   });
 
+  test("rejects oversized incoming WebSocket messages before dispatch", async () => {
+    const profilePath = await makeProfile();
+    let dispatched = 0;
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* openUiServer(
+            profilePath,
+            handlers({
+              onRequest: () =>
+                Effect.sync(() => {
+                  dispatched++;
+                }),
+            }),
+          );
+
+          const { token } = yield* readUiServerProjection(profilePath);
+          const socket = yield* Effect.promise(() => connect(server.port, token));
+          const closed = nextClose(socket);
+
+          socket.send("x".repeat(UI_SERVER_MAX_FRAME_BYTES + 1));
+          yield* Effect.promise(() => within(closed, "oversized message close"));
+          expect(dispatched).toBe(0);
+        }),
+      ),
+    );
+  });
+
   test("requires a matching query or Bearer token before upgrade", async () => {
     const profilePath = await makeProfile();
     await Effect.runPromise(
