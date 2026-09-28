@@ -582,6 +582,46 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
   expect(existsSync(join(fixture.profilePath, "automations"))).toBe(false);
 });
 
+test("runtime quarantine pauses existing package automations without deleting their records", async () => {
+  const fixture = await makeProfile();
+
+  const id = "quarantined-job";
+
+  await writeAutomationPackage(fixture.profilePath, "quarantined", id);
+  await writeSelection(fixture.profilePath, ["quarantined"]);
+
+  const service = makeService(noPreflight, noLock);
+
+  const first = await Effect.runPromise(
+    service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
+  );
+
+  await Effect.runPromise(
+    service.activateRuntime(fixture.profilePath, fixture.repositoryRoot, first, ["quarantined"]),
+  );
+
+  const active = join(fixture.profilePath, "automations", `${id}.md`);
+
+  const paused = join(fixture.profilePath, "automations", `${id}.paused.md`);
+
+  expect(existsSync(active)).toBe(true);
+
+  const second = await Effect.runPromise(
+    service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
+  );
+
+  await Effect.runPromise(
+    service.activateRuntime(fixture.profilePath, fixture.repositoryRoot, second, []),
+  );
+
+  expect(existsSync(active)).toBe(false);
+  expect(existsSync(paused)).toBe(true);
+  expect(await readFile(paused, "utf8")).toContain("extension:quarantined");
+  expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toContain(
+    "quarantined",
+  );
+});
+
 test("runtime activation rejects exact selection-byte drift before activating owned automation", async () => {
   const fixture = await makeProfile();
   const automationId = "runtime-owned-job";

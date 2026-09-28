@@ -1308,7 +1308,17 @@ const createProfileRuntime = (
                 });
                 assertNoPiResourceDiagnostics(profilePath, services);
                 acceptedResources = partition.resources;
-                skippedPackages = partition.skipped;
+                skippedPackages = partition.skipped.map((item) => ({
+                  ...item,
+                  diagnostics: [
+                    ...item.diagnostics.slice(0, 11),
+                    {
+                      source: item.id,
+                      message:
+                        "Package-owned automations are disabled while quarantined; stored definitions are retained",
+                    },
+                  ],
+                }));
               }
 
               const specialistRunner =
@@ -1453,10 +1463,24 @@ const createProfileRuntime = (
     }),
   );
 
-const bindChatRuntime = async (
+export const bindChatRuntime = async (
   runtime: AgentSessionRuntime,
   lease?: ReturnType<typeof makeSessionLeaseTransitions>,
 ): Promise<void> => {
+  let invalidatedSession: AgentSessionRuntime["session"] | undefined;
+  runtime.setBeforeSessionInvalidate(() => {
+    invalidatedSession = runtime.session;
+  });
+
+  const replacementFailed = async (previous: AgentSessionRuntime["session"]): Promise<void> => {
+    if (lease === undefined) return;
+
+    if (runtime.session !== previous || invalidatedSession === previous) lease.poison();
+
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+    await Effect.runPromise(lease.cancelReservation);
+  };
+
   const bindSession = async (): Promise<void> => {
     const session = runtime.session;
     await session.bindExtensions({
@@ -1464,12 +1488,13 @@ const bindChatRuntime = async (
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
         newSession: async (options) => {
+          const previous = runtime.session;
           let result: Awaited<ReturnType<typeof runtime.newSession>>;
 
           try {
             result = await runtime.newSession(options);
           } catch (cause) {
-            lease?.poison();
+            await replacementFailed(previous);
             throw cause;
           }
 
@@ -1485,12 +1510,13 @@ const bindChatRuntime = async (
           return result;
         },
         fork: async (entryId, options) => {
+          const previous = runtime.session;
           let result: Awaited<ReturnType<typeof runtime.fork>>;
 
           try {
             result = await runtime.fork(entryId, options);
           } catch (cause) {
-            lease?.poison();
+            await replacementFailed(previous);
             throw cause;
           }
 
@@ -1535,6 +1561,8 @@ const bindChatRuntime = async (
           return { cancelled: result.cancelled };
         },
         switchSession: async (sessionPath, options) => {
+          const previous = runtime.session;
+
           if (lease !== undefined) {
             // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
             const id = (await Effect.runPromise(readSessionHeaderOnly(sessionPath))).id;
@@ -1557,12 +1585,7 @@ const bindChatRuntime = async (
 
             return result;
           } catch (cause) {
-            if (lease !== undefined) {
-              lease.poison();
-              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-              await Effect.runPromise(lease.cancelReservation);
-            }
-
+            await replacementFailed(previous);
             throw cause;
           }
         },

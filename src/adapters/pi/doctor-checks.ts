@@ -270,7 +270,7 @@ const resourcesCheck = (
     if (skipped.length > 0)
       return error(
         "resources",
-        `BROKEN Profile packages skipped: ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
+        `BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
       );
 
     const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);

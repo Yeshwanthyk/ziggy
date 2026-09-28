@@ -393,7 +393,9 @@ test("doctor reports skipped broken packages as an error with the diagnostic", a
 
     expect(report.checks.find((check) => check.id === "resources")).toMatchObject({
       severity: "error",
-      message: expect.stringContaining("BROKEN Profile packages skipped: broken (missing module)"),
+      message: expect.stringContaining(
+        "BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): broken (missing module)",
+      ),
     });
   } finally {
     await rm(profilePath, { recursive: true, force: true });

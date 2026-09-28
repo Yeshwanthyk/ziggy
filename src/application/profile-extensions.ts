@@ -1150,19 +1150,27 @@ export const makeProfileExtensions = (
               );
 
               const activated: Array<ActivatedAutomation> = [];
+              const paused: Array<PausedAutomation> = [];
               const accepted = new Set(acceptedOptionalIds);
-              yield* provisionAdditions(
-                automation,
-                profilePath,
-                packages.filter((item) => accepted.has(item.id)),
-                activated,
-              ).pipe(
+
+              yield* Effect.gen(function* () {
+                for (const packageInfo of packages.filter((item) => !accepted.has(item.id))) {
+                  yield* pauseOwnedAutomations(automation, profilePath, packageInfo, paused);
+                }
+
+                yield* provisionAdditions(
+                  automation,
+                  profilePath,
+                  packages.filter((item) => accepted.has(item.id)),
+                  activated,
+                );
+              }).pipe(
                 Effect.catch((failure) =>
                   rollbackMutation(
                     profilePath,
                     "activate-runtime",
                     failure,
-                    rollbackActions(automation, profilePath, snapshot, activated, []),
+                    rollbackActions(automation, profilePath, snapshot, activated, paused),
                   ),
                 ),
               );
