@@ -11,6 +11,7 @@ import { Effect } from "effect";
 import {
   makeProfileExtensionPreflight,
   inspectPiPackageHealth,
+  listProfileExtensionsWithHealth,
 } from "ziggy/adapters/pi/profile-extension-preflight";
 import { openChat } from "ziggy/adapters/pi/pi-agent";
 import { createAgentSessionRuntime } from "@earendil-works/pi-coding-agent";
@@ -178,6 +179,16 @@ test("skips broken imports and skills while reporting bounded package diagnostic
   );
 
   const broken = await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"));
+
+  const health = await Effect.runPromise(
+    listProfileExtensionsWithHealth(profilePath, "/repository", {
+      listForProfile: () =>
+        Effect.succeed({ available: [], selected: ["broken-import", "bad-skill", "healthy"] }),
+    }),
+  );
+
+  expect(health.listing.selected).toEqual(["broken-import", "bad-skill", "healthy"]);
+  expect(health.skipped.map((item) => item.id).sort()).toEqual(["bad-skill", "broken-import"]);
   expect(broken.map((item) => item.id).sort()).toEqual(["bad-skill", "broken-import"]);
   expect(
     broken.every((item) =>

@@ -8,6 +8,9 @@ import { memoryFilePaths } from "../../domain/memory";
 import {
   ProfileExtensionPreflight,
   ProfileExtensionPreflightFailed,
+  type ProfileExtensionError,
+  type ProfileExtensionListing,
+  type ProfileExtensionsApi,
   type ProfileExtensionPreflightApi,
   type ProfileExtensionPreflightResult,
 } from "../../domain/profile-extension";
@@ -291,3 +294,23 @@ export const inspectPiPackageHealth = (
         : preflightFailure(profilePath, "could not inspect Pi packages", "resources", cause),
     ),
   );
+
+export interface ProfileExtensionHealthListing {
+  readonly listing: ProfileExtensionListing;
+  /** Selected optional packages quarantined by Pi, with bounded diagnostics for display. */
+  readonly skipped: ReadonlyArray<SkippedPiPackage>;
+}
+
+/** One typed UI projection: catalog selection alongside the runtime's skipped-package policy. */
+export const listProfileExtensionsWithHealth = (
+  profilePath: string,
+  repositoryRoot: string,
+  extensions: Pick<ProfileExtensionsApi, "listForProfile">,
+): Effect.Effect<
+  ProfileExtensionHealthListing,
+  ProfileExtensionError | ProfileExtensionPreflightFailed
+> =>
+  Effect.all({
+    listing: extensions.listForProfile(profilePath, repositoryRoot),
+    skipped: inspectPiPackageHealth(profilePath, repositoryRoot),
+  });
