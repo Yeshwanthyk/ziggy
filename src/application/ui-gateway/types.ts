@@ -27,6 +27,8 @@ export interface UiGatewayDependencies {
   readonly profileDirectory?: import("../profile-directory").ProfileDirectoryApi;
   readonly runtimeDirectory?: import("../profile-runtime-directory").ProfileRuntimeDirectoryApi;
   readonly repositoryRoot: string;
+  /** Directory that bare Profile names resolve under; enables short CLI targets. */
+  readonly profilesDirectory?: string | undefined;
   readonly sessions: SessionsApi;
   readonly agent: ZiggyAgentApi;
   readonly profileExtensions: ProfileExtensionsApi;

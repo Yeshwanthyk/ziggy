@@ -142,6 +142,7 @@ const makeLiveUiRuntime = (
     readonly memory: MemoryApi;
   },
   profileRegistryPath?: string,
+  profilesDirectory?: string,
 ): ResidentUiRuntime => ({
   run: (target, registry) =>
     Effect.gen(function* () {
@@ -168,6 +169,7 @@ const makeLiveUiRuntime = (
         openedGateway = yield* makeUiGateway({
           defaultProfile: defaultBranch,
           repositoryRoot,
+          profilesDirectory,
           ...capabilities,
         });
       } else {
@@ -208,6 +210,7 @@ const makeLiveUiRuntime = (
           branches,
           profileDirectory,
           repositoryRoot,
+          profilesDirectory,
           ...capabilities,
         });
       }
@@ -340,6 +343,7 @@ export const makeResidentGatewayLive = (
   repositoryRoot: string,
   profileRegistryPath: string | undefined,
   extensionHealth: UiGatewayDependencies["extensionHealth"],
+  profilesDirectory?: string,
 ) =>
   Layer.effect(
     ResidentGateway,
@@ -367,6 +371,7 @@ export const makeResidentGatewayLive = (
             memory: yield* Memory,
           },
           profileRegistryPath,
+          profilesDirectory,
         ),
       );
     }),

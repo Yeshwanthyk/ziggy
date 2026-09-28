@@ -165,6 +165,7 @@ const ResidentProvided = makeResidentGatewayLive(
   repositoryRoot,
   resolveProfilesRegistry(resolutionOptions),
   listProfileExtensionsWithHealth,
+  resolveProfilesDirectory(resolutionOptions),
 ).pipe(
   Layer.provide(
     Layer.mergeAll(

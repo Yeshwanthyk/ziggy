@@ -123,7 +123,11 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     state: "open",
     capabilities: vi.fn(async () => capabilitiesResult()),
     listProfiles: vi.fn(async () => ({ profiles: [profile] })),
-    currentProfile: vi.fn(async () => ({ profileId: profile.profileId, name: profile.name })),
+    currentProfile: vi.fn(async () => ({
+      profileId: profile.profileId,
+      name: profile.name,
+      cliTarget: "squarey",
+    })),
     openMain: vi.fn(async () => mainRef),
     openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
@@ -1293,6 +1297,7 @@ describe("useZiggyGateway", () => {
       currentProfile: vi.fn(async () => ({
         profileId: staleProfile.profileId,
         name: staleProfile.name,
+        cliTarget: "stale",
       })),
       openMain: vi.fn(async () => staleRef),
       listSessions: vi.fn(async () => ({

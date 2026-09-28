@@ -330,6 +330,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   );
   const [profiles, setProfiles] = useState<ReadonlyArray<ZiggyProfileSummary>>([]);
   const [profile, setProfile] = useState<ZiggyProfileSummary>();
+  // Exact `ziggy` CLI argument for the resident's own Profile, supplied by the server.
+  const [residentCliTarget, setResidentCliTarget] = useState<string>();
   const [conversations, setConversations] = useState<ReadonlyArray<ConversationSummary>>([]);
   const [pins, setPins] = useState<ReadonlyArray<ZiggyPin>>([]);
   const [pinRevision, setPinRevision] = useState(0);
@@ -937,6 +939,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           return;
         setMaxPromptCodePoints(capabilities.bounds.maxPromptCodePoints);
         setProfiles(listedProfiles.profiles);
+        setResidentCliTarget(current.cliTarget);
         const storedProfileId = readStoredProfile(url);
         const selectedProfile =
           listedProfiles.profiles.find(
@@ -2253,6 +2256,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     profiles,
     reconciling,
     refreshSidebar,
+    residentCliTarget,
     removeConversationPin,
     resumeAutomation,
     runAutomation,

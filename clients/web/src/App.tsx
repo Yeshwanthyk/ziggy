@@ -1002,6 +1002,7 @@ export function App() {
         onSaveModel={gateway.saveModelSettings}
         onToggleExtension={gateway.toggleExtension}
         open={connectionOpen}
+        cliTarget={gateway.residentCliTarget}
         profileName={gateway.profile?.name ?? "Ziggy"}
       />
       <div aria-live="polite" className="sr-only">

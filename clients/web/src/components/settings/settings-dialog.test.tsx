@@ -159,6 +159,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
       connectionPending={false}
       open
       profileName="Squarey"
+      cliTarget="/Users/me/Ziggy Profiles/Squarey"
       modelSettings={{
         ...modelSettings,
         extensions: {
@@ -188,7 +189,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
   );
   expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
   expect(screen.getByText(/Restart the resident to apply extension changes/u)).not.toBeNull();
-  expect(screen.getByText("ziggy serve restart squarey")).not.toBeNull();
+  expect(screen.getByText("ziggy serve restart '/Users/me/Ziggy Profiles/Squarey'")).not.toBeNull();
   fireEvent.click(screen.getByRole("switch", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });

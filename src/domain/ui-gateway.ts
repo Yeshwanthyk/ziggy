@@ -627,6 +627,8 @@ export type UiProfileListResult = typeof UiProfileListResult.Type;
 export const UiProfileCurrentResult = Schema.Struct({
   profileId: ProfileId,
   name: boundedString("Profile name", 128),
+  /** Exact `ziggy` CLI argument that resolves back to this Profile. */
+  cliTarget: boundedString("Profile CLI target", 4096),
 });
 
 export type UiProfileCurrentResult = typeof UiProfileCurrentResult.Type;

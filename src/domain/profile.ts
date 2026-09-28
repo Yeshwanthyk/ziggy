@@ -196,6 +196,22 @@ export const resolveProfileTarget = (
   };
 };
 
+/**
+ * The shortest CLI argument that resolves back to `profilePath`: the folder name when the
+ * Profile lives directly under `profilesDirectory`, otherwise the absolute path. Round-trip
+ * invariant: `resolveProfileTarget(profileCliTarget(p, dir), options).path === p` whenever
+ * `dir === resolveProfilesDirectory(options)` and `p` is absolute.
+ */
+export const profileCliTarget = (profilePath: string, profilesDirectory: string): string => {
+  const name = path.basename(profilePath);
+
+  return name.length > 0 &&
+    !hasPathSyntax(name) &&
+    path.join(profilesDirectory, name) === profilePath
+    ? name
+    : profilePath;
+};
+
 export const soulTemplate = (name: string): string => `# ${name}
 
 You are ${name}. You live in this folder — it is your whole world: your soul, memory,

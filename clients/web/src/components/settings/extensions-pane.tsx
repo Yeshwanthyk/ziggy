@@ -5,11 +5,11 @@ import type { ModelSettingsState } from "@/gateway";
 import type { ZiggyExtensionChoice } from "../../../../../packages/ui-sdk/src/index";
 import { AlertTriangle, Check, Copy, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { PaneHeader, profileTarget } from "./shared";
+import { PaneHeader, profileCommandArgument } from "./shared";
 
 interface ExtensionsPaneProps {
   readonly modelSettings?: ModelSettingsState;
-  readonly profileName: string;
+  readonly cliTarget?: string | undefined;
   readonly onToggleExtension: (id: string, enabled: boolean) => Promise<void>;
 }
 
@@ -30,7 +30,7 @@ interface Row {
 
 export function ExtensionsPane({
   modelSettings,
-  profileName,
+  cliTarget,
   onToggleExtension,
 }: ExtensionsPaneProps) {
   const [query, setQuery] = useState("");
@@ -179,7 +179,7 @@ export function ExtensionsPane({
         ) : null}
       </div>
       {modelSettings?.restartRequired ? (
-        <RestartBar profileName={profileName} />
+        <RestartBar cliTarget={cliTarget} />
       ) : modelSettings?.extensionNotice ? (
         <div className="settings-pane-footer">
           <p className="settings-footer-note" role="status">
@@ -191,8 +191,8 @@ export function ExtensionsPane({
   );
 }
 
-function RestartBar({ profileName }: { readonly profileName: string }) {
-  const command = `ziggy serve restart ${profileTarget(profileName)}`;
+function RestartBar({ cliTarget }: { readonly cliTarget: string | undefined }) {
+  const command = `ziggy serve restart ${profileCommandArgument(cliTarget)}`;
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);

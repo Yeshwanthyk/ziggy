@@ -14,6 +14,8 @@ export interface ZiggyProfileListResult {
 export interface ZiggyProfileCurrentResult {
   readonly profileId: ZiggyProfileId;
   readonly name: string;
+  /** Exact `ziggy` CLI argument that resolves back to this Profile (name or absolute path). */
+  readonly cliTarget: string;
 }
 
 export type ZiggyProfileScopedParams = { readonly profileId: ZiggyProfileId };
@@ -61,9 +63,10 @@ export const isProfileListResult = (value: unknown): value is ZiggyProfileListRe
 
 export const isProfileCurrentResult = (value: unknown): value is ZiggyProfileCurrentResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "name"]) &&
+  hasOnlyKeys(value, ["profileId", "name", "cliTarget"]) &&
   isProfileId(value.profileId) &&
-  isBoundedString(value.name, 128);
+  isBoundedString(value.name, 128) &&
+  isBoundedString(value.cliTarget, 4096);
 
 export const isProfileHealthCheck = (value: unknown): value is ZiggyProfileHealthCheck =>
   isRecord(value) &&

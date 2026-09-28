@@ -15,6 +15,7 @@ import {
   type UiRequestId,
 } from "../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
+import { profileCliTarget } from "../domain/profile";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
 import { makeCommandCache } from "./ui-gateway/command-cache";
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
@@ -163,6 +164,11 @@ export const makeUiGateway = (
       );
     };
 
+    const cliTarget = (profilePath: string): string =>
+      config.profilesDirectory === undefined
+        ? profilePath
+        : profileCliTarget(profilePath, config.profilesDirectory);
+
     const defaultProfile = (): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
       Effect.succeed(config.defaultProfile);
 
@@ -233,12 +239,14 @@ export const makeUiGateway = (
                     Effect.map((branch) => ({
                       profileId: branch.profileId,
                       name: branch.target.name,
+                      cliTarget: cliTarget(branch.target.path),
                     })),
                   )
                 : config.profileDirectory.current().pipe(
                     Effect.map((current) => ({
                       profileId: current.profileId,
                       name: current.target.name,
+                      cliTarget: cliTarget(current.target.path),
                     })),
                     Effect.mapError((cause) => toGatewayError(request.method, cause)),
                   ),

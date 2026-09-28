@@ -47,6 +47,8 @@ interface SettingsDialogProps {
   readonly pairingRequired?: boolean;
   readonly open: boolean;
   readonly profileName: string;
+  /** Exact `ziggy` CLI argument for the resident Profile, as sent by the server. */
+  readonly cliTarget?: string | undefined;
   readonly onConnect: (url: string, token: string) => Promise<void>;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRetrySettings: () => Promise<void>;
@@ -87,6 +89,7 @@ export function SettingsDialog({
   pairingRequired = false,
   open,
   profileName,
+  cliTarget,
   onConnect,
   onOpenChange,
   onSaveModel,
@@ -206,13 +209,14 @@ export function SettingsDialog({
             ) : tab === "extensions" ? (
               <ExtensionsPane
                 modelSettings={modelSettings}
+                cliTarget={cliTarget}
                 onToggleExtension={onToggleExtension}
-                profileName={profileName}
               />
             ) : tab === "providers" ? (
               <ProvidersPane modelSettings={modelSettings} />
             ) : (
               <ConnectionPane
+                cliTarget={cliTarget}
                 connected={connected}
                 connectionError={connectionError}
                 connectionPending={connectionPending}

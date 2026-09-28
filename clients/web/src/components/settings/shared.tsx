@@ -36,11 +36,14 @@ export const modelKey = (providerId: string, modelId: string): string =>
   JSON.stringify([providerId, modelId]);
 
 /**
- * The CLI target for this Profile. Ziggy names a Profile by capitalising its folder name,
- * so lowering the first letter recovers the folder under the Profiles directory.
+ * The Profile argument for a `ziggy` command hint. The server supplies the exact CLI target
+ * (folder name or absolute path); this only shell-quotes it so it can be pasted as one argument.
  */
-export const profileTarget = (profileName: string): string =>
-  `${profileName.charAt(0).toLocaleLowerCase()}${profileName.slice(1)}`;
+export const profileCommandArgument = (cliTarget: string | undefined): string => {
+  if (cliTarget === undefined || cliTarget.length === 0) return "<profile>";
+  if (/^[\w./@%+=:,-]+$/.test(cliTarget)) return cliTarget;
+  return `'${cliTarget.replaceAll("'", `'\\''`)}'`;
+};
 
 export function PaneHeader({
   title,

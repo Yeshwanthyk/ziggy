@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LoaderCircle } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Field, PaneHeader, profileTarget } from "./shared";
+import { Field, PaneHeader, profileCommandArgument } from "./shared";
 
 const endpointKey = "ziggy.web.endpoint";
 const tokenKey = "ziggy.web.session-token";
@@ -28,6 +28,7 @@ interface ConnectionPaneProps {
   readonly hosted: boolean;
   readonly pairingRequired: boolean;
   readonly profileName: string;
+  readonly cliTarget?: string | undefined;
   readonly onConnect: (url: string, token: string) => Promise<void>;
 }
 
@@ -38,6 +39,7 @@ export function ConnectionPane({
   hosted,
   pairingRequired,
   profileName,
+  cliTarget,
   onConnect,
 }: ConnectionPaneProps) {
   const [url, setUrl] = useState(
@@ -80,7 +82,7 @@ export function ConnectionPane({
           {pairingRequired ? (
             <div className="settings-callout" data-tone="danger">
               <p>This browser needs pairing. Open a fresh link from:</p>
-              <code>ziggy web pair {profileTarget(profileName)}</code>
+              <code>ziggy web pair {profileCommandArgument(cliTarget)}</code>
             </div>
           ) : (
             <p className="settings-muted">This browser is paired with the local Ziggy resident.</p>

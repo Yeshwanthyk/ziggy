@@ -232,7 +232,7 @@ const methodFixtures = (): ReadonlyArray<{
         profiles: [{ profileId: PROFILE_A, name: "Squarey", current: true, available: true }],
       },
     },
-    { method: "profile.current", params: {}, result: { profileId: PROFILE_A, name: "Squarey" } },
+    { method: "profile.current", params: {}, result: { profileId: PROFILE_A, name: "Squarey", cliTarget: "squarey" } },
     {
       method: "profile.health",
       params: profileScopedParams(PROFILE_A),
@@ -704,11 +704,11 @@ describe("gateway client transport", () => {
     socket.message({
       id: frameId(socket, 1),
       ok: true,
-      result: { profileId: PROFILE_A, name: "Squarey" },
+      result: { profileId: PROFILE_A, name: "Squarey", cliTarget: "squarey" },
     });
     socket.message({ id: frameId(socket, 0), ok: true, result: { pong: true } });
     expect(await ping).toEqual({ pong: true });
-    expect(await current).toEqual({ profileId: PROFILE_A, name: "Squarey" });
+    expect(await current).toEqual({ profileId: PROFILE_A, name: "Squarey", cliTarget: "squarey" });
     client.close();
   });
 

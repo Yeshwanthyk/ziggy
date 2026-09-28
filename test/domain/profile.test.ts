@@ -4,6 +4,7 @@ import { Effect, Predicate, Result, Schema } from "effect";
 import {
   parseLeadingProfileAgentMention,
   prepareProfileAgentPrompt,
+  profileCliTarget,
   ProfileAgent,
   resolveProfilesDirectory,
   resolveProfilesRegistry,
@@ -45,6 +46,33 @@ test("Profile targets default to ~/.ziggy and preserve current-directory entry",
     path: "/workspace/current",
     name: "Current",
   });
+});
+
+test("Profile CLI targets round-trip to the exact Profile path", () => {
+  const options = { cwd: "/workspace/current", homedir: "/Users/test" };
+  const profiles = resolveProfilesDirectory(options);
+
+  const roundTrip = (profilePath: string) =>
+    resolveProfileTarget(profileCliTarget(profilePath, profiles), options).path;
+
+  expect(profileCliTarget("/Users/test/.ziggy/profiles/Buddy", profiles)).toBe("Buddy");
+  expect(profileCliTarget("/Users/test/work/buddy", profiles)).toBe("/Users/test/work/buddy");
+
+  expect(profileCliTarget("/Users/test/.Ziggy/profiles/buddy", profiles)).toBe(
+    "/Users/test/.Ziggy/profiles/buddy",
+  );
+  expect(profileCliTarget("/Users/test/.ziggy/profiles/.hidden", profiles)).toBe(
+    "/Users/test/.ziggy/profiles/.hidden",
+  );
+
+  for (const profilePath of [
+    "/Users/test/.ziggy/profiles/Buddy",
+    "/Users/test/work/my buddy",
+    "/Users/test/.Ziggy/profiles/buddy",
+    "/Users/test/.ziggy/profiles/.hidden",
+  ]) {
+    expect(roundTrip(profilePath)).toBe(profilePath);
+  }
 });
 
 test("leading Profile agent mentions require the same literal leading position", () => {
