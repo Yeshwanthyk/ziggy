@@ -2,6 +2,7 @@ import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
 import type * as Scope from "effect/Scope";
 import { type DiscordApiError, getGatewayBot } from "./api";
 import { makeRecentIds } from "../bun/recent-ids";
+import { MAX_CHAT_FRAME_SIZE } from "../slack-discord-frame-limit";
 import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
 
 export interface DiscordInboundMessage {
@@ -59,7 +60,7 @@ export type DiscordSocketConnectionState =
   | { readonly state: "connected"; readonly guildIds: ReadonlyArray<string> }
   | {
       readonly state: "reconnecting";
-      readonly reason: "connection" | "queue-overflow" | "socket";
+      readonly reason: "connection" | "malformed-frame" | "queue-overflow" | "socket";
     }
   | {
       readonly state: "failed";
@@ -238,11 +239,6 @@ const GATEWAY_QUERY = "v=10&encoding=json";
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
 const MAX_MESSAGE_IDS = 1_000;
-
-const MAX_FRAME_BYTES = 1_048_576;
-
-// Bound string frames without encoding/copying their attacker-controlled content.
-const MAX_FRAME_TEXT_LENGTH = 262_144;
 
 const SOCKET_OPEN = 1;
 
@@ -457,13 +453,17 @@ export const openDiscordSocket = (
       }
     };
 
-    const scheduleReconnect = (delayMs: number, mode: ConnectMode = "auto") => {
+    const scheduleReconnect = (
+      delayMs: number,
+      mode: ConnectMode = "auto",
+      reason: "connection" | "malformed-frame" = "connection",
+    ) => {
       if (stopped || failed) {
         return;
       }
 
       clearReconnect();
-      reportState({ state: "reconnecting", reason: "connection" });
+      reportState({ state: "reconnecting", reason });
       cancelReconnect = dependencies.schedule(delayMs, () => {
         cancelReconnect = undefined;
         offerCommand({ _tag: "Connect", mode });
@@ -483,14 +483,18 @@ export const openDiscordSocket = (
       return true;
     };
 
-    const reconnect = (connection: DiscordSocketConnection, mode: ConnectMode = "auto") => {
+    const reconnect = (
+      connection: DiscordSocketConnection,
+      mode: ConnectMode = "auto",
+      reason: "connection" | "malformed-frame" = "connection",
+    ) => {
       if (!abandon(connection)) {
         return;
       }
 
       const delay = reconnectDelayMs;
       reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
-      scheduleReconnect(delay, mode);
+      scheduleReconnect(delay, mode, reason);
     };
 
     const send = (
@@ -560,8 +564,8 @@ export const openDiscordSocket = (
                   offerCommand(
                     (
                       ArrayBuffer.isView(data)
-                        ? data.byteLength > MAX_FRAME_BYTES
-                        : data.length > MAX_FRAME_TEXT_LENGTH
+                        ? data.byteLength > MAX_CHAT_FRAME_SIZE
+                        : data.length > MAX_CHAT_FRAME_SIZE
                     )
                       ? { _tag: "FrameTooLarge", connection }
                       : { _tag: "Frame", connection, text: websocketMessageText(data) },
@@ -901,11 +905,12 @@ export const openDiscordSocket = (
         case "Frame":
           return handleFrame(command.connection, command.text);
         case "FrameTooLarge":
-          return command.connection === current?.connection
-            ? terminalFailure(
-                error("receive", "queue-overflow", false, new Error("Discord frame too large")),
-              )
-            : Effect.void;
+          return Effect.sync(() => {
+            if (command.connection !== current?.connection) return;
+
+            console.warn("[discord] malformed-frame: oversized gateway frame; reconnecting");
+            reconnect(command.connection, "auto", "malformed-frame");
+          });
         case "SocketError":
           return Effect.sync(() => reconnect(command.connection));
         case "SocketClosed":

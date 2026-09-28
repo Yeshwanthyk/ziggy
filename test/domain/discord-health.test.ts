@@ -28,18 +28,4 @@ describe("Discord runtime health", () => {
       lastFailure: "thread",
     });
   });
-
-  test("settles a queued turn cancelled before it starts", () => {
-    let health = initialDiscordHealth(1);
-    health = evolveDiscordHealth(health, { _tag: "connected", atMs: 2 });
-    health = evolveDiscordHealth(health, { _tag: "accepted", atMs: 3, queued: false });
-    health = evolveDiscordHealth(health, { _tag: "accepted", atMs: 4, queued: true });
-    health = evolveDiscordHealth(health, { _tag: "cancelled", atMs: 5, wasQueued: true });
-
-    expect(health).toMatchObject({
-      activeTurnCount: 1,
-      queuedTurnCount: 0,
-      cancelledTurnCount: 1,
-    });
-  });
 });

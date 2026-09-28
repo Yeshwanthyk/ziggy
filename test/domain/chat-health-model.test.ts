@@ -16,7 +16,7 @@ test("Slack and Discord health counts follow outstanding turns", () => {
       (steps) => {
         let slack = initialSlackHealth(0);
         let discord = initialDiscordHealth(0);
-        let outstanding: Array<{ queued: boolean }> = [];
+        let outstanding: Array<{ queued: boolean; started: boolean }> = [];
         let accepted = 0;
         let completed = 0;
         let cancelled = 0;
@@ -28,7 +28,7 @@ test("Slack and Discord health counts follow outstanding turns", () => {
           if (action === 0 || outstanding.length === 0) {
             const queued = outstanding.length > 0;
 
-            outstanding.push({ queued });
+            outstanding.push({ queued, started: false });
             accepted += 1;
             event = { _tag: "accepted", atMs, queued };
           } else if (action === 4) {
@@ -40,9 +40,11 @@ test("Slack and Discord health counts follow outstanding turns", () => {
 
             if (turn === undefined) return;
 
-            if (action === 1 && turn.queued) {
+            if (action === 1 && !turn.started) {
+              turn.started = true;
+              const wasQueued = turn.queued;
               turn.queued = false;
-              event = { _tag: "started", atMs, wasQueued: true };
+              event = { _tag: "started", atMs, wasQueued };
             } else {
               outstanding.splice(position, 1);
 
@@ -55,9 +57,9 @@ test("Slack and Discord health counts follow outstanding turns", () => {
                 if (succeeded) completed += 1;
                 else failed += 1;
 
-                // A queued turn cannot complete before starting; start it first.
-                if (turn.queued) {
-                  const start: SlackHealthEvent = { _tag: "started", atMs, wasQueued: true };
+                // Completion requires a start even if the generated action skipped it.
+                if (!turn.started) {
+                  const start: SlackHealthEvent = { _tag: "started", atMs, wasQueued: turn.queued };
                   slack = evolveSlackHealth(slack, start);
                   discord = evolveDiscordHealth(discord, start);
                 }

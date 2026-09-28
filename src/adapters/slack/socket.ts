@@ -2,6 +2,7 @@ import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
 import type * as Scope from "effect/Scope";
 import { type SlackApiError, connectionsOpen } from "./api";
 import { makeRecentIds } from "../bun/recent-ids";
+import { MAX_CHAT_FRAME_SIZE } from "../slack-discord-frame-limit";
 
 export interface SlackInboundFile {
   readonly id: string;
@@ -124,6 +125,8 @@ const SlackMessageFileSchema = Schema.Struct({
   url_private_download: Schema.optional(BoundedFileText),
 });
 
+const MAX_SLACK_INBOUND_TEXT_LENGTH = 40_000;
+
 const MessageSchema = Schema.Struct({
   type: Schema.Literal("message"),
   subtype: Schema.optional(Schema.String),
@@ -131,7 +134,7 @@ const MessageSchema = Schema.Struct({
   channel: Schema.String,
   channel_type: Schema.Literals(["im", "channel", "group", "mpim"]),
   user: Schema.String.check(Schema.isMinLength(1)),
-  text: Schema.optional(Schema.String.check(Schema.isMaxLength(16_000))),
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(MAX_SLACK_INBOUND_TEXT_LENGTH))),
   ts: Schema.String,
   thread_ts: Schema.optional(Schema.String),
   files: Schema.optional(Schema.Array(Schema.Unknown)),
@@ -175,12 +178,6 @@ const MAX_EVENT_IDS = 1_000;
 const MAX_FILES_PER_TURN = 4;
 
 const MAX_FILES_TO_DECODE = 20;
-
-const MAX_FRAME_BYTES = 1_048_576;
-
-// A UTF-16 code unit can encode up to three UTF-8 bytes; this conservative
-// limit avoids encoding/copying attacker-controlled strings in the listener.
-const MAX_FRAME_TEXT_LENGTH = 262_144;
 
 const SOCKET_OPEN = 1;
 
@@ -427,8 +424,8 @@ export const openSlackSocket = (
                   offerCommand(
                     (
                       ArrayBuffer.isView(data)
-                        ? data.byteLength > MAX_FRAME_BYTES
-                        : data.length > MAX_FRAME_TEXT_LENGTH
+                        ? data.byteLength > MAX_CHAT_FRAME_SIZE
+                        : data.length > MAX_CHAT_FRAME_SIZE
                     )
                       ? { _tag: "FrameTooLarge", connection }
                       : { _tag: "Frame", connection, text: websocketMessageText(data) },
@@ -658,11 +655,12 @@ export const openSlackSocket = (
         case "Frame":
           return handleFrame(command.connection, command.text);
         case "FrameTooLarge":
-          return command.connection === current?.connection
-            ? terminalFailure(
-                error("receive", "queue-overflow", false, new Error("Slack frame too large")),
-              )
-            : Effect.void;
+          // No envelope ID can be acknowledged without decoding the frame.
+          return Effect.sync(() => {
+            if (command.connection === current?.connection) {
+              console.warn("[slack] dropped oversized socket frame without acknowledgment");
+            }
+          });
         case "SocketError":
           return Effect.sync(() => {
             dependencies.reportConnectionFailure(

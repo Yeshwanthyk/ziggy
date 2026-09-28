@@ -1211,6 +1211,100 @@ describe("Slack gateway boundary", () => {
       }),
     ));
 
+  test("caps per-chat replay and emits one busy notice per burst", async () => {
+    const settled: Array<string> = [];
+    const posts: Array<string> = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const busy = yield* Deferred.make<void>();
+        const rejected = yield* Deferred.make<void>();
+
+        const records: ReadonlyArray<SlackIngressRecord> = Array.from(
+          { length: 10 },
+          (_, index) => ({
+            eventId: `event-${index}`,
+            payload: {
+              chatKey: "user-U1",
+              channel: "D1",
+              context: { kind: "user", userId: "owner" },
+              statusThreadTs: `${index}.0`,
+              sourceTs: `${index}.0`,
+              text: `request ${index}`,
+            },
+          }),
+        );
+
+        const ingress: SlackIngressRuntime = {
+          initialize: () => Effect.void,
+          recover: () => Effect.void,
+          replayable: () => Effect.succeed(records),
+          admit: () => Effect.succeed("accepted"),
+          start: () => Effect.succeed(true),
+          finish: (_path, payload, _owner, state) =>
+            Effect.gen(function* () {
+              settled.push(`${payload.sourceTs}:${state}`);
+
+              if (payload.sourceTs === "9.0") yield* Deferred.succeed(rejected, undefined);
+            }),
+        };
+
+        const transport: SlackTransport = {
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          openSocket: () =>
+            Effect.succeed({
+              next: Effect.never,
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+          postMessage: (_token, _channel, text) =>
+            Effect.gen(function* () {
+              posts.push(text);
+
+              if (text === "This conversation is busy. Please try again later.") {
+                yield* Deferred.succeed(busy, undefined);
+                yield* Effect.never;
+              }
+
+              return { ts: "placeholder" };
+            }),
+          updateMessage: () => Effect.void,
+          setStatus: () => Effect.void,
+          addReaction: () => Effect.void,
+          removeReaction: () => Effect.void,
+        };
+
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          runSpecialist: () =>
+            Effect.succeed({
+              answer: "reply",
+              session: { id: "specialist", file: "/sessions/specialist.jsonl" },
+            }),
+          openTui: () => Effect.succeed(0),
+          openSpecialistChat: () =>
+            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
+          openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
+        };
+
+        yield* Effect.raceFirst(
+          makeSlackGateway(agent, transport, undefined, ingress).runLoop(
+            { path: "/tmp/ziggy-slack-cap-test", name: "Test" },
+            { botToken: "token", appToken: "app-token", ownerUserId: "U1" },
+          ),
+          Effect.all([Deferred.await(busy), Deferred.await(rejected)]),
+        );
+      }),
+    );
+
+    expect(settled).toContain("8.0:failed");
+    expect(settled).toContain("9.0:failed");
+    expect(
+      posts.filter((text) => text === "This conversation is busy. Please try again later."),
+    ).toHaveLength(1);
+  });
+
   test("bounds durable replay execution after registering the backlog in order", () =>
     Effect.runPromise(
       Effect.gen(function* () {

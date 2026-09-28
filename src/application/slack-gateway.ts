@@ -213,6 +213,7 @@ interface ChatState {
   handle?: ChatHandle;
   activeMessage?: InboundMessage;
   pending: number;
+  busyNoticePending: boolean;
 }
 
 interface ScheduledSlackTurn {
@@ -1076,6 +1077,7 @@ export const makeSlackGateway = (
             turns: new Set(),
             generation: 0,
             pending: 0,
+            busyNoticePending: false,
           };
 
           chats.set(chatKey, created);
@@ -1813,18 +1815,23 @@ export const makeSlackGateway = (
                 "failed",
                 healthRuntime.now(),
               );
-              yield* transport
-                .postMessage(
-                  config.botToken,
-                  message.channel,
-                  BUSY_MESSAGE,
-                  slackReplyThreadTs(message),
-                )
-                .pipe(
-                  Effect.catch((failure) =>
-                    Effect.logWarning("Slack busy response failed", { failure }),
-                  ),
-                );
+
+              if (!chatState.busyNoticePending) {
+                chatState.busyNoticePending = true;
+                yield* transport
+                  .postMessage(
+                    config.botToken,
+                    message.channel,
+                    BUSY_MESSAGE,
+                    slackReplyThreadTs(message),
+                  )
+                  .pipe(
+                    Effect.catch((failure) =>
+                      Effect.logWarning("Slack busy response failed", { failure }),
+                    ),
+                    Effect.forkScoped,
+                  );
+              }
 
               return;
             }
@@ -1861,6 +1868,9 @@ export const makeSlackGateway = (
 
               chatState.turns.delete(turn);
               chatState.pending = Math.max(0, chatState.pending - 1);
+
+              if (chatState.pending < MAX_PENDING_TURNS_PER_CHAT)
+                chatState.busyNoticePending = false;
             });
 
             return Effect.suspend(() =>

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Duration, Effect, Fiber, Result } from "effect";
 import { TestClock } from "effect/testing";
 import { DiscordApiError } from "ziggy/adapters/discord/api";
+import { MAX_CHAT_FRAME_SIZE } from "ziggy/adapters/slack-discord-frame-limit";
 import {
   DiscordSocketError,
   type DiscordSocketConnection,
@@ -50,7 +51,7 @@ class FakeDiscordConnection implements DiscordSocketConnection {
   };
   onClose = (listener: (code: number) => void) => this.add(this.closeListeners, listener);
 
-  emitMessage(data: string) {
+  emitMessage(data: DiscordWebSocketMessageData) {
     for (const listener of this.messageListeners) {
       listener(data);
     }
@@ -144,25 +145,43 @@ const yieldToSupervisor = Effect.gen(function* () {
 });
 
 describe("Discord socket Effect boundary", () => {
-  test("rejects an oversized frame before decoding or retaining it", async () => {
+  test("reconnects after an oversized frame without terminating the socket", async () => {
     const fixture = dependencies();
 
-    const result = await Effect.runPromise(
+    const state = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
-          fixture.connections[0]?.emitMessage("x".repeat(1_048_577));
+          fixture.connections[0]?.emitMessage("x".repeat(MAX_CHAT_FRAME_SIZE + 1));
 
-          return yield* socket.next.pipe(Effect.result);
+          return yield* socket.nextConnectionState;
         }),
       ),
     );
 
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "DiscordSocketError", reason: "queue-overflow" },
-    });
+    expect(state).toEqual({ state: "reconnecting", reason: "malformed-frame" });
+    expect(fixture.connections[0]?.state).toBe(3);
+  });
+
+  test("accepts a binary gateway frame at the exact byte limit", async () => {
+    const fixture = dependencies();
+    const frame = new Uint8Array(MAX_CHAT_FRAME_SIZE).fill(32);
+    frame.set(new TextEncoder().encode(ready));
+
+    const state = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openDiscordSocket("token", 0, fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(frame);
+
+          return yield* socket.nextConnectionState;
+        }),
+      ),
+    );
+
+    expect(state).toEqual({ state: "connected", guildIds: ["guild-1"] });
   });
 
   test("does not admit oversized inbound text", async () => {

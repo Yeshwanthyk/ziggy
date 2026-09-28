@@ -206,6 +206,7 @@ interface ChatState {
   generation: number;
   handle?: ChatHandle;
   pending: number;
+  busyNoticePending: boolean;
 }
 
 export interface DiscordProgressUpdateState {
@@ -706,7 +707,7 @@ export const makeDiscordGateway = (
                 return observe({
                   _tag: "reconnecting",
                   atMs: healthRuntime.now(),
-                  failure: state.reason,
+                  failure: state.reason === "malformed-frame" ? "socket" : state.reason,
                 });
               case "failed":
                 return observe({
@@ -739,6 +740,7 @@ export const makeDiscordGateway = (
             turns: new Set(),
             generation: 0,
             pending: 0,
+            busyNoticePending: false,
           };
 
           chats.set(chatKey, created);
@@ -1187,13 +1189,18 @@ export const makeDiscordGateway = (
                 "failed",
                 healthRuntime.now(),
               );
-              yield* transport
-                .createMessage(config.botToken, message.channelId, BUSY_MESSAGE)
-                .pipe(
-                  Effect.catch((failure) =>
-                    Effect.logWarning("Discord busy response failed", { failure }),
-                  ),
-                );
+
+              if (!chatState.busyNoticePending) {
+                chatState.busyNoticePending = true;
+                yield* transport
+                  .createMessage(config.botToken, message.channelId, BUSY_MESSAGE)
+                  .pipe(
+                    Effect.catch((failure) =>
+                      Effect.logWarning("Discord busy response failed", { failure }),
+                    ),
+                    Effect.forkScoped,
+                  );
+              }
 
               return;
             }
@@ -1256,6 +1263,9 @@ export const makeDiscordGateway = (
 
                   chatState.turns.delete(turn);
                   chatState.pending = Math.max(0, chatState.pending - 1);
+
+                  if (chatState.pending < MAX_PENDING_TURNS_PER_CHAT)
+                    chatState.busyNoticePending = false;
                 }),
               ),
               Effect.forkScoped,

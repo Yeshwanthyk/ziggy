@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { Deferred, Duration, Effect, Fiber, Result } from "effect";
 import { SlackApiError } from "ziggy/adapters/slack/api";
+import { MAX_CHAT_FRAME_SIZE } from "ziggy/adapters/slack-discord-frame-limit";
 import {
   type SlackSocketConnection,
   type SlackSocketDependencies,
@@ -42,7 +43,7 @@ class FakeSlackConnection implements SlackSocketConnection {
   };
   onClose = (listener: () => void) => this.add(this.closeListeners, listener);
 
-  emitMessage(data: string) {
+  emitMessage(data: SlackWebSocketMessageData) {
     for (const listener of this.messageListeners) {
       listener(data);
     }
@@ -141,25 +142,46 @@ describe("Slack socket Effect boundary", () => {
     expect(state).toEqual({ state: "reconnecting", failure: "connection" });
   });
 
-  test("rejects an oversized frame before decoding or retaining it", async () => {
+  test("drops oversized frames without terminating or acknowledging the socket", async () => {
     const fixture = dependencies();
 
-    const result = await Effect.runPromise(
+    const received = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openSlackSocket("token", fixture.value);
           yield* yieldToSupervisor;
-          fixture.connections[0]?.emitMessage("x".repeat(1_048_577));
+          fixture.connections[0]?.emitMessage("x".repeat(MAX_CHAT_FRAME_SIZE + 1));
+          fixture.connections[0]?.emitMessage(envelope("small"));
 
-          return yield* socket.next.pipe(Effect.result);
+          return yield* socket.next;
         }),
       ),
     );
 
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "SlackSocketError", reason: "queue-overflow" },
-    });
+    expect(received.ts).toBe("small");
+    expect(fixture.connections[0]?.sent).toEqual([
+      JSON.stringify({ envelope_id: "envelope-small" }),
+    ]);
+  });
+
+  test("admits a binary frame at the exact byte limit", async () => {
+    const fixture = dependencies();
+    const frame = new Uint8Array(MAX_CHAT_FRAME_SIZE).fill(32);
+    frame.set(new TextEncoder().encode(envelope("boundary")));
+
+    const received = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const socket = yield* openSlackSocket("token", fixture.value);
+          yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(frame);
+
+          return yield* socket.next;
+        }),
+      ),
+    );
+
+    expect(received.ts).toBe("boundary");
   });
 
   test("does not admit oversized inbound text", async () => {
@@ -170,31 +192,39 @@ describe("Slack socket Effect boundary", () => {
         Effect.gen(function* () {
           const socket = yield* openSlackSocket("token", fixture.value);
           yield* yieldToSupervisor;
-          fixture.connections[0]?.emitMessage(
-            JSON.stringify({
-              type: "events_api",
-              envelope_id: "large",
-              payload: {
-                event_id: "large",
-                event: {
-                  type: "message",
-                  channel: "C1",
-                  channel_type: "im",
-                  user: "U1",
-                  text: "x".repeat(16_001),
-                  ts: "large",
+
+          const examples: ReadonlyArray<readonly [string, number]> = [
+            ["large", 40_001],
+            ["limit", 40_000],
+          ];
+
+          for (const [ts, length] of examples) {
+            fixture.connections[0]?.emitMessage(
+              JSON.stringify({
+                type: "events_api",
+                envelope_id: ts,
+                payload: {
+                  event_id: ts,
+                  event: {
+                    type: "message",
+                    channel: "C1",
+                    channel_type: "im",
+                    user: "U1",
+                    text: "x".repeat(length),
+                    ts,
+                  },
                 },
-              },
-            }),
-          );
-          fixture.connections[0]?.emitMessage(envelope("small"));
+              }),
+            );
+          }
 
           return yield* socket.next;
         }),
       ),
     );
 
-    expect(received.ts).toBe("small");
+    expect(received.ts).toBe("limit");
+    expect(received.text).toHaveLength(40_000);
   });
 
   test("fails authentication once with a typed socket error", async () => {
