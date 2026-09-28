@@ -80,7 +80,7 @@ through the resident. We accept that.
 
 ## 2. Codemode setup
 
-Status: pending.
+Status: done (review/ext).
 
 - M1: codemode is unusable until `codemode.json` exists, and there's no schema hint or skill.
 - M2: the interpreter's rejection of loops and `try/catch` isn't described in the tool.

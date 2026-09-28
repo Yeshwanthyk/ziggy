@@ -1046,3 +1046,10 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - A new resident owner removes the previous `ui-server.json` before its UI starts, so attach never prints a stale port. URL discovery retries only while the file is missing.
 - Remaining web UI gaps: extension picker, per-session model/thinking switching, older-session resume picker.
 - Verification: `bun run check` and `bun run test` (711 pass) passed. Opus re-review: all findings resolved.
+
+## 2026-09-28 — Codemode setup, pi_docs policy, and headless skill guidance
+
+- Codemode: a missing `codemode.json` now gives a schema hint and points to a setup skill; the tool description states the interpreter contract (no classic `for`, `try/catch` or `throw`); MCP `isError` content reaches the script, capped at 4 KiB; config errors name key paths, never values.
+- Offline `pi_docs` includes Ziggy's Profile resource rules.
+- Replaced TUI instructions in `docs/operations/*.md` and the preloaded skills with resident web UI and CLI flows, and regenerated the packaged references. The extension-authoring skill says extensions run headless: `ctx.ui` confirm returns `false`, select and input return `undefined`.
+- Verification: `bun run check` and `bun run test` (714 pass) passed. Opus re-review: merge.
