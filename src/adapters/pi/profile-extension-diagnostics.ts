@@ -1,3 +1,5 @@
+import { sep } from "node:path";
+import type { PiResources } from "./resources";
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
 import {
   ProfileExtensionPreflightFailed,
@@ -122,4 +124,69 @@ export const assertNoPiResourceDiagnostics = (
   const failure = piResourceDiagnosticFailure(profilePath, services);
 
   if (failure !== undefined) throw failure;
+};
+
+export interface SkippedPiPackage {
+  readonly id: string;
+  readonly diagnostics: ReadonlyArray<PiResourceDiagnostic>;
+}
+
+export interface PiResourcePartition {
+  readonly resources: PiResources;
+  readonly skipped: ReadonlyArray<SkippedPiPackage>;
+  readonly fatal: ReadonlyArray<PiResourceDiagnostic>;
+}
+
+/** Only selected optional package roots may be quarantined. Inline and core diagnostics stay fatal. */
+export const partitionPiResourceDiagnostics = (
+  resources: PiResources,
+  diagnostics: ReadonlyArray<PiResourceDiagnostic>,
+): PiResourcePartition => {
+  const byPackage = new Map<string, PiResourceDiagnostic[]>();
+  const fatal: PiResourceDiagnostic[] = [];
+
+  for (const diagnostic of diagnostics) {
+    const owner = resources.optionalPackages?.find(
+      (item) =>
+        diagnostic.source === item.packagePath ||
+        diagnostic.source.startsWith(`${item.packagePath}${sep}`),
+    );
+
+    if (owner === undefined) {
+      fatal.push(diagnostic);
+      continue;
+    }
+
+    const entries = byPackage.get(owner.id) ?? [];
+    entries.push(diagnostic);
+    byPackage.set(owner.id, entries);
+  }
+
+  const skipped = [...byPackage.entries()].map(([id, entries]) => ({
+    id,
+    diagnostics: entries.slice(0, MAX_PI_RESOURCE_DIAGNOSTICS).map((item) => ({
+      source: bounded(item.source, MAX_PI_DIAGNOSTIC_SOURCE),
+      message: bounded(item.message, MAX_PI_DIAGNOSTIC_MESSAGE),
+    })),
+  }));
+
+  const rejected = new Set(skipped.map((item) => item.id));
+
+  const rejectedPaths = (resources.optionalPackages ?? [])
+    .filter((item) => rejected.has(item.id))
+    .map((item) => item.packagePath);
+
+  const retained = (path: string) =>
+    !rejectedPaths.some((root) => path === root || path.startsWith(`${root}${sep}`));
+
+  return {
+    resources: {
+      ...resources,
+      extensionPaths: resources.extensionPaths.filter(retained),
+      skillPaths: resources.skillPaths.filter(retained),
+      optionalPackages: (resources.optionalPackages ?? []).filter((item) => !rejected.has(item.id)),
+    },
+    skipped,
+    fatal,
+  };
 };

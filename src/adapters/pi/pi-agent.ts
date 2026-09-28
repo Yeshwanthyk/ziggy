@@ -62,7 +62,13 @@ import type {
 import { fileSystemCauseDetails } from "../fs/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { composePiResources, discoverPiResources, type PiResources } from "./resources";
-import { assertNoPiResourceDiagnostics } from "./profile-extension-diagnostics";
+import {
+  assertNoPiResourceDiagnostics,
+  collectPiResourceDiagnostics,
+  partitionPiResourceDiagnostics,
+  piResourceDiagnosticFailure,
+  type SkippedPiPackage,
+} from "./profile-extension-diagnostics";
 import { profileResourceLoaderOptions } from "./profile-resource-loader";
 import { leaseProfileRuntime } from "./profile-runtime-lease";
 import { withProfileRuntimeLock } from "../bun/profile-runtime-lock";
@@ -998,6 +1004,7 @@ const createSpecialistVoiceHub = (): SpecialistVoiceHub => {
 
 interface ProfileRuntime extends AgentSessionRuntime {
   readonly resources: PiResources;
+  readonly skippedPackages: ReadonlyArray<SkippedPiPackage>;
   readonly agents: ReadonlyArray<ProfileAgent>;
   readonly ephemeralPromptContext: EphemeralPromptContextState;
   readonly voiceHub: SpecialistVoiceHub;
@@ -1141,12 +1148,14 @@ const createProfileRuntime = (
       });
 
       const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
+      let acceptedResources = resources;
+      let skippedPackages: ReadonlyArray<SkippedPiPackage> = [];
 
       const runtime = yield* Effect.tryPromise({
         try: async () => {
           const runtime = await runtimeFactory(
             async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
-              const services = await createAgentSessionServices({
+              let services = await createAgentSessionServices({
                 cwd,
                 agentDir,
                 resourceLoaderOptions: profileResourceLoaderOptions(
@@ -1156,7 +1165,29 @@ const createProfileRuntime = (
                 ),
               });
 
-              assertNoPiResourceDiagnostics(profilePath, services);
+              const partition = partitionPiResourceDiagnostics(
+                resources,
+                collectPiResourceDiagnostics(services),
+              );
+
+              const fatal = piResourceDiagnosticFailure(profilePath, services, partition.fatal);
+
+              if (fatal !== undefined) throw fatal;
+
+              if (partition.skipped.length > 0) {
+                services = await createAgentSessionServices({
+                  cwd,
+                  agentDir,
+                  resourceLoaderOptions: profileResourceLoaderOptions(
+                    systemPrompt,
+                    partition.resources,
+                    inlineExtensions,
+                  ),
+                });
+                assertNoPiResourceDiagnostics(profilePath, services);
+                acceptedResources = partition.resources;
+                skippedPackages = partition.skipped;
+              }
 
               const specialistRunner =
                 agents.length === 0
@@ -1172,7 +1203,7 @@ const createProfileRuntime = (
                         const parent: SpecialistParent = {
                           session: current.session,
                           services,
-                          resources,
+                          resources: acceptedResources,
                         };
 
                         return parent;
@@ -1237,10 +1268,19 @@ const createProfileRuntime = (
             : providerError(profilePath, "create agent runtime", cause),
       });
 
+      for (const skipped of skippedPackages) {
+        yield* Effect.logWarning("Skipped broken Profile extension package", {
+          profilePath,
+          packageId: skipped.id,
+          diagnostics: skipped.diagnostics,
+        });
+      }
+
       // AgentSessionRuntime owns `services` through a getter. Attach only Ziggy's
       // additional resource bundle; assigning `services` would throw at runtime.
       const profileRuntime: ProfileRuntime = Object.assign(runtime, {
-        resources,
+        resources: acceptedResources,
+        skippedPackages,
         agents,
         ephemeralPromptContext,
         voiceHub,

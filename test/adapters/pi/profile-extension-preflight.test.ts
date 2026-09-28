@@ -8,7 +8,12 @@ import {
   type CreateAgentSessionServicesOptions,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { makeProfileExtensionPreflight } from "ziggy/adapters/pi/profile-extension-preflight";
+import {
+  makeProfileExtensionPreflight,
+  inspectPiPackageHealth,
+} from "ziggy/adapters/pi/profile-extension-preflight";
+import { openChat } from "ziggy/adapters/pi/pi-agent";
+import { createAgentSessionRuntime } from "@earendil-works/pi-coding-agent";
 import {
   MAX_PI_DIAGNOSTIC_MESSAGE,
   MAX_PI_DIAGNOSTIC_SOURCE,
@@ -168,73 +173,102 @@ test("preflight uses the production resource-loader shape for arbitrary packages
   );
 });
 
-test("preflight reports extension import and factory failures as typed diagnostics", async () => {
+test("skips broken imports and skills while reporting bounded package diagnostics", async () => {
   const profilePath = await makeProfile();
   await writePackage(profilePath, "broken-import", { brokenImport: true });
-  await writePackage(profilePath, "broken-factory", { brokenFactory: true });
-  await stageRequiredPackages(profilePath);
-
-  const failure = await failureFor(profilePath, ["broken-import", "broken-factory"]);
-
-  expect(failure).toMatchObject({
-    _tag: "ProfileExtensionPreflightFailed",
-    stage: "extensions",
-  });
-  const diagnostics = failure._tag === "ProfileExtensionPreflightFailed" ? failure.diagnostics : [];
-  expect(diagnostics.map((diagnostic) => diagnostic.source)).toEqual(
-    expect.arrayContaining([
-      join(profilePath, "extensions", "broken-import", "index.ts"),
-      join(profilePath, "extensions", "broken-factory", "index.ts"),
-    ]),
-  );
-});
-
-test("preflight reports skill diagnostics independently of extension loading", async () => {
-  const profilePath = await makeProfile();
   await writePackage(profilePath, "bad-skill", { skillDiagnostic: true });
+  await writePackage(profilePath, "healthy");
   await stageRequiredPackages(profilePath);
-
-  const failure = await failureFor(profilePath, ["bad-skill"]);
-
-  expect(failure).toMatchObject({
-    _tag: "ProfileExtensionPreflightFailed",
-    stage: "skills",
-  });
-  const diagnostics = failure._tag === "ProfileExtensionPreflightFailed" ? failure.diagnostics : [];
-  expect(diagnostics).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        source: join(profilePath, "extensions", "bad-skill", "skills", "bad-skill", "SKILL.md"),
-      }),
-    ]),
+  await writeFile(
+    join(profilePath, "extensions.json"),
+    JSON.stringify({ extensions: ["broken-import", "bad-skill", "healthy"] }),
   );
-});
 
-test("preflight bounds aggregated extension, skill, and service diagnostics", async () => {
-  const profilePath = await makeProfile();
-  const selected = Array.from({ length: 20 }, (_, index) => `broken-${index}`);
-
-  for (const id of selected) {
-    await writePackage(profilePath, id, { brokenImport: true });
-  }
-
-  await stageRequiredPackages(profilePath);
-
-  const failure = await failureFor(profilePath, selected);
-
-  expect(failure._tag).toBe("ProfileExtensionPreflightFailed");
-
-  if (failure._tag !== "ProfileExtensionPreflightFailed") return;
-  expect(failure.diagnostics).toHaveLength(12);
+  const broken = await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"));
+  expect(broken.map((item) => item.id).sort()).toEqual(["bad-skill", "broken-import"]);
   expect(
-    failure.diagnostics.every((diagnostic) => diagnostic.source.length <= MAX_PI_DIAGNOSTIC_SOURCE),
-  ).toBe(true);
-  expect(
-    failure.diagnostics.every(
-      (diagnostic) => diagnostic.message.length <= MAX_PI_DIAGNOSTIC_MESSAGE,
+    broken.every((item) =>
+      item.diagnostics.every(
+        (diagnostic) =>
+          diagnostic.source.length <= MAX_PI_DIAGNOSTIC_SOURCE &&
+          diagnostic.message.length <= MAX_PI_DIAGNOSTIC_MESSAGE,
+      ),
     ),
   ).toBe(true);
-  expect(failure.message).toContain("20 diagnostic");
+
+  const result = await Effect.runPromise(
+    makeProfileExtensionPreflight().preflight(profilePath, "/repository", [
+      "broken-import",
+      "bad-skill",
+      "healthy",
+    ]),
+  );
+
+  expect(result.extensionPathCount).toBe(1);
+  expect(result.skillPathCount).toBe(4);
+});
+
+test("runtime opens with healthy package while a broken package is reported", async () => {
+  const profilePath = await makeProfile();
+  await writePackage(profilePath, "broken", { brokenImport: true });
+  await writePackage(profilePath, "healthy", { commandConflict: "healthy-command" });
+  await stageRequiredPackages(profilePath);
+  await writeFile(
+    join(profilePath, "extensions.json"),
+    JSON.stringify({ extensions: ["broken", "healthy"] }),
+  );
+  await writeFile(
+    join(profilePath, "settings.json"),
+    JSON.stringify({ defaultProvider: "fixture", defaultModel: "fixture-model" }),
+  );
+  await writeFile(
+    join(profilePath, "models.json"),
+    JSON.stringify({
+      providers: {
+        fixture: {
+          baseUrl: "http://127.0.0.1:1/v1",
+          api: "openai-completions",
+          apiKey: "fixture-key",
+          models: [{ id: "fixture-model" }],
+        },
+      },
+    }),
+  );
+  let loaded: string[] = [];
+
+  const factory: typeof createAgentSessionRuntime = async (create, options) => {
+    const runtime = await createAgentSessionRuntime(create, options);
+    loaded = runtime.services.resourceLoader
+      .getExtensions()
+      .extensions.map((extension) => extension.path);
+
+    return runtime;
+  };
+
+  const handle = await Effect.runPromise(
+    openChat(
+      { path: profilePath, name: "Profile" },
+      { kind: "local" },
+      join(profilePath, "sessions"),
+      "/repository",
+      "fresh",
+      undefined,
+      undefined,
+      factory,
+    ),
+  );
+
+  try {
+    expect(loaded).toContain(join(profilePath, "extensions", "healthy", "index.ts"));
+    expect(loaded).not.toContain(join(profilePath, "extensions", "broken", "index.ts"));
+    expect(
+      (await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"))).map(
+        (item) => item.id,
+      ),
+    ).toEqual(["broken"]);
+  } finally {
+    await Effect.runPromise(handle.dispose);
+  }
 });
 
 test("preflight aggregates a service error without creating an AgentSession or provider turn", async () => {

@@ -161,7 +161,10 @@ describe("profile_extensions input and result contract", () => {
     const calls: Array<ReadonlyArray<unknown>> = [];
     const profilePath = "/trusted/profile";
     const repositoryRoot = "/trusted/repository";
-    const tool = createProfileExtensionTool(profilePath, repositoryRoot, makeStub(calls));
+
+    const tool = createProfileExtensionTool(profilePath, repositoryRoot, makeStub(calls), () =>
+      Effect.succeed([]),
+    );
 
     const listed = await invoke(tool, { action: "list" });
     const added = await invoke(tool, { action: "add", id: "alpha", source: "shelf" });
@@ -333,5 +336,27 @@ describe("profile_extensions real service boundary", () => {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
     }
+  });
+});
+
+test("list names skipped broken packages and their diagnostic", async () => {
+  const tool = createProfileExtensionTool("/profile", "/repo", makeStub([]), () =>
+    Effect.succeed([
+      {
+        id: "broken",
+        diagnostics: [{ source: "/profile/extensions/broken/index.ts", message: "missing module" }],
+      },
+    ]),
+  );
+
+  const result = await invoke(tool, { action: "list" });
+
+  expect(result.content[0]).toMatchObject({
+    type: "text",
+    text: expect.stringContaining("BROKEN skipped=broken: missing module"),
+  });
+  expect(result.details).toMatchObject({
+    ok: true,
+    result: { broken: [{ id: "broken", diagnostics: [{ message: "missing module" }] }] },
   });
 });

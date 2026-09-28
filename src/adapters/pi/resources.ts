@@ -25,6 +25,10 @@ export interface PiResources {
   readonly extensionPaths: ReadonlyArray<string>;
   readonly skillPaths: ReadonlyArray<string>;
   readonly extensionFactories: ReadonlyArray<BundledExtensionFactory>;
+  readonly optionalPackages?: ReadonlyArray<{
+    readonly id: string;
+    readonly packagePath: string;
+  }>;
 }
 
 const embeddedBundledSkillPaths = new Set<string>();
@@ -116,6 +120,7 @@ export const composePiResources = (
     );
 
     return {
+      optionalPackages: selected.map((item) => ({ id: item.id, packagePath: item.packagePath })),
       extensionPaths: selected.flatMap((item) =>
         item.extensionPaths.length > 0 ? [item.packagePath] : [],
       ),
