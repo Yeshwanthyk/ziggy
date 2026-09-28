@@ -134,8 +134,8 @@ it("offers both selected and unselected extensions without optimistic selection"
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
-  const selected = screen.getByRole("checkbox", { name: "bundled-one" }) as HTMLInputElement;
-  const unselected = screen.getByRole("checkbox", { name: "installed-one" }) as HTMLInputElement;
+  const selected = screen.getByRole("switch", { name: "bundled-one" }) as HTMLInputElement;
+  const unselected = screen.getByRole("switch", { name: "installed-one" }) as HTMLInputElement;
   expect(selected.checked).toBe(true);
   expect(unselected.checked).toBe(false);
   fireEvent.click(unselected);
@@ -174,12 +174,12 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
-  expect((screen.getByRole("checkbox", { name: "missing-one" }) as HTMLInputElement).checked).toBe(
+  expect((screen.getByRole("switch", { name: "missing-one" }) as HTMLInputElement).checked).toBe(
     true,
   );
   expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
   expect(screen.getByText(/Restart the resident to apply extension changes/u)).not.toBeNull();
-  fireEvent.click(screen.getByRole("checkbox", { name: "missing-one" }));
+  fireEvent.click(screen.getByRole("switch", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });
 
@@ -309,7 +309,7 @@ it("shows quarantined extension diagnostics and the resident restart hint", () =
   expect(screen.getByRole("alert").textContent).toContain(
     "Some packages were skipped. Fix them, then restart the resident.",
   );
-  expect((screen.getByRole("checkbox", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
+  expect((screen.getByRole("switch", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
     true,
   );
 });

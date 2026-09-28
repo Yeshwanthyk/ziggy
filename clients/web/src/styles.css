@@ -183,7 +183,18 @@
   --color-warning-surface: var(--warning-surface);
   --color-danger: var(--danger);
   --color-danger-surface: var(--danger-surface);
+  --color-link: var(--link);
+  --color-placeholder: var(--placeholder);
   --ease-out-quint: var(--ease-out);
+}
+
+/* Hover styling only for devices that really hover with a fine pointer. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
 }
 
 @layer base {
@@ -204,8 +215,17 @@
     min-width: 320px;
   }
 
+  * {
+    scrollbar-width: thin;
+  }
+
+  :root {
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+  }
+
   button,
   input,
+  select,
   textarea {
     font: inherit;
   }
@@ -1621,21 +1641,6 @@
   text-align: center;
 }
 
-.settings-status {
-  background: var(--muted);
-  border-radius: var(--radius-full);
-  color: var(--muted-foreground);
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 8px;
-}
-
-.settings-status.is-ready {
-  background: var(--success-surface);
-  color: var(--success-foreground);
-}
-
 .provider-list {
   display: flex;
   flex-direction: column;
@@ -1983,8 +1988,18 @@
   border-bottom: 1px solid var(--border);
   font-size: 13px;
 }
+.settings-extension label {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.settings-extension strong {
+  font-weight: 500;
+}
+
 .settings-extension p {
-  margin: 4px 0 0;
+  margin: 4px 0 0 42px;
 }
 
 .ziggy-brand {

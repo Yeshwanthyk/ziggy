@@ -1,0 +1,249 @@
+/* Shared control primitives: Select, Switch, SegmentedControl, Badge. */
+
+.ui-select {
+  display: inline-flex;
+  min-width: 0;
+  position: relative;
+}
+
+.ui-select > select {
+  appearance: none;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 13px;
+  height: var(--control-md);
+  min-width: 0;
+  outline: 0;
+  padding: 0 30px 0 10px;
+  text-overflow: ellipsis;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+  width: 100%;
+}
+
+.ui-select > select:focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid var(--ring-soft);
+}
+
+.ui-select > select:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ui-select > svg {
+  color: var(--muted-foreground);
+  height: 14px;
+  pointer-events: none;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 14px;
+}
+
+.ui-select[data-size="sm"] > select {
+  height: var(--control-sm);
+}
+
+.ui-select[data-variant="ghost"] > select {
+  background: transparent;
+  border-color: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-select > select:not(:disabled):hover {
+    background: var(--hover);
+  }
+}
+
+.ui-switch {
+  appearance: none;
+  background: var(--selected);
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--input);
+  cursor: pointer;
+  flex: 0 0 auto;
+  height: 18px;
+  margin: 0;
+  outline: 0;
+  position: relative;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+  width: 32px;
+}
+
+.ui-switch::before {
+  background: var(--background);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  content: "";
+  height: 14px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform var(--dur-press) var(--ease-out);
+  width: 14px;
+}
+
+.ui-switch:checked {
+  background: var(--primary);
+  box-shadow: none;
+}
+
+.ui-switch:checked::before {
+  background: var(--primary-foreground);
+  transform: translateX(14px);
+}
+
+.ui-switch:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ui-switch:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* Segmented control: equal-width native radios with one sliding thumb. The scroller
+   lets many segments keep a legible minimum width on narrow screens. */
+.ui-segmented-scroll {
+  border-radius: var(--radius-md);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ui-segmented {
+  background: var(--muted);
+  border-radius: var(--radius-md);
+  display: grid;
+  grid-auto-columns: minmax(var(--segment-min, 56px), 1fr);
+  min-width: 100%;
+  width: max-content;
+  grid-auto-flow: column;
+  isolation: isolate;
+  padding: 2px;
+  position: relative;
+}
+
+.ui-segmented-thumb {
+  background: var(--background);
+  border-radius: var(--radius-sm);
+  bottom: 2px;
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 1px var(--border);
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transform: translateX(calc(var(--segment-index) * 100%));
+  transition: transform var(--dur-modal) var(--ease-out);
+  width: calc((100% - 4px) / var(--segment-count));
+  z-index: -1;
+}
+
+.ui-segmented[data-instant] .ui-segmented-thumb {
+  transition: none;
+}
+
+.ui-segment {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  font-weight: 500;
+  height: var(--control-sm);
+  justify-content: center;
+  min-width: 0;
+  padding: 0 8px;
+  position: relative;
+  transition: color var(--dur-fast) var(--ease-out);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.ui-segment > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-segment:has(input:checked) {
+  color: var(--foreground);
+}
+
+.ui-segment:has(input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+
+.ui-segment:has(input:disabled) {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.ui-segment input {
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-segment:not(:has(input:checked, input:disabled)):hover {
+    color: var(--foreground);
+  }
+}
+
+.ui-badge {
+  align-items: center;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 4px;
+  height: 20px;
+  line-height: 1;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.ui-badge[data-variant="success"] {
+  background: var(--success-surface);
+  color: var(--success-foreground);
+}
+
+.ui-badge[data-variant="warning"] {
+  background: var(--warning-surface);
+  color: var(--warning-foreground);
+}
+
+.ui-badge[data-variant="danger"] {
+  background: var(--danger-surface);
+  color: var(--danger-foreground);
+}
+
+.ui-badge[data-variant="outline"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch::before,
+  .ui-segmented-thumb {
+    transition: none;
+  }
+}

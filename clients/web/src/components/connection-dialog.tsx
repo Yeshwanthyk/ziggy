@@ -1,5 +1,9 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ModelPicker } from "@/components/model-picker";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogBody,
@@ -81,6 +85,16 @@ const thinkingLevels: ReadonlyArray<ZiggyModelThinkingLevel> = [
   "xhigh",
   "max",
 ];
+
+const thinkingLabels: Readonly<Record<ZiggyModelThinkingLevel, string>> = {
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "XHigh",
+  max: "Max",
+};
 
 const isThinkingLevel = (value: string): value is ZiggyModelThinkingLevel =>
   thinkingLevels.some((level) => level === value);
@@ -269,29 +283,27 @@ export function SettingsDialog({
                         selected={selectedModel}
                       />
                     </div>
-                    <fieldset className="thinking-fieldset">
-                      <legend>Thinking</legend>
-                      <div className="thinking-options">
-                        {selectedModel === undefined ? (
-                          <p className="ziggy-settings-muted">
-                            Choose an available model to see its thinking options.
-                          </p>
-                        ) : null}
-                        {supportedThinking.map((level) => (
-                          <label className="thinking-option" key={level}>
-                            <input
-                              checked={thinking === level}
-                              disabled={!connected || selectedModel === undefined}
-                              name="model-thinking"
-                              onChange={() => setThinking(level)}
-                              type="radio"
-                              value={level}
-                            />
-                            <span>{level}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
+                    <div className="ziggy-settings-field">
+                      <span id="model-thinking-label">Thinking</span>
+                      {selectedModel === undefined ? (
+                        <p className="ziggy-settings-muted">
+                          Choose an available model to see its thinking options.
+                        </p>
+                      ) : (
+                        <SegmentedControl
+                          aria-label="Thinking"
+                          disabled={!connected}
+                          name="model-thinking"
+                          onValueChange={setThinking}
+                          options={supportedThinking.map((level) => ({
+                            value: level,
+                            label: thinkingLabels[level],
+                            ariaLabel: level,
+                          }))}
+                          value={thinking === "" ? undefined : thinking}
+                        />
+                      )}
+                    </div>
                   </div>
                   <p className="ziggy-settings-note">
                     <Info aria-hidden="true" />
@@ -342,7 +354,7 @@ export function SettingsDialog({
                   </p>
                   <label>
                     Session model
-                    <select
+                    <Select
                       aria-label="Session model"
                       disabled={sessionBusy || sessionModel.pending}
                       value={modelKey(
@@ -381,11 +393,11 @@ export function SettingsDialog({
                           {model.name}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   <label>
                     Session thinking
-                    <select
+                    <Select
                       aria-label="Session thinking"
                       disabled={sessionBusy || sessionModel.pending}
                       value={sessionModel.value.thinking}
@@ -396,10 +408,10 @@ export function SettingsDialog({
                     >
                       {thinkingLevels.map((level) => (
                         <option key={level} value={level}>
-                          {level}
+                          {thinkingLabels[level]}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </>
               ) : sessionModel.pending ? (
@@ -445,9 +457,9 @@ export function SettingsDialog({
                       </small>
                     </span>
                     {session.id === sessionSummaries.value?.currentSessionId ? (
-                      <span className="settings-status">Open here</span>
+                      <Badge>Open here</Badge>
                     ) : session.held ? (
-                      <span className="settings-status">Held</span>
+                      <Badge>Held</Badge>
                     ) : null}
                     <Button
                       type="button"
@@ -471,9 +483,9 @@ export function SettingsDialog({
                   {connected ? "Connected to the local resident" : "Connection required"}
                 </small>
               </span>
-              <span className={`settings-status ${connected ? "is-ready" : ""}`}>
+              <Badge variant={connected ? "success" : "neutral"}>
                 {connected ? "Connected" : "Offline"}
-              </span>
+              </Badge>
             </div>
             {hosted ? (
               <div className="ziggy-connection-fields">
@@ -550,7 +562,7 @@ export function SettingsDialog({
                           <strong>{provider.name}</strong>
                           <small>{provider.type === "oauth" ? "OAuth" : "API key"}</small>
                         </span>
-                        <span className="settings-status is-ready">Ready</span>
+                        <Badge variant="success">Ready</Badge>
                       </div>
                     ))}
                     {otherProviders.length === 0 ? null : (
@@ -562,7 +574,7 @@ export function SettingsDialog({
                               <strong>{provider.name}</strong>
                               <small>No credential</small>
                             </span>
-                            <span className="settings-status">Not configured</span>
+                            <Badge>Not configured</Badge>
                           </div>
                         ))}
                       </details>
@@ -630,8 +642,7 @@ export function SettingsDialog({
                     return (
                       <div className="settings-extension" key={extension.id}>
                         <label>
-                          <input
-                            type="checkbox"
+                          <Switch
                             checked={enabled}
                             disabled={modelSettings.extensionBusy !== undefined}
                             onChange={() => void onToggleExtension(extension.id, enabled)}
