@@ -188,6 +188,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
   );
   expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
   expect(screen.getByText(/Restart the resident to apply extension changes/u)).not.toBeNull();
+  expect(screen.getByText("ziggy serve restart squarey")).not.toBeNull();
   fireEvent.click(screen.getByRole("switch", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });

@@ -106,6 +106,7 @@
 .settings-footer-note {
   color: var(--muted-foreground);
   font-size: 12px;
+  margin: 0;
 }
 
 .settings-pane-header {
@@ -324,17 +325,183 @@
   font-size: 12px;
 }
 
-.settings-extension {
+.settings-callout[data-tone="warning"] {
+  background: var(--warning-surface);
+  border-color: transparent;
+  color: var(--warning-foreground);
+}
+
+.settings-callout-title {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.settings-callout-title svg {
+  flex: 0 0 auto;
+  height: 14px;
+  margin-top: 3px;
+  width: 14px;
+}
+
+.settings-callout-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding-left: 22px;
 }
 
-.settings-extension label {
+.settings-callout-item p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-extensions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-toolbar {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-search {
+  align-items: center;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  display: flex;
+  flex: 1 1 200px;
+  gap: 8px;
+  height: var(--control-md);
+  padding: 0 10px;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.settings-search:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px var(--ring-soft);
+}
+
+.settings-search svg {
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+
+.settings-search input {
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
+  flex: 1 1 auto;
   font-size: 13px;
-  gap: 10px;
+  min-width: 0;
+  outline: 0;
+}
+
+.settings-search input::placeholder {
+  color: var(--placeholder);
+}
+
+.settings-chips {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.settings-chips button {
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  height: var(--control-sm);
+  padding: 0 9px;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.settings-chips button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--foreground);
+}
+
+.settings-chips button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .settings-chips button:not([aria-pressed="true"]):hover {
+    background: var(--hover);
+    color: var(--foreground);
+  }
+}
+
+.settings-extensions-empty {
+  padding: 24px 0;
+  text-align: center;
+}
+
+.settings-extension {
+  gap: 16px;
+  min-height: 56px;
+}
+
+.settings-extension-name {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-row-text .settings-extension-name strong {
+  font-size: 14px;
+}
+
+.settings-row-text small.settings-extension-problem {
+  align-items: center;
+  color: var(--danger-foreground);
+  display: flex;
+  gap: 5px;
+}
+
+.settings-extension-problem svg {
+  flex: 0 0 auto;
+  height: 13px;
+  width: 13px;
+}
+
+.settings-restart {
+  background: var(--muted);
+}
+
+.settings-restart-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-restart-text p {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.settings-restart-text code {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 720px) {

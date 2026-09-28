@@ -204,7 +204,11 @@ export function SettingsDialog({
                 sessionSummaries={sessionSummaries}
               />
             ) : tab === "extensions" ? (
-              <ExtensionsPane modelSettings={modelSettings} onToggleExtension={onToggleExtension} />
+              <ExtensionsPane
+                modelSettings={modelSettings}
+                onToggleExtension={onToggleExtension}
+                profileName={profileName}
+              />
             ) : tab === "providers" ? (
               <ProvidersPane modelSettings={modelSettings} />
             ) : (
