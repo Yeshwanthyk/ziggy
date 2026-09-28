@@ -89,7 +89,7 @@ export const acquireSessionLease = (
 
           try {
             db.exec(
-              "PRAGMA busy_timeout = 0; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
+              "PRAGMA busy_timeout = 40; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
             );
             db.exec("BEGIN IMMEDIATE");
 

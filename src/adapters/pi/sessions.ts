@@ -169,7 +169,10 @@ const inspectRegularPath = (
     }),
   );
 
-const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, SessionReadFailed> =>
+const discoverFiles = (
+  root: string,
+  skipInvalid = false,
+): Effect.Effect<ReadonlyArray<string>, SessionReadFailed> =>
   Effect.gen(function* () {
     const status = yield* io(root, "inspect-root", () => lstat(root)).pipe(Effect.result);
 
@@ -208,6 +211,11 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
         const childPath = path.join(directory, child.name);
 
         if (child.isSymbolicLink()) {
+          if (skipInvalid) {
+            yield* Effect.logWarning("Skipped symlinked session transcript", { path: childPath });
+            continue;
+          }
+
           return yield* failure(
             childPath,
             "walk",
@@ -252,7 +260,7 @@ const firstUserText = (content: typeof TextContent.Type): string | undefined => 
 
   const normalized = text.replace(/\s+/gu, " ").trim();
 
-  return normalized.length === 0 ? undefined : normalized.slice(0, 160);
+  return normalized.length === 0 ? undefined : [...normalized].slice(0, 160).join("");
 };
 
 const terminalState = (message: Entry["message"]): SessionTerminalState => {
@@ -560,21 +568,45 @@ export const listProfileSessionSummaries = (
   profilePath: string,
 ): Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed | SessionLeaseFailed> =>
   Effect.gen(function* () {
-    const parsed = yield* readParsedProfileSessions(profilePath);
-    const sessions = yield* projectSessions(parsed);
-    const byId = new Map(parsed.map((session) => [session.header.id, session]));
+    const root = path.join(profilePath, "sessions");
+    const files = yield* discoverFiles(root, true);
+    const seen = new Set<string>();
+    const summaries: Array<ProfileSessionSummary> = [];
 
-    return yield* Effect.forEach(sessions, (session) =>
-      Effect.map(
-        isSessionLeaseHeld(profilePath, session.id),
-        (held): ProfileSessionSummary => ({
-          id: session.id,
-          path: session.path,
-          title: session.name ?? byId.get(session.id)?.firstUserMessage,
-          updatedAt: session.activityAt ?? session.createdAt,
-          held,
-        }),
-      ),
+    for (const file of files) {
+      const parsed = yield* Effect.result(parseSession(root, file));
+
+      if (parsed._tag === "Failure") {
+        yield* Effect.logWarning("Skipped unreadable session transcript", {
+          path: file,
+          message: parsed.failure.message,
+        });
+        continue;
+      }
+
+      const session = parsed.success;
+
+      if (seen.has(session.header.id)) {
+        yield* Effect.logWarning("Skipped duplicate session transcript", {
+          path: file,
+          id: session.header.id,
+        });
+        continue;
+      }
+
+      seen.add(session.header.id);
+      summaries.push({
+        id: session.header.id,
+        path: session.relativePath,
+        title: session.name ?? session.firstUserMessage,
+        updatedAt: session.activityAt,
+        held: yield* isSessionLeaseHeld(profilePath, session.header.id),
+      });
+    }
+
+    return summaries.sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) || left.path.localeCompare(right.path),
     );
   });
 

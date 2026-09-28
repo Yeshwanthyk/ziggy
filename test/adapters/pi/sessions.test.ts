@@ -576,3 +576,30 @@ test("read-only session summaries use first user text and observe a live writer"
 
   expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.held).toBe(false);
 });
+
+test("summary listing isolates bad transcripts, sorts by activity and truncates Unicode titles", async () => {
+  const root = await profile();
+  const sessions = join(root, "sessions");
+  const first = join(sessions, "a.jsonl");
+  await writeJsonl(first, [
+    header("first"),
+    entry("early", null, {
+      type: "message",
+      message: { role: "user", content: "a".repeat(159) + "😀more", timestamp: 0 },
+    }),
+  ]);
+  await writeJsonl(join(sessions, "b.jsonl"), [
+    header("second"),
+    entry("recent", null, {
+      type: "message",
+      message: { role: "user", content: "newer", timestamp: 0 },
+    }),
+  ]);
+  await writeJsonl(join(sessions, "c.jsonl"), [header("first")]);
+  await writeFile(join(sessions, "broken.jsonl"), "not json\n");
+  await symlink(first, join(sessions, "linked.jsonl"));
+
+  const result = await Effect.runPromise(listProfileSessionSummaries(root));
+  expect(result.map((item) => item.id)).toEqual(["second", "first"]);
+  expect(result[1]?.title).toBe("a".repeat(159) + "😀");
+});
