@@ -60,7 +60,7 @@ export const makeProfileExtensionPreflight = (
   createServices: typeof createAgentSessionServices = createAgentSessionServices,
   createCoreInlineExtensions: ProfileCoreInlineExtensionFactory = createProfileCoreInlineExtensions,
 ): ProfileExtensionPreflightApi => ({
-  preflight: (profilePath, _repositoryRoot, selected) =>
+  preflight: (profilePath, _repositoryRoot, selected, options) =>
     Effect.gen(function* () {
       const resources = yield* composePiResources(profilePath, selected);
 
@@ -146,6 +146,20 @@ export const makeProfileExtensionPreflight = (
                 );
 
                 if (diagnosticFailure !== undefined) return yield* diagnosticFailure;
+
+                const rejected = partition.skipped.filter((item) =>
+                  options?.rejectBrokenIds.includes(item.id),
+                );
+
+                if (rejected.length > 0) {
+                  const failure = piResourceDiagnosticFailure(
+                    profilePath,
+                    services,
+                    rejected.flatMap((item) => item.diagnostics),
+                  );
+
+                  if (failure !== undefined) return yield* failure;
+                }
 
                 if (partition.skipped.length > 0) {
                   const healthy = yield* Effect.tryPromise({

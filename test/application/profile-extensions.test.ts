@@ -483,7 +483,7 @@ test("remove valid unselected ID is a byte-preserving no-op", async () => {
   expect(await readFile(join(fixture.profilePath, "extensions.json"))).toEqual(bytes);
 });
 
-test("Pi factory failures quarantine a selected optional package", async () => {
+test("adding a broken Pi factory fails preflight without selecting it", async () => {
   const fixture = await makeProfile();
 
   const packagePath = await writeShelfPackage(fixture.profilePath, "broken-import", {
@@ -492,7 +492,7 @@ test("Pi factory failures quarantine a selected optional package", async () => {
   });
 
   await writeFile(join(packagePath, "index.ts"), 'throw new Error("factory exploded");\n');
-  await writeSelection(fixture.profilePath, []);
+  const before = await writeSelection(fixture.profilePath, []);
   const service = makeService(makeProfileExtensionPreflight());
 
   const result = await Effect.runPromise(
@@ -500,19 +500,40 @@ test("Pi factory failures quarantine a selected optional package", async () => {
   );
 
   expect(result).toMatchObject({
-    _tag: "Success",
-    success: { id: "broken-import", selected: true },
+    _tag: "Failure",
+    failure: { _tag: "ProfileExtensionPreflightFailed" },
   });
-  expect(
-    (
-      await Effect.runPromise(inspectPiPackageHealth(fixture.profilePath, fixture.repositoryRoot))
-    ).map((item) => item.id),
-  ).toEqual(["broken-import"]);
+  expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(before);
   expect(existsSync(join(fixture.profilePath, "extensions", "broken-import"))).toBe(true);
   expect(
     (await Effect.runPromise(discoverPiResources(fixture.profilePath, fixture.repositoryRoot)))
       .extensionPaths,
-  ).toEqual([packagePath]);
+  ).toEqual([]);
+});
+
+test("enabling a broken Pi package fails without changing selection", async () => {
+  const fixture = await makeProfile();
+
+  const packagePath = await writeShelfPackage(fixture.profilePath, "broken-enable", {
+    code: true,
+    skill: false,
+  });
+
+  await writeFile(join(packagePath, "index.ts"), 'throw new Error("broken factory");\n');
+  const before = await writeSelection(fixture.profilePath, []);
+  const service = makeService(makeProfileExtensionPreflight());
+
+  const result = await Effect.runPromise(
+    service
+      .setSelected(fixture.target, fixture.repositoryRoot, ["broken-enable"])
+      .pipe(Effect.result),
+  );
+
+  expect(result).toMatchObject({
+    _tag: "Failure",
+    failure: { _tag: "ProfileExtensionPreflightFailed" },
+  });
+  expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(before);
 });
 
 test("optional Pi diagnostics skip the package without blocking activation", async () => {
@@ -525,25 +546,17 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
       name: "@upstream/diagnostic-runtime",
       description: "diagnostic runtime package",
       pi: { skills: ["./notes.txt"] },
+      ziggy: { automations: [{ id: "skipped-job", path: "./automations/skipped-job.md" }] },
     })}\n`,
   );
   await writeFile(join(packagePath, "notes.txt"), "not a Pi Markdown skill\n");
+  await mkdir(join(packagePath, "automations"), { recursive: true });
+  await writeFile(
+    join(packagePath, "automations", "skipped-job.md"),
+    automationSource("extension:diagnostic-runtime"),
+  );
   await writeSelection(fixture.profilePath, ["diagnostic-runtime"]);
-  const snapshot = await Effect.runPromise(snapshotExtensionSelection(fixture.profilePath));
-  let activationCalls = 0;
-
-  const service: ProfileExtensionsApi = {
-    ...makeService(noPreflight, noLock),
-    prepareRuntime: () =>
-      Effect.succeed({
-        selected: snapshot.selected,
-        generation: extensionSelectionGeneration(snapshot),
-      }),
-    activateRuntime: () =>
-      Effect.sync(() => {
-        activationCalls += 1;
-      }),
-  };
+  const service = makeService(noPreflight, noLock);
 
   const result = await Effect.runPromise(
     openChat(
@@ -566,7 +579,6 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
       await Effect.runPromise(inspectPiPackageHealth(fixture.profilePath, fixture.repositoryRoot))
     ).map((item) => item.id),
   ).toEqual(["diagnostic-runtime"]);
-  expect(activationCalls).toBe(1);
   expect(existsSync(join(fixture.profilePath, "automations"))).toBe(false);
 });
 

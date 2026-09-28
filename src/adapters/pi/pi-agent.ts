@@ -1383,7 +1383,12 @@ const createProfileRuntime = (
 
       if (preparation !== undefined && runtimeOptions.profileExtensions !== undefined) {
         yield* runtimeOptions.profileExtensions
-          .activateRuntime(profilePath, repositoryRoot, preparation)
+          .activateRuntime(
+            profilePath,
+            repositoryRoot,
+            preparation,
+            (acceptedResources.optionalPackages ?? []).map((item) => item.id),
+          )
           .pipe(
             Effect.catch((failure) =>
               Effect.gen(function* () {

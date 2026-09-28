@@ -878,7 +878,9 @@ export const makeProfileExtensions = (
               materializationIds(requested),
             );
 
-            yield* preflight.preflight(target.path, repositoryRoot, requested);
+            yield* preflight.preflight(target.path, repositoryRoot, requested, {
+              rejectBrokenIds: [id],
+            });
             const activated: Array<ActivatedAutomation> = [];
             const addedIds = new Set(requested.filter((candidate) => !current.includes(candidate)));
             yield* Effect.gen(function* () {
@@ -1024,7 +1026,9 @@ export const makeProfileExtensions = (
               ? validatePackages(target.path, repositoryRoot, materializationIds(next))
               : validateExistingPackages(target.path, repositoryRoot, next);
 
-            yield* preflight.preflight(target.path, repositoryRoot, next);
+            yield* preflight.preflight(target.path, repositoryRoot, next, {
+              rejectBrokenIds: added,
+            });
             const paused: Array<PausedAutomation> = [];
             const activated: Array<ActivatedAutomation> = [];
             const addedSet = new Set(added);
@@ -1118,6 +1122,7 @@ export const makeProfileExtensions = (
     profilePath: string,
     repositoryRoot: string,
     preparation: ProfileExtensionRuntimePreparation,
+    acceptedOptionalIds: ReadonlyArray<string> = preparation.selected,
   ) =>
     verifyInitialized(profilePath)
       .pipe(
@@ -1145,7 +1150,13 @@ export const makeProfileExtensions = (
               );
 
               const activated: Array<ActivatedAutomation> = [];
-              yield* provisionAdditions(automation, profilePath, packages, activated).pipe(
+              const accepted = new Set(acceptedOptionalIds);
+              yield* provisionAdditions(
+                automation,
+                profilePath,
+                packages.filter((item) => accepted.has(item.id)),
+                activated,
+              ).pipe(
                 Effect.catch((failure) =>
                   rollbackMutation(
                     profilePath,

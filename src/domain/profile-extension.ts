@@ -137,6 +137,7 @@ export interface ProfileExtensionPreflightApi {
     profilePath: string,
     repositoryRoot: string,
     selected: ReadonlyArray<string>,
+    options?: { readonly rejectBrokenIds: ReadonlyArray<string> },
   ) => Effect.Effect<ProfileExtensionPreflightResult, ProfileExtensionError>;
 }
 
@@ -197,5 +198,6 @@ export interface ProfileExtensionsApi {
     profilePath: string,
     repositoryRoot: string,
     preparation: ProfileExtensionRuntimePreparation,
+    acceptedOptionalIds?: ReadonlyArray<string>,
   ) => Effect.Effect<void, ProfileExtensionRuntimeError>;
 }
