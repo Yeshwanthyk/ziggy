@@ -1,9 +1,9 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- async Bun tests execute Effects at their approved boundary */
 import { describe, expect, test } from "bun:test";
-import { Effect } from "effect";
+import fc from "fast-check";
+import { Cron, Effect, Result } from "effect";
 import {
-  AutomationPaused,
   type AutomationBroadcastToken,
   automationScheduleFingerprint,
   manualRunId,
@@ -37,19 +37,6 @@ const invalidMessage = async (fields: ReadonlyArray<string>, body?: string) => {
     ),
   );
 };
-
-describe("automation lifecycle", () => {
-  test("keeps paused failure distinct from missing", () => {
-    const failure = new AutomationPaused({
-      id: "daily",
-      path: "/profile/automations/daily.paused.md",
-      message: "automation daily is paused",
-    });
-
-    expect(failure._tag).toBe("AutomationPaused");
-    expect(failure.message).toContain("paused");
-  });
-});
 
 describe("automation definition", () => {
   test("parses the exact contract independent of field order", async () => {
@@ -347,6 +334,91 @@ describe("automation definition", () => {
       ]),
     ).toBe(
       "invalid automation daily-note: telegram-chat is no longer supported; use broadcast: telegram:chat:<chat-id>",
+    );
+  });
+});
+
+describe("automation generated invariants", () => {
+  test("arbitrary definition bytes and mutated valid frontmatter never defect", async () => {
+    const id = await Effect.runPromise(validateAutomationId("daily-note"));
+
+    const text = fc.oneof(
+      fc.string({ maxLength: 512 }),
+      fc.uint8Array({ maxLength: 512 }).map((bytes) => Buffer.from(bytes).toString("utf8")),
+      fc
+        .tuple(
+          fc.constantFrom(
+            "cron",
+            "timezone",
+            "broadcast",
+            "gate",
+            "provider",
+            "model",
+            "thinking",
+            "version",
+            "origin",
+            "unexpected",
+          ),
+          fc.string({ maxLength: 128 }),
+          fc.string({ maxLength: 128 }),
+        )
+        .map(([key, value, body]) =>
+          source(["cron: 0 9 * * *", "timezone: UTC", "broadcast: none", `${key}: ${value}`], body),
+        ),
+    );
+
+    await fc.assert(
+      fc.asyncProperty(text, async (input) => {
+        const result = await Effect.runPromise(
+          parseAutomationFile(id, "/profile/automations/daily-note.md", input).pipe(Effect.result),
+        );
+
+        expect(Result.isSuccess(result) || result.failure._tag === "AutomationInvalid").toBe(true);
+      }),
+      { numRuns: 500, seed: 20260928 },
+    );
+  });
+
+  test("UTC cron next occurrence agrees with independent minute stepping", async () => {
+    const id = await Effect.runPromise(validateAutomationId("daily-note"));
+
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 0, max: 59 }),
+        fc.integer({ min: 0, max: 23 }),
+        fc.integer({ min: 0, max: 6 }),
+        fc.integer({ min: 0, max: 365 * 24 * 60 }),
+        async (minute, hour, weekday, offset) => {
+          const cron = `${minute} ${hour} * * ${weekday}`;
+
+          const parsed = await Effect.runPromise(
+            parseAutomationFile(
+              id,
+              "/profile/automations/daily-note.md",
+              source([`cron: ${cron}`, "timezone: UTC", "broadcast: none"]),
+            ),
+          );
+
+          const after = Date.parse("2025-01-01T00:00:00.000Z") + offset * 60_000 + 13_000;
+          let expected = Math.floor(after / 60_000) * 60_000 + 60_000;
+
+          while (true) {
+            const date = new Date(expected);
+
+            if (
+              date.getUTCMinutes() === minute &&
+              date.getUTCHours() === hour &&
+              date.getUTCDay() === weekday
+            )
+              break;
+
+            expected += 60_000;
+          }
+
+          expect(Cron.next(parsed.schedule.cron, new Date(after)).getTime()).toBe(expected);
+        },
+      ),
+      { numRuns: 150, seed: 20260928 },
     );
   });
 });
