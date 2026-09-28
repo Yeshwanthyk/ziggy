@@ -16,6 +16,7 @@ import {
   ExtensionCatalogUnavailable,
 } from "ziggy/domain/extension-catalog";
 import { ProfileExtensionInvalid } from "ziggy/domain/profile";
+import { ResidentServiceError } from "ziggy/domain/resident-service";
 import type {
   ProfileExtensionMutationLockApi,
   ProfileExtensionsApi,
@@ -67,6 +68,10 @@ const fixture = async (residentRunning = false) => {
   let running = residentRunning;
   const lifecycle: string[] = [];
   let startReady = true;
+  let stopReady = true;
+  let stopFails = false;
+  let stopKeepsRunning = false;
+  let managed = true;
   let failValidation = false;
   let stagedChecks = 0;
 
@@ -95,23 +100,32 @@ const fixture = async (residentRunning = false) => {
     resident: {
       status: () =>
         Effect.succeed({
-          managed: Result.succeed({
-            _tag: "current" as const,
-            path: profile,
-            fingerprint: "fixture",
-          }),
+          managed: Result.succeed(
+            managed
+              ? { _tag: "current" as const, path: profile, fingerprint: "fixture" }
+              : { _tag: "not-installed" as const, path: profile },
+          ),
         }),
       stop: () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           lifecycle.push("stop");
-          running = false;
+          running = stopKeepsRunning;
+
+          if (stopFails)
+            return yield* new ResidentServiceError({
+              operation: "stop",
+              reason: "command",
+              path: profile,
+              message: "fixture stop failure",
+              cause: undefined,
+            });
 
           return {
             action: "stop" as const,
             manager: "launchd" as const,
             identity: "fixture",
             definitionPath: "fixture",
-            ready: true,
+            ready: stopReady,
             warnings: [],
           };
         }),
@@ -164,6 +178,17 @@ const fixture = async (residentRunning = false) => {
     source,
     target,
     lifecycle,
+    stopIncomplete: (keepsRunning: boolean) => {
+      stopReady = false;
+      stopKeepsRunning = keepsRunning;
+    },
+    failStop: () => {
+      stopFails = true;
+      stopKeepsRunning = false;
+    },
+    notInstalled: () => {
+      managed = false;
+    },
     failStart: () => {
       startReady = false;
     },
@@ -176,6 +201,74 @@ const fixture = async (residentRunning = false) => {
 };
 
 describe("bundled extension update", () => {
+  test("unmanaged resident refuses before preparing or staging", async () => {
+    const f = await fixture(true);
+    f.notInstalled();
+    await expect(
+      Effect.runPromise(f.service.update(f.target, "weather", { adopt: true, restart: true })),
+    ).rejects.toMatchObject({ reason: "unsupported" });
+    expect(f.lifecycle).toEqual([]);
+  });
+
+  test("receipt-only update does not stop a running resident", async () => {
+    // An untracked identical copy needs a receipt, not a runtime restart.
+    const active = await fixture(true);
+    await writeFile(join(active.source, "index.ts"), "old bytes\n");
+
+    const result = await Effect.runPromise(
+      active.service.update(active.target, "weather", { adopt: true, restart: true }),
+    );
+
+    expect(result.status).toBe("adopted");
+    expect(active.lifecycle).toEqual(["stage"]);
+  });
+
+  test("an incomplete stop with owner still running never applies or starts", async () => {
+    const f = await fixture(true);
+    f.stopIncomplete(true);
+    await expect(
+      Effect.runPromise(f.service.update(f.target, "weather", { adopt: true, restart: true })),
+    ).rejects.toMatchObject({
+      reason: "resident",
+      message: expect.stringContaining("resident running"),
+    });
+    expect(f.lifecycle).toEqual(["stage", "stop"]);
+    expect(await readFile(join(f.profile, "extensions", "weather", "index.ts"), "utf8")).toBe(
+      "old bytes\n",
+    );
+  });
+
+  test("an incomplete stop with owner gone attempts a restart without applying", async () => {
+    // A reported stop failure can still mean the process exited; recheck ownership.
+    const f = await fixture(true);
+    f.stopIncomplete(false);
+    await expect(
+      Effect.runPromise(f.service.update(f.target, "weather", { adopt: true, restart: true })),
+    ).rejects.toMatchObject({
+      reason: "resident",
+      message: expect.stringContaining("resident running"),
+    });
+    expect(f.lifecycle).toEqual(["stage", "stop", "start"]);
+    expect(await readFile(join(f.profile, "extensions", "weather", "index.ts"), "utf8")).toBe(
+      "old bytes\n",
+    );
+  });
+
+  test("a stop error with owner gone attempts start before reporting failure", async () => {
+    const f = await fixture(true);
+    f.failStop();
+    await expect(
+      Effect.runPromise(f.service.update(f.target, "weather", { adopt: true, restart: true })),
+    ).rejects.toMatchObject({
+      reason: "resident",
+      message: expect.stringContaining("resident running"),
+    });
+    expect(f.lifecycle).toEqual(["stage", "stop", "start"]);
+    expect(await readFile(join(f.profile, "extensions", "weather", "index.ts"), "utf8")).toBe(
+      "old bytes\n",
+    );
+  });
+
   test("stages before stopping and restarts after the locked swap", async () => {
     const f = await fixture(true);
     await expect(

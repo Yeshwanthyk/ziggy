@@ -12,6 +12,7 @@ export class ExtensionUpdateError extends Schema.TaggedErrorClass<ExtensionUpdat
       "automation",
       "filesystem",
       "recovery",
+      "resident",
     ]),
     message: Schema.String,
     cause: Schema.Defect(),

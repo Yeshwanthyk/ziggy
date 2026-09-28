@@ -6,7 +6,10 @@ import {
   type ExtensionArchiveClientApi,
 } from "../adapters/github/extension-catalog";
 import { makeExtensionInstaller } from "../adapters/fs/extension-installer";
-import { makeExtensionUpdateStore } from "../adapters/fs/extension-update";
+import {
+  hasPendingExtensionUpdates,
+  makeExtensionUpdateStore,
+} from "../adapters/fs/extension-update";
 import { readExtensionPackage } from "../adapters/fs/profile-extensions";
 import { inspectGatewayOwner } from "../adapters/bun/gateway-owner";
 import { makeProfileExtensionPreflight } from "../adapters/pi/profile-extension-preflight";
@@ -84,11 +87,28 @@ export const makeExtensionUpdate = (
             ),
           );
 
-          if (owner._tag === "running" && !request.restart)
-            return yield* error(
-              "unsupported",
-              "Stop the Profile resident before updating extensions, or use --restart.",
-            );
+          if (owner._tag === "running") {
+            if (!request.restart)
+              return yield* error(
+                "unsupported",
+                "Stop the Profile resident before updating extensions, or use --restart.",
+              );
+
+            if (options.resident === undefined)
+              return yield* error("unsupported", "--restart requires a managed resident.");
+
+            const service = yield* options.resident.status(target);
+
+            if (
+              service.managed._tag !== "Success" ||
+              service.managed.success._tag === "not-installed"
+            )
+              return yield* error(
+                "unsupported",
+                "--restart requires an installed managed resident.",
+              );
+          }
+
           const store = makeExtensionUpdateStore(target.path, id);
           const prepared = yield* store.prepare();
 
@@ -175,23 +195,14 @@ export const makeExtensionUpdate = (
               } satisfies ExtensionUpdateResult;
             });
 
+            if (oldHash === contentHash) return yield* apply;
+
             if (owner._tag !== "running") return yield* fence(target.path, apply);
 
             const resident = options.resident;
 
             if (resident === undefined)
               return yield* error("unsupported", "--restart requires a managed resident.");
-
-            const service = yield* resident.status(target);
-
-            if (
-              service.managed._tag !== "Success" ||
-              service.managed.success._tag === "not-installed"
-            )
-              return yield* error(
-                "unsupported",
-                "--restart requires an installed managed resident.",
-              );
 
             return yield* Effect.uninterruptible(
               Effect.gen(function* () {
@@ -208,14 +219,33 @@ export const makeExtensionUpdate = (
                   const running =
                     stoppedOwner._tag === "Success" && stoppedOwner.success._tag === "running";
 
+                  const restart =
+                    stoppedOwner._tag === "Success" && !running
+                      ? yield* resident.start(target).pipe(Effect.result)
+                      : undefined;
+
+                  const restored =
+                    restart !== undefined &&
+                    restart._tag === "Success" &&
+                    restart.success.ready === true;
+
+                  const state =
+                    running || restored
+                      ? "running"
+                      : restart === undefined
+                        ? "state unknown or not running"
+                        : "not running";
+
                   return yield* error(
-                    "filesystem",
-                    `Resident did not stop; update not applied; resident ${running ? "running" : "state unknown or not running"}.`,
-                    stopped._tag === "Failure"
-                      ? stopped.failure
-                      : stoppedOwner._tag === "Failure"
-                        ? stoppedOwner.failure
-                        : stopped.success,
+                    "resident",
+                    `Resident did not stop cleanly; update not applied; resident ${state}.`,
+                    restart?._tag === "Failure"
+                      ? restart.failure
+                      : stopped._tag === "Failure"
+                        ? stopped.failure
+                        : stoppedOwner._tag === "Failure"
+                          ? stoppedOwner.failure
+                          : stopped.success,
                   );
                 }
 
@@ -223,16 +253,23 @@ export const makeExtensionUpdate = (
                 const started = yield* resident.start(target).pipe(Effect.result);
                 const running = started._tag === "Success" && started.success.ready === true;
 
-                if (applied._tag === "Failure")
+                if (applied._tag === "Failure") {
+                  const pending = yield* hasPendingExtensionUpdates(target.path).pipe(
+                    Effect.result,
+                  );
+
+                  const recovery = pending._tag === "Failure" || pending.success;
+
                   return yield* error(
-                    "filesystem",
-                    `Update failed; old or new version applied; resident ${running ? "running" : "not running"}.`,
+                    recovery ? "recovery" : "filesystem",
+                    `Update failed; ${recovery ? `recovery needed; rerun \`ziggy extensions update ${target.path} ${id}${request.adopt ? " --adopt" : ""} --restart\`` : "old or new version applied"}; resident ${running ? "running" : "not running"}.`,
                     applied.failure,
                   );
+                }
 
                 if (!running)
                   return yield* error(
-                    "filesystem",
+                    "resident",
                     "Update applied; resident not running; use ziggy serve start.",
                     started._tag === "Failure" ? started.failure : started.success,
                   );
