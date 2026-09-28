@@ -36,6 +36,7 @@ back, and the integrator merges one stream at a time with `bun run check`.
 | `ext` | 2, 5 (authoring), 11b | `extensions/codemode`, preloaded skills, `pi_docs` | now |
 | `adapter` | 4, 5 (diagnostics), 9, 11a | the rest of `src/adapters/pi/`, the runtime interface, resident service | after `tui` |
 | `cli` | 3, 10 | domain setup, `src/faces/cli`, the CLI parts of `main.ts` | after `tui` |
+| `webui` | 13 | `clients/web`, `packages/ui-sdk`, `src/application/ui-gateway*`, `src/adapters/bun/ui-server.ts` | now |
 | `headless` | 12 | `ziggy wake`, `ziggy tick`, `extensions update`, the `deliver` lanes in `automations.ts`, `automations status` | after `auto` and `adapter` |
 
 ## 0. Pi 0.87.1 upgrade
@@ -110,9 +111,11 @@ Status: pending.
 
 ## 5. Extension system and authoring
 
-Status: pending. Needs a decision on the broken-extension policy.
+Status: pending.
 
 - One package diagnostic fails the whole Profile runtime (`assertNoPiResourceDiagnostics`).
+  Decided (2026-09-28): skip the broken package, load the rest, and warn loudly in `doctor`, the
+  web UI and the agent tool.
 - The agent tool drops preflight diagnostics.
 - `pi_docs` lacks Ziggy's resource rules.
 - Add success doesn't say that a reopen or restart is required.
@@ -190,19 +193,24 @@ reading the owner lease before it starts; nothing falls back after the fact.
   idempotent.
 - `ziggy wake`: if the resident is running, call its `automation.run` over the UI socket, using
   the projection's port and token, and print the outcome. Otherwise run in-process as today.
-- `automations status`: when neither the resident nor the tick timer is installed, print
-  "schedules will not fire: run `ziggy serve install` or `ziggy automations install-timer`".
-  Installing an extension that ships automations prints the same.
+- `automations status`: when the resident service isn't installed, print "schedules will not
+  fire: run `ziggy serve install <profile>`; `ziggy wake <id>` runs one now". Installing an
+  extension that ships automations prints the same.
 - `extensions update --restart`: stage, stop the managed resident, apply under the update lock,
   start it again. Without `--restart`, keep the refusal and name the flag.
-- `ziggy tick`: one scheduler scan under the owner lease; run the claimed workers to completion,
-  then exit. If the lease is held (the resident or another tick is running), exit quietly. A
-  launchd `StartInterval` or systemd timer runs it every minute, installed by
-  `ziggy automations install-timer <profile>`, so schedules fire without the resident. The
-  existing claim CAS and unique active-run index keep one run per slot, whichever process ticks.
-  Slots skipped while a long tick holds the lease go through the scheduler's missed-run policy.
 - The wake migration path's "gateway already running" error should read "resident is starting;
   retry".
+
+## 13. Web UI parity
+
+Status: pending.
+
+The web UI is the only interactive face since 1b. It lacks:
+
+- an extension picker: list, enable and disable Profile extensions, with the same preflight and
+  "restart needed" message as the CLI and agent tool;
+- per-session model and thinking switching, alongside the existing Profile defaults;
+- a resume picker for older Pi sessions.
 
 ## Decision: the resident is optional for extensions
 
@@ -210,17 +218,22 @@ Status: decided (2026-09-28), from a Fable review of Ziggy, hermes-agent and ope
 
 - No extension surface depends on the resident. There's no service locator, event bus, injection
   API or tiered registration mode, and extensions stay plain Pi extensions.
-- Resident-only, by nature: inbound channel sockets, sessions it holds open and interactive UI.
-  The scheduler is not resident-only: whoever holds the owner lease ticks, the resident or a
-  timer-driven `ziggy tick`. Everything else runs headless and is tested that way.
+- Resident-only, by nature: inbound channel sockets, sessions it holds open, the scheduler and
+  interactive UI. The resident needs no chat config: with none, it is just the scheduler and
+  the web UI, so it is the Profile's background process, not a gateway extensions depend on.
+  Everything else runs headless and is tested that way.
+- No `ziggy tick`. A timer-driven one-shot scheduler would duplicate the resident, with its own
+  launchd and systemd installers, for users who never install the resident.
+  `ziggy serve install` covers them.
+- When the resident is running, `ziggy wake` hands the run to it. `run --continue` on a session the
+  resident holds refuses and points at the UI.
 - No durable outbox. All three channels send over HTTP from any process, and conversation
   receipts are idempotent stored appends. hermes and openclaw need queues only for
   gateway-only transports (relay, E2EE, WhatsApp), which Ziggy doesn't have.
 - No silent fallback in either direction. openclaw retired its gateway-to-local fallback after
   transcript lock races.
 - Not doing: a `ctx.ui` bridge (until an extension needs `notify` in the web UI), hot reload in the
-  resident, or a headless long-running scheduler daemon (the OS timer plus `ziggy tick` covers
-  it).
+  resident, or a second scheduler outside the resident.
 
 ## Decision: keep Pi, don't own the core
 
