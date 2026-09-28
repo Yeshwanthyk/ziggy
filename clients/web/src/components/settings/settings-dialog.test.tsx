@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SettingsDialog } from "./connection-dialog";
+import { SettingsDialog } from "./settings-dialog";
 import type { ModelSettingsState } from "@/gateway";
 
 const modelSettings: ModelSettingsState = {
@@ -29,6 +29,10 @@ const modelSettings: ModelSettingsState = {
     providerId: "openai-codex",
     thinking: "medium",
   },
+};
+
+const openTab = (name: string): void => {
+  fireEvent.click(screen.getByRole("tab", { name }));
 };
 
 afterEach(() => {
@@ -66,9 +70,10 @@ describe("SettingsDialog", () => {
     fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4/u }));
 
     expect(onSaveModel).not.toHaveBeenCalled();
-    expect((screen.getByRole("radio", { name: "low" }) as HTMLInputElement).checked).toBe(true);
+    const thinking = screen.getByRole("slider", { name: "Thinking" });
+    expect(thinking.getAttribute("aria-valuetext")).toBe("low");
 
-    fireEvent.click(screen.getByRole("radio", { name: "high" }));
+    fireEvent.change(thinking, { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Save model" }));
 
     await waitFor(() =>
@@ -136,6 +141,7 @@ it("offers both selected and unselected extensions without optimistic selection"
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
+  openTab("Extensions");
   const selected = screen.getByRole("switch", { name: "bundled-one" }) as HTMLInputElement;
   const unselected = screen.getByRole("switch", { name: "installed-one" }) as HTMLInputElement;
   expect(selected.checked).toBe(true);
@@ -176,6 +182,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
+  openTab("Extensions");
   expect((screen.getByRole("switch", { name: "missing-one" }) as HTMLInputElement).checked).toBe(
     true,
   );
@@ -216,13 +223,14 @@ it("keeps live session switches disabled while streaming, without changing Profi
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
-  expect(
-    (screen.getByRole("combobox", { name: "Session model" }) as HTMLSelectElement).disabled,
-  ).toBe(true);
-  expect(
-    (screen.getByRole("combobox", { name: "Session thinking" }) as HTMLSelectElement).disabled,
-  ).toBe(true);
   expect(screen.getByRole("button", { name: "Save model" })).not.toBeNull();
+  openTab("Session");
+  expect(
+    (screen.getByRole("combobox", { name: "Session model" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("slider", { name: "Session thinking" }) as HTMLInputElement).disabled,
+  ).toBe(true);
   expect(switchModel).not.toHaveBeenCalled();
 });
 
@@ -262,6 +270,7 @@ it("marks held transcripts and does not offer them for resume", () => {
       onToggleExtension={vi.fn(async () => undefined)}
     />,
   );
+  openTab("Session");
   const section = screen.getByRole("region", { name: "Resume past session" });
   expect(section.textContent).toContain("Held session");
   expect(section.textContent).toContain("Held");
@@ -307,6 +316,7 @@ it("shows quarantined extension diagnostics and the resident restart hint", () =
       onChangeSessionThinking={vi.fn(async () => undefined)}
     />,
   );
+  openTab("Extensions");
   expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
   expect(screen.getByRole("alert").textContent).toContain(
     "Some packages were skipped. Fix them, then restart the resident.",

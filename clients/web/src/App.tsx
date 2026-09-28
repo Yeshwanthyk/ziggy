@@ -31,7 +31,8 @@ import { MessageMarkdown } from "@/components/message-markdown";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SidebarSection } from "@/components/sidebar-section";
 import { Textarea } from "@/components/ui/textarea";
-import { readSavedConnection, SettingsDialog } from "@/components/connection-dialog";
+import { readSavedConnection } from "@/components/settings/connection-pane";
+import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { type ConversationSummary, useZiggyGateway } from "@/gateway";
 
 const avatar = (name: string, active = false, size = 36) => (

@@ -1,65 +1,4 @@
-/* Shared control primitives: Select, Switch, SegmentedControl, Badge. */
-
-.ui-select {
-  display: inline-flex;
-  min-width: 0;
-  position: relative;
-}
-
-.ui-select > select {
-  appearance: none;
-  background: var(--background);
-  border: 1px solid var(--input);
-  border-radius: var(--radius-md);
-  color: var(--foreground);
-  cursor: pointer;
-  font-size: 13px;
-  height: var(--control-md);
-  min-width: 0;
-  outline: 0;
-  padding: 0 30px 0 10px;
-  text-overflow: ellipsis;
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-  width: 100%;
-}
-
-.ui-select > select:focus-visible {
-  border-color: var(--ring);
-  outline: 2px solid var(--ring-soft);
-}
-
-.ui-select > select:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-.ui-select > svg {
-  color: var(--muted-foreground);
-  height: 14px;
-  pointer-events: none;
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  translate: 0 -50%;
-  width: 14px;
-}
-
-.ui-select[data-size="sm"] > select {
-  height: var(--control-sm);
-}
-
-.ui-select[data-variant="ghost"] > select {
-  background: transparent;
-  border-color: transparent;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ui-select > select:not(:disabled):hover {
-    background: var(--hover);
-  }
-}
+/* Shared control primitives: Switch, StepSlider, Badge. */
 
 .ui-switch {
   appearance: none;
@@ -111,100 +50,6 @@
   opacity: 0.45;
 }
 
-/* Segmented control: equal-width native radios with one sliding thumb. The scroller
-   lets many segments keep a legible minimum width on narrow screens. */
-.ui-segmented-scroll {
-  border-radius: var(--radius-md);
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.ui-segmented {
-  background: var(--muted);
-  border-radius: var(--radius-md);
-  display: grid;
-  grid-auto-columns: minmax(var(--segment-min, 56px), 1fr);
-  min-width: 100%;
-  width: max-content;
-  grid-auto-flow: column;
-  isolation: isolate;
-  padding: 2px;
-  position: relative;
-}
-
-.ui-segmented-thumb {
-  background: var(--background);
-  border-radius: var(--radius-sm);
-  bottom: 2px;
-  box-shadow:
-    var(--shadow-sm),
-    0 0 0 1px var(--border);
-  left: 2px;
-  position: absolute;
-  top: 2px;
-  transform: translateX(calc(var(--segment-index) * 100%));
-  transition: transform var(--dur-modal) var(--ease-out);
-  width: calc((100% - 4px) / var(--segment-count));
-  z-index: -1;
-}
-
-.ui-segmented[data-instant] .ui-segmented-thumb {
-  transition: none;
-}
-
-.ui-segment {
-  align-items: center;
-  border-radius: var(--radius-sm);
-  color: var(--muted-foreground);
-  cursor: pointer;
-  display: flex;
-  font-size: 13px;
-  font-weight: 500;
-  height: var(--control-sm);
-  justify-content: center;
-  min-width: 0;
-  padding: 0 8px;
-  position: relative;
-  transition: color var(--dur-fast) var(--ease-out);
-  user-select: none;
-  white-space: nowrap;
-}
-
-.ui-segment > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ui-segment:has(input:checked) {
-  color: var(--foreground);
-}
-
-.ui-segment:has(input:focus-visible) {
-  outline: 2px solid var(--ring);
-  outline-offset: 0;
-}
-
-.ui-segment:has(input:disabled) {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.ui-segment input {
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-  position: absolute;
-  width: 1px;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ui-segment:not(:has(input:checked, input:disabled)):hover {
-    color: var(--foreground);
-  }
-}
-
 .ui-badge {
   align-items: center;
   background: var(--muted);
@@ -241,9 +86,159 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+/* Step slider: header (label + value), dotted track under a native range, end labels. */
+.ui-steps {
+  --thumb: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.ui-steps-header {
+  align-items: baseline;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.ui-steps-header > span {
+  color: var(--muted-foreground);
+}
+
+.ui-steps-header output {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.ui-steps-track {
+  height: 24px;
+  position: relative;
+}
+
+.ui-steps-rail,
+.ui-steps-rail::after {
+  border-radius: var(--radius-full);
+  height: 2px;
+  left: calc(var(--thumb) / 2);
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.ui-steps-rail {
+  background: var(--border);
+  right: calc(var(--thumb) / 2);
+}
+
+.ui-steps-rail::after {
+  background: var(--foreground);
+  content: "";
+  left: 0;
+  width: calc(var(--steps-fill) * 100%);
+}
+
+.ui-steps-dot {
+  background: var(--input);
+  border-radius: var(--radius-full);
+  height: 6px;
+  left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--step-at));
+  position: absolute;
+  top: 50%;
+  translate: -50% -50%;
+  width: 6px;
+}
+
+.ui-steps-dot[data-filled] {
+  background: var(--foreground);
+}
+
+.ui-steps-track input {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 100%;
+  inset: 0;
+  margin: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.ui-steps-track input::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 100%;
+}
+
+.ui-steps-track input::-moz-range-track {
+  background: transparent;
+}
+
+.ui-steps-track input::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--background);
+  border: 1.5px solid var(--foreground);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  height: var(--thumb);
+  margin-top: calc((24px - var(--thumb)) / 2);
+  width: var(--thumb);
+}
+
+.ui-steps-track input::-moz-range-thumb {
+  background: var(--background);
+  border: 1.5px solid var(--foreground);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
+  height: var(--thumb);
+  width: var(--thumb);
+}
+
+.ui-steps-track input:focus-visible {
+  outline: 0;
+}
+
+.ui-steps-track input:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ui-steps-track input:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ui-steps[data-disabled] {
+  opacity: 0.5;
+}
+
+.ui-steps[data-disabled] input {
+  cursor: default;
+}
+
+.ui-steps-ends {
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+}
+
+@media (pointer: coarse) {
+  .ui-steps {
+    --thumb: 22px;
+  }
+
+  .ui-steps-track {
+    height: 32px;
+  }
+
+  .ui-steps-track input::-webkit-slider-thumb {
+    margin-top: calc((32px - var(--thumb)) / 2);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .ui-switch::before,
-  .ui-segmented-thumb {
+  .ui-switch::before {
     transition: none;
   }
 }
