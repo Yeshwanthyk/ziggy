@@ -1096,3 +1096,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `extensions list|show <profile>`: checks that the Profile is initialized, resolves Profile-local packages, lists selected-but-missing ids, labels them "selected in", and encodes `--json` through Schemas.
 - A bounded fast-check property says argv decoding always ends in success or exactly one typed input error. It covers subcommand vocabulary.
 - Codex OAuth import is on hold for an owner decision (read in place, not copy).
+
+## Web extension picker
+
+- The web settings list, enable and disable Profile extensions through the same `ProfileExtensionsApi` add/remove as the agent tool, so preflight, required-extension rejection and rollback are shared.
+- The listing cap is now 64, the same as the agent tool, and reports `truncated` when the frame budget applies. Selected ids that aren't listed stay removable.
+- Typed preflight reasons from `ZiggyGatewayError.details` are shown. A confirmed mutation updates the selection before a best-effort refresh. Unknown and selection-changed outcomes reconcile from the server. Extension state no longer races `loadModelSettings`.
+- `restartRequired` is sent on the wire, and the web says to restart the resident (`ziggy serve restart <profile>`); the resident doesn't hot reload.
+- Per-session model/thinking switching and the resume picker are waiting on adapter capabilities (round 3).

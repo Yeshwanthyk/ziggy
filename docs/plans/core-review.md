@@ -203,7 +203,7 @@ reading the owner lease before it starts; nothing falls back after the fact.
 
 ## 13. Web UI parity
 
-Status: pending.
+Status: extension picker done (review/webui). Model/thinking switching and resume wait on adapter capabilities.
 
 The web UI is the only interactive face since 1b. It lacks:
 
