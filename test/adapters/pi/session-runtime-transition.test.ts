@@ -8,10 +8,15 @@ import {
   createAgentSessionFromServices,
   createAgentSessionRuntime,
   createAgentSessionServices,
+  type AgentSessionEvent,
   type AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { bindChatRuntime, makeLiveChatControls } from "ziggy/adapters/pi/pi-agent";
+import {
+  bindChatRuntime,
+  makeLiveChatControls,
+  makeSessionChatHandle,
+} from "ziggy/adapters/pi/pi-agent";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { acquireSessionLease, makeSessionLeaseTransitions } from "ziggy/adapters/pi/session-lease";
 
@@ -29,6 +34,10 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
   const source = SessionManager.create(profilePath, directory, { id: "source" });
   const target = SessionManager.create(profilePath, directory, { id: "target" });
   target.appendMessage({ role: "user", content: "materialize", timestamp: Date.now() });
+  await Bun.write(
+    join(directory, "third.jsonl"),
+    `${JSON.stringify({ type: "session", version: 3, id: "third", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
+  );
   target.appendMessage({
     role: "assistant",
     content: [{ type: "text", text: "ready" }],
@@ -54,6 +63,8 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
   const release = await Effect.runPromise(acquireSessionLease(profilePath, "source"));
 
   const lease = makeSessionLeaseTransitions(profilePath, "source", release);
+
+  const subscriptions = new Map<string, Set<(event: AgentSessionEvent) => void>>();
 
   let actions:
     | NonNullable<
@@ -82,6 +93,20 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
 
     const result = await createAgentSessionFromServices({ services, sessionManager });
 
+    const listeners = new Set<(event: AgentSessionEvent) => void>();
+    subscriptions.set(sessionManager.getSessionId(), listeners);
+    const subscribe = result.session.subscribe.bind(result.session);
+
+    result.session.subscribe = (listener) => {
+      listeners.add(listener);
+      const unsubscribe = subscribe(listener);
+
+      return () => {
+        listeners.delete(listener);
+        unsubscribe();
+      };
+    };
+
     const bind = result.session.bindExtensions.bind(result.session);
 
     result.session.bindExtensions = async (bindings) => {
@@ -101,10 +126,68 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
   try {
     const binding = await bindChatRuntime(runtime, lease);
     const controls = makeLiveChatControls(profilePath, runtime, lease, binding);
+
+    const handle = makeSessionChatHandle(
+      profilePath,
+      () => runtime.session,
+      { ...controls, prompt: () => Effect.succeed(""), dispose: Effect.void },
+      undefined,
+      undefined,
+      lease,
+      binding,
+    );
+
+    const events: Array<string> = [];
+
+    const unsubscribe = handle.subscribe((event) => events.push(event.kind));
+
+    const emitTool = (id: string) => {
+      for (const listener of subscriptions.get(id) ?? []) {
+        listener({ type: "tool_execution_start", toolCallId: id, toolName: "read", args: {} });
+      }
+    };
+
+    emitTool("source");
+    expect(events).toEqual(["tool"]);
     expect((await Effect.runPromise(controls.modelState)).thinking).toBe(
       runtime.session.thinkingLevel,
     );
     expect((await Effect.runPromise(controls.setThinkingLevel("off"))).thinking).toBe("off");
+    expect(
+      await Effect.runPromise(Effect.result(controls.setModel("missing", "model"))),
+    ).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProviderConfigError" },
+    });
+
+    for (const invalid of ["../x", join(profilePath, "sessions", "target.jsonl")]) {
+      expect(await Effect.runPromise(Effect.result(controls.resume(invalid)))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SessionNotFound" },
+      });
+    }
+
+    Object.defineProperty(runtime.session, "isIdle", { configurable: true, get: () => false });
+    expect(await Effect.runPromise(Effect.result(controls.resume("target")))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SessionBusy" },
+    });
+
+    for (const change of [
+      controls.setModel("missing", "model"),
+      controls.setThinkingLevel("high"),
+    ]) {
+      expect(await Effect.runPromise(Effect.result(change))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SessionBusy" },
+      });
+    }
+
+    expect(lease.owns("source")).toBe(true);
+    emitTool("source");
+    expect(events).toEqual(["tool", "tool"]);
+    Reflect.deleteProperty(runtime.session, "isIdle");
+
     const before = actions;
 
     if (before === undefined) throw new Error("Pi command actions not bound");
@@ -153,6 +236,9 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
 
     expect(await Effect.runPromise(controls.resume("target"))).toEqual({ cancelled: false });
     expect(lease.owns("target")).toBe(true);
+    emitTool("source");
+    emitTool("target");
+    expect(events).toEqual(["tool", "tool", "tool"]);
 
     const old = await Effect.runPromise(acquireSessionLease(profilePath, "source"));
 
@@ -174,6 +260,18 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
       cancelled: false,
     });
     expect(lease.owns("target")).toBe(true);
+    emitTool("target");
+    expect(events).toEqual(["tool", "tool", "tool", "tool"]);
+    await Promise.all([
+      Effect.runPromise(controls.resume("third")),
+      Effect.runPromise(controls.resume("target")),
+    ]);
+    expect(lease.owns("target")).toBe(true);
+    const thirdAfter = await Effect.runPromise(acquireSessionLease(profilePath, "third"));
+    await Effect.runPromise(thirdAfter);
+
+    unsubscribe();
+    await Effect.runPromise(handle.dispose);
   } finally {
     await runtime.dispose();
     await Effect.runPromise(lease.close);

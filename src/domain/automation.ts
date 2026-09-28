@@ -317,6 +317,7 @@ export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 
 const AutomationRunFailureCategory = Schema.Literals([
   "session-held",
+  "SessionBusy",
   "schedule-superseded",
   "broadcasts-unreadable",
   "broadcasts-invalid",
@@ -387,6 +388,7 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
 
 const executionFailureCategories: ReadonlySet<string> = new Set([
   "session-held",
+  "SessionBusy",
   "schedule-superseded",
   "AutomationInvalid",
   "AutomationNotFound",

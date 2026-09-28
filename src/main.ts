@@ -964,6 +964,7 @@ const program = Effect.gen(function* () {
     SpecialistToolUnsupported: (failure) => fail(failure.message),
     SpecialistRunFailed: (failure) => fail(failure.message),
     ProfileNotInitialized: (failure) => fail(failure.message),
+    SessionBusy: (failure) => fail(failure.message),
     SessionHeld: (failure) => fail(failure.message),
     ProviderConfigError: (failure) => fail(failure.message),
     ProviderCallError: (failure) => fail(failure.message),

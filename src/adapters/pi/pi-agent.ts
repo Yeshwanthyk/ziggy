@@ -22,13 +22,25 @@ import {
 import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Database } from "bun:sqlite";
-import { Clock, Context, Effect, Exit, Layer, Option, Predicate, Result, Schema } from "effect";
+import {
+  Clock,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Result,
+  Schema,
+  Semaphore,
+} from "effect";
 import { Type } from "typebox";
 import {
   ChatNotStreaming,
   ProfileNotInitialized,
   ProviderCallError,
   ProviderConfigError,
+  SessionBusy,
   SessionHeld,
   SpecialistAgentNotFound,
   type ChatModelOverride,
@@ -1466,10 +1478,27 @@ const createProfileRuntime = (
     }),
   );
 
+export interface ChatRuntimeBinding {
+  readonly switchSession: AgentSessionRuntime["switchSession"];
+  readonly switchSessionUnderControl: AgentSessionRuntime["switchSession"];
+  readonly withControl: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  readonly onRebind: (callback: () => void) => () => void;
+}
+
 export const bindChatRuntime = async (
   runtime: AgentSessionRuntime,
   lease?: ReturnType<typeof makeSessionLeaseTransitions>,
-): Promise<{ readonly switchSession: AgentSessionRuntime["switchSession"] }> => {
+): Promise<ChatRuntimeBinding> => {
+  const semaphore = Semaphore.makeUnsafe(1);
+
+  let rebindListener: (() => void) | undefined;
+
+  const serialized = <A>(operation: () => Promise<A>): Promise<A> =>
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+    Effect.runPromise(
+      semaphore.withPermit(Effect.tryPromise({ try: operation, catch: (cause) => cause })),
+    );
+
   let invalidatedSession: AgentSessionRuntime["session"] | undefined;
   runtime.setBeforeSessionInvalidate(() => {
     invalidatedSession = runtime.session;
@@ -1484,7 +1513,10 @@ export const bindChatRuntime = async (
     await Effect.runPromise(lease.cancelReservation);
   };
 
-  const switchSession: AgentSessionRuntime["switchSession"] = async (sessionPath, options) => {
+  const switchSessionUnserialized: AgentSessionRuntime["switchSession"] = async (
+    sessionPath,
+    options,
+  ) => {
     const previous = runtime.session;
 
     if (lease !== undefined) {
@@ -1514,56 +1546,61 @@ export const bindChatRuntime = async (
     }
   };
 
+  const switchSession: AgentSessionRuntime["switchSession"] = (sessionPath, options) =>
+    serialized(() => switchSessionUnserialized(sessionPath, options));
+
   const bindSession = async (): Promise<void> => {
     const session = runtime.session;
     await session.bindExtensions({
       mode: "print",
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
-        newSession: async (options) => {
-          const previous = runtime.session;
-          let result: Awaited<ReturnType<typeof runtime.newSession>>;
+        newSession: (options) =>
+          serialized(async () => {
+            const previous = runtime.session;
+            let result: Awaited<ReturnType<typeof runtime.newSession>>;
 
-          try {
-            result = await runtime.newSession(options);
-          } catch (cause) {
-            await replacementFailed(previous);
-            throw cause;
-          }
+            try {
+              result = await runtime.newSession(options);
+            } catch (cause) {
+              await replacementFailed(previous);
+              throw cause;
+            }
 
-          if (lease !== undefined) {
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-            await Effect.runPromise(
-              result.cancelled
-                ? lease.cancelReservation
-                : lease.transition(runtime.session.sessionManager.getSessionId()),
-            );
-          }
+            if (lease !== undefined) {
+              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+              await Effect.runPromise(
+                result.cancelled
+                  ? lease.cancelReservation
+                  : lease.transition(runtime.session.sessionManager.getSessionId()),
+              );
+            }
 
-          return result;
-        },
-        fork: async (entryId, options) => {
-          const previous = runtime.session;
-          let result: Awaited<ReturnType<typeof runtime.fork>>;
+            return result;
+          }),
+        fork: (entryId, options) =>
+          serialized(async () => {
+            const previous = runtime.session;
+            let result: Awaited<ReturnType<typeof runtime.fork>>;
 
-          try {
-            result = await runtime.fork(entryId, options);
-          } catch (cause) {
-            await replacementFailed(previous);
-            throw cause;
-          }
+            try {
+              result = await runtime.fork(entryId, options);
+            } catch (cause) {
+              await replacementFailed(previous);
+              throw cause;
+            }
 
-          if (lease !== undefined) {
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-            await Effect.runPromise(
-              result.cancelled
-                ? lease.cancelReservation
-                : lease.transition(runtime.session.sessionManager.getSessionId()),
-            );
-          }
+            if (lease !== undefined) {
+              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+              await Effect.runPromise(
+                result.cancelled
+                  ? lease.cancelReservation
+                  : lease.transition(runtime.session.sessionManager.getSessionId()),
+              );
+            }
 
-          return { cancelled: result.cancelled };
-        },
+            return { cancelled: result.cancelled };
+          }),
         navigateTree: async (targetId, options) => {
           if (
             options?.summarize === undefined &&
@@ -1600,12 +1637,24 @@ export const bindChatRuntime = async (
         console.error(`Extension error (${error.extensionPath}): ${error.error}`);
       },
     });
+    rebindListener?.();
   };
 
   runtime.setRebindSession(bindSession);
   await bindSession();
 
-  return { switchSession };
+  return {
+    switchSession,
+    switchSessionUnderControl: switchSessionUnserialized,
+    withControl: (effect) => semaphore.withPermit(effect),
+    onRebind: (callback) => {
+      rebindListener = callback;
+
+      return () => {
+        if (rebindListener === callback) rebindListener = undefined;
+      };
+    },
+  };
 };
 
 type PromptSession = Pick<
@@ -1834,50 +1883,83 @@ export const makeLiveChatControls = (
           ),
         );
 
+  const requireIdle = () =>
+    runtime.session.isIdle
+      ? Effect.void
+      : Effect.fail(
+          new SessionBusy({
+            profilePath,
+            message: "session is busy; wait for the current turn to finish",
+          }),
+        );
+
+  const withIdleControl = <A, E>(effect: Effect.Effect<A, E>) =>
+    binding.withControl(
+      Effect.suspend(() =>
+        requireWriter().pipe(Effect.andThen(requireIdle()), Effect.andThen(effect)),
+      ),
+    );
+
   return {
     modelState: Effect.sync(modelState),
     setModel: (providerId, modelId) =>
-      requireWriter().pipe(
-        Effect.andThen(
-          Effect.suspend(() => {
-            const model = runtime.services.modelRuntime.getModel(providerId, modelId);
+      withIdleControl(
+        Effect.void.pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const model = runtime.services.modelRuntime.getModel(providerId, modelId);
 
-            return model === undefined
-              ? Effect.fail(
-                  new ProviderConfigError({
-                    profilePath,
-                    operation: "set session model",
-                    message: `model ${providerId}/${modelId} is not available in this Profile`,
-                    cause: undefined,
-                  }),
-                )
-              : piPromise(profilePath, "set session model", () =>
-                  runtime.session.setModel(model, { persist: false }),
-                ).pipe(Effect.asVoid);
-          }),
+              return model === undefined
+                ? Effect.fail(
+                    new ProviderConfigError({
+                      profilePath,
+                      operation: "set session model",
+                      message: `model ${providerId}/${modelId} is not available in this Profile`,
+                      cause: undefined,
+                    }),
+                  )
+                : Effect.tryPromise({
+                    try: () => runtime.session.setModel(model, { persist: false }),
+                    catch: (cause) =>
+                      cause instanceof Error && cause.message.startsWith("No API key for ")
+                        ? new ProviderConfigError({
+                            profilePath,
+                            operation: "set session model",
+                            message: `no API key configured for ${providerId}/${modelId}`,
+                            cause: undefined,
+                          })
+                        : providerError(profilePath, "set session model", cause),
+                  }).pipe(Effect.asVoid);
+            }),
+          ),
+          Effect.andThen(Effect.sync(modelState)),
         ),
-        Effect.andThen(Effect.sync(modelState)),
       ),
     setThinkingLevel: (level: ProfileAgentThinking) =>
-      requireWriter().pipe(
-        Effect.andThen(
-          piPromise(profilePath, "set session thinking", () =>
-            Promise.resolve(runtime.session.setThinkingLevel(level, { persist: false })),
+      withIdleControl(
+        Effect.void.pipe(
+          Effect.andThen(
+            piPromise(profilePath, "set session thinking", () =>
+              Promise.resolve(runtime.session.setThinkingLevel(level, { persist: false })),
+            ),
           ),
+          Effect.andThen(Effect.sync(modelState)),
         ),
-        Effect.andThen(Effect.sync(modelState)),
       ),
     resume: (reference) =>
-      requireWriter().pipe(
-        Effect.andThen(showProfileSession(profilePath, reference)),
-        Effect.flatMap((metadata) =>
-          Effect.tryPromise({
-            try: () => binding.switchSession(join(profilePath, "sessions", metadata.path)),
-            catch: (cause) =>
-              cause instanceof SessionLeaseHeld || cause instanceof SessionLeaseFailed
-                ? sessionLeaseError(profilePath, cause)
-                : providerError(profilePath, "resume session", cause),
-          }),
+      withIdleControl(
+        Effect.void.pipe(
+          Effect.andThen(showProfileSession(profilePath, reference)),
+          Effect.flatMap((metadata) =>
+            Effect.tryPromise({
+              try: () =>
+                binding.switchSessionUnderControl(join(profilePath, "sessions", metadata.path)),
+              catch: (cause) =>
+                cause instanceof SessionLeaseHeld || cause instanceof SessionLeaseFailed
+                  ? sessionLeaseError(profilePath, cause)
+                  : providerError(profilePath, "resume session", cause),
+            }),
+          ),
         ),
       ),
   };
@@ -1893,14 +1975,22 @@ export const makeSessionChatHandle = (
   abortSession: () => Promise<void> = sharePiAbort(() => liveSession().abort()),
   voiceHub?: SpecialistVoiceHub,
   lease?: SessionLeaseTransitions,
+  binding?: Pick<ChatRuntimeBinding, "onRebind">,
 ): ChatHandle => {
   const listeners = new Set<(event: ChatEvent) => void>();
   const project = createChatEventProjector();
 
-  const unsubscribeSession = liveSession().subscribe((event) => {
+  const forwardSessionEvent = (event: AgentSessionEvent) => {
     for (const chatEvent of project(event)) {
       for (const listener of listeners) listener(chatEvent);
     }
+  };
+
+  let unsubscribeSession = liveSession().subscribe(forwardSessionEvent);
+
+  const unsubscribeRebind = binding?.onRebind(() => {
+    unsubscribeSession();
+    unsubscribeSession = liveSession().subscribe(forwardSessionEvent);
   });
 
   const unsubscribeVoice =
@@ -2139,6 +2229,7 @@ export const makeSessionChatHandle = (
       };
     },
     dispose: Effect.sync(() => {
+      unsubscribeRebind?.();
       unsubscribeSession();
       unsubscribeVoice();
     }).pipe(Effect.andThen(methods.dispose)),
@@ -2433,6 +2524,7 @@ export const openChat = (
         abortSession,
         runtime.voiceHub,
         lease,
+        binding,
       );
     }),
   );
@@ -2592,6 +2684,7 @@ export const openSpecialistChat = (
           abortSession,
           undefined,
           specialistLease,
+          binding,
         );
       }),
     ),

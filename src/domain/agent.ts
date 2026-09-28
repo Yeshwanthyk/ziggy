@@ -218,7 +218,13 @@ export class SessionHeld extends Schema.TaggedErrorClass<SessionHeld>()("Session
   pid: Schema.optional(Schema.Int),
 }) {}
 
+export class SessionBusy extends Schema.TaggedErrorClass<SessionBusy>()("SessionBusy", {
+  profilePath: Schema.String,
+  message: Schema.String,
+}) {}
+
 export type ZiggyAgentError =
+  | SessionBusy
   | SessionHeld
   | ProfileNotInitialized
   | ProviderConfigError
