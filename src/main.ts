@@ -24,6 +24,7 @@ import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-
 import { manageExtensions } from "./application/extension-manager";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { Doctor, DoctorLive } from "./application/doctor";
+import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
 import { GatewayLive } from "./application/gateway";
 import { Models, ModelsLive } from "./application/models";
 import { Memory, MemoryLive } from "./application/memory";
@@ -155,7 +156,7 @@ const ProfileAgentsProvided = ProfileAgentsLive.pipe(
 const SchedulerProvided = AutomationSchedulerLive.pipe(Layer.provide(AutomationsProvided));
 
 const DoctorProvided = DoctorLive.pipe(
-  Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
+  Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided, DoctorChecksLive)),
 );
 
 const MemoryProvided = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
@@ -1007,7 +1008,9 @@ const program = Effect.gen(function* () {
             AuthLive,
             ModelsLive,
             DoctorLive.pipe(
-              Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided)),
+              Layer.provide(
+                Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsProvided, DoctorChecksLive),
+              ),
             ),
           ),
         ),
