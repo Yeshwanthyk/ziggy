@@ -1,5 +1,5 @@
 .ziggy-settings-dialog {
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   max-height: min(92dvh, 820px);
   overflow: hidden;
   padding: 0;
@@ -54,7 +54,7 @@
 
 .ziggy-settings-block-title h3 {
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.005em;
   margin: 0;
 }
@@ -117,18 +117,18 @@
 
 .model-picker-trigger-copy strong {
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .model-picker-trigger-copy small {
   color: var(--muted-foreground);
-  font-size: 11.5px;
-  font-weight: 450;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .model-picker-placeholder {
   color: var(--muted-foreground);
-  font-weight: 450;
+  font-weight: 400;
 }
 
 .model-picker-trigger > svg {
@@ -156,7 +156,7 @@
   align-items: center;
   background: var(--background);
   border: 1px solid var(--input);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
   justify-content: center;
@@ -199,10 +199,10 @@
 .ziggy-settings-note {
   align-items: flex-start;
   background: var(--muted);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--muted-foreground);
   display: flex;
-  font-size: 11.5px;
+  font-size: 12px;
   gap: 8px;
   line-height: 1.45;
   margin: 16px 0 0;
@@ -239,7 +239,7 @@
 .ziggy-connection-fields input {
   background: var(--background);
   border: 1px solid var(--input);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--foreground);
   height: 40px;
   min-width: 0;
@@ -249,7 +249,7 @@
 
 .ziggy-connection-fields input:focus-visible {
   border-color: var(--ring);
-  outline: 2px solid color-mix(in oklch, var(--ring) 16%, transparent);
+  outline: 2px solid var(--ring-soft);
 }
 
 .ziggy-connection-fields .form-error {
@@ -261,7 +261,7 @@
 }
 
 .model-picker-dialog {
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   gap: 0;
   overflow: hidden;
   padding: 20px;
@@ -271,7 +271,7 @@
   align-items: center;
   background: var(--muted);
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   display: flex;
   gap: 9px;
   margin-top: 18px;
@@ -281,7 +281,7 @@
 
 .model-picker-search:focus-within {
   border-color: var(--ring);
-  outline: 2px solid color-mix(in oklch, var(--ring) 16%, transparent);
+  outline: 2px solid var(--ring-soft);
 }
 
 .model-picker-search svg {
@@ -301,14 +301,14 @@
 }
 
 .model-picker-search input::placeholder {
-  color: oklch(0.44 0.012 260);
+  color: var(--placeholder);
   opacity: 1;
 }
 
 .model-picker-search kbd {
   color: var(--muted-foreground);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .model-picker-scroll {
@@ -333,13 +333,13 @@
 
 .model-picker-provider-heading h3 {
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   margin: 0;
 }
 
 .model-picker-provider-heading span {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .model-picker-options {
@@ -352,7 +352,7 @@
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: inherit;
   cursor: pointer;
   display: flex;
@@ -388,12 +388,12 @@
 
 .model-picker-option strong {
   font-size: 13px;
-  font-weight: 610;
+  font-weight: 600;
 }
 
 .model-picker-option small {
   color: var(--muted-foreground);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .model-picker-option > svg {
@@ -430,7 +430,7 @@
   font-size: 12px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .ziggy-settings-header {
     padding: 18px 52px 16px 18px;
   }
