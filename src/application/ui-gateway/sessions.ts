@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Effect, Option, Schema } from "effect";
+import { Effect, Option, Predicate, Schema } from "effect";
 import {
   UiSessionHistoryParams,
   UiSessionOpenParams,
@@ -328,7 +328,19 @@ export const makeSessionDispatcher = (
           const metadata =
             params.agentId === undefined ? { context } : { context, agentId: params.agentId };
 
-          yield* branch.registry.getOrOpenUi(key, open, metadata);
+          yield* branch.registry
+            .getOrOpenUi(key, open, metadata)
+            .pipe(
+              Effect.mapError((cause) =>
+                Predicate.isTagged(cause.cause, "SessionHeld")
+                  ? protocolFailure(
+                      "session_busy",
+                      "This session is held by another process; close it there or start a new session",
+                      cause.cause,
+                    )
+                  : cause,
+              ),
+            );
           const ref = sessionRef(branch.profileId, key);
           const subscriptionKey = `${branch.profileId}:${key}`;
 

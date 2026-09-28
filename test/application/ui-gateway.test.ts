@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Deferred, Effect, Fiber, Result, Schema } from "effect";
 import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/application/agent";
+import { SessionHeld } from "ziggy/domain/agent";
 import {
   CHAT_REPLAY_LIMIT,
   makeChatRegistry,
@@ -109,6 +110,35 @@ const makeConfig = (
   agent,
   profileExtensions,
   ...extra,
+});
+
+test("session.open refuses a held writer with a plain session_busy error", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+
+  const agent = makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") }), {
+    openChat: () => Effect.fail(new SessionHeld({ profilePath: "/secret", message: "held" })),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
+          responses.push(decodeResponse(frame)),
+        );
+
+        yield* connection.request({
+          id: "held",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+      }),
+    ),
+  );
+
+  expect(responses).toMatchObject([{ id: "held", ok: false, error: { code: "session_busy" } }]);
+  expect(JSON.stringify(responses)).not.toContain("/secret");
 });
 
 test("UI gateway opens local Pi sessions, emits sequenced events, and detaches on close", async () => {
