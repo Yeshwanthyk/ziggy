@@ -3,6 +3,7 @@ import { DefinitionEditor } from "@/components/definition-editor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -53,7 +54,7 @@ export function AgentDefinitionDialog({
             </Button>
           </div>
         </DialogHeader>
-        <div className="agent-definition-body">
+        <DialogBody>
           {detail?.loading ? <p className="detail-loading">Loading agent definition…</p> : null}
           {detail?.error === undefined ? null : (
             <p className="detail-error" role="alert">
@@ -68,7 +69,7 @@ export function AgentDefinitionDialog({
               source={detail.document.source}
             />
           )}
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

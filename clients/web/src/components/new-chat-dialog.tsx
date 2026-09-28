@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -51,24 +52,26 @@ export function NewChatDialog({
               A separate conversation with your assistant, saved in Pinned.
             </DialogDescription>
           </DialogHeader>
-          <div className="group-fields">
-            <label className="field-label">
-              <span>Name</span>
-              <input
-                autoFocus
-                maxLength={80}
-                placeholder="What are we working on?"
-                value={title}
-                disabled={pending}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </label>
-            {error ? (
-              <p className="form-error" role="alert">
-                {error}
-              </p>
-            ) : null}
-          </div>
+          <DialogBody>
+            <div className="group-fields">
+              <label className="field-label">
+                <span>Name</span>
+                <input
+                  autoFocus
+                  maxLength={80}
+                  placeholder="What are we working on?"
+                  value={title}
+                  disabled={pending}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
+              </label>
+              {error ? (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          </DialogBody>
           <DialogFooter>
             <Button
               type="button"

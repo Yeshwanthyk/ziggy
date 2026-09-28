@@ -2,9 +2,9 @@ import { Button } from "@/components/ui/button";
 import { ModelPicker } from "@/components/model-picker";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -222,7 +222,7 @@ export function SettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="ziggy-settings-body">
+        <DialogBody className="ziggy-settings-body">
           {connected ? (
             <section className="ziggy-settings-block" aria-labelledby="model-heading">
               <div className="ziggy-settings-block-header">
@@ -300,7 +300,7 @@ export function SettingsDialog({
                       the resident restarts.
                     </span>
                   </p>
-                  <DialogFooter className="ziggy-settings-actions">
+                  <div className="ziggy-settings-actions">
                     <Button
                       disabled={
                         !connected ||
@@ -314,7 +314,7 @@ export function SettingsDialog({
                     >
                       {modelSettings?.saving ? "Saving…" : "Save model"}
                     </Button>
-                  </DialogFooter>
+                  </div>
                 </form>
               ) : null}
             </section>
@@ -514,7 +514,7 @@ export function SettingsDialog({
                     </p>
                   )}
                 </div>
-                <DialogFooter>
+                <div className="ziggy-settings-actions">
                   <Button
                     disabled={
                       connectionPending || url.trim().length === 0 || token.trim().length === 0
@@ -524,7 +524,7 @@ export function SettingsDialog({
                   >
                     {connectionPending ? "Connecting…" : connected ? "Reconnect" : "Connect"}
                   </Button>
-                </DialogFooter>
+                </div>
               </form>
             )}
           </section>
@@ -648,7 +648,7 @@ export function SettingsDialog({
               </section>
             </>
           ) : null}
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

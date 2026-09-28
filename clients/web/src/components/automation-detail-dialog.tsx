@@ -11,12 +11,12 @@ import type { AutomationDestinationOption, AutomationDetail, AutomationSummary }
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface AutomationDetailDialogProps {
   readonly automation?: AutomationSummary;
@@ -262,7 +262,7 @@ export function AutomationDetailDialog({
             </span>
           </div>
         </DialogHeader>
-        <ScrollArea className="automation-detail-scroll">
+        <DialogBody>
           <div className="automation-detail-body">
             {detail?.loading ? <p className="detail-loading">Loading automation details…</p> : null}
             {detail?.errors.map((error) => (
@@ -530,7 +530,7 @@ export function AutomationDetailDialog({
               </>
             )}
           </div>
-        </ScrollArea>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

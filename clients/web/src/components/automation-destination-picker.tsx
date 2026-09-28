@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -210,79 +211,80 @@ export function AutomationDestinationPicker({
               Send results to a conversation or a connected channel.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
+            <label className="automation-destination-picker-search">
+              <Search aria-hidden="true" />
+              <span className="sr-only">Search destinations</span>
+              <input
+                autoFocus
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search conversations, agents, or channels"
+                type="search"
+                value={query}
+              />
+            </label>
 
-          <label className="automation-destination-picker-search">
-            <Search aria-hidden="true" />
-            <span className="sr-only">Search destinations</span>
-            <input
-              autoFocus
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search conversations, agents, or channels"
-              type="search"
-              value={query}
-            />
-          </label>
+            <div
+              aria-label="Destination types"
+              className="automation-destination-filters"
+              role="group"
+            >
+              {filters.map((entry) => (
+                <button
+                  aria-pressed={filter === entry.id}
+                  key={entry.id}
+                  onClick={() => setFilter(entry.id)}
+                  type="button"
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
 
-          <div
-            aria-label="Destination types"
-            className="automation-destination-filters"
-            role="group"
-          >
-            {filters.map((entry) => (
-              <button
-                aria-pressed={filter === entry.id}
-                key={entry.id}
-                onClick={() => setFilter(entry.id)}
-                type="button"
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
-
-          <ScrollArea className="automation-destination-picker-scroll">
-            {groups.length === 0 ? (
-              <div className="automation-destination-picker-empty">
-                <Search aria-hidden="true" />
-                <strong>No matching destinations</strong>
-                <span>Try another name, agent, channel, or filter.</span>
-              </div>
-            ) : (
-              <div className="automation-destination-groups">
-                {groups.map((group) => (
-                  <section aria-labelledby={`destination-group-${group.id}`} key={group.id}>
-                    <div className="automation-destination-group-heading">
-                      <span>
-                        {iconFor(group.id)}
-                        <h3 id={`destination-group-${group.id}`}>{group.label}</h3>
-                      </span>
-                      <small>{group.entries.length}</small>
-                    </div>
-                    <div className="automation-destination-options">
-                      {group.entries.map((destination) => {
-                        const isSelected = selected?.target === destination.target;
-                        return (
-                          <button
-                            aria-pressed={isSelected}
-                            className="automation-destination-option"
-                            key={destination.target}
-                            onClick={() => choose(destination)}
-                            type="button"
-                          >
-                            <span>
-                              <strong>{labelFor(destination)}</strong>
-                              <DestinationContext destination={destination} />
-                            </span>
-                            {isSelected ? <Check aria-hidden="true" /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
+            <ScrollArea className="automation-destination-picker-scroll">
+              {groups.length === 0 ? (
+                <div className="automation-destination-picker-empty">
+                  <Search aria-hidden="true" />
+                  <strong>No matching destinations</strong>
+                  <span>Try another name, agent, channel, or filter.</span>
+                </div>
+              ) : (
+                <div className="automation-destination-groups">
+                  {groups.map((group) => (
+                    <section aria-labelledby={`destination-group-${group.id}`} key={group.id}>
+                      <div className="automation-destination-group-heading">
+                        <span>
+                          {iconFor(group.id)}
+                          <h3 id={`destination-group-${group.id}`}>{group.label}</h3>
+                        </span>
+                        <small>{group.entries.length}</small>
+                      </div>
+                      <div className="automation-destination-options">
+                        {group.entries.map((destination) => {
+                          const isSelected = selected?.target === destination.target;
+                          return (
+                            <button
+                              aria-pressed={isSelected}
+                              className="automation-destination-option"
+                              key={destination.target}
+                              onClick={() => choose(destination)}
+                              type="button"
+                            >
+                              <span>
+                                <strong>{labelFor(destination)}</strong>
+                                <DestinationContext destination={destination} />
+                              </span>
+                              {isSelected ? <Check aria-hidden="true" /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </>

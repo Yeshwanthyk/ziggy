@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -107,64 +108,68 @@ export function ModelPicker({ disabled, models, onSelect, selected }: ModelPicke
               Search the models available through this Ziggy resident.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
+            <label className="model-picker-search">
+              <Search aria-hidden="true" />
+              <span className="sr-only">Search models</span>
+              <input
+                autoFocus
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by model or provider"
+                type="search"
+                value={query}
+              />
+              {query.length === 0 ? null : <kbd>Esc</kbd>}
+            </label>
 
-          <label className="model-picker-search">
-            <Search aria-hidden="true" />
-            <span className="sr-only">Search models</span>
-            <input
-              autoFocus
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by model or provider"
-              type="search"
-              value={query}
-            />
-            {query.length === 0 ? null : <kbd>Esc</kbd>}
-          </label>
-
-          <ScrollArea className="model-picker-scroll">
-            {groups.length === 0 ? (
-              <div className="model-picker-empty">
-                <Search aria-hidden="true" />
-                <strong>No matching models</strong>
-                <span>Try a model name, ID, or provider.</span>
-              </div>
-            ) : (
-              <div className="model-picker-groups">
-                {groups.map((group) => (
-                  <section aria-labelledby={`provider-${group.providerId}`} key={group.providerId}>
-                    <div className="model-picker-provider-heading">
-                      <h3 id={`provider-${group.providerId}`}>
-                        {displayProviderName(group.providerId)}
-                      </h3>
-                      <span>{group.models.length}</span>
-                    </div>
-                    <div className="model-picker-options">
-                      {group.models.map((model) => {
-                        const isSelected =
-                          selected?.providerId === model.providerId &&
-                          selected.modelId === model.modelId;
-                        return (
-                          <button
-                            aria-pressed={isSelected}
-                            className="model-picker-option"
-                            key={`${model.providerId}/${model.modelId}`}
-                            onClick={() => chooseModel(model)}
-                            type="button"
-                          >
-                            <span>
-                              <strong>{model.name}</strong>
-                              <small>{model.modelId}</small>
-                            </span>
-                            {isSelected ? <Check aria-hidden="true" /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
+            <ScrollArea className="model-picker-scroll">
+              {groups.length === 0 ? (
+                <div className="model-picker-empty">
+                  <Search aria-hidden="true" />
+                  <strong>No matching models</strong>
+                  <span>Try a model name, ID, or provider.</span>
+                </div>
+              ) : (
+                <div className="model-picker-groups">
+                  {groups.map((group) => (
+                    <section
+                      aria-labelledby={`provider-${group.providerId}`}
+                      key={group.providerId}
+                    >
+                      <div className="model-picker-provider-heading">
+                        <h3 id={`provider-${group.providerId}`}>
+                          {displayProviderName(group.providerId)}
+                        </h3>
+                        <span>{group.models.length}</span>
+                      </div>
+                      <div className="model-picker-options">
+                        {group.models.map((model) => {
+                          const isSelected =
+                            selected?.providerId === model.providerId &&
+                            selected.modelId === model.modelId;
+                          return (
+                            <button
+                              aria-pressed={isSelected}
+                              className="model-picker-option"
+                              key={`${model.providerId}/${model.modelId}`}
+                              onClick={() => chooseModel(model)}
+                              type="button"
+                            >
+                              <span>
+                                <strong>{model.name}</strong>
+                                <small>{model.modelId}</small>
+                              </span>
+                              {isSelected ? <Check aria-hidden="true" /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </>

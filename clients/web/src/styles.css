@@ -571,22 +571,74 @@
   }
 }
 
-.automation-dialog {
-  border-radius: var(--radius-lg);
-  max-height: min(88dvh, 820px);
-  overflow: hidden;
-  padding: 22px 14px 14px 22px;
+/* Dialog primitive: enter with a CSS transition from @starting-style, exit with a
+   short keyframe so Radix Presence waits for it before unmounting. */
+.ui-dialog-overlay {
+  background: var(--overlay);
+  transition: opacity var(--dur-modal) var(--ease-out);
 }
 
+.ui-dialog-overlay[data-state="closed"] {
+  animation: ui-fade-out var(--dur-modal-exit) var(--ease-out) forwards;
+}
+
+.ui-dialog {
+  transform-origin: center;
+  transition:
+    opacity var(--dur-modal) var(--ease-out),
+    scale var(--dur-modal) var(--ease-out);
+  translate: -50% -50%;
+}
+
+.ui-dialog[data-state="closed"] {
+  animation: ui-dialog-out var(--dur-modal-exit) var(--ease-out) forwards;
+}
+
+@starting-style {
+  .ui-dialog-overlay[data-state="open"] {
+    opacity: 0;
+  }
+
+  .ui-dialog[data-state="open"] {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+@keyframes ui-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-dialog-out {
+  to {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+.ui-dialog-close {
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    scale var(--dur-press) var(--ease-out);
+}
+
+.ui-dialog-close:active {
+  scale: 0.97;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-dialog-close:hover {
+    background: var(--hover);
+    color: var(--foreground);
+  }
+}
+
+.automation-dialog,
 .agent-definition-dialog {
-  border-radius: var(--radius-lg);
   max-height: min(88dvh, 820px);
-  overflow: auto;
-  padding: 22px;
-}
-
-.agent-definition-body {
-  margin-top: 16px;
 }
 
 .automation-detail-heading {
@@ -594,7 +646,6 @@
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  padding-right: 36px;
 }
 
 .automation-detail-heading > span {
@@ -608,11 +659,6 @@
   flex-direction: row;
   flex-shrink: 0;
   gap: 3px;
-}
-
-.automation-detail-scroll {
-  height: min(72dvh, 650px);
-  margin-top: 16px;
 }
 
 .automation-detail-body {
@@ -841,13 +887,6 @@
   flex: 0 0 auto;
   height: 15px;
   width: 15px;
-}
-
-.automation-destination-picker-dialog {
-  border-radius: var(--radius-lg);
-  gap: 0;
-  overflow: hidden;
-  padding: 20px;
 }
 
 .automation-destination-picker-search {
@@ -1658,11 +1697,11 @@
   padding-left: 10px;
 }
 
-.group-dialog {
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-  border-radius: var(--radius-lg);
-  padding: 22px;
+.group-dialog > form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .group-dialog > form,
@@ -1676,8 +1715,7 @@
 .group-fields {
   display: flex;
   flex-direction: column;
-  gap: 17px;
-  margin: 22px 0;
+  gap: 16px;
 }
 
 .field-label,
@@ -1871,20 +1909,36 @@
     align-items: stretch;
     flex-direction: column;
   }
-
-  .automation-destination-picker-dialog {
-    padding: 18px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
+  :where(*:not(.ui-dialog, .ui-dialog-overlay)),
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Keep the dialog fade, drop its scale. */
+  .ui-dialog,
+  .ui-dialog-overlay {
+    transition: opacity var(--dur-modal-exit) var(--ease-out);
+  }
+
+  .ui-dialog[data-state="closed"] {
+    animation-name: ui-fade-out;
+  }
+
+  .ui-dialog-close:active {
+    scale: none;
+  }
+
+  @starting-style {
+    .ui-dialog[data-state="open"] {
+      scale: none;
+    }
   }
 }
 
