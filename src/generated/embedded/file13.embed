@@ -1,7 +1,8 @@
+/* oxlint-disable ziggy/no-runtime-typeof -- SchemaIssue pointer keys are PropertyKey; narrow only their names before emitting a credential-safe diagnostic. */
 import { join } from "node:path";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaError, SchemaIssue } from "effect";
 
 const SERVER_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 
@@ -119,6 +120,34 @@ const decodeConfigJson = Schema.decodeUnknownEffect(Schema.fromJsonString(CodeMo
   onExcessProperty: "error",
 });
 
+// Schema issues contain offending values, including credentials in env. Traverse only pointers.
+const issuePath = (issue: SchemaIssue.Issue): ReadonlyArray<PropertyKey> => {
+  switch (issue._tag) {
+    case "Pointer":
+      return [...issue.path, ...issuePath(issue.issue)];
+    case "Composite":
+    case "AnyOf":
+      return issue.issues[0] === undefined ? [] : issuePath(issue.issues[0]);
+    case "Filter":
+    case "Encoding":
+      return issuePath(issue.issue);
+    default:
+      return [];
+  }
+};
+
+const configIssuePath = (cause: SchemaError.SchemaError): string =>
+  issuePath(cause.issue)
+    .slice(0, 8)
+    .map((key) =>
+      typeof key === "string" && /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(key)
+        ? key
+        : typeof key === "number" && Number.isSafeInteger(key)
+          ? String(key)
+          : "[invalid key]",
+    )
+    .join(".");
+
 export const loadConfig = (profilePath: string) => {
   const path = join(profilePath, "codemode.json");
 
@@ -173,9 +202,14 @@ export const loadConfig = (profilePath: string) => {
     );
 
     return yield* decodeConfigJson(text).pipe(
-      Effect.mapError(
-        (cause) => new CodeModeConfigError({ path, reason: "codemode.json is invalid.", cause }),
-      ),
+      Effect.mapError((cause) => {
+        const keyPath = configIssuePath(cause);
+
+        return new CodeModeConfigError({
+          path,
+          reason: `codemode.json is invalid${keyPath === "" ? "" : ` at ${keyPath}`}. See the codemode-setup skill or codemode README for the schema.`,
+        });
+      }),
     );
   });
 };

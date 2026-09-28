@@ -2,6 +2,7 @@
 import { Effect, Option, Result, Schema } from "effect";
 import { loadConfig, resolveLimits, type ResolvedLimits } from "./config.ts";
 import { McpHost } from "./host.ts";
+import { McpClientError, MCP_ERROR_MESSAGE_MAX } from "./mcp.ts";
 import { formatLogValues, interpret, InterpreterError, parseProgram } from "./interpreter.ts";
 
 type CodeModeDiagnostic = {
@@ -236,9 +237,20 @@ export const executeCodeMode = (
         const name = path.join(".");
         toolCalls.push({ path: name });
 
-        return path[0] === "$codemode" && path[1] === "search"
-          ? host.search(input)
-          : host.call(path[0] ?? "", path[1] ?? "", input);
+        return (
+          path[0] === "$codemode" && path[1] === "search"
+            ? host.search(input)
+            : host.call(path[0] ?? "", path[1] ?? "", input)
+        ).pipe(
+          Effect.mapError((error) =>
+            error instanceof McpClientError
+              ? new InterpreterError({
+                  kind: "ToolFailure",
+                  message: error.reason.slice(0, MCP_ERROR_MESSAGE_MAX),
+                })
+              : error,
+          ),
+        );
       },
     }).pipe(
       Effect.onInterrupt(() => host.revokeAll()),

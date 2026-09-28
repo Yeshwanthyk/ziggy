@@ -41,7 +41,8 @@ fail closed instead of falling back to a symlink-racy read.
 ```
 
 `mcpServers` is required (an empty object allows code without MCP calls); `command` and
-`allowTools` are required for each server. `args`, `env`, and `limits` are optional. The child
+`allowTools` are required for each server. `args` and `env` are optional per-server fields;
+`limits` is optional at the top level. The child
 receives only the configured `env` map. Generated code cannot inspect it. MCP clients
 start on the first search or call and cache their bounded tool list for the Pi session. Timeout,
 external cancellation, and `session_shutdown` revoke the clients, terminate their detached process

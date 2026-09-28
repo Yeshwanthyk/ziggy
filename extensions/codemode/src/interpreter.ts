@@ -7,7 +7,6 @@
 /* oxlint-disable ziggy/no-unknown-parameters, ziggy/no-runtime-typeof, ziggy/no-reflect-get, ziggy/no-unsafe-typescript-syntax, ziggy/require-safety-comment-for-type-assertion, ziggy/no-unsafe-dictionary-type, ziggy/no-conditional-empty-object-spread -- Acorn AST nodes are dynamic by contract and are validated by node helpers before interpretation. */
 import { parse } from "acorn";
 import { Effect, Schema } from "effect";
-import { McpClientError } from "./mcp.ts";
 
 export class InterpreterError extends Schema.TaggedErrorClass<InterpreterError>()(
   "InterpreterError",
@@ -363,8 +362,7 @@ export const interpret = (
               ? error
               : new InterpreterError({
                   kind: "ToolFailure",
-                  message:
-                    error instanceof McpClientError ? error.reason : "An MCP tool call failed.",
+                  message: "An MCP tool call failed.",
                 }),
           ),
         );

@@ -26,7 +26,7 @@ export default function codeMode(pi: Pick<ExtensionAPI, "on" | "registerTool">):
     name: "codemode_execute",
     label: "codemode_execute",
     description:
-      "Run bounded JavaScript orchestration over MCP stdio tools explicitly allowed in Profile codemode.json. If that file is missing, create it first (see the codemode-setup skill or package README for schema and security rules). Supports await, data, conditionals, while and for...of, safe helpers, and tools.$codemode.search. Classic for loops and try/catch are not supported. This AST interpreter is not eval or a general JavaScript runtime.",
+      "Run bounded JavaScript over MCP stdio tools allowed in Profile codemode.json (setup: codemode-setup skill or package README). Supports await, while and for...of; define functions with arrow functions. Rejects classic for, for...in, do...while, try/catch, throw, switch, and function declarations. Any MCP isError ends the script; there is no try/catch. Confined AST interpreter, not general JavaScript.",
     parameters: Parameters,
     executionMode: "sequential",
     async execute(_toolCallId, { code }, signal, _onUpdate, ctx) {

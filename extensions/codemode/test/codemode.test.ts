@@ -159,7 +159,6 @@ describe("codemode extension", () => {
     codeMode(fakePi);
 
     expect(registered?.name).toBe("codemode_execute");
-    expect(registered?.description).toContain("Classic for loops and try/catch are not supported");
     expect(registered?.description).toContain("codemode-setup");
     const tool = registered as CapturedTool;
 
@@ -287,7 +286,6 @@ describe("codemode extension", () => {
       const session = createCodeModeSession();
       const result = await Effect.runPromise(executeCodeMode(session, root, scenario.code));
       expect(result).toMatchObject({ ok: false, error: { kind: scenario.kind } });
-
       expect(result).not.toHaveProperty("error.line");
       await Effect.runPromise(session.close());
     }
@@ -455,6 +453,33 @@ describe("codemode extension", () => {
     );
 
     expect(result).toMatchObject({ ok: false, error: { kind: "CodeModeConfigError" } });
+  });
+
+  test("reports the invalid key path without credential values", async () => {
+    const root = await mkdtemp(join("/tmp", "ziggy-codemode-invalid-secret-"));
+    roots.push(root);
+    const secret = "secret-content-".repeat(1200);
+    await writeFile(
+      join(root, "codemode.json"),
+      JSON.stringify({
+        mcpServers: {
+          notes: { command: "/bin/true", allowTools: ["search"], env: { TOKEN: secret } },
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      executeCodeMode(createCodeModeSession(), root, "return 1;"),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "CodeModeConfigError",
+        message: expect.stringContaining("mcpServers.notes.env"),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("secret-content");
   });
 
   test("rejects a symlinked codemode.json", async () => {

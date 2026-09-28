@@ -26,7 +26,7 @@ matches it. Do not search a developer checkout for plans or `src/`.
 - Create, validate, inspect, or run specialists → `ziggy_help` topic `agents`
 - Open an Agent Client Protocol session → `ziggy_help` topic `acp`
 - Update the Ziggy executable → `ziggy_help` topic `update`
-- Open the resident web UI or run a one-shot prompt → `ziggy_help` topics `serve` or `run`
+- Open the resident web UI or run a one-shot prompt → `ziggy_help` topics `serve`, `web`, or `run`
 - Profile diagnosis or package selection → `ziggy_help` topics `doctor` or `extensions`
 
 ## Rules

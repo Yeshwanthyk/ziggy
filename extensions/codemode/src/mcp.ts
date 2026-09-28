@@ -67,6 +67,8 @@ const decodeToolResult = Schema.decodeUnknownOption(CallToolResult);
 
 const SAFE_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
+export const MCP_ERROR_MESSAGE_MAX = 4096;
+
 export type McpTool = typeof Tool.Type;
 
 export class McpClientError extends Schema.TaggedErrorClass<McpClientError>()("McpClientError", {
@@ -241,7 +243,11 @@ export class McpStdioClient {
             new McpClientError({
               server: this.#server,
               operation: "tools/call",
-              reason: `MCP tool reported failure: ${JSON.stringify({ content: decoded.value.content, structuredContent: decoded.value.structuredContent }).slice(0, 4096)}`,
+              reason:
+                `MCP tool reported failure: ${JSON.stringify({ content: decoded.value.content, structuredContent: decoded.value.structuredContent })}`.slice(
+                  0,
+                  MCP_ERROR_MESSAGE_MAX,
+                ),
             }),
           );
         }

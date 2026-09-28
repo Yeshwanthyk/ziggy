@@ -12,6 +12,7 @@ description: "Set up or troubleshoot Ziggy Code Mode for a Profile: select the p
    Create `<profile>/codemode.json` as a regular, non-symlink file. Start with
    `{ "mcpServers": {} }` if no MCP tools are needed yet. For each server, specify its
    executable `command`, optional `args` and `env`, and explicit nonempty `allowTools`.
+   Server names must match `^[a-z][a-z0-9_-]{0,63}$`; unknown configuration keys are rejected.
    Verify the command and tool names with the user before granting access; configured MCP
    servers execute with the permissions of that process. Keep credentials in `env`, never in
    generated code, and do not write secrets to logs or chat.
