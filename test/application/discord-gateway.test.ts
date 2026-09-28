@@ -1532,7 +1532,9 @@ describe("Discord gateway boundary", () => {
     );
 
     expect(settled).toContain("replay-8:failed");
-    expect(posts).toContain("This conversation is busy. Please try again later.");
+    expect(
+      posts.filter((text) => text === "This conversation is busy. Please try again later."),
+    ).toHaveLength(1);
   });
 
   test("replays accepted Discord ingress before waiting for new socket messages", async () => {

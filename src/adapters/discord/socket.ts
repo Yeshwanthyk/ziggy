@@ -497,6 +497,13 @@ export const openDiscordSocket = (
       scheduleReconnect(delay, mode, reason);
     };
 
+    const reconnectMalformedFrame = (connection: DiscordSocketConnection) => {
+      if (connection !== current?.connection) return;
+
+      console.warn("[discord] malformed-frame: reconnecting with a fresh gateway session");
+      reconnect(connection, "fresh", "malformed-frame");
+    };
+
     const send = (
       connection: DiscordSocketConnection,
       payload: DiscordGatewayOutboundPayload,
@@ -561,6 +568,7 @@ export const openDiscordSocket = (
             try: () => {
               removers.push(
                 connection.onMessage((data) => {
+                  // Bounds decoding work, not receive memory: Bun has no client payload cap.
                   offerCommand(
                     (
                       ArrayBuffer.isView(data)
@@ -628,9 +636,7 @@ export const openDiscordSocket = (
           const decodedReady = yield* decodeReadyPayload(frame.d).pipe(Effect.result);
 
           if (Result.isFailure(decodedReady)) {
-            yield* terminalFailure(
-              error("receive", "malformed-frame", false, decodedReady.failure),
-            );
+            reconnectMalformedFrame(connection);
 
             return;
           }
@@ -775,7 +781,7 @@ export const openDiscordSocket = (
         const decoded = yield* decodeGatewayFrameJson(text).pipe(Effect.result);
 
         if (Result.isFailure(decoded)) {
-          yield* terminalFailure(error("receive", "malformed-frame", false, decoded.failure));
+          reconnectMalformedFrame(connection);
 
           return;
         }
@@ -818,9 +824,7 @@ export const openDiscordSocket = (
             const decodedHello = yield* decodeHelloPayload(frame.d).pipe(Effect.result);
 
             if (Result.isFailure(decodedHello)) {
-              yield* terminalFailure(
-                error("receive", "malformed-frame", false, decodedHello.failure),
-              );
+              reconnectMalformedFrame(connection);
 
               return;
             }
@@ -905,12 +909,7 @@ export const openDiscordSocket = (
         case "Frame":
           return handleFrame(command.connection, command.text);
         case "FrameTooLarge":
-          return Effect.sync(() => {
-            if (command.connection !== current?.connection) return;
-
-            console.warn("[discord] malformed-frame: oversized gateway frame; reconnecting");
-            reconnect(command.connection, "auto", "malformed-frame");
-          });
+          return Effect.sync(() => reconnectMalformedFrame(command.connection));
         case "SocketError":
           return Effect.sync(() => reconnect(command.connection));
         case "SocketClosed":

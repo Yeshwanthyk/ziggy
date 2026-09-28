@@ -421,6 +421,7 @@ export const openSlackSocket = (
               );
               removers.push(
                 connection.onMessage((data) => {
+                  // Bounds decoding work, not receive memory: Bun has no client payload cap.
                   offerCommand(
                     (
                       ArrayBuffer.isView(data)

@@ -145,23 +145,44 @@ const yieldToSupervisor = Effect.gen(function* () {
 });
 
 describe("Discord socket Effect boundary", () => {
-  test("reconnects after an oversized frame without terminating the socket", async () => {
-    const fixture = dependencies();
+  test("reconnects fresh after an oversized frame instead of resuming its replay", async () => {
+    const scheduled: Array<() => void> = [];
+    let bootstraps = 0;
+
+    const fixture = dependencies({
+      getGatewayBot: () =>
+        Effect.sync(() => {
+          bootstraps += 1;
+
+          return { url: "wss://gateway.discord.test" };
+        }),
+      schedule: (_delay, task) => {
+        scheduled.push(task);
+
+        return () => undefined;
+      },
+    });
 
     const state = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
+          fixture.connections[0]?.emitMessage(ready);
+          yield* socket.nextConnectionState;
           fixture.connections[0]?.emitMessage("x".repeat(MAX_CHAT_FRAME_SIZE + 1));
+          const reconnecting = yield* socket.nextConnectionState;
+          scheduled[0]?.();
+          yield* yieldToSupervisor;
 
-          return yield* socket.nextConnectionState;
+          return reconnecting;
         }),
       ),
     );
 
     expect(state).toEqual({ state: "reconnecting", reason: "malformed-frame" });
     expect(fixture.connections[0]?.state).toBe(3);
+    expect(bootstraps).toBe(2);
   });
 
   test("accepts a binary gateway frame at the exact byte limit", async () => {
@@ -269,22 +290,23 @@ describe("Discord socket Effect boundary", () => {
     expect(fixture.connections).toHaveLength(0);
   });
 
-  test("fails malformed gateway JSON through the receive channel", async () => {
+  test("reconnects for malformed gateway JSON without terminating inbound", async () => {
     const fixture = dependencies();
 
-    const result = await Effect.runPromise(
+    const state = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const socket = yield* openDiscordSocket("token", 0, fixture.value);
           yield* yieldToSupervisor;
           fixture.connections[0]?.emitMessage("{");
 
-          return yield* socket.next.pipe(Effect.result);
+          return yield* socket.nextConnectionState;
         }),
       ),
     );
 
-    expect(Result.isFailure(result) && result.failure.reason).toBe("malformed-frame");
+    expect(state).toEqual({ state: "reconnecting", reason: "malformed-frame" });
+    expect(fixture.connections[0]?.state).toBe(3);
   });
 
   test("decodes bounded Discord attachment metadata for file-only messages", async () => {
