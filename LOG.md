@@ -1038,3 +1038,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Added `docs/plans/core-review.md`: section-by-section tightening pass from the 2026-09-28 core review, with a Workstreams table that splits parallel sessions by file ownership.
 - Decisions: keep Pi as the only agent loop, headless, and don't own the core (PiG and openclaw show the cost); remove the TUI in favour of the resident-served web UI and UI SDK; no Codex app-server or Claude SDK runtime; extensions stay plain Pi extensions.
 - Added `fast-check@4.10.2` as a dev dependency so every stream can add property and fuzz tests without touching `package.json`.
+
+## 2026-09-28 — Remove local TUI and harden resident attach
+
+- Removed the local TUI (`ziggy-tui-extension.ts`, `tui-themes.ts`, `automation-tui.ts`, `extension-multi-select.ts`, the `openTui` path, specialist render hooks), about 2.5k lines. The web UI and UI SDK served by the resident are the interactive faces; `ziggy tui` now reports that the TUI was removed.
+- Bare `ziggy <profile>` attaches to a running resident, or starts an already-installed service, and prints the UI URL with a `ziggy web pair` hint. It never installs a service; if none is installed it prints the `ziggy serve` commands and exits 1. Service-status failures keep their typed error.
+- A new resident owner removes the previous `ui-server.json` before its UI starts, so attach never prints a stale port. URL discovery retries only while the file is missing.
+- Remaining web UI gaps: extension picker, per-session model/thinking switching, older-session resume picker.
+- Verification: `bun run check` and `bun run test` (711 pass) passed. Opus re-review: all findings resolved.

@@ -59,7 +59,8 @@ Status: pending.
 
 ## 1b. Remove the TUI
 
-Status: decided (2026-09-28); pending.
+Status: done (review/tui). Web UI gaps remain: extension picker, per-session model/thinking
+switching, older-session resume picker.
 
 Ziggy drops its local TUI. The web UI and UI SDK, served by the resident gateway, become the
 interactive faces, alongside `run`, ACP, the CLI and chat gateways. A session can be viewed only
