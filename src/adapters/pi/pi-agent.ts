@@ -22,7 +22,7 @@ import {
 import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { Database } from "bun:sqlite";
-import { Clock, Context, Effect, Layer, Option, Predicate, Result, Schema } from "effect";
+import { Clock, Context, Effect, Exit, Layer, Option, Predicate, Result, Schema } from "effect";
 import { Type } from "typebox";
 import {
   ChatNotStreaming,
@@ -84,6 +84,7 @@ import {
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
 import { ensurePiSessionName } from "./session-name";
+import { acquireSessionLease, scopedSessionLease, SessionLeaseHeld } from "./session-lease";
 import { createProfileExtensionTool } from "./profile-extension-tool";
 import {
   AUTOMATION_RESULT_CUSTOM_TYPE,
@@ -122,6 +123,14 @@ export interface PiAgentApi {
 export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
 
 export type ChatSessionMode = "continue" | "fresh";
+
+const sessionLeaseError = (profilePath: string, cause: unknown): ProviderConfigError =>
+  new ProviderConfigError({
+    profilePath,
+    operation: "open session",
+    message: cause instanceof SessionLeaseHeld ? cause.message : "could not acquire session lease",
+    cause,
+  });
 
 export const providerError = (
   profilePath: string,
@@ -895,6 +904,9 @@ export const askOnce = (
           : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
 
       const runtimeOptions: ProfileRuntimeOptions = {};
+      yield* scopedSessionLease(target.path, sessionManager.getSessionId()).pipe(
+        Effect.mapError((failure) => sessionLeaseError(target.path, failure)),
+      );
 
       if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
@@ -1864,18 +1876,42 @@ export const openChat = (
 
     if (runtimeFactory !== undefined) runtimeOptions.runtimeFactory = runtimeFactory;
 
+    const sessionManager =
+      sessionMode === "continue"
+        ? SessionManager.continueRecent(target.path, sessionDirectory)
+        : SessionManager.create(target.path, sessionDirectory);
+
+    const releaseLease = yield* acquireSessionLease(
+      target.path,
+      sessionManager.getSessionId(),
+    ).pipe(Effect.mapError((failure) => sessionLeaseError(target.path, failure)));
+
     const runtime = yield* createProfileRuntime(
       target.path,
       repositoryRoot,
       soulPath,
-      sessionMode === "continue"
-        ? SessionManager.continueRecent(target.path, sessionDirectory)
-        : SessionManager.create(target.path, sessionDirectory),
+      sessionManager,
       context,
       runtimeOptions,
+    ).pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? releaseLease.pipe(
+              Effect.catch((failure) =>
+                Effect.logWarning("Session lease release failed", { failure }),
+              ),
+            )
+          : Effect.void,
+      ),
     );
 
-    const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose());
+    const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+      Effect.ensuring(
+        releaseLease.pipe(
+          Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
+        ),
+      ),
+    );
 
     const disposeBestEffort = dispose.pipe(
       Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
