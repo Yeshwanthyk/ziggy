@@ -606,6 +606,9 @@ test("runtime quarantine pauses existing package automations without deleting th
 
   expect(existsSync(active)).toBe(true);
 
+  // A package may stop declaring an already installed owner-tagged automation.
+  await writeShelfPackage(fixture.profilePath, "quarantined", { skill: true });
+
   const second = await Effect.runPromise(
     service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
   );

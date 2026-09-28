@@ -57,6 +57,7 @@ import {
 } from "../adapters/fs/profile-extensions";
 import {
   automationFileStore,
+  discoverAutomationSources,
   installAutomationDefinition,
   removeAutomationDefinition,
   pauseAutomationDefinition,
@@ -497,6 +498,64 @@ const pauseOwnedAutomations = (
     { discard: true, concurrency: 1 },
   );
 };
+
+/** Quarantine must suppress stored owner-tagged definitions even if the package manifest changed. */
+const pauseQuarantinedAutomations = (
+  automation: ProfileExtensionAutomationOperations,
+  profilePath: string,
+  quarantined: ReadonlyArray<ExtensionPackage>,
+  paused: Array<PausedAutomation>,
+): Effect.Effect<void, ExtensionCatalogInstallFailed> =>
+  Effect.gen(function* () {
+    if (quarantined.length === 0) return;
+
+    const target = { name: path.basename(profilePath), path: profilePath };
+
+    const sources = yield* discoverAutomationSources(target).pipe(
+      Effect.mapError((cause) =>
+        installFailure(
+          "quarantine",
+          path.join(profilePath, "automations"),
+          "filesystem",
+          "could not inspect existing automations for quarantined packages",
+          cause,
+        ),
+      ),
+    );
+
+    for (const source of sources) {
+      if (source.lifecycle !== "active" || source.source === null) continue;
+
+      const id = yield* validateAutomationId(source.idSource).pipe(Effect.result);
+
+      if (Result.isFailure(id)) continue;
+
+      const parsed = yield* parseAutomationFile(id.success, source.path, source.source).pipe(
+        Effect.result,
+      );
+
+      if (Result.isFailure(parsed)) continue;
+
+      const owner = quarantined.find((item) => parsed.success.owner === `extension:${item.id}`);
+
+      if (owner === undefined) continue;
+
+      yield* automation
+        .pause(target, id.success)
+        .pipe(
+          Effect.mapError((cause) =>
+            installFailure(
+              owner.id,
+              source.path,
+              "filesystem",
+              `could not pause quarantined automation '${id.success}'`,
+              cause,
+            ),
+          ),
+        );
+      paused.push({ packageInfo: owner, id: id.success });
+    }
+  });
 
 interface ProvisionOwnedAutomationsResult {
   readonly activated: ReadonlyArray<ActivatedAutomation>;
@@ -1154,9 +1213,12 @@ export const makeProfileExtensions = (
               const accepted = new Set(acceptedOptionalIds);
 
               yield* Effect.gen(function* () {
-                for (const packageInfo of packages.filter((item) => !accepted.has(item.id))) {
-                  yield* pauseOwnedAutomations(automation, profilePath, packageInfo, paused);
-                }
+                yield* pauseQuarantinedAutomations(
+                  automation,
+                  profilePath,
+                  packages.filter((item) => !accepted.has(item.id)),
+                  paused,
+                );
 
                 yield* provisionAdditions(
                   automation,
