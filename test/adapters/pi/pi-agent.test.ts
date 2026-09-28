@@ -1461,6 +1461,18 @@ describe("specialist chat rails", () => {
 
       try {
         await Effect.runPromise(handle.prompt("first rail turn"));
+
+        const competing = await Effect.runPromiseExit(
+          openSpecialistChat(target, "reviewer", process.cwd()),
+        );
+
+        const competingMessage = Exit.isFailure(competing)
+          ? Option.getOrUndefined(Cause.findErrorOption(competing.cause))?.message
+          : undefined;
+
+        expect(competingMessage).toBe(
+          "this session is open in the resident; use the UI, or start a new session",
+        );
         await Effect.runPromise(handle.prompt("second rail turn"));
       } finally {
         await Effect.runPromise(handle.dispose);

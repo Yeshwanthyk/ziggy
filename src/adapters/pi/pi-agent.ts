@@ -2093,6 +2093,20 @@ export const openSpecialistChat = (
 
       const { selected, environment } = selectedEnvironment;
 
+      const specialistManager = SessionManager.continueRecent(
+        target.path,
+        localSpecialistSessionDirectory(target.path, agentId),
+      );
+
+      const releaseSpecialist = yield* acquireSessionLease(
+        target.path,
+        specialistManager.getSessionId(),
+      ).pipe(Effect.mapError((cause) => sessionLeaseError(target.path, cause)));
+
+      const releaseBestEffort = releaseSpecialist.pipe(
+        Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
+      );
+
       const liveRuntime = yield* specialistRuntime(
         target.path,
         environment,
@@ -2100,15 +2114,12 @@ export const openSpecialistChat = (
         selected.model,
         selected.thinking,
         selected.tools,
-        SessionManager.continueRecent(
-          target.path,
-          localSpecialistSessionDirectory(target.path, agentId),
-        ),
-      );
+        specialistManager,
+      ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseBestEffort : Effect.void)));
 
       const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
         liveRuntime.dispose(),
-      );
+      ).pipe(Effect.ensuring(releaseBestEffort));
 
       const disposeLiveBestEffort = disposeLive.pipe(
         Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
@@ -2159,90 +2170,96 @@ export const runSpecialist = (
 ): Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError> =>
   withProfileRuntimeLock(
     target.path,
-    Effect.gen(function* () {
-      const soulPath = yield* requireSoul(target.path);
-      const agents = yield* discoverProfileAgents(target.path);
+    Effect.scoped(
+      Effect.gen(function* () {
+        const soulPath = yield* requireSoul(target.path);
+        const agents = yield* discoverProfileAgents(target.path);
 
-      if (!agents.some((agent) => agent.id === agentId)) {
-        return yield* new SpecialistAgentNotFound({
-          profilePath: target.path,
-          agentId,
-          message: `unknown Profile agent: ${agentId}`,
-        });
-      }
+        if (!agents.some((agent) => agent.id === agentId)) {
+          return yield* new SpecialistAgentNotFound({
+            profilePath: target.path,
+            agentId,
+            message: `unknown Profile agent: ${agentId}`,
+          });
+        }
 
-      const rootManager = SessionManager.create(target.path, context.sessionDirectory);
-      ensurePiSessionName(rootManager, `Agent · ${agentId}`, task);
-      const rootReference = sessionReference(rootManager);
+        const rootManager = SessionManager.create(target.path, context.sessionDirectory);
+        ensurePiSessionName(rootManager, `Agent · ${agentId}`, task);
+        const rootReference = sessionReference(rootManager);
 
-      if (rootReference === undefined) {
-        return yield* new ProviderConfigError({
-          profilePath: target.path,
-          operation: "create Profile agent session",
-          message: "Pi did not create a persistent Profile agent session",
-          cause: undefined,
-        });
-      }
+        if (rootReference === undefined) {
+          return yield* new ProviderConfigError({
+            profilePath: target.path,
+            operation: "create Profile agent session",
+            message: "Pi did not create a persistent Profile agent session",
+            cause: undefined,
+          });
+        }
 
-      const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+        yield* scopedSessionLease(target.path, rootReference.id).pipe(
+          Effect.mapError((failure) => sessionLeaseError(target.path, failure)),
+        );
 
-      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+        const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
 
-      const selectedEnvironment = yield* Effect.acquireUseRelease(
-        createProfileRuntime(
+        if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+
+        const selectedEnvironment = yield* Effect.acquireUseRelease(
+          createProfileRuntime(
+            target.path,
+            repositoryRoot,
+            soulPath,
+            rootManager,
+            { kind: "local" },
+            runtimeOptions,
+          ),
+          (runtime) =>
+            selectSpecialist(
+              { profilePath: target.path, agents },
+              { agent: agentId, prompt: task },
+              runtime,
+            ).pipe(
+              Effect.map((selected) => ({
+                selected,
+                environment: { services: runtime.services, resources: runtime.resources },
+              })),
+            ),
+          (runtime) =>
+            piPromise(target.path, "dispose specialist selection runtime", () =>
+              runtime.dispose(),
+            ).pipe(
+              Effect.catch((failure) =>
+                Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+              ),
+            ),
+        );
+
+        const { selected, environment } = selectedEnvironment;
+
+        const result = yield* useSpecialistChild(
           target.path,
-          repositoryRoot,
-          soulPath,
-          rootManager,
-          { kind: "local" },
-          runtimeOptions,
-        ),
-        (runtime) =>
-          selectSpecialist(
-            { profilePath: target.path, agents },
-            { agent: agentId, prompt: task },
-            runtime,
+          specialistRuntime(
+            target.path,
+            environment,
+            selected.agent,
+            selected.model,
+            selected.thinking,
+            selected.tools,
+            rootManager,
           ).pipe(
-            Effect.map((selected) => ({
-              selected,
-              environment: { services: runtime.services, resources: runtime.resources },
+            Effect.map((runtime) => ({
+              session: runtime.session,
+              reference: rootReference,
+              dispose: () => runtime.dispose(),
             })),
           ),
-        (runtime) =>
-          piPromise(target.path, "dispose specialist selection runtime", () =>
-            runtime.dispose(),
-          ).pipe(
-            Effect.catch((failure) =>
-              Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
-            ),
-          ),
-      );
+          selected,
+          (runtime) => promptForAssistantText(target.path, runtime.session, task),
+        );
 
-      const { selected, environment } = selectedEnvironment;
-
-      const result = yield* useSpecialistChild(
-        target.path,
-        specialistRuntime(
-          target.path,
-          environment,
-          selected.agent,
-          selected.model,
-          selected.thinking,
-          selected.tools,
-          rootManager,
-        ).pipe(
-          Effect.map((runtime) => ({
-            session: runtime.session,
-            reference: rootReference,
-            dispose: () => runtime.dispose(),
-          })),
-        ),
-        selected,
-        (runtime) => promptForAssistantText(target.path, runtime.session, task),
-      );
-
-      return { answer: result.answer, session: result.session };
-    }),
+        return { answer: result.answer, session: result.session };
+      }),
+    ),
   );
 
 export const makePiAgent = (
