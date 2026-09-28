@@ -1,15 +1,6 @@
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Combobox } from "@/components/ui/combobox";
 import type { AutomationDestinationOption } from "@/gateway";
-import { Bot, Check, ChevronDown, Hash, MessageCircle, Pin, Search } from "lucide-react";
+import { Bot, Hash, MessageCircle, Pin } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 type DestinationFilter = "all" | "pinned" | "agent" | "session" | "slack" | "discord" | "telegram";
@@ -88,7 +79,7 @@ const DestinationContext = ({
 }) => {
   const activity = activityFor(destination);
   return (
-    <small>
+    <small className="ui-combobox-meta">
       {contextFor(destination)}
       {activity === undefined ? null : (
         <>
@@ -129,7 +120,6 @@ export function AutomationDestinationPicker({
   onSelect,
   selected,
 }: AutomationDestinationPickerProps) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<DestinationFilter>("all");
 
@@ -164,129 +154,67 @@ export function AutomationDestinationPicker({
     });
   }, [destinations, filter, query]);
 
-  const choose = (destination: AutomationDestinationOption): void => {
-    onSelect(destination);
-    setOpen(false);
+  const reset = (): void => {
     setQuery("");
     setFilter("all");
   };
 
   return (
-    <>
-      <Button
-        aria-haspopup="dialog"
-        className="automation-destination-picker-trigger"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        type="button"
-        variant="outline"
-      >
-        <span>
-          {selected === undefined ? (
-            <span className="automation-destination-picker-placeholder">Select a destination</span>
-          ) : (
+    <Combobox
+      aria-label="Destination"
+      disabled={disabled}
+      empty={
+        <>
+          <strong>No matching destinations</strong>
+          <span>Try another name, agent, channel, or filter.</span>
+        </>
+      }
+      groups={groups.map((group) => ({
+        key: group.id,
+        heading: group.label,
+        icon: iconFor(group.id),
+        options: group.entries.map((destination) => ({
+          key: destination.target,
+          value: destination,
+          selected: selected?.target === destination.target,
+          content: (
             <>
-              <strong>{labelFor(selected)}</strong>
-              <DestinationContext destination={selected} />
+              <strong className="ui-combobox-label">{labelFor(destination)}</strong>
+              <DestinationContext destination={destination} />
             </>
-          )}
-        </span>
-        <ChevronDown aria-hidden="true" />
-      </Button>
-
-      <Dialog
-        open={open}
-        onOpenChange={(nextOpen) => {
-          setOpen(nextOpen);
-          if (!nextOpen) {
-            setQuery("");
-            setFilter("all");
-          }
-        }}
-      >
-        <DialogContent className="automation-destination-picker-dialog sm:max-w-[640px]">
-          <DialogHeader>
-            <DialogTitle>Choose a destination</DialogTitle>
-            <DialogDescription>
-              Send results to a conversation or a connected channel.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <label className="automation-destination-picker-search">
-              <Search aria-hidden="true" />
-              <span className="sr-only">Search destinations</span>
-              <input
-                autoFocus
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search conversations, agents, or channels"
-                type="search"
-                value={query}
-              />
-            </label>
-
-            <div
-              aria-label="Destination types"
-              className="automation-destination-filters"
-              role="group"
+          ),
+        })),
+      }))}
+      onClose={reset}
+      onQueryChange={setQuery}
+      onSelect={onSelect}
+      popoverLabel="Choose a destination"
+      query={query}
+      searchLabel="Search destinations"
+      searchPlaceholder="Search conversations, agents, or channels"
+      toolbar={
+        <div aria-label="Destination types" className="ui-combobox-chips" role="group">
+          {filters.map((entry) => (
+            <button
+              aria-pressed={filter === entry.id}
+              key={entry.id}
+              onClick={() => setFilter(entry.id)}
+              type="button"
             >
-              {filters.map((entry) => (
-                <button
-                  aria-pressed={filter === entry.id}
-                  key={entry.id}
-                  onClick={() => setFilter(entry.id)}
-                  type="button"
-                >
-                  {entry.label}
-                </button>
-              ))}
-            </div>
-
-            <ScrollArea className="automation-destination-picker-scroll">
-              {groups.length === 0 ? (
-                <div className="automation-destination-picker-empty">
-                  <Search aria-hidden="true" />
-                  <strong>No matching destinations</strong>
-                  <span>Try another name, agent, channel, or filter.</span>
-                </div>
-              ) : (
-                <div className="automation-destination-groups">
-                  {groups.map((group) => (
-                    <section aria-labelledby={`destination-group-${group.id}`} key={group.id}>
-                      <div className="automation-destination-group-heading">
-                        <span>
-                          {iconFor(group.id)}
-                          <h3 id={`destination-group-${group.id}`}>{group.label}</h3>
-                        </span>
-                        <small>{group.entries.length}</small>
-                      </div>
-                      <div className="automation-destination-options">
-                        {group.entries.map((destination) => {
-                          const isSelected = selected?.target === destination.target;
-                          return (
-                            <button
-                              aria-pressed={isSelected}
-                              className="automation-destination-option"
-                              key={destination.target}
-                              onClick={() => choose(destination)}
-                              type="button"
-                            >
-                              <span>
-                                <strong>{labelFor(destination)}</strong>
-                                <DestinationContext destination={destination} />
-                              </span>
-                              {isSelected ? <Check aria-hidden="true" /> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
-    </>
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {selected === undefined ? (
+        <span className="ui-combobox-placeholder">Select a destination</span>
+      ) : (
+        <>
+          <strong className="ui-combobox-label">{labelFor(selected)}</strong>
+          <DestinationContext destination={selected} />
+        </>
+      )}
+    </Combobox>
   );
 }

@@ -60,8 +60,10 @@ describe("SettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /GPT-5.6 Sol/u }));
-    fireEvent.click(screen.getByRole("button", { name: /Claude Sonnet 4/u }));
+    const modelTrigger = screen.getByRole("combobox", { name: "Model" });
+    expect(modelTrigger.textContent).toContain("GPT-5.6 Sol");
+    fireEvent.click(modelTrigger);
+    fireEvent.click(screen.getByRole("option", { name: /Claude Sonnet 4/u }));
 
     expect(onSaveModel).not.toHaveBeenCalled();
     expect((screen.getByRole("radio", { name: "low" }) as HTMLInputElement).checked).toBe(true);

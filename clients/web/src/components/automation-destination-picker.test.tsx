@@ -51,21 +51,20 @@ describe("AutomationDestinationPicker", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Select a destination" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Destination" }));
 
     const headings = screen.getAllByRole("heading", { level: 3 });
     expect(headings.map((heading) => heading.textContent)).toEqual(["Pinned", "Agents", "Slack"]);
-    const agentGroup = screen.getByRole("heading", { name: "Agents" }).closest("section");
-    expect(agentGroup).not.toBeNull();
+    const agentGroup = screen.getByRole("group", { name: "Agents" });
     expect(
-      within(agentGroup!)
-        .getAllByRole("button")
-        .map((button) => button.textContent),
+      within(agentGroup)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
     ).toEqual([
       expect.stringMatching(/^Current reviewAgent · reviewer · /u),
       expect.stringMatching(/^Older reviewAgent · reviewer · /u),
     ]);
-    expect(agentGroup!.querySelector("time")?.getAttribute("title")).toBeTruthy();
+    expect(agentGroup.querySelector("time")?.getAttribute("title")).toBeTruthy();
   });
 
   it("filters and searches readable context before returning the selected destination", () => {
@@ -78,15 +77,15 @@ describe("AutomationDestinationPicker", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Select a destination" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Destination" }));
     fireEvent.click(screen.getByRole("button", { name: "Agents" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search destinations" }), {
       target: { value: "current reviewer" },
     });
 
-    expect(screen.getByRole("button", { name: /Current review/u })).not.toBeNull();
-    expect(screen.queryByRole("button", { name: /Older review/u })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Current review/u }));
+    expect(screen.getByRole("option", { name: /Current review/u })).not.toBeNull();
+    expect(screen.queryByRole("option", { name: /Older review/u })).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: /Current review/u }));
 
     expect(onSelect).toHaveBeenCalledExactlyOnceWith(destinations[1]);
     expect(screen.queryByRole("dialog", { name: "Choose a destination" })).toBeNull();

@@ -275,6 +275,7 @@ export function SettingsDialog({
                     <div className="ziggy-settings-field">
                       <span>Model</span>
                       <ModelPicker
+                        aria-label="Model"
                         disabled={
                           !connected || modelSettings?.loading || availableModels.length === 0
                         }

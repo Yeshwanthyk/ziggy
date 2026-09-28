@@ -130,8 +130,8 @@ describe("AutomationDetailDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Select a destination" }));
-    fireEvent.click(screen.getByRole("button", { name: /Team updates/u }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Destination" }));
+    fireEvent.click(screen.getByRole("option", { name: /Team updates/u }));
     fireEvent.click(screen.getByRole("button", { name: "Add destination" }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));

@@ -1,18 +1,10 @@
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Combobox } from "@/components/ui/combobox";
 import type { ZiggyModelDescriptor } from "../../../../packages/ui-sdk/src/index";
-import { Check, ChevronDown, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 interface ModelPickerProps {
+  readonly "aria-label"?: string;
+  readonly "aria-labelledby"?: string;
   readonly disabled: boolean;
   readonly models: ReadonlyArray<ZiggyModelDescriptor>;
   readonly onSelect: (model: ZiggyModelDescriptor) => void;
@@ -40,8 +32,14 @@ const displayProviderName = (providerId: string): string =>
     .map(providerPartName)
     .join(" ");
 
-export function ModelPicker({ disabled, models, onSelect, selected }: ModelPickerProps) {
-  const [open, setOpen] = useState(false);
+export function ModelPicker({
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+  disabled,
+  models,
+  onSelect,
+  selected,
+}: ModelPickerProps) {
   const [query, setQuery] = useState("");
 
   const groups = useMemo<ReadonlyArray<ProviderGroup>>(() => {
@@ -63,115 +61,50 @@ export function ModelPicker({ disabled, models, onSelect, selected }: ModelPicke
     }));
   }, [models, query]);
 
-  const chooseModel = (model: ZiggyModelDescriptor): void => {
-    onSelect(model);
-    setOpen(false);
-    setQuery("");
-  };
-
   return (
-    <>
-      <Button
-        aria-haspopup="dialog"
-        className="model-picker-trigger"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        type="button"
-        variant="outline"
-      >
-        <span className="model-picker-trigger-copy">
-          {selected === undefined ? (
-            <span className="model-picker-placeholder">Choose an available model</span>
-          ) : (
+    <Combobox
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      disabled={disabled}
+      empty={
+        <>
+          <strong>No matching models</strong>
+          <span>Try a model name, ID, or provider.</span>
+        </>
+      }
+      groups={groups.map((group) => ({
+        key: group.providerId,
+        heading: displayProviderName(group.providerId),
+        options: group.models.map((model) => ({
+          key: `${model.providerId}/${model.modelId}`,
+          value: model,
+          selected: selected?.providerId === model.providerId && selected.modelId === model.modelId,
+          content: (
             <>
-              <strong>{selected.name}</strong>
-              <small>
-                {selected.providerId}/{selected.modelId}
-              </small>
+              <span className="ui-combobox-label">{model.name}</span>
+              <span className="ui-combobox-meta" data-mono="">
+                {model.modelId}
+              </span>
             </>
-          )}
-        </span>
-        <ChevronDown aria-hidden="true" />
-      </Button>
-
-      <Dialog
-        open={open}
-        onOpenChange={(nextOpen) => {
-          setOpen(nextOpen);
-          if (!nextOpen) setQuery("");
-        }}
-      >
-        <DialogContent className="model-picker-dialog sm:max-w-[640px]">
-          <DialogHeader>
-            <DialogTitle>Choose a model</DialogTitle>
-            <DialogDescription>
-              Search the models available through this Ziggy resident.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <label className="model-picker-search">
-              <Search aria-hidden="true" />
-              <span className="sr-only">Search models</span>
-              <input
-                autoFocus
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by model or provider"
-                type="search"
-                value={query}
-              />
-              {query.length === 0 ? null : <kbd>Esc</kbd>}
-            </label>
-
-            <ScrollArea className="model-picker-scroll">
-              {groups.length === 0 ? (
-                <div className="model-picker-empty">
-                  <Search aria-hidden="true" />
-                  <strong>No matching models</strong>
-                  <span>Try a model name, ID, or provider.</span>
-                </div>
-              ) : (
-                <div className="model-picker-groups">
-                  {groups.map((group) => (
-                    <section
-                      aria-labelledby={`provider-${group.providerId}`}
-                      key={group.providerId}
-                    >
-                      <div className="model-picker-provider-heading">
-                        <h3 id={`provider-${group.providerId}`}>
-                          {displayProviderName(group.providerId)}
-                        </h3>
-                        <span>{group.models.length}</span>
-                      </div>
-                      <div className="model-picker-options">
-                        {group.models.map((model) => {
-                          const isSelected =
-                            selected?.providerId === model.providerId &&
-                            selected.modelId === model.modelId;
-                          return (
-                            <button
-                              aria-pressed={isSelected}
-                              className="model-picker-option"
-                              key={`${model.providerId}/${model.modelId}`}
-                              onClick={() => chooseModel(model)}
-                              type="button"
-                            >
-                              <span>
-                                <strong>{model.name}</strong>
-                                <small>{model.modelId}</small>
-                              </span>
-                              {isSelected ? <Check aria-hidden="true" /> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
-    </>
+          ),
+        })),
+      }))}
+      onClose={() => setQuery("")}
+      onQueryChange={setQuery}
+      onSelect={onSelect}
+      popoverLabel="Choose a model"
+      query={query}
+      searchLabel="Search models"
+      searchPlaceholder="Search models"
+    >
+      {selected === undefined ? (
+        <span className="ui-combobox-placeholder">Choose an available model</span>
+      ) : (
+        <>
+          <span className="ui-combobox-label">{selected.name}</span>
+          <span className="ui-combobox-meta">{displayProviderName(selected.providerId)}</span>
+        </>
+      )}
+    </Combobox>
   );
 }
