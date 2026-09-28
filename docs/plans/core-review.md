@@ -250,3 +250,14 @@ Status: decided (2026-09-28).
 - Extensions stay plain Pi extensions. Anything written for Pi works, so there's no tiered
   extension contract.
 - Pi upgrades go through the adapter seam. 0.84.1 → 0.87.1 took about an hour.
+
+## After the streams
+
+Status: pending. Starts when adapter, adapter round 3, webui round 2 and headless have merged.
+
+1. Owner walkthrough: the owner reads the code, guided by a map of modules, control flows and what each stream changed.
+2. Baseline: confirm everything works end to end with a scratch Profile (init, run, resident plus web UI, chat gateways, automations, extensions add/skip/remove, wake). Tag the result as the baseline.
+3. Cleanup pass from that baseline:
+   - break oversized modules into cohesive ones;
+   - simplify control flows;
+   - remove old code that doesn't line up with Effect v4 idioms (checked against vendor/effect).
