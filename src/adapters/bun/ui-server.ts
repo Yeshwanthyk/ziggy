@@ -138,6 +138,38 @@ const serverError = (
 export const uiServerProjectionPath = (profilePath: string): string =>
   join(profilePath, ".runtime", "ui-server.json");
 
+/** A new owner must not advertise the previous process's port while its UI starts. */
+export const removeStaleUiServerProjection = (
+  profilePath: string,
+): Effect.Effect<void, UiServerError> => {
+  const path = uiServerProjectionPath(profilePath);
+  const runtimePath = dirname(path);
+
+  return Effect.tryPromise({
+    try: async () => {
+      const runtime = await lstat(runtimePath);
+
+      if (!runtime.isDirectory() || runtime.isSymbolicLink()) {
+        throw new Error("unsafe UI runtime directory");
+      }
+
+      const projection = await lstat(path);
+
+      if (!projection.isFile() || projection.isSymbolicLink()) {
+        throw new Error("unsafe UI server projection");
+      }
+
+      await unlink(path);
+    },
+    catch: (cause) =>
+      serverError("start", "could not remove stale UI server projection", cause, path),
+  }).pipe(
+    Effect.catch((failure) =>
+      fileSystemCauseDetails(failure.cause).code === "ENOENT" ? Effect.void : Effect.fail(failure),
+    ),
+  );
+};
+
 const readPhysicalFile = (path: string) =>
   Effect.acquireUseRelease(
     Effect.tryPromise({

@@ -5,7 +5,12 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
-import { openUiServer, type UiServerConnection, UiServerError } from "../adapters/bun/ui-server";
+import {
+  openUiServer,
+  removeStaleUiServerProjection,
+  type UiServerConnection,
+  UiServerError,
+} from "../adapters/bun/ui-server";
 import { type DiscordApiError } from "../adapters/discord/api";
 import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gateway-config";
 import { readWebAccessConfig } from "../adapters/fs/web-access-config";
@@ -258,6 +263,7 @@ export const makeResidentGateway = (
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* runtime.acquireOwner(target);
+          yield* removeStaleUiServerProjection(target.path);
           const registry = yield* makeChatRegistry(target.path);
 
           const branches: Array<

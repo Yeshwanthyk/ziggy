@@ -1,9 +1,10 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Clock, Effect, Exit, Layer, Result, Runtime } from "effect";
+import { Cause, Clock, Effect, Exit, Layer, Result, Runtime, Schedule } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
+import { fileSystemCauseDetails } from "./adapters/fs/cause";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
 import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-preflight";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
@@ -818,7 +819,9 @@ const program = Effect.gen(function* () {
       if (owner._tag !== "running") {
         const status = yield* residentService.status(target);
 
-        if (!Result.isSuccess(status.managed) || status.managed.success._tag === "not-installed") {
+        if (Result.isFailure(status.managed)) return yield* status.managed.failure;
+
+        if (status.managed.success._tag === "not-installed") {
           const profile = JSON.stringify(command.target);
 
           return yield* fail(
@@ -842,7 +845,11 @@ const program = Effect.gen(function* () {
       }
 
       const ui = yield* readUiServerProjection(target.path).pipe(
-        Effect.retry({ times: 10, delay: "100 millis" }),
+        Effect.retry({
+          while: (failure) => fileSystemCauseDetails(failure.cause).code === "ENOENT",
+          times: 10,
+          schedule: Schedule.spaced("100 millis"),
+        }),
       );
 
       console.log(

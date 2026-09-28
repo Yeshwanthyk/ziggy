@@ -10,6 +10,7 @@ import { Deferred, Effect, Fiber, Layer, Predicate, Result, Schema, Scope } from
 import { DiscordApiError } from "ziggy/adapters/discord/api";
 import {
   readUiServerProjection,
+  uiServerProjectionPath,
   UiServerError,
   type UiServerProjection,
 } from "ziggy/adapters/bun/ui-server";
@@ -345,6 +346,9 @@ describe("resident gateway supervision", () => {
     const target = await profile();
     const events: Array<string> = [];
     const channelLoops = loops(() => Effect.never);
+    const projectionPath = uiServerProjectionPath(target.path);
+    await mkdir(join(target.path, ".runtime"));
+    await writeFile(projectionPath, '{"version":1,"port":1234,"token":"stale"}\n');
 
     const host = makeResidentGateway(
       scheduler(() => scopedLoop(events, "scheduler")),
@@ -360,6 +364,7 @@ describe("resident gateway supervision", () => {
         const fiber = yield* Effect.forkScoped(host.run(target));
         yield* waitFor(() => events.includes("ui:enter"));
         expect(events.indexOf("owner:enter")).toBeLessThan(events.indexOf("ui:enter"));
+        expect(yield* Effect.promise(() => exists(projectionPath))).toBe(false);
         yield* Fiber.interrupt(fiber);
       }),
     );
