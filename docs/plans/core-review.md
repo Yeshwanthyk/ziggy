@@ -36,6 +36,7 @@ back, and the integrator merges one stream at a time with `bun run check`.
 | `ext` | 2, 5 (authoring), 11b | `extensions/codemode`, preloaded skills, `pi_docs` | now |
 | `adapter` | 4, 5 (diagnostics), 9, 11a | the rest of `src/adapters/pi/`, the runtime interface, resident service | after `tui` |
 | `cli` | 3, 10 | domain setup, `src/faces/cli`, the CLI parts of `main.ts` | after `tui` |
+| `headless` | 12 | `ziggy wake`, `ziggy tick`, `extensions update`, the `deliver` lanes in `automations.ts`, `automations status` | after `auto` and `adapter` |
 
 ## 0. Pi 0.87.1 upgrade
 
@@ -116,6 +117,8 @@ Status: pending. Needs a decision on the broken-extension policy.
 - `pi_docs` lacks Ziggy's resource rules.
 - Add success doesn't say that a reopen or restart is required.
 - Delete `test/adapters/pi/profile-extension-selection.test.ts`.
+- `ctx.ui` is headless in every host: `confirm` is `false`, `select` and `input` are `undefined`,
+  `hasUI` is `false`. The authoring skill says so (done in `ext`); `pi_docs` should too.
 
 ## 6. Automations
 
@@ -161,8 +164,58 @@ Status: pending.
 - Add a small runtime interface in `src/adapters/pi/`: open, prompt, steer, abort, events, close.
   The resident, UI and chat gateways depend on it, and headless Pi implements it. Pi is the only
   implementation; the interface is there to tighten the boundary, not to make runtimes pluggable.
+- `open` takes a per-session writer lease keyed by session id, stored in `.runtime/`, using the
+  `BEGIN IMMEDIATE` and stale-pid pattern from `gateway-owner.ts`; `close` releases it. The
+  resident, `run --continue`, `run --session`, ACP and stored automation appends
+  (`automation-result.ts`) all go through it. A held lease is a plain refusal: "this session is
+  open in the resident; use the UI, or start a new session". Today two writers don't crash: Pi
+  appends whole lines without a lock and takes the last entry as the leaf, so the session tree
+  silently forks and the last writer wins.
+- The interface has no presence or broadcast port. Presence is `inspectGatewayOwner`, read by
+  faces before they start, never by a runtime.
 - Audit the preloaded skills for references to the TUI, slash commands, or local interactive
   flows. Point them at the UI, CLI or resident instead.
+
+## 12. Headless hosts and the resident
+
+Status: pending. Starts after `auto` and `adapter` merge (needs the session lease from 11a).
+
+The resident owns connections and live sessions, never extension execution or definitions.
+Extensions, tools, hooks, specialists, `run`, ACP and `wake` load the same Pi runtime with or
+without a resident. Chat delivery is direct HTTP from any process. A face picks its lane by
+reading the owner lease before it starts; nothing falls back after the fact.
+
+- `deliver`: a `conversation:` target without a registry appends the stored receipt under the
+  session lease, instead of failing with `owner-unavailable`. The receipt check keeps it
+  idempotent.
+- `ziggy wake`: if the resident is running, call its `automation.run` over the UI socket, using
+  the projection's port and token, and print the outcome. Otherwise run in-process as today.
+- `automations status`: when the owner lease is free, print "resident not running: schedules will
+  not fire; `ziggy wake <id>` runs one now". Installing an extension that ships automations prints
+  the same.
+- `extensions update --restart`: stage, stop the managed resident, apply under the update lock,
+  start it again. Without `--restart`, keep the refusal and name the flag.
+- `ziggy tick`, only once a Profile actually runs without a resident: one scan under the owner
+  lease; run the claimed workers to completion, then exit; if the lease is held, yield with a
+  message. For a launchd `StartInterval` or a systemd timer.
+- The wake migration path's "gateway already running" error should read "resident is starting;
+  retry".
+
+## Decision: the resident is optional for extensions
+
+Status: decided (2026-09-28), from a Fable review of Ziggy, hermes-agent and openclaw.
+
+- No extension surface depends on the resident. There's no service locator, event bus, injection
+  API or tiered registration mode, and extensions stay plain Pi extensions.
+- Resident-only, by nature: inbound channel sockets, sessions it holds open, the cron ticker and
+  interactive UI. Everything else runs headless and is tested that way.
+- No durable outbox. All three channels send over HTTP from any process, and conversation
+  receipts are idempotent stored appends. hermes and openclaw need queues only for
+  gateway-only transports (relay, E2EE, WhatsApp), which Ziggy doesn't have.
+- No silent fallback in either direction. openclaw retired its gateway-to-local fallback after
+  transcript lock races.
+- Not doing: a `ctx.ui` bridge (until an extension needs `notify` in the web UI), hot reload in the
+  resident, or a headless long-running scheduler.
 
 ## Decision: keep Pi, don't own the core
 

@@ -1061,3 +1061,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Oversized or undecodable frames no longer stop a gateway. Slack drops the frame without acknowledging it, and Slack's bounded retry stops redelivery. Discord reconnects with a fresh session (resuming would replay the bad event), using the existing backoff capped at 30s.
 - Removed the unused `slackHeartbeat` and its test. The Slack and Discord turn schedulers were not merged: steering and ingress settlement differ.
 - Verification: `bun run check` and `bun run test` (720 pass) passed. Opus re-review: merge.
+
+## 2026-09-28 — Plan: extensions run without the resident
+
+- A Fable review of Ziggy, hermes-agent and openclaw confirmed that extensions already run headless in every host, and that the resident should own only connections, live sessions, the cron ticker and interactive UI.
+- Added a per-session writer lease to section 11 (today concurrent writers silently fork a session), headless `ctx.ui` defaults to section 5, and section 12 "Headless hosts and the resident" (conversation delivery from `wake`, a no-resident schedule warning, `extensions update --restart`, an optional `ziggy tick`), owned by a new `headless` stream after `auto` and `adapter`.
+- Recorded the decision: the resident is optional for extensions; no outbox, no broadcast port, no silent fallback.
