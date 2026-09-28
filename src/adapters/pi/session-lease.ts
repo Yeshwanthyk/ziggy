@@ -1,13 +1,13 @@
-import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Effect, Schema, Scope } from "effect";
 import { fileSystemCauseDetails } from "../fs/cause";
 
 export class SessionLeaseHeld extends Schema.TaggedErrorClass<SessionLeaseHeld>()(
   "SessionLeaseHeld",
-  { message: Schema.String, cause: Schema.Defect() },
+  { message: Schema.String, pid: Schema.optional(Schema.Int), cause: Schema.Defect() },
 ) {}
 
 export class SessionLeaseFailed extends Schema.TaggedErrorClass<SessionLeaseFailed>()(
@@ -15,114 +15,170 @@ export class SessionLeaseFailed extends Schema.TaggedErrorClass<SessionLeaseFail
   { message: Schema.String, cause: Schema.Defect() },
 ) {}
 
+const OwnerProjection = Schema.Struct({ ownerId: Schema.String, pid: Schema.Int });
+
+const decodeProjection = Schema.decodeUnknownEffect(Schema.fromJsonString(OwnerProjection));
+
 export interface SessionLeaseRuntime {
   readonly pid: number;
-  readonly isAlive: (pid: number) => boolean;
   readonly ownerId: () => string;
 }
 
-const liveRuntime: SessionLeaseRuntime = {
-  pid: process.pid,
-  ownerId: randomUUID,
-  isAlive: (pid) => {
-    try {
-      process.kill(pid, 0);
+const liveRuntime: SessionLeaseRuntime = { pid: process.pid, ownerId: randomUUID };
 
-      return true;
-    } catch (cause) {
-      return fileSystemCauseDetails(cause).code !== "ESRCH";
-    }
-  },
-};
+const refusal = (pid?: number) =>
+  `this session is open in another Ziggy process${pid === undefined ? "" : ` (pid ${pid})`}; use the UI, or start a new session`;
 
-const refusal = "this session is open in the resident; use the UI, or start a new session";
+/** Hashing bounds the filename and prevents an untrusted Pi header from escaping .runtime. */
+export const sessionLeasePath = (profilePath: string, sessionId: string): string =>
+  join(
+    profilePath,
+    ".runtime",
+    "session-leases",
+    `${createHash("sha256").update(sessionId).digest("hex")}.sqlite`,
+  );
 
-const LeaseRow = Schema.NullOr(Schema.Struct({ pid: Schema.Int }));
+const projectionPath = (path: string) => `${path}.owner`;
 
-const decodeLeaseRow = Schema.decodeUnknownSync(LeaseRow);
+const cleanupProjection = (path: string, ownerId: string) =>
+  Effect.gen(function* () {
+    const raw = yield* Effect.tryPromise({
+      try: () => readFile(path, "utf8"),
+      catch: (cause) => cause,
+    });
 
-export const sessionLeasePath = (profilePath: string): string =>
-  join(profilePath, ".runtime", "session-leases.sqlite");
+    const record = yield* decodeProjection(raw);
 
-/** SQLite is the authority; each mutation serializes through BEGIN IMMEDIATE. */
+    if (record.ownerId === ownerId)
+      yield* Effect.tryPromise({ try: () => unlink(path), catch: (cause) => cause });
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Session lease projection cleanup failed", { path, cause }),
+    ),
+  );
+
+const inspectHolder = (path: string) =>
+  Effect.tryPromise({
+    try: () => readFile(projectionPath(path), "utf8"),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.flatMap(decodeProjection),
+    Effect.map((record) => record.pid),
+    Effect.orElseSucceed(() => undefined),
+  );
+
+/** BEGIN IMMEDIATE stays open until release. An OS process exit drops the authority even if a PID is reused. */
 export const acquireSessionLease = (
   profilePath: string,
   sessionId: string,
   runtime: SessionLeaseRuntime = liveRuntime,
 ): Effect.Effect<Effect.Effect<void, SessionLeaseFailed>, SessionLeaseHeld | SessionLeaseFailed> =>
-  Effect.gen(function* () {
-    const path = sessionLeasePath(profilePath);
-    yield* Effect.tryPromise({
-      try: () => mkdir(join(profilePath, ".runtime"), { recursive: true }),
-      catch: (cause) =>
-        new SessionLeaseFailed({ message: "could not create session lease directory", cause }),
-    });
+  Effect.uninterruptibleMask(() =>
+    Effect.gen(function* () {
+      const path = sessionLeasePath(profilePath, sessionId);
+      yield* Effect.tryPromise({
+        try: () => mkdir(dirname(path), { recursive: true, mode: 0o700 }),
+        catch: (cause) =>
+          new SessionLeaseFailed({ message: "could not create session lease directory", cause }),
+      });
 
-    return yield* Effect.try({
-      try: () => {
-        const db = new Database(path, { create: true, readwrite: true, strict: true });
-
-        try {
-          db.exec(
-            "PRAGMA busy_timeout = 2000; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
-          );
-          db.exec(
-            "CREATE TABLE IF NOT EXISTS leases (session_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, pid INTEGER NOT NULL)",
-          );
-          db.exec("BEGIN IMMEDIATE");
+      const acquired = yield* Effect.try({
+        try: () => {
+          const db = new Database(path, { create: true, readwrite: true, strict: true });
 
           try {
-            const row = decodeLeaseRow(
-              db.query("SELECT pid FROM leases WHERE session_id = ?").get(sessionId),
+            db.exec(
+              "PRAGMA busy_timeout = 0; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
             );
+            db.exec("BEGIN IMMEDIATE");
 
-            if (row !== null && runtime.isAlive(row.pid)) {
-              throw new SessionLeaseHeld({ message: refusal, cause: undefined });
-            }
-
-            const ownerId = runtime.ownerId();
-            db.query(
-              "INSERT OR REPLACE INTO leases (session_id, owner_id, pid) VALUES (?, ?, ?)",
-            ).run(sessionId, ownerId, runtime.pid);
-            db.exec("COMMIT");
-
-            return Effect.try({
-              try: () => {
-                const releaseDb = new Database(path, { readwrite: true, strict: true });
-
-                try {
-                  releaseDb.exec("PRAGMA busy_timeout = 2000; BEGIN IMMEDIATE");
-
-                  try {
-                    releaseDb
-                      .query("DELETE FROM leases WHERE session_id = ? AND owner_id = ?")
-                      .run(sessionId, ownerId);
-                    releaseDb.exec("COMMIT");
-                  } catch (cause) {
-                    releaseDb.exec("ROLLBACK");
-                    throw cause;
-                  }
-                } finally {
-                  releaseDb.close(false);
-                }
-              },
-              catch: (cause) =>
-                new SessionLeaseFailed({ message: "could not release session lease", cause }),
-            });
+            return db;
           } catch (cause) {
-            db.exec("ROLLBACK");
+            db.close(false);
             throw cause;
           }
-        } finally {
-          db.close(false);
+        },
+        catch: (cause) => cause,
+      }).pipe(Effect.result);
+
+      if (acquired._tag === "Failure") {
+        const pid = yield* inspectHolder(path);
+        // SQLite lock errors represent another live writer. All other errors remain distinct.
+        const text = String(acquired.failure);
+
+        if (text.includes("SQLITE_BUSY") || text.includes("database is locked")) {
+          return yield* new SessionLeaseHeld({
+            message: refusal(pid),
+            pid,
+            cause: acquired.failure,
+          });
         }
-      },
-      catch: (cause) =>
-        cause instanceof SessionLeaseHeld
-          ? cause
-          : new SessionLeaseFailed({ message: "could not acquire session lease", cause }),
-    });
-  });
+
+        return yield* new SessionLeaseFailed({
+          message: "could not acquire session lease",
+          cause: acquired.failure,
+        });
+      }
+
+      const db = acquired.success;
+      const ownerId = runtime.ownerId();
+      const candidate = `${projectionPath(path)}.${ownerId}.candidate`;
+      let closed = false;
+
+      const release = Effect.suspend(() =>
+        closed
+          ? Effect.void
+          : Effect.gen(function* () {
+              yield* Effect.try({
+                try: () => {
+                  db.exec("ROLLBACK");
+                  db.close(false);
+                  closed = true;
+                },
+                catch: (cause) =>
+                  new SessionLeaseFailed({ message: "could not release session lease", cause }),
+              });
+              yield* cleanupProjection(projectionPath(path), ownerId);
+            }),
+      );
+
+      return yield* Effect.tryPromise({
+        try: async () => {
+          await writeFile(candidate, JSON.stringify({ ownerId, pid: runtime.pid }), {
+            flag: "wx",
+            mode: 0o600,
+          });
+          await rename(candidate, projectionPath(path));
+
+          return release;
+        },
+        catch: (cause) =>
+          new SessionLeaseFailed({ message: "could not publish session lease holder", cause }),
+      }).pipe(
+        Effect.onExit((exit) =>
+          exit._tag === "Failure"
+            ? release.pipe(
+                Effect.catch((failure) =>
+                  Effect.logWarning("Session lease cleanup failed", { failure }),
+                ),
+                Effect.andThen(
+                  Effect.tryPromise({ try: () => unlink(candidate), catch: (cause) => cause }).pipe(
+                    Effect.catch((cause) =>
+                      fileSystemCauseDetails(cause).code === "ENOENT"
+                        ? Effect.void
+                        : Effect.logWarning("Session lease candidate cleanup failed", {
+                            candidate,
+                            cause,
+                          }),
+                    ),
+                  ),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+    }),
+  );
 
 export const scopedSessionLease = (
   profilePath: string,
@@ -136,11 +192,20 @@ export const scopedSessionLease = (
   ).pipe(Effect.asVoid);
 
 /** A runtime may replace Pi's session manager without closing its handle. */
+export interface SessionLeaseTransitions {
+  readonly reserve: (id: string) => Effect.Effect<void, SessionLeaseHeld | SessionLeaseFailed>;
+  readonly cancelReservation: Effect.Effect<void, SessionLeaseFailed>;
+  readonly transition: (id: string) => Effect.Effect<void, SessionLeaseHeld | SessionLeaseFailed>;
+  readonly close: Effect.Effect<void, SessionLeaseFailed>;
+  readonly owns: (id: string) => boolean;
+  readonly poison: () => void;
+}
+
 export const makeSessionLeaseTransitions = (
   profilePath: string,
   initialId: string,
   initialRelease: Effect.Effect<void, SessionLeaseFailed>,
-) => {
+): SessionLeaseTransitions => {
   let currentId = initialId;
   let release = initialRelease;
 
@@ -148,20 +213,35 @@ export const makeSessionLeaseTransitions = (
     | { readonly id: string; readonly release: Effect.Effect<void, SessionLeaseFailed> }
     | undefined;
 
+  const pendingReleases: Array<Effect.Effect<void, SessionLeaseFailed>> = [];
   let poisoned = false;
 
-  const reserve = (id: string) =>
-    Effect.gen(function* () {
-      if (id === currentId || reserved?.id === id) return;
-      reserved = { id, release: yield* acquireSessionLease(profilePath, id) };
-    });
+  const retryRelease = (operation: Effect.Effect<void, SessionLeaseFailed>) =>
+    operation.pipe(
+      Effect.catch((cause) =>
+        Effect.sync(() => {
+          pendingReleases.push(operation);
+        }).pipe(
+          Effect.andThen(
+            Effect.logWarning("Session lease release failed; retrying on close", { cause }),
+          ),
+        ),
+      ),
+    );
 
   const cancelReservation = Effect.suspend(() => {
     const previous = reserved;
     reserved = undefined;
 
-    return previous === undefined ? Effect.void : previous.release;
+    return previous === undefined ? Effect.void : retryRelease(previous.release);
   });
+
+  const reserve = (id: string) =>
+    Effect.gen(function* () {
+      if (id === currentId || reserved?.id === id) return;
+      yield* cancelReservation;
+      reserved = { id, release: yield* acquireSessionLease(profilePath, id) };
+    });
 
   const transition = (id: string) =>
     Effect.gen(function* () {
@@ -178,7 +258,7 @@ export const makeSessionLeaseTransitions = (
       const previous = release;
       currentId = id;
       release = next;
-      yield* previous;
+      yield* retryRelease(previous);
       poisoned = false;
     }).pipe(
       Effect.tapError(() =>
@@ -190,7 +270,9 @@ export const makeSessionLeaseTransitions = (
 
   const close = Effect.gen(function* () {
     yield* cancelReservation;
-    yield* release;
+    yield* retryRelease(release);
+
+    for (const pending of pendingReleases.splice(0)) yield* retryRelease(pending);
   });
 
   return {
@@ -198,6 +280,9 @@ export const makeSessionLeaseTransitions = (
     cancelReservation,
     transition,
     close,
-    owns: (id: string) => !poisoned && id === currentId,
+    owns: (id) => !poisoned && id === currentId,
+    poison: () => {
+      poisoned = true;
+    },
   };
 };

@@ -1,72 +1,106 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 import { test, expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
-import fc from "fast-check";
-import { acquireSessionLease, makeSessionLeaseTransitions } from "ziggy/adapters/pi/session-lease";
+import {
+  acquireSessionLease,
+  makeSessionLeaseTransitions,
+  sessionLeasePath,
+} from "ziggy/adapters/pi/session-lease";
+import type { LeaseWorkerFixture } from "./fixtures/session-lease-worker";
 
-test("one live holder per session; stale pid reclaims; releases are idempotent", async () => {
-  await fc.assert(
-    fc.asyncProperty(
-      fc.array(fc.boolean(), { minLength: 1, maxLength: 12 }),
-      async (staleFlags) => {
-        const profile = await mkdtemp(join(tmpdir(), "ziggy-session-lease-"));
-        let owner = 0;
-        let live = true;
-        const runtime = { pid: 12345, ownerId: () => `owner-${++owner}`, isAlive: () => live };
+const fixture: LeaseWorkerFixture = join(import.meta.dir, "fixtures", "session-lease-worker.ts");
 
-        try {
-          for (const [index, stale] of staleFlags.entries()) {
-            const id = `session-${index}`;
-            const first = await Effect.runPromise(acquireSessionLease(profile, id, runtime));
-            const held = await Effect.runPromiseExit(acquireSessionLease(profile, id, runtime));
-            expect(Exit.isFailure(held)).toBe(true);
+const makeProfile = () => mkdtemp(join(tmpdir(), "ziggy-session-lease-"));
 
-            if (stale) {
-              live = false;
+const worker = (profile: string, session: string, duration: number) =>
+  Bun.spawn({
+    cmd: [process.execPath, fixture, profile, session, String(duration)],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-              const replacement = await Effect.runPromise(
-                acquireSessionLease(profile, id, runtime),
-              );
+test("release is idempotent and an old holder cannot remove a replacement projection", async () => {
+  const profile = await makeProfile();
 
-              await Effect.runPromise(first); // Old owner cannot erase replacement.
-              live = true;
+  try {
+    const old = await Effect.runPromise(
+      acquireSessionLease(profile, "session", { pid: 111, ownerId: () => "old" }),
+    );
 
-              const stillHeld = Exit.isFailure(
-                await Effect.runPromiseExit(acquireSessionLease(profile, id, runtime)),
-              );
+    await Effect.runPromise(old);
 
-              if (!stillHeld) throw new Error("old owner released the replacement lease");
-              await Effect.runPromise(replacement);
-            } else {
-              await Effect.runPromise(first);
-            }
+    const replacement = await Effect.runPromise(
+      acquireSessionLease(profile, "session", { pid: 222, ownerId: () => "new" }),
+    );
 
-            await Effect.runPromise(first);
-            const next = await Effect.runPromise(acquireSessionLease(profile, id, runtime));
-            await Effect.runPromise(next);
-          }
-        } finally {
-          await rm(profile, { recursive: true, force: true });
-        }
-      },
-    ),
-    { numRuns: 30 },
-  );
+    await Effect.runPromise(old);
+
+    const projection = JSON.parse(
+      await readFile(`${sessionLeasePath(profile, "session")}.owner`, "utf8"),
+    );
+
+    expect(projection).toEqual({ ownerId: "new", pid: 222 });
+    expect(
+      Exit.isFailure(await Effect.runPromiseExit(acquireSessionLease(profile, "session"))),
+    ).toBe(true);
+    await Effect.runPromise(replacement);
+    await Effect.runPromise(replacement);
+    const next = await Effect.runPromise(acquireSessionLease(profile, "session"));
+    await Effect.runPromise(next);
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
 });
 
-test("session replacement holds its destination before releasing its previous id", async () => {
-  const profile = await mkdtemp(join(tmpdir(), "ziggy-session-transition-"));
+test("independent Bun processes race for one session; exactly one wins", async () => {
+  const profile = await makeProfile();
+  const children = Array.from({ length: 6 }, () => worker(profile, "race", 1200));
+
+  try {
+    const outputs = await Promise.all(
+      children.map(async (child) => ({
+        output: (await new Response(child.stdout).text()).trim(),
+        exit: await child.exited,
+      })),
+    );
+
+    expect(outputs.filter((item) => item.output === "won" && item.exit === 0)).toHaveLength(1);
+    expect(outputs.filter((item) => item.output === "held" && item.exit === 0)).toHaveLength(5);
+  } finally {
+    for (const child of children) child.kill();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("killing a real holder frees its SQLite lease regardless of recorded pid", async () => {
+  const profile = await makeProfile();
+  const child = worker(profile, "crash", 10000);
+
+  try {
+    const reader = child.stdout.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain("won");
+    child.kill("SIGKILL");
+    await child.exited;
+    const release = await Effect.runPromise(acquireSessionLease(profile, "crash"));
+    await Effect.runPromise(release);
+  } finally {
+    child.kill();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("session replacement reserves destination before releasing previous id", async () => {
+  const profile = await makeProfile();
 
   try {
     const first = await Effect.runPromise(acquireSessionLease(profile, "first"));
     const transitions = makeSessionLeaseTransitions(profile, "first", first);
     const competing = await Effect.runPromise(acquireSessionLease(profile, "second"));
-    const blocked = await Effect.runPromiseExit(transitions.reserve("second"));
-
-    expect(Exit.isFailure(blocked)).toBe(true);
+    expect(Exit.isFailure(await Effect.runPromiseExit(transitions.reserve("second")))).toBe(true);
     expect(Exit.isFailure(await Effect.runPromiseExit(acquireSessionLease(profile, "first")))).toBe(
       true,
     );
@@ -81,8 +115,6 @@ test("session replacement holds its destination before releasing its previous id
     await Effect.runPromise(old);
     await Effect.runPromise(transitions.close);
     await Effect.runPromise(transitions.close);
-    const next = await Effect.runPromise(acquireSessionLease(profile, "second"));
-    await Effect.runPromise(next);
   } finally {
     await rm(profile, { recursive: true, force: true });
   }
