@@ -1147,3 +1147,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Wake migration contention reads "resident is starting; retry"; CLI session refusals name the holding process.
 - Skills: `docs/operations` automations, extension-updates and sessions, and `extension-authoring`, now cover the wake handoff, `--restart`, one writer per session, web resume and model switching, and broken-package skipping.
 - Verification: `bun run check` and `bun run test` (782 pass) passed. Opus review and two verify rounds resolved.
+
+## Fresh Profile end-to-end fixes
+
+- End-to-end pass on a fresh scratch Profile (init, run, resident, web pairing, web chat, per-session model and thinking, resume picker, extension picker, automations create/wake/run, session-held refusal) found the gaps below; all fixed.
+- Pairing uses the running resident's recorded UI port when the configured port is 0 and refuses a port-0 link when no resident runs; the token is never printed. Init, `automations status` and extension hints print the real quoted Profile path; a foreground resident no longer triggers "schedules will not fire"; init's next step is `serve install` then `web pair`; unknown provider/model hints use placeholders instead of repeating the bad value.
+- Required core packages get an update receipt when published. At resident start a receipted copy that still matches its receipt is refreshed when the bundled content differs (content hash, not version), through the existing update path and lock; failures never block start. Doctor reports edited copies (restore, then update) and untracked copies behind the bundle (`--adopt`).
+- The web client uses the Profile name (tab title included) with a Ziggy fallback; `--restart` is in `ziggy help extensions`; operations guidance covers new-Profile setup, pairing, the writer lease and the wake handoff.
+- Verification: `bun run check` and `bun run test` (784 pass) passed. Opus review plus one verify round resolved.
