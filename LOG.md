@@ -1077,3 +1077,14 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Verification: `bun run check` and `bun run test` (729 pass) passed. Opus re-reviews: all findings resolved.
 - Follow-up: the scheduler is not resident-only. Section 12 now requires `ziggy tick` driven by a launchd or systemd timer, so automations fire without the resident; the owner lease keeps one ticker at a time.
 - Owner decisions: skip broken extension packages and warn loudly (section 5); `ziggy wake` hands off to a running resident; `run --continue` refuses on a session the resident holds; no `ziggy tick`, because a resident with no chat config is just the scheduler and web UI; new section 13 and `webui` stream for web UI parity.
+
+## 2026-09-28 — Automation fingerprint fence and scheduler properties
+
+- A claimed scheduled run re-reads its definition and compares the fingerprint with the claim before the gate, the agent or any delivery. On a mismatch it records `failed` with the `schedule-superseded` category, logs one `[wake]` line, and doesn't count as the latest error. The next tick replans from the new schedule.
+- Manual admission cannot be interrupted partway. If `start` fails after a manual claim, the claim is marked failed, so later manual runs don't report busy until the process exits.
+- Tests:
+  - fast-check parser totality: input parses or fails with `AutomationInvalid`, never defects;
+  - a cron occurrence model checked against a minute-stepping oracle;
+  - a scheduler property: cursors move forward, due run ids never repeat, a fingerprint change resets the cursor;
+  - removed a test that only restated an error class.
+- Verification: `bun run check` and `bun run test` (735 pass) passed. Opus review findings resolved.

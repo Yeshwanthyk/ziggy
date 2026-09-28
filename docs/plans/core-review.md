@@ -48,7 +48,7 @@ Status: done; on main (d5bb377).
 
 ## 1. Correctness fixes
 
-Status: Slack health and command cache done; automation fingerprint in review.
+Status: done.
 
 - UI gateway command cache (`src/application/ui-gateway.ts:1531`). A defect in `run` never completes
   the `Deferred`, so retries hang. The whole run is uninterruptible, and FIFO eviction can drop
@@ -125,7 +125,7 @@ Status: pending.
 
 ## 6. Automations
 
-Status: pending (the fingerprint recheck is in section 1).
+Status: done (review/auto).
 
 - Parser totality and a cron occurrence model test.
 
