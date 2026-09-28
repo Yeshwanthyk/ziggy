@@ -1129,3 +1129,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Resume marks the session as switching: prompts, steers, follow-ups and re-entrant extension session commands fail with `SessionBusy` instead of racing teardown or deadlocking on the control lock.
 - Event subscriptions rebind before extension binding, and each rebind listener is removable on its own.
 - Verification: `bun run check` and `bun run test` (759 pass) passed.
+
+## Web UI session controls
+
+- The resident web UI switches model and thinking level for the active session, resumes older web transcripts from a picker, and shows skipped extensions with their diagnostics in the extension picker. A held or streaming session shows as busy.
+- Resume accepts only a stored session id and only plain web transcripts (`local/main/` and single-level `ui/<name>/`); group, specialist, automation and channel transcripts are refused on the server, and the picker's `canResume` comes from the same check.
+- After a resume or a model change the gateway clears the replay buffer and emits a `session-state` reset, so every client reloads history; stale replay cursors get `replay_gap`.
+- Extension health is a required gateway dependency; a preflight failure degrades to a listing with a diagnostic.
+- Verification: `bun run check` and `bun run test` (768 pass) passed; ui-sdk and web client suites pass. Opus review findings resolved; the resume/reset race and summary scan cost are left for the cleanup pass.

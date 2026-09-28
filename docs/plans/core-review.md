@@ -203,7 +203,7 @@ reading the owner lease before it starts; nothing falls back after the fact.
 
 ## 13. Web UI parity
 
-Status: extension picker done (review/webui). Adapter capabilities for model/thinking switching, resume and extension health are on main (adapter round 3); webui round 2 wires them.
+Status: done (review/webui, round 2). Follow-ups for the cleanup pass: emit the transcript reset inside the session switch (resume/reset race), keep status on model-scope events in the ui-sdk reducer, a scoped mtime-bounded summaries API in the adapter, and model-event and web reset tests.
 
 The web UI is the only interactive face since 1b. It lacks:
 
