@@ -1,7 +1,9 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun async tests own their disposable Effect execution */
 import { describe, expect, test } from "bun:test";
-import { Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
+import fc from "fast-check";
+import { CliInputInvalid } from "ziggy/faces/cli-command";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "ziggy/faces/cli";
 
 const decode = (args: ReadonlyArray<string>) => Effect.runPromise(decodeCliCommand(args));
@@ -453,4 +455,51 @@ describe("CLI decoding", () => {
       "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",
     );
   });
+});
+
+test("bounded argv decoding is total with only typed input failures", async () => {
+  const token = fc.oneof(
+    fc.constantFrom("", "--", "--json", "--port", "--provider", "--session", "\u0000"),
+    fc.string({ maxLength: 24 }),
+  );
+
+  const argv = fc.oneof(
+    fc.array(token, { maxLength: 12 }),
+    fc
+      .tuple(
+        fc.constantFrom(
+          "init",
+          "extensions",
+          "run",
+          "acp",
+          "models",
+          "agents",
+          "automations",
+          "memory",
+          "serve",
+          "web",
+          "sessions",
+          "auth",
+          "help",
+        ),
+        fc.array(token, { maxLength: 11 }),
+      )
+      .map(([command, rest]) => [command, ...rest]),
+  );
+
+  await fc.assert(
+    fc.asyncProperty(argv, async (args) => {
+      const exit = await Effect.runPromiseExit(decodeCliCommand(args));
+
+      const valid =
+        Exit.isSuccess(exit) ||
+        (exit.cause.reasons.length === 1 &&
+          exit.cause.reasons.every(
+            (reason) => Cause.isFailReason(reason) && reason.error instanceof CliInputInvalid,
+          ));
+
+      expect(valid).toBeTrue();
+    }),
+    { seed: 20260928, numRuns: 500 },
+  );
 });
