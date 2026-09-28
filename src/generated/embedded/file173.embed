@@ -9,11 +9,19 @@ Update one installed bundled package from the executable you are running:
 ziggy extensions update squarey computer-workflows
 ```
 
-Close all sessions using the Profile and stop its resident before updating. This first version
-does not drain active work, schedule an update, download another executable, or restart Squarey.
-Runtimes with update fencing block package replacement while open. Older Ziggy processes do not
-participate in that fence: close old web, run, ACP, wake, and specialist sessions and stop older
-residents before the initial upgrade as well.
+If a managed resident (`ziggy serve install`) is running, add `--restart`:
+
+```sh
+ziggy extensions update squarey computer-workflows --restart
+```
+
+Ziggy stages and validates the new package first, then stops the resident, applies the update
+under the update lock, and starts the resident again. Without `--restart` the update is refused
+while the resident runs. If a step fails, either the old or the new version stays applied, and
+the command reports whether the resident is running or recovery is needed. The updater does not
+drain active work, schedule an update, or download another executable. Older Ziggy processes do
+not participate in the update fence: close old web, run, ACP, wake, and specialist sessions and
+stop older residents before the initial upgrade.
 
 ## Adopt an existing installation
 
@@ -39,8 +47,8 @@ that protection.
 - A recovery journal protects interrupted replacement. An unresolved update blocks runtime
   loading until recovery succeeds. Rerun the update command for that package to recover it;
   if recovery detects changed files, it preserves them and reports the conflict.
-- Restart the Profile after a successful update to load the new tool code and skill instructions
-  together.
+- The new tool code and skill instructions load together when the resident restarts; `--restart`
+  does this for you.
 
 A successful update verifies package installation and loading. It does not prove that a saved
 workflow completes on a live website.

@@ -36,6 +36,10 @@ The web UI reads the same Profile Markdown, scheduler projection, and fixed run 
 `ziggy automations` CLI. Use `ziggy serve <profile>` to run the resident; the web UI is the
 interactive face, and `ziggy web pair <profile>` pairs a browser. The CLI provides create, list,
 validate, pause, resume, status, and runs; `ziggy wake <profile> <id>` runs a definition manually.
+When the resident is running, `wake` asks it to run the automation and prints the same outcome and
+exit code as a local run; otherwise it runs in-process. If the request may have reached the resident
+but no answer came back, check `ziggy automations runs` before retrying. Schedules fire only while
+the resident runs: `automations status` warns when the resident service is not installed.
 The CLI has no show, save, or `automations run` subcommand. In the web UI, choose an automation to
 inspect its metadata, edit it, inspect run history, or change lifecycle; the scheduler overview
 shows heartbeat, tick, next-due, and latest-run state.

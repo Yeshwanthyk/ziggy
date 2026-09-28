@@ -162,7 +162,7 @@ Status: done (review/cli). Codex OAuth import is on hold for an owner decision.
 
 ## 11. Runtime interface and preloaded skills
 
-Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gateway/sessions.ts` goes to webui round 2. Runtime interface: done (adapter round 3). Preloaded skills audit pending.
+Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gateway/sessions.ts` goes to webui round 2. Runtime interface: done (adapter round 3). Preloaded skills audit done (headless stream plus integrator edits to docs/operations and extension-authoring).
 
 - Add a small runtime interface in `src/adapters/pi/`: open, prompt, steer, abort, events, close.
   The resident, UI and chat gateways depend on it, and headless Pi implements it. Pi is the only
@@ -181,7 +181,7 @@ Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gat
 
 ## 12. Headless hosts and the resident
 
-Status: pending. Starts after `auto` and `adapter` merge (needs the session lease from 11a).
+Status: done (review/headless). `deliver` appends stored receipts under the session lease without the resident; `ziggy wake` hands off to a running resident and renders the same outcome and exit code; schedule hints when no resident is installed; `extensions update --restart`. Follow-ups for the cleanup pass: SDK per-request send deadline, POSIX single-quoting in recovery commands, show the resident-stopped hint only when a service is installed.
 
 The resident owns connections and live sessions, never extension execution or definitions.
 Extensions, tools, hooks, specialists, `run`, ACP and `wake` load the same Pi runtime with or

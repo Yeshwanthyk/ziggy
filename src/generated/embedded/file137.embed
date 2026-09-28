@@ -82,6 +82,15 @@ Specialists never receive `profile_extensions`. A specialist may prepare or revi
 then must return the shelf ID, changed paths, and proof results to the parent Profile agent for
 validation and admission.
 
+## Broken packages
+
+A selected package that fails to load does not stop the Profile: Ziggy skips it, loads the rest,
+and reports it. `profile_extensions` with `action: "list"` returns skipped packages under `broken`
+with their diagnostics, and `ziggy doctor` shows them. Automations the package owns pause while it
+is broken and resume when it loads cleanly again. Adding a package that already fails preflight is
+refused. Fix the package, run `profile_extensions` with `action: "validate"`, then restart the
+resident so the fixed package loads.
+
 ## Third-party package adoption
 
 To adopt a package from upstream, clone or download its source into an OS temporary directory

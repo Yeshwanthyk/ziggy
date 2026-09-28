@@ -1137,3 +1137,13 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - After a resume or a model change the gateway clears the replay buffer and emits a `session-state` reset, so every client reloads history; stale replay cursors get `replay_gap`.
 - Extension health is a required gateway dependency; a preflight failure degrades to a listing with a diagnostic.
 - Verification: `bun run check` and `bun run test` (768 pass) passed; ui-sdk and web client suites pass. Opus review findings resolved; the resume/reset race and summary scan cost are left for the cleanup pass.
+
+## Headless resident lanes
+
+- `deliver` to a `conversation:` target without a registry appends the stored receipt under the session writer lease; the receipt check keeps replays idempotent, and a held lease is a plain retriable refusal.
+- `ziggy wake` reads the owner lease and UI projection first. With a running resident it calls `automation.run` over the UI socket and renders the full outcome with the same stderr and exit code as an in-process run; otherwise it runs in-process. No fallback after the fact. An unsent request fails after a 10 s connect deadline as safe to retry; a sent request waits up to 30 minutes and reports an unknown outcome if the answer is lost. The token is never printed.
+- `automations status` and `extensions add` warn when schedules will not fire because no resident service is installed.
+- `extensions update --restart` stages and validates, stops the managed resident, applies under the update lock and starts it again; a pending recovery journal keeps the resident stopped and prints quoted recovery commands. Without `--restart` the refusal names the flag.
+- Wake migration contention reads "resident is starting; retry"; CLI session refusals name the holding process.
+- Skills: `docs/operations` automations, extension-updates and sessions, and `extension-authoring`, now cover the wake handoff, `--restart`, one writer per session, web resume and model switching, and broken-package skipping.
+- Verification: `bun run check` and `bun run test` (782 pass) passed. Opus review and two verify rounds resolved.
