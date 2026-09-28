@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { PiAgent, type ChatSessionMode } from "../adapters/pi/pi-agent";
+import { makePiSessionRuntime } from "../adapters/pi/runtime";
 import type {
   ChatModelOverride,
   ChatNotStreaming,
@@ -136,6 +137,7 @@ export const ZiggyAgentLive = Layer.effect(
   ZiggyAgent,
   Effect.gen(function* () {
     const piAgent = yield* PiAgent;
+    const runtime = makePiSessionRuntime(piAgent);
 
     return {
       runOnce: (
@@ -152,15 +154,7 @@ export const ZiggyAgentLive = Layer.effect(
         sessionMode?: ChatSessionMode,
         modelOverride?: ChatModelOverride,
         sessionName?: string,
-      ) =>
-        piAgent.openChat(
-          target,
-          context,
-          sessionDirectory,
-          sessionMode,
-          modelOverride,
-          sessionName,
-        ),
+      ) => runtime.open(target, context, sessionDirectory, sessionMode, modelOverride, sessionName),
       openSpecialistChat: (target, agentId) => piAgent.openSpecialistChat(target, agentId),
       runSpecialist: (target, agentId, task, context) =>
         piAgent.runSpecialist(target, agentId, task, context),

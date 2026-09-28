@@ -28,18 +28,20 @@ export interface SessionRuntime {
   ) => Effect.Effect<RuntimeSession, ZiggyAgentError>;
 }
 
-export const runtimeSessionFromChat = (handle: ChatHandle): RuntimeSession => ({
-  prompt: handle.prompt,
-  steer: handle.steer,
-  abort: handle.abort,
+export const runtimeSessionFromChat = (handle: ChatHandle) => ({
+  ...handle,
+  get isIdle() {
+    return handle.isIdle;
+  },
   events: handle.subscribe,
   close: handle.dispose,
 });
 
 /** Pi is the sole implementation; no presence or broadcast capability belongs here. */
-export const makePiSessionRuntime = (pi: PiAgentApi): SessionRuntime => ({
-  open: (target, context, directory, mode, model, name) =>
-    pi
-      .openChat(target, context, directory, mode, model, name)
-      .pipe(Effect.map(runtimeSessionFromChat)),
-});
+export const makePiSessionRuntime = (pi: PiAgentApi) =>
+  ({
+    open: (target, context, directory, mode, model, name) =>
+      pi
+        .openChat(target, context, directory, mode, model, name)
+        .pipe(Effect.map(runtimeSessionFromChat)),
+  }) satisfies SessionRuntime;
