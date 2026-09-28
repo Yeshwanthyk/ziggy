@@ -271,6 +271,7 @@ export const makeSessionLeaseTransitions = (
     );
 
   const close = Effect.gen(function* () {
+    poisoned = true;
     yield* cancelReservation;
     yield* retryRelease(release);
 

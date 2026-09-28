@@ -10,8 +10,11 @@ import type {
   SessionReference,
   ZiggyAgentError,
 } from "../domain/agent";
+import { ProviderConfigError } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
+import type { ProfileAgentThinking } from "../domain/profile";
+import type { SessionNotFound, SessionReadFailed } from "../domain/session";
 import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
@@ -68,7 +71,30 @@ export interface ChatPromptOptions {
   readonly onProgress?: (event: ChatProgressEvent) => void;
 }
 
+export interface ChatSessionModelState {
+  readonly providerId?: string;
+  readonly modelId?: string;
+  readonly thinking: ProfileAgentThinking;
+}
+
+export interface ChatResumeResult {
+  readonly cancelled: boolean;
+}
+
 export interface ChatHandle {
+  /** Live session state; changing it never persists a Profile-wide default. */
+  readonly modelState: Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  readonly setModel: (
+    providerId: string,
+    modelId: string,
+  ) => Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  readonly setThinkingLevel: (
+    level: ProfileAgentThinking,
+  ) => Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  /** Accepts a Profile session id or a path relative to its sessions directory. */
+  readonly resume: (
+    reference: string,
+  ) => Effect.Effect<ChatResumeResult, ZiggyAgentError | SessionReadFailed | SessionNotFound>;
   readonly isIdle: boolean;
   /** The current persisted Pi transcript identity, resolved at read time. */
   readonly currentSession?: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
@@ -86,10 +112,24 @@ export interface ChatHandle {
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
 
+const unsupportedLiveControl = (operation: string) =>
+  Effect.fail(
+    new ProviderConfigError({
+      profilePath: "",
+      operation,
+      message: "live session controls are unavailable on this handle",
+      cause: undefined,
+    }),
+  );
+
 export const makeChatHandle = (
   methods: Pick<ChatHandle, "prompt"> & Partial<Omit<ChatHandle, "prompt">>,
 ): ChatHandle => ({
   isIdle: true,
+  modelState: unsupportedLiveControl("read model"),
+  setModel: () => unsupportedLiveControl("set model"),
+  setThinkingLevel: () => unsupportedLiveControl("set thinking"),
+  resume: () => unsupportedLiveControl("resume session"),
   abort: Effect.void,
   steer: () => Effect.void,
   followUp: () => Effect.void,

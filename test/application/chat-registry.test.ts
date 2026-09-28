@@ -187,6 +187,7 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
         let idle = true;
 
         const handle: ChatHandle = {
+          ...makeChatHandle({ prompt: () => Effect.succeed("unused") }),
           get isIdle() {
             return idle;
           },

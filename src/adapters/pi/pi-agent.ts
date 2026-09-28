@@ -51,6 +51,7 @@ import {
 import {
   prepareProfileAgentPrompt,
   ProfileAgentMentionInvalid,
+  type ProfileAgentThinking,
   type ProfileAgent,
   type ProfileTarget,
 } from "../../domain/profile";
@@ -58,6 +59,7 @@ import type {
   ChatEvent,
   ChatHandle,
   ChatPromptOptions,
+  ChatSessionModelState,
   RunOnceOptions,
 } from "../../application/agent";
 import { fileSystemCauseDetails } from "../fs/cause";
@@ -83,6 +85,7 @@ import {
   type SpecialistParent,
 } from "./specialist";
 import { sessionReference } from "./session-lineage";
+import { showProfileSession } from "./sessions";
 import {
   ProfileExtensionRollbackFailed,
   type ProfileExtensionPreflightFailed,
@@ -1466,7 +1469,7 @@ const createProfileRuntime = (
 export const bindChatRuntime = async (
   runtime: AgentSessionRuntime,
   lease?: ReturnType<typeof makeSessionLeaseTransitions>,
-): Promise<void> => {
+): Promise<{ readonly switchSession: AgentSessionRuntime["switchSession"] }> => {
   let invalidatedSession: AgentSessionRuntime["session"] | undefined;
   runtime.setBeforeSessionInvalidate(() => {
     invalidatedSession = runtime.session;
@@ -1479,6 +1482,36 @@ export const bindChatRuntime = async (
 
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
     await Effect.runPromise(lease.cancelReservation);
+  };
+
+  const switchSession: AgentSessionRuntime["switchSession"] = async (sessionPath, options) => {
+    const previous = runtime.session;
+
+    if (lease !== undefined) {
+      // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+      const id = (await Effect.runPromise(readSessionHeaderOnly(sessionPath))).id;
+
+      // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+      await Effect.runPromise(lease.reserve(id));
+    }
+
+    try {
+      const result = await runtime.switchSession(sessionPath, options);
+
+      if (lease !== undefined) {
+        // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+        await Effect.runPromise(
+          result.cancelled
+            ? lease.cancelReservation
+            : lease.transition(runtime.session.sessionManager.getSessionId()),
+        );
+      }
+
+      return result;
+    } catch (cause) {
+      await replacementFailed(previous);
+      throw cause;
+    }
   };
 
   const bindSession = async (): Promise<void> => {
@@ -1560,35 +1593,7 @@ export const bindChatRuntime = async (
 
           return { cancelled: result.cancelled };
         },
-        switchSession: async (sessionPath, options) => {
-          const previous = runtime.session;
-
-          if (lease !== undefined) {
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-            const id = (await Effect.runPromise(readSessionHeaderOnly(sessionPath))).id;
-
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-            await Effect.runPromise(lease.reserve(id));
-          }
-
-          try {
-            const result = await runtime.switchSession(sessionPath, options);
-
-            if (lease !== undefined) {
-              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-              await Effect.runPromise(
-                result.cancelled
-                  ? lease.cancelReservation
-                  : lease.transition(runtime.session.sessionManager.getSessionId()),
-              );
-            }
-
-            return result;
-          } catch (cause) {
-            await replacementFailed(previous);
-            throw cause;
-          }
-        },
+        switchSession,
         reload: () => session.reload(),
       },
       onError: (error) => {
@@ -1599,6 +1604,8 @@ export const bindChatRuntime = async (
 
   runtime.setRebindSession(bindSession);
   await bindSession();
+
+  return { switchSession };
 };
 
 type PromptSession = Pick<
@@ -1802,10 +1809,87 @@ const chatNotStreaming = (profilePath: string, operation: "steer" | "followUp"):
     message: operation === "steer" ? "no live turn to steer" : "no live turn to follow up",
   });
 
+export const makeLiveChatControls = (
+  profilePath: string,
+  runtime: AgentSessionRuntime,
+  lease: SessionLeaseTransitions,
+  binding: Awaited<ReturnType<typeof bindChatRuntime>>,
+): Pick<ChatHandle, "modelState" | "setModel" | "setThinkingLevel" | "resume"> => {
+  const modelState = (): ChatSessionModelState => {
+    const session = runtime.session;
+    const model = session.model;
+
+    return model === undefined
+      ? { thinking: session.thinkingLevel }
+      : { providerId: model.provider, modelId: model.id, thinking: session.thinkingLevel };
+  };
+
+  const requireWriter = () =>
+    lease.owns(runtime.session.sessionManager.getSessionId())
+      ? Effect.void
+      : Effect.fail(
+          sessionLeaseError(
+            profilePath,
+            new Error("live session no longer holds its writer lease"),
+          ),
+        );
+
+  return {
+    modelState: Effect.sync(modelState),
+    setModel: (providerId, modelId) =>
+      requireWriter().pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            const model = runtime.services.modelRuntime.getModel(providerId, modelId);
+
+            return model === undefined
+              ? Effect.fail(
+                  new ProviderConfigError({
+                    profilePath,
+                    operation: "set session model",
+                    message: `model ${providerId}/${modelId} is not available in this Profile`,
+                    cause: undefined,
+                  }),
+                )
+              : piPromise(profilePath, "set session model", () =>
+                  runtime.session.setModel(model, { persist: false }),
+                ).pipe(Effect.asVoid);
+          }),
+        ),
+        Effect.andThen(Effect.sync(modelState)),
+      ),
+    setThinkingLevel: (level: ProfileAgentThinking) =>
+      requireWriter().pipe(
+        Effect.andThen(
+          piPromise(profilePath, "set session thinking", () =>
+            Promise.resolve(runtime.session.setThinkingLevel(level, { persist: false })),
+          ),
+        ),
+        Effect.andThen(Effect.sync(modelState)),
+      ),
+    resume: (reference) =>
+      requireWriter().pipe(
+        Effect.andThen(showProfileSession(profilePath, reference)),
+        Effect.flatMap((metadata) =>
+          Effect.tryPromise({
+            try: () => binding.switchSession(join(profilePath, "sessions", metadata.path)),
+            catch: (cause) =>
+              cause instanceof SessionLeaseHeld || cause instanceof SessionLeaseFailed
+                ? sessionLeaseError(profilePath, cause)
+                : providerError(profilePath, "resume session", cause),
+          }),
+        ),
+      ),
+  };
+};
+
 export const makeSessionChatHandle = (
   profilePath: string,
   liveSession: () => ChatSession,
-  methods: Pick<ChatHandle, "prompt" | "dispose"> & Partial<Pick<ChatHandle, "currentSession">>,
+  methods: Pick<ChatHandle, "prompt" | "dispose"> &
+    Partial<
+      Pick<ChatHandle, "currentSession" | "modelState" | "setModel" | "setThinkingLevel" | "resume">
+    >,
   abortSession: () => Promise<void> = sharePiAbort(() => liveSession().abort()),
   voiceHub?: SpecialistVoiceHub,
   lease?: SessionLeaseTransitions,
@@ -1857,6 +1941,37 @@ export const makeSessionChatHandle = (
     get isIdle() {
       return liveSession().isIdle;
     },
+    modelState:
+      methods.modelState ??
+      Effect.fail(
+        providerError(profilePath, "read session model", new Error("session controls unavailable")),
+      ),
+    setModel:
+      methods.setModel ??
+      (() =>
+        Effect.fail(
+          providerError(
+            profilePath,
+            "set session model",
+            new Error("session controls unavailable"),
+          ),
+        )),
+    setThinkingLevel:
+      methods.setThinkingLevel ??
+      (() =>
+        Effect.fail(
+          providerError(
+            profilePath,
+            "set session thinking",
+            new Error("session controls unavailable"),
+          ),
+        )),
+    resume:
+      methods.resume ??
+      (() =>
+        Effect.fail(
+          providerError(profilePath, "resume session", new Error("session controls unavailable")),
+        )),
     prompt: methods.prompt,
     ...currentSession,
     appendAutomationResult: (result) =>
@@ -2237,7 +2352,7 @@ export const openChat = (
         });
       }
 
-      yield* piPromise(target.path, "bind agent runtime", () =>
+      const binding = yield* piPromise(target.path, "bind agent runtime", () =>
         bindChatRuntime(runtime, lease),
       ).pipe(Effect.tapError(() => disposeBestEffort));
 
@@ -2256,6 +2371,7 @@ export const openChat = (
         target.path,
         () => runtime.session,
         {
+          ...makeLiveChatControls(target.path, runtime, lease, binding),
           currentSession: Effect.suspend(() =>
             currentPiSessionReference(target.path, runtime.session.sessionManager),
           ),
@@ -2427,9 +2543,10 @@ export const openSpecialistChat = (
           Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
         );
 
-        yield* piPromise(target.path, "bind agent runtime", () =>
+        const binding = yield* piPromise(target.path, "bind agent runtime", () =>
           bindChatRuntime(liveRuntime, specialistLease),
         ).pipe(Effect.tapError(() => disposeLiveBestEffort));
+
         const abortSession = sharePiAbort(() => liveRuntime.session.abort());
 
         const promptSession: PromptSession = {
@@ -2445,6 +2562,7 @@ export const openSpecialistChat = (
           target.path,
           () => liveRuntime.session,
           {
+            ...makeLiveChatControls(target.path, liveRuntime, specialistLease, binding),
             currentSession: Effect.suspend(() =>
               currentPiSessionReference(target.path, liveRuntime.session.sessionManager),
             ),

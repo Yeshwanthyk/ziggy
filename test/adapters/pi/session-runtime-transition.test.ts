@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   SessionManager,
   createAgentSessionFromServices,
@@ -11,7 +11,7 @@ import {
   type AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { bindChatRuntime } from "ziggy/adapters/pi/pi-agent";
+import { bindChatRuntime, makeLiveChatControls } from "ziggy/adapters/pi/pi-agent";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { acquireSessionLease, makeSessionLeaseTransitions } from "ziggy/adapters/pi/session-lease";
 
@@ -99,7 +99,12 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
   });
 
   try {
-    await bindChatRuntime(runtime, lease);
+    const binding = await bindChatRuntime(runtime, lease);
+    const controls = makeLiveChatControls(profilePath, runtime, lease, binding);
+    expect((await Effect.runPromise(controls.modelState)).thinking).toBe(
+      runtime.session.thinkingLevel,
+    );
+    expect((await Effect.runPromise(controls.setThinkingLevel("off"))).thinking).toBe("off");
     const before = actions;
 
     if (before === undefined) throw new Error("Pi command actions not bound");
@@ -134,7 +139,19 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
       failure: { _tag: "SessionLeaseHeld" },
     });
 
-    expect(await before.switchSession(targetFile)).toEqual({ cancelled: false });
+    const competingRelease = await Effect.runPromise(acquireSessionLease(profilePath, "target"));
+
+    try {
+      expect(await Effect.runPromise(Effect.result(controls.resume("target")))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SessionHeld" },
+      });
+      expect(lease.owns("source")).toBe(true);
+    } finally {
+      await Effect.runPromise(competingRelease);
+    }
+
+    expect(await Effect.runPromise(controls.resume("target"))).toEqual({ cancelled: false });
     expect(lease.owns("target")).toBe(true);
 
     const old = await Effect.runPromise(acquireSessionLease(profilePath, "source"));
@@ -153,6 +170,10 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
     expect(await after.newSession()).toEqual({ cancelled: false });
     expect(lease.owns(runtime.session.sessionManager.getSessionId())).toBe(true);
     expect(lease.owns("target")).toBe(false);
+    expect(await Effect.runPromise(controls.resume(relative(directory, targetFile)))).toEqual({
+      cancelled: false,
+    });
+    expect(lease.owns("target")).toBe(true);
   } finally {
     await runtime.dispose();
     await Effect.runPromise(lease.close);

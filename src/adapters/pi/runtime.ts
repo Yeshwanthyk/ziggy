@@ -6,7 +6,10 @@ import type { ProfileTarget } from "../../domain/profile";
 import type { ChatSessionMode, PiAgentApi } from "./pi-agent";
 
 /** One headless Pi session. The handle owns its lifetime; close releases its writer lease. */
-export interface RuntimeSession {
+export interface RuntimeSession extends Pick<
+  ChatHandle,
+  "modelState" | "setModel" | "setThinkingLevel" | "resume"
+> {
   readonly prompt: (
     text: string,
     options?: ChatPromptOptions,
