@@ -208,6 +208,20 @@
   outline-offset: 2px;
 }
 
+.ui-steps[data-unset] output {
+  color: var(--muted-foreground);
+}
+
+.ui-steps[data-unset] input::-webkit-slider-thumb {
+  border-color: var(--muted-foreground);
+  border-style: dashed;
+}
+
+.ui-steps[data-unset] input::-moz-range-thumb {
+  border-color: var(--muted-foreground);
+  border-style: dashed;
+}
+
 .ui-steps[data-disabled] {
   opacity: 0.5;
 }

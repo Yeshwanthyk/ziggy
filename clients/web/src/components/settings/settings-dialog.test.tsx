@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsDialog } from "./settings-dialog";
 import type { ModelSettingsState } from "@/gateway";
@@ -71,7 +71,7 @@ describe("SettingsDialog", () => {
 
     expect(onSaveModel).not.toHaveBeenCalled();
     const thinking = screen.getByRole("slider", { name: "Thinking" });
-    expect(thinking.getAttribute("aria-valuetext")).toBe("low");
+    expect(thinking.getAttribute("aria-valuetext")).toBe("Low");
 
     fireEvent.change(thinking, { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Save model" }));
@@ -326,4 +326,56 @@ it("shows quarantined extension diagnostics and the resident restart hint", () =
   expect((screen.getByRole("switch", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
     true,
   );
+});
+
+it("commits keyboard thinking steps once and falls back to the saved level on rejection", async () => {
+  vi.useFakeTimers();
+  try {
+    const changeThinking = vi.fn(async () => {
+      throw new Error("rejected");
+    });
+    render(
+      <SettingsDialog
+        connected
+        connectionPending={false}
+        open
+        profileName="Squarey"
+        selectedRef={{ profileId: "prf_squarey", kind: "live", key: "local/main" }}
+        sessionBusy={false}
+        sessionModel={{
+          pending: false,
+          value: {
+            profileId: "prf_squarey",
+            ref: { profileId: "prf_squarey", kind: "live", key: "local/main" },
+            providerId: "openai-codex",
+            modelId: "gpt-5.6-sol",
+            thinking: "low",
+          },
+        }}
+        modelSettings={modelSettings}
+        onConnect={vi.fn(async () => undefined)}
+        onOpenChange={vi.fn()}
+        onSaveModel={vi.fn(async () => undefined)}
+        onRetrySettings={vi.fn(async () => undefined)}
+        onToggleExtension={vi.fn(async () => undefined)}
+        onLoadSessionModel={vi.fn(async () => undefined)}
+        onChangeSessionModel={vi.fn(async () => undefined)}
+        onChangeSessionThinking={changeThinking}
+      />,
+    );
+    openTab("Session");
+    const slider = screen.getByRole("slider", { name: "Session thinking" }) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: "1" } });
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(changeThinking).not.toHaveBeenCalled();
+    expect(slider.disabled).toBe(false);
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    expect(changeThinking).toHaveBeenCalledExactlyOnceWith("high");
+    expect(slider.getAttribute("aria-valuetext")).toBe("Low");
+  } finally {
+    vi.useRealTimers();
+  }
 });

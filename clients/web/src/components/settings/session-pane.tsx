@@ -71,7 +71,12 @@ export function SessionPane({
       ? current.thinking
       : undefined;
   const [thinking, setThinking] = useState(savedThinking);
-  useEffect(() => setThinking(savedThinking), [savedThinking]);
+  // Bumped whenever a thinking change settles, so the slider falls back to the saved value
+  // after a rejected (or ignored) request as well as after a successful one.
+  const [settled, setSettled] = useState(0);
+  useEffect(() => {
+    if (!sessionModel.pending) setThinking(savedThinking);
+  }, [savedThinking, sessionModel.pending, settled]);
 
   if (!live) {
     return (
@@ -99,7 +104,6 @@ export function SessionPane({
           thinkingLevels: [...thinkingLevels],
         }
       : undefined);
-  const locked = sessionBusy || sessionModel.pending;
   const summaries = sessionSummaries.value;
 
   return (
@@ -124,7 +128,8 @@ export function SessionPane({
             <Field label="Model">
               <ModelPicker
                 aria-label="Session model"
-                disabled={locked}
+                // Stay enabled while a switch is pending so focus stays on the trigger.
+                disabled={sessionBusy}
                 models={availableModels}
                 onSelect={(model) => void onChangeSessionModel(model.providerId, model.modelId)}
                 selected={selected}
@@ -132,11 +137,15 @@ export function SessionPane({
             </Field>
             <StepSlider
               aria-label="Session thinking"
-              disabled={locked}
+              disabled={sessionBusy}
               endLabel="Smarter"
               label="Thinking"
               onValueChange={setThinking}
-              onValueCommit={(level) => void onChangeSessionThinking(level)}
+              onValueCommit={(level) =>
+                void onChangeSessionThinking(level)
+                  .catch(() => undefined)
+                  .finally(() => setSettled((count) => count + 1))
+              }
               startLabel="Faster"
               steps={thinkingSteps(selected?.thinkingLevels ?? thinkingLevels)}
               value={thinking}
