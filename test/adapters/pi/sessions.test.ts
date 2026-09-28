@@ -603,3 +603,26 @@ test("summary listing isolates bad transcripts, sorts by activity and truncates 
   expect(result.map((item) => item.id)).toEqual(["second", "first"]);
   expect(result[1]?.title).toBe("a".repeat(159) + "😀");
 });
+
+test("show skips unrelated broken files but rejects only duplicate identities", async () => {
+  const root = await profile();
+  const sessions = join(root, "sessions");
+  const healthy = join(sessions, "healthy.jsonl");
+  await writeJsonl(healthy, [header("healthy")]);
+  await writeJsonl(join(sessions, "duplicate-a.jsonl"), [header("duplicate")]);
+  await writeJsonl(join(sessions, "duplicate-b.jsonl"), [header("duplicate")]);
+  await writeFile(join(sessions, "broken.jsonl"), "not json\n");
+  await symlink(healthy, join(sessions, "linked.jsonl"));
+
+  expect((await Effect.runPromise(showProfileSession(root, "healthy"))).id).toBe("healthy");
+  expect((await Effect.runPromise(showProfileSession(root, "healthy.jsonl"))).id).toBe("healthy");
+
+  for (const reference of ["duplicate", "duplicate-a.jsonl", "duplicate-b.jsonl"]) {
+    expect(
+      await Effect.runPromise(Effect.result(showProfileSession(root, reference))),
+    ).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SessionReadFailed", operation: "resolve" },
+    });
+  }
+});

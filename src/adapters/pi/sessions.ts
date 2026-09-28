@@ -424,51 +424,6 @@ const parseSession = (
     };
   });
 
-const parseSessionHeader = (
-  root: string,
-  file: string,
-): Effect.Effect<ParsedSession, SessionReadFailed> =>
-  Effect.gen(function* () {
-    let header: Header | undefined;
-
-    yield* scanTranscriptLines(file, (line) => {
-      if (line.trim().length === 0) return;
-      let decodedHeader: Header;
-
-      try {
-        decodedHeader = decodeHeaderLine(line);
-      } catch (cause) {
-        throw new TranscriptLineRejected(decodeFailure(file, cause));
-      }
-
-      if (decodedHeader.id.length === 0 || !Number.isFinite(Date.parse(decodedHeader.timestamp))) {
-        throw new TranscriptLineRejected(decodeFailure(file, { kind: "invalid-header-metadata" }));
-      }
-
-      header = decodedHeader;
-
-      return false;
-    });
-
-    const parsedHeader = header;
-
-    if (parsedHeader === undefined) return yield* decodeFailure(file, { kind: "empty" });
-
-    return {
-      file,
-      relativePath: path.relative(root, file),
-      header: parsedHeader,
-      name: undefined,
-      activityAt: parsedHeader.timestamp,
-      firstUserMessage: undefined,
-      entryCount: 0,
-      modelChanges: [],
-      thinkingChanges: [],
-      usage: zeroUsage(),
-      terminalState: "incomplete",
-    };
-  });
-
 const projectSessions = (
   parsed: ReadonlyArray<ParsedSession>,
 ): Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed> =>
@@ -616,13 +571,47 @@ export const showProfileSession = (
 ): Effect.Effect<SessionMetadata, SessionReadFailed | SessionNotFound> =>
   Effect.gen(function* () {
     const root = path.join(profilePath, "sessions");
-    const files = yield* discoverFiles(root);
+    const files = yield* discoverFiles(root, true);
+    const sessions: Array<ParsedSession> = [];
+    const seen = new Set<string>();
+    const ambiguous = new Set<string>();
+    const invalid = new Map<string, SessionReadFailed>();
+    const duplicatePaths = new Map<string, string>();
 
-    const headers = yield* Effect.forEach(files, (file) => parseSessionHeader(root, file), {
-      concurrency: 1,
-    });
+    for (const file of files) {
+      const parsed = yield* Effect.result(parseSession(root, file));
 
-    let selected = headers.find((session) => session.header.id === reference);
+      if (parsed._tag === "Failure") {
+        invalid.set(path.relative(root, file), parsed.failure);
+        yield* Effect.logWarning("Skipped unreadable session transcript", {
+          path: file,
+          message: parsed.failure.message,
+        });
+        continue;
+      }
+
+      const session = parsed.success;
+
+      if (seen.has(session.header.id)) {
+        ambiguous.add(session.header.id);
+        duplicatePaths.set(session.relativePath, session.header.id);
+        yield* Effect.logWarning("Skipped duplicate session transcript", {
+          path: file,
+          id: session.header.id,
+        });
+        continue;
+      }
+
+      seen.add(session.header.id);
+      sessions.push(session);
+    }
+
+    if (ambiguous.has(reference))
+      return yield* failure(root, "resolve", `ambiguous Pi session ID: ${reference}`, {
+        id: reference,
+      });
+
+    let selected = sessions.find((session) => session.header.id === reference);
 
     if (selected === undefined) {
       if (path.isAbsolute(reference)) {
@@ -641,7 +630,19 @@ export const showProfileSession = (
         });
       }
 
-      selected = headers.find((session) => path.normalize(session.relativePath) === normalized);
+      selected = sessions.find((session) => path.normalize(session.relativePath) === normalized);
+
+      if (selected === undefined) {
+        const addressedFailure = invalid.get(normalized);
+
+        if (addressedFailure !== undefined) return yield* addressedFailure;
+        const duplicateId = duplicatePaths.get(normalized);
+
+        if (duplicateId !== undefined)
+          return yield* failure(root, "resolve", `ambiguous Pi session ID: ${duplicateId}`, {
+            id: duplicateId,
+          });
+      }
     }
 
     if (selected === undefined) {
@@ -651,13 +652,21 @@ export const showProfileSession = (
       });
     }
 
-    const parsed = yield* parseSession(root, selected.file);
+    if (ambiguous.has(selected.header.id))
+      return yield* failure(
+        selected.file,
+        "resolve",
+        `ambiguous Pi session ID: ${selected.header.id}`,
+        {
+          id: selected.header.id,
+        },
+      );
 
     const projected = yield* projectSessions(
-      headers.map((session) => (session.file === selected.file ? parsed : session)),
+      sessions.filter((session) => !ambiguous.has(session.header.id)),
     );
 
-    const metadata = projected.find((session) => session.path === parsed.relativePath);
+    const metadata = projected.find((session) => session.path === selected.relativePath);
 
     if (metadata !== undefined) return metadata;
 
