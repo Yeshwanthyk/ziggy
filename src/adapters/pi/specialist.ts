@@ -19,7 +19,6 @@ import {
   type Model,
   type Usage,
 } from "@earendil-works/pi-ai";
-import { Text } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
 import { Value } from "typebox/value";
 import { type Static, Type } from "typebox";
@@ -537,9 +536,6 @@ export const truncateDiscussionText = (text: string, maxCodePoints: number): str
 const compareDiscussionAgents = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
-const compactDiscussionTopic = (topic: string): string =>
-  truncateDiscussionText(topic.replace(/\s+/g, " ").trim(), 72);
-
 const discussionRoundPrompt = (
   topic: string,
   agent: string,
@@ -837,40 +833,6 @@ const textResult = (
   return result;
 };
 
-const compactPrompt = (prompt: string): string => {
-  const singleLine = prompt.replace(/\s+/g, " ").trim();
-
-  return singleLine.length > 72 ? `${singleLine.slice(0, 69)}...` : singleLine;
-};
-
-const compactUsage = (usage: SpecialistUsage): string =>
-  `${usage.totalTokens} tok${usage.cost.total === 0 ? "" : ` · $${usage.cost.total.toFixed(4)}`}`;
-
-export const renderAgentRunCall = (input: Pick<AgentRunInput, "agent" | "prompt">): string =>
-  `agent_run → ${input.agent}: ${compactPrompt(input.prompt)}`;
-
-export const renderAgentRunResult = (details: SpecialistToolDetails, expanded: boolean): string => {
-  if (details.error !== undefined) return `agent_run ✕ ${details.error}`;
-  const specialist = details.result;
-
-  if (specialist === undefined) return "agent_run ✕ no result";
-
-  if (!expanded) {
-    return `agent_run ← ${specialist.agent} · ${specialist.provider}/${specialist.model} · ${specialist.thinking} · ${compactUsage(specialist.usage)}`;
-  }
-
-  return [
-    `agent_run ← ${specialist.agent}`,
-    `model: ${specialist.provider}/${specialist.model}`,
-    `thinking: ${specialist.thinking}`,
-    `tools: ${specialist.tools.length === 0 ? "(none)" : specialist.tools.join(", ")}`,
-    `child session: ${specialist.session.id}`,
-    `usage: ${specialist.usage.input} in · ${specialist.usage.output} out · ${compactUsage(specialist.usage)}`,
-    "",
-    specialist.answer,
-  ].join("\n");
-};
-
 export type AgentRunTool = Omit<ToolDefinition, "execute"> & {
   execute(
     toolCallId: string,
@@ -911,21 +873,8 @@ export const createAgentRunTool = (
       }),
     );
 
-    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback at this adapter boundary.
     return Effect.runPromise(program, { signal });
-  },
-  renderCall: (rawInput) => {
-    if (!Value.Check(agentRunParameters, rawInput))
-      return new Text("agent_run (invalid input)", 0, 0);
-
-    return new Text(renderAgentRunCall(rawInput), 0, 0);
-  },
-  renderResult: (result, options) => {
-    if (!Value.Check(specialistToolDetailsSchema, result.details)) {
-      return new Text("agent_run ✕ invalid result", 0, 0);
-    }
-
-    return new Text(renderAgentRunResult(result.details, options.expanded), 0, 0);
   },
 });
 
@@ -960,44 +909,6 @@ const boundedDiscussionOutput = (transcript: string): string => {
     "",
     discussionSynthesisInstruction,
   ].join("\n");
-};
-
-const discussionCallRounds = (input: AgentDiscussionInput): 1 | 2 => input.rounds ?? 1;
-
-export const renderAgentDiscussCall = (input: AgentDiscussionInput): string =>
-  `agent_discuss → ${[...input.agents].sort(compareDiscussionAgents).join(", ")} · ${discussionCallRounds(input)} round${discussionCallRounds(input) === 1 ? "" : "s"}: ${compactDiscussionTopic(input.topic)}`;
-
-export const renderAgentDiscussResult = (
-  details: AgentDiscussionToolDetails,
-  expanded: boolean,
-): string => {
-  if (details.error !== undefined) return `agent_discuss ✕ ${details.error}`;
-  const discussion = details.result;
-
-  if (discussion === undefined) return "agent_discuss ✕ no result";
-
-  const participants = [
-    ...new Set(discussion.rounds.flatMap((round) => round.participants.map((p) => p.agent))),
-  ];
-
-  const calls = discussion.rounds.reduce((count, round) => count + round.participants.length, 0);
-
-  if (!expanded) {
-    return `agent_discuss ← ${participants.join(", ")} · ${discussion.rounds.length} round${discussion.rounds.length === 1 ? "" : "s"} · ${calls} model calls · ${compactUsage(discussion.usage)}`;
-  }
-
-  return truncateDiscussionText(
-    [
-      `agent_discuss ← ${participants.join(", ")}`,
-      `rounds: ${discussion.rounds.length}`,
-      `model calls: ${calls}`,
-      `child sessions: ${discussion.rounds.flatMap((round) => round.participants.map((participant) => participant.session.id)).join(", ")}`,
-      `usage: ${discussion.usage.input} in · ${discussion.usage.output} out · ${compactUsage(discussion.usage)}`,
-      "",
-      discussionTranscript(discussion),
-    ].join("\n"),
-    DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS,
-  );
 };
 
 export type AgentDiscussTool = Omit<ToolDefinition, "execute"> & {
@@ -1064,21 +975,8 @@ export const createAgentDiscussTool = (
       }),
     );
 
-    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the TUI adapter bridge.
+    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback at this adapter boundary.
     return Effect.runPromise(program, { signal });
-  },
-  renderCall: (rawInput) => {
-    if (!Value.Check(discussionParameters, rawInput))
-      return new Text("agent_discuss (invalid input)", 0, 0);
-
-    return new Text(renderAgentDiscussCall(rawInput), 0, 0);
-  },
-  renderResult: (result, options) => {
-    if (!Value.Check(discussionToolDetailsSchema, result.details)) {
-      return new Text("agent_discuss ✕ invalid result", 0, 0);
-    }
-
-    return new Text(renderAgentDiscussResult(result.details, options.expanded), 0, 0);
   },
 });
 

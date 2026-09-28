@@ -135,7 +135,7 @@ export const renderProfiles = (
         color,
         alignEdges(
           `${action} ${color.bold("ziggy <profile>")}`,
-          color.dim("open a profile"),
+          color.dim("open the web UI"),
           innerWidth,
         ),
         width,

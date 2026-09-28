@@ -41,7 +41,7 @@ test("renders a branded Profile view with warnings and a next action", () => {
       "│  PA  pal                                                             │",
       "│      └ ~/.ziggy/profiles/pal                                         │",
       "├──────────────────────────────────────────────────────────────────────┤",
-      "│  OPEN  ziggy <profile>                                open a profile │",
+      "│  OPEN  ziggy <profile>                               open the web UI │",
       "╰──────────────────────────────────────────────────────────────────────╯",
     ].join("\n"),
   );

@@ -16,10 +16,6 @@ import {
   createAgentRunTool,
   discussionParameters,
   discussionToolDetailsSchema,
-  renderAgentDiscussCall,
-  renderAgentDiscussResult,
-  renderAgentRunCall,
-  renderAgentRunResult,
   selectSpecialist,
   specialistReferenceExtensions,
   usageFromMessages,
@@ -169,7 +165,7 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
   return { options, parent };
 };
 
-describe("agent_run TUI tool", () => {
+describe("agent_run tool", () => {
   test("passes strict input to a fake runner and returns exact metadata", async () => {
     const calls: Array<unknown> = [];
 
@@ -293,27 +289,6 @@ describe("agent_run TUI tool", () => {
     );
 
     expect(voices).toEqual([]);
-  });
-
-  test("renders compact and expanded result details", () => {
-    expect(renderAgentRunCall({ agent: "research-helper", prompt: "Find the answer" })).toBe(
-      "agent_run → research-helper: Find the answer",
-    );
-    expect(renderAgentRunResult({ result }, false)).toBe(
-      "agent_run ← research-helper · anthropic/claude-sonnet · high · 20 tok · $0.0010",
-    );
-    expect(renderAgentRunResult({ result }, true)).toBe(
-      [
-        "agent_run ← research-helper",
-        "model: anthropic/claude-sonnet",
-        "thinking: high",
-        "tools: read",
-        "child session: child-session",
-        "usage: 12 in · 8 out · 20 tok · $0.0010",
-        "",
-        "delegated answer",
-      ].join("\n"),
-    );
   });
 
   test("publishes a strict TypeBox schema", () => {
@@ -575,7 +550,7 @@ test("specialists register only the read-only Ziggy reference extensions", () =>
   ]);
 });
 
-describe("agent_discuss TUI tool", () => {
+describe("agent_discuss tool", () => {
   test("publishes a strict bounded schema and rejects duplicates", async () => {
     const calls: unknown[] = [];
 
@@ -833,25 +808,7 @@ describe("agent_discuss TUI tool", () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  test("renders participants, rounds, model calls, usage, and a newline transcript", () => {
-    const details = {
-      result: {
-        topic: "topic",
-        rounds: [
-          {
-            round: 1 as const,
-            participants: [discussionChildResult("alpha", "first\nline", 2)],
-          },
-        ],
-        usage: discussionUsage(2),
-      },
-    };
-
-    expect(renderAgentDiscussCall({ topic: "topic", agents: ["beta", "alpha"] })).toContain(
-      "alpha, beta",
-    );
-    expect(renderAgentDiscussResult(details, false)).toContain("1 model calls");
-    expect(renderAgentDiscussResult(details, true)).toContain("first\nline");
+  test("combines discussion usage", () => {
     expect(addUsage(discussionUsage(1), discussionUsage(2))).toEqual({
       input: 3,
       output: 5,

@@ -6,7 +6,7 @@ Two standing principles: the Profile is plain visible files — open the folder 
 
 One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.87.1` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
 
-The resident gateway owns live sessions and serves the web UI. `ziggy <name|path>` starts or attaches to it and prints its local URL. `run` remains the one-shot CLI face; there is no local TUI or second session owner.
+The resident gateway is the only interactive session owner and serves the web UI. `ziggy <name|path>` attaches to a running resident, starts an installed service if stopped, or prints how to start one; it then prints the local URL. `run` and non-shared ACP still own in-process one-shot sessions. There is no local TUI.
 
 ## Ownership
 
@@ -54,7 +54,7 @@ Only the adapter imports Pi. Only executable entrypoints run Effects.
 
 ```text
 ziggy init <name|path>       create a Profile (SOUL.md); names resolve under ~/.ziggy/profiles
-ziggy <name|path>            start or attach to the resident and print the web UI URL
+ziggy <name|path>            attach or start an installed resident and print the web UI URL
 ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest session
 ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
 ziggy sessions list <name|path>              list safe Pi session metadata

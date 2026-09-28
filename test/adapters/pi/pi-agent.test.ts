@@ -442,20 +442,6 @@ describe("Pi provider failure classification", () => {
     );
   });
 
-  test("open interactive mode reports the cause without inventing models.json copy", () => {
-    const cause = new Error("ENOENT: no such file or directory, open '/commands/theme/dark.json'");
-
-    expect(providerError("/profile", "open interactive mode", cause)).toEqual(
-      new ProviderConfigError({
-        profilePath: "/profile",
-        operation: "open interactive mode",
-        message:
-          "open interactive mode failed: ENOENT: no such file or directory, open '/commands/theme/dark.json'",
-        cause,
-      }),
-    );
-  });
-
   test("select model still uses the canned auth/models.json configuration copy", () => {
     const cause = new Error("no default model");
 

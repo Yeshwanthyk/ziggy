@@ -45,7 +45,14 @@ describe("CLI decoding", () => {
   test("opens the resident UI for a bare profile", async () => {
     await expect(decode([])).resolves.toEqual({ _tag: "Open", target: "." });
     await expect(decode(["buddy"])).resolves.toEqual({ _tag: "Open", target: "buddy" });
-    await expect(decode(["tui", "help"])).rejects.toMatchObject({ _tag: "CliInputInvalid" });
+    await expect(decode(["tui", "help"])).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+      message: "the TUI was removed; use `ziggy <profile>`",
+    });
+    await expect(decode(["tui"])).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+      message: "the TUI was removed; use `ziggy <profile>`",
+    });
   });
 
   test("preserves current command shapes", async () => {

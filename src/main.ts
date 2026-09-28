@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
+import { Cause, Clock, Effect, Exit, Layer, Result, Runtime } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
@@ -816,15 +816,38 @@ const program = Effect.gen(function* () {
       const owner = yield* residentGateway.status(target);
 
       if (owner._tag !== "running") {
-        const started = yield* residentService.install(target, { force: false, start: true });
+        const status = yield* residentService.status(target);
 
-        if (started.ready !== true) {
-          return yield* fail("resident did not become ready; inspect ziggy serve status and logs");
+        if (!Result.isSuccess(status.managed) || status.managed.success._tag === "not-installed") {
+          const profile = JSON.stringify(command.target);
+
+          return yield* fail(
+            `resident not running; start it with: ziggy serve ${profile}  (or install: ziggy serve install ${profile})`,
+          );
+        }
+
+        const started = yield* residentService.start(target).pipe(Effect.result);
+
+        if (Result.isFailure(started) || started.success.ready !== true) {
+          const current = yield* residentGateway.status(target);
+
+          if (current._tag !== "running") {
+            if (Result.isFailure(started)) return yield* started.failure;
+
+            return yield* fail(
+              "resident did not become ready; inspect ziggy serve status and logs",
+            );
+          }
         }
       }
 
-      const ui = yield* readUiServerProjection(target.path);
-      console.log(`http://127.0.0.1:${ui.port}`);
+      const ui = yield* readUiServerProjection(target.path).pipe(
+        Effect.retry({ times: 10, delay: "100 millis" }),
+      );
+
+      console.log(
+        `http://127.0.0.1:${ui.port}\nNew browser? Run: ziggy web pair ${JSON.stringify(command.target)}`,
+      );
 
       return;
     }

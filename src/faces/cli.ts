@@ -224,6 +224,8 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return { _tag: "Update" };
   }
 
+  if (word === "tui") return invalid("the TUI was removed; use `ziggy <profile>`");
+
   if (word === "init") return parseInit(rest);
 
   if (word === "acp") {
