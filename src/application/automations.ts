@@ -11,6 +11,7 @@ import { createMessage, DiscordApiError } from "../adapters/discord/api";
 import { automationFileStore, type AutomationFileStore } from "../adapters/fs/automation-files";
 import { postMessage, SlackApiError } from "../adapters/slack/api";
 import { sendMessage, TelegramApiError } from "../adapters/telegram/api";
+import { appendStoredAutomationResult } from "../adapters/pi/automation-result";
 import {
   type Automation,
   AutomationDatabaseError,
@@ -71,6 +72,7 @@ export interface AutomationCapabilities {
   readonly gate: AutomationGate;
   readonly files: AutomationFileStore;
   readonly printReply: (reply: string) => Effect.Effect<void>;
+  readonly appendStoredResult?: typeof appendStoredAutomationResult;
   readonly loadTelegramConfig: typeof loadGatewayConfig;
   readonly loadDiscordConfig: typeof loadDiscordGatewayConfig;
   readonly loadSlackConfig: typeof loadSlackGatewayConfig;
@@ -88,6 +90,7 @@ const liveCapabilities: AutomationCapabilities = {
   gate: liveAutomationGate,
   files: automationFileStore,
   printReply: (reply) => Effect.sync(() => console.log(reply)),
+  appendStoredResult: appendStoredAutomationResult,
   loadTelegramConfig: loadGatewayConfig,
   loadDiscordConfig: loadDiscordGatewayConfig,
   loadSlackConfig: loadSlackGatewayConfig,
@@ -212,29 +215,26 @@ const deliver = (
 ): Effect.Effect<AutomationTargetOutcome> => {
   const operation: Effect.Effect<void, DeliveryFailure> = Effect.gen(function* () {
     if (Predicate.isTagged("conversation")(target)) {
-      if (context?.registry === undefined) {
-        return yield* Effect.fail<DeliveryFailure>({
-          category: "owner-unavailable",
-          retriable: true,
-        });
-      }
+      const result = {
+        automationId,
+        runId,
+        targetSessionId: target.sessionId,
+        text: reply,
+        timestamp,
+      };
 
-      return yield* context.registry
-        .deliverAutomationResult(profile, {
-          automationId,
-          runId,
-          targetSessionId: target.sessionId,
-          text: reply,
-          timestamp,
-        })
-        .pipe(
-          Effect.mapError(
-            (failure): DeliveryFailure => ({
-              category: failure.category,
-              retriable: failure.retriable,
-            }),
-          ),
-        );
+      return yield* (
+        context?.registry === undefined
+          ? (capabilities.appendStoredResult ?? appendStoredAutomationResult)(profile.path, result)
+          : context.registry.deliverAutomationResult(profile, result)
+      ).pipe(
+        Effect.mapError(
+          (failure): DeliveryFailure => ({
+            category: failure.category,
+            retriable: failure.retriable,
+          }),
+        ),
+      );
     }
 
     if (Predicate.isTagged("telegram")(target)) {

@@ -1,9 +1,13 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixtures exercise the Node filesystem adapter */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- test fixture checks persisted Pi session and releases its lease on assertion failure */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
+import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import { Deferred, Effect, Exit, Fiber, Option } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
@@ -682,40 +686,83 @@ describe("automation run", () => {
     expect(allEvents.at(-1)).toBe("reply:local reply");
   });
 
-  test("conversation delivery without a scoped registry fails truthfully and records the ledger", async () => {
-    const events: Array<string> = [];
-    const target = await profile("conversation:0199aabb-ccdd-7000-8000-001122334455");
+  test("headless conversation delivery checks the stored receipt under the session lease", async () => {
+    const id = "0199aabb-ccdd-7000-8000-001122334455";
+    const target = await profile(`conversation:${id}`);
+    const manager = SessionManager.create(target.path, join(target.path, "sessions"), { id });
+    manager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "initial" }],
+      timestamp: Date.now(),
+    });
+    manager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "ready" }],
+      api: "openai-completions",
+      provider: "fixture",
+      model: "fixture-model",
+      stopReason: "stop",
+      timestamp: Date.now(),
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    const file = manager.getSessionFile();
 
-    expect(await run(harness(events), target)).toEqual({
+    if (file === undefined) throw new Error("session was not persisted");
+
+    const service = harness([]);
+    const first = await run(service, target);
+    expect(first).toEqual({
       kind: "executed",
       delivery: {
         kind: "resolved",
-        targets: [
-          {
-            target: "conversation:0199aabb-ccdd-7000-8000-001122334455",
-            status: "failed",
-            category: "owner-unavailable",
-            retriable: true,
-          },
-        ],
+        targets: [{ target: `conversation:${id}`, status: "delivered" }],
       },
     });
-    expect(events).toContain("reply:local reply");
-    expect(await Effect.runPromise(readAutomationRuns(target.path))).toMatchObject([
-      {
-        state: "failed",
-        localCompleted: true,
-        failureCategory: "owner-unavailable",
-        targets: [
-          {
-            target: "conversation:0199aabb-ccdd-7000-8000-001122334455",
-            status: "failed",
-            failureCategory: "owner-unavailable",
-            retriable: true,
-          },
-        ],
-      },
-    ]);
+    // Replaying a delivery with the same run identity must not create a second receipt.
+    await Effect.runPromise(
+      appendStoredAutomationResult(target.path, {
+        automationId: "daily-note",
+        runId: "manual:00000000-0000-4000-8000-000000000001",
+        targetSessionId: id,
+        text: "local reply",
+        timestamp: "2026-09-17T12:00:00.000Z",
+      }),
+    );
+    expect(
+      (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
+    ).toHaveLength(1);
+
+    const release = await Effect.runPromise(acquireSessionLease(target.path, id));
+
+    try {
+      const held = await run(harness([], { manualRunId: "manual:held" }), target);
+      expect(held).toEqual({
+        kind: "executed",
+        delivery: {
+          kind: "resolved",
+          targets: [
+            {
+              target: `conversation:${id}`,
+              status: "failed",
+              category: "session-held",
+              retriable: true,
+            },
+          ],
+        },
+      });
+      expect(
+        (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
+      ).toHaveLength(1);
+    } finally {
+      await Effect.runPromise(release);
+    }
   });
 
   test("a truthful terminal database failure is attempted once and is not fabricated", async () => {
