@@ -48,11 +48,16 @@ const incomplete = (
   message: string,
   options: SetupOptions,
   needsAuth = false,
-): SetupIncomplete =>
-  new SetupIncomplete({
+  invalid?: "provider" | "model",
+): SetupIncomplete => {
+  const providerId = invalid === "provider" ? undefined : options.providerId;
+  const modelId = invalid === undefined ? options.modelId : undefined;
+
+  return new SetupIncomplete({
     profilePath,
-    message: `${message}; ${needsAuth ? `authenticate with ziggy auth ${JSON.stringify(profilePath)}${options.providerId === undefined ? "" : ` ${JSON.stringify(options.providerId)}`}; then ` : ""}resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive --provider ${options.providerId === undefined ? "<id>" : JSON.stringify(options.providerId)} --model ${options.modelId === undefined ? "<id>" : JSON.stringify(options.modelId)}${options.thinking === undefined ? "" : ` --thinking ${JSON.stringify(options.thinking)}`}`,
+    message: `${message}; ${needsAuth ? `authenticate with ziggy auth ${JSON.stringify(profilePath)}${providerId === undefined ? "" : ` ${JSON.stringify(providerId)}`}; then ` : ""}resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive --provider ${providerId === undefined ? "<id>" : JSON.stringify(providerId)} --model ${modelId === undefined ? "<id>" : JSON.stringify(modelId)}${options.thinking === undefined ? "" : ` --thinking ${JSON.stringify(options.thinking)}`}`,
   });
+};
 
 const choose = (
   target: ProfileTarget,
@@ -126,7 +131,13 @@ export const makeSetup = (
       const provider = providers.find((candidate) => candidate.id === providerId);
 
       if (provider === undefined) {
-        return yield* incomplete(target.path, `unknown provider ${providerId}`, options);
+        return yield* incomplete(
+          target.path,
+          `unknown provider ${providerId}`,
+          options,
+          false,
+          "provider",
+        );
       }
 
       if (provider.configured === undefined) {
@@ -164,7 +175,13 @@ export const makeSetup = (
       const selectedModel = knownModels.find((candidate) => candidate.modelId === modelId);
 
       if (selectedModel === undefined) {
-        return yield* incomplete(target.path, `unknown model ${providerId}/${modelId}`, options);
+        return yield* incomplete(
+          target.path,
+          `unknown model ${providerId}/${modelId}`,
+          options,
+          false,
+          "model",
+        );
       }
 
       let thinking = options.thinking;

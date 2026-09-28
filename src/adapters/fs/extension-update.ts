@@ -422,6 +422,15 @@ export const classifyBundledCopy = (profilePath: string, entry: BundledExtension
   const currentPath = join(profilePath, "extensions", entry.id);
 
   return Effect.gen(function* () {
+    const present = yield* Effect.promise(() =>
+      lstat(currentPath).then(
+        () => true,
+        () => false,
+      ),
+    );
+
+    if (!present) return { state: "missing" as const };
+
     const receipt = yield* store.readReceipt();
     const installedHash = yield* store.hash(currentPath);
 

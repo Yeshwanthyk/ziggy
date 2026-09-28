@@ -291,7 +291,7 @@ const resourcesCheck = (
       if (copy.state === "modified")
         return warn(
           "resources",
-          `${entry.id} has local changes; move them aside, then run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id}`,
+          `${entry.id} has local changes; copy your edits elsewhere and restore the original files, then run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id}`,
         );
 
       if (copy.state === "untracked-behind")
