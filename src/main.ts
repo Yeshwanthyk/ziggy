@@ -7,6 +7,7 @@ import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { fileSystemCauseDetails } from "./adapters/fs/cause";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
 import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-preflight";
+import { readSelectedExtensionPackage } from "./adapters/fs/profile-extensions";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { bootstrapPiStandaloneRuntime } from "./adapters/pi/standalone-runtime";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
@@ -65,6 +66,7 @@ import {
   renderAutomationRunsJson,
   renderAutomationStatus,
   renderAutomationStatusJson,
+  RESIDENT_SCHEDULE_HINT,
   renderAutomationTransition,
   renderAutomationValidation,
 } from "./faces/automation-cli";
@@ -449,6 +451,24 @@ const program = Effect.gen(function* () {
 
       console.log(renderExtensionMutation(result, terminalRenderOptions()));
 
+      if (command._tag === "ExtensionsAdd" && result.selected && result.changed) {
+        const extension = yield* readSelectedExtensionPackage(
+          target.path,
+          repositoryRoot,
+          result.id,
+        );
+
+        const service = yield* residentService.status(target);
+
+        if (
+          extension.automations.length > 0 &&
+          Result.isSuccess(service.managed) &&
+          service.managed.success._tag === "not-installed"
+        ) {
+          console.log(RESIDENT_SCHEDULE_HINT);
+        }
+      }
+
       return;
     }
 
@@ -671,13 +691,19 @@ const program = Effect.gen(function* () {
     }
 
     case "AutomationsStatus": {
-      const status = yield* automationScheduler.status(
-        resolveProfileTarget(command.target, resolutionOptions),
-      );
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const status = yield* automationScheduler.status(target);
 
       console.log(
         command.json ? renderAutomationStatusJson(status) : renderAutomationStatus(status),
       );
+
+      if (!command.json) {
+        const service = yield* residentService.status(target);
+
+        if (Result.isSuccess(service.managed) && service.managed.success._tag === "not-installed")
+          console.log(RESIDENT_SCHEDULE_HINT);
+      }
 
       return;
     }

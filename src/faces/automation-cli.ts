@@ -1,3 +1,6 @@
+export const RESIDENT_SCHEDULE_HINT =
+  "schedules will not fire: run `ziggy serve install <profile>`; `ziggy wake <id>` runs one now";
+
 import { Schema } from "effect";
 import type {
   AutomationDefinitionProjection,
