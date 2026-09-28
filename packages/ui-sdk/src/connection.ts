@@ -27,6 +27,28 @@ export const SOCKET_OPEN = 1;
 export const SOCKET_CLOSING = 2;
 export const SOCKET_CLOSED = 3;
 
+/** The request was never transmitted and is safe to retry. */
+export class ZiggyRequestNotSentError extends Error {
+  readonly method: ZiggyMethod;
+
+  constructor(method: ZiggyMethod) {
+    super(`Ziggy gateway request timed out before send: ${method}`);
+    this.name = "ZiggyRequestNotSentError";
+    this.method = method;
+  }
+}
+
+/** A response arrived, but its result failed the method's protocol decoder. */
+export class ZiggyInvalidResponseError extends Error {
+  readonly method: ZiggyMethod;
+
+  constructor(method: ZiggyMethod) {
+    super(`Invalid Ziggy gateway response for ${method}`);
+    this.name = "ZiggyInvalidResponseError";
+    this.method = method;
+  }
+}
+
 /** A sent request may have committed even though its response was not observed. Never retry it automatically. */
 export class ZiggyRequestOutcomeUnknownError extends Error {
   readonly method: ZiggyMethod;
@@ -237,7 +259,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
         if (!pending.delete(id)) return;
         reject(
           entry?.sentGeneration === undefined
-            ? new Error(`Ziggy gateway request timed out before send: ${method}`)
+            ? new ZiggyRequestNotSentError(method)
             : new ZiggyRequestOutcomeUnknownError(method, params),
         );
       }, requestTimeoutMs);
@@ -247,7 +269,7 @@ export const createZiggyConnection = (options: ZiggyConnectionOptions): ZiggyCon
         params,
         resolve: (value) => {
           if (!isMethodResult(method, params, value)) {
-            reject(new Error(`Invalid Ziggy gateway response for ${method}`));
+            reject(new ZiggyInvalidResponseError(method));
             return;
           }
           resolve(value);
