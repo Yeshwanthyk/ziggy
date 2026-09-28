@@ -53,8 +53,13 @@ describe("AutomationDestinationPicker", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "Destination" }));
 
-    const headings = screen.getAllByRole("heading", { level: 3 });
-    expect(headings.map((heading) => heading.textContent)).toEqual(["Pinned", "Agents", "Slack"]);
+    const groups = within(screen.getByRole("listbox")).getAllByRole("group");
+    expect(
+      groups.map(
+        (group) =>
+          document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
+      ),
+    ).toEqual(["Pinned", "Agents", "Slack"]);
     const agentGroup = screen.getByRole("group", { name: "Agents" });
     expect(
       within(agentGroup)
@@ -79,7 +84,7 @@ describe("AutomationDestinationPicker", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "Destination" }));
     fireEvent.click(screen.getByRole("button", { name: "Agents" }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search destinations" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Search destinations" }), {
       target: { value: "current reviewer" },
     });
 

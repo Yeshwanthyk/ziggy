@@ -222,6 +222,18 @@ function Combobox<Value>({
     setActiveIndex(next);
   };
 
+  // Tab past either end of the popover closes it and returns focus to the trigger.
+  const onPopoverKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>("input, button:not(:disabled)"),
+    ];
+    const edge = event.shiftKey ? focusable[0] : focusable.at(-1);
+    if (edge !== undefined && document.activeElement !== edge) return;
+    event.preventDefault();
+    hide({ instant: true, restoreFocus: true });
+  };
+
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
     if (options.length === 0) return;
     if (event.key === "ArrowDown") {
@@ -230,10 +242,10 @@ function Combobox<Value>({
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       moveActive(Math.max(active - 1, 0));
-    } else if (event.key === "Home" && event.ctrlKey) {
+    } else if (event.key === "Home") {
       event.preventDefault();
       moveActive(0);
-    } else if (event.key === "End" && event.ctrlKey) {
+    } else if (event.key === "End") {
       event.preventDefault();
       moveActive(options.length - 1);
     } else if (event.key === "Enter") {
@@ -280,6 +292,7 @@ function Combobox<Value>({
               data-side={placement.side}
               data-state={open ? "open" : "closed"}
               id={popoverId}
+              onKeyDown={onPopoverKeyDown}
               onBlur={(event) => {
                 const next = event.relatedTarget;
                 if (
@@ -306,7 +319,8 @@ function Combobox<Value>({
                 <input
                   aria-activedescendant={active < 0 ? undefined : optionId(active)}
                   aria-autocomplete="list"
-                  aria-controls={listId}
+                  aria-controls={options.length === 0 ? undefined : listId}
+                  aria-expanded={options.length > 0}
                   autoComplete="off"
                   autoFocus
                   onChange={(event) => {
@@ -315,6 +329,7 @@ function Combobox<Value>({
                   }}
                   onKeyDown={onSearchKeyDown}
                   placeholder={searchPlaceholder}
+                  role="combobox"
                   spellCheck={false}
                   type="search"
                   value={query}
@@ -341,8 +356,15 @@ function Combobox<Value>({
                     >
                       <div className="ui-combobox-heading" role="presentation">
                         {group.icon}
-                        <h3 id={`${baseId}-group-${group.key}`}>{group.heading}</h3>
-                        <span aria-hidden="true">{group.options.length}</span>
+                        <span
+                          className="ui-combobox-heading-name"
+                          id={`${baseId}-group-${group.key}`}
+                        >
+                          {group.heading}
+                        </span>
+                        <span aria-hidden="true" className="ui-combobox-heading-count">
+                          {group.options.length}
+                        </span>
                       </div>
                       {group.options.map((option) => {
                         index += 1;

@@ -236,14 +236,14 @@
   width: 12px;
 }
 
-.ui-combobox-heading h3 {
+.ui-combobox-heading-name {
   flex: 1;
   font-size: 12px;
   font-weight: 500;
   margin: 0;
 }
 
-.ui-combobox-heading span {
+.ui-combobox-heading-count {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
