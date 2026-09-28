@@ -25,10 +25,6 @@ test("required copies refresh only when their receipt still matches on-disk byte
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "package.json"), JSON.stringify({ name: id, version: "0.0.1" }));
   const store = makeExtensionUpdateStore(root, id);
-  await Effect.runPromise(store.prepare());
-  await Effect.runPromise(
-    store.adoptCurrent(await Effect.runPromise(store.hash(directory)), "older"),
-  );
   const calls: string[] = [];
 
   const update = (_target: typeof target, selected: string) =>
@@ -45,7 +41,14 @@ test("required copies refresh only when their receipt still matches on-disk byte
       };
     });
 
-  expect(entry?.version).not.toBe("older");
+  await Effect.runPromise(refreshRequiredExtensions(target, update));
+  expect(calls).toEqual([]);
+
+  await Effect.runPromise(store.prepare());
+  expect(entry?.source).toBe("bundled");
+  await Effect.runPromise(
+    store.adoptCurrent(await Effect.runPromise(store.hash(directory)), entry?.version ?? "0.1.0"),
+  );
   await Effect.runPromise(refreshRequiredExtensions(target, update));
   expect(calls).toEqual([id]);
 

@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp } from "node:fs/promises";
+import type { BundledExtensionCatalogEntry } from "../../domain/extension-catalog";
+import { installBundledPackage } from "./extension-installer";
 import { Effect, Schema } from "effect";
 import { ExtensionUpdateError } from "../../domain/extension-update";
 import { fileSystemCauseDetails } from "./cause";
@@ -411,3 +415,46 @@ export const makeExtensionUpdateStore = (profilePath: string, id: string) => ({
       contentHash,
     }),
 });
+
+/** Compare the published tree, its receipt and a staged copy of the current embedded bundle. */
+export const classifyBundledCopy = (profilePath: string, entry: BundledExtensionCatalogEntry) => {
+  const store = makeExtensionUpdateStore(profilePath, entry.id);
+  const currentPath = join(profilePath, "extensions", entry.id);
+
+  return Effect.gen(function* () {
+    const receipt = yield* store.readReceipt();
+    const installedHash = yield* store.hash(currentPath);
+
+    const bundledHash = yield* Effect.acquireUseRelease(
+      disk(profilePath, entry.id, "Could not create bundled comparison directory.", () =>
+        mkdtemp(join(tmpdir(), "ziggy-bundled-")),
+      ),
+      (temporary) =>
+        Effect.gen(function* () {
+          yield* installBundledPackage(temporary, entry);
+
+          return yield* store.hash(join(temporary, "extensions", entry.id));
+        }),
+      (temporary) =>
+        disk(profilePath, entry.id, "Could not remove bundled comparison directory.", () =>
+          rm(temporary, { recursive: true, force: true }),
+        ),
+    );
+
+    return {
+      receipt,
+      installedHash,
+      bundledHash,
+      state:
+        receipt === undefined
+          ? installedHash === bundledHash
+            ? ("untracked-current" as const)
+            : ("untracked-behind" as const)
+          : installedHash !== receipt.contentHash
+            ? ("modified" as const)
+            : bundledHash !== receipt.contentHash
+              ? ("tracked-behind" as const)
+              : ("current" as const),
+    };
+  });
+};

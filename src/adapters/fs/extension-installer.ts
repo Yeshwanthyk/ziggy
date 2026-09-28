@@ -490,15 +490,11 @@ const publishSource = (
   });
 };
 
-export const makeExtensionInstaller = (
-  client: ExtensionArchiveClientApi,
-  extractor: ExtensionArchiveExtractor = systemTarExtractor,
-) => ({
-  installBundled: (profilePath: string, entry: BundledExtensionCatalogEntry) => {
-    const metadata = bundledPackageMetadata(entry.id);
+export const installBundledPackage = (profilePath: string, entry: BundledExtensionCatalogEntry) => {
+  const metadata = bundledPackageMetadata(entry.id);
 
-    if (metadata === undefined) {
-      return Effect.fail(
+  return metadata === undefined
+    ? Effect.fail(
         installFailure(
           entry,
           entry.path,
@@ -506,11 +502,15 @@ export const makeExtensionInstaller = (
           `approved extension '${entry.id}' is missing from the bundled catalog`,
           undefined,
         ),
-      );
-    }
+      )
+    : publishEmbeddedTree(profilePath, entry, metadata.sourcePath, metadata.packageFiles);
+};
 
-    return publishEmbeddedTree(profilePath, entry, metadata.sourcePath, metadata.packageFiles);
-  },
+export const makeExtensionInstaller = (
+  client: ExtensionArchiveClientApi,
+  extractor: ExtensionArchiveExtractor = systemTarExtractor,
+) => ({
+  installBundled: installBundledPackage,
   installGitHub: (profilePath: string, entry: GitHubExtensionCatalogEntry) =>
     Effect.gen(function* () {
       const temporaryRoot = yield* Effect.tryPromise({

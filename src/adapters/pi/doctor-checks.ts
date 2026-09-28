@@ -2,7 +2,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../fs/cause";
-import { makeExtensionUpdateStore } from "../fs/extension-update";
+import { classifyBundledCopy } from "../fs/extension-update";
 import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../../catalog";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import {
@@ -279,18 +279,26 @@ const resourcesCheck = (
 
     for (const entry of BUILTIN_EXTENSION_CATALOG.extensions) {
       if (!isRequiredBundledExtension(entry.id) || entry.source !== "bundled") continue;
-      const store = makeExtensionUpdateStore(target.path, entry.id);
-      const receipt = yield* store.readReceipt();
+      const present = yield* Effect.result(inspect(path.join(target.path, "extensions", entry.id)));
 
-      if (receipt?.packageVersion !== undefined && receipt.packageVersion !== entry.version) {
-        const currentHash = yield* store.hash(path.join(target.path, "extensions", entry.id));
+      if (present._tag === "Failure" && isMissing(present.failure)) continue;
 
-        if (currentHash !== receipt.contentHash)
-          return warn(
-            "resources",
-            `${entry.id} is behind the bundle and locally modified; run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id} --adopt after resolving local changes`,
-          );
-      }
+      if (present._tag === "Failure")
+        return error("resources", `Could not inspect required package ${entry.id}`);
+
+      const copy = yield* classifyBundledCopy(target.path, entry);
+
+      if (copy.state === "modified")
+        return warn(
+          "resources",
+          `${entry.id} has local changes; move them aside, then run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id}`,
+        );
+
+      if (copy.state === "untracked-behind")
+        return warn(
+          "resources",
+          `${entry.id} is behind the bundle and untracked; run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id} --adopt`,
+        );
     }
 
     return ok(

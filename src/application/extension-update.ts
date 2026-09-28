@@ -7,6 +7,7 @@ import {
 } from "../adapters/github/extension-catalog";
 import { makeExtensionInstaller } from "../adapters/fs/extension-installer";
 import {
+  classifyBundledCopy,
   hasPendingExtensionUpdates,
   makeExtensionUpdateStore,
 } from "../adapters/fs/extension-update";
@@ -23,6 +24,7 @@ import {
 } from "../domain/profile-extension";
 import { ExtensionUpdateError, type ExtensionUpdateResult } from "../domain/extension-update";
 import type { ExtensionCatalog } from "../domain/extension-catalog";
+import type { BundledExtensionCatalogEntry } from "../domain/extension-catalog";
 import type { ProfileTarget } from "../domain/profile";
 import { ResidentService, type ResidentServiceApi } from "./resident-service";
 import type {
@@ -39,20 +41,21 @@ export const refreshRequiredExtensions = (
 ) =>
   Effect.forEach(
     [...BUILTIN_EXTENSION_CATALOG.extensions].filter(
-      (entry) => isRequiredBundledExtension(entry.id) && entry.source === "bundled",
+      (entry): entry is BundledExtensionCatalogEntry =>
+        isRequiredBundledExtension(entry.id) && entry.source === "bundled",
     ),
     (entry) =>
       Effect.gen(function* () {
-        const store = makeExtensionUpdateStore(target.path, entry.id);
-        const receipt = yield* store.readReceipt();
+        const copy = yield* classifyBundledCopy(target.path, entry);
 
-        if (receipt === undefined || receipt.packageVersion === entry.version) return;
-        const hash = yield* store.hash(join(target.path, "extensions", entry.id));
+        if (copy.state !== "tracked-behind") return;
+        const result = yield* update(target, entry.id);
 
-        if (hash !== receipt.contentHash) return;
-        yield* update(target, entry.id);
+        yield* Effect.logInfo(
+          `Refreshed required extension ${entry.id}${result.backupPath === undefined ? "" : `; backup: ${result.backupPath}`}`,
+        );
       }).pipe(
-        Effect.catch((cause) =>
+        Effect.catchCause((cause) =>
           Effect.logWarning(`Required extension ${entry.id} was not refreshed`, { cause }),
         ),
       ),
