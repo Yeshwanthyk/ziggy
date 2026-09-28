@@ -240,7 +240,7 @@ describe("profile_extensions input and result contract", () => {
       profilePath: "/trusted/profile",
       stage: "skills",
       message: `bad skill\n${"x".repeat(600)}`,
-      diagnostics: [],
+      diagnostics: [{ source: "skills/broken", message: "missing entrypoint" }],
       cause: new Error("private cause"),
     });
 
@@ -269,6 +269,7 @@ describe("profile_extensions input and result contract", () => {
       id: "alpha",
       source: "shelf",
       selectionChanged: false,
+      diagnostics: [{ source: "skills/broken", message: "missing entrypoint" }],
     });
 
     if (response.details.ok) throw new Error("expected a structured tool failure");

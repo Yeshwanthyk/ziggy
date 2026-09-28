@@ -206,6 +206,16 @@ const toolDetailsFailure = Type.Object(
     code: toolCode,
     message: toolMessage,
     selectionChanged: Type.Boolean(),
+    diagnostics: Type.Optional(
+      Type.Array(
+        Type.Object({
+          source: Type.String({ maxLength: 240 }),
+          message: Type.String({ maxLength: PROFILE_EXTENSIONS_MAX_MESSAGE_CODE_POINTS }),
+        }),
+        { maxItems: 8 },
+      ),
+    ),
+    diagnosticsTruncated: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -272,6 +282,7 @@ interface MutableToolDetailFields {
 }
 
 interface FailureProjection {
+  readonly diagnostics?: ReadonlyArray<{ readonly source: string; readonly message: string }>;
   readonly stage: Exclude<ToolStage, "input" | "complete">;
   readonly code: string;
   readonly id?: string;
@@ -364,23 +375,41 @@ const failureDetails = (
   code: string,
   message: string,
   selectionChanged: boolean,
-): ProfileExtensionToolDetails => ({
-  ok: false,
-  ...withInputMetadata(
-    {
-      operation,
-      stage,
-      code: boundedCode(code, "extension_operation_failed"),
+  diagnostics?: ReadonlyArray<{ readonly source: string; readonly message: string }>,
+): ProfileExtensionToolDetails => {
+  const base = {
+    ok: false as const,
+    ...withInputMetadata(
+      {
+        operation,
+        stage,
+        code: boundedCode(code, "extension_operation_failed"),
+        message: boundedText(
+          message,
+          PROFILE_EXTENSIONS_MAX_MESSAGE_CODE_POINTS,
+          "extension operation failed",
+        ),
+        selectionChanged,
+      },
+      metadata,
+    ),
+  };
+
+  if (diagnostics === undefined) return base;
+
+  return {
+    ...base,
+    diagnostics: diagnostics.slice(0, 8).map((item) => ({
+      source: boundedText(item.source, 240, "unknown"),
       message: boundedText(
-        message,
+        item.message,
         PROFILE_EXTENSIONS_MAX_MESSAGE_CODE_POINTS,
-        "extension operation failed",
+        "diagnostic unavailable",
       ),
-      selectionChanged,
-    },
-    metadata,
-  ),
-});
+    })),
+    diagnosticsTruncated: diagnostics.length > 8,
+  };
+};
 
 const successDetails = (
   operation: Exclude<ToolOperation, "input">,
@@ -436,7 +465,12 @@ const failureProjection = (failure: ProfileExtensionError): FailureProjection =>
         selectionChanged: false,
       };
     case "ProfileExtensionPreflightFailed":
-      return { stage: failure.stage, code: "preflight_failed", selectionChanged: false };
+      return {
+        stage: failure.stage,
+        code: "preflight_failed",
+        selectionChanged: false,
+        diagnostics: failure.diagnostics,
+      };
     case "ProfileExtensionLockFailed":
       return { stage: "lock", code: "lock_failed", selectionChanged: false };
     case "ProfileExtensionRollbackFailed":
@@ -556,8 +590,8 @@ const successFor = (
         metadata,
         mutation.changed ? "selected" : "already_selected",
         mutation.changed
-          ? `selected Profile extension '${boundedId(mutation.id)}'`
-          : `Profile extension '${boundedId(mutation.id)}' is already selected`,
+          ? `selected Profile extension '${boundedId(mutation.id)}'; open sessions need a reopen or a resident restart (ziggy serve restart <profile>)`
+          : `Profile extension '${boundedId(mutation.id)}' is already selected; open sessions need a reopen or a resident restart (ziggy serve restart <profile>)`,
         mutation.changed,
         projectMutation(mutation),
       );
@@ -595,7 +629,15 @@ const successFor = (
 
 const contentFor = (details: ProfileExtensionToolDetails): string => {
   if (!details.ok) {
-    return `ERROR: ${details.operation} failed [stage=${details.stage}; code=${details.code}]: ${details.message}`;
+    const diagnostics = details.diagnostics
+      ?.map((item) => `${item.source}: ${item.message}`)
+      .join("; ");
+
+    return boundedText(
+      `ERROR: ${details.operation} failed [stage=${details.stage}; code=${details.code}]: ${details.message}${diagnostics ? `; diagnostics: ${diagnostics}` : ""}${details.diagnosticsTruncated ? "; diagnostics truncated" : ""}`,
+      PROFILE_EXTENSIONS_MAX_OUTPUT_CODE_POINTS,
+      "extension operation failed",
+    );
   }
 
   if (details.operation === "list" && "available" in details.result) {
@@ -688,6 +730,7 @@ export const createProfileExtensionTool = (
                 projection.code,
                 failure.message,
                 projection.selectionChanged,
+                projection.diagnostics,
               ),
             );
           },
