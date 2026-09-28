@@ -1,5 +1,4 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem state */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +9,6 @@ import { AutomationProjectionError } from "ziggy/domain/automation";
 import { ResidentServiceError, type ResidentLaunchVector } from "ziggy/domain/resident-service";
 import type { AutomationSchedulerApi } from "ziggy/application/automation-scheduler";
 import type { ResidentGatewayApi } from "ziggy/application/resident-gateway";
-import {} from "ziggy/application/resident-service";
 import {
   makeResidentService,
   type ResidentServiceRuntime,

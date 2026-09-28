@@ -29,18 +29,12 @@ import {
 import { validateGatewayProfile } from "../fs/gateway-config";
 import { readDiscordHealth } from "../fs/discord-health";
 import { readSlackHealth } from "../fs/slack-health";
-import type {
-  DiscordHealthProjection,
-  DiscordHealthProjectionError,
-} from "../../domain/discord-health";
 import type { ProfileTarget } from "../../domain/profile";
 import {
   deriveResidentServiceIdentity,
   type ResidentServiceDefinition,
-  type ResidentServiceDefinitionState,
   ResidentServiceError,
   type ResidentServiceManager,
-  type ResidentServiceWriteResult,
 } from "../../domain/resident-service";
 import {
   AutomationScheduler,
@@ -51,9 +45,6 @@ import { ResidentGateway, type ResidentGatewayApi } from "../../application/resi
 import {
   ResidentServiceOperations,
   type ResidentServiceApi,
-  type ResidentServiceStatus,
-  type ResidentLifecycleResult,
-  type ResidentLogsResult,
   type ResidentSupervisorStatus,
 } from "../../application/resident-service";
 import type { GatewayOwnerStatus } from "../../domain/gateway";

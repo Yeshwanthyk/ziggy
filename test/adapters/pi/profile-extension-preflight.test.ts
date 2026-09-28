@@ -98,13 +98,6 @@ const writeAgent = async (profilePath: string): Promise<void> => {
   );
 };
 
-const failureFor = async (profilePath: string, selected: ReadonlyArray<string>) =>
-  Effect.runPromise(
-    makeProfileExtensionPreflight()
-      .preflight(profilePath, "/repository", selected)
-      .pipe(Effect.flip),
-  );
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
