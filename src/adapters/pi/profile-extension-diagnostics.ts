@@ -1,4 +1,5 @@
-import { sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import type { PiResources } from "./resources";
 import type { AgentSessionServices } from "@earendil-works/pi-coding-agent";
 import {
@@ -137,6 +138,26 @@ export interface PiResourcePartition {
   readonly fatal: ReadonlyArray<PiResourceDiagnostic>;
 }
 
+const canonicalPath = (path: string): string => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+};
+
+const owningPackage = (resources: PiResources, source: string) => {
+  const path = canonicalPath(source);
+
+  return (resources.optionalPackages ?? [])
+    .filter((item) => {
+      const root = canonicalPath(item.packagePath);
+
+      return path === root || path.startsWith(`${root}${sep}`);
+    })
+    .sort((a, b) => canonicalPath(b.packagePath).length - canonicalPath(a.packagePath).length)[0];
+};
+
 /** Only selected optional package roots may be quarantined. Inline and core diagnostics stay fatal. */
 export const partitionPiResourceDiagnostics = (
   resources: PiResources,
@@ -146,11 +167,14 @@ export const partitionPiResourceDiagnostics = (
   const fatal: PiResourceDiagnostic[] = [];
 
   for (const diagnostic of diagnostics) {
-    const owner = resources.optionalPackages?.find(
-      (item) =>
-        diagnostic.source === item.packagePath ||
-        diagnostic.source.startsWith(`${item.packagePath}${sep}`),
-    );
+    const conflict = /Command "[^"]+" conflicts with (.+)$/u.exec(diagnostic.message);
+
+    const currentOwner = owningPackage(resources, diagnostic.source);
+
+    const previousOwner =
+      conflict?.[1] === undefined ? undefined : owningPackage(resources, conflict[1]);
+
+    const owner = currentOwner ?? previousOwner;
 
     if (owner === undefined) {
       fatal.push(diagnostic);
@@ -158,7 +182,11 @@ export const partitionPiResourceDiagnostics = (
     }
 
     const entries = byPackage.get(owner.id) ?? [];
-    entries.push(diagnostic);
+    entries.push(
+      currentOwner === undefined && previousOwner !== undefined
+        ? { source: conflict?.[1] ?? diagnostic.source, message: diagnostic.message }
+        : diagnostic,
+    );
     byPackage.set(owner.id, entries);
   }
 
@@ -174,10 +202,13 @@ export const partitionPiResourceDiagnostics = (
 
   const rejectedPaths = (resources.optionalPackages ?? [])
     .filter((item) => rejected.has(item.id))
-    .map((item) => item.packagePath);
+    .map((item) => canonicalPath(item.packagePath));
 
-  const retained = (path: string) =>
-    !rejectedPaths.some((root) => path === root || path.startsWith(`${root}${sep}`));
+  const retained = (source: string) => {
+    const path = canonicalPath(source);
+
+    return !rejectedPaths.some((root) => path === root || path.startsWith(`${root}${sep}`));
+  };
 
   return {
     resources: {
