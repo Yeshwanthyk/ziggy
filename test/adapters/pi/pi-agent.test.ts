@@ -280,6 +280,66 @@ test("a failed chat runtime build releases the transcript lease", async () => {
   if (Exit.isSuccess(reopened)) await Effect.runPromise(reopened.value.dispose);
 });
 
+test("interrupting a pending runtime build releases the transcript lease", async () => {
+  const profilePath = await temporaryProfile();
+
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
+
+  const directory = join(profilePath, "sessions", "chat");
+  await mkdir(directory, { recursive: true });
+
+  await writeFile(
+    join(directory, "interrupted.jsonl"),
+    `${JSON.stringify({ type: "session", version: 3, id: "interrupted-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
+  );
+
+  const reached = Promise.withResolvers<void>();
+
+  const pending = Promise.withResolvers<AgentSessionRuntime>();
+
+  const running = Effect.runFork(
+    openChat(
+      { path: profilePath, name: "Profile" },
+      { kind: "local" },
+      directory,
+      profilePath,
+      "continue",
+      undefined,
+      undefined,
+      async () => {
+        reached.resolve();
+
+        return pending.promise;
+      },
+    ),
+  );
+
+  await reached.promise;
+  const interruption = Effect.runPromise(Fiber.interrupt(running));
+  pending.reject(new Error("injected interrupted build failure"));
+  await interruption;
+
+  let reopenedFactoryCalls = 0;
+  await Effect.runPromiseExit(
+    openChat(
+      { path: profilePath, name: "Profile" },
+      { kind: "local" },
+      directory,
+      profilePath,
+      "continue",
+      undefined,
+      undefined,
+      (...args) => {
+        reopenedFactoryCalls += 1;
+
+        return createAgentSessionRuntime(...args);
+      },
+    ),
+  );
+
+  expect(reopenedFactoryCalls).toBe(1);
+});
+
 test("a held chat refuses before calling Pi's runtime factory", async () => {
   const profilePath = await temporaryProfile();
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
