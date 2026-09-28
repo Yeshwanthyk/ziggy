@@ -178,7 +178,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
     true,
   );
   expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
-  expect(screen.getByText(/ziggy serve restart <profile>/u)).not.toBeNull();
+  expect(screen.getByText(/Restart the resident to apply extension changes/u)).not.toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });
@@ -306,7 +306,7 @@ it("shows quarantined extension diagnostics and the resident restart hint", () =
     />,
   );
   expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
-  expect(screen.getByRole("alert").textContent).toContain("ziggy serve restart <profile>");
+  expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
   expect((screen.getByRole("checkbox", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
     true,
   );

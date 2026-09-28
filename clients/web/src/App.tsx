@@ -175,6 +175,10 @@ export function App() {
   const connectionAttemptRef = useRef(0);
 
   useEffect(() => {
+    document.title = gateway.profile?.name ?? "Ziggy";
+  }, [gateway.profile?.name]);
+
+  useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [gateway.pendingUser, gateway.streamText, gateway.tools]);
 
@@ -528,9 +532,7 @@ export function App() {
                       conversation.active,
                   )}
                   description={agent.description}
-                  shortDescription={agent.description
-                    .split(/\.\s/u)[0]
-                    ?.replace(/ for Squarey\.?$/u, "")}
+                  shortDescription={agent.description.split(/\.\s/u)[0]}
                   disabled={!connected || gateway.sidebarBusy}
                   key={agent.id}
                   name={agent.id}
@@ -635,9 +637,9 @@ export function App() {
           </div>
         </ScrollArea>
         <Stack alignCenter gap={12} className="profile-footer">
-          {avatar(gateway.profile?.name ?? "Squarey")}
+          {avatar(gateway.profile?.name ?? "Ziggy")}
           <span>
-            <strong>{gateway.profile?.name ?? "Squarey"}</strong>
+            <strong>{gateway.profile?.name ?? "Ziggy"}</strong>
             <small>{gateway.connection === "open" ? "Connected" : gateway.connection}</small>
           </span>
           <Button
@@ -746,11 +748,15 @@ export function App() {
             !startupPending ? (
               <div className="welcome-state">
                 <PrismArt />
-                <h1>{connected ? `Talk with ${gateway.selectedTitle}` : "Meet Squarey"}</h1>
+                <h1>
+                  {connected
+                    ? `Talk with ${gateway.selectedTitle}`
+                    : `Meet ${gateway.profile?.name ?? "Ziggy"}`}
+                </h1>
                 <p>
                   {connected
                     ? "Start with what is on your mind. This conversation stays with your local Profile."
-                    : "Connect to Squarey to open your conversations and start chatting."}
+                    : `Connect to ${gateway.profile?.name ?? "Ziggy"} to open your conversations and start chatting.`}
                 </p>
                 {connected ? null : (
                   <Button onClick={() => setConnectionOpen(true)}>Connect</Button>
@@ -981,11 +987,11 @@ export function App() {
         onSaveModel={gateway.saveModelSettings}
         onToggleExtension={gateway.toggleExtension}
         open={connectionOpen}
-        profileName={gateway.profile?.name ?? "Squarey"}
+        profileName={gateway.profile?.name ?? "Ziggy"}
       />
       <div aria-live="polite" className="sr-only">
         {gateway.busy
-          ? "Squarey is working"
+          ? `${gateway.profile?.name ?? "Ziggy"} is working`
           : gateway.streamText.length > 0
             ? "Response complete"
             : ""}

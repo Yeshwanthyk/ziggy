@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="description" content="A quiet local conversation with Ziggy." />
     <link rel="icon" type="image/webp" href="/ziggy-prism.webp?v=1" />
-    <title>Squarey</title>
+    <title>Ziggy</title>
     <script type="module" crossorigin src="/assets/app.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index.css">
   </head>

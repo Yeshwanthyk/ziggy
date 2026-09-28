@@ -218,7 +218,7 @@ export function SettingsDialog({
           <DialogDescription>
             {connected
               ? "Manage this browser connection and the Profile default used when sessions open."
-              : "Connect to Squarey to open your conversations. Model and provider settings will appear once connected."}
+              : `Connect to ${profileName} to open your conversations. Model and provider settings will appear once connected.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -480,7 +480,7 @@ export function SettingsDialog({
                 <p className={pairingRequired ? "form-error" : "ziggy-settings-muted"}>
                   {pairingRequired
                     ? "This browser needs pairing. Open a fresh link from `ziggy web pair <profile>`."
-                    : "This browser is paired with the hosted Ziggy gateway."}
+                    : "This browser is paired with the local Ziggy resident."}
                 </p>
               </div>
             ) : (
@@ -594,10 +594,7 @@ export function SettingsDialog({
                   </div>
                 ) : null}
                 {modelSettings?.restartRequired ? (
-                  <p role="status">
-                    Restart the resident to apply extension changes:{" "}
-                    <code>ziggy serve restart &lt;profile&gt;</code>
-                  </p>
+                  <p role="status">Restart the resident to apply extension changes.</p>
                 ) : null}
                 {modelSettings?.extensions?.truncated ? (
                   <p role="status">Extension list truncated; some entries are not shown.</p>

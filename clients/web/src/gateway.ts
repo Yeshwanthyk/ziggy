@@ -363,7 +363,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [sidebarBusy, setSidebarBusy] = useState(false);
   const [selectedRef, setSelectedRef] = useState<ZiggySessionRef>();
-  const [selectedTitle, setSelectedTitle] = useState("Squarey");
+  const [selectedTitle, setSelectedTitle] = useState("Ziggy");
   const [history, setHistory] = useState<ReadonlyArray<ZiggySessionHistoryEntry>>([]);
   const [historyCursor, setHistoryCursor] = useState<string>();
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
