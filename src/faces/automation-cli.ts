@@ -1,10 +1,3 @@
-const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-
-export const RESIDENT_SCHEDULE_HINT = (profilePath: string, running: boolean): string =>
-  running
-    ? `schedules fire only while this resident runs; install a service with ziggy serve install ${shellQuote(profilePath)}`
-    : `schedules will not fire: run ziggy serve install ${shellQuote(profilePath)} (or ziggy serve ${shellQuote(profilePath)})`;
-
 import { Schema } from "effect";
 import type {
   AutomationDefinitionProjection,
@@ -12,6 +5,11 @@ import type {
 } from "../application/automation-definitions";
 import { AutomationRunProjection, AutomationScheduleRecord } from "../domain/automation";
 import type { AutomationRunOutcome, AutomationStatusProjection } from "../domain/automation";
+
+export const RESIDENT_SCHEDULE_HINT = (profilePath: string, running: boolean): string =>
+  running
+    ? `schedules fire only while this resident runs; install a service with ziggy serve install ${JSON.stringify(profilePath)}`
+    : `schedules will not fire: run ziggy serve install ${JSON.stringify(profilePath)} (or ziggy serve ${JSON.stringify(profilePath)})`;
 
 export const AutomationDefinitionProjectionJson = Schema.Struct({
   id: Schema.String,

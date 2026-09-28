@@ -32,32 +32,35 @@ export const issueWebPairing = (target: ProfileTarget): Effect.Effect<WebPairing
   Effect.gen(function* () {
     const config = yield* readWebAccessConfig(target.path);
 
-    const owner = yield* inspectGatewayOwner(target).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WebAccessError({
-            operation: "issue web pairing",
-            path: target.path,
-            message: "could not inspect resident",
-            cause,
-          }),
-      ),
-    );
+    let port = config.port;
 
-    const port =
-      owner._tag === "running"
-        ? (yield* readUiServerProjection(target.path).pipe(
-            Effect.mapError(
-              (cause) =>
-                new WebAccessError({
-                  operation: "issue web pairing",
-                  path: target.path,
-                  message: "resident UI is not ready",
-                  cause,
-                }),
-            ),
-          )).port
-        : config.port;
+    if (port === 0 && config.publicUrl === undefined) {
+      const owner = yield* inspectGatewayOwner(target).pipe(
+        Effect.mapError(
+          (cause) =>
+            new WebAccessError({
+              operation: "issue web pairing",
+              path: target.path,
+              message: "could not inspect resident",
+              cause,
+            }),
+        ),
+      );
+
+      if (owner._tag === "running") {
+        port = (yield* readUiServerProjection(target.path).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WebAccessError({
+                operation: "issue web pairing",
+                path: target.path,
+                message: "resident UI is not ready",
+                cause,
+              }),
+          ),
+        )).port;
+      }
+    }
 
     if (port === 0 && config.publicUrl === undefined) {
       return yield* new WebAccessError({

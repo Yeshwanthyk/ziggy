@@ -39,8 +39,11 @@ import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-o
 import { Sessions, SessionsLive } from "./application/sessions";
 import { listProfileExtensionsWithHealth } from "./adapters/pi/profile-extension-preflight";
 import { SelfUpdate, SelfUpdateLive } from "./application/self-update";
-import { ExtensionUpdate, ExtensionUpdateLive } from "./application/extension-update";
-import { refreshRequiredExtensions } from "./application/extension-update";
+import {
+  ExtensionUpdate,
+  ExtensionUpdateLive,
+  refreshRequiredExtensions,
+} from "./application/extension-update";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Setup, SetupLive } from "./application/setup";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";

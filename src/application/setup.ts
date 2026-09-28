@@ -46,21 +46,23 @@ export class Setup extends Context.Service<Setup, SetupApi>()("ziggy/Setup") {}
 const incomplete = (
   profilePath: string,
   message: string,
-  options?: SetupOptions,
+  options: SetupOptions,
+  needsAuth = false,
 ): SetupIncomplete =>
   new SetupIncomplete({
     profilePath,
-    message: `${message}; authenticate with ziggy auth ${JSON.stringify(profilePath)}${options?.providerId === undefined ? "" : ` ${JSON.stringify(options.providerId)}`}; then resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive${options?.providerId === undefined ? "" : ` --provider ${JSON.stringify(options.providerId)}`}${options?.modelId === undefined ? "" : ` --model ${JSON.stringify(options.modelId)}`}${options?.thinking === undefined ? "" : ` --thinking ${JSON.stringify(options.thinking)}`}`,
+    message: `${message}; ${needsAuth ? `authenticate with ziggy auth ${JSON.stringify(profilePath)}${options.providerId === undefined ? "" : ` ${JSON.stringify(options.providerId)}`}; then ` : ""}resume with: ziggy init ${JSON.stringify(profilePath)} --non-interactive --provider ${options.providerId === undefined ? "<id>" : JSON.stringify(options.providerId)} --model ${options.modelId === undefined ? "<id>" : JSON.stringify(options.modelId)}${options.thinking === undefined ? "" : ` --thinking ${JSON.stringify(options.thinking)}`}`,
   });
 
 const choose = (
   target: ProfileTarget,
   interaction: SetupInteraction,
+  options: SetupOptions,
   message: string,
   choices: ReadonlyArray<SetupChoice>,
 ) =>
   choices.length === 0
-    ? Effect.fail(incomplete(target.path, message))
+    ? Effect.fail(incomplete(target.path, message, options))
     : interaction.select(message, choices);
 
 const configuredProviderChoices = (
@@ -109,12 +111,13 @@ export const makeSetup = (
 
       if (providerId === undefined) {
         if (!options.interactive) {
-          return yield* incomplete(target.path, "provider selection is missing");
+          return yield* incomplete(target.path, "provider selection is missing", options);
         }
 
         providerId = yield* choose(
           target,
           interaction,
+          options,
           "Select a provider",
           configuredProviderChoices(providers),
         );
@@ -123,7 +126,7 @@ export const makeSetup = (
       const provider = providers.find((candidate) => candidate.id === providerId);
 
       if (provider === undefined) {
-        return yield* incomplete(target.path, `unknown provider ${providerId}`);
+        return yield* incomplete(target.path, `unknown provider ${providerId}`, options);
       }
 
       if (provider.configured === undefined) {
@@ -132,6 +135,7 @@ export const makeSetup = (
             target.path,
             `provider ${providerId} is not authenticated`,
             options,
+            true,
           );
         }
 
@@ -145,12 +149,13 @@ export const makeSetup = (
 
       if (modelId === undefined) {
         if (!options.interactive) {
-          return yield* incomplete(target.path, "model selection is missing");
+          return yield* incomplete(target.path, "model selection is missing", options);
         }
 
         modelId = yield* choose(
           target,
           interaction,
+          options,
           `Select a ${providerId} model`,
           modelChoices(knownModels),
         );
@@ -159,7 +164,7 @@ export const makeSetup = (
       const selectedModel = knownModels.find((candidate) => candidate.modelId === modelId);
 
       if (selectedModel === undefined) {
-        return yield* incomplete(target.path, `unknown model ${providerId}/${modelId}`);
+        return yield* incomplete(target.path, `unknown model ${providerId}/${modelId}`, options);
       }
 
       let thinking = options.thinking;
@@ -179,6 +184,7 @@ export const makeSetup = (
         thinking = yield* choose(
           target,
           interaction,
+          options,
           `Select a thinking level for ${providerId}/${modelId}`,
           selectedModel.thinkingLevels.map((level) => ({ id: level, label: level })),
         );
