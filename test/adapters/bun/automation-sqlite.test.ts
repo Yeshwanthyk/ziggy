@@ -20,6 +20,7 @@ import {
   recoverResidentAutomationRuns,
 } from "ziggy/adapters/bun/automation-sqlite";
 import { discoverAutomationSources } from "ziggy/adapters/fs/automation-files";
+import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
 import { isLocalProcessAlive, makeLocalProcessAlive } from "ziggy/adapters/bun/process";
 
 const paths: Array<string> = [];
@@ -96,6 +97,25 @@ afterEach(async () =>
 );
 
 describe("automation SQLite", () => {
+  test("initialization authority contention reports a retriable resident startup", async () => {
+    const path = await profile();
+
+    const result = await run(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* acquireGatewayOwner({ path, name: "test" });
+
+          return yield* initializeAutomationDatabase(path).pipe(Effect.result);
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationDatabaseError", message: "resident is starting; retry" },
+    });
+  });
+
   test("local PID liveness proves only ESRCH dead and otherwise stays conservative", async () => {
     const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1_000)"], {
       stdout: "ignore",

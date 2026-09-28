@@ -22,6 +22,7 @@ import {
   manualRunId,
 } from "../../domain/automation";
 import type { ProfileTarget } from "../../domain/profile";
+import { GatewayOwnerError } from "../../domain/gateway";
 import { isLocalProcessAlive } from "./process";
 
 const DATABASE_NAME = "automation-scheduler.sqlite";
@@ -180,6 +181,16 @@ const dbError = (operation: string, path: string, cause: unknown) =>
     message: `automation database ${operation} failed at ${path}`,
     cause,
   });
+
+const migrationAuthorityError = (operation: string, path: string, cause: unknown) =>
+  cause instanceof GatewayOwnerError && cause.reason === "held"
+    ? new AutomationDatabaseError({
+        operation,
+        path,
+        message: "resident is starting; retry",
+        cause,
+      })
+    : dbError(operation, path, cause);
 
 // The v1 shape is a frozen migration input contract. Unknown versions and altered SQL fail closed.
 const expectedObjects = [
@@ -368,7 +379,7 @@ export const initializeAutomationDatabase = (
         (cause): AutomationDatabaseError =>
           cause instanceof AutomationDatabaseError
             ? cause
-            : dbError("acquire initialization authority", path, cause),
+            : migrationAuthorityError("acquire initialization authority", path, cause),
       ),
     );
 
@@ -656,7 +667,11 @@ const ensureManualDatabase = (
             const authority = yield* acquireGatewayOwner({ path: profilePath, name: profilePath });
             yield* initializeAutomationDatabase(profilePath, authority);
           }),
-        ).pipe(Effect.mapError((cause) => dbError("acquire migration authority", path, cause))),
+        ).pipe(
+          Effect.mapError((cause) =>
+            migrationAuthorityError("acquire migration authority", path, cause),
+          ),
+        ),
   );
 };
 
