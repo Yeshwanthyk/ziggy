@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -190,6 +191,36 @@ export const scopedSessionLease = (
       Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
     ),
   ).pipe(Effect.asVoid);
+
+/** A non-creating snapshot of lease authority. Never opens the transcript or takes ownership. */
+export const isSessionLeaseHeld = (
+  profilePath: string,
+  sessionId: string,
+): Effect.Effect<boolean, SessionLeaseFailed> =>
+  Effect.try({
+    try: () => {
+      const path = sessionLeasePath(profilePath, sessionId);
+
+      if (!existsSync(path)) return false;
+
+      const db = new Database(path, { create: false, readwrite: true, strict: true });
+
+      try {
+        db.exec("PRAGMA busy_timeout = 0;");
+        db.exec("BEGIN IMMEDIATE");
+        db.exec("ROLLBACK");
+
+        return false;
+      } catch (cause) {
+        if (String(cause).includes("SQLITE_BUSY") || String(cause).includes("database is locked"))
+          return true;
+        throw cause;
+      } finally {
+        db.close(false);
+      }
+    },
+    catch: (cause) => new SessionLeaseFailed({ message: "could not inspect session lease", cause }),
+  });
 
 /** A runtime may replace Pi's session manager without closing its handle. */
 export interface SessionLeaseTransitions {

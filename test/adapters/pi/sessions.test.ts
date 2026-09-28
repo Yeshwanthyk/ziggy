@@ -15,7 +15,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Result, Schema } from "effect";
-import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
+import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
+import {
+  listProfileSessionSummaries,
+  listProfileSessions,
+  showProfileSession,
+} from "ziggy/adapters/pi/sessions";
 
 const temporaryPaths: Array<string> = [];
 
@@ -539,4 +544,35 @@ describe("Pi session metadata adapter", () => {
     expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
     expect(await readFile(file)).toEqual(before);
   });
+});
+
+test("read-only session summaries use first user text and observe a live writer", async () => {
+  const root = await profile();
+  const file = join(root, "sessions", "one.jsonl");
+  await writeJsonl(file, [
+    header("one"),
+    entry("user", null, {
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "Hello Ziggy" }], timestamp: 0 },
+    }),
+  ]);
+  const before = await readFile(file);
+  const release = await Effect.runPromise(acquireSessionLease(root, "one"));
+
+  try {
+    expect(await Effect.runPromise(listProfileSessionSummaries(root))).toEqual([
+      {
+        id: "one",
+        path: "one.jsonl",
+        title: "Hello Ziggy",
+        updatedAt: "2026-08-08T10:00:04.000Z",
+        held: true,
+      },
+    ]);
+    expect(await readFile(file)).toEqual(before);
+  } finally {
+    await Effect.runPromise(release);
+  }
+
+  expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.held).toBe(false);
 });

@@ -2,6 +2,7 @@ import { lstat, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Schema } from "effect";
 import type {
+  ProfileSessionSummary,
   SessionMetadata,
   SessionModelChange,
   SessionReferenceMetadata,
@@ -11,6 +12,7 @@ import type {
 } from "../../domain/session";
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
+import { isSessionLeaseHeld, SessionLeaseFailed } from "./session-lease";
 import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
 
 const isOversizedLineCause = Schema.is(Schema.Struct({ kind: Schema.Literal("line-too-large") }));
@@ -35,6 +37,7 @@ const Usage = Schema.Struct({
 
 const RawMessage = Schema.Struct({
   role: Schema.String,
+  content: Schema.optional(Schema.Unknown),
   provider: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
   stopReason: Schema.optional(Schema.String),
@@ -78,6 +81,7 @@ interface ParsedSession {
   readonly relativePath: string;
   readonly header: Header;
   readonly name: string | undefined;
+  readonly firstUserMessage: string | undefined;
   readonly activityAt: string;
   readonly entryCount: number;
   readonly modelChanges: ReadonlyArray<SessionModelChange>;
@@ -226,6 +230,31 @@ const discoverFiles = (root: string): Effect.Effect<ReadonlyArray<string>, Sessi
 const decodeFailure = (file: string, cause: unknown) =>
   failure(file, "decode", `invalid Pi session metadata in ${file}`, cause);
 
+const TextPart = Schema.Struct({ type: Schema.Literal("text"), text: Schema.String });
+
+const isTextPart = Schema.is(TextPart);
+
+const isString = Schema.is(Schema.String);
+
+const TextContent = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+
+const isTextContent = Schema.is(TextContent);
+
+const firstUserText = (content: typeof TextContent.Type): string | undefined => {
+  const text = isString(content)
+    ? content
+    : content !== undefined
+      ? content
+          .filter(isTextPart)
+          .map((part) => part.text)
+          .join(" ")
+      : "";
+
+  const normalized = text.replace(/\s+/gu, " ").trim();
+
+  return normalized.length === 0 ? undefined : normalized.slice(0, 160);
+};
+
 const terminalState = (message: Entry["message"]): SessionTerminalState => {
   if (message?.role !== "assistant") return "incomplete";
 
@@ -250,6 +279,7 @@ const parseSession = (
     let usage = zeroUsage();
     let lastMessage: Entry["message"];
     let name: string | undefined;
+    let firstUserMessage: string | undefined;
     let activityAt: string | undefined;
 
     const reject = (cause: unknown): never => {
@@ -323,6 +353,14 @@ const parseSession = (
       const message = entry.message;
 
       if (
+        firstUserMessage === undefined &&
+        entry.type === "message" &&
+        message?.role === "user" &&
+        isTextContent(message.content)
+      )
+        firstUserMessage = firstUserText(message.content);
+
+      if (
         entry.type === "message" ||
         (entry.type === "custom_message" && entry.customType === "ziggy.automation-result")
       ) {
@@ -369,6 +407,7 @@ const parseSession = (
       header: parsedHeader,
       name,
       activityAt: activityAt ?? parsedHeader.timestamp,
+      firstUserMessage,
       entryCount,
       modelChanges,
       thinkingChanges,
@@ -413,6 +452,7 @@ const parseSessionHeader = (
       header: parsedHeader,
       name: undefined,
       activityAt: parsedHeader.timestamp,
+      firstUserMessage: undefined,
       entryCount: 0,
       modelChanges: [],
       thinkingChanges: [],
@@ -487,9 +527,9 @@ const projectSessions = (
       );
   });
 
-export const listProfileSessions = (
+const readParsedProfileSessions = (
   profilePath: string,
-): Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed> =>
+): Effect.Effect<ReadonlyArray<ParsedSession>, SessionReadFailed> =>
   Effect.gen(function* () {
     const root = path.join(profilePath, "sessions");
     const files = yield* discoverFiles(root);
@@ -507,8 +547,34 @@ export const listProfileSessions = (
       { concurrency: 1 },
     );
 
-    return yield* projectSessions(
-      parsed.filter((session): session is ParsedSession => session !== undefined),
+    return parsed.filter((session): session is ParsedSession => session !== undefined);
+  });
+
+export const listProfileSessions = (
+  profilePath: string,
+): Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed> =>
+  readParsedProfileSessions(profilePath).pipe(Effect.flatMap(projectSessions));
+
+/** Reads transcripts without SessionManager.open; lease probing never opens a transcript for writing. */
+export const listProfileSessionSummaries = (
+  profilePath: string,
+): Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed | SessionLeaseFailed> =>
+  Effect.gen(function* () {
+    const parsed = yield* readParsedProfileSessions(profilePath);
+    const sessions = yield* projectSessions(parsed);
+    const byId = new Map(parsed.map((session) => [session.header.id, session]));
+
+    return yield* Effect.forEach(sessions, (session) =>
+      Effect.map(
+        isSessionLeaseHeld(profilePath, session.id),
+        (held): ProfileSessionSummary => ({
+          id: session.id,
+          path: session.path,
+          title: session.name ?? byId.get(session.id)?.firstUserMessage,
+          updatedAt: session.activityAt ?? session.createdAt,
+          held,
+        }),
+      ),
     );
   });
 

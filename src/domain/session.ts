@@ -26,6 +26,15 @@ export interface SessionUsage {
   readonly cost: number;
 }
 
+/** Read-only list projection; held is a momentary lease observation, not a reservation. */
+export interface ProfileSessionSummary {
+  readonly id: string;
+  readonly path: string;
+  readonly title: string | undefined;
+  readonly updatedAt: string;
+  readonly held: boolean;
+}
+
 export interface SessionMetadata {
   readonly path: string;
   readonly id: string;
