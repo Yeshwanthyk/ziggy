@@ -10,8 +10,8 @@ then request the matching topic for exact version-matched usage. Read a referenc
 matches it. Do not search a developer checkout for plans or `src/`.
 
 ## When to read what
-- New Profile end-to-end setup → [references/web-access.md](references/web-access.md) (`init`, `serve install`, `pair`)
 
+- New Profile end-to-end setup → [references/web-access.md](references/web-access.md) (`init`, `serve install`, `pair`)
 - Automations, web UI management, pause/resume, wake, and run history → [references/automations.md](references/automations.md)
 - Profile memory, scopes, caps, backups, and inspection → [references/memory.md](references/memory.md)
 - Resident `ziggy serve` install/start/status/logs → [references/serve.md](references/serve.md)
@@ -27,7 +27,7 @@ matches it. Do not search a developer checkout for plans or `src/`.
 - Create, validate, inspect, or run specialists → `ziggy_help` topic `agents`
 - Open an Agent Client Protocol session → `ziggy_help` topic `acp`
 - Update the Ziggy executable → `ziggy_help` topic `update`
-- `ziggy <profile>` opens the running resident web UI (no terminal UI); one-shot prompts → `ziggy_help` topic `run`
+- `ziggy <profile>` opens the running resident web UI (no terminal UI); one-shot prompts → `ziggy_help` topics `serve`, `web`, or `run`
 - Profile diagnosis or package selection → `ziggy_help` topics `doctor` or `extensions`
 
 ## Rules

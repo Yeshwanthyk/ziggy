@@ -76,8 +76,10 @@ Profile directory.
 ## Updating the packaged guidance
 
 This guide also ships inside the required `ziggy-operations` package. Required packages refresh
-automatically at resident startup when their tracked files are unchanged. For an older untracked
-installation, stop the resident and deliberately adopt the package from the updated executable:
+at resident start when their receipted copy is unchanged and the bundled content differs. Edited
+copies are left alone; `ziggy doctor` explains how to resolve them. For an older untracked
+installation, close active Profile sessions, stop the resident, then deliberately adopt the
+package from the updated executable:
 
 ```sh
 ziggy extensions update squarey ziggy-operations --adopt
