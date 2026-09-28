@@ -90,7 +90,12 @@ import {
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
 import { ensurePiSessionName } from "./session-name";
-import { acquireSessionLease, scopedSessionLease, SessionLeaseHeld } from "./session-lease";
+import {
+  acquireSessionLease,
+  makeSessionLeaseTransitions,
+  scopedSessionLease,
+  SessionLeaseHeld,
+} from "./session-lease";
 import { createProfileExtensionTool } from "./profile-extension-tool";
 import {
   AUTOMATION_RESULT_CUSTOM_TYPE,
@@ -1015,6 +1020,7 @@ interface ProfileRuntimeOptions {
   profileExtensions?: ProfileExtensionsApi;
   modelOverride?: ChatModelOverride;
   runtimeFactory?: typeof createAgentSessionRuntime;
+  beforeServices?: (sessionManager: SessionManager) => Promise<void>;
 }
 
 const configuredSessionModelError = (profilePath: string, message: string) =>
@@ -1155,6 +1161,8 @@ const createProfileRuntime = (
         try: async () => {
           const runtime = await runtimeFactory(
             async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
+              await runtimeOptions.beforeServices?.(runtimeSessionManager);
+
               let services = await createAgentSessionServices({
                 cwd,
                 agentDir,
@@ -1326,16 +1334,38 @@ const createProfileRuntime = (
     }),
   );
 
-const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
+const bindChatRuntime = async (
+  runtime: AgentSessionRuntime,
+  lease?: ReturnType<typeof makeSessionLeaseTransitions>,
+): Promise<void> => {
   const bindSession = async (): Promise<void> => {
     const session = runtime.session;
     await session.bindExtensions({
       mode: "print",
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
-        newSession: async (options) => runtime.newSession(options),
+        newSession: async (options) => {
+          const result = await runtime.newSession(options);
+
+          if (!result.cancelled && lease !== undefined) {
+            // Pi command callbacks are Promise-shaped; adapt the Effect at this Pi boundary.
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary
+            await Effect.runPromise(
+              lease.transition(runtime.session.sessionManager.getSessionId()),
+            );
+          }
+
+          return result;
+        },
         fork: async (entryId, options) => {
           const result = await runtime.fork(entryId, options);
+
+          if (!result.cancelled && lease !== undefined) {
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+            await Effect.runPromise(
+              lease.transition(runtime.session.sessionManager.getSessionId()),
+            );
+          }
 
           return { cancelled: result.cancelled };
         },
@@ -1368,7 +1398,35 @@ const bindChatRuntime = async (runtime: AgentSessionRuntime): Promise<void> => {
 
           return { cancelled: result.cancelled };
         },
-        switchSession: (sessionPath, options) => runtime.switchSession(sessionPath, options),
+        switchSession: async (sessionPath, options) => {
+          if (lease !== undefined) {
+            const id = SessionManager.open(sessionPath).getSessionId();
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+            await Effect.runPromise(lease.reserve(id));
+          }
+
+          try {
+            const result = await runtime.switchSession(sessionPath, options);
+
+            if (lease !== undefined) {
+              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+              await Effect.runPromise(
+                result.cancelled
+                  ? lease.cancelReservation
+                  : lease.transition(runtime.session.sessionManager.getSessionId()),
+              );
+            }
+
+            return result;
+          } catch (cause) {
+            if (lease !== undefined) {
+              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+              await Effect.runPromise(lease.cancelReservation);
+            }
+
+            throw cause;
+          }
+        },
         reload: () => session.reload(),
       },
       onError: (error) => {
@@ -1926,6 +1984,19 @@ export const openChat = (
       sessionManager.getSessionId(),
     ).pipe(Effect.mapError((failure) => sessionLeaseError(target.path, failure)));
 
+    const lease = makeSessionLeaseTransitions(
+      target.path,
+      sessionManager.getSessionId(),
+      releaseLease,
+    );
+
+    runtimeOptions.beforeServices = async (nextManager) => {
+      if (!lease.owns(nextManager.getSessionId())) {
+        // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge; lease before Pi builds a replacement session.
+        await Effect.runPromise(lease.reserve(nextManager.getSessionId()));
+      }
+    };
+
     const runtime = yield* createProfileRuntime(
       target.path,
       repositoryRoot,
@@ -1936,7 +2007,7 @@ export const openChat = (
     ).pipe(
       Effect.onExit((exit) =>
         Exit.isFailure(exit)
-          ? releaseLease.pipe(
+          ? lease.close.pipe(
               Effect.catch((failure) =>
                 Effect.logWarning("Session lease release failed", { failure }),
               ),
@@ -1947,7 +2018,7 @@ export const openChat = (
 
     const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
       Effect.ensuring(
-        releaseLease.pipe(
+        lease.close.pipe(
           Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
         ),
       ),
@@ -1968,7 +2039,7 @@ export const openChat = (
       });
     }
 
-    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime)).pipe(
+    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime, lease)).pipe(
       Effect.tapError(() => disposeBestEffort),
     );
 
@@ -1990,6 +2061,17 @@ export const openChat = (
         currentSession: currentPiSessionReference(target.path, runtime.session.sessionManager),
         prompt: (text, options) =>
           Effect.suspend(() => {
+            if (!lease.owns(runtime.session.sessionManager.getSessionId())) {
+              return Effect.fail(
+                sessionLeaseError(
+                  target.path,
+                  new Error(
+                    "Pi session changed without a writer lease; close and reopen this session",
+                  ),
+                ),
+              );
+            }
+
             const generation = runtime.ephemeralPromptContext.generation + 1;
             runtime.ephemeralPromptContext.generation = generation;
 
@@ -2103,7 +2185,13 @@ export const openSpecialistChat = (
         specialistManager.getSessionId(),
       ).pipe(Effect.mapError((cause) => sessionLeaseError(target.path, cause)));
 
-      const releaseBestEffort = releaseSpecialist.pipe(
+      const specialistLease = makeSessionLeaseTransitions(
+        target.path,
+        specialistManager.getSessionId(),
+        releaseSpecialist,
+      );
+
+      const releaseBestEffort = specialistLease.close.pipe(
         Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
       );
 
@@ -2115,6 +2203,12 @@ export const openSpecialistChat = (
         selected.thinking,
         selected.tools,
         specialistManager,
+        async (nextManager) => {
+          if (!specialistLease.owns(nextManager.getSessionId())) {
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge.
+            await Effect.runPromise(specialistLease.reserve(nextManager.getSessionId()));
+          }
+        },
       ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseBestEffort : Effect.void)));
 
       const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
@@ -2125,9 +2219,9 @@ export const openSpecialistChat = (
         Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
       );
 
-      yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(liveRuntime)).pipe(
-        Effect.tapError(() => disposeLiveBestEffort),
-      );
+      yield* piPromise(target.path, "bind agent runtime", () =>
+        bindChatRuntime(liveRuntime, specialistLease),
+      ).pipe(Effect.tapError(() => disposeLiveBestEffort));
       const abortSession = sharePiAbort(() => liveRuntime.session.abort());
 
       const promptSession: PromptSession = {
@@ -2148,8 +2242,23 @@ export const openSpecialistChat = (
             liveRuntime.session.sessionManager,
           ),
           prompt: (text, options) =>
-            Effect.sync(() =>
-              ensurePiSessionName(liveRuntime.session.sessionManager, `Agent · ${agentId}`, text),
+            Effect.suspend(() =>
+              specialistLease.owns(liveRuntime.session.sessionManager.getSessionId())
+                ? Effect.sync(() =>
+                    ensurePiSessionName(
+                      liveRuntime.session.sessionManager,
+                      `Agent · ${agentId}`,
+                      text,
+                    ),
+                  )
+                : Effect.fail(
+                    sessionLeaseError(
+                      target.path,
+                      new Error(
+                        "Pi session changed without a writer lease; close and reopen this session",
+                      ),
+                    ),
+                  ),
             ).pipe(
               Effect.andThen(promptForAssistantText(target.path, promptSession, text, options)),
             ),

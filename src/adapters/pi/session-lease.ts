@@ -134,3 +134,70 @@ export const scopedSessionLease = (
       Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
     ),
   ).pipe(Effect.asVoid);
+
+/** A runtime may replace Pi's session manager without closing its handle. */
+export const makeSessionLeaseTransitions = (
+  profilePath: string,
+  initialId: string,
+  initialRelease: Effect.Effect<void, SessionLeaseFailed>,
+) => {
+  let currentId = initialId;
+  let release = initialRelease;
+
+  let reserved:
+    | { readonly id: string; readonly release: Effect.Effect<void, SessionLeaseFailed> }
+    | undefined;
+
+  let poisoned = false;
+
+  const reserve = (id: string) =>
+    Effect.gen(function* () {
+      if (id === currentId || reserved?.id === id) return;
+      reserved = { id, release: yield* acquireSessionLease(profilePath, id) };
+    });
+
+  const cancelReservation = Effect.suspend(() => {
+    const previous = reserved;
+    reserved = undefined;
+
+    return previous === undefined ? Effect.void : previous.release;
+  });
+
+  const transition = (id: string) =>
+    Effect.gen(function* () {
+      if (id === currentId) {
+        yield* cancelReservation;
+
+        return;
+      }
+
+      const next =
+        reserved?.id === id ? reserved.release : yield* acquireSessionLease(profilePath, id);
+
+      reserved = undefined;
+      const previous = release;
+      currentId = id;
+      release = next;
+      yield* previous;
+      poisoned = false;
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          poisoned = true;
+        }),
+      ),
+    );
+
+  const close = Effect.gen(function* () {
+    yield* cancelReservation;
+    yield* release;
+  });
+
+  return {
+    reserve,
+    cancelReservation,
+    transition,
+    close,
+    owns: (id: string) => !poisoned && id === currentId,
+  };
+};

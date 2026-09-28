@@ -19,7 +19,7 @@ import {
   type Model,
   type Usage,
 } from "@earendil-works/pi-ai";
-import { Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { Value } from "typebox/value";
 import { type Static, Type } from "typebox";
 import {
@@ -37,6 +37,7 @@ import {
 import type { ProfileAgent } from "../../domain/profile";
 import { createPiDocsExtension } from "./pi-docs";
 import { leaseProfileRuntime } from "./profile-runtime-lease";
+import { acquireSessionLease } from "./session-lease";
 import { promptForAssistantText } from "./pi-agent";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
 import type { PiResources } from "./resources";
@@ -271,6 +272,7 @@ export const specialistRuntime = (
   thinking: ThinkingLevel,
   tools: ReadonlyArray<string>,
   sessionManager: SessionManager,
+  beforeServices?: (manager: SessionManager) => Promise<void>,
 ): Effect.Effect<AgentSessionRuntime, SpecialistRunFailed> =>
   leaseProfileRuntime(
     profilePath,
@@ -286,6 +288,8 @@ export const specialistRuntime = (
                 sessionManager: runtimeSessionManager,
                 sessionStartEvent,
               }) => {
+                await beforeServices?.(runtimeSessionManager);
+
                 const services = await createAgentSessionServices({
                   cwd,
                   agentDir,
@@ -371,6 +375,12 @@ const childRuntime = (
       );
     }
 
+    const release = yield* acquireSessionLease(options.profilePath, child.reference.id).pipe(
+      Effect.mapError((cause) =>
+        specialistFailure(options.profilePath, "open child session", cause),
+      ),
+    );
+
     const runtime = yield* specialistRuntime(
       options.profilePath,
       parent,
@@ -379,12 +389,29 @@ const childRuntime = (
       thinking,
       tools,
       child.manager,
+    ).pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? release.pipe(
+              Effect.catch((failure) =>
+                Effect.logWarning("Child session lease release failed", { failure }),
+              ),
+            )
+          : Effect.void,
+      ),
     );
 
     return {
       session: runtime.session,
       reference: child.reference,
-      dispose: () => runtime.dispose(),
+      dispose: async () => {
+        try {
+          await runtime.dispose();
+        } finally {
+          // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi child disposal Promise bridge.
+          await Effect.runPromise(release);
+        }
+      },
     };
   });
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
 import fc from "fast-check";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
+import { acquireSessionLease, makeSessionLeaseTransitions } from "ziggy/adapters/pi/session-lease";
 
 test("one live holder per session; stale pid reclaims; releases are idempotent", async () => {
   await fc.assert(
@@ -55,4 +55,35 @@ test("one live holder per session; stale pid reclaims; releases are idempotent",
     ),
     { numRuns: 30 },
   );
+});
+
+test("session replacement holds its destination before releasing its previous id", async () => {
+  const profile = await mkdtemp(join(tmpdir(), "ziggy-session-transition-"));
+
+  try {
+    const first = await Effect.runPromise(acquireSessionLease(profile, "first"));
+    const transitions = makeSessionLeaseTransitions(profile, "first", first);
+    const competing = await Effect.runPromise(acquireSessionLease(profile, "second"));
+    const blocked = await Effect.runPromiseExit(transitions.reserve("second"));
+
+    expect(Exit.isFailure(blocked)).toBe(true);
+    expect(Exit.isFailure(await Effect.runPromiseExit(acquireSessionLease(profile, "first")))).toBe(
+      true,
+    );
+    await Effect.runPromise(competing);
+    await Effect.runPromise(transitions.reserve("second"));
+    expect(
+      Exit.isFailure(await Effect.runPromiseExit(acquireSessionLease(profile, "second"))),
+    ).toBe(true);
+    await Effect.runPromise(transitions.transition("second"));
+    expect(transitions.owns("second")).toBe(true);
+    const old = await Effect.runPromise(acquireSessionLease(profile, "first"));
+    await Effect.runPromise(old);
+    await Effect.runPromise(transitions.close);
+    await Effect.runPromise(transitions.close);
+    const next = await Effect.runPromise(acquireSessionLease(profile, "second"));
+    await Effect.runPromise(next);
+  } finally {
+    await rm(profile, { recursive: true, force: true });
+  }
 });
