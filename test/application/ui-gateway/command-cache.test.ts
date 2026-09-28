@@ -21,41 +21,43 @@ test("concurrent commands execute once and every waiter finishes on success, typ
       fc.integer({ min: 2, max: 16 }),
       fc.constantFrom("success", "typed failure", "defect"),
       async (count, outcome) => {
-        const cache = makeCommandCache();
         let executions = 0;
 
         const results = await Effect.runPromise(
-          Effect.gen(function* () {
-            const started = yield* Deferred.make<void>();
-            const release = yield* Deferred.make<void>();
+          Effect.scoped(
+            Effect.gen(function* () {
+              const cache = makeCommandCache(yield* Effect.scope);
+              const started = yield* Deferred.make<void>();
+              const release = yield* Deferred.make<void>();
 
-            const run = Effect.gen(function* () {
-              executions++;
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(release);
+              const run = Effect.gen(function* () {
+                executions++;
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
 
-              if (outcome === "defect") return yield* Effect.die("injected defect");
+                if (outcome === "defect") return yield* Effect.die("injected defect");
 
-              return outcome === "typed failure" ? typedFailure : success;
-            });
+                return outcome === "typed failure" ? typedFailure : success;
+              });
 
-            const owner = yield* Effect.forkChild(cache("key", "fingerprint", "first", run));
-            yield* Deferred.await(started);
-            const waiters = [];
+              const owner = yield* Effect.forkChild(cache("key", "fingerprint", "first", run));
+              yield* Deferred.await(started);
+              const waiters = [];
 
-            for (let i = 1; i < count; i++) {
-              waiters.push(
-                yield* Effect.forkChild(cache("key", "fingerprint", `waiter-${i}`, run)),
-              );
-            }
+              for (let i = 1; i < count; i++) {
+                waiters.push(
+                  yield* Effect.forkChild(cache("key", "fingerprint", `waiter-${i}`, run)),
+                );
+              }
 
-            yield* Effect.yieldNow;
-            yield* Deferred.succeed(release, undefined);
+              yield* Effect.yieldNow;
+              yield* Deferred.succeed(release, undefined);
 
-            return yield* Effect.all([Fiber.join(owner), ...waiters.map(Fiber.join)], {
-              concurrency: "unbounded",
-            });
-          }),
+              return yield* Effect.all([Fiber.join(owner), ...waiters.map(Fiber.join)], {
+                concurrency: "unbounded",
+              });
+            }),
+          ),
         );
 
         expect(executions).toBe(1);
@@ -71,69 +73,73 @@ test("concurrent commands execute once and every waiter finishes on success, typ
 });
 
 test("an in-flight slot survives completed-result eviction pressure", async () => {
-  const cache = makeCommandCache();
   let executions = 0;
 
   await Effect.runPromise(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cache = makeCommandCache(yield* Effect.scope);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
 
-      const pending = Effect.gen(function* () {
-        executions++;
-        yield* Deferred.succeed(started, undefined);
-        yield* Deferred.await(release);
+        const pending = Effect.gen(function* () {
+          executions++;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
 
-        return success;
-      });
+          return success;
+        });
 
-      const owner = yield* Effect.forkChild(cache("oldest", "same", "first", pending));
-      yield* Deferred.await(started);
+        const owner = yield* Effect.forkChild(cache("oldest", "same", "first", pending));
+        yield* Deferred.await(started);
 
-      for (let i = 0; i < 513; i++)
-        yield* cache(`completed-${i}`, "same", "first", Effect.succeed(success));
-      const waiter = yield* Effect.forkChild(cache("oldest", "same", "second", pending));
-      yield* Effect.yieldNow;
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(owner);
-      yield* Fiber.join(waiter);
-    }),
+        for (let i = 0; i < 513; i++)
+          yield* cache(`completed-${i}`, "same", "first", Effect.succeed(success));
+        const waiter = yield* Effect.forkChild(cache("oldest", "same", "second", pending));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(owner);
+        yield* Fiber.join(waiter);
+      }),
+    ),
   );
   expect(executions).toBe(1);
 });
 
 test("interrupting the owner leaves the command running for another connection", async () => {
-  const cache = makeCommandCache();
   let executions = 0;
 
   const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cache = makeCommandCache(yield* Effect.scope);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
 
-      const run = Effect.gen(function* () {
-        executions++;
-        yield* Deferred.succeed(started, undefined);
-        yield* Deferred.await(release);
+        const run = Effect.gen(function* () {
+          executions++;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
 
-        return success;
-      });
+          return success;
+        });
 
-      const owner = yield* Effect.forkChild(cache("key", "same", "first", run));
-      yield* Deferred.await(started);
+        const owner = yield* Effect.forkChild(cache("key", "same", "first", run));
+        yield* Deferred.await(started);
 
-      const waiter = yield* Effect.forkChild(
-        cache("key", "same", "second", Effect.die("must not run")),
-      );
+        const waiter = yield* Effect.forkChild(
+          cache("key", "same", "second", Effect.die("must not run")),
+        );
 
-      yield* Effect.yieldNow;
-      yield* Fiber.interrupt(owner);
-      yield* Deferred.succeed(release, undefined);
-      const released = yield* Fiber.join(waiter);
-      const retry = yield* cache("key", "same", "third", Effect.succeed(success));
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(owner);
+        yield* Deferred.succeed(release, undefined);
+        const released = yield* Fiber.join(waiter);
+        const retry = yield* cache("key", "same", "third", Effect.succeed(success));
 
-      return { released, retry };
-    }),
+        return { released, retry };
+      }),
+    ),
   );
 
   expect(result.released).toEqual(success);
@@ -142,22 +148,25 @@ test("interrupting the owner leaves the command running for another connection",
 });
 
 test("typed failure responses are not retained for retries", async () => {
-  const cache = makeCommandCache();
   let executions = 0;
 
   const results = await Effect.runPromise(
-    Effect.gen(function* () {
-      const run = Effect.sync(() => {
-        executions++;
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cache = makeCommandCache(yield* Effect.scope);
 
-        return executions === 1 ? typedFailure : success;
-      });
+        const run = Effect.sync(() => {
+          executions++;
 
-      const first = yield* cache("key", "same", "first", run);
-      const second = yield* cache("key", "same", "second", run);
+          return executions === 1 ? typedFailure : success;
+        });
 
-      return { first, second };
-    }),
+        const first = yield* cache("key", "same", "first", run);
+        const second = yield* cache("key", "same", "second", run);
+
+        return { first, second };
+      }),
+    ),
   );
 
   expect(results.first).toEqual(typedFailure);
@@ -166,11 +175,10 @@ test("typed failure responses are not retained for retries", async () => {
 });
 
 test("closing the UI server scope interrupts running commands and releases waiters", async () => {
-  const cache = makeCommandCache();
-
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const serverScope = yield* Scope.make();
+      const cache = makeCommandCache(serverScope);
       const started = yield* Deferred.make<void>();
 
       yield* Effect.forkChild(
@@ -183,7 +191,7 @@ test("closing the UI server scope interrupts running commands and releases waite
 
             return yield* Effect.never;
           }),
-        ).pipe(Effect.provideService(Scope.Scope, serverScope)),
+        ),
       );
 
       yield* Deferred.await(started);
@@ -195,15 +203,42 @@ test("closing the UI server scope interrupts running commands and releases waite
       yield* Effect.yieldNow;
       yield* Scope.close(serverScope, Exit.void);
       const released = yield* Fiber.join(waiter);
-      const afterClose = yield* Effect.flip(cache("new", "same", "third", Effect.succeed(success)));
 
-      return { released, afterClose };
+      return released;
     }),
   );
 
-  expect(result.released).toMatchObject({
+  expect(result).toMatchObject({
     ok: false,
     error: { code: "internal", message: "command interrupted" },
   });
-  expect(result.afterClose).toMatchObject({ code: "internal", message: "UI server stopped" });
+});
+
+test("closing the scope immediately after a claim still completes every pending waiter", async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const cache = makeCommandCache(scope);
+      const owner = yield* Effect.forkChild(cache("key", "same", "first", Effect.never));
+      yield* Effect.yieldNow;
+
+      const waiter = yield* Effect.forkChild(
+        cache("key", "same", "second", Effect.die("must not run")),
+      );
+
+      yield* Effect.yieldNow;
+      yield* Scope.close(scope, Exit.void);
+      const first = yield* Fiber.join(owner);
+      const second = yield* Fiber.join(waiter);
+
+      return { first, second };
+    }),
+  );
+
+  expect(result.first).toMatchObject({
+    id: "first",
+    ok: false,
+    error: { message: "command interrupted" },
+  });
+  expect(result.second).toEqual(result.first);
 });

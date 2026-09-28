@@ -154,7 +154,7 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
         const alphaRegistry = yield* makeChatRegistry();
         const betaRegistry = yield* makeChatRegistry();
 
-        const gateway = makeSharedUiGateway({
+        const gateway = yield* makeSharedUiGateway({
           profileDirectory: makeDirectory(),
           defaultProfile: { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
           branches: [

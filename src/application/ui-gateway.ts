@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Context, Effect, Option, Schema } from "effect";
+import { Context, Effect, Option, Schema, Scope } from "effect";
 import { makeUiGroupStore, makeUiPinStore } from "../adapters/fs/ui-state";
 import {
   UiEmptyParams,
@@ -117,285 +117,291 @@ const sendResponse = (send: (frame: string) => void, frame: UiResponseFrame): Ef
     Effect.asVoid,
   );
 
-export const makeUiGateway = (config: UiGatewayDependencies): UiGatewayApi => {
-  const serverEpoch = randomUUID();
-  const pins = config.pins ?? makeUiPinStore();
-  const groups = config.groups ?? makeUiGroupStore();
-  const runCommand = makeCommandCache();
+export const makeUiGateway = (
+  config: UiGatewayDependencies,
+): Effect.Effect<UiGatewayApi, never, Scope.Scope> =>
+  Effect.gen(function* () {
+    const commandScope = yield* Scope.fork(yield* Effect.scope);
+    const serverEpoch = randomUUID();
+    const pins = config.pins ?? makeUiPinStore();
+    const groups = config.groups ?? makeUiGroupStore();
+    const runCommand = makeCommandCache(commandScope);
 
-  const profileBranches = new Map<ProfileId, UiGatewayBranch>([
-    [config.defaultProfile.profileId, config.defaultProfile],
-  ]);
+    const profileBranches = new Map<ProfileId, UiGatewayBranch>([
+      [config.defaultProfile.profileId, config.defaultProfile],
+    ]);
 
-  const branchFor = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> => {
-    const existing = profileBranches.get(profileId);
+    const branchFor = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> => {
+      const existing = profileBranches.get(profileId);
 
-    if (existing !== undefined) return Effect.succeed(existing);
+      if (existing !== undefined) return Effect.succeed(existing);
 
-    if (config.runtimeDirectory !== undefined) {
-      return config.runtimeDirectory
-        .branch(profileId)
-        .pipe(Effect.mapError((cause) => toGatewayError("profile.resolve", cause)));
-    }
+      if (config.runtimeDirectory !== undefined) {
+        return config.runtimeDirectory
+          .branch(profileId)
+          .pipe(Effect.mapError((cause) => toGatewayError("profile.resolve", cause)));
+      }
 
-    if (config.profileDirectory !== undefined) {
-      return config.profileDirectory.resolve(profileId).pipe(
-        Effect.flatMap((resolved) =>
-          resolved.profileId === config.defaultProfile.profileId
-            ? Effect.succeed(config.defaultProfile)
-            : Effect.fail(
-                protocolFailure(
-                  "profile_unavailable",
-                  "the requested Profile resident is unavailable",
+      if (config.profileDirectory !== undefined) {
+        return config.profileDirectory.resolve(profileId).pipe(
+          Effect.flatMap((resolved) =>
+            resolved.profileId === config.defaultProfile.profileId
+              ? Effect.succeed(config.defaultProfile)
+              : Effect.fail(
+                  protocolFailure(
+                    "profile_unavailable",
+                    "the requested Profile resident is unavailable",
+                  ),
                 ),
-              ),
-        ),
-        Effect.mapError((cause) => toGatewayError("profile.resolve", cause)),
+          ),
+          Effect.mapError((cause) => toGatewayError("profile.resolve", cause)),
+        );
+      }
+
+      return Effect.fail(
+        protocolFailure("unknown_profile", "the requested Profile is not registered"),
       );
-    }
+    };
 
-    return Effect.fail(
-      protocolFailure("unknown_profile", "the requested Profile is not registered"),
-    );
-  };
+    const defaultProfile = (): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
+      Effect.succeed(config.defaultProfile);
 
-  const defaultProfile = (): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
-    Effect.succeed(config.defaultProfile);
+    const ensureGroup = makeEnsureGroup(groups);
 
-  const ensureGroup = makeEnsureGroup(groups);
+    const dispatchSessions = makeSessionDispatcher(config, branchFor, serverEpoch, ensureGroup);
 
-  const dispatchSessions = makeSessionDispatcher(config, branchFor, serverEpoch, ensureGroup);
-
-  const dispatch = (
-    request: UiRequestEnvelope,
-    send: (frame: string) => void,
-    subscriptions: Map<string, () => void>,
-    isOpen: () => boolean,
-  ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
-    const route = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
-      branchFor(profileId);
-
-    switch (isKnownMethod(request.method) ? request.method : undefined) {
-      case "ping":
-        return decodeEmpty(request.params).pipe(
-          Effect.mapError((cause) => badParams(request.method, cause)),
-          Effect.as({ pong: true }),
-        );
-      case "system.capabilities":
-        return decodeEmpty(request.params).pipe(
-          Effect.mapError((cause) => badParams(request.method, cause)),
-          Effect.andThen(defaultProfile()),
-          Effect.map(
-            (branch) =>
-              ({
-                protocolVersion: 1,
-                defaultProfileId: branch.profileId,
-                methods: [...UI_METHODS],
-                events: [...UI_EVENTS],
-                bounds: { maxPromptCodePoints: 60_000, replayWindow: 256, maxHistoryEntries: 32 },
-                serverEpoch,
-              }) satisfies typeof UiSystemCapabilitiesResult.Type,
-          ),
-        );
-      case "profile.list":
-        return decodeEmpty(request.params).pipe(
-          Effect.mapError((cause) => badParams(request.method, cause)),
-          Effect.andThen(
-            config.profileDirectory === undefined
-              ? defaultProfile().pipe(
-                  Effect.map((branch) => ({
-                    profiles: [
-                      {
-                        profileId: branch.profileId,
-                        name: branch.target.name,
-                        current: true,
-                        available: true,
-                      },
-                    ],
-                  })),
-                )
-              : config.profileDirectory.list().pipe(
-                  Effect.map((profiles) => ({ profiles: profiles.slice(0, 32) })),
-                  Effect.mapError((cause) => toGatewayError(request.method, cause)),
-                ),
-          ),
-        );
-      case "profile.current":
-        return decodeEmpty(request.params).pipe(
-          Effect.mapError((cause) => badParams(request.method, cause)),
-          Effect.andThen(
-            config.profileDirectory === undefined
-              ? defaultProfile().pipe(
-                  Effect.map((branch) => ({
-                    profileId: branch.profileId,
-                    name: branch.target.name,
-                  })),
-                )
-              : config.profileDirectory.current().pipe(
-                  Effect.map((current) => ({
-                    profileId: current.profileId,
-                    name: current.target.name,
-                  })),
-                  Effect.mapError((cause) => toGatewayError(request.method, cause)),
-                ),
-          ),
-        );
-      case "profile.health":
-        return Effect.gen(function* () {
-          const params = yield* decodeScoped(request.params).pipe(
-            Effect.mapError((cause) => badParams(request.method, cause)),
-          );
-
-          const branch = yield* route(params.profileId);
-
-          if (config.doctor === undefined) {
-            return {
-              profileId: branch.profileId,
-              checks: [
-                {
-                  id: "resident",
-                  severity: "ok" as const,
-                  message: "Profile resident is available",
-                },
-              ],
-              hasErrors: false,
-            };
-          }
-
-          const report = yield* config.doctor
-            .check(branch.target, config.repositoryRoot)
-            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
-
-          return {
-            profileId: branch.profileId,
-            checks: report.checks.slice(0, 16).map((check) => ({
-              id: boundedText(check.id, 80, "check"),
-              severity: check.severity,
-              message: mapHealthMessage(check.message),
-            })),
-            hasErrors: report.hasErrors,
-          };
-        });
-      case "group.list":
-        return dispatchGroups(request, route, config, groups, pins);
-      case "destination.list":
-        return dispatchGroups(request, route, config, groups, pins);
-      case "session.list":
-      case "session.show":
-      case "session.history":
-      case "session.open":
-      case "session.watch":
-      case "session.unwatch":
-      case "session.close":
-      case "session.steer":
-      case "session.follow-up":
-      case "session.abort":
-      case "prompt.submit":
-        return dispatchSessions(request, send, subscriptions, isOpen);
-      case "agent.list":
-      case "agent.show":
-      case "agent.document":
-      case "agent.save":
-      case "agent.create":
-      case "agent.validate":
-      case "agent.run":
-        return dispatchAgents(request, route, config);
-      case "model.status":
-      case "model.list":
-      case "model.available":
-      case "model.set":
-      case "auth.status":
-        return dispatchSettings(request, route, config);
-      case "automation.list":
-      case "automation.show":
-      case "automation.create":
-      case "automation.save":
-      case "automation.validate":
-      case "automation.pause":
-      case "automation.resume":
-      case "automation.run":
-      case "automation.status":
-      case "automation.runs":
-        return dispatchAutomation(request, route, config);
-      case "memory.list":
-      case "memory.show":
-        return dispatchMemory(request, route, config);
-      case "extension.list-for-profile":
-      case "extension.add":
-      case "extension.remove":
-      case "extension.validate":
-        return dispatchExtensions(request, route, config);
-      case "pin.list":
-      case "pin.set":
-      case "pin.remove":
-        return dispatchPins(request, route, pins);
-      default:
-        return Effect.fail(
-          protocolFailure("unknown_method", `unknown UI gateway method ${request.method}`),
-        );
-    }
-  };
-
-  const requestFor =
-    (
+    const dispatch = (
+      request: UiRequestEnvelope,
       send: (frame: string) => void,
       subscriptions: Map<string, () => void>,
       isOpen: () => boolean,
-    ) =>
-    (request: UiRequestEnvelope): Effect.Effect<void> => {
-      const commandProbe = decodeCommandProbe(request.params);
-      const commandId = Option.isSome(commandProbe) ? commandProbe.value.commandId : undefined;
+    ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
+      const route = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
+        branchFor(profileId);
 
-      const profileId =
-        Option.isSome(commandProbe) && commandProbe.value.profileId !== undefined
-          ? commandProbe.value.profileId
-          : config.defaultProfile.profileId;
-
-      const run = dispatch(request, send, subscriptions, isOpen).pipe(
-        Effect.map((result) => resultFrame(request.id, result)),
-        Effect.catch((cause) =>
-          Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
-        ),
-      );
-
-      return commandId === undefined
-        ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
-        : runCommand(
-            `${profileId}:${commandId}`,
-            `${request.method}:${safeFingerprint(request.params)}`,
-            request.id,
-            run,
-          ).pipe(
-            Effect.catch((cause) =>
-              Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
-            ),
-            Effect.map((frame) => ({ ...frame, id: request.id })),
-            Effect.flatMap((frame) => sendResponse(send, frame)),
+      switch (isKnownMethod(request.method) ? request.method : undefined) {
+        case "ping":
+          return decodeEmpty(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+            Effect.as({ pong: true }),
           );
+        case "system.capabilities":
+          return decodeEmpty(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+            Effect.andThen(defaultProfile()),
+            Effect.map(
+              (branch) =>
+                ({
+                  protocolVersion: 1,
+                  defaultProfileId: branch.profileId,
+                  methods: [...UI_METHODS],
+                  events: [...UI_EVENTS],
+                  bounds: { maxPromptCodePoints: 60_000, replayWindow: 256, maxHistoryEntries: 32 },
+                  serverEpoch,
+                }) satisfies typeof UiSystemCapabilitiesResult.Type,
+            ),
+          );
+        case "profile.list":
+          return decodeEmpty(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+            Effect.andThen(
+              config.profileDirectory === undefined
+                ? defaultProfile().pipe(
+                    Effect.map((branch) => ({
+                      profiles: [
+                        {
+                          profileId: branch.profileId,
+                          name: branch.target.name,
+                          current: true,
+                          available: true,
+                        },
+                      ],
+                    })),
+                  )
+                : config.profileDirectory.list().pipe(
+                    Effect.map((profiles) => ({ profiles: profiles.slice(0, 32) })),
+                    Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                  ),
+            ),
+          );
+        case "profile.current":
+          return decodeEmpty(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+            Effect.andThen(
+              config.profileDirectory === undefined
+                ? defaultProfile().pipe(
+                    Effect.map((branch) => ({
+                      profileId: branch.profileId,
+                      name: branch.target.name,
+                    })),
+                  )
+                : config.profileDirectory.current().pipe(
+                    Effect.map((current) => ({
+                      profileId: current.profileId,
+                      name: current.target.name,
+                    })),
+                    Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                  ),
+            ),
+          );
+        case "profile.health":
+          return Effect.gen(function* () {
+            const params = yield* decodeScoped(request.params).pipe(
+              Effect.mapError((cause) => badParams(request.method, cause)),
+            );
+
+            const branch = yield* route(params.profileId);
+
+            if (config.doctor === undefined) {
+              return {
+                profileId: branch.profileId,
+                checks: [
+                  {
+                    id: "resident",
+                    severity: "ok" as const,
+                    message: "Profile resident is available",
+                  },
+                ],
+                hasErrors: false,
+              };
+            }
+
+            const report = yield* config.doctor
+              .check(branch.target, config.repositoryRoot)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+            return {
+              profileId: branch.profileId,
+              checks: report.checks.slice(0, 16).map((check) => ({
+                id: boundedText(check.id, 80, "check"),
+                severity: check.severity,
+                message: mapHealthMessage(check.message),
+              })),
+              hasErrors: report.hasErrors,
+            };
+          });
+        case "group.list":
+          return dispatchGroups(request, route, config, groups, pins);
+        case "destination.list":
+          return dispatchGroups(request, route, config, groups, pins);
+        case "session.list":
+        case "session.show":
+        case "session.history":
+        case "session.open":
+        case "session.watch":
+        case "session.unwatch":
+        case "session.close":
+        case "session.steer":
+        case "session.follow-up":
+        case "session.abort":
+        case "prompt.submit":
+          return dispatchSessions(request, send, subscriptions, isOpen);
+        case "agent.list":
+        case "agent.show":
+        case "agent.document":
+        case "agent.save":
+        case "agent.create":
+        case "agent.validate":
+        case "agent.run":
+          return dispatchAgents(request, route, config);
+        case "model.status":
+        case "model.list":
+        case "model.available":
+        case "model.set":
+        case "auth.status":
+          return dispatchSettings(request, route, config);
+        case "automation.list":
+        case "automation.show":
+        case "automation.create":
+        case "automation.save":
+        case "automation.validate":
+        case "automation.pause":
+        case "automation.resume":
+        case "automation.run":
+        case "automation.status":
+        case "automation.runs":
+          return dispatchAutomation(request, route, config);
+        case "memory.list":
+        case "memory.show":
+          return dispatchMemory(request, route, config);
+        case "extension.list-for-profile":
+        case "extension.add":
+        case "extension.remove":
+        case "extension.validate":
+          return dispatchExtensions(request, route, config);
+        case "pin.list":
+        case "pin.set":
+        case "pin.remove":
+          return dispatchPins(request, route, pins);
+        default:
+          return Effect.fail(
+            protocolFailure("unknown_method", `unknown UI gateway method ${request.method}`),
+          );
+      }
     };
 
-  return {
-    connect: (send) => {
-      const subscriptions = new Map<string, () => void>();
-      let open = true;
+    const requestFor =
+      (
+        send: (frame: string) => void,
+        subscriptions: Map<string, () => void>,
+        isOpen: () => boolean,
+      ) =>
+      (request: UiRequestEnvelope): Effect.Effect<void> => {
+        const commandProbe = decodeCommandProbe(request.params);
+        const commandId = Option.isSome(commandProbe) ? commandProbe.value.commandId : undefined;
 
-      return {
-        request: requestFor(send, subscriptions, () => open),
-        close: Effect.sync(() => {
-          open = false;
+        const profileId =
+          Option.isSome(commandProbe) && commandProbe.value.profileId !== undefined
+            ? commandProbe.value.profileId
+            : config.defaultProfile.profileId;
 
-          for (const unsubscribe of subscriptions.values()) unsubscribe();
-          subscriptions.clear();
-        }),
+        const run = dispatch(request, send, subscriptions, isOpen).pipe(
+          Effect.map((result) => resultFrame(request.id, result)),
+          Effect.catch((cause) =>
+            Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
+          ),
+        );
+
+        return commandId === undefined
+          ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
+          : runCommand(
+              `${profileId}:${commandId}`,
+              `${request.method}:${safeFingerprint(request.params)}`,
+              request.id,
+              run,
+            ).pipe(
+              Effect.catch((cause) =>
+                Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
+              ),
+              Effect.map((frame) => ({ ...frame, id: request.id })),
+              Effect.flatMap((frame) => sendResponse(send, frame)),
+            );
       };
-    },
-  };
-};
+
+    return {
+      connect: (send) => {
+        const subscriptions = new Map<string, () => void>();
+        let open = true;
+
+        return {
+          request: requestFor(send, subscriptions, () => open),
+          close: Effect.sync(() => {
+            open = false;
+
+            for (const unsubscribe of subscriptions.values()) unsubscribe();
+            subscriptions.clear();
+          }),
+        };
+      },
+    };
+  });
 
 const safeFingerprint = (value: Schema.Json): string => JSON.stringify(value);
 
 /** Build one current-protocol gateway with isolated, explicitly-routable Profile branches. */
-export const makeSharedUiGateway = (config: SharedUiGatewayDependencies): UiGatewayApi => {
+export const makeSharedUiGateway = (
+  config: SharedUiGatewayDependencies,
+): Effect.Effect<UiGatewayApi, never, Scope.Scope> => {
   const branches = config.branches.some(
     (branch) => branch.profileId === config.defaultProfile.profileId,
   )

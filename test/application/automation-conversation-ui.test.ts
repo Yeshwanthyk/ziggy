@@ -20,7 +20,11 @@ import {
   type ProfileDirectoryEntry,
 } from "ziggy/application/profile-directory";
 import type { SessionsApi } from "ziggy/application/sessions";
-import { makeSharedUiGateway, makeUiGateway } from "ziggy/application/ui-gateway";
+import {
+  makeSharedUiGateway,
+  makeUiGateway,
+  type UiGatewayApi,
+} from "ziggy/application/ui-gateway";
 import { SessionNotFound } from "ziggy/domain/session";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import type { ProfileTarget } from "ziggy/domain/profile";
@@ -188,7 +192,7 @@ const makeProfileDirectory = (
 };
 
 const request = (
-  gateway: ReturnType<typeof makeUiGateway>,
+  gateway: UiGatewayApi,
   input: Parameters<ReturnType<typeof gateway.connect>["request"]>[0],
 ) =>
   Effect.gen(function* () {
@@ -245,7 +249,7 @@ test("automation.run routes through the selected Profile registry and reloads th
           [{ profileId: fixture.profileId, target: fixture.target }],
         );
 
-        const gateway = makeSharedUiGateway({
+        const gateway = yield* makeSharedUiGateway({
           defaultProfile: {
             profileId: defaultProfileId,
             target: defaultTarget,
@@ -288,7 +292,7 @@ test("automation.run routes through the selected Profile registry and reloads th
         const restartedDefaultRegistry = yield* makeChatRegistry(defaultTarget.path);
         const restartedRegistry = yield* makeChatRegistry(fixture.target.path);
 
-        const restartedGateway = makeSharedUiGateway({
+        const restartedGateway = yield* makeSharedUiGateway({
           defaultProfile: {
             profileId: defaultProfileId,
             target: defaultTarget,
@@ -360,7 +364,7 @@ test("a missing destination records a terminal failure without a fallback conver
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry(fixture.target.path);
 
-        const gateway = makeUiGateway({
+        const gateway = yield* makeUiGateway({
           defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
           repositoryRoot: fixture.target.path,
           sessions,
@@ -539,7 +543,7 @@ test("destination.list pages the selected Profile's stored and external destinat
           [{ profileId: otherProfileId, target: otherTarget }],
         );
 
-        const gateway = makeSharedUiGateway({
+        const gateway = yield* makeSharedUiGateway({
           defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
           branches: [
             { profileId: fixture.profileId, target: fixture.target, registry },

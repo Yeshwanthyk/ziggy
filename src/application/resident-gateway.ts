@@ -163,7 +163,7 @@ const makeLiveUiRuntime = (
       let openedGateway: UiGatewayApi;
 
       if (profileRegistryPath === undefined) {
-        openedGateway = makeUiGateway({
+        openedGateway = yield* makeUiGateway({
           defaultProfile: defaultBranch,
           repositoryRoot,
           ...capabilities,
@@ -201,7 +201,7 @@ const makeLiveUiRuntime = (
           { concurrency: 1 },
         );
 
-        openedGateway = makeSharedUiGateway({
+        openedGateway = yield* makeSharedUiGateway({
           defaultProfile: defaultBranch,
           branches,
           profileDirectory,

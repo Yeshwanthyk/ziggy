@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Result } from "effect";
+import { Deferred, Effect, Result, Scope } from "effect";
 import {
   gatewayCookieName,
   openUiServer,
@@ -15,6 +15,7 @@ import {
   type UiServerHandlers,
 } from "ziggy/adapters/bun/ui-server";
 import { openWebAccessStore } from "ziggy/adapters/bun/web-access-sqlite";
+import { makeCommandCache } from "ziggy/application/ui-gateway/command-cache";
 
 const paths: Array<string> = [];
 
@@ -341,6 +342,70 @@ describe("Bun UI server projection and authentication", () => {
 });
 
 describe("Bun UI server socket lifecycle", () => {
+  test("a closed socket's command completes once and its retry succeeds on another socket", async () => {
+    const profilePath = await makeProfile();
+    let executions = 0;
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cache = makeCommandCache(yield* Scope.fork(yield* Effect.scope));
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+
+          const server = yield* openUiServer(
+            profilePath,
+            handlers({
+              onRequest: (connection, request) =>
+                cache(
+                  "same-command",
+                  "ping:{}",
+                  request.id,
+                  Effect.gen(function* () {
+                    executions++;
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+
+                    return { id: request.id, ok: true as const, result: { pong: true as const } };
+                  }),
+                ).pipe(
+                  Effect.catch((error) =>
+                    Effect.succeed({ id: request.id, ok: false as const, error }),
+                  ),
+                  Effect.flatMap((frame) =>
+                    Effect.sync(() =>
+                      connection.send(JSON.stringify({ ...frame, id: request.id })),
+                    ),
+                  ),
+                ),
+            }),
+          );
+
+          const { token } = yield* readUiServerProjection(profilePath);
+          const first = yield* Effect.promise(() => connect(server.port, token));
+          first.send(
+            JSON.stringify({ id: "first", method: "ping", params: { commandId: "same-command" } }),
+          );
+          yield* Deferred.await(started);
+          yield* Effect.promise(() => closeClient(first));
+
+          const second = yield* Effect.promise(() => connect(server.port, token));
+          const response = nextMessage(second);
+          second.send(
+            JSON.stringify({ id: "second", method: "ping", params: { commandId: "same-command" } }),
+          );
+          yield* Deferred.succeed(release, undefined);
+          expect(
+            JSON.parse(yield* Effect.promise(() => within(response, "retry response"))),
+          ).toEqual({ id: "second", ok: true, result: { pong: true } });
+          yield* Effect.promise(() => closeClient(second));
+        }),
+      ),
+    );
+
+    expect(executions).toBe(1);
+  });
+
   test("keeps the largest schema-valid history page below the wire frame limit", () => {
     const frame = JSON.stringify({
       id: "history-maximum",

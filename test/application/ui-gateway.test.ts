@@ -149,7 +149,7 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(makeConfig(registry, agent)).connect((frame) =>
+        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
           sent.push(frame),
         );
 
@@ -262,9 +262,9 @@ test("live session history resolves the handle's current transcript identity at 
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "open",
@@ -328,9 +328,9 @@ test("live session history is empty only while its Pi transcript is not material
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "open",
@@ -400,9 +400,9 @@ test("live session history preserves transcript read failures without exposing i
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "open",
@@ -443,7 +443,7 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
-        const gateway = makeUiGateway(makeConfig(registry, makeAgent(handle)));
+        const gateway = yield* makeUiGateway(makeConfig(registry, makeAgent(handle)));
         const first = gateway.connect((frame) => events.push(frame));
         yield* first.request({
           id: "open",
@@ -488,8 +488,8 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
 
         const restarted: (typeof UiResponseFrame.Type)[] = [];
 
-        const third = makeUiGateway(makeConfig(registry, makeAgent(handle))).connect((frame) =>
-          restarted.push(decodeResponse(frame)),
+        const third = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+          (frame) => restarted.push(decodeResponse(frame)),
         );
 
         yield* third.request({
@@ -552,7 +552,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
             }),
         };
 
-        const gateway = makeUiGateway(makeConfig(registry, agent, undefined, { sessions }));
+        const gateway = yield* makeUiGateway(makeConfig(registry, agent, undefined, { sessions }));
         const frames: string[] = [];
         const connection = gateway.connect((frame) => frames.push(frame));
         const ref = { profileId, kind: "live" as const, key: "local/main" };
@@ -642,7 +642,7 @@ test("command retries preserve the current transport request id", async () => {
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(makeConfig(registry, agent)).connect((frame) =>
+        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
           sent.push(frame),
         );
 
@@ -685,7 +685,7 @@ test("a disconnected command owner does not interrupt another connection's agent
             }),
         });
 
-        const gateway = makeUiGateway(
+        const gateway = yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
@@ -762,9 +762,9 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { profileAgents }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "document",
@@ -842,9 +842,9 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { auth }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "auth",
@@ -907,8 +907,8 @@ test("reopening a session replaces its subscription instead of leaking listeners
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(makeConfig(registry, makeAgent(handle))).connect((frame) =>
-          sent.push(frame),
+        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+          (frame) => sent.push(frame),
         );
 
         const params = { profileId, context: { kind: "local" as const }, name: "same" };
@@ -969,14 +969,14 @@ test("returns a bounded internal frame when a successful result cannot be encode
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
             makeProfileExtensions(),
             { sessions: oversizedSessions },
           ),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "list",
@@ -1016,7 +1016,11 @@ test("specialist session.open uses local specialist Pi primitive, never a channe
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
         yield* registry.registerAlias("slack/user-1", "slack", handle);
-        const connection = makeUiGateway(makeConfig(registry, agent)).connect(() => undefined);
+
+        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect(
+          () => undefined,
+        );
+
         yield* connection.request({
           id: "specialist",
           method: "session.open",
@@ -1056,14 +1060,14 @@ test("group.list discovers persisted groups for the requested Profile", async ()
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
             makeProfileExtensions(),
             { groups },
           ),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "groups",
@@ -1141,11 +1145,11 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
         const registry = yield* makeChatRegistry();
         const sent: string[] = [];
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(registry, agent, makeProfileExtensions(), {
             groups,
           }),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         const context = {
           kind: "group" as const,
@@ -1318,13 +1322,13 @@ test("UI gateway routes all management operations through decoded explicit Profi
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             profileExtensions,
           ),
-        ).connect((frame) => responses.push(decodeResponse(frame)));
+        )).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
           id: "1",
@@ -1388,13 +1392,13 @@ test("UI gateway maps extension failures to bounded typed details without filesy
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             profileExtensions,
           ),
-        ).connect((frame) => responses.push(decodeResponse(frame)));
+        )).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
           id: "1",
@@ -1452,14 +1456,14 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = makeUiGateway(
+        const connection = (yield* makeUiGateway(
           makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             makeProfileExtensions(),
             { models: modelService },
           ),
-        ).connect((frame) => sent.push(frame));
+        )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
           id: "large-model-catalog",
