@@ -1018,8 +1018,10 @@ const program = Effect.gen(function* () {
     SpecialistRunFailed: (failure) => fail(failure.message),
     ProfileNotInitialized: (failure) => fail(failure.message),
     SessionBusy: (failure) => fail(failure.message),
-    SessionHeld: () =>
-      fail("this session is open in the resident; use the UI, or start a new session"),
+    SessionHeld: (failure) =>
+      fail(
+        `this session is open in another process${failure.pid === undefined ? "" : ` (pid ${failure.pid})`}; use the UI, or start a new session`,
+      ),
     ProviderConfigError: (failure) => fail(failure.message),
     ProviderCallError: (failure) => fail(failure.message),
     AuthProviderUnknown: (failure) => fail(failure.message),
@@ -1043,10 +1045,10 @@ const program = Effect.gen(function* () {
     AutomationProjectionError: (failure) => fail(failure.message),
     AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
-    GatewayOwnerError: (failure) =>
-      fail(failure.reason === "held" ? "resident is starting; retry" : failure.message),
+    GatewayOwnerError: (failure) => fail(failure.message),
     ResidentServiceError: (failure) => fail(failure.message),
     UiServerError: (failure) => fail(failure.message),
+    UiGatewayError: (failure) => fail(failure.message),
     WebAccessError: (failure) => fail(failure.message),
     SessionReadFailed: (failure) => fail(failure.message),
     SessionNotFound: (failure) => fail(failure.message),
