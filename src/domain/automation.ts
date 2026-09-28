@@ -169,6 +169,11 @@ export class AutomationEditConflict extends Schema.TaggedErrorClass<AutomationEd
   { id: Schema.String, path: Schema.String, message: Schema.String },
 ) {}
 
+export class AutomationScheduleSuperseded extends Schema.TaggedErrorClass<AutomationScheduleSuperseded>()(
+  "AutomationScheduleSuperseded",
+  { id: Schema.String, message: Schema.String },
+) {}
+
 export class AutomationFileSystemError extends Schema.TaggedErrorClass<AutomationFileSystemError>()(
   "AutomationFileSystemError",
   { path: Schema.String, message: Schema.String, cause: Schema.Defect() },
@@ -309,6 +314,7 @@ export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, targ
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 
 const AutomationRunFailureCategory = Schema.Literals([
+  "schedule-superseded",
   "broadcasts-unreadable",
   "broadcasts-invalid",
   "all-empty",
@@ -376,6 +382,7 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
 ]);
 
 const executionFailureCategories: ReadonlySet<string> = new Set([
+  "schedule-superseded",
   "AutomationInvalid",
   "AutomationNotFound",
   "AutomationPaused",

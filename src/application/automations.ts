@@ -19,6 +19,8 @@ import {
   AutomationInvalid,
   AutomationNotFound,
   AutomationPaused,
+  AutomationScheduleSuperseded,
+  automationScheduleFingerprint,
   type AutomationDeliveryFailureCategory,
   type AutomationRunOutcome,
   type AutomationTrigger,
@@ -42,6 +44,7 @@ export type AutomationError =
   | AutomationInvalid
   | AutomationNotFound
   | AutomationPaused
+  | AutomationScheduleSuperseded
   | AutomationFileSystemError
   | AutomationGateFailed
   | AutomationDatabaseError
@@ -313,7 +316,7 @@ const gateFailureCategory = (
 };
 
 // oxfmt-ignore
-const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileExtensionPreflightFailed: () => "ProfileExtensionPreflightFailed" as const, ProfileExtensionLockFailed: () => "ProfileExtensionLockFailed" as const, ProfileExtensionRollbackFailed: () => "ProfileExtensionRollbackFailed" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
+const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationScheduleSuperseded: () => "schedule-superseded" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileExtensionPreflightFailed: () => "ProfileExtensionPreflightFailed" as const, ProfileExtensionLockFailed: () => "ProfileExtensionLockFailed" as const, ProfileExtensionRollbackFailed: () => "ProfileExtensionRollbackFailed" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
 const chatModelOverride = (automation: Automation): ChatModelOverride | undefined => {
   if (automation.provider !== undefined && automation.model !== undefined) {
@@ -335,182 +338,200 @@ export const makeAutomations = (
   runtime: AutomationRunRuntime = liveRunRuntime,
 ): AutomationsApi => ({
   run: (target, automationIdSource, trigger, context) =>
-    Effect.gen(function* () {
-      const automationId = yield* validateAutomationId(automationIdSource);
-      const admittedAt = yield* runtime.now;
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const automationId = yield* validateAutomationId(automationIdSource);
+        const admittedAt = yield* runtime.now;
 
-      const runId =
-        trigger.kind === "manual-force"
-          ? runtime.makeManualRunId()
-          : scheduledRunId(automationId, Date.parse(trigger.scheduledFor));
+        const runId =
+          trigger.kind === "manual-force"
+            ? runtime.makeManualRunId()
+            : scheduledRunId(automationId, Date.parse(trigger.scheduledFor));
 
-      if (trigger.kind === "manual-force") {
-        yield* runtime.store.recover(target.path, admittedAt);
+        const fingerprint = trigger.kind === "scheduled" ? trigger.scheduleFingerprint : null;
 
-        const admission = yield* runtime.store.admitManual(
-          target.path,
-          automationId,
-          runId,
-          admittedAt,
-        );
+        const owner =
+          trigger.kind === "scheduled"
+            ? { kind: "resident" as const, id: trigger.residentOwnerId }
+            : undefined;
 
-        if (admission === "skipped-busy") return { kind: "skipped-busy" };
-      }
+        // A manual claim must not be stranded by interruption before start. Scheduled claims
+        // have already committed with the cursor; both paths enter the same terminal guard.
+        const admitted = yield* Effect.gen(function* () {
+          if (trigger.kind === "manual-force") {
+            yield* runtime.store.recover(target.path, admittedAt);
 
-      const fingerprint = trigger.kind === "scheduled" ? trigger.scheduleFingerprint : null;
+            const admission = yield* runtime.store.admitManual(
+              target.path,
+              automationId,
+              runId,
+              admittedAt,
+            );
 
-      const owner =
-        trigger.kind === "scheduled"
-          ? { kind: "resident" as const, id: trigger.residentOwnerId }
-          : undefined;
+            if (admission === "skipped-busy") return false;
+          }
 
-      yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint, owner);
+          yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint, owner);
 
-      const finish = (
-        terminal: Omit<RunTerminal, "atMs">,
-        targets: ReadonlyArray<AutomationTargetOutcome> = [],
-      ) =>
-        Effect.flatMap(runtime.now, (atMs) =>
-          runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets, owner),
-        );
+          return true;
+        });
 
-      const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {
-        const automation = yield* readAutomation(
-          capabilities.files,
-          target,
-          automationId,
-          trigger.kind === "scheduled",
-        );
+        if (!admitted) return { kind: "skipped-busy" };
 
-        if (trigger.kind === "scheduled" && automation.gate === undefined) {
-          return {
-            outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },
-            terminal: {
-              state: "skipped-gate",
-              localCompleted: false,
-              failureCategory: "gate-missing",
-              gateExitCode: null,
-            },
-            targets: [],
-          };
-        }
+        const finish = (
+          terminal: Omit<RunTerminal, "atMs">,
+          targets: ReadonlyArray<AutomationTargetOutcome> = [],
+        ) =>
+          Effect.flatMap(runtime.now, (atMs) =>
+            runtime.store.finish(target.path, runId, { ...terminal, atMs }, targets, owner),
+          );
 
-        if (automation.gate !== undefined) {
-          const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
+        const execute: Effect.Effect<TerminalIntent, AutomationError> = Effect.gen(function* () {
+          const automation = yield* readAutomation(
+            capabilities.files,
+            target,
+            automationId,
+            trigger.kind === "scheduled",
+          );
 
-          if (gate.kind === "declined") {
+          if (
+            trigger.kind === "scheduled" &&
+            automationScheduleFingerprint(automation) !== trigger.scheduleFingerprint
+          ) {
+            return yield* new AutomationScheduleSuperseded({
+              id: automation.id,
+              message: `scheduled automation ${automation.id} changed after its occurrence was claimed`,
+            });
+          }
+
+          if (trigger.kind === "scheduled" && automation.gate === undefined) {
             return {
-              outcome: { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode },
+              outcome: { kind: "declined", reason: "gate-nonzero", exitCode: 1 },
               terminal: {
                 state: "skipped-gate",
                 localCompleted: false,
-                failureCategory: "gate-nonzero",
-                gateExitCode: gate.exitCode,
+                failureCategory: "gate-missing",
+                gateExitCode: null,
               },
               targets: [],
             };
           }
-        }
 
-        const reply =
-          automation.specialist === undefined
-            ? yield* Effect.acquireUseRelease(
-                agent.openChat(
-                  target,
-                  { kind: "local" },
-                  join(target.path, "sessions", "automations", automation.id),
-                  "fresh",
-                  chatModelOverride(automation),
-                  `Automation · ${automation.id}`,
-                ),
-                (handle) => handle.prompt(automation.prompt),
-                (handle) =>
-                  handle.dispose.pipe(
-                    Effect.catch((failure) =>
-                      Effect.sync(() =>
-                        console.error(
-                          `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
+          if (automation.gate !== undefined) {
+            const gate = yield* capabilities.gate.run(target.path, automation.id, automation.gate);
+
+            if (gate.kind === "declined") {
+              return {
+                outcome: { kind: "declined", reason: "gate-nonzero", exitCode: gate.exitCode },
+                terminal: {
+                  state: "skipped-gate",
+                  localCompleted: false,
+                  failureCategory: "gate-nonzero",
+                  gateExitCode: gate.exitCode,
+                },
+                targets: [],
+              };
+            }
+          }
+
+          const reply =
+            automation.specialist === undefined
+              ? yield* Effect.acquireUseRelease(
+                  agent.openChat(
+                    target,
+                    { kind: "local" },
+                    join(target.path, "sessions", "automations", automation.id),
+                    "fresh",
+                    chatModelOverride(automation),
+                    `Automation · ${automation.id}`,
+                  ),
+                  (handle) => handle.prompt(automation.prompt),
+                  (handle) =>
+                    handle.dispose.pipe(
+                      Effect.catch((failure) =>
+                        Effect.sync(() =>
+                          console.error(
+                            `[wake] ${automation.id}: session dispose failed — ${failure.message}`,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              )
-            : (yield* agent.runSpecialist(
+                )
+              : (yield* agent.runSpecialist(
+                  target,
+                  automation.specialist.agentId,
+                  automation.specialist.task,
+                  {
+                    sessionDirectory: join(
+                      target.path,
+                      "sessions",
+                      "automations",
+                      automation.id,
+                      runId,
+                    ),
+                  },
+                )).answer;
+
+          yield* capabilities.printReply(reply);
+          const resolution = yield* resolveTargets(capabilities.files, target, automation);
+
+          if (!resolution.ok) {
+            return {
+              outcome: {
+                kind: "executed",
+                delivery: { kind: "resolution-failed", category: resolution.category },
+              },
+              terminal: {
+                state: "failed",
+                localCompleted: true,
+                failureCategory: resolution.category,
+                gateExitCode: null,
+              },
+              targets: [],
+            };
+          }
+
+          const outcomes: Array<AutomationTargetOutcome> = [];
+
+          for (const destination of resolution.targets) {
+            const deliveredAt = new Date(yield* runtime.now).toISOString();
+            outcomes.push(
+              yield* deliver(
+                capabilities,
                 target,
-                automation.specialist.agentId,
-                automation.specialist.task,
-                {
-                  sessionDirectory: join(
-                    target.path,
-                    "sessions",
-                    "automations",
-                    automation.id,
-                    runId,
-                  ),
-                },
-              )).answer;
+                destination,
+                reply,
+                automation.id,
+                runId,
+                deliveredAt,
+                context,
+              ),
+            );
+          }
 
-        yield* capabilities.printReply(reply);
-        const resolution = yield* resolveTargets(capabilities.files, target, automation);
+          const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
 
-        if (!resolution.ok) {
           return {
-            outcome: {
-              kind: "executed",
-              delivery: { kind: "resolution-failed", category: resolution.category },
-            },
-            terminal: {
-              state: "failed",
-              localCompleted: true,
-              failureCategory: resolution.category,
-              gateExitCode: null,
-            },
-            targets: [],
+            outcome: { kind: "executed", delivery: { kind: "resolved", targets: outcomes } },
+            terminal:
+              firstFailure === undefined
+                ? {
+                    state: "completed",
+                    localCompleted: true,
+                    failureCategory: null,
+                    gateExitCode: null,
+                  }
+                : {
+                    state: "failed",
+                    localCompleted: true,
+                    failureCategory: firstFailure.category,
+                    gateExitCode: null,
+                  },
+            targets: outcomes,
           };
-        }
+        });
 
-        const outcomes: Array<AutomationTargetOutcome> = [];
-
-        for (const destination of resolution.targets) {
-          const deliveredAt = new Date(yield* runtime.now).toISOString();
-          outcomes.push(
-            yield* deliver(
-              capabilities,
-              target,
-              destination,
-              reply,
-              automation.id,
-              runId,
-              deliveredAt,
-              context,
-            ),
-          );
-        }
-
-        const firstFailure = outcomes.find((outcome) => outcome.status === "failed");
-
-        return {
-          outcome: { kind: "executed", delivery: { kind: "resolved", targets: outcomes } },
-          terminal:
-            firstFailure === undefined
-              ? {
-                  state: "completed",
-                  localCompleted: true,
-                  failureCategory: null,
-                  gateExitCode: null,
-                }
-              : {
-                  state: "failed",
-                  localCompleted: true,
-                  failureCategory: firstFailure.category,
-                  gateExitCode: null,
-                },
-          targets: outcomes,
-        };
-      });
-
-      return yield* Effect.uninterruptibleMask((restore) =>
-        restore(execute).pipe(
+        return yield* restore(execute).pipe(
           Effect.catch((error) =>
             finish({
               state: "failed",
@@ -530,9 +551,9 @@ export const makeAutomations = (
               gateExitCode: null,
             }),
           ),
-        ),
-      );
-    }),
+        );
+      }),
+    ),
 });
 
 export const AutomationsLive = Layer.effect(

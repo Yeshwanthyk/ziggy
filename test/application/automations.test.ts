@@ -11,6 +11,7 @@ import {
   initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
+  readScheduleRecords,
   recoverAutomationRuns,
   type AutomationRunStore,
   type RunTerminal,
@@ -22,7 +23,13 @@ import {
   ProviderConfigError,
   SpecialistAgentNotFound,
 } from "ziggy/domain/agent";
-import { AutomationDatabaseError, type AutomationTargetOutcome } from "ziggy/domain/automation";
+import {
+  AutomationDatabaseError,
+  automationScheduleFingerprint,
+  parseAutomationFile,
+  validateAutomationId,
+  type AutomationTargetOutcome,
+} from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
 import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
@@ -441,7 +448,17 @@ describe("automation run", () => {
   test("a scheduled definition without a gate records skipped-gate before Pi", async () => {
     const events: Array<string> = [];
     const target = await profile("none");
-    const fingerprint = "a".repeat(64);
+    const id = await Effect.runPromise(validateAutomationId("daily-note"));
+
+    const fingerprint = automationScheduleFingerprint(
+      await Effect.runPromise(
+        parseAutomationFile(
+          id,
+          join(target.path, "automations", "daily-note.md"),
+          definition("none"),
+        ),
+      ),
+    );
 
     const initial = {
       automationId: "daily-note",
@@ -497,6 +514,78 @@ describe("automation run", () => {
       "skipped-gate",
       "gate-missing",
     ]);
+  });
+
+  test("a re-read schedule mismatch does not run the gate or agent and leaves the next cursor intact", async () => {
+    const events: Array<string> = [];
+    const target = await profile("none", ["gate: true"]);
+    const id = await Effect.runPromise(validateAutomationId("daily-note"));
+    const path = join(target.path, "automations", "daily-note.md");
+    const original = definition("none", ["gate: true"]);
+
+    const fingerprint = automationScheduleFingerprint(
+      await Effect.runPromise(parseAutomationFile(id, path, original)),
+    );
+
+    const initial = {
+      automationId: "daily-note",
+      definitionState: "valid" as const,
+      scheduleFingerprint: fingerprint,
+      nextScheduledAtMs: 1_000,
+      definitionObservedAtMs: 0,
+      definitionError: null,
+    };
+
+    await Effect.runPromise(initializeAutomationDatabase(target.path));
+    await Effect.runPromise(
+      commitScheduleTick(target.path, 0, [{ expected: null, next: initial }], "resident"),
+    );
+    await Effect.runPromise(
+      commitScheduleTick(
+        target.path,
+        1_000,
+        [
+          {
+            expected: initial,
+            next: { ...initial, nextScheduledAtMs: 2_000, definitionObservedAtMs: 1_000 },
+            occurrence: {
+              kind: "due",
+              runId: "scheduled:daily-note:1970-01-01T00:00:01.000Z",
+              scheduledForMs: 1_000,
+              missedThroughMs: null,
+              scheduleFingerprint: fingerprint,
+            },
+          },
+        ],
+        "resident",
+      ),
+    );
+    await writeFile(path, original.replace("cron: 0 9 * * *", "cron: 0 10 * * *"));
+
+    const result = await Effect.runPromise(
+      harness(events)
+        .run(target, "daily-note", {
+          kind: "scheduled",
+          scheduledFor: "1970-01-01T00:00:01.000Z",
+          scheduleFingerprint: fingerprint,
+          residentOwnerId: "resident",
+        })
+        .pipe(Effect.result),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "AutomationScheduleSuperseded" },
+    });
+    expect(events).toEqual([]);
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      failureCategory: "schedule-superseded",
+      localCompleted: false,
+    });
+    expect((await Effect.runPromise(readScheduleRecords(target.path)))[0]?.nextScheduledAtMs).toBe(
+      2_000,
+    );
   });
 
   test("prints before resolution and malformed broadcasts sends nothing", async () => {
@@ -722,6 +811,37 @@ describe("automation run", () => {
       localCompleted: false,
       failureCategory: null,
       finishedAtMs: null,
+    });
+  });
+
+  test("interruption during manual admission cannot strand a claimed run", async () => {
+    const target = await profile("none");
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      admitManual: (path, id, runId, atMs) =>
+        automationRunStore.admitManual(path, id, runId, atMs).pipe(
+          Effect.tap(() => Deferred.succeed(entered, undefined)),
+          Effect.tap(() => Deferred.await(release)),
+        ),
+    };
+
+    const fiber = Effect.runFork(
+      harness([], { store }).run(target, "daily-note", { kind: "manual-force" }),
+    );
+
+    await Effect.runPromise(Deferred.await(entered));
+
+    const interrupted = Effect.runFork(Fiber.interrupt(fiber));
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await Effect.runPromise(Fiber.join(interrupted));
+
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      failureCategory: "interrupted",
+      localCompleted: false,
     });
   });
 
