@@ -1042,7 +1042,8 @@ const program = Effect.gen(function* () {
     AutomationProjectionError: (failure) => fail(failure.message),
     AutomationSchedulerError: (failure) => fail(failure.message),
     GatewayConfigError: (failure) => fail(failure.message),
-    GatewayOwnerError: (failure) => fail(failure.message),
+    GatewayOwnerError: (failure) =>
+      fail(failure.reason === "held" ? "resident is starting; retry" : failure.message),
     ResidentServiceError: (failure) => fail(failure.message),
     UiServerError: (failure) => fail(failure.message),
     WebAccessError: (failure) => fail(failure.message),
