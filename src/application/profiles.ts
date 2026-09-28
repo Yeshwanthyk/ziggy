@@ -1,5 +1,4 @@
 import { Context, Effect, Layer } from "effect";
-import type { Dirent, Stats } from "node:fs";
 import * as path from "node:path";
 import {
   ProfileFileSystemError,
@@ -42,8 +41,19 @@ export interface ProfilesApi {
 
 export class Profiles extends Context.Service<Profiles, ProfilesApi>()("ziggy/Profiles") {}
 
+export interface ProfileFileStatus {
+  readonly isDirectory: () => boolean;
+  readonly isSymbolicLink: () => boolean;
+  readonly isFile: () => boolean;
+}
+
+export interface ProfileDirectoryEntry {
+  readonly name: string;
+  readonly isDirectory: () => boolean;
+}
+
 export interface ProfileFilesApi {
-  readonly lstat: (targetPath: string) => Effect.Effect<Stats, ProfileFileSystemError>;
+  readonly lstat: (targetPath: string) => Effect.Effect<ProfileFileStatus, ProfileFileSystemError>;
   readonly mkdir: (
     targetPath: string,
     options?: { readonly recursive?: boolean; readonly mode?: number },
@@ -60,7 +70,7 @@ export interface ProfileFilesApi {
   ) => Effect.Effect<void, ProfileFileSystemError>;
   readonly readdir: (
     targetPath: string,
-  ) => Effect.Effect<ReadonlyArray<Dirent>, ProfileFileSystemError>;
+  ) => Effect.Effect<ReadonlyArray<ProfileDirectoryEntry>, ProfileFileSystemError>;
 }
 
 export class ProfileStore extends Context.Service<ProfileStore, ProfileFilesApi>()(
@@ -135,7 +145,7 @@ MEMORY.md; person and group documents live under memory/users/ and memory/groups
 See docs/operations/memory.md for scope rules, caps, backups, and safe hand-editing.
 `;
 
-  const validMemoryDirectory = (directoryPath: string) => (status: Stats) =>
+  const validMemoryDirectory = (directoryPath: string) => (status: ProfileFileStatus) =>
     status.isDirectory() && !status.isSymbolicLink()
       ? Effect.void
       : Effect.fail(
@@ -148,7 +158,7 @@ See docs/operations/memory.md for scope rules, caps, backups, and safe hand-edit
           }),
         );
 
-  const validMemoryFile = (filePath: string) => (status: Stats) =>
+  const validMemoryFile = (filePath: string) => (status: ProfileFileStatus) =>
     status.isFile() && !status.isSymbolicLink()
       ? Effect.void
       : Effect.fail(
