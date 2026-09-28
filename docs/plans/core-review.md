@@ -47,7 +47,7 @@ Status: done; on main (d5bb377).
 
 ## 1. Correctness fixes
 
-Status: Slack health done (review/chat); command cache and fingerprint in review.
+Status: Slack health and command cache done; automation fingerprint in review.
 
 - UI gateway command cache (`src/application/ui-gateway.ts:1531`). A defect in `run` never completes
   the `Deferred`, so retries hang. The whole run is uninterruptible, and FIFO eviction can drop
@@ -137,7 +137,7 @@ Status: done (review/chat). Merging the Slack and Discord turn schedulers stays 
 
 ## 8. UI gateway
 
-Status: pending.
+Status: done (review/ui).
 
 - Split `ui-gateway.ts` (1,578 lines) and `management.ts` (947 lines) along protocol boundaries.
 

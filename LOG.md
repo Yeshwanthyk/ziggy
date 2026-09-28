@@ -1067,3 +1067,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - A Fable review of Ziggy, hermes-agent and openclaw confirmed that extensions already run headless in every host, and that the resident should own only connections, live sessions, the cron ticker and interactive UI.
 - Added a per-session writer lease to section 11 (today concurrent writers silently fork a session), headless `ctx.ui` defaults to section 5, and section 12 "Headless hosts and the resident" (conversation delivery from `wake`, a no-resident schedule warning, `extensions update --restart`, an optional `ziggy tick`), owned by a new `headless` stream after `auto` and `adapter`.
 - Recorded the decision: the resident is optional for extensions; no outbox, no broadcast port, no silent fallback.
+
+## 2026-09-28 — UI command cache lifecycle and gateway split
+
+- UI commands run in a gateway-owned scope (`makeUiGateway` is now scoped and built inside the resident's scope), so closing the socket that sent a command no longer interrupts it or causes a duplicate run on retry. The child fiber starts masked, only the command itself is interruptible, and waiters always get a frame, including at shutdown.
+- A slot is claimed with no yield between lookup and insert. Only successful responses are cached, evicted oldest-completed first; pending slots are never evicted.
+- Split `ui-gateway.ts` (1,578 → 411 lines) into protocol modules, including `sessions.ts` and `groups.ts`, and removed the `management.ts` barrel.
+- Tests: a command-cache property test, socket disconnect-and-retry through the real UI server, immediate shutdown, and the server's inbound size limit.
+- Verification: `bun run check` and `bun run test` (729 pass) passed. Opus re-reviews: all findings resolved.
