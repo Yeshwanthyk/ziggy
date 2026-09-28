@@ -1,24 +1,3 @@
-export type HelpTopic =
-  | "help"
-  | "version"
-  | "update"
-  | "init"
-  | "profiles"
-  | "extensions"
-  | "auth"
-  | "models"
-  | "agents"
-  | "doctor"
-  | "run"
-  | "acp"
-  | "automations"
-  | "wake"
-  | "sessions"
-  | "memory"
-  | "serve"
-  | "web"
-  | "gateway";
-
 export const ziggyHelpTopics = [
   "help",
   "version",
@@ -39,7 +18,9 @@ export const ziggyHelpTopics = [
   "serve",
   "web",
   "gateway",
-] as const satisfies ReadonlyArray<HelpTopic>;
+] as const;
+
+export type HelpTopic = (typeof ziggyHelpTopics)[number];
 
 export const isZiggyHelpTopic = (value: string): value is HelpTopic =>
   ziggyHelpTopics.some((topic) => topic === value);

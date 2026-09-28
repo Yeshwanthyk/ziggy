@@ -1,7 +1,5 @@
 import { Schema } from "effect";
 
-export type SessionTerminalState = "completed" | "aborted" | "failed" | "incomplete";
-
 export interface SessionReferenceMetadata {
   readonly id: string;
   readonly path: string;
@@ -69,6 +67,8 @@ export const SessionHistoryTerminalState = Schema.Literals([
 ]);
 
 export type SessionHistoryTerminalState = typeof SessionHistoryTerminalState.Type;
+
+export type SessionTerminalState = SessionHistoryTerminalState;
 
 export type SessionHistoryEntry =
   | {

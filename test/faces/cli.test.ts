@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { Cause, Effect, Exit } from "effect";
 import fc from "fast-check";
 import { CliInputInvalid } from "ziggy/faces/cli-command";
+import { ziggyHelpTopics } from "ziggy/domain/cli-help";
 import { decodeCliCommand, isForegroundResidentArguments, renderHelp } from "ziggy/faces/cli";
 
 const decode = (args: ReadonlyArray<string>) => Effect.runPromise(decodeCliCommand(args));
@@ -458,32 +459,36 @@ describe("CLI decoding", () => {
 });
 
 test("bounded argv decoding is total with only typed input failures", async () => {
+  const subcommand = fc.constantFrom(
+    "list",
+    "show",
+    "manage",
+    "add",
+    "remove",
+    "update",
+    "set",
+    "status",
+    "create",
+    "validate",
+    "run",
+    "configure",
+    "install",
+    "start",
+    "stop",
+    "restart",
+    "logs",
+  );
+
   const token = fc.oneof(
     fc.constantFrom("", "--", "--json", "--port", "--provider", "--session", "\u0000"),
+    subcommand,
     fc.string({ maxLength: 24 }),
   );
 
   const argv = fc.oneof(
     fc.array(token, { maxLength: 12 }),
     fc
-      .tuple(
-        fc.constantFrom(
-          "init",
-          "extensions",
-          "run",
-          "acp",
-          "models",
-          "agents",
-          "automations",
-          "memory",
-          "serve",
-          "web",
-          "sessions",
-          "auth",
-          "help",
-        ),
-        fc.array(token, { maxLength: 11 }),
-      )
+      .tuple(fc.constantFrom(...ziggyHelpTopics), fc.array(token, { maxLength: 11 }))
       .map(([command, rest]) => [command, ...rest]),
   );
 

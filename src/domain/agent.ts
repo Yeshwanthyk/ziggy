@@ -223,7 +223,6 @@ export type ZiggyAgentError =
 
 export type ProfileSpecialistError =
   | ZiggyAgentError
-  | ProfileAgentInvalid
   | SpecialistAgentNotFound
   | SpecialistProviderUnsupported
   | SpecialistModelUnsupported
