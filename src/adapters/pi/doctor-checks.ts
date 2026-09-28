@@ -20,7 +20,10 @@ import { parseAutomationFile } from "../../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../../domain/memory";
 import { type DoctorCheck, doctorReport } from "../../domain/doctor";
 import type { ProfileTarget } from "../../domain/profile";
-import type { ProfileExtensionsApi } from "../../domain/profile-extension";
+import {
+  ProfileExtensionPreflightFailed,
+  type ProfileExtensionsApi,
+} from "../../domain/profile-extension";
 import { inspectPiPackageHealth } from "./profile-extension-preflight";
 import { DoctorChecks, type DoctorChecksApi } from "../../application/doctor";
 import packageJson from "../../../package.json" with { type: "json" };
@@ -262,7 +265,6 @@ const resourcesCheck = (
   inspectPackages: typeof inspectPiPackageHealth,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);
     const skipped = yield* inspectPackages(target.path, repositoryRoot);
 
     if (skipped.length > 0)
@@ -271,13 +273,25 @@ const resourcesCheck = (
         `BROKEN Profile packages skipped: ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
       );
 
+    const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);
+
     return ok(
       "resources",
       `${preflight.extensionFactoryCount} bundled factories, ${preflight.extensionPathCount} Profile extension entrypoints, and ${preflight.skillPathCount} skill roots selected`,
     );
   }).pipe(
-    Effect.catch(() =>
-      Effect.succeed(error("resources", "Selected extensions or installed skills are invalid")),
+    Effect.catch((failure) =>
+      Effect.succeed(
+        error(
+          "resources",
+          failure instanceof ProfileExtensionPreflightFailed
+            ? `Fatal Pi resource diagnostics: ${failure.diagnostics
+                .slice(0, 3)
+                .map((item) => `${item.source}: ${item.message}`)
+                .join("; ")}`.slice(0, 720)
+            : "Selected extensions or installed skills are invalid",
+        ),
+      ),
     ),
   );
 
