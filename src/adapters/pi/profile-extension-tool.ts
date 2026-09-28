@@ -164,6 +164,7 @@ const listResult = Type.Object(
       { maxItems: 16 },
     ),
     selected: boundedSelectedIds,
+    healthWarning: Type.Boolean(),
     truncated: Type.Boolean(),
   },
   { additionalProperties: false },
@@ -316,6 +317,7 @@ type ProfileExtensionActionResult =
       readonly action: "list";
       readonly value: ProfileExtensionListing;
       readonly broken: ReadonlyArray<SkippedPiPackage>;
+      readonly healthWarning: boolean;
     }
   | { readonly action: "add"; readonly value: ProfileExtensionMutation }
   | { readonly action: "remove"; readonly value: ProfileExtensionMutation }
@@ -501,6 +503,7 @@ const failureProjection = (failure: ProfileExtensionError): FailureProjection =>
 const projectListing = (
   listing: ProfileExtensionListing,
   broken: ReadonlyArray<SkippedPiPackage>,
+  healthWarning: boolean,
 ): ProjectedListing => {
   const available = listing.available.slice(0, PROFILE_EXTENSIONS_MAX_LIST_ITEMS).map((choice) => ({
     id: boundedId(choice.id),
@@ -523,6 +526,7 @@ const projectListing = (
         .slice(0, 16)
         .map((item) => ({ id: boundedId(item.id), diagnostics: [...item.diagnostics] })),
       selected: [...selected.values],
+      healthWarning,
       truncated: available.length < listing.available.length || selected.truncated,
     },
   };
@@ -560,11 +564,21 @@ const actionEffect = (
     case "list":
       return Effect.all([
         options.profileExtensions.listForProfile(options.profilePath, options.repositoryRoot),
-        options.inspectPackages(options.profilePath, options.repositoryRoot),
+        options.inspectPackages(options.profilePath, options.repositoryRoot).pipe(
+          Effect.map((broken) => ({ broken, healthWarning: false })),
+          Effect.catch((failure) =>
+            Effect.logWarning("Profile extension health inspection failed", { failure }).pipe(
+              Effect.as({
+                broken: [] satisfies ReadonlyArray<SkippedPiPackage>,
+                healthWarning: true,
+              }),
+            ),
+          ),
+        ),
       ]).pipe(
         Effect.map(
-          ([value, broken]) =>
-            ({ action: "list", value, broken }) satisfies ProfileExtensionActionResult,
+          ([value, health]) =>
+            ({ action: "list", value, ...health }) satisfies ProfileExtensionActionResult,
         ),
       );
     case "add":
@@ -600,13 +614,13 @@ const successFor = (
 
   switch (result.action) {
     case "list": {
-      const projected = projectListing(result.value, result.broken);
+      const projected = projectListing(result.value, result.broken, result.healthWarning);
 
       return successDetails(
         "list",
         metadata,
         "listed",
-        `listed ${projected.availableCount} Profile extension${projected.availableCount === 1 ? "" : "s"}${result.broken.length > 0 ? `; BROKEN packages skipped: ${result.broken.map((item) => item.id).join(", ")}` : ""}`,
+        `listed ${projected.availableCount} Profile extension${projected.availableCount === 1 ? "" : "s"}${result.broken.length > 0 ? `; BROKEN packages skipped: ${result.broken.map((item) => item.id).join(", ")}` : ""}${result.healthWarning ? "; WARNING: package health could not be inspected" : ""}`,
         false,
         projected.result,
       );
@@ -682,7 +696,7 @@ const contentFor = (details: ProfileExtensionToolDetails): string => {
       .join("; ");
 
     return boundedText(
-      `profile_extensions list: available=${available || "(none)"}; selected=${selected || "(none)"}; BROKEN skipped=${broken || "(none)"}${details.result.truncated ? "; result truncated" : ""}`,
+      `profile_extensions list: available=${available || "(none)"}; selected=${selected || "(none)"}; BROKEN skipped=${broken || "(none)"}${details.result.healthWarning ? "; WARNING: package health inspection failed" : ""}${details.result.truncated ? "; result truncated" : ""}`,
       PROFILE_EXTENSIONS_MAX_OUTPUT_CODE_POINTS,
       "profile extension list unavailable",
     );

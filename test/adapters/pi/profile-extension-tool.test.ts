@@ -238,6 +238,32 @@ describe("profile_extensions input and result contract", () => {
     expect(Value.Check(profileExtensionToolDetailsSchema, added.details)).toBe(true);
   });
 
+  test("warns and returns an empty broken list when health inspection fails", async () => {
+    const tool = createProfileExtensionTool(
+      "/trusted/profile",
+      "/trusted/repository",
+      makeStub([]),
+      () =>
+        Effect.fail(
+          new ProfileExtensionPreflightFailed({
+            profilePath: "/trusted/profile",
+            stage: "extensions",
+            message: "inspection failed",
+            diagnostics: [],
+            cause: undefined,
+          }),
+        ),
+    );
+
+    const listed = await invoke(tool, { action: "list" });
+
+    expect(listed.details).toMatchObject({
+      ok: true,
+      result: { broken: [], healthWarning: true },
+    });
+    expect(listed.content[0]).toMatchObject({ text: expect.stringContaining("WARNING") });
+  });
+
   test("projects typed failures without exposing causes or unbounded text", async () => {
     const failure = new ProfileExtensionPreflightFailed({
       profilePath: "/trusted/profile",
