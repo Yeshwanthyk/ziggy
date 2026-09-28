@@ -30,6 +30,13 @@
   width: 14px;
 }
 
+/* In dark mode the background-coloured thumb sinks into the off track; lift it to a quiet grey. */
+@media (prefers-color-scheme: dark) {
+  .ui-switch:not(:checked)::before {
+    background: var(--placeholder);
+  }
+}
+
 .ui-switch:checked {
   background: var(--primary);
   box-shadow: none;
