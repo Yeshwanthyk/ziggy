@@ -1018,7 +1018,8 @@ const program = Effect.gen(function* () {
     SpecialistRunFailed: (failure) => fail(failure.message),
     ProfileNotInitialized: (failure) => fail(failure.message),
     SessionBusy: (failure) => fail(failure.message),
-    SessionHeld: (failure) => fail(failure.message),
+    SessionHeld: () =>
+      fail("this session is open in the resident; use the UI, or start a new session"),
     ProviderConfigError: (failure) => fail(failure.message),
     ProviderCallError: (failure) => fail(failure.message),
     AuthProviderUnknown: (failure) => fail(failure.message),
