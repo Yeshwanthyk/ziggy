@@ -1104,3 +1104,13 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Typed preflight reasons from `ZiggyGatewayError.details` are shown. A confirmed mutation updates the selection before a best-effort refresh. Unknown and selection-changed outcomes reconcile from the server. Extension state no longer races `loadModelSettings`.
 - `restartRequired` is sent on the wire, and the web says to restart the resident (`ziggy serve restart <profile>`); the resident doesn't hot reload.
 - Per-session model/thinking switching and the resume picker are waiting on adapter capabilities (round 3).
+
+## Adapter review, session ownership and quarantine
+
+- Removed duplicate Pi prompt helpers; provider failures shown to users are bounded and sanitized.
+- Persistent sessions take a per-session SQLite writer lease (`BEGIN IMMEDIATE`, `busy_timeout` 0) before Pi loads the transcript, hold it for the handle's lifetime and transfer it across new/fork/switch. A switch that fails before teardown keeps the old session usable. Print mode rejects session replacement. Chat, specialist, gateway and stored automation appends use the same lease; a held session fails with a typed `SessionHeld` that the CLI renders plainly and automations record as `session-held`.
+- Broken optional extension packages are skipped, not fatal: doctor, `extensions list` and the agent tool report them, their owner-tagged automations pause (records kept, resumed once healthy), and `extensions add` still rejects a broken package. Core inline diagnostics stay fatal.
+- Profile filesystem, doctor probes and resident platform operations sit behind application ports.
+- Tests: multi-process lease race, killed holder releases, interruption, pre-teardown switch failure, quarantine pausing, per-turn memory refresh.
+- Left for the cleanup pass: loading extension factories once under quarantine; doctor and resident policy still partly in adapters. Web session adoption goes to webui round 2.
+- Verification: `bun run check` and `bun run test` (756 pass) passed. Two Opus review rounds resolved.

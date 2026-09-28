@@ -101,7 +101,7 @@ Status: done (review/cli).
 
 ## 4. Pi adapter
 
-Status: pending.
+Status: done (review/adapter). Profile model policy moves to the application model-selection service in the cleanup pass.
 
 - Delete the duplicate prompt and memory helpers in `pi-agent.ts:889-985`, which are only called
   from tests, along with their test cases.
@@ -111,7 +111,7 @@ Status: pending.
 
 ## 5. Extension system and authoring
 
-Status: pending.
+Status: done (review/adapter). Broken optional packages are skipped and reported; their automations pause. Loading factories once under quarantine is left for the cleanup pass.
 
 - One package diagnostic fails the whole Profile runtime (`assertNoPiResourceDiagnostics`).
   Decided (2026-09-28): skip the broken package, load the rest, and warn loudly in `doctor`, the
@@ -146,7 +146,7 @@ Status: done (review/ui).
 
 ## 9. Runtime shell
 
-Status: pending. The TUI and resident question is settled by 1b.
+Status: partly done (review/adapter): Profile filesystem, doctor probes and resident platform sit behind application ports. Doctor and resident policy still live partly in adapters; moved to the cleanup pass. The TUI and resident question is settled by 1b.
 
 - Application code imports adapters directly (resident service, profiles, doctor).
 - A concurrent `init` should treat EEXIST on `SOUL.md` as `created: false`.
@@ -162,7 +162,7 @@ Status: done (review/cli). Codex OAuth import is on hold for an owner decision.
 
 ## 11. Runtime interface and preloaded skills
 
-Status: pending.
+Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gateway/sessions.ts` goes to webui round 2. Runtime interface: adapter round 3. Preloaded skills audit pending.
 
 - Add a small runtime interface in `src/adapters/pi/`: open, prompt, steer, abort, events, close.
   The resident, UI and chat gateways depend on it, and headless Pi implements it. Pi is the only
