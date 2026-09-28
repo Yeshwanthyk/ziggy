@@ -26,6 +26,7 @@ interface SettingsDialogProps {
   readonly onConnect: (url: string, token: string) => Promise<void>;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRetrySettings: () => Promise<void>;
+  readonly onToggleExtension: (id: string, enabled: boolean) => Promise<void>;
   readonly onSaveModel: (
     providerId: string,
     modelId: string,
@@ -78,6 +79,7 @@ export function SettingsDialog({
   onOpenChange,
   onSaveModel,
   onRetrySettings,
+  onToggleExtension,
 }: SettingsDialogProps) {
   const [url, setUrl] = useState("ws://127.0.0.1:8787/ws");
   const [token, setToken] = useState("");
@@ -380,24 +382,36 @@ export function SettingsDialog({
               <section className="ziggy-settings-block" aria-label="Extensions">
                 <h3>Extensions</h3>
                 <p className="ziggy-settings-muted">
-                  Selected for this Profile. Existing sessions may need to restart to pick up
-                  changes.
+                  Select Profile extensions. Broken packages are skipped when the runtime supports
+                  diagnostics; check the resident warning for details.
                 </p>
+                {modelSettings?.extensionNotice ? (
+                  <p role="status">{modelSettings.extensionNotice}</p>
+                ) : null}
                 {modelSettings?.extensions === undefined ? (
                   <p className="ziggy-settings-muted">
                     {connected ? "Extension list unavailable." : "Connect to see extensions."}
                   </p>
-                ) : modelSettings.extensions.selected.length === 0 ? (
-                  <p className="ziggy-settings-muted">No extensions selected.</p>
+                ) : modelSettings.extensions.available.length === 0 ? (
+                  <p className="ziggy-settings-muted">No extensions available.</p>
                 ) : (
-                  modelSettings.extensions.selected.map((id) => {
-                    const extension = modelSettings.extensions?.available.find(
-                      (item) => item.id === id,
-                    );
+                  modelSettings.extensions.available.map((extension) => {
+                    const enabled =
+                      modelSettings.extensions?.selected.includes(extension.id) ?? false;
                     return (
-                      <div className="settings-extension" key={id}>
-                        <strong>{id}</strong>
-                        <p className="ziggy-settings-muted">{extension?.description}</p>
+                      <div className="settings-extension" key={extension.id}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={enabled}
+                            disabled={modelSettings.extensionBusy !== undefined}
+                            onChange={() => void onToggleExtension(extension.id, enabled)}
+                          />
+                          <strong>{extension.id}</strong>
+                        </label>
+                        <p className="ziggy-settings-muted">
+                          {extension.description} · {extension.source}
+                        </p>
                       </div>
                     );
                   })

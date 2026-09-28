@@ -43,6 +43,7 @@ describe("SettingsDialog", () => {
     render(
       <SettingsDialog
         onRetrySettings={vi.fn(async () => undefined)}
+        onToggleExtension={vi.fn(async () => undefined)}
         connected
         connectionPending={false}
         modelSettings={modelSettings}
@@ -81,10 +82,46 @@ it("offers retry instead of an empty model form when settings are unavailable", 
       onOpenChange={vi.fn()}
       onSaveModel={vi.fn(async () => undefined)}
       onRetrySettings={retry}
+      onToggleExtension={vi.fn(async () => undefined)}
     />,
   );
   expect(screen.getByText("Model settings could not be loaded.")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Save model" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry loading settings" }));
   expect(retry).toHaveBeenCalledTimes(1);
+});
+
+it("offers both selected and unselected extensions without optimistic selection", () => {
+  const toggle = vi.fn(async () => undefined);
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      modelSettings={{
+        ...modelSettings,
+        extensions: {
+          profileId: "prf_squarey",
+          available: [
+            { id: "bundled-one", kind: "code", source: "bundled", description: "Bundled" },
+            { id: "installed-one", kind: "skill", source: "profile", description: "Installed" },
+          ],
+          selected: ["bundled-one"],
+        },
+      }}
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={toggle}
+    />,
+  );
+  const selected = screen.getByRole("checkbox", { name: "bundled-one" }) as HTMLInputElement;
+  const unselected = screen.getByRole("checkbox", { name: "installed-one" }) as HTMLInputElement;
+  expect(selected.checked).toBe(true);
+  expect(unselected.checked).toBe(false);
+  fireEvent.click(unselected);
+  expect(toggle).toHaveBeenCalledExactlyOnceWith("installed-one", false);
+  expect(unselected.checked).toBe(false);
 });

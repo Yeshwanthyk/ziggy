@@ -148,6 +148,18 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
       available: [],
       selected: [],
     })),
+    addExtension: vi.fn(async (_profileId, id) => ({
+      profileId: profile.profileId,
+      id,
+      changed: true,
+      selected: true,
+    })),
+    removeExtension: vi.fn(async (_profileId, id) => ({
+      profileId: profile.profileId,
+      id,
+      changed: true,
+      selected: false,
+    })),
     modelStatus: vi.fn(async () => ({
       profileId: profile.profileId,
       providerId: "openai",
@@ -544,6 +556,37 @@ describe("useZiggyGateway", () => {
       "high",
       expect.stringMatching(/^web-model-save-/),
     );
+  });
+
+  it("refreshes extension selection only after a confirmed mutation", async () => {
+    const { client, fixture } = makeClient();
+    const hook = await connectHook(client);
+    await act(async () => {
+      await hook.result.current.loadModelSettings();
+    });
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual([]);
+    fixture.listExtensionsForProfile = vi.fn(async () => ({
+      profileId: profile.profileId,
+      available: [
+        {
+          id: "bundled-one",
+          kind: "code" as const,
+          source: "bundled" as const,
+          description: "Bundled",
+        },
+      ],
+      selected: ["bundled-one"],
+    }));
+    await act(async () => {
+      await hook.result.current.toggleExtension("bundled-one", false);
+    });
+    expect(fixture.addExtension).toHaveBeenCalledWith(
+      profile.profileId,
+      "bundled-one",
+      expect.stringMatching(/^web-extension-/),
+    );
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual(["bundled-one"]);
+    expect(hook.result.current.modelSettings?.extensionNotice).toContain("Reopen open sessions");
   });
 
   it("loads display-ready pins, agents, groups, and automation sections without watching them", async () => {

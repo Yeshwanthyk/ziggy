@@ -970,6 +970,7 @@ export function App() {
         }}
         onRetrySettings={gateway.loadModelSettings}
         onSaveModel={gateway.saveModelSettings}
+        onToggleExtension={gateway.toggleExtension}
         open={connectionOpen}
         profileName={gateway.profile?.name ?? "Squarey"}
       />

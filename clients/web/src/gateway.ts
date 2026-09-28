@@ -118,6 +118,8 @@ export interface ConnectInput {
 
 export interface ModelSettingsState {
   readonly extensions?: ZiggyExtensionListResult;
+  readonly extensionNotice?: string;
+  readonly extensionBusy?: string;
   readonly availableModels: ReadonlyArray<ZiggyModelDescriptor>;
   readonly error?: string;
   readonly loading: boolean;
@@ -140,6 +142,8 @@ export type GatewayClient = Pick<
   | "listGroups"
   | "listModels"
   | "listExtensionsForProfile"
+  | "addExtension"
+  | "removeExtension"
   | "listDestinations"
   | "listPins"
   | "listProfiles"
@@ -1241,6 +1245,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       providers: current?.providers ?? [],
       saving: current?.saving ?? false,
       ...(current?.status === undefined ? {} : { status: current.status }),
+      ...(current?.extensions === undefined ? {} : { extensions: current.extensions }),
+      ...(current?.extensionNotice === undefined
+        ? {}
+        : { extensionNotice: current.extensionNotice }),
     }));
     const [statusResult, modelsResult, availableResult, authResult, extensionsResult] =
       await Promise.allSettled([
@@ -1263,7 +1271,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       authResult,
       extensionsResult,
     ].filter((result): result is PromiseRejectedResult => result.status === "rejected");
-    setModelSettings({
+    setModelSettings((current) => ({
       availableModels: availableResult.status === "fulfilled" ? availableResult.value.models : [],
       ...(failures.length === 0
         ? {}
@@ -1279,8 +1287,11 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       providers: authResult.status === "fulfilled" ? authResult.value.providers : [],
       saving: false,
       ...(extensionsResult.status === "fulfilled" ? { extensions: extensionsResult.value } : {}),
+      ...(current?.extensionNotice === undefined
+        ? {}
+        : { extensionNotice: current.extensionNotice }),
       ...(statusResult.status === "fulfilled" ? { status: statusResult.value } : {}),
-    });
+    }));
   }, []);
 
   const clearModelSettings = useCallback((): void => {
@@ -1348,6 +1359,78 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     },
     [loadModelSettings],
   );
+
+  const toggleExtension = useCallback(async (id: string, enabled: boolean): Promise<void> => {
+    const client = clientRef.current;
+    const profile = profileRef.current;
+    if (client === undefined || profile === undefined || client.state !== "open") return;
+    const generation = modelSettingsGenerationRef.current;
+    setModelSettings((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            extensionBusy: id,
+            extensionNotice: undefined,
+          },
+    );
+    try {
+      const result = enabled
+        ? await client.removeExtension(
+            profile.profileId,
+            id,
+            `web-extension-${crypto.randomUUID()}`,
+          )
+        : await client.addExtension(profile.profileId, id, `web-extension-${crypto.randomUUID()}`);
+      if (
+        generation !== modelSettingsGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== profile.profileId
+      )
+        return;
+      // A lost response has an unknown outcome; only refresh after a confirmed mutation.
+      const extensions = await client.listExtensionsForProfile(profile.profileId);
+      if (
+        generation !== modelSettingsGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== profile.profileId
+      )
+        return;
+      setModelSettings((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              extensions,
+              extensionBusy: undefined,
+              extensionNotice: result.changed
+                ? "Extension selection updated. Reopen open sessions or run `ziggy serve restart` to load the change."
+                : "Extension selection was already up to date.",
+            },
+      );
+    } catch (cause) {
+      if (
+        generation !== modelSettingsGenerationRef.current ||
+        clientRef.current !== client ||
+        profileRef.current?.profileId !== profile.profileId
+      )
+        return;
+      setModelSettings((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              extensionBusy: undefined,
+              extensionNotice:
+                cause instanceof ZiggyRequestOutcomeUnknownError
+                  ? "Extension change outcome is unknown. Reload settings before trying again."
+                  : cause instanceof Error
+                    ? cause.message
+                    : "Extension change failed.",
+            },
+      );
+    }
+  }, []);
 
   const loadAutomationDetail = useCallback(
     async (automationId: string): Promise<void> => {
@@ -1795,6 +1878,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     busy,
     clearAutomationDetail,
     clearAgentDefinition,
+    toggleExtension,
     clearModelSettings,
     connect,
     connection,
