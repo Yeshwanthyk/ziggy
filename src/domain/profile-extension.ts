@@ -22,7 +22,7 @@ export interface ProfileExtensionCatalogListing {
   readonly description: string;
   readonly kind: ProfileExtensionKind;
   readonly required: boolean;
-  readonly source: ProfileExtensionCatalogSource;
+  readonly source: ProfileExtensionCatalogSource | "profile";
   readonly installed: boolean;
   readonly packagePath?: string;
   readonly skills?: ReadonlyArray<{ readonly name: string; readonly description: string }>;
@@ -39,6 +39,7 @@ export interface ProfileExtensionChoice {
 export interface ProfileExtensionListing {
   readonly available: ReadonlyArray<ProfileExtensionChoice>;
   readonly selected: ReadonlyArray<string>;
+  readonly required?: ReadonlyArray<string>;
 }
 
 export interface ProfileExtensionMutation {
@@ -163,6 +164,7 @@ export interface ProfileExtensionsApi {
   readonly show: (
     repositoryRoot: string,
     id: string,
+    profilePath?: string,
   ) => Effect.Effect<ProfileExtensionCatalogListing, ProfileExtensionError>;
   readonly listForProfile: (
     profilePath: string,

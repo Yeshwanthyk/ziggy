@@ -578,22 +578,42 @@ export const makeProfileExtensions = (
       Effect.map((items) => [...items].sort((left, right) => left.id.localeCompare(right.id))),
     );
 
-  const show = (repositoryRoot: string, id: string) =>
-    list(repositoryRoot).pipe(
-      Effect.flatMap((items) => {
-        const found = items.find((item) => item.id === id);
+  const show = (repositoryRoot: string, id: string, profilePath?: string) =>
+    Effect.gen(function* () {
+      if (profilePath !== undefined) {
+        yield* verifyInitialized(profilePath);
+        const profileOwned = yield* scanOptionalExtensionShelf(profilePath);
+        const local = profileOwned.find((extension) => extension.id === id);
 
-        return found === undefined
-          ? Effect.fail(
-              new ExtensionCatalogInvalid({
-                source: id,
-                message: `unknown extension '${id}'`,
-                cause: undefined,
-              }),
-            )
-          : Effect.succeed(found);
-      }),
-    );
+        if (local !== undefined) {
+          return {
+            id: local.id,
+            version: "profile-local",
+            description: local.description,
+            kind: local.kind,
+            required: local.required,
+            source: "profile" as const,
+            installed: true,
+            packagePath: local.packagePath,
+            skills: local.skills,
+            extensionPaths: local.extensionPaths,
+          };
+        }
+      }
+
+      const items = yield* list(repositoryRoot);
+      const found = items.find((item) => item.id === id);
+
+      if (found === undefined) {
+        return yield* new ExtensionCatalogInvalid({
+          source: id,
+          message: `unknown extension '${id}'`,
+          cause: undefined,
+        });
+      }
+
+      return found;
+    });
 
   const ensurePublished = (
     profilePath: string,
@@ -776,54 +796,61 @@ export const makeProfileExtensions = (
     });
 
   const listForProfile = (profilePath: string, repositoryRoot: string) =>
-    lock
-      .withLock(
-        profilePath,
-        Effect.all({
-          catalogue: list(repositoryRoot),
-          profileOwned: scanOptionalExtensionShelf(profilePath),
-          selected: readExtensionSelection(profilePath),
-        }),
-      )
-      .pipe(
-        Effect.map(({ catalogue, profileOwned, selected }) => {
-          const availableById = new Map<string, ProfileExtensionChoice>(
-            catalogue.flatMap((extension) =>
-              extension.required
-                ? []
-                : [
-                    [
-                      extension.id,
-                      {
-                        id: extension.id,
-                        description: extension.description,
-                        kind: extension.kind,
-                        source: extension.source,
-                      },
-                    ] as const,
-                  ],
-            ),
-          );
+    verifyInitialized(profilePath).pipe(
+      Effect.andThen(
+        lock
+          .withLock(
+            profilePath,
+            Effect.all({
+              catalogue: list(repositoryRoot),
+              profileOwned: scanOptionalExtensionShelf(profilePath),
+              selected: readExtensionSelection(profilePath),
+            }),
+          )
+          .pipe(
+            Effect.map(({ catalogue, profileOwned, selected }) => {
+              const availableById = new Map<string, ProfileExtensionChoice>(
+                catalogue.flatMap((extension) =>
+                  extension.required
+                    ? []
+                    : [
+                        [
+                          extension.id,
+                          {
+                            id: extension.id,
+                            description: extension.description,
+                            kind: extension.kind,
+                            source: extension.source,
+                          },
+                        ] as const,
+                      ],
+                ),
+              );
 
-          for (const extension of profileOwned) {
-            if (!extension.required) {
-              availableById.set(extension.id, {
-                id: extension.id,
-                description: extension.description,
-                kind: extension.kind,
-                source: "profile",
-              });
-            }
-          }
+              for (const extension of profileOwned) {
+                if (!extension.required) {
+                  availableById.set(extension.id, {
+                    id: extension.id,
+                    description: extension.description,
+                    kind: extension.kind,
+                    source: "profile",
+                  });
+                }
+              }
 
-          return {
-            available: [...availableById.values()].sort((left, right) =>
-              left.id.localeCompare(right.id),
-            ),
-            selected,
-          } satisfies ProfileExtensionListing;
-        }),
-      );
+              return {
+                available: [...availableById.values()].sort((left, right) =>
+                  left.id.localeCompare(right.id),
+                ),
+                selected,
+                required: catalogue
+                  .filter((extension) => extension.required)
+                  .map((extension) => extension.id),
+              } satisfies ProfileExtensionListing;
+            }),
+          ),
+      ),
+    );
 
   const add = (target: ProfileTarget, repositoryRoot: string, id: string) =>
     verifyInitialized(target.path).pipe(

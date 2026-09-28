@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Schema } from "effect";
 import {
   ProfileExtensionLockFailed,
   ProfileExtensionPreflightFailed,
@@ -10,10 +11,16 @@ import {
   renderExtensionMutation,
   renderExtensions,
   renderExtensionJson,
+  renderProfileExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
   renderProfileExtensions,
+  ProfileExtensionsJson,
 } from "ziggy/faces/extensions-cli";
+
+const decodeProfileExtensions = Schema.decodeUnknownSync(
+  Schema.fromJsonString(ProfileExtensionsJson),
+);
 
 const extension = {
   id: "weather",
@@ -137,7 +144,7 @@ test("names the Profile for installed selection and distinguishes package presen
   expect(renderExtension(extension, options)).not.toContain("installed");
   expect(
     renderExtension(extension, options, { path: "/profiles/buddy", selected: false }),
-  ).toContain("installed for /profiles/buddy\tno");
+  ).toContain("selected in /profiles/buddy\tno");
 
   const listing = {
     available: [
@@ -152,9 +159,28 @@ test("names the Profile for installed selection and distinguishes package presen
   };
 
   expect(renderProfileExtensions(listing, "/profiles/buddy", false)).toContain("weather\tselected");
-  expect(renderProfileExtensions(listing, "/profiles/buddy", true)).toBe(
-    JSON.stringify({ profile: "/profiles/buddy", ...listing }),
+  expect(
+    decodeProfileExtensions(renderProfileExtensions(listing, "/profiles/buddy", true)),
+  ).toEqual({ profile: "/profiles/buddy", ...listing });
+  expect(renderProfileExtensionJson(extension, { path: "/profiles/buddy", selected: true })).toBe(
+    JSON.stringify({ ...extension, profile: "/profiles/buddy", selected: true }),
   );
+  expect(
+    renderProfileExtensionJson(
+      { ...extension, source: "profile", version: "profile-local" },
+      { path: "/profiles/buddy", selected: true },
+    ),
+  ).toContain('"source":"profile"');
+  expect(
+    renderProfileExtensions(
+      { ...listing, selected: ["weather", "lost"], required: ["core"] },
+      "/profiles/buddy",
+      false,
+    ),
+  ).toContain("lost\tselected\tmissing");
+  expect(
+    renderProfileExtensions({ ...listing, required: ["core"] }, "/profiles/buddy", false),
+  ).toContain("core\tselected\trequired");
 });
 
 test("projects bounded preflight diagnostics without exposing the cause", () => {

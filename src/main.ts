@@ -72,6 +72,7 @@ import {
   renderExtensionMutation,
   renderExtensions,
   renderExtensionJson,
+  renderProfileExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
   renderProfileExtensions,
@@ -373,19 +374,24 @@ const program = Effect.gen(function* () {
     }
 
     case "ExtensionsShow": {
-      const extension = yield* profileExtensions.show(repositoryRoot, command.id);
-      const profileTarget = command.target;
+      const target =
+        command.target === undefined
+          ? undefined
+          : resolveProfileTarget(command.target, resolutionOptions);
+
+      const extension = yield* profileExtensions.show(repositoryRoot, command.id, target?.path);
 
       const profile =
-        profileTarget === undefined
+        target === undefined
           ? undefined
           : yield* Effect.gen(function* () {
-              const target = resolveProfileTarget(profileTarget, resolutionOptions);
               const listing = yield* profileExtensions.listForProfile(target.path, repositoryRoot);
 
               return {
                 path: target.path,
-                selected: extension.required || listing.selected.includes(command.id),
+                selected:
+                  listing.required?.includes(command.id) === true ||
+                  listing.selected.includes(command.id),
               };
             });
 
@@ -393,7 +399,7 @@ const program = Effect.gen(function* () {
         console.log(
           profile === undefined
             ? renderExtensionJson(extension)
-            : JSON.stringify({ ...extension, profile: profile.path, selected: profile.selected }),
+            : renderProfileExtensionJson(extension, profile),
         );
 
         return;

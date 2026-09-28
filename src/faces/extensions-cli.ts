@@ -85,7 +85,7 @@ export const ExtensionCatalogListingJson = Schema.Struct({
   description: Schema.String,
   kind: Schema.Literals(["skill", "code", "skill+code", "remote"]),
   required: Schema.Boolean,
-  source: Schema.Literals(["bundled", "remote-approved"]),
+  source: Schema.Literals(["bundled", "remote-approved", "profile"]),
   installed: Schema.Boolean,
   packagePath: Schema.optional(Schema.String),
   skills: Schema.optional(Schema.Array(ExtensionSkillJson)),
@@ -102,19 +102,63 @@ const encodeExtensions = Schema.encodeSync(ExtensionsJson);
 
 const encodeExtension = Schema.encodeSync(ExtensionCatalogListingJson);
 
+export const ProfileExtensionsJson = Schema.Struct({
+  profile: Schema.String,
+  available: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      description: Schema.String,
+      kind: Schema.Literals(["skill", "code", "skill+code", "remote"]),
+      source: Schema.Literals(["bundled", "remote-approved", "profile"]),
+    }),
+  ),
+  selected: Schema.Array(Schema.String),
+  required: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const encodeProfileExtensions = Schema.encodeSync(ProfileExtensionsJson);
+
+export const ProfileExtensionDetailJson = Schema.Struct({
+  ...ExtensionCatalogListingJson.fields,
+  profile: Schema.String,
+  selected: Schema.Boolean,
+});
+
+const encodeProfileExtensionDetail = Schema.encodeSync(ProfileExtensionDetailJson);
+
+export const renderProfileExtensionJson = (
+  extension: ExtensionCatalogListingJson,
+  profile: { readonly path: string; readonly selected: boolean },
+): string =>
+  JSON.stringify(
+    encodeProfileExtensionDetail({
+      ...extension,
+      profile: profile.path,
+      selected: profile.selected,
+    }),
+  );
+
 export const renderProfileExtensions = (
   listing: ProfileExtensionListing,
   profilePath: string,
   json: boolean,
 ): string =>
   json
-    ? JSON.stringify({ profile: profilePath, ...listing })
+    ? JSON.stringify(encodeProfileExtensions({ profile: profilePath, ...listing }))
     : [
         `Profile: ${profilePath}`,
         ...listing.available.map(
           (extension) =>
-            `${extension.id}\t${listing.selected.includes(extension.id) ? "selected" : "available"}\t${extension.kind}\t${extension.description}`,
+            `${extension.id}\t${listing.selected.includes(extension.id) || listing.required?.includes(extension.id) ? "selected" : "available"}\t${extension.kind}\t${extension.description}`,
         ),
+        ...listing.selected
+          .filter(
+            (id) =>
+              !listing.available.some((extension) => extension.id === id) &&
+              !listing.required?.includes(id),
+          )
+          .map((id) => `${id}\tselected\tmissing`),
+        ...(listing.required ?? []).map((id) => `${id}\tselected\trequired`),
       ].join("\n");
 
 export const renderExtensionsJson = (
@@ -257,7 +301,7 @@ const renderPlainExtension = (
     `version\t${extension.version}`,
     profile === undefined
       ? `package present\t${extension.installed ? "yes" : "no"}`
-      : `installed for ${profile.path}\t${profile.selected ? "yes" : "no"}`,
+      : `selected in ${profile.path}\t${profile.selected ? "yes" : "no"}`,
     ...(extension.packagePath === undefined ? [] : [`path\t${extension.packagePath}`]),
     ...(extension.skills ?? []).map((skill) => `skill\t${skill.name} — ${skill.description}`),
     ...(extension.extensionPaths ?? []).map((extensionPath) => `executable\t${extensionPath}`),
@@ -308,7 +352,7 @@ export const renderExtension = (
     panelLine(
       color,
       alignBoundedRight(
-        profile === undefined ? "package present" : `installed for ${profile.path}`,
+        profile === undefined ? "package present" : `selected in ${profile.path}`,
         (profile?.selected ?? extension.installed) ? "yes" : "no",
         innerWidth,
       ),

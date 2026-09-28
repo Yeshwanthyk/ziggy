@@ -244,6 +244,49 @@ test("lists catalog metadata and Profile-owned shelf choices through one service
     source: "profile",
   });
   expect(profileListing.selected).toEqual([]);
+  await writeSelection(fixture.profilePath, ["lost"]);
+
+  const withMissing = await Effect.runPromise(
+    service.listForProfile(fixture.profilePath, fixture.repositoryRoot),
+  );
+
+  expect(withMissing.selected).toContain("lost");
+  expect(withMissing.available.some((item) => item.id === "lost")).toBeFalse();
+  expect(withMissing.required).toContain("extension-authoring");
+});
+
+test("Profile detail prefers a local package and rejects uninitialized targets", async () => {
+  const fixture = await makeProfile();
+  const service = makeService();
+  const packagePath = await writeShelfPackage(fixture.profilePath, "local");
+  await writeShelfPackage(fixture.profilePath, "weather");
+
+  expect(
+    await Effect.runPromise(service.show(fixture.repositoryRoot, "local", fixture.profilePath)),
+  ).toMatchObject({
+    id: "local",
+    source: "profile",
+    version: "profile-local",
+    packagePath,
+    skills: [{ name: "local", description: "local test skill" }],
+  });
+  expect(
+    await Effect.runPromise(service.show(fixture.repositoryRoot, "weather", fixture.profilePath)),
+  ).toMatchObject({ id: "weather", source: "profile" });
+  expect(
+    await Effect.runPromise(
+      service
+        .show(fixture.repositoryRoot, "weather", join(fixture.root, "typo"))
+        .pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { _tag: "ProfileExtensionInvalid" } });
+  expect(
+    await Effect.runPromise(
+      service
+        .listForProfile(join(fixture.root, "typo"), fixture.repositoryRoot)
+        .pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { _tag: "ProfileExtensionInvalid" } });
 });
 
 test("invalid manifests preserve exact selection bytes and remain inactive", async () => {
