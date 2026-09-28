@@ -1155,3 +1155,12 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Required core packages get an update receipt when published. At resident start a receipted copy that still matches its receipt is refreshed when the bundled content differs (content hash, not version), through the existing update path and lock; failures never block start. Doctor reports edited copies (restore, then update) and untracked copies behind the bundle (`--adopt`).
 - The web client uses the Profile name (tab title included) with a Ziggy fallback; `--restart` is in `ziggy help extensions`; operations guidance covers new-Profile setup, pairing, the writer lease and the wake handoff.
 - Verification: `bun run check` and `bun run test` (784 pass) passed. Opus review plus one verify round resolved.
+
+## Web UI redesign
+
+- Base reset moved under Tailwind's base layer; design tokens (spacing, type, radii, colour, motion) with a `prefers-color-scheme` dark theme; dialogs get header/body/footer slots, a lighter overlay and CSS enter/exit motion that respects reduced motion.
+- Shared primitives: button press feedback, Switch, Badge, a discrete StepSlider and one searchable Combobox used by the model and automation destination pickers.
+- Settings is a tabbed dialog (Model, Session, Extensions, Providers, Connection) with panes kept mounted. Thinking is a Faster/Smarter slider limited to the model's supported levels, debounced for keys, resynced to the saved value and showing "Not set" for unknown values. Extension switches apply immediately with a filter and a persistent restart bar.
+- The restart hint uses a server-sent `cliTarget` from `profile.current`: the folder name only when it resolves back to the same path under the Profiles directory, otherwise the absolute path.
+- Sidebar rows share one grid; the chat header is centred on the transcript column with author shown once per run; automation detail shows a readable name and schedule; mobile drawer uses the shared easing and 40px touch targets.
+- Verification: `bun run check` and `bun run test` (785 pass) passed; web suite 80 pass. Opus review findings resolved.
