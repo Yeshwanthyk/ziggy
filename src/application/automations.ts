@@ -355,12 +355,13 @@ export const makeAutomations = (
             ? { kind: "resident" as const, id: trigger.residentOwnerId }
             : undefined;
 
+        if (trigger.kind === "manual-force")
+          yield* restore(runtime.store.recover(target.path, admittedAt));
+
         // A manual claim must not be stranded by interruption before start. Scheduled claims
         // have already committed with the cursor; both paths enter the same terminal guard.
         const admitted = yield* Effect.gen(function* () {
           if (trigger.kind === "manual-force") {
-            yield* runtime.store.recover(target.path, admittedAt);
-
             const admission = yield* runtime.store.admitManual(
               target.path,
               automationId,
@@ -371,7 +372,17 @@ export const makeAutomations = (
             if (admission === "skipped-busy") return false;
           }
 
-          yield* runtime.store.start(target.path, runId, yield* runtime.now, fingerprint, owner);
+          yield* runtime.store
+            .start(target.path, runId, yield* runtime.now, fingerprint, owner)
+            .pipe(
+              Effect.catch((failure) =>
+                trigger.kind === "manual-force"
+                  ? Effect.flatMap(runtime.now, (atMs) =>
+                      runtime.store.failClaim(target.path, runId, atMs),
+                    ).pipe(Effect.andThen(Effect.fail(failure)))
+                  : Effect.fail(failure),
+              ),
+            );
 
           return true;
         });

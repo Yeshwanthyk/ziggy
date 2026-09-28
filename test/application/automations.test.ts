@@ -5,12 +5,15 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Option } from "effect";
+import * as TestClock from "effect/testing/TestClock";
+import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
 import {
   automationRunStore,
   commitScheduleTick,
   initializeAutomationDatabase,
   makeAutomationRunStore,
   readAutomationRuns,
+  readAutomationStatus,
   readScheduleRecords,
   recoverAutomationRuns,
   type AutomationRunStore,
@@ -33,6 +36,8 @@ import {
 import type { ProfileTarget } from "ziggy/domain/profile";
 import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
+import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
+import { makeChatRegistry } from "ziggy/application/chat-registry";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 
 const paths: Array<string> = [];
@@ -76,6 +81,7 @@ const harness = (
       ProviderConfigError | SpecialistAgentNotFound
     >;
     readonly store?: AutomationRunStore;
+    readonly manualRunId?: string;
   } = {},
 ) => {
   const agent: ZiggyAgentApi = {
@@ -172,7 +178,7 @@ const harness = (
   return makeAutomations(agent, capabilities, {
     store: options.store ?? automationRunStore,
     now: Effect.succeed(1_000),
-    makeManualRunId: () => "manual:00000000-0000-4000-8000-000000000001",
+    makeManualRunId: () => options.manualRunId ?? "manual:00000000-0000-4000-8000-000000000001",
   });
 };
 
@@ -586,6 +592,29 @@ describe("automation run", () => {
     expect((await Effect.runPromise(readScheduleRecords(target.path)))[0]?.nextScheduledAtMs).toBe(
       2_000,
     );
+
+    const observedAt = Date.parse("2026-01-01T00:00:00.000Z");
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(observedAt);
+          const owner = yield* acquireGatewayOwner(target);
+          const registry = yield* makeChatRegistry(target.path);
+          const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+          const fiber = yield* Effect.forkScoped(scheduler.run(target, owner, registry));
+
+          while (
+            (yield* readAutomationStatus(target.path, observedAt)).heartbeatAtMs !== observedAt
+          )
+            yield* Effect.promise<void>(() => new Promise((resolve) => setImmediate(resolve)));
+
+          expect((yield* readScheduleRecords(target.path))[0]?.nextScheduledAtMs).toBe(
+            Date.parse("2026-01-01T15:00:00.000Z"),
+          );
+          yield* Fiber.interrupt(fiber);
+        }),
+      ).pipe(Effect.provide(TestClock.layer({}))),
+    );
   });
 
   test("prints before resolution and malformed broadcasts sends nothing", async () => {
@@ -812,6 +841,44 @@ describe("automation run", () => {
       failureCategory: null,
       finishedAtMs: null,
     });
+  });
+
+  test("a manual start failure releases its claim for the next run", async () => {
+    const target = await profile("none");
+
+    const failure = new AutomationDatabaseError({
+      operation: "start run",
+      path: target.path,
+      message: "injected start failure",
+      cause: "fixture",
+    });
+
+    const store: AutomationRunStore = {
+      ...automationRunStore,
+      start: () => Effect.fail(failure),
+    };
+
+    const result = await Effect.runPromise(
+      harness([], { store })
+        .run(target, "daily-note", { kind: "manual-force" })
+        .pipe(Effect.result),
+    );
+
+    expect(result).toMatchObject({ _tag: "Failure", failure });
+    expect((await Effect.runPromise(readAutomationRuns(target.path)))[0]).toMatchObject({
+      state: "failed",
+      failureCategory: "AutomationDatabaseError",
+      startedAtMs: null,
+    });
+
+    const next = await run(
+      harness([], {
+        manualRunId: "manual:00000000-0000-4000-8000-000000000002",
+      }),
+      target,
+    );
+
+    expect(next.kind).toBe("executed");
   });
 
   test("interruption during manual admission cannot strand a claimed run", async () => {

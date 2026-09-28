@@ -1,6 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- test fixtures own disposable filesystem state */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import fc from "fast-check";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,11 @@ import {
   readScheduleRecords,
 } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
-import { AutomationDatabaseError, AutomationSchedulerError } from "ziggy/domain/automation";
+import {
+  AutomationDatabaseError,
+  AutomationSchedulerError,
+  AutomationScheduleSuperseded,
+} from "ziggy/domain/automation";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import type { ProfileTarget } from "ziggy/domain/profile";
 import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
@@ -572,6 +577,92 @@ describe("automation scheduler engine", () => {
     );
 
     await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+  });
+
+  test("a superseded worker emits one wake line", async () => {
+    const target = await profile([["daily", definition("* * * * *")]]);
+    const lines: Array<string> = [];
+
+    const consoleError = spyOn(console, "error").mockImplementation((line: string) => {
+      lines.push(line);
+    });
+
+    const scheduler = makeAutomationScheduler({
+      run: () => Effect.fail(new AutomationScheduleSuperseded({ id: "daily", message: "changed" })),
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(start);
+          const fiber = yield* Effect.forkScoped(runScheduler(scheduler, target));
+          yield* awaitHeartbeat(target, start);
+          yield* TestClock.adjust(60_000);
+          yield* awaitHeartbeat(target, start + 60_000);
+
+          while (lines.length === 0) yield* eventLoopTurn;
+          yield* Fiber.interrupt(fiber);
+        }),
+      ).pipe(
+        Effect.provide(TestClock.layer({})),
+        Effect.ensuring(Effect.sync(() => consoleError.mockRestore())),
+      ),
+    );
+
+    expect(lines).toEqual(["[wake] daily: scheduled run superseded by a changed schedule"]);
+  });
+
+  test("generated tick gaps preserve future cursors, unique due identities, and reset on a changed fingerprint", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(fc.integer({ min: 1, max: 2 }), { minLength: 2, maxLength: 3 }),
+        async (gaps) => {
+          const target = await profile([["daily", definition("* * * * *")]]);
+          const scheduler = makeAutomationScheduler({ run: () => Effect.never });
+
+          await Effect.runPromise(
+            Effect.scoped(
+              Effect.gen(function* () {
+                yield* TestClock.setTime(start);
+                const fiber = yield* Effect.forkScoped(runScheduler(scheduler, target));
+                yield* awaitHeartbeat(target, start);
+
+                let observed = start;
+                const dueIds = new Set<string>();
+
+                for (const gap of gaps) {
+                  observed += gap * 60_000;
+                  yield* TestClock.adjust(gap * 60_000);
+                  yield* awaitHeartbeat(target, observed);
+
+                  const row = (yield* readScheduleRecords(target.path))[0];
+                  expect(row?.nextScheduledAtMs).toBeGreaterThan(observed);
+
+                  const dueRuns = (yield* readAutomationRuns(target.path, "daily")).filter(
+                    (run) => run.state !== "missed",
+                  );
+
+                  for (const run of dueRuns) dueIds.add(run.runId);
+                  expect(dueIds.size).toBe(dueRuns.length);
+                }
+
+                const changed = join(target.path, "automations", "daily.md");
+                yield* Effect.promise(() => writeFile(changed, definition("0 12 * * *")));
+                observed += 60_000;
+                yield* TestClock.adjust(60_000);
+                yield* awaitHeartbeat(target, observed);
+
+                const next = (yield* readScheduleRecords(target.path))[0];
+                expect(next?.nextScheduledAtMs).toBe(Date.parse("2026-01-01T12:00:00.000Z"));
+                expect(next?.nextScheduledAtMs).toBeGreaterThan(observed);
+                yield* Fiber.interrupt(fiber);
+              }),
+            ).pipe(Effect.provide(TestClock.layer({}))),
+          );
+        },
+      ),
+      { numRuns: 15, seed: 20260928 },
+    );
   });
 
   test("empty schedules heartbeat at sixty seconds and interruption stops later ticks", async () => {

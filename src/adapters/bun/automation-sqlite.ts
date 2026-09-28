@@ -626,7 +626,7 @@ export interface RunOwner {
 }
 
 // oxfmt-ignore
-export interface AutomationRunStore { readonly recover: (profilePath: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError> }
+export interface AutomationRunStore { readonly recover: (profilePath: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly admitManual: (profilePath: string, automationId: string, runId: string, atMs: number) => Effect.Effect<"claimed" | "skipped-busy", AutomationDatabaseError>; readonly start: (profilePath: string, runId: string, atMs: number, fingerprint: string | null, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError>; readonly failClaim: (profilePath: string, runId: string, atMs: number) => Effect.Effect<void, AutomationDatabaseError>; readonly finish: (profilePath: string, runId: string, terminal: RunTerminal, targets: ReadonlyArray<AutomationTargetOutcome>, owner?: RunOwner) => Effect.Effect<void, AutomationDatabaseError> }
 
 export type RunTerminal = AutomationRunTerminal;
 
@@ -717,6 +717,16 @@ export const makeAutomationRunStore = (
           })
           .immediate(),
       ),
+    failClaim: (profilePath, runId, atMs) =>
+      withWritable(profilePath, "fail manual claim", (db) => {
+        const result = db
+          .query(`UPDATE automation_run SET state='failed',finished_at_ms=?,failure_category='AutomationDatabaseError',owner_pid=NULL,owner_id=NULL,owner_kind=NULL
+          WHERE run_id=? AND trigger='manual-force' AND state='claimed' AND owner_pid=? AND owner_id=? AND owner_kind='manual'`)
+          .run(atMs, runId, ownerPid, manualOwner.id);
+
+        if (result.changes !== 1)
+          throw dbError("fail claimed manual run", automationDatabasePath(profilePath), runId);
+      }),
     finish: (profilePath, runId, terminal, targets, suppliedOwner) =>
       withWritable(profilePath, "finish run", (db) => {
         const completion = decodeRunCompletion({ terminal, targets });
@@ -857,8 +867,13 @@ export const readAutomationStatus = (profilePath: string, observedAtMs: number) 
       const latestRun = readRunRows(db, "", [], 1)[0] ?? null;
 
       const latestErrorRun =
-        readRunRows(db, "WHERE state IN ('failed','missed','unknown')", [], 1, "finished")[0] ??
-        null;
+        readRunRows(
+          db,
+          "WHERE state IN ('failed','missed','unknown') AND failure_category IS NOT 'schedule-superseded'",
+          [],
+          1,
+          "finished",
+        )[0] ?? null;
 
       return {
         ...emptyStatus(profilePath, observedAtMs),

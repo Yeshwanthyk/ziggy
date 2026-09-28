@@ -281,6 +281,13 @@ export const makeAutomationScheduler = (
                   { registry },
                 )
                 .pipe(
+                  Effect.catchTag("AutomationScheduleSuperseded", () =>
+                    Effect.sync(() =>
+                      console.error(
+                        `[wake] ${claim.automationId}: scheduled run superseded by a changed schedule`,
+                      ),
+                    ),
+                  ),
                   Effect.catchTag("AutomationDatabaseError", (failure) =>
                     Deferred.fail(fatal, failure).pipe(Effect.asVoid),
                   ),

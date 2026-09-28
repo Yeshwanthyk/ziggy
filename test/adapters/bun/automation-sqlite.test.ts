@@ -675,6 +675,55 @@ describe("automation SQLite", () => {
     const status = await run(readAutomationStatus(path, 600));
     expect(status.latestRun?.runId).toBe(admittedLatestId);
     expect(status.latestErrorRun?.runId).toBe(finishedTieHighId);
+
+    const before = schedule("edited", 600, 500);
+    await run(commitScheduleTick(path, 500, [{ expected: null, next: before }]));
+    const supersededId = "scheduled:edited:1970-01-01T00:00:00.600Z";
+    await run(
+      commitScheduleTick(path, 600, [
+        {
+          expected: before,
+          next: { ...before, nextScheduledAtMs: 700, definitionObservedAtMs: 600 },
+          occurrence: {
+            kind: "due",
+            runId: supersededId,
+            scheduledForMs: 600,
+            missedThroughMs: null,
+            scheduleFingerprint: fingerprint,
+          },
+        },
+      ]),
+    );
+    await run(
+      automationRunStore.start(path, supersededId, 601, fingerprint, {
+        kind: "resident",
+        id: defaultResidentOwnerId,
+      }),
+    );
+    await run(
+      automationRunStore.finish(
+        path,
+        supersededId,
+        {
+          state: "failed",
+          atMs: 602,
+          localCompleted: false,
+          failureCategory: "schedule-superseded",
+          gateExitCode: null,
+        },
+        [],
+        { kind: "resident", id: defaultResidentOwnerId },
+      ),
+    );
+
+    const after = await run(readAutomationStatus(path, 603));
+    expect(after.latestRun?.runId).toBe(supersededId);
+    expect(after.latestErrorRun?.runId).toBe(finishedTieHighId);
+    expect((await run(readAutomationRuns(path)))[0]).toMatchObject({
+      runId: supersededId,
+      state: "failed",
+      failureCategory: "schedule-superseded",
+    });
   });
 
   test("malformed persisted run and target rows fail closed before normalization", async () => {
