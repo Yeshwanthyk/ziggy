@@ -84,7 +84,7 @@ export const appendStoredAutomationResult = (
           yield* scopedSessionLease(profilePath, result.targetSessionId).pipe(
             Effect.mapError((cause) =>
               failure(
-                "write",
+                cause instanceof SessionLeaseHeld ? "session-held" : "write",
                 true,
                 cause instanceof SessionLeaseHeld
                   ? cause.message

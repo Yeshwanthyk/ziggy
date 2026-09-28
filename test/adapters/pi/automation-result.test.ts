@@ -179,7 +179,7 @@ test("live idle delivery appends without prompting, publishes once, and busy del
 
   const handle = makeSessionChatHandle(
     profilePath,
-    {
+    () => ({
       get isIdle() {
         return idle;
       },
@@ -222,7 +222,7 @@ test("live idle delivery appends without prompting, publishes once, and busy del
 
         return () => listeners.delete(listener);
       },
-    },
+    }),
     {
       currentSession: Effect.succeed({ id: "live-session", file }),
       prompt: () =>
@@ -317,7 +317,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
 
   const failedHandle = makeSessionChatHandle(
     profilePath,
-    {
+    () => ({
       isIdle: true,
       sessionManager: manager,
       prompt: () => Promise.resolve(),
@@ -331,7 +331,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
         return Promise.reject(new Error("injected persistence failure"));
       },
       subscribe: () => () => undefined,
-    },
+    }),
     {
       currentSession: Effect.succeed({ id: "poison-session", file }),
       prompt: () => Effect.succeed("unused"),
@@ -372,7 +372,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
 
         const reopened = makeSessionChatHandle(
           profilePath,
-          {
+          () => ({
             isIdle: true,
             sessionManager: reopenedManager,
             prompt: () => Promise.resolve(),
@@ -390,7 +390,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
               return Promise.resolve();
             },
             subscribe: () => () => undefined,
-          },
+          }),
           {
             currentSession: Effect.succeed({ id: "poison-session", file }),
             prompt: () => Effect.succeed("unused"),

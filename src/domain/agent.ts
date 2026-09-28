@@ -212,7 +212,14 @@ export class SpecialistRunFailed extends Schema.TaggedErrorClass<SpecialistRunFa
   },
 ) {}
 
+export class SessionHeld extends Schema.TaggedErrorClass<SessionHeld>()("SessionHeld", {
+  profilePath: Schema.String,
+  message: Schema.String,
+  pid: Schema.optional(Schema.Int),
+}) {}
+
 export type ZiggyAgentError =
+  | SessionHeld
   | ProfileNotInitialized
   | ProviderConfigError
   | ProviderCallError

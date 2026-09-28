@@ -199,6 +199,7 @@ const AutomationResolutionCategorySchema = Schema.Literals([
 export type AutomationResolutionCategory = typeof AutomationResolutionCategorySchema.Type;
 
 const AutomationDeliveryFailureCategorySchema = Schema.Literals([
+  "session-held",
   "configuration",
   "authentication",
   "rate-limited",
@@ -226,6 +227,7 @@ export class AutomationConversationDeliveryFailed extends Schema.TaggedErrorClas
   "AutomationConversationDeliveryFailed",
   {
     category: Schema.Literals([
+      "session-held",
       "owner-unavailable",
       "session-busy",
       "destination-invalid",
@@ -314,6 +316,7 @@ export const AutomationTargetProjection = Schema.Struct({ ordinal: Ordinal, targ
 export type AutomationTargetProjection = typeof AutomationTargetProjection.Type;
 
 const AutomationRunFailureCategory = Schema.Literals([
+  "session-held",
   "schedule-superseded",
   "broadcasts-unreadable",
   "broadcasts-invalid",
@@ -368,6 +371,7 @@ const resolutionFailureCategories: ReadonlySet<string> = new Set([
 ]);
 
 const deliveryFailureCategories: ReadonlySet<string> = new Set([
+  "session-held",
   "configuration",
   "authentication",
   "rate-limited",

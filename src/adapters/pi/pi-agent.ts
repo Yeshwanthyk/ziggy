@@ -29,6 +29,7 @@ import {
   ProfileNotInitialized,
   ProviderCallError,
   ProviderConfigError,
+  SessionHeld,
   SpecialistAgentNotFound,
   type ChatModelOverride,
   type ProfileAgentRunContext,
@@ -95,6 +96,7 @@ import {
   acquireSessionLease,
   makeSessionLeaseTransitions,
   scopedSessionLease,
+  type SessionLeaseTransitions,
   SessionLeaseHeld,
   SessionLeaseFailed,
 } from "./session-lease";
@@ -137,13 +139,35 @@ export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAge
 
 export type ChatSessionMode = "continue" | "fresh";
 
-const sessionLeaseError = (profilePath: string, cause: unknown): ProviderConfigError =>
-  new ProviderConfigError({
-    profilePath,
-    operation: "open session",
-    message: cause instanceof SessionLeaseHeld ? cause.message : "could not acquire session lease",
-    cause,
-  });
+const sessionLeaseError = (
+  profilePath: string,
+  cause: unknown,
+): ProviderConfigError | SessionHeld =>
+  cause instanceof SessionLeaseHeld
+    ? new SessionHeld({ profilePath, message: cause.message, pid: cause.pid })
+    : new ProviderConfigError({
+        profilePath,
+        operation: "open session",
+        message: "could not acquire session lease",
+        cause,
+      });
+
+const runtimeFailureHint = (cause: unknown): string => {
+  if (!(cause instanceof Error)) return "check Profile extension diagnostics with ziggy doctor";
+
+  const message = cause.message;
+
+  if (/no models available/iu.test(message))
+    return "no models available; configure a provider or run /login";
+
+  if (/authentication|unauthorized|api key/iu.test(message))
+    return "provider authentication unavailable; check Profile credentials";
+
+  if (/extension|skill|command conflict/iu.test(message))
+    return "check Profile extension diagnostics with ziggy doctor";
+
+  return "check ziggy doctor and the local runtime logs";
+};
 
 export const providerError = (
   profilePath: string,
@@ -175,7 +199,10 @@ export const providerError = (
   return new ProviderConfigError({
     profilePath,
     operation,
-    message: `${operation} failed`,
+    message:
+      operation === "create agent runtime"
+        ? `${operation} failed: ${runtimeFailureHint(cause)}`
+        : `${operation} failed`,
     cause,
   });
 };
@@ -1437,25 +1464,42 @@ const bindChatRuntime = async (
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
         newSession: async (options) => {
-          const result = await runtime.newSession(options);
+          let result: Awaited<ReturnType<typeof runtime.newSession>>;
 
-          if (!result.cancelled && lease !== undefined) {
-            // Pi command callbacks are Promise-shaped; adapt the Effect at this Pi boundary.
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary
+          try {
+            result = await runtime.newSession(options);
+          } catch (cause) {
+            lease?.poison();
+            throw cause;
+          }
+
+          if (lease !== undefined) {
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
             await Effect.runPromise(
-              lease.transition(runtime.session.sessionManager.getSessionId()),
+              result.cancelled
+                ? lease.cancelReservation
+                : lease.transition(runtime.session.sessionManager.getSessionId()),
             );
           }
 
           return result;
         },
         fork: async (entryId, options) => {
-          const result = await runtime.fork(entryId, options);
+          let result: Awaited<ReturnType<typeof runtime.fork>>;
 
-          if (!result.cancelled && lease !== undefined) {
+          try {
+            result = await runtime.fork(entryId, options);
+          } catch (cause) {
+            lease?.poison();
+            throw cause;
+          }
+
+          if (lease !== undefined) {
             // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
             await Effect.runPromise(
-              lease.transition(runtime.session.sessionManager.getSessionId()),
+              result.cancelled
+                ? lease.cancelReservation
+                : lease.transition(runtime.session.sessionManager.getSessionId()),
             );
           }
 
@@ -1514,6 +1558,7 @@ const bindChatRuntime = async (
             return result;
           } catch (cause) {
             if (lease !== undefined) {
+              lease.poison();
               // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
               await Effect.runPromise(lease.cancelReservation);
             }
@@ -1736,15 +1781,16 @@ const chatNotStreaming = (profilePath: string, operation: "steer" | "followUp"):
 
 export const makeSessionChatHandle = (
   profilePath: string,
-  session: ChatSession,
+  liveSession: () => ChatSession,
   methods: Pick<ChatHandle, "prompt" | "dispose"> & Partial<Pick<ChatHandle, "currentSession">>,
-  abortSession: () => Promise<void> = sharePiAbort(() => session.abort()),
+  abortSession: () => Promise<void> = sharePiAbort(() => liveSession().abort()),
   voiceHub?: SpecialistVoiceHub,
+  lease?: SessionLeaseTransitions,
 ): ChatHandle => {
   const listeners = new Set<(event: ChatEvent) => void>();
   const project = createChatEventProjector();
 
-  const unsubscribeSession = session.subscribe((event) => {
+  const unsubscribeSession = liveSession().subscribe((event) => {
     for (const chatEvent of project(event)) {
       for (const listener of listeners) listener(chatEvent);
     }
@@ -1765,7 +1811,7 @@ export const makeSessionChatHandle = (
   let automationAppendPoisoned = false;
 
   const durableAutomationReceipt = (result: AutomationConversationResult): boolean => {
-    const file = session.sessionManager.getSessionFile();
+    const file = liveSession().sessionManager.getSessionFile();
 
     if (file === undefined) return false;
 
@@ -1786,15 +1832,23 @@ export const makeSessionChatHandle = (
 
   return {
     get isIdle() {
-      return session.isIdle;
+      return liveSession().isIdle;
     },
     prompt: methods.prompt,
     ...currentSession,
     appendAutomationResult: (result) =>
       Effect.gen(function* () {
+        if (lease !== undefined && !lease.owns(result.targetSessionId)) {
+          return yield* deliveryFailure(
+            "session-held",
+            true,
+            "live session no longer holds its writer lease",
+          );
+        }
+
         const alreadyDelivered = yield* Effect.try({
           try: () => {
-            if (session.sessionManager.getSessionId() !== result.targetSessionId) {
+            if (liveSession().sessionManager.getSessionId() !== result.targetSessionId) {
               throw deliveryFailure(
                 "destination-missing",
                 false,
@@ -1829,7 +1883,15 @@ export const makeSessionChatHandle = (
 
         yield* Effect.tryPromise({
           try: () => {
-            if (session.sessionManager.getSessionId() !== result.targetSessionId) {
+            if (lease !== undefined && !lease.owns(result.targetSessionId)) {
+              throw deliveryFailure(
+                "session-held",
+                true,
+                "live session no longer holds its writer lease",
+              );
+            }
+
+            if (liveSession().sessionManager.getSessionId() !== result.targetSessionId) {
               throw deliveryFailure(
                 "destination-missing",
                 false,
@@ -1837,11 +1899,11 @@ export const makeSessionChatHandle = (
               );
             }
 
-            if (!session.isIdle) {
+            if (!liveSession().isIdle) {
               throw deliveryFailure("session-busy", true, "conversation has an active turn");
             }
 
-            return session.sendCustomMessage(
+            return liveSession().sendCustomMessage(
               {
                 customType: AUTOMATION_RESULT_CUSTOM_TYPE,
                 content: automationResultContent(result),
@@ -1910,13 +1972,27 @@ export const makeSessionChatHandle = (
       }),
     abort: piPromise(profilePath, "abort agent session", abortSession),
     steer: (text) =>
-      session.isIdle
-        ? Effect.fail(chatNotStreaming(profilePath, "steer"))
-        : piPromise(profilePath, "steer agent session", () => session.steer(text)),
+      lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
+        ? Effect.fail(
+            sessionLeaseError(
+              profilePath,
+              new Error("live session no longer holds its writer lease"),
+            ),
+          )
+        : liveSession().isIdle
+          ? Effect.fail(chatNotStreaming(profilePath, "steer"))
+          : piPromise(profilePath, "steer agent session", () => liveSession().steer(text)),
     followUp: (text) =>
-      session.isIdle
-        ? Effect.fail(chatNotStreaming(profilePath, "followUp"))
-        : piPromise(profilePath, "follow up agent session", () => session.followUp(text)),
+      lease !== undefined && !lease.owns(liveSession().sessionManager.getSessionId())
+        ? Effect.fail(
+            sessionLeaseError(
+              profilePath,
+              new Error("live session no longer holds its writer lease"),
+            ),
+          )
+        : liveSession().isIdle
+          ? Effect.fail(chatNotStreaming(profilePath, "followUp"))
+          : piPromise(profilePath, "follow up agent session", () => liveSession().followUp(text)),
     subscribe: (listener) => {
       listeners.add(listener);
 
@@ -2058,160 +2134,167 @@ export const openChat = (
   runtimeFactory?: typeof createAgentSessionRuntime,
   sessionName?: string,
 ): Effect.Effect<ChatHandle, ZiggyAgentError> =>
-  Effect.gen(function* () {
-    const soulPath = yield* requireSoul(target.path);
-    const runtimeOptions: ProfileRuntimeOptions = {};
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const soulPath = yield* requireSoul(target.path);
+      const runtimeOptions: ProfileRuntimeOptions = {};
 
-    if (modelOverride !== undefined) runtimeOptions.modelOverride = modelOverride;
+      if (modelOverride !== undefined) runtimeOptions.modelOverride = modelOverride;
 
-    if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
-    if (runtimeFactory !== undefined) runtimeOptions.runtimeFactory = runtimeFactory;
+      if (runtimeFactory !== undefined) runtimeOptions.runtimeFactory = runtimeFactory;
 
-    const { manager: sessionManager, release: releaseLease } = yield* prepareLeasedSession(
-      target.path,
-      sessionDirectory,
-      sessionMode,
-    ).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
-      ),
-    );
-
-    const lease = makeSessionLeaseTransitions(
-      target.path,
-      sessionManager.getSessionId(),
-      releaseLease,
-    );
-
-    runtimeOptions.beforeServices = async (nextManager) => {
-      if (!lease.owns(nextManager.getSessionId())) {
-        // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge; lease before Pi builds a replacement session.
-        await Effect.runPromise(lease.reserve(nextManager.getSessionId()));
-      }
-    };
-
-    const runtime = yield* createProfileRuntime(
-      target.path,
-      repositoryRoot,
-      soulPath,
-      sessionManager,
-      context,
-      runtimeOptions,
-    ).pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit)
-          ? lease.close.pipe(
-              Effect.catch((failure) =>
-                Effect.logWarning("Session lease release failed", { failure }),
-              ),
-            )
-          : Effect.void,
-      ),
-    );
-
-    const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
-      Effect.ensuring(
-        lease.close.pipe(
-          Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
+      const { manager: sessionManager, release: releaseLease } = yield* prepareLeasedSession(
+        target.path,
+        sessionDirectory,
+        sessionMode,
+      ).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
         ),
-      ),
-    );
+      );
 
-    const disposeBestEffort = dispose.pipe(
-      Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
-    );
+      const lease = makeSessionLeaseTransitions(
+        target.path,
+        sessionManager.getSessionId(),
+        releaseLease,
+      );
 
-    if (runtime.modelFallbackMessage !== undefined) {
-      yield* disposeBestEffort;
+      runtimeOptions.beforeServices = async (nextManager) => {
+        if (!lease.owns(nextManager.getSessionId())) {
+          // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge; lease before Pi builds a replacement session.
+          await Effect.runPromise(lease.reserve(nextManager.getSessionId()));
+        }
+      };
 
-      return yield* new ProviderConfigError({
-        profilePath: target.path,
-        operation: "select model",
-        message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
-        cause: new Error(runtime.modelFallbackMessage),
-      });
-    }
+      const runtime = yield* restore(
+        createProfileRuntime(
+          target.path,
+          repositoryRoot,
+          soulPath,
+          sessionManager,
+          context,
+          runtimeOptions,
+        ),
+      ).pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? lease.close.pipe(
+                Effect.catch((failure) =>
+                  Effect.logWarning("Session lease release failed", { failure }),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
 
-    yield* piPromise(target.path, "bind agent runtime", () => bindChatRuntime(runtime, lease)).pipe(
-      Effect.tapError(() => disposeBestEffort),
-    );
+      const dispose = piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
+        Effect.ensuring(
+          lease.close.pipe(
+            Effect.catch((failure) =>
+              Effect.logWarning("Session lease release failed", { failure }),
+            ),
+          ),
+        ),
+      );
 
-    const abortSession = sharePiAbort(() => runtime.session.abort());
+      const disposeBestEffort = dispose.pipe(
+        Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+      );
 
-    const promptSession: PromptSession = {
-      abort: abortSession,
-      prompt: (text, options) => runtime.session.prompt(text, options),
-      subscribe: (listener) => runtime.session.subscribe(listener),
-      get isIdle() {
-        return runtime.session.isIdle;
-      },
-    };
+      if (runtime.modelFallbackMessage !== undefined) {
+        yield* disposeBestEffort;
 
-    return makeSessionChatHandle(
-      target.path,
-      runtime.session,
-      {
-        currentSession: currentPiSessionReference(target.path, runtime.session.sessionManager),
-        prompt: (text, options) =>
-          Effect.suspend(() => {
-            if (!lease.owns(runtime.session.sessionManager.getSessionId())) {
-              return Effect.fail(
-                sessionLeaseError(
-                  target.path,
-                  new Error(
-                    "Pi session changed without a writer lease; close and reopen this session",
+        return yield* new ProviderConfigError({
+          profilePath: target.path,
+          operation: "select model",
+          message: `no configured model is available; place credentials in ${join(target.path, "auth.json")} and model configuration in ${join(target.path, "models.json")}`,
+          cause: new Error(runtime.modelFallbackMessage),
+        });
+      }
+
+      yield* piPromise(target.path, "bind agent runtime", () =>
+        bindChatRuntime(runtime, lease),
+      ).pipe(Effect.tapError(() => disposeBestEffort));
+
+      const abortSession = sharePiAbort(() => runtime.session.abort());
+
+      const promptSession: PromptSession = {
+        abort: abortSession,
+        prompt: (text, options) => runtime.session.prompt(text, options),
+        subscribe: (listener) => runtime.session.subscribe(listener),
+        get isIdle() {
+          return runtime.session.isIdle;
+        },
+      };
+
+      return makeSessionChatHandle(
+        target.path,
+        () => runtime.session,
+        {
+          currentSession: currentPiSessionReference(target.path, runtime.session.sessionManager),
+          prompt: (text, options) =>
+            Effect.suspend(() => {
+              if (!lease.owns(runtime.session.sessionManager.getSessionId())) {
+                return Effect.fail(
+                  sessionLeaseError(
+                    target.path,
+                    new Error(
+                      "Pi session changed without a writer lease; close and reopen this session",
+                    ),
                   ),
+                );
+              }
+
+              const generation = runtime.ephemeralPromptContext.generation + 1;
+              runtime.ephemeralPromptContext.generation = generation;
+
+              if (options?.ephemeralContext === undefined) {
+                delete runtime.ephemeralPromptContext.value;
+              } else {
+                runtime.ephemeralPromptContext.value = options.ephemeralContext;
+              }
+
+              const prepared = prepareProfileAgentPrompt(text, runtime.agents);
+
+              if (prepared.ok) {
+                ensurePiSessionName(runtime.session.sessionManager, sessionName, text);
+              }
+
+              const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
+                ? promptForAssistantText(
+                    target.path,
+                    promptSession,
+                    prepared.text,
+                    options,
+                    runtime.voiceHub,
+                  )
+                : Effect.fail(
+                    new ProfileAgentMentionInvalid({
+                      profilePath: target.path,
+                      message: prepared.message,
+                    }),
+                  );
+
+              return prompted.pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    if (runtime.ephemeralPromptContext.generation === generation) {
+                      delete runtime.ephemeralPromptContext.value;
+                    }
+                  }),
                 ),
               );
-            }
-
-            const generation = runtime.ephemeralPromptContext.generation + 1;
-            runtime.ephemeralPromptContext.generation = generation;
-
-            if (options?.ephemeralContext === undefined) {
-              delete runtime.ephemeralPromptContext.value;
-            } else {
-              runtime.ephemeralPromptContext.value = options.ephemeralContext;
-            }
-
-            const prepared = prepareProfileAgentPrompt(text, runtime.agents);
-
-            if (prepared.ok) {
-              ensurePiSessionName(runtime.session.sessionManager, sessionName, text);
-            }
-
-            const prompted: Effect.Effect<string, ZiggyAgentError> = prepared.ok
-              ? promptForAssistantText(
-                  target.path,
-                  promptSession,
-                  prepared.text,
-                  options,
-                  runtime.voiceHub,
-                )
-              : Effect.fail(
-                  new ProfileAgentMentionInvalid({
-                    profilePath: target.path,
-                    message: prepared.message,
-                  }),
-                );
-
-            return prompted.pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  if (runtime.ephemeralPromptContext.generation === generation) {
-                    delete runtime.ephemeralPromptContext.value;
-                  }
-                }),
-              ),
-            );
-          }),
-        dispose,
-      },
-      abortSession,
-      runtime.voiceHub,
-    );
-  });
+            }),
+          dispose,
+        },
+        abortSession,
+        runtime.voiceHub,
+        lease,
+      );
+    }),
+  );
 
 export const openSpecialistChat = (
   target: ProfileTarget,
@@ -2221,147 +2304,155 @@ export const openSpecialistChat = (
 ): Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError> =>
   withProfileRuntimeLock(
     target.path,
-    Effect.gen(function* () {
-      const soulPath = yield* requireSoul(target.path);
-      const agents = yield* discoverProfileAgents(target.path);
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const soulPath = yield* requireSoul(target.path);
+        const agents = yield* discoverProfileAgents(target.path);
 
-      if (!agents.some((agent) => agent.id === agentId)) {
-        return yield* new SpecialistAgentNotFound({
-          profilePath: target.path,
-          agentId,
-          message: `unknown Profile agent: ${agentId}`,
-        });
-      }
+        if (!agents.some((agent) => agent.id === agentId)) {
+          return yield* new SpecialistAgentNotFound({
+            profilePath: target.path,
+            agentId,
+            message: `unknown Profile agent: ${agentId}`,
+          });
+        }
 
-      const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
+        const runtimeOptions: ProfileRuntimeOptions = { admittedAgents: agents };
 
-      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
+        if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
-      const selectedEnvironment = yield* Effect.acquireUseRelease(
-        createProfileRuntime(
-          target.path,
-          repositoryRoot,
-          soulPath,
-          SessionManager.inMemory(target.path),
-          { kind: "local" },
-          runtimeOptions,
-        ),
-        (runtime) =>
-          selectSpecialist(
-            { profilePath: target.path, agents },
-            { agent: agentId, prompt: agentId },
-            runtime,
-          ).pipe(
-            Effect.map((selected) => ({
-              selected,
-              environment: { services: runtime.services, resources: runtime.resources },
-            })),
-          ),
-        (runtime) =>
-          piPromise(target.path, "dispose specialist selection runtime", () =>
-            runtime.dispose(),
-          ).pipe(
-            Effect.catch((failure) =>
-              Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+        const selectedEnvironment = yield* restore(
+          Effect.acquireUseRelease(
+            createProfileRuntime(
+              target.path,
+              repositoryRoot,
+              soulPath,
+              SessionManager.inMemory(target.path),
+              { kind: "local" },
+              runtimeOptions,
             ),
-          ),
-      );
-
-      const { selected, environment } = selectedEnvironment;
-
-      const { manager: specialistManager, release: releaseSpecialist } =
-        yield* prepareLeasedSession(
-          target.path,
-          localSpecialistSessionDirectory(target.path, agentId),
-          "continue",
-        ).pipe(
-          Effect.mapError((cause) =>
-            cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+            (runtime) =>
+              selectSpecialist(
+                { profilePath: target.path, agents },
+                { agent: agentId, prompt: agentId },
+                runtime,
+              ).pipe(
+                Effect.map((selected) => ({
+                  selected,
+                  environment: { services: runtime.services, resources: runtime.resources },
+                })),
+              ),
+            (runtime) =>
+              piPromise(target.path, "dispose specialist selection runtime", () =>
+                runtime.dispose(),
+              ).pipe(
+                Effect.catch((failure) =>
+                  Effect.logWarning("Pi specialist selection cleanup failed", { failure }),
+                ),
+              ),
           ),
         );
 
-      const specialistLease = makeSessionLeaseTransitions(
-        target.path,
-        specialistManager.getSessionId(),
-        releaseSpecialist,
-      );
+        const { selected, environment } = selectedEnvironment;
 
-      const releaseBestEffort = specialistLease.close.pipe(
-        Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
-      );
-
-      const liveRuntime = yield* specialistRuntime(
-        target.path,
-        environment,
-        selected.agent,
-        selected.model,
-        selected.thinking,
-        selected.tools,
-        specialistManager,
-        async (nextManager) => {
-          if (!specialistLease.owns(nextManager.getSessionId())) {
-            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge.
-            await Effect.runPromise(specialistLease.reserve(nextManager.getSessionId()));
-          }
-        },
-      ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseBestEffort : Effect.void)));
-
-      const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
-        liveRuntime.dispose(),
-      ).pipe(Effect.ensuring(releaseBestEffort));
-
-      const disposeLiveBestEffort = disposeLive.pipe(
-        Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
-      );
-
-      yield* piPromise(target.path, "bind agent runtime", () =>
-        bindChatRuntime(liveRuntime, specialistLease),
-      ).pipe(Effect.tapError(() => disposeLiveBestEffort));
-      const abortSession = sharePiAbort(() => liveRuntime.session.abort());
-
-      const promptSession: PromptSession = {
-        abort: abortSession,
-        prompt: (text, options) => liveRuntime.session.prompt(text, options),
-        subscribe: (listener) => liveRuntime.session.subscribe(listener),
-        get isIdle() {
-          return liveRuntime.session.isIdle;
-        },
-      };
-
-      return makeSessionChatHandle(
-        target.path,
-        liveRuntime.session,
-        {
-          currentSession: currentPiSessionReference(
+        const { manager: specialistManager, release: releaseSpecialist } =
+          yield* prepareLeasedSession(
             target.path,
-            liveRuntime.session.sessionManager,
+            localSpecialistSessionDirectory(target.path, agentId),
+            "continue",
+          ).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+            ),
+          );
+
+        const specialistLease = makeSessionLeaseTransitions(
+          target.path,
+          specialistManager.getSessionId(),
+          releaseSpecialist,
+        );
+
+        const releaseBestEffort = specialistLease.close.pipe(
+          Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
+        );
+
+        const liveRuntime = yield* restore(
+          specialistRuntime(
+            target.path,
+            environment,
+            selected.agent,
+            selected.model,
+            selected.thinking,
+            selected.tools,
+            specialistManager,
+            async (nextManager) => {
+              if (!specialistLease.owns(nextManager.getSessionId())) {
+                // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge.
+                await Effect.runPromise(specialistLease.reserve(nextManager.getSessionId()));
+              }
+            },
           ),
-          prompt: (text, options) =>
-            Effect.suspend(() =>
-              specialistLease.owns(liveRuntime.session.sessionManager.getSessionId())
-                ? Effect.sync(() =>
-                    ensurePiSessionName(
-                      liveRuntime.session.sessionManager,
-                      `Agent · ${agentId}`,
-                      text,
-                    ),
-                  )
-                : Effect.fail(
-                    sessionLeaseError(
-                      target.path,
-                      new Error(
-                        "Pi session changed without a writer lease; close and reopen this session",
+        ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releaseBestEffort : Effect.void)));
+
+        const disposeLive = piPromise(target.path, "dispose agent runtime", () =>
+          liveRuntime.dispose(),
+        ).pipe(Effect.ensuring(releaseBestEffort));
+
+        const disposeLiveBestEffort = disposeLive.pipe(
+          Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
+        );
+
+        yield* piPromise(target.path, "bind agent runtime", () =>
+          bindChatRuntime(liveRuntime, specialistLease),
+        ).pipe(Effect.tapError(() => disposeLiveBestEffort));
+        const abortSession = sharePiAbort(() => liveRuntime.session.abort());
+
+        const promptSession: PromptSession = {
+          abort: abortSession,
+          prompt: (text, options) => liveRuntime.session.prompt(text, options),
+          subscribe: (listener) => liveRuntime.session.subscribe(listener),
+          get isIdle() {
+            return liveRuntime.session.isIdle;
+          },
+        };
+
+        return makeSessionChatHandle(
+          target.path,
+          () => liveRuntime.session,
+          {
+            currentSession: currentPiSessionReference(
+              target.path,
+              liveRuntime.session.sessionManager,
+            ),
+            prompt: (text, options) =>
+              Effect.suspend(() =>
+                specialistLease.owns(liveRuntime.session.sessionManager.getSessionId())
+                  ? Effect.sync(() =>
+                      ensurePiSessionName(
+                        liveRuntime.session.sessionManager,
+                        `Agent · ${agentId}`,
+                        text,
+                      ),
+                    )
+                  : Effect.fail(
+                      sessionLeaseError(
+                        target.path,
+                        new Error(
+                          "Pi session changed without a writer lease; close and reopen this session",
+                        ),
                       ),
                     ),
-                  ),
-            ).pipe(
-              Effect.andThen(promptForAssistantText(target.path, promptSession, text, options)),
-            ),
-          dispose: disposeLive,
-        },
-        abortSession,
-      );
-    }),
+              ).pipe(
+                Effect.andThen(promptForAssistantText(target.path, promptSession, text, options)),
+              ),
+            dispose: disposeLive,
+          },
+          abortSession,
+          undefined,
+          specialistLease,
+        );
+      }),
+    ),
   );
 
 export const runSpecialist = (

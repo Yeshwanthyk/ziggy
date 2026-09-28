@@ -235,6 +235,51 @@ test("run --session refuses a session held by another writer before creating Pi"
   }
 });
 
+test("a failed chat runtime build releases the transcript lease", async () => {
+  const profilePath = await temporaryProfile();
+
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
+
+  const directory = join(profilePath, "sessions", "chat");
+  await mkdir(directory, { recursive: true });
+
+  const file = join(directory, "reopen.jsonl");
+  await writeFile(
+    file,
+    `${JSON.stringify({ type: "session", version: 3, id: "reopen-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
+  );
+
+  const args = [
+    { path: profilePath, name: "Profile" },
+    { kind: "local" },
+    directory,
+    profilePath,
+    "continue",
+  ] as const;
+
+  const failed = await Effect.runPromiseExit(
+    openChat(...args, undefined, undefined, async () => {
+      throw new Error("injected runtime build failure");
+    }),
+  );
+
+  expect(Exit.isFailure(failed)).toBe(true);
+
+  let reopenedFactoryCalls = 0;
+
+  const reopened = await Effect.runPromiseExit(
+    openChat(...args, undefined, undefined, (...factoryArgs) => {
+      reopenedFactoryCalls += 1;
+
+      return createAgentSessionRuntime(...factoryArgs);
+    }),
+  );
+
+  expect(reopenedFactoryCalls).toBe(1);
+
+  if (Exit.isSuccess(reopened)) await Effect.runPromise(reopened.value.dispose);
+});
+
 test("a held chat refuses before calling Pi's runtime factory", async () => {
   const profilePath = await temporaryProfile();
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
@@ -424,7 +469,7 @@ describe("Pi provider failure classification", () => {
 
     const handle = makeSessionChatHandle(
       "/profile",
-      {
+      () => ({
         get isIdle() {
           return idle;
         },
@@ -447,7 +492,7 @@ describe("Pi provider failure classification", () => {
             listeners.delete(listener);
           };
         },
-      },
+      }),
       {
         prompt: () => Effect.succeed("unused"),
         dispose: Effect.void,
