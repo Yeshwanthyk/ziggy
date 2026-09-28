@@ -118,6 +118,7 @@ it("offers both selected and unselected extensions without optimistic selection"
             { id: "installed-one", kind: "skill", source: "profile", description: "Installed" },
           ],
           selected: ["bundled-one"],
+          skipped: [],
           truncated: false,
         },
       }}
@@ -156,6 +157,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
           profileId: "prf_squarey",
           available: [],
           selected: ["missing-one"],
+          skipped: [],
           truncated: true,
         },
         restartRequired: true,
@@ -263,4 +265,47 @@ it("marks held transcripts and does not offer them for resume", () => {
   expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(buttons[1]!);
   expect(resume).toHaveBeenCalledExactlyOnceWith("free-1");
+});
+
+it("shows quarantined extension diagnostics and the resident restart hint", () => {
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      sessionModel={{ pending: false }}
+      sessionBusy={false}
+      modelSettings={{
+        ...modelSettings,
+        extensions: {
+          profileId: "prf_squarey",
+          available: [],
+          selected: ["broken-one"],
+          truncated: false,
+          skipped: [
+            {
+              id: "broken-one",
+              diagnostics: [
+                { source: "broken-one/index.ts", message: "invalid command registration" },
+              ],
+            },
+          ],
+        },
+      }}
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={vi.fn(async () => undefined)}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
+    />,
+  );
+  expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
+  expect(screen.getByRole("alert").textContent).toContain("ziggy serve restart <profile>");
+  expect((screen.getByRole("checkbox", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
+    true,
+  );
 });

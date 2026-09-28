@@ -519,7 +519,13 @@ const methodFixtures = (): ReadonlyArray<{
     {
       method: "extension.list-for-profile",
       params: profileScopedParams(PROFILE_A),
-      result: { profileId: PROFILE_A, available: [extension], selected: [], truncated: false },
+      result: {
+        profileId: PROFILE_A,
+        available: [extension],
+        selected: [],
+        skipped: [],
+        truncated: false,
+      },
     },
     {
       method: "extension.add",

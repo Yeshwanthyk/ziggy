@@ -571,6 +571,24 @@ export function SettingsDialog({
               <section className="ziggy-settings-block" aria-label="Extensions">
                 <h3>Extensions</h3>
                 <p className="ziggy-settings-muted">Select Profile extensions.</p>
+                {modelSettings?.extensions?.skipped.length ? (
+                  <div role="alert" className="form-error">
+                    <strong>
+                      Some packages were skipped. Fix them, then restart the resident:{" "}
+                      <code>ziggy serve restart &lt;profile&gt;</code>
+                    </strong>
+                    {modelSettings.extensions.skipped.map((item) => (
+                      <div key={item.id}>
+                        <strong>{item.id}</strong>
+                        {item.diagnostics.map((diagnostic, index) => (
+                          <p key={`${item.id}-${index}`}>
+                            {diagnostic.source}: {diagnostic.message}
+                          </p>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {modelSettings?.restartRequired ? (
                   <p role="status">
                     Restart the resident to apply extension changes:{" "}

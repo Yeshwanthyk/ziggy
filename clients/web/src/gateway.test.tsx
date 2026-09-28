@@ -180,6 +180,7 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
       profileId: profile.profileId,
       available: [],
       selected: [],
+      skipped: [],
       truncated: false,
     })),
     addExtension: vi.fn(async (_profileId, id) => ({
@@ -612,6 +613,7 @@ describe("useZiggyGateway", () => {
         },
       ],
       selected: ["bundled-one"],
+      skipped: [],
       truncated: false,
     }));
     await act(async () => {
@@ -679,6 +681,7 @@ describe("useZiggyGateway", () => {
         profileId: profile.profileId,
         available: [],
         selected: ["weather"],
+        skipped: [],
         truncated: false,
       }));
       await act(async () => {
@@ -702,6 +705,7 @@ describe("useZiggyGateway", () => {
         profileId: profile.profileId,
         available: [],
         selected: ["weather"],
+        skipped: [],
         truncated: false,
       })),
     });
@@ -733,6 +737,7 @@ describe("useZiggyGateway", () => {
         profileId: profile.profileId,
         available: [],
         selected: ["weather"],
+        skipped: [],
         truncated: false,
       });
       await load;

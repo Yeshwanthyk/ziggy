@@ -117,12 +117,14 @@ test("UI extension methods require Profile identity and never expose a path", ()
       profileId,
       available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
       selected: ["weather"],
+      skipped: [],
       truncated: false,
     }),
   ).toEqual({
     profileId,
     available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
     selected: ["weather"],
+    skipped: [],
     truncated: false,
   });
   expect(

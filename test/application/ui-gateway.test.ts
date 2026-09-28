@@ -114,6 +114,10 @@ const makeConfig = (
   sessions: makeSessions(),
   agent,
   profileExtensions,
+  extensionHealth: (_path: string, root: string, extensions: ProfileExtensionsApi) =>
+    extensions
+      .listForProfile(target.path, root)
+      .pipe(Effect.map((listing) => ({ listing, skipped: [] }))),
   ...extra,
 });
 
@@ -1552,18 +1556,31 @@ test("UI extension listing respects the frame budget and reports truncation", as
       Effect.succeed({ available: choices, selected: choices.map((choice) => choice.id) }),
   });
 
+  const skipped = Array.from({ length: 16 }, (_, index) => ({
+    id: `broken-${index}`,
+    diagnostics: Array.from({ length: 8 }, () => ({
+      source: "package",
+      message: "🦊".repeat(180),
+    })),
+  }));
+
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
 
-        const connection = (yield* makeUiGateway(
-          makeConfig(
+        const connection = (yield* makeUiGateway({
+          ...makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             profileExtensions,
           ),
-        )).connect((frame) => responses.push(decodeResponse(frame)));
+          extensionHealth: () =>
+            Effect.succeed({
+              listing: { available: choices, selected: choices.map((choice) => choice.id) },
+              skipped,
+            }),
+        })).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
           id: "list",
@@ -1583,6 +1600,51 @@ test("UI extension listing respects the frame budget and reports truncation", as
   expect(result).toMatchObject({ truncated: true });
   expect(available?.length).toBeLessThanOrEqual(64);
   expect(selected).toHaveLength(64);
+  expect(Buffer.byteLength(JSON.stringify(response), "utf8")).toBeLessThan(64 * 1_024);
+});
+
+test("extension listing reports quarantined package diagnostics", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway({
+          ...makeConfig(registry, makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") }))),
+          extensionHealth: () =>
+            Effect.succeed({
+              listing: { available: [], selected: ["broken-one"] },
+              skipped: [
+                {
+                  id: "broken-one",
+                  diagnostics: [
+                    { source: "broken-one/index.ts", message: "invalid command registration" },
+                  ],
+                },
+              ],
+            }),
+        })).connect((frame) => responses.push(decodeResponse(frame)));
+
+        yield* connection.request({
+          id: "health",
+          method: "extension.list-for-profile",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  expect(responses).toMatchObject([
+    {
+      ok: true,
+      result: {
+        selected: ["broken-one"],
+        skipped: [{ id: "broken-one", diagnostics: [{ message: "invalid command registration" }] }],
+      },
+    },
+  ]);
 });
 
 test("UI gateway maps extension failures to bounded typed details without filesystem paths", async () => {

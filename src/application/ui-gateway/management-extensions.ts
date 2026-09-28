@@ -1,4 +1,8 @@
 import { Effect, Schema } from "effect";
+import {
+  listProfileExtensionsWithHealth,
+  type ProfileExtensionHealthListing,
+} from "../../adapters/pi/profile-extension-preflight";
 
 import {
   UiExtensionAddParams,
@@ -87,22 +91,47 @@ const extensionFailure = (
   return { ...result, id: boundedText(requestedId, 128, "extension") };
 };
 
-const projectExtensionList = (
-  profileId: ProfileId,
-  result: {
-    readonly available: ReadonlyArray<{
-      readonly id: string;
-      readonly description: string;
-      readonly kind: "skill" | "code" | "skill+code" | "remote";
-      readonly source: "bundled" | "remote-approved" | "profile";
-    }>;
-    readonly selected: ReadonlyArray<string>;
-  },
-) => {
-  const selected = result.selected.slice(0, 64);
-  const available: Array<(typeof result.available)[number]> = [];
+const projectExtensionList = (profileId: ProfileId, result: ProfileExtensionHealthListing) => {
+  const selected = result.listing.selected.slice(0, 64);
 
-  for (const choice of result.available.slice(0, 64)) {
+  const skipped: Array<{ id: string; diagnostics: Array<{ source: string; message: string }> }> =
+    [];
+
+  let healthTruncated = false;
+
+  for (const item of result.skipped.slice(0, 16)) {
+    const id = boundedText(item.id, 64, "package");
+    const diagnostics: Array<{ source: string; message: string }> = [];
+
+    for (const diagnostic of item.diagnostics.slice(0, 8)) {
+      const candidate = {
+        source: boundedText(diagnostic.source, 120, "package"),
+        message: boundedText(diagnostic.message, 180, "Package could not load"),
+      };
+
+      if (
+        new TextEncoder().encode(
+          JSON.stringify({
+            profileId,
+            selected,
+            skipped: [...skipped, { id, diagnostics: [...diagnostics, candidate] }],
+          }),
+        ).byteLength > 20_000
+      ) {
+        healthTruncated = true;
+        break;
+      }
+
+      diagnostics.push(candidate);
+    }
+
+    if (diagnostics.length < item.diagnostics.length) healthTruncated = true;
+    skipped.push({ id, diagnostics });
+  }
+
+  const available: Array<(typeof result.listing.available)[number]> = [];
+
+  for (const choice of result.listing.available.slice(0, 64)) {
     const description = [...boundedText(choice.description, 512, "Extension")];
 
     while (description.join("").length > 512) description.pop();
@@ -116,9 +145,10 @@ const projectExtensionList = (
           profileId,
           selected,
           available: [...available, candidate],
+          skipped,
           truncated: true,
         }),
-      ).byteLength > 55_000
+      ).byteLength > 54_000
     )
       break;
 
@@ -129,8 +159,12 @@ const projectExtensionList = (
     profileId,
     available,
     selected,
+    skipped,
     truncated:
-      available.length < result.available.length || selected.length < result.selected.length,
+      available.length < result.listing.available.length ||
+      selected.length < result.listing.selected.length ||
+      skipped.length < result.skipped.length ||
+      healthTruncated,
   };
 };
 
@@ -156,7 +190,11 @@ export const dispatchExtensions = (
         Effect.mapError((cause) => badParams(request.method, cause)),
         Effect.flatMap((params) => route(params.profileId)),
         Effect.flatMap((branch) =>
-          config.profileExtensions.listForProfile(branch.target.path, config.repositoryRoot).pipe(
+          (config.extensionHealth ?? listProfileExtensionsWithHealth)(
+            branch.target.path,
+            config.repositoryRoot,
+            config.profileExtensions,
+          ).pipe(
             Effect.mapError((cause) =>
               protocolFailure(
                 "internal",

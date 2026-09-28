@@ -1097,6 +1097,17 @@ export const UiExtensionListForProfileResult = Schema.Struct({
   profileId: ProfileId,
   available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(64)),
   selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(64)),
+  skipped: Schema.Array(
+    Schema.Struct({
+      id: boundedString("skipped package id", 128),
+      diagnostics: Schema.Array(
+        Schema.Struct({
+          source: boundedString("diagnostic source", 240),
+          message: boundedString("diagnostic message", 360),
+        }),
+      ).check(Schema.isMaxLength(8)),
+    }),
+  ).check(Schema.isMaxLength(16)),
   truncated: Schema.Boolean,
 }).check(resultWithinWireBudget);
 

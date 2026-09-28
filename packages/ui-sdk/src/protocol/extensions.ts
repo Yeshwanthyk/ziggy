@@ -46,6 +46,10 @@ export interface ZiggyExtensionListResult {
   readonly profileId: ZiggyProfileId;
   readonly available: ReadonlyArray<ZiggyExtensionChoice>;
   readonly selected: ReadonlyArray<ZiggyExtensionId>;
+  readonly skipped: ReadonlyArray<{
+    readonly id: string;
+    readonly diagnostics: ReadonlyArray<{ readonly source: string; readonly message: string }>;
+  }>;
   readonly truncated: boolean;
 }
 
@@ -105,7 +109,7 @@ const isChoice = (value: unknown): value is ZiggyExtensionChoice =>
 
 export const isExtensionListResult = (value: unknown): value is ZiggyExtensionListResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "available", "selected", "truncated"]) &&
+  hasOnlyKeys(value, ["profileId", "available", "selected", "skipped", "truncated"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.available) &&
   value.available.length <= 64 &&
@@ -113,6 +117,23 @@ export const isExtensionListResult = (value: unknown): value is ZiggyExtensionLi
   Array.isArray(value.selected) &&
   value.selected.length <= 64 &&
   value.selected.every(isExtensionId) &&
+  Array.isArray(value.skipped) &&
+  value.skipped.length <= 16 &&
+  value.skipped.every(
+    (entry) =>
+      isRecord(entry) &&
+      hasOnlyKeys(entry, ["id", "diagnostics"]) &&
+      isBoundedString(entry.id, 128) &&
+      Array.isArray(entry.diagnostics) &&
+      entry.diagnostics.length <= 8 &&
+      entry.diagnostics.every(
+        (diagnostic) =>
+          isRecord(diagnostic) &&
+          hasOnlyKeys(diagnostic, ["source", "message"]) &&
+          isBoundedString(diagnostic.source, 240) &&
+          isBoundedString(diagnostic.message, 360),
+      ),
+  ) &&
   typeof value.truncated === "boolean";
 
 export const isExtensionMutationResult = (value: unknown): value is ZiggyExtensionMutationResult =>
