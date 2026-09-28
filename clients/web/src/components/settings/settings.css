@@ -1,7 +1,7 @@
 /* Settings dialog: fixed frame, vertical tabs, one concern per pane. */
 
 .settings-dialog {
-  height: min(560px, calc(100dvh - 32px));
+  height: min(640px, calc(100dvh - 64px));
   max-width: 760px;
 }
 
