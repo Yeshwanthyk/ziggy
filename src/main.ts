@@ -74,6 +74,7 @@ import {
   renderExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
+  renderProfileExtensions,
 } from "./faces/extensions-cli";
 import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
 import {
@@ -286,7 +287,7 @@ const program = Effect.gen(function* () {
         if (rendered.exitCode !== 0) {
           process.exitCode = rendered.exitCode;
           console.error(
-            `setup incomplete; resume with: ziggy init ${JSON.stringify(result.profilePath)}`,
+            `setup incomplete; inspect with: ziggy doctor ${JSON.stringify(result.profilePath)}; fix the reported issues, then open: ziggy ${JSON.stringify(result.profilePath)}`,
           );
 
           return;
@@ -352,6 +353,14 @@ const program = Effect.gen(function* () {
     }
 
     case "ExtensionsList": {
+      if (command.target !== undefined) {
+        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const listing = yield* profileExtensions.listForProfile(target.path, repositoryRoot);
+        console.log(renderProfileExtensions(listing, target.path, command.json));
+
+        return;
+      }
+
       const extensions = yield* profileExtensions.list(repositoryRoot);
 
       if (command.json) {
@@ -367,9 +376,27 @@ const program = Effect.gen(function* () {
 
     case "ExtensionsShow": {
       const extension = yield* profileExtensions.show(repositoryRoot, command.id);
+      const profileTarget = command.target;
+
+      const profile =
+        profileTarget === undefined
+          ? undefined
+          : yield* Effect.gen(function* () {
+              const target = resolveProfileTarget(profileTarget, resolutionOptions);
+              const listing = yield* profileExtensions.listForProfile(target.path, repositoryRoot);
+
+              return {
+                path: target.path,
+                selected: extension.required || listing.selected.includes(command.id),
+              };
+            });
 
       if (command.json) {
-        console.log(renderExtensionJson(extension));
+        console.log(
+          profile === undefined
+            ? renderExtensionJson(extension)
+            : JSON.stringify({ ...extension, profile: profile.path, selected: profile.selected }),
+        );
 
         return;
       }
@@ -391,6 +418,7 @@ const program = Effect.gen(function* () {
             ),
           },
           terminalRenderOptions(),
+          profile,
         ),
       );
 

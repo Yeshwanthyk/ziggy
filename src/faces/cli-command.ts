@@ -16,8 +16,13 @@ export type CliCommand =
       readonly thinking?: string;
     }
   | { readonly _tag: "Profiles"; readonly json: boolean }
-  | { readonly _tag: "ExtensionsList"; readonly json: boolean }
-  | { readonly _tag: "ExtensionsShow"; readonly id: string; readonly json: boolean }
+  | { readonly _tag: "ExtensionsList"; readonly target?: string; readonly json: boolean }
+  | {
+      readonly _tag: "ExtensionsShow";
+      readonly id: string;
+      readonly target?: string;
+      readonly json: boolean;
+    }
   | { readonly _tag: "ExtensionsManage"; readonly target?: string }
   | { readonly _tag: "ExtensionsAdd"; readonly target: string; readonly id: string }
   | { readonly _tag: "ExtensionsRemove"; readonly target: string; readonly id: string }

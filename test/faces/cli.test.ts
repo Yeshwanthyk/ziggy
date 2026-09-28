@@ -256,6 +256,21 @@ describe("CLI decoding", () => {
       _tag: "ExtensionsList",
       json: true,
     });
+    await expect(decode(["extensions", "list", "buddy", "--json"])).resolves.toEqual({
+      _tag: "ExtensionsList",
+      target: "buddy",
+      json: true,
+    });
+    await expect(decode(["extensions", "show", "buddy", "weather"])).resolves.toEqual({
+      _tag: "ExtensionsShow",
+      target: "buddy",
+      id: "weather",
+      json: false,
+    });
+    await expect(decode(["extensions", "list", "buddy", "extra"])).rejects.toMatchObject({
+      _tag: "CliInputInvalid",
+      message: expect.stringContaining("extensions update"),
+    });
     await expect(decode(["automations", "status", "buddy", "--json"])).resolves.toEqual({
       _tag: "AutomationsStatus",
       target: "buddy",
@@ -429,6 +444,8 @@ describe("CLI decoding", () => {
     expect(renderHelp()).toContain("ziggy serve <name|path>");
     expect(renderHelp()).toContain("ziggy serve status <name|path>");
     expect(renderHelp("sessions")).toContain("sessions show");
+    expect(renderHelp("extensions")).toContain("extensions list [<name|path>] [--json]");
+    expect(renderHelp("extensions")).toContain("extensions update <name|path> <id> [--adopt]");
     expect(renderHelp("serve")).toContain("ziggy serve install <name|path> [--force] [--no-start]");
     expect(renderHelp("serve")).toContain("ziggy serve logs <name|path> [--follow]");
     expect(renderHelp("acp")).toBe("usage: ziggy acp <name|path> [--shared] [--agent <agent-id>]");

@@ -12,6 +12,7 @@ import {
   renderExtensionJson,
   renderExtensionsJson,
   renderProfileExtensionFailure,
+  renderProfileExtensions,
 } from "ziggy/faces/extensions-cli";
 
 const extension = {
@@ -128,6 +129,32 @@ test("preserves extension metadata in the pretty detail view", () => {
   expect(rendered).toContain(" CODE  extensions/weather/index.ts");
   expect(rendered).toContain("path");
   expect(rendered).toContain("extensions/weather");
+});
+
+test("names the Profile for installed selection and distinguishes package presence", () => {
+  const options = { pretty: false, colors: false, columns: 76 };
+  expect(renderExtension(extension, options)).toContain("package present\tyes");
+  expect(renderExtension(extension, options)).not.toContain("installed");
+  expect(
+    renderExtension(extension, options, { path: "/profiles/buddy", selected: false }),
+  ).toContain("installed for /profiles/buddy\tno");
+
+  const listing = {
+    available: [
+      {
+        id: "weather",
+        kind: "skill" as const,
+        source: "bundled" as const,
+        description: "Weather lookup",
+      },
+    ],
+    selected: ["weather"],
+  };
+
+  expect(renderProfileExtensions(listing, "/profiles/buddy", false)).toContain("weather\tselected");
+  expect(renderProfileExtensions(listing, "/profiles/buddy", true)).toBe(
+    JSON.stringify({ profile: "/profiles/buddy", ...listing }),
+  );
 });
 
 test("projects bounded preflight diagnostics without exposing the cause", () => {

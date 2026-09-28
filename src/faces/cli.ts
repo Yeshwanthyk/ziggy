@@ -310,6 +310,10 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
       if (parsed.positional.length === 0) {
         return { _tag: "ExtensionsList", json: parsed.json };
       }
+
+      if (parsed.positional.length === 1 && required(parsed.positional[0])) {
+        return { _tag: "ExtensionsList", target: parsed.positional[0], json: parsed.json };
+      }
     }
 
     if (rest[0] === "show") {
@@ -319,6 +323,19 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
 
       if (parsed.positional.length === 1 && required(parsed.positional[0])) {
         return { _tag: "ExtensionsShow", id: parsed.positional[0], json: parsed.json };
+      }
+
+      if (
+        parsed.positional.length === 2 &&
+        required(parsed.positional[0]) &&
+        required(parsed.positional[1])
+      ) {
+        return {
+          _tag: "ExtensionsShow",
+          target: parsed.positional[0],
+          id: parsed.positional[1],
+          json: parsed.json,
+        };
       }
     }
 
@@ -335,9 +352,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
       };
     }
 
-    return invalid(
-      "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list\n  ziggy extensions show <id>\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>",
-    );
+    return invalid(renderZiggyHelp("extensions"));
   }
 
   if (word === "auth") {

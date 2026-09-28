@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import type { ExtensionManagerResult } from "../application/extension-manager";
 import type {
+  ProfileExtensionListing,
   ProfileExtensionLockFailed,
   ProfileExtensionMutation,
   ProfileExtensionPreflightFailed,
@@ -100,6 +101,21 @@ export type ExtensionsJson = typeof ExtensionsJson.Type;
 const encodeExtensions = Schema.encodeSync(ExtensionsJson);
 
 const encodeExtension = Schema.encodeSync(ExtensionCatalogListingJson);
+
+export const renderProfileExtensions = (
+  listing: ProfileExtensionListing,
+  profilePath: string,
+  json: boolean,
+): string =>
+  json
+    ? JSON.stringify({ profile: profilePath, ...listing })
+    : [
+        `Profile: ${profilePath}`,
+        ...listing.available.map(
+          (extension) =>
+            `${extension.id}\t${listing.selected.includes(extension.id) ? "selected" : "available"}\t${extension.kind}\t${extension.description}`,
+        ),
+      ].join("\n");
 
 export const renderExtensionsJson = (
   extensions: ReadonlyArray<ExtensionCatalogListingJson>,
@@ -228,7 +244,10 @@ export const renderExtensions = (
   return lines.join("\n");
 };
 
-const renderPlainExtension = (extension: ExtensionCatalogListingJson): string =>
+const renderPlainExtension = (
+  extension: ExtensionCatalogListingJson,
+  profile?: { readonly path: string; readonly selected: boolean },
+): string =>
   [
     `id\t${extension.id}`,
     `kind\t${extension.kind}`,
@@ -236,7 +255,9 @@ const renderPlainExtension = (extension: ExtensionCatalogListingJson): string =>
     `description\t${extension.description}`,
     `source\t${extension.source}`,
     `version\t${extension.version}`,
-    `installed\t${extension.installed ? "yes" : "no"}`,
+    profile === undefined
+      ? `package present\t${extension.installed ? "yes" : "no"}`
+      : `installed for ${profile.path}\t${profile.selected ? "yes" : "no"}`,
     ...(extension.packagePath === undefined ? [] : [`path\t${extension.packagePath}`]),
     ...(extension.skills ?? []).map((skill) => `skill\t${skill.name} — ${skill.description}`),
     ...(extension.extensionPaths ?? []).map((extensionPath) => `executable\t${extensionPath}`),
@@ -245,8 +266,9 @@ const renderPlainExtension = (extension: ExtensionCatalogListingJson): string =>
 export const renderExtension = (
   extension: ExtensionCatalogListingJson,
   options: TerminalRenderOptions,
+  profile?: { readonly path: string; readonly selected: boolean },
 ): string => {
-  if (!options.pretty) return renderPlainExtension(extension);
+  if (!options.pretty) return renderPlainExtension(extension, profile);
 
   const color = createTerminalColors(options.colors);
   const width = terminalPanelWidth(options.columns);
@@ -285,7 +307,11 @@ export const renderExtension = (
     ),
     panelLine(
       color,
-      alignBoundedRight("installed", extension.installed ? "yes" : "no", innerWidth),
+      alignBoundedRight(
+        profile === undefined ? "package present" : `installed for ${profile.path}`,
+        (profile?.selected ?? extension.installed) ? "yes" : "no",
+        innerWidth,
+      ),
       width,
     ),
   ];
