@@ -1784,25 +1784,6 @@
   overflow-wrap: anywhere;
 }
 
-.settings-extension {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-.settings-extension label {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-}
-
-.settings-extension strong {
-  font-weight: 500;
-}
-
-.settings-extension p {
-  margin: 4px 0 0 42px;
-}
-
 .ziggy-brand {
   display: inline-flex;
   align-items: center;
