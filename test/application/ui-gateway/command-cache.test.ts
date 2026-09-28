@@ -1,18 +1,25 @@
-/* oxlint-disable ziggy-effect/no-effect-escape-hatch -- Deliberately inject defects to test cache recovery */
+/* oxlint-disable ziggy-effect/no-effect-escape-hatch -- Inject a defect to test cache recovery */
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute Effects */
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun tests are Promise-shaped */
 import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { Deferred, Effect, Fiber } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { makeCommandCache } from "ziggy/application/ui-gateway/command-cache";
+import { protocolFailure } from "ziggy/application/ui-gateway/errors";
 
 const success = { id: "first", ok: true as const, result: { pong: true as const } };
 
-test("concurrent identical commands execute once and all waiters finish on success, failure, or defect", async () => {
+const typedFailure = {
+  id: "first",
+  ok: false as const,
+  error: protocolFailure("internal", "unavailable"),
+};
+
+test("concurrent commands execute once and every waiter finishes on success, typed failure, or defect", async () => {
   await fc.assert(
     fc.asyncProperty(
       fc.integer({ min: 2, max: 16 }),
-      fc.constantFrom("success", "failure", "defect"),
+      fc.constantFrom("success", "typed failure", "defect"),
       async (count, outcome) => {
         const cache = makeCommandCache();
         let executions = 0;
@@ -29,9 +36,7 @@ test("concurrent identical commands execute once and all waiters finish on succe
 
               if (outcome === "defect") return yield* Effect.die("injected defect");
 
-              if (outcome === "failure") return yield* Effect.fail("injected failure");
-
-              return success;
+              return outcome === "typed failure" ? typedFailure : success;
             });
 
             const owner = yield* Effect.forkChild(cache("key", "fingerprint", "first", run));
@@ -55,11 +60,7 @@ test("concurrent identical commands execute once and all waiters finish on succe
 
         expect(executions).toBe(1);
         expect(results).toHaveLength(count);
-        expect(
-          results.every((result) => result.ok === (outcome === "success" ? success.ok : false)),
-        ).toBe(true);
         expect(results.every((result) => result.id === "first")).toBe(true);
-
         expect(results.map((result) => (result.ok ? "success" : result.error.code))).toEqual(
           Array(count).fill(outcome === "success" ? "success" : "internal"),
         );
@@ -72,6 +73,7 @@ test("concurrent identical commands execute once and all waiters finish on succe
 test("an in-flight slot survives completed-result eviction pressure", async () => {
   const cache = makeCommandCache();
   let executions = 0;
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -100,14 +102,78 @@ test("an in-flight slot survives completed-result eviction pressure", async () =
   expect(executions).toBe(1);
 });
 
-test("interrupting the owner releases existing waiters and permits a retry", async () => {
+test("interrupting the owner leaves the command running for another connection", async () => {
   const cache = makeCommandCache();
+  let executions = 0;
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
 
-      const owner = yield* Effect.forkChild(
+      const run = Effect.gen(function* () {
+        executions++;
+        yield* Deferred.succeed(started, undefined);
+        yield* Deferred.await(release);
+
+        return success;
+      });
+
+      const owner = yield* Effect.forkChild(cache("key", "same", "first", run));
+      yield* Deferred.await(started);
+
+      const waiter = yield* Effect.forkChild(
+        cache("key", "same", "second", Effect.die("must not run")),
+      );
+
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(owner);
+      yield* Deferred.succeed(release, undefined);
+      const released = yield* Fiber.join(waiter);
+      const retry = yield* cache("key", "same", "third", Effect.succeed(success));
+
+      return { released, retry };
+    }),
+  );
+
+  expect(result.released).toEqual(success);
+  expect(result.retry).toEqual(success);
+  expect(executions).toBe(1);
+});
+
+test("typed failure responses are not retained for retries", async () => {
+  const cache = makeCommandCache();
+  let executions = 0;
+
+  const results = await Effect.runPromise(
+    Effect.gen(function* () {
+      const run = Effect.sync(() => {
+        executions++;
+
+        return executions === 1 ? typedFailure : success;
+      });
+
+      const first = yield* cache("key", "same", "first", run);
+      const second = yield* cache("key", "same", "second", run);
+
+      return { first, second };
+    }),
+  );
+
+  expect(results.first).toEqual(typedFailure);
+  expect(results.second).toEqual(success);
+  expect(executions).toBe(2);
+});
+
+test("closing the UI server scope interrupts running commands and releases waiters", async () => {
+  const cache = makeCommandCache();
+
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const serverScope = yield* Scope.make();
+      const started = yield* Deferred.make<void>();
+
+      yield* Effect.forkChild(
         cache(
           "key",
           "same",
@@ -117,7 +183,7 @@ test("interrupting the owner releases existing waiters and permits a retry", asy
 
             return yield* Effect.never;
           }),
-        ),
+        ).pipe(Effect.provideService(Scope.Scope, serverScope)),
       );
 
       yield* Deferred.await(started);
@@ -127,14 +193,17 @@ test("interrupting the owner releases existing waiters and permits a retry", asy
       );
 
       yield* Effect.yieldNow;
-      yield* Fiber.interrupt(owner);
+      yield* Scope.close(serverScope, Exit.void);
       const released = yield* Fiber.join(waiter);
-      const retry = yield* cache("key", "same", "third", Effect.succeed(success));
+      const afterClose = yield* Effect.flip(cache("new", "same", "third", Effect.succeed(success)));
 
-      return { released, retry };
+      return { released, afterClose };
     }),
   );
 
-  expect(result.released).toMatchObject({ id: "first", ok: false, error: { code: "internal" } });
-  expect(result.retry).toEqual(success);
+  expect(result.released).toMatchObject({
+    ok: false,
+    error: { code: "internal", message: "command interrupted" },
+  });
+  expect(result.afterClose).toMatchObject({ code: "internal", message: "UI server stopped" });
 });

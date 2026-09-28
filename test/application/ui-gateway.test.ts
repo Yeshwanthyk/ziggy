@@ -2,7 +2,7 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun's test callback API is Promise-shaped */
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { Effect, Result, Schema } from "effect";
+import { Deferred, Effect, Fiber, Result, Schema } from "effect";
 import { makeChatHandle, type ChatEvent, type ZiggyAgentApi } from "ziggy/application/agent";
 import {
   CHAT_REPLAY_LIMIT,
@@ -661,6 +661,76 @@ test("command retries preserve the current transport request id", async () => {
 
   expect(sent.map((frame) => decodeResponse(frame).id)).toEqual(["transport-1", "transport-2"]);
   expect(openCount).toBe(1);
+});
+
+test("a disconnected command owner does not interrupt another connection's agent run", async () => {
+  const sent: string[] = [];
+  let executions = 0;
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+
+        const agents = makeProfileAgents({
+          run: () =>
+            Effect.gen(function* () {
+              executions++;
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+
+              return { answer: "completed", session: { id: "child", file: "child.jsonl" } };
+            }),
+        });
+
+        const gateway = makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
+            makeProfileExtensions(),
+            { profileAgents: agents },
+          ),
+        );
+
+        const first = gateway.connect(() => {});
+        const second = gateway.connect((frame) => sent.push(frame));
+
+        const params = {
+          profileId,
+          agentId: "researcher",
+          task: "research",
+          commandId: "same-run",
+        };
+
+        const owner = yield* Effect.forkChild(
+          first.request({ id: "first", method: "agent.run", params }),
+        );
+
+        yield* Deferred.await(started);
+
+        const waiter = yield* Effect.forkChild(
+          second.request({ id: "second", method: "agent.run", params }),
+        );
+
+        yield* Effect.yieldNow;
+        yield* first.close;
+        yield* Fiber.interrupt(owner);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(waiter);
+      }),
+    ),
+  );
+
+  expect(executions).toBe(1);
+  expect(sent.map((frame) => decodeResponse(frame))).toEqual([
+    {
+      id: "second",
+      ok: true,
+      result: { profileId, agentId: "researcher", answer: "completed", sessionId: "child" },
+    },
+  ]);
 });
 
 test("agent document/save preserves source, deduplicates command ids, and maps conflicts", async () => {

@@ -440,6 +440,7 @@ export const openUiServer = (
 ): Effect.Effect<UiServer, UiServerError, Scope.Scope> =>
   Effect.gen(function* () {
     const commandCapacity = options.commandCapacity ?? UI_SERVER_COMMAND_CAPACITY;
+    const serverScope = yield* Effect.scope;
     const maxInFlight = options.maxInFlightPerSocket ?? UI_SERVER_MAX_IN_FLIGHT;
 
     if (!Number.isSafeInteger(commandCapacity) || commandCapacity < 1) {
@@ -502,6 +503,7 @@ export const openUiServer = (
       state.connection = connection;
 
       const requestWork = handlers.onRequest(connection, request).pipe(
+        Effect.provideService(Scope.Scope, serverScope),
         Effect.catchCause(() =>
           Effect.sync(() =>
             connection.send(failureFrame(request.id, "internal", "request handler failed")),

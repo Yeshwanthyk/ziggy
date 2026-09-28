@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Exit } from "effect";
+import { Cause, Deferred, Effect, Exit, Option, Scope } from "effect";
 import type { UiResponseFrame, UiRequestId } from "../../domain/ui-gateway";
 import { protocolFailure } from "./errors";
 
@@ -8,9 +8,12 @@ type Slot =
   | { readonly fingerprint: string; readonly pending: Deferred.Deferred<UiResponseFrame> }
   | { readonly fingerprint: string; readonly result: UiResponseFrame };
 
-/** An idempotency slot stays addressable until its owner publishes an outcome. */
+/** One gateway-owned scope outlives every connection, but closes with the UI server scope. */
 export const makeCommandCache = () => {
   const slots = new Map<string, Slot>();
+  const scope = Scope.makeUnsafe();
+  let registered = false;
+  let closed = false;
 
   const trim = () => {
     for (const [key, slot] of slots) {
@@ -28,6 +31,22 @@ export const makeCommandCache = () => {
   ): Effect.Effect<UiResponseFrame, ReturnType<typeof protocolFailure>, R> =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
+        // In production the UI server supplies its scope. Tests that call the gateway directly
+        // have no server lifecycle; their short-lived commands complete without an owner scope.
+        const serverScope = yield* Effect.serviceOption(Scope.Scope);
+
+        if (!registered && Option.isSome(serverScope)) {
+          yield* Scope.addFinalizer(
+            serverScope.value,
+            Effect.sync(() => {
+              closed = true;
+            }).pipe(Effect.andThen(Scope.close(scope, Exit.void))),
+          );
+          registered = true;
+        }
+
+        if (closed) return yield* Effect.fail(protocolFailure("internal", "UI server stopped"));
+
         const existing = slots.get(key);
 
         if (existing !== undefined) {
@@ -41,32 +60,43 @@ export const makeCommandCache = () => {
           return yield* restore(Deferred.await(existing.pending));
         }
 
-        const pending = yield* Deferred.make<UiResponseFrame>();
+        // No yield between lookup and insert: simultaneous callers cannot both claim this key.
+        const pending = Deferred.makeUnsafe<UiResponseFrame>();
         slots.set(key, { fingerprint, pending });
         trim();
 
-        const exit = yield* Effect.exit(restore(run));
+        yield* Effect.forkIn(
+          Effect.uninterruptibleMask((restoreRun) =>
+            Effect.gen(function* () {
+              const exit = yield* Effect.exit(restoreRun(run));
 
-        const result = Exit.isSuccess(exit)
-          ? exit.value
-          : {
-              id,
-              ok: false as const,
-              error: protocolFailure(
-                "internal",
-                Cause.hasInterruptsOnly(exit.cause) ? "command interrupted" : "command failed",
-              ),
-            };
+              const result: UiResponseFrame = Exit.isSuccess(exit)
+                ? exit.value
+                : {
+                    id,
+                    ok: false,
+                    error: protocolFailure(
+                      "internal",
+                      Cause.hasInterruptsOnly(exit.cause)
+                        ? "command interrupted"
+                        : "command failed",
+                    ),
+                  };
 
-        // Publish before releasing the slot. Waiters already holding the Deferred always finish,
-        // even if the owner was interrupted or the command died with a defect.
-        yield* Deferred.succeed(pending, result);
+              // Failure frames (including typed failures mapped by dispatch) are retryable.
+              // Only successful responses represent a completed idempotent command.
+              slots.delete(key);
 
-        if (Exit.isSuccess(exit)) slots.set(key, { fingerprint, result });
-        else slots.delete(key); // failed attempts may be retried with the same command id
-        trim();
+              if (result.ok) slots.set(key, { fingerprint, result });
+              trim();
+              yield* Deferred.succeed(pending, result);
+            }),
+          ),
+          scope,
+          { uninterruptible: false },
+        );
 
-        return result;
+        return yield* restore(Deferred.await(pending));
       }),
     );
 };
