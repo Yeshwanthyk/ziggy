@@ -962,6 +962,9 @@ export function App() {
         connectionPending={gateway.connection === "connecting"}
         modelSettings={gateway.modelSettings}
         sessionModel={gateway.sessionModel}
+        sessionSummaries={gateway.sessionSummaries}
+        onLoadSessionSummaries={gateway.loadSessionSummaries}
+        onResumePastSession={gateway.resumePastSession}
         selectedRef={gateway.selectedRef}
         sessionBusy={gateway.busy}
         onLoadSessionModel={gateway.loadSessionModel}

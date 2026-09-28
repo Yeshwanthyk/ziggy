@@ -127,6 +127,17 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     openMain: vi.fn(async () => mainRef),
     openSpecialist: vi.fn(async () => specialistRef),
     listSessions: vi.fn(async () => sessionListResult()),
+    listSessionSummaries: vi.fn(async () => ({
+      profileId: profile.profileId,
+      sessions: [],
+      truncated: false,
+    })),
+    resumeSession: vi.fn(async (ref, sessionId) => ({
+      profileId: profile.profileId,
+      ref,
+      sessionId,
+      cancelled: false,
+    })),
     sessionModelStatus: vi.fn(async (ref) => ({
       profileId: profile.profileId,
       ref,

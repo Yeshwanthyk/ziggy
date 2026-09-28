@@ -221,3 +221,46 @@ it("keeps live session switches disabled while streaming, without changing Profi
   expect(screen.getByRole("button", { name: "Save model" })).not.toBeNull();
   expect(switchModel).not.toHaveBeenCalled();
 });
+
+it("marks held transcripts and does not offer them for resume", () => {
+  const resume = vi.fn(async () => undefined);
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      selectedRef={{ profileId: "prf_squarey", kind: "live", key: "local/main" }}
+      sessionBusy={false}
+      sessionModel={{ pending: false }}
+      sessionSummaries={{
+        pending: false,
+        value: {
+          profileId: "prf_squarey",
+          truncated: false,
+          sessions: [
+            { id: "held-1", title: "Held session", updatedAt: "2026-01-01", held: true },
+            { id: "free-1", title: "Free session", updatedAt: "2026-01-02", held: false },
+          ],
+        },
+      }}
+      onLoadSessionSummaries={vi.fn(async () => undefined)}
+      onResumePastSession={resume}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={vi.fn(async () => undefined)}
+    />,
+  );
+  const section = screen.getByRole("region", { name: "Resume past session" });
+  expect(section.textContent).toContain("Held session");
+  expect(section.textContent).toContain("Held");
+  const buttons = screen.getAllByRole("button", { name: "Resume" });
+  expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(buttons[1]!);
+  expect(resume).toHaveBeenCalledExactlyOnceWith("free-1");
+});

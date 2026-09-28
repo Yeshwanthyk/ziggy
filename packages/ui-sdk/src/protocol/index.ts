@@ -50,6 +50,8 @@ import {
   isSessionHistoryResult,
   isSessionListResult,
   isSessionModelResult,
+  isSessionSummaryResult,
+  isSessionResumeResult,
   isSessionNameValue,
   isSessionReference,
   isSessionShowResult,
@@ -104,6 +106,15 @@ export const isMethodResult = <Method extends ZiggyMethod>(
         isSessionReference(value.ref) &&
         value.ref.kind === "live" &&
         profileMatches(value.ref.profileId, params)
+      );
+    case "session.summaries":
+      return isSessionSummaryResult(value) && profileMatches(value.profileId, params);
+    case "session.resume":
+      return (
+        isSessionResumeResult(value) &&
+        refProfileMatches(value.profileId, params) &&
+        isRecord(params) &&
+        value.sessionId === params.sessionId
       );
     case "session.model.status":
     case "session.model.set":
@@ -271,6 +282,19 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         isConversationContextValue(value.context) &&
         (value.name === undefined || isSessionNameValue(value.name)) &&
         (value.agentId === undefined || isAgentId(value.agentId)) &&
+        (value.commandId === undefined || isCommandId(value.commandId))
+      );
+    case "session.summaries":
+      return hasProfileIdOnly(value);
+    case "session.resume":
+      return (
+        hasRef(value) &&
+        hasOnlyKeys(value, ["ref", "sessionId", "commandId"]) &&
+        isBoundedString(value.sessionId, 256) &&
+        !value.sessionId.includes("/") &&
+        !value.sessionId.includes("\\") &&
+        !value.sessionId.includes("..") &&
+        !value.sessionId.startsWith(".") &&
         (value.commandId === undefined || isCommandId(value.commandId))
       );
     case "session.model.status":

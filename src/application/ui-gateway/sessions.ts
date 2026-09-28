@@ -1,10 +1,12 @@
 import { join } from "node:path";
+import { listProfileSessionSummaries } from "../../adapters/pi/sessions";
 import { Effect, Option, Predicate, Schema } from "effect";
 import {
   UiSessionHistoryParams,
   UiSessionOpenParams,
   UiSessionModelSetParams,
   UiSessionThinkingSetParams,
+  UiSessionResumeParams,
   UiSessionRefParams,
   UiSessionTextParams,
   UiSessionKey,
@@ -58,6 +60,10 @@ const decodeModelSet = Schema.decodeUnknownEffect(UiSessionModelSetParams, {
 });
 
 const decodeThinkingSet = Schema.decodeUnknownEffect(UiSessionThinkingSetParams, {
+  onExcessProperty: "error",
+});
+
+const decodeResume = Schema.decodeUnknownEffect(UiSessionResumeParams, {
   onExcessProperty: "error",
 });
 
@@ -371,6 +377,56 @@ export const makeSessionDispatcher = (
 
           return { ref };
         });
+      case "session.summaries":
+        return Effect.gen(function* () {
+          const params = yield* decodeScoped(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+
+          const branch = yield* route(params.profileId);
+
+          const summaries = yield* listProfileSessionSummaries(branch.target.path).pipe(
+            Effect.mapError((cause) => toGatewayError(request.method, cause)),
+          );
+
+          return {
+            profileId: branch.profileId,
+            sessions: summaries.slice(0, 32).map((session) => ({
+              id: session.id,
+              title: boundedText(session.title ?? "Untitled session", 160, "Untitled session"),
+              updatedAt: session.updatedAt,
+              held: session.held,
+            })),
+            truncated: summaries.length > 32,
+          };
+        });
+      case "session.resume":
+        return Effect.gen(function* () {
+          const params = yield* decodeResume(request.params).pipe(
+            Effect.mapError((cause) => badParams(request.method, cause)),
+          );
+
+          if (params.ref.kind !== "live")
+            return yield* protocolFailure("watch_only", "stored sessions cannot resume here");
+
+          const branch = yield* route(params.ref.profileId);
+          const entry = yield* branch.registry.get(params.ref.key);
+
+          if (entry.kind !== "ui")
+            return yield* protocolFailure("watch_only", "channel sessions cannot resume here");
+
+          const result = yield* entry.handle
+            .resume(params.sessionId)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+
+          return {
+            profileId: branch.profileId,
+            ref: params.ref,
+            sessionId: params.sessionId,
+            cancelled: result.cancelled,
+          };
+        });
+
       case "session.model.status":
       case "session.model.set":
       case "session.thinking.set":

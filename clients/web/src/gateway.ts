@@ -27,6 +27,7 @@ import {
   type ZiggySessionHistoryEntry,
   type ZiggySessionListResult,
   type ZiggySessionModelResult,
+  type ZiggySessionSummaryResult,
   type ZiggySessionRef,
 } from "../../../packages/ui-sdk/src/index";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -154,6 +155,8 @@ export type GatewayClient = Pick<
   | "sessionModelStatus"
   | "setSessionModel"
   | "setSessionThinking"
+  | "listSessionSummaries"
+  | "resumeSession"
   | "modelStatus"
   | "onAny"
   | "openMain"
@@ -348,6 +351,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     readonly error?: string;
     readonly pending: boolean;
   }>({ pending: false });
+  const [sessionSummaries, setSessionSummaries] = useState<{
+    readonly value?: ZiggySessionSummaryResult;
+    readonly error?: string;
+    readonly pending: boolean;
+  }>({ pending: false });
+  const sessionSummariesGenerationRef = useRef(0);
   const sessionModelGenerationRef = useRef(0);
   const extensionGenerationRef = useRef(0);
   const extensionMutationRef = useRef(false);
@@ -1523,6 +1532,38 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     }
   }, []);
 
+  const loadSessionSummaries = useCallback(async (): Promise<void> => {
+    const client = clientRef.current;
+    const profile = profileRef.current;
+    const generation = ++sessionSummariesGenerationRef.current;
+    if (client === undefined || client.state !== "open" || profile === undefined) {
+      setSessionSummaries({ pending: false });
+      return;
+    }
+
+    setSessionSummaries((current) => ({ ...current, pending: true, error: undefined }));
+    try {
+      const value = await client.listSessionSummaries(profile.profileId);
+      if (
+        generation === sessionSummariesGenerationRef.current &&
+        clientRef.current === client &&
+        profileRef.current?.profileId === profile.profileId
+      )
+        setSessionSummaries({ value, pending: false });
+    } catch (cause) {
+      if (
+        generation === sessionSummariesGenerationRef.current &&
+        clientRef.current === client &&
+        profileRef.current?.profileId === profile.profileId
+      )
+        setSessionSummaries((current) => ({
+          ...current,
+          error: cause instanceof Error ? cause.message : "Past sessions unavailable",
+          pending: false,
+        }));
+    }
+  }, []);
+
   const loadSessionModel = useCallback(async (): Promise<void> => {
     const client = clientRef.current;
     const ref = selectedRefRef.current;
@@ -1639,6 +1680,63 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       }
     },
     [busy, sessionModel.pending],
+  );
+
+  const resumePastSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      const client = clientRef.current;
+      const ref = selectedRefRef.current;
+      if (
+        client === undefined ||
+        client.state !== "open" ||
+        ref?.kind !== "live" ||
+        busy ||
+        sessionSummaries.pending
+      )
+        return;
+
+      const generation = ++sessionSummariesGenerationRef.current;
+      setSessionSummaries((current) => ({ ...current, pending: true, error: undefined }));
+      try {
+        const result = await client.resumeSession(
+          ref,
+          sessionId,
+          `web-resume-${crypto.randomUUID()}`,
+        );
+        if (
+          generation !== sessionSummariesGenerationRef.current ||
+          clientRef.current !== client ||
+          !sameRef(selectedRefRef.current, ref)
+        )
+          return;
+
+        if (!result.cancelled) {
+          historyGenerationRef.current += 1;
+          setHistory([]);
+          setHistoryCursor(undefined);
+          setHasMoreHistory(false);
+          setPendingUser(undefined);
+          setStreamText("");
+          setTools([]);
+          await Promise.all([loadHistory(ref), loadSessionModel()]);
+        }
+
+        await loadSessionSummaries();
+      } catch (cause) {
+        if (
+          generation === sessionSummariesGenerationRef.current &&
+          clientRef.current === client &&
+          sameRef(selectedRefRef.current, ref)
+        ) {
+          setSessionSummaries((current) => ({
+            ...current,
+            pending: false,
+            error: cause instanceof Error ? cause.message : "Could not resume session",
+          }));
+        }
+      }
+    },
+    [busy, sessionSummaries.pending, loadHistory, loadSessionModel, loadSessionSummaries],
   );
 
   const loadAutomationDetail = useCallback(
@@ -2109,6 +2207,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     loadSessionModel,
     changeSessionModel,
     changeSessionThinking,
+    sessionSummaries,
+    loadSessionSummaries,
+    resumePastSession,
     openGroup,
     openSpecialist,
     pauseAutomation,

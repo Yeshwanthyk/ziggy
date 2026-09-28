@@ -295,6 +295,27 @@ const methodFixtures = (): ReadonlyArray<{
         thinking: "low",
       },
     })),
+    {
+      method: "session.summaries",
+      params: { profileId: PROFILE_A },
+      result: {
+        profileId: PROFILE_A,
+        sessions: [
+          { id: "older-1", title: "Earlier chat", updatedAt: "2026-01-01T00:00:00Z", held: false },
+        ],
+        truncated: false,
+      },
+    },
+    {
+      method: "session.resume",
+      params: { ref: MAIN_A, sessionId: "older-1" },
+      result: {
+        profileId: PROFILE_A,
+        ref: MAIN_A,
+        sessionId: "older-1",
+        cancelled: false,
+      },
+    },
     ...emptyResultMethods.map((method) => ({
       method,
       params:

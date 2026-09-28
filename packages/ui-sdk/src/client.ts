@@ -20,6 +20,8 @@ import {
   type ZiggySessionRef,
   type ZiggySessionListResult,
   type ZiggySessionModelResult,
+  type ZiggySessionSummaryResult,
+  type ZiggySessionResumeResult,
   type ZiggySessionShowResult,
 } from "./protocol/conversations";
 import type {
@@ -126,6 +128,12 @@ export interface ZiggyGatewayClient {
   listGroups(profileId: ZiggyProfileId): Promise<ZiggyGroupListResult>;
   listSessions(profileId: ZiggyProfileId): Promise<ZiggySessionListResult>;
   showSession(ref: ZiggySessionRef): Promise<ZiggySessionShowResult>;
+  listSessionSummaries(profileId: ZiggyProfileId): Promise<ZiggySessionSummaryResult>;
+  resumeSession(
+    ref: ZiggySessionRef,
+    sessionId: string,
+    commandId?: string,
+  ): Promise<ZiggySessionResumeResult>;
   sessionModelStatus(ref: ZiggySessionRef): Promise<ZiggySessionModelResult>;
   setSessionModel(
     ref: ZiggySessionRef,
@@ -280,6 +288,12 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
     listGroups: (profileId) => connection.request("group.list", { profileId }),
     listSessions: (profileId) => connection.request("session.list", { profileId }),
     showSession: (ref) => connection.request("session.show", { ref }),
+    listSessionSummaries: (profileId) => connection.request("session.summaries", { profileId }),
+    resumeSession: (ref, sessionId, commandId) =>
+      connection.request(
+        "session.resume",
+        commandId === undefined ? { ref, sessionId } : { ref, sessionId, commandId },
+      ),
     sessionModelStatus: (ref) => connection.request("session.model.status", { ref }),
     setSessionModel: (ref, providerId, modelId, commandId) =>
       connection.request(

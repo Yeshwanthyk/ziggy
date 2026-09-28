@@ -204,6 +204,8 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "session.model.status",
   "session.model.set",
   "session.thinking.set",
+  "session.summaries",
+  "session.resume",
   "session.watch",
   "session.unwatch",
   "session.close",

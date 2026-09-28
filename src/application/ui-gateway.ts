@@ -291,6 +291,8 @@ export const makeUiGateway = (
         case "session.model.status":
         case "session.model.set":
         case "session.thinking.set":
+        case "session.summaries":
+        case "session.resume":
         case "session.watch":
         case "session.unwatch":
         case "session.close":

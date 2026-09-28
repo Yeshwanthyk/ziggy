@@ -1396,6 +1396,49 @@ test("UI gateway routes all management operations through decoded explicit Profi
   expect(JSON.stringify(responses)).not.toContain("profilePath");
 });
 
+test("held resume refuses without replacing the current UI session", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed(""),
+    resume: () =>
+      Effect.fail(new SessionHeld({ profilePath: "/secret", message: "held elsewhere" })),
+    modelState: Effect.succeed({ providerId: "openai", modelId: "current", thinking: "low" }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+          (frame) => responses.push(decodeResponse(frame)),
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        yield* connection.request({
+          id: "held",
+          method: "session.resume",
+          params: { ref, sessionId: "older-1" },
+        });
+        yield* connection.request({ id: "state", method: "session.model.status", params: { ref } });
+      }),
+    ),
+  );
+
+  expect(responses[1]).toMatchObject({
+    ok: false,
+    error: { code: "session_busy", message: "Session is held by another process" },
+  });
+  expect(responses[2]).toMatchObject({ ok: true, result: { modelId: "current" } });
+  expect(JSON.stringify(responses)).not.toContain("/secret");
+});
+
 test("session model and thinking mutations stay on the open handle, not the Profile default", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
   const ref = { profileId, kind: "live" as const, key: "local/main" as const };

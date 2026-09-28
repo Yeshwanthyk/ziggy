@@ -66,6 +66,24 @@ export interface ZiggyStoredSession {
   readonly terminalState: ZiggyTerminalState;
 }
 
+export interface ZiggySessionSummaryResult {
+  readonly profileId: ZiggyProfileId;
+  readonly sessions: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly updatedAt: string;
+    readonly held: boolean;
+  }>;
+  readonly truncated: boolean;
+}
+
+export interface ZiggySessionResumeResult {
+  readonly profileId: ZiggyProfileId;
+  readonly ref: ZiggySessionRef;
+  readonly sessionId: string;
+  readonly cancelled: boolean;
+}
+
 export interface ZiggySessionModelResult {
   readonly profileId: ZiggyProfileId;
   readonly ref: ZiggySessionRef;
@@ -193,6 +211,12 @@ export interface ZiggyConversationRequestMap {
     readonly thinking: import("./models").ZiggyModelThinkingLevel;
     readonly commandId?: string;
   };
+  readonly "session.summaries": { readonly profileId: ZiggyProfileId };
+  readonly "session.resume": {
+    readonly ref: ZiggySessionRef;
+    readonly sessionId: string;
+    readonly commandId?: string;
+  };
   readonly "session.watch": ZiggySessionWatchParams;
   readonly "session.unwatch": ZiggySessionCommandParams;
   readonly "session.close": ZiggySessionCommandParams;
@@ -210,6 +234,8 @@ export interface ZiggyConversationResultMap {
   readonly "session.model.status": ZiggySessionModelResult;
   readonly "session.model.set": ZiggySessionModelResult;
   readonly "session.thinking.set": ZiggySessionModelResult;
+  readonly "session.summaries": ZiggySessionSummaryResult;
+  readonly "session.resume": ZiggySessionResumeResult;
   readonly "session.watch": ZiggyAcknowledgedResult;
   readonly "session.unwatch": ZiggyAcknowledgedResult;
   readonly "session.close": ZiggyAcknowledgedResult;
@@ -457,6 +483,38 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   }
   return false;
 };
+
+export const isSessionSummaryResult = (value: unknown): value is ZiggySessionSummaryResult =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "sessions", "truncated"]) &&
+  isProfileId(value.profileId) &&
+  typeof value.truncated === "boolean" &&
+  Array.isArray(value.sessions) &&
+  value.sessions.length <= 32 &&
+  value.sessions.every(
+    (session) =>
+      isRecord(session) &&
+      hasOnlyKeys(session, ["id", "title", "updatedAt", "held"]) &&
+      isBoundedString(session.id, 256) &&
+      !session.id.includes("/") &&
+      !session.id.includes("\\") &&
+      !session.id.includes("..") &&
+      !session.id.startsWith(".") &&
+      isBoundedCodePointString(session.title, 160) &&
+      isBoundedString(session.updatedAt, 128) &&
+      typeof session.held === "boolean",
+  );
+
+export const isSessionResumeResult = (value: unknown): value is ZiggySessionResumeResult =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "ref", "sessionId", "cancelled"]) &&
+  isProfileId(value.profileId) &&
+  isSessionRef(value.ref) &&
+  value.ref.profileId === value.profileId &&
+  isBoundedString(value.sessionId, 256) &&
+  !value.sessionId.includes("/") &&
+  !value.sessionId.includes("\\") &&
+  typeof value.cancelled === "boolean";
 
 export const isSessionModelResult = (value: unknown): value is ZiggySessionModelResult =>
   isRecord(value) &&

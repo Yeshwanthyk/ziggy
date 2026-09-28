@@ -174,6 +174,12 @@ export const UiSessionOpenParams = Schema.Struct({
 
 export type UiSessionOpenParams = typeof UiSessionOpenParams.Type;
 
+export const UiSessionResumeParams = Schema.Struct({
+  ref: UiSessionRef,
+  sessionId: UiStoredSessionId,
+  commandId: Schema.optionalKey(UiCommandId),
+});
+
 export const UiSessionModelSetParams = Schema.Struct({
   ref: UiSessionRef,
   providerId: boundedString("provider id", 128),
@@ -486,6 +492,8 @@ export const UI_METHODS = [
   "session.model.status",
   "session.model.set",
   "session.thinking.set",
+  "session.summaries",
+  "session.resume",
   "session.watch",
   "session.unwatch",
   "session.close",
@@ -636,6 +644,26 @@ export const UiProfileHealthResult = Schema.Struct({
 }).check(resultWithinWireBudget);
 
 export type UiProfileHealthResult = typeof UiProfileHealthResult.Type;
+
+export const UiSessionSummaryResult = Schema.Struct({
+  profileId: ProfileId,
+  sessions: Schema.Array(
+    Schema.Struct({
+      id: UiStoredSessionId,
+      title: boundedCodePointString("session title", 160),
+      updatedAt: boundedString("session updated time", 128),
+      held: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(32)),
+  truncated: Schema.Boolean,
+}).check(resultWithinWireBudget);
+
+export const UiSessionResumeResult = Schema.Struct({
+  profileId: ProfileId,
+  ref: UiSessionRef,
+  cancelled: Schema.Boolean,
+  sessionId: UiStoredSessionId,
+});
 
 export const UiSessionModelResult = Schema.Struct({
   profileId: ProfileId,
@@ -1136,6 +1164,8 @@ export const UiGatewayResult = Schema.Union([
   UiProfileHealthResult,
   UiSessionListResult,
   UiSessionModelResult,
+  UiSessionSummaryResult,
+  UiSessionResumeResult,
   UiSessionShowResult,
   UiSessionHistoryResult,
   UiDestinationListResult,

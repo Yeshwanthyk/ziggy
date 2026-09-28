@@ -12,6 +12,7 @@ import type { ModelSettingsState } from "@/gateway";
 import type {
   ZiggyModelThinkingLevel,
   ZiggySessionModelResult,
+  ZiggySessionSummaryResult,
   ZiggySessionRef,
 } from "../../../../packages/ui-sdk/src/index";
 import { Info } from "lucide-react";
@@ -30,6 +31,13 @@ interface SettingsDialogProps {
   };
   readonly selectedRef?: ZiggySessionRef;
   readonly sessionBusy: boolean;
+  readonly sessionSummaries?: {
+    readonly value?: ZiggySessionSummaryResult;
+    readonly error?: string;
+    readonly pending: boolean;
+  };
+  readonly onLoadSessionSummaries?: () => Promise<void>;
+  readonly onResumePastSession?: (sessionId: string) => Promise<void>;
   readonly onLoadSessionModel: () => Promise<void>;
   readonly onChangeSessionModel: (providerId: string, modelId: string) => Promise<void>;
   readonly onChangeSessionThinking: (level: ZiggyModelThinkingLevel) => Promise<void>;
@@ -88,6 +96,9 @@ export function SettingsDialog({
   sessionModel,
   selectedRef,
   sessionBusy,
+  sessionSummaries = { pending: false },
+  onLoadSessionSummaries = async () => undefined,
+  onResumePastSession = async () => undefined,
   onLoadSessionModel,
   onChangeSessionModel,
   onChangeSessionThinking,
@@ -142,6 +153,15 @@ export function SettingsDialog({
     onLoadSessionModel,
   ]);
 
+  useEffect(() => {
+    if (open && connected && selectedRef?.kind === "live") void onLoadSessionSummaries();
+  }, [
+    open,
+    connected,
+    selectedRef?.kind,
+    selectedRef?.kind === "live" ? selectedRef.key : undefined,
+    onLoadSessionSummaries,
+  ]);
   const availableModels = modelSettings?.availableModels ?? [];
   const configuredProviders = (modelSettings?.providers ?? []).filter(
     (provider) => provider.configured,
@@ -385,6 +405,57 @@ export function SettingsDialog({
               ) : sessionModel.pending ? (
                 <p role="status">Loading session model…</p>
               ) : null}
+            </section>
+          ) : null}
+
+          {connected &&
+          selectedRef?.kind === "live" &&
+          (selectedRef.key.startsWith("local/") || selectedRef.key.startsWith("ui/")) ? (
+            <section className="ziggy-settings-block" aria-label="Resume past session">
+              <h3>Resume past session</h3>
+              <p className="ziggy-settings-muted">
+                Resume into this open conversation. A session held elsewhere cannot be resumed.
+              </p>
+              {sessionSummaries.error ? (
+                <p className="form-error" role="alert">
+                  {sessionSummaries.error}
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={sessionSummaries.pending}
+                onClick={() => void onLoadSessionSummaries()}
+              >
+                Refresh sessions
+              </Button>
+              {sessionSummaries.value?.truncated ? (
+                <p role="status">Showing the most recent 32 sessions.</p>
+              ) : null}
+              {sessionSummaries.value?.sessions.length === 0 ? (
+                <p className="ziggy-settings-muted">No past sessions found.</p>
+              ) : null}
+              <div className="provider-list">
+                {sessionSummaries.value?.sessions.map((session) => (
+                  <div className="provider-row" key={session.id}>
+                    <span>
+                      <strong>{session.title}</strong>
+                      <small>
+                        {session.updatedAt} · {session.id}
+                      </small>
+                    </span>
+                    {session.held ? <span className="settings-status">Held</span> : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={session.held || sessionBusy || sessionSummaries.pending}
+                      onClick={() => void onResumePastSession(session.id)}
+                    >
+                      Resume
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </section>
           ) : null}
 
