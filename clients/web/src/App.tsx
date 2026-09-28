@@ -671,68 +671,70 @@ export function App() {
       </aside>
 
       <main className="conversation-main">
-        <Stack alignCenter className="conversation-header" gap={12}>
-          <Button
-            aria-label="Open conversations"
-            className="mobile-only"
-            onClick={() => setSidebarOpen(true)}
-            size="icon"
-            variant="ghost"
-          >
-            <Menu />
-          </Button>
-          {avatar(gateway.selectedTitle, gateway.busy, 30)}
-          <div className="conversation-title">
-            <strong>{gateway.selectedTitle}</strong>
-            <span>
-              {gateway.reconciling
-                ? "Refreshing conversation…"
-                : gateway.busy
-                  ? "Working"
-                  : gateway.selectedRef?.kind === "stored"
-                    ? "Past conversation"
-                    : gateway.connection === "open"
-                      ? "Ready"
-                      : "Offline"}
-            </span>
-          </div>
-          <div className="header-actions">
+        <header className="conversation-header">
+          <Stack alignCenter className="conversation-header-inner" gap={12}>
             <Button
-              aria-label="Edit agent"
-              disabled={!connected}
-              hidden={selectedAgent === undefined}
-              onClick={() => {
-                if (selectedAgent === undefined) return;
-                setAgentEditorOpen(true);
-                void gateway.loadAgentDefinition(selectedAgent.id);
-              }}
-              size="icon"
-              type="button"
+              aria-label="Open conversations"
+              className="mobile-only"
+              onClick={() => setSidebarOpen(true)}
+              size="icon-sm"
               variant="ghost"
             >
-              <Pencil />
+              <Menu />
             </Button>
-            <Button
-              aria-label={selectedPin === undefined ? "Pin conversation" : "Unpin conversation"}
-              className={selectedPin === undefined ? "" : "is-selected"}
-              disabled={!connected || gateway.selectedRef === undefined || gateway.sidebarBusy}
-              onClick={() => {
-                const ref = gateway.selectedRef;
-                if (ref === undefined) return;
-                void runSidebarAction("pin", () =>
-                  selectedPin === undefined
-                    ? gateway.setConversationPin(ref, gateway.selectedTitle)
-                    : gateway.removeConversationPin(selectedPin.pinId),
-                );
-              }}
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              <Star />
-            </Button>
-          </div>
-        </Stack>
+            {avatar(gateway.selectedTitle, gateway.busy, 24)}
+            <div className="conversation-title">
+              <strong>{gateway.selectedTitle}</strong>
+              <span>
+                {gateway.reconciling
+                  ? "Refreshing conversation…"
+                  : gateway.busy
+                    ? "Working"
+                    : gateway.selectedRef?.kind === "stored"
+                      ? "Past conversation"
+                      : gateway.connection === "open"
+                        ? "Ready"
+                        : "Offline"}
+              </span>
+            </div>
+            <div className="header-actions">
+              <Button
+                aria-label="Edit agent"
+                disabled={!connected}
+                hidden={selectedAgent === undefined}
+                onClick={() => {
+                  if (selectedAgent === undefined) return;
+                  setAgentEditorOpen(true);
+                  void gateway.loadAgentDefinition(selectedAgent.id);
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <Pencil />
+              </Button>
+              <Button
+                aria-label={selectedPin === undefined ? "Pin conversation" : "Unpin conversation"}
+                className={selectedPin === undefined ? "" : "is-selected"}
+                disabled={!connected || gateway.selectedRef === undefined || gateway.sidebarBusy}
+                onClick={() => {
+                  const ref = gateway.selectedRef;
+                  if (ref === undefined) return;
+                  void runSidebarAction("pin", () =>
+                    selectedPin === undefined
+                      ? gateway.setConversationPin(ref, gateway.selectedTitle)
+                      : gateway.removeConversationPin(selectedPin.pinId),
+                  );
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <Star />
+              </Button>
+            </div>
+          </Stack>
+        </header>
 
         <ScrollArea className="transcript-scroll">
           <div className="transcript">
@@ -887,6 +889,7 @@ export function App() {
               {gateway.busy ? (
                 <Button
                   type="button"
+                  size="sm"
                   variant="secondary"
                   disabled={draft.trim().length === 0 || !connected}
                   onClick={() => void send(undefined, "queue")}
