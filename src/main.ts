@@ -457,16 +457,15 @@ const program = Effect.gen(function* () {
           target.path,
           repositoryRoot,
           result.id,
-        );
+        ).pipe(Effect.result);
 
-        const service = yield* residentService.status(target);
+        if (Result.isFailure(extension)) {
+          console.warn("extension added; could not inspect its schedules for a resident hint");
+        } else if (extension.success.automations.length > 0) {
+          const service = yield* residentService.status(target);
 
-        if (
-          extension.automations.length > 0 &&
-          Result.isSuccess(service.managed) &&
-          service.managed.success._tag === "not-installed"
-        ) {
-          console.log(RESIDENT_SCHEDULE_HINT);
+          if (Result.isSuccess(service.managed) && service.managed.success._tag === "not-installed")
+            console.log(RESIDENT_SCHEDULE_HINT);
         }
       }
 
