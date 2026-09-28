@@ -46,7 +46,7 @@ export function AgentDefinitionDialog({
               aria-label="Refresh agent definition"
               disabled={!available || detail?.loading || agent === undefined}
               onClick={onRefresh}
-              size="icon"
+              size="icon-sm"
               type="button"
               variant="ghost"
             >

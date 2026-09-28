@@ -714,10 +714,17 @@
 }
 
 .detail-section h3 {
-  font-size: 12px;
-  letter-spacing: 0.055em;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
   margin: 0 0 10px;
-  text-transform: uppercase;
+}
+
+.automation-detail-id,
+.detail-cron {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .automation-task {
@@ -737,11 +744,50 @@
   gap: 16px;
 }
 
-.editor-mode,
+/* Pressed-state chips for small mode and filter toggles. */
+.chip-group {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.chip-group button {
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  height: var(--control-sm);
+  padding: 0 9px;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.chip-group button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--foreground);
+}
+
+.chip-group button:disabled {
+  opacity: 0.5;
+}
+
+.chip-group button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chip-group button:not([aria-pressed="true"], :disabled):hover {
+    background: var(--hover);
+    color: var(--foreground);
+  }
+}
+
 .editor-actions {
   align-items: center;
   display: flex;
-  gap: 5px;
+  gap: 8px;
 }
 
 .editor-actions {
@@ -871,6 +917,10 @@
   gap: 8px;
 }
 
+.automation-destination-controls .ui-combobox-trigger {
+  height: var(--control-md);
+}
+
 .automation-destination-picker-field {
   display: flex;
   flex: 1;
@@ -922,6 +972,12 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+.scheduler-line strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 .scheduler-line small,

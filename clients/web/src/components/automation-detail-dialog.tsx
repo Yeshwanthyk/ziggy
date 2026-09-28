@@ -8,6 +8,7 @@ import {
   removeAutomationBroadcastTarget,
 } from "@/lib/definition-source";
 import type { AutomationDestinationOption, AutomationDetail, AutomationSummary } from "@/gateway";
+import { automationTitle, scheduleLabel } from "@/lib/automation-labels";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -231,9 +232,15 @@ export function AutomationDetailDialog({
         <DialogHeader>
           <div className="automation-detail-heading">
             <span>
-              <DialogTitle>{automation?.id ?? "Automation"}</DialogTitle>
+              <DialogTitle>
+                {automation === undefined ? "Automation" : automationTitle(automation.id)}
+              </DialogTitle>
               <DialogDescription>
-                Definition, schedule, and recent execution history.
+                {automation === undefined ? (
+                  "Definition, schedule, and recent execution history."
+                ) : (
+                  <code className="automation-detail-id">{automation.id}</code>
+                )}
               </DialogDescription>
             </span>
             <span className="automation-detail-actions">
@@ -253,7 +260,7 @@ export function AutomationDetailDialog({
                 aria-label="Refresh automation details"
                 disabled={!available || detail?.loading || automation === undefined || editing}
                 onClick={onRefresh}
-                size="icon"
+                size="icon-sm"
                 type="button"
                 variant="ghost"
               >
@@ -311,8 +318,14 @@ export function AutomationDetailDialog({
                   <div>
                     <span>Schedule</span>
                     <strong>
-                      {automation?.schedule ?? automation?.gateState ?? "Manual only"}
+                      {automation?.schedule === undefined
+                        ? (automation?.gateState ?? "Manual only")
+                        : scheduleLabel(automation.schedule)}
                     </strong>
+                    {automation?.schedule === undefined ||
+                    scheduleLabel(automation.schedule) === automation.schedule ? null : (
+                      <code className="detail-cron">{automation.schedule}</code>
+                    )}
                   </div>
                   <div>
                     <span>Timezone</span>

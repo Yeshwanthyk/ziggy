@@ -122,7 +122,7 @@ export function ExtensionsPane({
                   value={query}
                 />
               </label>
-              <div aria-label="Show" className="settings-chips" role="group">
+              <div aria-label="Show" className="chip-group" role="group">
                 {filters.map((entry) => (
                   <button
                     aria-pressed={filter === entry.id}

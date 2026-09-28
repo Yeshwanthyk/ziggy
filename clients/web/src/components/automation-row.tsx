@@ -1,6 +1,7 @@
 import type { ZiggyAutomationRun } from "../../../../packages/ui-sdk/src/index";
 import { CircleAlert, LoaderCircle, Pause, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { automationTitle, scheduleLabel } from "@/lib/automation-labels";
 
 interface AutomationRowProps {
   readonly automation: {
@@ -17,17 +18,6 @@ interface AutomationRowProps {
   readonly onRun: () => void;
 }
 
-function scheduleLabel(schedule: string | undefined) {
-  if (!schedule) return "Scheduled";
-  const daily = /^(\d{1,2}) (\d{1,2}) \* \* \*$/u.exec(schedule.trim());
-  if (!daily) return schedule;
-  const minute = Number(daily[1]);
-  const hour = Number(daily[2]);
-  if (minute > 59 || hour > 23) return schedule;
-  const time = `${hour % 12 || 12}${minute ? `:${String(minute).padStart(2, "0")}` : ""} ${hour < 12 ? "AM" : "PM"}`;
-  return `Daily at ${time}`;
-}
-
 export function AutomationRow({
   automation,
   busy,
@@ -39,8 +29,7 @@ export function AutomationRow({
 }: AutomationRowProps) {
   const actionable = automation.lifecycle !== "conflict";
   const needsAttention = Boolean(automation.message) || !actionable;
-  const name = automation.id.replace(/[-_]+/gu, " ");
-  const label = name.charAt(0).toUpperCase() + name.slice(1);
+  const label = automationTitle(automation.id);
   const running = runState === "running" || runState === "claimed" || runState === "starting";
   const runLabel =
     runState === "completed"

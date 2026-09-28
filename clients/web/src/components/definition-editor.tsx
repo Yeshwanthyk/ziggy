@@ -129,25 +129,23 @@ export function DefinitionEditor({
 
   return (
     <div className="definition-editor">
-      <div className="editor-mode" role="group" aria-label="Definition editor mode">
-        <Button
+      <div aria-label="Definition editor mode" className="chip-group editor-mode" role="group">
+        <button
+          aria-pressed={mode === "fields"}
           disabled={saving}
           onClick={() => switchMode("fields")}
-          size="sm"
           type="button"
-          variant={mode === "fields" ? "secondary" : "ghost"}
         >
           Fields
-        </Button>
-        <Button
+        </button>
+        <button
+          aria-pressed={mode === "source"}
           disabled={saving}
           onClick={() => switchMode("source")}
-          size="sm"
           type="button"
-          variant={mode === "source" ? "secondary" : "ghost"}
         >
           Full source
-        </Button>
+        </button>
       </div>
       {mode === "source" ? (
         <Textarea
