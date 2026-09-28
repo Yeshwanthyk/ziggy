@@ -322,7 +322,7 @@ export function AutomationDetailDialog({
                         ? (automation?.gateState ?? "Manual only")
                         : scheduleLabel(automation.schedule)}
                     </strong>
-                    {automation?.schedule === undefined ||
+                    {!automation?.schedule ||
                     scheduleLabel(automation.schedule) === automation.schedule ? null : (
                       <code className="detail-cron">{automation.schedule}</code>
                     )}
