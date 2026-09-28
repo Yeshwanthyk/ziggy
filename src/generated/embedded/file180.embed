@@ -10,6 +10,7 @@ then request the matching topic for exact version-matched usage. Read a referenc
 matches it. Do not search a developer checkout for plans or `src/`.
 
 ## When to read what
+- New Profile end-to-end setup → [references/web-access.md](references/web-access.md) (`init`, `serve install`, `pair`)
 
 - Automations, web UI management, pause/resume, wake, and run history → [references/automations.md](references/automations.md)
 - Profile memory, scopes, caps, backups, and inspection → [references/memory.md](references/memory.md)
@@ -26,12 +27,13 @@ matches it. Do not search a developer checkout for plans or `src/`.
 - Create, validate, inspect, or run specialists → `ziggy_help` topic `agents`
 - Open an Agent Client Protocol session → `ziggy_help` topic `acp`
 - Update the Ziggy executable → `ziggy_help` topic `update`
-- Open the resident web UI or run a one-shot prompt → `ziggy_help` topics `serve`, `web`, or `run`
+- `ziggy <profile>` opens the running resident web UI (no terminal UI); one-shot prompts → `ziggy_help` topic `run`
 - Profile diagnosis or package selection → `ziggy_help` topics `doctor` or `extensions`
 
 ## Rules
 
 - Profile Markdown is authority. Do not invent a second automation or session store.
+- Broken optional packages are skipped with diagnostics and their automations paused; see [references/extension-updates.md](references/extension-updates.md).
 - Bundled and Profile-owned packages are admitted only through the in-process `profile_extensions`
   tool. Read `pi-packages` for selection and `extension-authoring` for the authoritative third-party
   adoption procedure.

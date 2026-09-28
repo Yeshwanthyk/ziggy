@@ -4,6 +4,10 @@
 scheduler and any configured Telegram, Discord, or Slack loops. Run at most one resident per
 resolved Profile path.
 
+Automation wake is handed to the running resident. A per-session single-writer lease refuses a
+second writer (web tab, ACP, or `run --continue/--session`) while another holds it. The web UI
+supports per-session model/thinking switching and resume; see [Sessions](sessions.md).
+
 Ziggy installs one user service per Profile and delegates restart policy to launchd on macOS or
 systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
 scheduler process.

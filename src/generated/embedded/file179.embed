@@ -75,23 +75,22 @@ Profile directory.
 
 ## Updating the packaged guidance
 
-This guide also ships inside the required `ziggy-operations` package. Updating the Ziggy binary
-does not overwrite an installed Profile-owned package. For an older untracked installation, close
-active Profile sessions, stop the resident, then deliberately adopt the package from the updated
-executable:
+This guide also ships inside the required `ziggy-operations` package. Required packages refresh
+automatically at resident startup when their tracked files are unchanged. For an older untracked
+installation, stop the resident and deliberately adopt the package from the updated executable:
 
 ```sh
 ziggy extensions update squarey ziggy-operations --adopt
 ```
 
-Use `--adopt` only for the initial takeover of an untracked package. Tracked packages use the normal
-update command. See [Updating bundled extensions](extension-updates.md) for fencing, backup, and
-local-change behavior.
+Use `--adopt` only for the initial takeover of an untracked package. Locally modified copies are
+not refreshed; resolve changes before updating. `--restart` on a managed resident avoids stopping
+it manually. See [Updating bundled extensions](extension-updates.md) for fencing and backups.
 
 ## Troubleshooting
 
-If `ziggy web pair squarey` prints `http://127.0.0.1:0`, no stable web configuration exists. This is
-a known 0.2.6 CLI limitation: configure a nonzero port, restart the resident, then pair again.
+With an ephemeral port, `ziggy web pair squarey` uses the running resident's actual port. If no
+resident is running, start one or configure a nonzero port before pairing.
 
 If the resident fails after configuration, check whether another process or resident already owns
 the port:
