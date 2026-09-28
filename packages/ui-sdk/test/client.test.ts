@@ -22,6 +22,7 @@ import {
   type ZiggySocketEvent,
   ZIGGY_METHODS,
   ZiggyRequestOutcomeUnknownError,
+  ZiggyInvalidResponseError,
 } from "../src/index";
 
 const PROFILE_A: ZiggyProfileId = "prf_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -733,7 +734,7 @@ describe("gateway client transport", () => {
     const request = client.request("ping", {});
     socket.rawMessage("not-json");
     socket.message({ id: frameId(socket, 0), ok: true, result: { pong: "yes" } });
-    await expect(request).rejects.toThrow("Invalid Ziggy gateway response for ping");
+    await expect(request).rejects.toBeInstanceOf(ZiggyInvalidResponseError);
     client.close();
   });
 

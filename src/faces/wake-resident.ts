@@ -3,6 +3,7 @@
 import { Effect } from "effect";
 import {
   createZiggyConnection,
+  ZiggyInvalidResponseError,
   ZiggyRequestNotSentError,
   ZiggyRequestOutcomeUnknownError,
   type ZiggyConnection,
@@ -20,7 +21,10 @@ const WAKE_REQUEST_TIMEOUT_MS = 30 * 60_000;
 const WAKE_CONNECT_TIMEOUT_MS = 10_000;
 
 const wakeFailureMessage = (cause: unknown): string => {
-  if (cause instanceof ZiggyRequestOutcomeUnknownError)
+  if (
+    cause instanceof ZiggyRequestOutcomeUnknownError ||
+    cause instanceof ZiggyInvalidResponseError
+  )
     return "resident wake outcome unknown; check `ziggy automations runs` before retrying";
 
   if (cause instanceof ZiggyRequestNotSentError)
