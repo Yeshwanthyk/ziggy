@@ -134,16 +134,6 @@ const ProfileExtensionsProvided = ProfileExtensionsLive.pipe(
   ),
 );
 
-const ExtensionUpdateProvided = ExtensionUpdateLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      ExtensionArchiveClientLive,
-      ProfileExtensionsProvided,
-      ProfileExtensionMutationLockLive,
-    ),
-  ),
-);
-
 const PiAgentLive = Layer.effect(
   PiAgent,
   Effect.gen(function* () {
@@ -201,6 +191,17 @@ const ResidentServiceProvided = ResidentServiceLive.pipe(
 );
 
 const SelfUpdateProvided = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));
+
+const ExtensionUpdateProvided = ExtensionUpdateLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ExtensionArchiveClientLive,
+      ProfileExtensionsProvided,
+      ProfileExtensionMutationLockLive,
+      ResidentServiceProvided,
+    ),
+  ),
+);
 
 const fail = (message: string) =>
   Effect.sync(() => {
@@ -474,7 +475,12 @@ const program = Effect.gen(function* () {
 
     case "ExtensionsUpdate": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
-      const updated = yield* extensionUpdate.update(target, command.id, { adopt: command.adopt });
+
+      const updated = yield* extensionUpdate.update(target, command.id, {
+        adopt: command.adopt,
+        restart: command.restart,
+      });
+
       console.log(`${updated.status} ${updated.id} in ${updated.profilePath}`);
 
       if (updated.adoptedUnknownOrigin) console.log("adopted previously untracked package");

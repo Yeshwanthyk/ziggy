@@ -278,22 +278,27 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     if (rest.length === 0) return { _tag: "ExtensionsManage" };
 
     if (rest[0] === "update") {
+      const flags = rest.slice(3);
+
       if (
-        (rest.length === 3 || (rest.length === 4 && rest[3] === "--adopt")) &&
         required(rest[1]) &&
         required(rest[2]) &&
         !rest[1].startsWith("--") &&
-        !rest[2].startsWith("--")
+        !rest[2].startsWith("--") &&
+        flags.length <= 2 &&
+        new Set(flags).size === flags.length &&
+        flags.every((flag) => flag === "--adopt" || flag === "--restart")
       ) {
         return {
           _tag: "ExtensionsUpdate",
           target: rest[1],
           id: rest[2],
-          adopt: rest.length === 4,
+          adopt: flags.includes("--adopt"),
+          restart: flags.includes("--restart"),
         };
       }
 
-      return invalid("usage: ziggy extensions update <name|path> <id> [--adopt]");
+      return invalid("usage: ziggy extensions update <name|path> <id> [--adopt] [--restart]");
     }
 
     if (rest[0] === "manage" && rest.length <= 2) {

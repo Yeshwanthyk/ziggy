@@ -31,6 +31,7 @@ export type CliCommand =
       readonly target: string;
       readonly id: string;
       readonly adopt: boolean;
+      readonly restart: boolean;
     }
   | { readonly _tag: "AuthStatus"; readonly target: string }
   | {

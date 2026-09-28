@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, type Result } from "effect";
 import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../catalog";
 import {
   ExtensionArchiveClient,
@@ -21,6 +21,11 @@ import {
 import { ExtensionUpdateError, type ExtensionUpdateResult } from "../domain/extension-update";
 import type { ExtensionCatalog } from "../domain/extension-catalog";
 import type { ProfileTarget } from "../domain/profile";
+import { ResidentService, type ResidentServiceApi } from "./resident-service";
+import type {
+  ResidentServiceDefinitionState,
+  ResidentServiceError,
+} from "../domain/resident-service";
 
 const decodeId = Schema.decodeUnknownEffect(ProfileExtensionId);
 
@@ -34,6 +39,13 @@ export const makeExtensionUpdate = (
     readonly fence?: typeof withProfileUpdateLock;
     readonly inspectOwner?: typeof inspectGatewayOwner;
     readonly preflight?: ReturnType<typeof makeProfileExtensionPreflight>;
+    readonly resident?: {
+      readonly status: (target: ProfileTarget) => Effect.Effect<{
+        readonly managed: Result.Result<ResidentServiceDefinitionState, ResidentServiceError>;
+      }>;
+      readonly stop: ResidentServiceApi["stop"];
+      readonly start: ResidentServiceApi["start"];
+    };
   } = {},
 ) => {
   const catalog = options.catalog ?? BUILTIN_EXTENSION_CATALOG;
@@ -45,7 +57,7 @@ export const makeExtensionUpdate = (
   const update = (
     target: ProfileTarget,
     id: string,
-    request: { readonly adopt?: boolean } = {},
+    request: { readonly adopt?: boolean; readonly restart?: boolean } = {},
   ) => {
     const error = (reason: ExtensionUpdateError["reason"], message: string, cause?: unknown) =>
       new ExtensionUpdateError({ profilePath: target.path, id, reason, message, cause });
@@ -63,75 +75,74 @@ export const makeExtensionUpdate = (
         );
       }
 
-      return yield* fence(
+      return yield* lock.withLock(
         target.path,
-        lock.withLock(
-          target.path,
-          Effect.gen(function* () {
-            const owner = yield* inspectOwner(target).pipe(
-              Effect.mapError((cause) =>
-                error("filesystem", "Could not establish whether the Profile is stopped.", cause),
-              ),
+        Effect.gen(function* () {
+          const owner = yield* inspectOwner(target).pipe(
+            Effect.mapError((cause) =>
+              error("filesystem", "Could not establish whether the Profile is stopped.", cause),
+            ),
+          );
+
+          if (owner._tag === "running" && !request.restart)
+            return yield* error(
+              "unsupported",
+              "Stop the Profile resident before updating extensions, or use --restart.",
+            );
+          const store = makeExtensionUpdateStore(target.path, id);
+          const prepared = yield* store.prepare();
+
+          return yield* Effect.gen(function* () {
+            const currentPath = join(target.path, "extensions", id);
+            const oldHash = yield* store.hash(currentPath);
+
+            if (prepared.receipt === undefined && request.adopt !== true) {
+              return yield* error(
+                "unmanaged",
+                "Extension origin is untracked. Use --adopt to explicitly take over these exact files; their previous origin cannot be verified.",
+              );
+            }
+
+            if (prepared.receipt !== undefined && prepared.receipt.contentHash !== oldHash) {
+              return yield* error(
+                "modified",
+                "Installed extension has local changes. Preserve or resolve them before updating; --adopt does not overwrite managed edits.",
+              );
+            }
+
+            yield* stage(prepared.stagingProfile, entry);
+            yield* store.stageContext(prepared.stagingProfile);
+            yield* preflight.preflight(
+              prepared.stagingProfile,
+              prepared.stagingProfile,
+              isRequiredBundledExtension(id) ? [] : [id],
+            );
+            const stagedPath = join(prepared.stagingProfile, "extensions", id);
+            const contentHash = yield* store.hash(stagedPath);
+            const current = yield* readExtensionPackage(target.path, id);
+            const next = yield* readExtensionPackage(prepared.stagingProfile, id);
+
+            const oldAutomations = yield* Effect.forEach(current.automations, (item) =>
+              store.hash(item.path).pipe(Effect.map((hash) => `${item.id}:${hash}`)),
             );
 
-            if (owner._tag === "running")
+            const newAutomations = yield* Effect.forEach(next.automations, (item) =>
+              store.hash(item.path).pipe(Effect.map((hash) => `${item.id}:${hash}`)),
+            );
+
+            if (
+              JSON.stringify(oldAutomations.toSorted()) !==
+              JSON.stringify(newAutomations.toSorted())
+            ) {
               return yield* error(
-                "unsupported",
-                "Stop the Profile resident before updating extensions.",
+                "automation",
+                "This update changes extension-owned automation definitions; that migration is not supported yet.",
               );
-            const store = makeExtensionUpdateStore(target.path, id);
-            const prepared = yield* store.prepare();
+            }
 
-            return yield* Effect.gen(function* () {
-              const currentPath = join(target.path, "extensions", id);
-              const oldHash = yield* store.hash(currentPath);
+            const adoptedUnknownOrigin = prepared.receipt === undefined;
 
-              if (prepared.receipt === undefined && request.adopt !== true) {
-                return yield* error(
-                  "unmanaged",
-                  "Extension origin is untracked. Use --adopt to explicitly take over these exact files; their previous origin cannot be verified.",
-                );
-              }
-
-              if (prepared.receipt !== undefined && prepared.receipt.contentHash !== oldHash) {
-                return yield* error(
-                  "modified",
-                  "Installed extension has local changes. Preserve or resolve them before updating; --adopt does not overwrite managed edits.",
-                );
-              }
-
-              yield* stage(prepared.stagingProfile, entry);
-              yield* store.stageContext(prepared.stagingProfile);
-              yield* preflight.preflight(
-                prepared.stagingProfile,
-                prepared.stagingProfile,
-                isRequiredBundledExtension(id) ? [] : [id],
-              );
-              const stagedPath = join(prepared.stagingProfile, "extensions", id);
-              const contentHash = yield* store.hash(stagedPath);
-              const current = yield* readExtensionPackage(target.path, id);
-              const next = yield* readExtensionPackage(prepared.stagingProfile, id);
-
-              const oldAutomations = yield* Effect.forEach(current.automations, (item) =>
-                store.hash(item.path).pipe(Effect.map((hash) => `${item.id}:${hash}`)),
-              );
-
-              const newAutomations = yield* Effect.forEach(next.automations, (item) =>
-                store.hash(item.path).pipe(Effect.map((hash) => `${item.id}:${hash}`)),
-              );
-
-              if (
-                JSON.stringify(oldAutomations.toSorted()) !==
-                JSON.stringify(newAutomations.toSorted())
-              ) {
-                return yield* error(
-                  "automation",
-                  "This update changes extension-owned automation definitions; that migration is not supported yet.",
-                );
-              }
-
-              const adoptedUnknownOrigin = prepared.receipt === undefined;
-
+            const apply = Effect.gen(function* () {
               if (oldHash === contentHash) {
                 yield* store.adoptCurrent(contentHash, entry.version);
 
@@ -162,15 +173,81 @@ export const makeExtensionUpdate = (
                 adoptedUnknownOrigin,
                 backupPath: prepared.backupPath,
               } satisfies ExtensionUpdateResult;
-            }).pipe(
-              Effect.ensuring(
-                store
-                  .discard(prepared.transactionId)
-                  .pipe(Effect.catch((cause) => Effect.logError(cause))),
-              ),
+            });
+
+            if (owner._tag !== "running") return yield* fence(target.path, apply);
+
+            const resident = options.resident;
+
+            if (resident === undefined)
+              return yield* error("unsupported", "--restart requires a managed resident.");
+
+            const service = yield* resident.status(target);
+
+            if (
+              service.managed._tag !== "Success" ||
+              service.managed.success._tag === "not-installed"
+            )
+              return yield* error(
+                "unsupported",
+                "--restart requires an installed managed resident.",
+              );
+
+            return yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                const stopped = yield* resident.stop(target).pipe(Effect.result);
+                const stoppedOwner = yield* inspectOwner(target).pipe(Effect.result);
+
+                const stoppedCleanly =
+                  stopped._tag === "Success" &&
+                  stopped.success.ready === true &&
+                  stoppedOwner._tag === "Success" &&
+                  stoppedOwner.success._tag !== "running";
+
+                if (!stoppedCleanly) {
+                  const running =
+                    stoppedOwner._tag === "Success" && stoppedOwner.success._tag === "running";
+
+                  return yield* error(
+                    "filesystem",
+                    `Resident did not stop; update not applied; resident ${running ? "running" : "state unknown or not running"}.`,
+                    stopped._tag === "Failure"
+                      ? stopped.failure
+                      : stoppedOwner._tag === "Failure"
+                        ? stoppedOwner.failure
+                        : stopped.success,
+                  );
+                }
+
+                const applied = yield* fence(target.path, apply).pipe(Effect.result);
+                const started = yield* resident.start(target).pipe(Effect.result);
+                const running = started._tag === "Success" && started.success.ready === true;
+
+                if (applied._tag === "Failure")
+                  return yield* error(
+                    "filesystem",
+                    `Update failed; old or new version applied; resident ${running ? "running" : "not running"}.`,
+                    applied.failure,
+                  );
+
+                if (!running)
+                  return yield* error(
+                    "filesystem",
+                    "Update applied; resident not running; use ziggy serve start.",
+                    started._tag === "Failure" ? started.failure : started.success,
+                  );
+
+                return applied.success;
+              }),
             );
-          }),
-        ),
+          }).pipe(
+            Effect.ensuring(
+              store
+                .discard(prepared.transactionId)
+                .pipe(Effect.catch((cause) => Effect.logError(cause))),
+            ),
+          );
+        }),
       );
     });
   };
@@ -190,6 +267,7 @@ export const ExtensionUpdateLive = Layer.effect(
       yield* ExtensionArchiveClient,
       yield* ProfileExtensions,
       yield* ProfileExtensionMutationLock,
+      { resident: yield* ResidentService },
     );
   }),
 );

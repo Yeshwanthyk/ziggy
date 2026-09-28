@@ -16,10 +16,14 @@ describe("CLI decoding", () => {
       target: "squarey",
       id: "computer-use",
       adopt: false,
+      restart: false,
     });
     await expect(
       decode(["extensions", "update", "squarey", "computer-use", "--adopt"]),
     ).resolves.toMatchObject({ adopt: true });
+    await expect(
+      decode(["extensions", "update", "squarey", "computer-use", "--restart", "--adopt"]),
+    ).resolves.toMatchObject({ adopt: true, restart: true });
 
     for (const args of [
       ["squarey"],
