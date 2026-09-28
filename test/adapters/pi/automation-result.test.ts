@@ -7,6 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
+import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import { readSessionHistory } from "ziggy/adapters/pi/session-history";
 import { makeSessionChatHandle } from "ziggy/adapters/pi/pi-agent";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
@@ -95,6 +96,39 @@ test("stored automation delivery persists one full-tree receipt and reloads thro
     text: "Automation daily-note result (run manual:one):\nThe durable result",
     timestamp: expect.any(String),
   });
+});
+
+test("stored delivery refuses a live writer without changing its transcript", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-held-"));
+  roots.push(profilePath);
+
+  const manager = SessionManager.create(profilePath, join(profilePath, "sessions"), {
+    id: "held-session",
+  });
+
+  const file = materialize(manager);
+  const before = await readFile(file);
+  const release = await Effect.runPromise(acquireSessionLease(profilePath, "held-session"));
+
+  try {
+    await expect(
+      Effect.runPromise(
+        appendStoredAutomationResult(profilePath, {
+          automationId: "daily-note",
+          runId: "manual:held",
+          targetSessionId: "held-session",
+          text: "no append",
+          timestamp: "2026-09-17T12:00:00.000Z",
+        }),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "AutomationConversationDeliveryFailed",
+      message: "this session is open in the resident; use the UI, or start a new session",
+    });
+    expect(await readFile(file)).toEqual(before);
+  } finally {
+    await Effect.runPromise(release);
+  }
 });
 
 test("stored automation delivery reports a deleted destination without creating a transcript", async () => {

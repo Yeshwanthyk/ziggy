@@ -7,6 +7,7 @@ import {
 } from "../../domain/automation";
 import { SessionNotFound } from "../../domain/session";
 import { showProfileSession } from "./sessions";
+import { scopedSessionLease, SessionLeaseHeld } from "./session-lease";
 
 export const AUTOMATION_RESULT_CUSTOM_TYPE = "ziggy.automation-result";
 
@@ -78,47 +79,64 @@ export const appendStoredAutomationResult = (
           ),
     ),
     Effect.flatMap((metadata) =>
-      Effect.try({
-        try: () => {
-          const file = join(profilePath, "sessions", metadata.path);
-          const manager = SessionManager.open(file, dirname(file), profilePath);
-
-          if (manager.getSessionId() !== result.targetSessionId) {
-            throw failure(
-              "destination-invalid",
-              false,
-              "resolved conversation identity did not match the requested session",
-            );
-          }
-
-          if (hasReceipt(manager, result)) return;
-
-          manager.appendCustomMessageEntry(
-            AUTOMATION_RESULT_CUSTOM_TYPE,
-            automationResultContent(result),
-            true,
-            {
-              automationId: result.automationId,
-              runId: result.runId,
-              targetSessionId: result.targetSessionId,
-            },
-          );
-
-          const persisted = SessionManager.open(file, dirname(file), profilePath);
-
-          if (!hasReceipt(persisted, result)) {
-            throw new Error("Pi transcript did not contain the appended automation receipt");
-          }
-        },
-        catch: (cause) =>
-          cause instanceof AutomationConversationDeliveryFailed
-            ? cause
-            : failure(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* scopedSessionLease(profilePath, result.targetSessionId).pipe(
+            Effect.mapError((cause) =>
+              failure(
                 "write",
                 true,
-                "could not durably append automation result to the conversation",
+                cause instanceof SessionLeaseHeld
+                  ? cause.message
+                  : "could not acquire session lease",
                 cause,
               ),
-      }),
+            ),
+          );
+
+          return yield* Effect.try({
+            try: () => {
+              const file = join(profilePath, "sessions", metadata.path);
+              const manager = SessionManager.open(file, dirname(file), profilePath);
+
+              if (manager.getSessionId() !== result.targetSessionId) {
+                throw failure(
+                  "destination-invalid",
+                  false,
+                  "resolved conversation identity did not match the requested session",
+                );
+              }
+
+              if (hasReceipt(manager, result)) return;
+
+              manager.appendCustomMessageEntry(
+                AUTOMATION_RESULT_CUSTOM_TYPE,
+                automationResultContent(result),
+                true,
+                {
+                  automationId: result.automationId,
+                  runId: result.runId,
+                  targetSessionId: result.targetSessionId,
+                },
+              );
+
+              const persisted = SessionManager.open(file, dirname(file), profilePath);
+
+              if (!hasReceipt(persisted, result)) {
+                throw new Error("Pi transcript did not contain the appended automation receipt");
+              }
+            },
+            catch: (cause) =>
+              cause instanceof AutomationConversationDeliveryFailed
+                ? cause
+                : failure(
+                    "write",
+                    true,
+                    "could not durably append automation result to the conversation",
+                    cause,
+                  ),
+          });
+        }),
+      ),
     ),
   );
