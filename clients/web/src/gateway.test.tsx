@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ZiggyRequestOutcomeUnknownError,
+  ZiggyGatewayError,
   type ZiggyAutomationRun,
   type ZiggyClientEvent,
   type ZiggyProfileId,
@@ -147,18 +148,21 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
       profileId: profile.profileId,
       available: [],
       selected: [],
+      truncated: false,
     })),
     addExtension: vi.fn(async (_profileId, id) => ({
       profileId: profile.profileId,
       id,
       changed: true,
       selected: true,
+      restartRequired: true,
     })),
     removeExtension: vi.fn(async (_profileId, id) => ({
       profileId: profile.profileId,
       id,
       changed: true,
       selected: false,
+      restartRequired: true,
     })),
     modelStatus: vi.fn(async () => ({
       profileId: profile.profileId,
@@ -576,6 +580,7 @@ describe("useZiggyGateway", () => {
         },
       ],
       selected: ["bundled-one"],
+      truncated: false,
     }));
     await act(async () => {
       await hook.result.current.toggleExtension("bundled-one", false);
@@ -586,7 +591,121 @@ describe("useZiggyGateway", () => {
       expect.stringMatching(/^web-extension-/),
     );
     expect(hook.result.current.modelSettings?.extensions?.selected).toEqual(["bundled-one"]);
-    expect(hook.result.current.modelSettings?.extensionNotice).toContain("Reopen open sessions");
+    expect(hook.result.current.modelSettings?.restartRequired).toBe(true);
+  });
+
+  it("shows a preflight reason without changing the selected extension", async () => {
+    const { client, fixture } = makeClient({
+      addExtension: vi.fn(async () => {
+        throw new ZiggyGatewayError("internal", "could not add", {
+          operation: "add",
+          stage: "extensions",
+          code: "preflight_failed",
+          message: "bad extension package",
+          selectionChanged: false,
+        });
+      }),
+    });
+    const hook = await connectHook(client);
+    await act(async () => {
+      await hook.result.current.loadModelSettings();
+    });
+    await act(async () => {
+      await hook.result.current.toggleExtension("bad-one", false);
+    });
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual([]);
+    expect(hook.result.current.modelSettings?.extensionNotice).toBe(
+      "add failed at extensions: bad extension package",
+    );
+    expect(fixture.listExtensionsForProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles unknown outcomes and selectionChanged failures by reading authoritative selection", async () => {
+    for (const failure of [
+      new ZiggyRequestOutcomeUnknownError("extension.add", {
+        profileId: profile.profileId,
+        id: "weather",
+      }),
+      new ZiggyGatewayError("internal", "rollback", {
+        operation: "add",
+        stage: "rollback",
+        code: "rollback_failed",
+        message: "rollback incomplete",
+        selectionChanged: true,
+      }),
+    ]) {
+      const { client, fixture } = makeClient({
+        addExtension: vi.fn(async () => {
+          throw failure;
+        }),
+      });
+      const hook = await connectHook(client);
+      await act(async () => {
+        await hook.result.current.loadModelSettings();
+      });
+      fixture.listExtensionsForProfile = vi.fn(async () => ({
+        profileId: profile.profileId,
+        available: [],
+        selected: ["weather"],
+        truncated: false,
+      }));
+      await act(async () => {
+        await hook.result.current.toggleExtension("weather", false);
+      });
+      expect(hook.result.current.modelSettings?.extensions?.selected).toEqual(["weather"]);
+      expect(hook.result.current.modelSettings?.restartRequired).not.toBe(true);
+      expect(hook.result.current.modelSettings?.extensionNotice).toContain(
+        failure instanceof ZiggyRequestOutcomeUnknownError
+          ? "outcome is unknown"
+          : "rollback incomplete",
+      );
+      hook.unmount();
+    }
+  });
+
+  it("keeps a confirmed remove despite a failed refresh and a stale settings reload", async () => {
+    const pending = deferred<Awaited<ReturnType<GatewayClient["listExtensionsForProfile"]>>>();
+    const { client, fixture } = makeClient({
+      listExtensionsForProfile: vi.fn(async () => ({
+        profileId: profile.profileId,
+        available: [],
+        selected: ["weather"],
+        truncated: false,
+      })),
+    });
+    const hook = await connectHook(client);
+    await act(async () => {
+      await hook.result.current.loadModelSettings();
+    });
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual(["weather"]);
+    fixture.listExtensionsForProfile = vi.fn(() => pending.promise);
+    let load: Promise<void> | undefined;
+    act(() => {
+      load = hook.result.current.loadModelSettings();
+    });
+    fixture.listExtensionsForProfile = vi.fn(async () => {
+      throw new Error("refresh failed");
+    });
+    await act(async () => {
+      await hook.result.current.toggleExtension("weather", true);
+    });
+    expect(fixture.removeExtension).toHaveBeenCalledWith(
+      profile.profileId,
+      "weather",
+      expect.stringMatching(/^web-extension-/),
+    );
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual([]);
+    expect(hook.result.current.modelSettings?.extensionNotice).toContain("could not be refreshed");
+    await act(async () => {
+      pending.resolve({
+        profileId: profile.profileId,
+        available: [],
+        selected: ["weather"],
+        truncated: false,
+      });
+      await load;
+    });
+    expect(hook.result.current.modelSettings?.extensions?.selected).toEqual([]);
   });
 
   it("loads display-ready pins, agents, groups, and automation sections without watching them", async () => {

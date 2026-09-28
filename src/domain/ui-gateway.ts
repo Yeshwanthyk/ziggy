@@ -1043,8 +1043,9 @@ export type UiExtensionChoice = typeof UiExtensionChoice.Type;
 
 export const UiExtensionListForProfileResult = Schema.Struct({
   profileId: ProfileId,
-  available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(12)),
-  selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(32)),
+  available: Schema.Array(UiExtensionChoice).check(Schema.isMaxLength(64)),
+  selected: Schema.Array(UiExtensionId).check(Schema.isMaxLength(64)),
+  truncated: Schema.Boolean,
 }).check(resultWithinWireBudget);
 
 export type UiExtensionListForProfileResult = typeof UiExtensionListForProfileResult.Type;
@@ -1055,6 +1056,7 @@ export const UiExtensionMutationResult = Schema.Struct({
   id: UiExtensionId,
   changed: Schema.Boolean,
   selected: Schema.Boolean,
+  restartRequired: Schema.Boolean,
 });
 
 export type UiExtensionMutationResult = typeof UiExtensionMutationResult.Type;

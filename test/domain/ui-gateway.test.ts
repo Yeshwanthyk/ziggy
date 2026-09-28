@@ -117,15 +117,23 @@ test("UI extension methods require Profile identity and never expose a path", ()
       profileId,
       available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
       selected: ["weather"],
+      truncated: false,
     }),
   ).toEqual({
     profileId,
     available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
     selected: ["weather"],
+    truncated: false,
   });
   expect(
-    decodeExtensionMutation({ profileId, id: "weather", changed: true, selected: true }),
-  ).toEqual({ profileId, id: "weather", changed: true, selected: true });
+    decodeExtensionMutation({
+      profileId,
+      id: "weather",
+      changed: true,
+      selected: true,
+      restartRequired: true,
+    }),
+  ).toEqual({ profileId, id: "weather", changed: true, selected: true, restartRequired: true });
   expect(
     decodeExtensionMutation({
       profileId,
@@ -133,8 +141,9 @@ test("UI extension methods require Profile identity and never expose a path", ()
       profilePath: "/profile",
       changed: true,
       selected: true,
+      restartRequired: true,
     }),
-  ).toEqual({ profileId, id: "weather", changed: true, selected: true });
+  ).toEqual({ profileId, id: "weather", changed: true, selected: true, restartRequired: true });
   expect(
     decodeExtensionValidation({
       profileId,

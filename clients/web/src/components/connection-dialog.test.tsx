@@ -108,6 +108,7 @@ it("offers both selected and unselected extensions without optimistic selection"
             { id: "installed-one", kind: "skill", source: "profile", description: "Installed" },
           ],
           selected: ["bundled-one"],
+          truncated: false,
         },
       }}
       onConnect={vi.fn(async () => undefined)}
@@ -124,4 +125,38 @@ it("offers both selected and unselected extensions without optimistic selection"
   fireEvent.click(unselected);
   expect(toggle).toHaveBeenCalledExactlyOnceWith("installed-one", false);
   expect(unselected.checked).toBe(false);
+});
+
+it("renders a selected id absent from the catalog so it can be disabled", () => {
+  const toggle = vi.fn(async () => undefined);
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      modelSettings={{
+        ...modelSettings,
+        extensions: {
+          profileId: "prf_squarey",
+          available: [],
+          selected: ["missing-one"],
+          truncated: true,
+        },
+        restartRequired: true,
+      }}
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={toggle}
+    />,
+  );
+  expect((screen.getByRole("checkbox", { name: "missing-one" }) as HTMLInputElement).checked).toBe(
+    true,
+  );
+  expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
+  expect(screen.getByText(/ziggy serve restart 'squarey'/u)).not.toBeNull();
+  fireEvent.click(screen.getByRole("checkbox", { name: "missing-one" }));
+  expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });

@@ -34,6 +34,11 @@ interface SettingsDialogProps {
   ) => Promise<void>;
 }
 
+const restartProfileName = (displayName: string): string => {
+  const name = displayName.charAt(0).toLowerCase() + displayName.slice(1);
+  return `'${name.replaceAll("'", "'\\''")}'`;
+};
+
 const endpointKey = "ziggy.web.endpoint";
 const tokenKey = "ziggy.web.session-token";
 
@@ -381,10 +386,16 @@ export function SettingsDialog({
               </section>
               <section className="ziggy-settings-block" aria-label="Extensions">
                 <h3>Extensions</h3>
-                <p className="ziggy-settings-muted">
-                  Select Profile extensions. Broken packages are skipped when the runtime supports
-                  diagnostics; check the resident warning for details.
-                </p>
+                <p className="ziggy-settings-muted">Select Profile extensions.</p>
+                {modelSettings?.restartRequired ? (
+                  <p role="status">
+                    Restart the resident to apply extension changes:{" "}
+                    <code>{`ziggy serve restart ${restartProfileName(profileName)}`}</code>
+                  </p>
+                ) : null}
+                {modelSettings?.extensions?.truncated ? (
+                  <p role="status">Extension list truncated; some entries are not shown.</p>
+                ) : null}
                 {modelSettings?.extensionNotice ? (
                   <p role="status">{modelSettings.extensionNotice}</p>
                 ) : null}
@@ -392,10 +403,26 @@ export function SettingsDialog({
                   <p className="ziggy-settings-muted">
                     {connected ? "Extension list unavailable." : "Connect to see extensions."}
                   </p>
-                ) : modelSettings.extensions.available.length === 0 ? (
+                ) : modelSettings.extensions.available.length === 0 &&
+                  modelSettings.extensions.selected.length === 0 ? (
                   <p className="ziggy-settings-muted">No extensions available.</p>
                 ) : (
-                  modelSettings.extensions.available.map((extension) => {
+                  [
+                    ...modelSettings.extensions.available,
+                    ...modelSettings.extensions.selected
+                      .filter(
+                        (id) =>
+                          !modelSettings.extensions?.available.some(
+                            (extension) => extension.id === id,
+                          ),
+                      )
+                      .map((id) => ({
+                        id,
+                        description: "Not in the current catalog",
+                        source: "profile" as const,
+                        kind: "code" as const,
+                      })),
+                  ].map((extension) => {
                     const enabled =
                       modelSettings.extensions?.selected.includes(extension.id) ?? false;
                     return (

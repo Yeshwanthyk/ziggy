@@ -4,6 +4,7 @@ import {
   isSessionReference,
   mergeSessionHistoryEntries,
   ZiggyRequestOutcomeUnknownError,
+  ZiggyGatewayError,
   type ZiggyAutomationDefinition,
   type ZiggyAutomationDestination,
   type ZiggyAutomationDocument,
@@ -120,6 +121,7 @@ export interface ModelSettingsState {
   readonly extensions?: ZiggyExtensionListResult;
   readonly extensionNotice?: string;
   readonly extensionBusy?: string;
+  readonly restartRequired?: boolean;
   readonly availableModels: ReadonlyArray<ZiggyModelDescriptor>;
   readonly error?: string;
   readonly loading: boolean;
@@ -337,6 +339,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [startingAutomation, setStartingAutomation] = useState<string>();
   const [automationDetail, setAutomationDetail] = useState<AutomationDetail>();
   const [modelSettings, setModelSettings] = useState<ModelSettingsState>();
+  const extensionGenerationRef = useRef(0);
+  const extensionMutationRef = useRef(false);
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [sidebarBusy, setSidebarBusy] = useState(false);
   const [selectedRef, setSelectedRef] = useState<ZiggySessionRef>();
@@ -1238,12 +1242,14 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     const selectedProfile = profileRef.current;
     if (client === undefined || selectedProfile === undefined || client.state !== "open") return;
     const generation = ++modelSettingsGenerationRef.current;
+    const extensionGeneration = extensionGenerationRef.current;
     setModelSettings((current) => ({
       availableModels: current?.availableModels ?? [],
       loading: true,
       models: current?.models ?? [],
       providers: current?.providers ?? [],
       saving: current?.saving ?? false,
+      ...(current?.extensionBusy === undefined ? {} : { extensionBusy: current.extensionBusy }),
       ...(current?.status === undefined ? {} : { status: current.status }),
       ...(current?.extensions === undefined ? {} : { extensions: current.extensions }),
       ...(current?.extensionNotice === undefined
@@ -1286,7 +1292,17 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       models: modelsResult.status === "fulfilled" ? modelsResult.value.models : [],
       providers: authResult.status === "fulfilled" ? authResult.value.providers : [],
       saving: false,
-      ...(extensionsResult.status === "fulfilled" ? { extensions: extensionsResult.value } : {}),
+      ...(current?.extensionBusy === undefined ? {} : { extensionBusy: current.extensionBusy }),
+      ...(extensionsResult.status === "fulfilled" &&
+      extensionGeneration === extensionGenerationRef.current &&
+      current?.extensionBusy === undefined
+        ? { extensions: extensionsResult.value }
+        : current?.extensions === undefined
+          ? {}
+          : { extensions: current.extensions }),
+      ...(current?.restartRequired === undefined
+        ? {}
+        : { restartRequired: current.restartRequired }),
       ...(current?.extensionNotice === undefined
         ? {}
         : { extensionNotice: current.extensionNotice }),
@@ -1296,6 +1312,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
 
   const clearModelSettings = useCallback((): void => {
     modelSettingsGenerationRef.current += 1;
+    extensionGenerationRef.current += 1;
     setModelSettings(undefined);
   }, []);
 
@@ -1363,8 +1380,21 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const toggleExtension = useCallback(async (id: string, enabled: boolean): Promise<void> => {
     const client = clientRef.current;
     const profile = profileRef.current;
-    if (client === undefined || profile === undefined || client.state !== "open") return;
+    if (
+      client === undefined ||
+      profile === undefined ||
+      client.state !== "open" ||
+      extensionMutationRef.current
+    )
+      return;
+    extensionMutationRef.current = true;
     const generation = modelSettingsGenerationRef.current;
+    const extensionGeneration = ++extensionGenerationRef.current;
+    const stale = () =>
+      generation !== modelSettingsGenerationRef.current ||
+      extensionGeneration !== extensionGenerationRef.current ||
+      clientRef.current !== client ||
+      profileRef.current?.profileId !== profile.profileId;
     setModelSettings((current) =>
       current === undefined
         ? current
@@ -1382,53 +1412,104 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
             `web-extension-${crypto.randomUUID()}`,
           )
         : await client.addExtension(profile.profileId, id, `web-extension-${crypto.randomUUID()}`);
-      if (
-        generation !== modelSettingsGenerationRef.current ||
-        clientRef.current !== client ||
-        profileRef.current?.profileId !== profile.profileId
-      )
-        return;
-      // A lost response has an unknown outcome; only refresh after a confirmed mutation.
-      const extensions = await client.listExtensionsForProfile(profile.profileId);
-      if (
-        generation !== modelSettingsGenerationRef.current ||
-        clientRef.current !== client ||
-        profileRef.current?.profileId !== profile.profileId
-      )
-        return;
+      if (stale()) return;
+      // A confirmed mutation is authoritative even if the subsequent listing fails.
       setModelSettings((current) =>
-        current === undefined
+        current === undefined || current.extensions === undefined
           ? current
           : {
               ...current,
-              extensions,
-              extensionBusy: undefined,
+              extensions: {
+                ...current.extensions,
+                selected: result.selected
+                  ? [...new Set([...current.extensions.selected, id])]
+                  : current.extensions.selected.filter((selectedId) => selectedId !== id),
+              },
+              restartRequired: current.restartRequired === true || result.restartRequired,
               extensionNotice: result.changed
-                ? "Extension selection updated. Reopen open sessions or run `ziggy serve restart` to load the change."
+                ? "Extension selection updated."
                 : "Extension selection was already up to date.",
             },
       );
+      try {
+        const extensions = await client.listExtensionsForProfile(profile.profileId);
+        if (!stale())
+          setModelSettings((current) =>
+            current === undefined
+              ? current
+              : {
+                  ...current,
+                  extensions,
+                },
+          );
+      } catch {
+        if (!stale())
+          setModelSettings((current) =>
+            current === undefined
+              ? current
+              : {
+                  ...current,
+                  extensionNotice: "Extension selection updated; the list could not be refreshed.",
+                },
+          );
+      }
     } catch (cause) {
-      if (
-        generation !== modelSettingsGenerationRef.current ||
-        clientRef.current !== client ||
-        profileRef.current?.profileId !== profile.profileId
-      )
-        return;
+      if (stale()) return;
+      const unknown = cause instanceof ZiggyRequestOutcomeUnknownError;
+      const details = cause instanceof ZiggyGatewayError ? cause.details : undefined;
+      const reason =
+        details === undefined
+          ? cause instanceof Error
+            ? cause.message
+            : "Extension change failed."
+          : `${details.operation} failed at ${details.stage}: ${details.message}`;
       setModelSettings((current) =>
         current === undefined
           ? current
           : {
               ...current,
-              extensionBusy: undefined,
-              extensionNotice:
-                cause instanceof ZiggyRequestOutcomeUnknownError
-                  ? "Extension change outcome is unknown. Reload settings before trying again."
-                  : cause instanceof Error
-                    ? cause.message
-                    : "Extension change failed.",
+              extensionNotice: unknown
+                ? "Extension change outcome is unknown; checking the current selection."
+                : reason,
             },
       );
+      if (unknown || details?.selectionChanged === true) {
+        try {
+          const extensions = await client.listExtensionsForProfile(profile.profileId);
+          if (!stale())
+            setModelSettings((current) =>
+              current === undefined
+                ? current
+                : {
+                    ...current,
+                    extensions,
+                  },
+            );
+        } catch {
+          if (!stale())
+            setModelSettings((current) =>
+              current === undefined
+                ? current
+                : {
+                    ...current,
+                    extensionNotice: `${unknown ? "Extension change outcome is unknown" : reason}; could not refresh selection. Retry loading settings.`,
+                  },
+            );
+        }
+      }
+    } finally {
+      extensionMutationRef.current = false;
+      if (!stale()) {
+        setModelSettings((current) =>
+          current === undefined
+            ? current
+            : {
+                ...current,
+                extensionBusy: undefined,
+              },
+        );
+        extensionGenerationRef.current += 1;
+      }
     }
   }, []);
 

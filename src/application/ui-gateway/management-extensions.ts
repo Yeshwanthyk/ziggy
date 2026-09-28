@@ -87,6 +87,53 @@ const extensionFailure = (
   return { ...result, id: boundedText(requestedId, 128, "extension") };
 };
 
+const projectExtensionList = (
+  profileId: ProfileId,
+  result: {
+    readonly available: ReadonlyArray<{
+      readonly id: string;
+      readonly description: string;
+      readonly kind: "skill" | "code" | "skill+code" | "remote";
+      readonly source: "bundled" | "remote-approved" | "profile";
+    }>;
+    readonly selected: ReadonlyArray<string>;
+  },
+) => {
+  const selected = result.selected.slice(0, 64);
+  const available: Array<(typeof result.available)[number]> = [];
+
+  for (const choice of result.available.slice(0, 64)) {
+    const description = [...boundedText(choice.description, 512, "Extension")];
+
+    while (description.join("").length > 512) description.pop();
+
+    const candidate = { ...choice, description: description.join("") };
+
+    // Leave room for the response envelope and multi-byte descriptions.
+    if (
+      new TextEncoder().encode(
+        JSON.stringify({
+          profileId,
+          selected,
+          available: [...available, candidate],
+          truncated: true,
+        }),
+      ).byteLength > 55_000
+    )
+      break;
+
+    available.push(candidate);
+  }
+
+  return {
+    profileId,
+    available,
+    selected,
+    truncated:
+      available.length < result.available.length || selected.length < result.selected.length,
+  };
+};
+
 const isKnownMethod = Schema.is(Schema.Literals(UI_METHODS));
 
 export const dispatchExtensions = (
@@ -119,14 +166,7 @@ export const dispatchExtensions = (
               ),
             ),
             Effect.flatMap((result) =>
-              decodeExtensionListResult({
-                profileId: branch.profileId,
-                available: result.available.slice(0, 12).map((choice) => ({
-                  ...choice,
-                  description: boundedText(choice.description, 512, "Extension"),
-                })),
-                selected: result.selected.slice(0, 32),
-              }).pipe(
+              decodeExtensionListResult(projectExtensionList(branch.profileId, result)).pipe(
                 Effect.mapError((cause) =>
                   protocolFailure("internal", "invalid Profile extension response", cause),
                 ),
@@ -147,6 +187,7 @@ export const dispatchExtensions = (
                   id: result.id,
                   changed: result.changed,
                   selected: result.selected,
+                  restartRequired: result.changed,
                 })),
                 Effect.mapError((cause) =>
                   protocolFailure(
@@ -173,6 +214,7 @@ export const dispatchExtensions = (
                   id: result.id,
                   changed: result.changed,
                   selected: result.selected,
+                  restartRequired: result.changed,
                 })),
                 Effect.mapError((cause) =>
                   protocolFailure(

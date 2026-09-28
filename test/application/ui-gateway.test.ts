@@ -1361,6 +1361,54 @@ test("UI gateway routes all management operations through decoded explicit Profi
   expect(JSON.stringify(responses)).not.toContain("profilePath");
 });
 
+test("UI extension listing respects the frame budget and reports truncation", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+
+  const choices = Array.from({ length: 70 }, (_, index) => ({
+    id: `extension-${index}`,
+    description: "🦊".repeat(512),
+    kind: "code" as const,
+    source: "bundled" as const,
+  }));
+
+  const profileExtensions = makeProfileExtensions({
+    listForProfile: () =>
+      Effect.succeed({ available: choices, selected: choices.map((choice) => choice.id) }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry();
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.never })),
+            profileExtensions,
+          ),
+        )).connect((frame) => responses.push(decodeResponse(frame)));
+
+        yield* connection.request({
+          id: "list",
+          method: "extension.list-for-profile",
+          params: { profileId },
+        });
+      }),
+    ),
+  );
+
+  const response = responses[0];
+  const result = response?.ok === true ? response.result : undefined;
+  const available = result !== undefined && "available" in result ? result.available : undefined;
+  const selected = result !== undefined && "selected" in result ? result.selected : undefined;
+
+  expect(response?.ok).toBe(true);
+  expect(result).toMatchObject({ truncated: true });
+  expect(available?.length).toBeLessThanOrEqual(64);
+  expect(selected).toHaveLength(64);
+});
+
 test("UI gateway maps extension failures to bounded typed details without filesystem paths", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
 

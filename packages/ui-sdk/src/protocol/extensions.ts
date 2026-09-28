@@ -46,6 +46,7 @@ export interface ZiggyExtensionListResult {
   readonly profileId: ZiggyProfileId;
   readonly available: ReadonlyArray<ZiggyExtensionChoice>;
   readonly selected: ReadonlyArray<ZiggyExtensionId>;
+  readonly truncated: boolean;
 }
 
 export interface ZiggyExtensionMutationResult {
@@ -53,6 +54,7 @@ export interface ZiggyExtensionMutationResult {
   readonly id: ZiggyExtensionId;
   readonly changed: boolean;
   readonly selected: boolean;
+  readonly restartRequired: boolean;
 }
 
 export interface ZiggyExtensionValidationResult {
@@ -103,22 +105,24 @@ const isChoice = (value: unknown): value is ZiggyExtensionChoice =>
 
 export const isExtensionListResult = (value: unknown): value is ZiggyExtensionListResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "available", "selected"]) &&
+  hasOnlyKeys(value, ["profileId", "available", "selected", "truncated"]) &&
   isProfileId(value.profileId) &&
   Array.isArray(value.available) &&
-  value.available.length <= 12 &&
+  value.available.length <= 64 &&
   value.available.every(isChoice) &&
   Array.isArray(value.selected) &&
-  value.selected.length <= 32 &&
-  value.selected.every(isExtensionId);
+  value.selected.length <= 64 &&
+  value.selected.every(isExtensionId) &&
+  typeof value.truncated === "boolean";
 
 export const isExtensionMutationResult = (value: unknown): value is ZiggyExtensionMutationResult =>
   isRecord(value) &&
-  hasOnlyKeys(value, ["profileId", "id", "changed", "selected"]) &&
+  hasOnlyKeys(value, ["profileId", "id", "changed", "selected", "restartRequired"]) &&
   isProfileId(value.profileId) &&
   isExtensionId(value.id) &&
   typeof value.changed === "boolean" &&
-  typeof value.selected === "boolean";
+  typeof value.selected === "boolean" &&
+  typeof value.restartRequired === "boolean";
 
 const isCount = (value: unknown): value is number => isSafeInteger(value) && value <= 1_000_000;
 

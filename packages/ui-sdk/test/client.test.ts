@@ -478,17 +478,29 @@ const methodFixtures = (): ReadonlyArray<{
     {
       method: "extension.list-for-profile",
       params: profileScopedParams(PROFILE_A),
-      result: { profileId: PROFILE_A, available: [extension], selected: [] },
+      result: { profileId: PROFILE_A, available: [extension], selected: [], truncated: false },
     },
     {
       method: "extension.add",
       params: { profileId: PROFILE_A, id: "weather" },
-      result: { profileId: PROFILE_A, id: "weather", changed: true, selected: true },
+      result: {
+        profileId: PROFILE_A,
+        id: "weather",
+        changed: true,
+        selected: true,
+        restartRequired: true,
+      },
     },
     {
       method: "extension.remove",
       params: { profileId: PROFILE_A, id: "weather" },
-      result: { profileId: PROFILE_A, id: "weather", changed: true, selected: false },
+      result: {
+        profileId: PROFILE_A,
+        id: "weather",
+        changed: true,
+        selected: false,
+        restartRequired: true,
+      },
     },
     {
       method: "extension.validate",
