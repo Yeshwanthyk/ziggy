@@ -90,6 +90,7 @@ import {
 } from "./faces/memory-cli";
 import { renderProfiles, renderProfilesJson } from "./faces/profiles-cli";
 import { runAcp } from "./faces/acp";
+import { wakeInResident } from "./faces/wake-resident";
 import {
   renderSession,
   renderSessionJson,
@@ -702,11 +703,29 @@ const program = Effect.gen(function* () {
     }
 
     case "Wake": {
-      const outcome = yield* automations.run(
-        resolveProfileTarget(command.target, resolutionOptions),
-        command.automationId,
-        { kind: "manual-force" },
-      );
+      const target = resolveProfileTarget(command.target, resolutionOptions);
+      const owner = yield* residentGateway.status(target);
+
+      if (owner._tag === "running") {
+        const projection = yield* readUiServerProjection(target.path).pipe(
+          Effect.catch((failure) =>
+            fileSystemCauseDetails(failure.cause).code === "ENOENT"
+              ? fail("resident is starting; retry")
+              : Effect.fail(failure),
+          ),
+        );
+
+        if (projection === undefined) return;
+
+        const result = yield* wakeInResident(target, command.automationId, projection);
+        console.log(`${result.automationId}: ${result.outcome}`);
+
+        return;
+      }
+
+      const outcome = yield* automations.run(target, command.automationId, {
+        kind: "manual-force",
+      });
 
       const rendered = renderAutomationOutcome(outcome);
 
