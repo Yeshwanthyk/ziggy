@@ -87,16 +87,19 @@ describe("SettingsDialog", () => {
   });
 });
 
-it("offers retry instead of an empty model form when settings are unavailable", () => {
+it("retries a failed settings load inside the open dialog", () => {
   const retry = vi.fn(async () => undefined);
+  const onOpenChange = vi.fn();
+  const { status: _status, ...failedSettings } = modelSettings;
   render(
     <SettingsDialog
       connected
       connectionPending={false}
       open
       profileName="Squarey"
+      modelSettings={{ ...failedSettings, error: "Model status failed." }}
       onConnect={vi.fn(async () => undefined)}
-      onOpenChange={vi.fn()}
+      onOpenChange={onOpenChange}
       onSaveModel={vi.fn(async () => undefined)}
       onRetrySettings={retry}
       onToggleExtension={vi.fn(async () => undefined)}
@@ -111,6 +114,31 @@ it("offers retry instead of an empty model form when settings are unavailable", 
   expect(screen.queryByRole("button", { name: "Save model" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Retry loading settings" }));
   expect(retry).toHaveBeenCalledTimes(1);
+  expect(onOpenChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog")).not.toBeNull();
+});
+
+it("shows settings that have not loaded yet as pending rather than failed", () => {
+  render(
+    <SettingsDialog
+      connected
+      connectionPending={false}
+      open
+      profileName="Squarey"
+      onConnect={vi.fn(async () => undefined)}
+      onOpenChange={vi.fn()}
+      onSaveModel={vi.fn(async () => undefined)}
+      onRetrySettings={vi.fn(async () => undefined)}
+      onToggleExtension={vi.fn(async () => undefined)}
+      sessionModel={{ pending: false }}
+      sessionBusy={false}
+      onLoadSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionModel={vi.fn(async () => undefined)}
+      onChangeSessionThinking={vi.fn(async () => undefined)}
+    />,
+  );
+  expect(screen.getByText("Loading model settings…")).not.toBeNull();
+  expect(screen.queryByText("Model settings could not be loaded.")).toBeNull();
 });
 
 it("offers both selected and unselected extensions without optimistic selection", () => {

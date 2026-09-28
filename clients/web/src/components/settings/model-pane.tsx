@@ -49,7 +49,9 @@ export function ModelPane({ modelSettings, onRetrySettings, onSaveModel }: Model
   );
   const steps = thinkingSteps(selectedModel?.thinkingLevels ?? []);
   const dirty = selectedModelKey !== savedModelKey || thinking !== statusThinking;
-  const loading = modelSettings?.loading === true;
+  // Settings that have never loaded are pending, not failed: the first load starts once the
+  // connection and Profile are ready.
+  const loading = modelSettings === undefined || modelSettings.loading;
   const saving = modelSettings?.saving === true;
 
   const selectModel = (next: ZiggyModelDescriptor): void => {

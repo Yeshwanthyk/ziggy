@@ -164,7 +164,7 @@ const shortAgentDescription = (description: string, profileName: string): string
 
 export function App() {
   const gateway = useZiggyGateway();
-  const [connectionOpen, setConnectionOpen] = useState(() => readSavedConnection() === undefined);
+  const [connectionOpen, setConnectionOpen] = useState(false);
   const [hosted, setHosted] = useState(false);
   const [pairingRequired, setPairingRequired] = useState(false);
   const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
@@ -264,12 +264,21 @@ export function App() {
     );
   }, [selectedGroup]);
 
-  const connect = async (url: string, token?: string, persistent = false): Promise<void> => {
+  /**
+   * Startup connections leave the dialog alone on success so a Settings dialog the user opened
+   * mid-connect stays open; connections submitted from the dialog close it.
+   */
+  const connect = async (
+    url: string,
+    token?: string,
+    persistent = false,
+    closeOnSuccess = true,
+  ): Promise<void> => {
     const attempt = ++connectionAttemptRef.current;
     setStartupPending(true);
     try {
       await gateway.connect({ persistent, url, token });
-      if (attempt === connectionAttemptRef.current) setConnectionOpen(false);
+      if (closeOnSuccess && attempt === connectionAttemptRef.current) setConnectionOpen(false);
     } catch {
       if (attempt === connectionAttemptRef.current) setConnectionOpen(true);
     } finally {
@@ -300,7 +309,8 @@ export function App() {
       })
       .then(async (response) => {
         if (response.status !== 204 && response.status !== 401) {
-          if (saved !== undefined) await connect(saved.url, saved.token);
+          if (saved === undefined) setConnectionOpen(true);
+          else await connect(saved.url, saved.token, false, false);
           return;
         }
         setHosted(true);
@@ -310,7 +320,7 @@ export function App() {
           return;
         }
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        await connect(`${protocol}//${location.host}/ws`, undefined, true);
+        await connect(`${protocol}//${location.host}/ws`, undefined, true, false);
       })
       .catch(() => {
         setStartupPending(false);
@@ -400,6 +410,14 @@ export function App() {
   };
 
   const connected = gateway.connection === "open";
+  const settingsProfileId = gateway.profile?.profileId;
+  const { loadModelSettings } = gateway;
+
+  // The socket reports open before the Profile loads, so wait for both before loading settings.
+  useEffect(() => {
+    if (connectionOpen && connected && settingsProfileId !== undefined) void loadModelSettings();
+  }, [connectionOpen, connected, settingsProfileId, loadModelSettings]);
+
   const selectedIsLive = gateway.selectedRef?.kind === "live";
   const sidebarPending = startupPending || gateway.sidebarLoading;
 
@@ -659,7 +677,6 @@ export function App() {
             className="settings-button"
             onClick={() => {
               setConnectionOpen(true);
-              if (connected) void gateway.loadModelSettings();
             }}
             size="xs"
             variant="ghost"
