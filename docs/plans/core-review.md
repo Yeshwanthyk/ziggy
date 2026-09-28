@@ -190,14 +190,17 @@ reading the owner lease before it starts; nothing falls back after the fact.
   idempotent.
 - `ziggy wake`: if the resident is running, call its `automation.run` over the UI socket, using
   the projection's port and token, and print the outcome. Otherwise run in-process as today.
-- `automations status`: when the owner lease is free, print "resident not running: schedules will
-  not fire; `ziggy wake <id>` runs one now". Installing an extension that ships automations prints
-  the same.
+- `automations status`: when neither the resident nor the tick timer is installed, print
+  "schedules will not fire: run `ziggy serve install` or `ziggy automations install-timer`".
+  Installing an extension that ships automations prints the same.
 - `extensions update --restart`: stage, stop the managed resident, apply under the update lock,
   start it again. Without `--restart`, keep the refusal and name the flag.
-- `ziggy tick`, only once a Profile actually runs without a resident: one scan under the owner
-  lease; run the claimed workers to completion, then exit; if the lease is held, yield with a
-  message. For a launchd `StartInterval` or a systemd timer.
+- `ziggy tick`: one scheduler scan under the owner lease; run the claimed workers to completion,
+  then exit. If the lease is held (the resident or another tick is running), exit quietly. A
+  launchd `StartInterval` or systemd timer runs it every minute, installed by
+  `ziggy automations install-timer <profile>`, so schedules fire without the resident. The
+  existing claim CAS and unique active-run index keep one run per slot, whichever process ticks.
+  Slots skipped while a long tick holds the lease go through the scheduler's missed-run policy.
 - The wake migration path's "gateway already running" error should read "resident is starting;
   retry".
 
@@ -207,15 +210,17 @@ Status: decided (2026-09-28), from a Fable review of Ziggy, hermes-agent and ope
 
 - No extension surface depends on the resident. There's no service locator, event bus, injection
   API or tiered registration mode, and extensions stay plain Pi extensions.
-- Resident-only, by nature: inbound channel sockets, sessions it holds open, the cron ticker and
-  interactive UI. Everything else runs headless and is tested that way.
+- Resident-only, by nature: inbound channel sockets, sessions it holds open and interactive UI.
+  The scheduler is not resident-only: whoever holds the owner lease ticks, the resident or a
+  timer-driven `ziggy tick`. Everything else runs headless and is tested that way.
 - No durable outbox. All three channels send over HTTP from any process, and conversation
   receipts are idempotent stored appends. hermes and openclaw need queues only for
   gateway-only transports (relay, E2EE, WhatsApp), which Ziggy doesn't have.
 - No silent fallback in either direction. openclaw retired its gateway-to-local fallback after
   transcript lock races.
 - Not doing: a `ctx.ui` bridge (until an extension needs `notify` in the web UI), hot reload in the
-  resident, or a headless long-running scheduler.
+  resident, or a headless long-running scheduler daemon (the OS timer plus `ziggy tick` covers
+  it).
 
 ## Decision: keep Pi, don't own the core
 

@@ -1075,3 +1075,4 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Split `ui-gateway.ts` (1,578 → 411 lines) into protocol modules, including `sessions.ts` and `groups.ts`, and removed the `management.ts` barrel.
 - Tests: a command-cache property test, socket disconnect-and-retry through the real UI server, immediate shutdown, and the server's inbound size limit.
 - Verification: `bun run check` and `bun run test` (729 pass) passed. Opus re-reviews: all findings resolved.
+- Follow-up: the scheduler is not resident-only. Section 12 now requires `ziggy tick` driven by a launchd or systemd timer, so automations fire without the resident; the owner lease keeps one ticker at a time.
