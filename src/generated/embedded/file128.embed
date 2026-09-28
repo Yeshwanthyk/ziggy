@@ -1,213 +1,334 @@
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Save validation failures become Pi tool failures. */
-/* oxlint-disable ziggy/no-unknown-parameters, ziggy/no-runtime-typeof, ziggy/no-known-value-widening -- Stable canonical JSON is an internal hash serializer over already schema-decoded domain values. */
-/* oxlint-disable ziggy/require-readable-spacing -- Hash and proof predicates remain adjacent for auditability. */
-import { createHash } from "node:crypto";
-import { Parse } from "typebox/value";
-import {
-  WorkflowSaveCandidateSchema,
-  WorkflowSaveProofSchema,
-  type RunSummary,
-  type WorkflowDefinition,
-  type WorkflowDraft,
-  type WorkflowSaveCandidate,
-  type WorkflowSaveProof,
-} from "./schema.ts";
-import { compileExecutionPlan } from "./execution-plan.ts";
-import { resolveWorkflowTemplates, validateWorkflowDefinition } from "./workflows.ts";
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Invalid observed tool events fail the active evidence run closed. */
+/* oxlint-disable ziggy/no-unsafe-dictionary-type, ziggy/no-unknown-parameters -- Pi custom-tool inputs and result details are unknown at the event boundary and are immediately strictly decoded. */
+/* oxlint-disable ziggy/require-readable-spacing -- Evidence checks keep each fail-closed predicate adjacent. */
+import { Type } from "typebox";
+import { Equal, Parse } from "typebox/value";
+import type { CompiledWorkflowExecution, WorkflowExecutionPlan } from "./execution-plan.ts";
+import type { RunRecord, RunSummary } from "./schema.ts";
 
-const stableJson = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(",")}}`;
+const RootQuerySchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    app: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    bundleId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    kind: Type.Optional(
+      Type.Union([
+        Type.Literal("window"),
+        Type.Literal("menu"),
+        Type.Literal("sheet"),
+        Type.Literal("popover"),
+        Type.Literal("dialog"),
+        Type.Literal("browser_page"),
+      ]),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const TargetSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  },
+  { additionalProperties: false },
+);
+
+const ConditionSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+
+const ActionSchema = Type.Union([
+  Type.Object(
+    {
+      action: Type.Literal("click"),
+      button: Type.Optional(
+        Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
+      ),
+      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("keypress"),
+      keys: Type.Array(Type.String({ pattern: "^[A-Za-z0-9+_-]{1,32}$" }), {
+        minItems: 1,
+        maxItems: 20,
+      }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("scroll"),
+      scrollX: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      scrollY: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+const SegmentStepSchema = Type.Union([
+  Type.Object(
+    {
+      target: TargetSchema,
+      actions: Type.Array(ActionSchema, { minItems: 1, maxItems: 20 }),
+      expect: ConditionSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object({ assert: ConditionSchema }, { additionalProperties: false }),
+]);
+
+const SegmentInputSchema = Type.Object(
+  {
+    rootQuery: Type.Optional(RootQuerySchema),
+    steps: Type.Array(SegmentStepSchema, { minItems: 1, maxItems: 20 }),
+  },
+  { additionalProperties: false },
+);
+
+const SegmentResultDetailsSchema = Type.Object(
+  {
+    tool: Type.Literal("run_ui_segment"),
+    status: Type.Literal("completed"),
+    completed: Type.Array(
+      Type.Union([
+        Type.Object(
+          {
+            step: Type.Integer({ minimum: 1, maximum: 20 }),
+            stateId: Type.String({ minLength: 1, maxLength: 256 }),
+            ref: Type.String({ minLength: 1, maxLength: 128 }),
+            actionCount: Type.Integer({ minimum: 1, maximum: 20 }),
+          },
+          { additionalProperties: false },
+        ),
+        Type.Object(
+          {
+            step: Type.Integer({ minimum: 1, maximum: 20 }),
+            stateId: Type.String({ minLength: 1, maxLength: 256 }),
+            kind: Type.Literal("assert"),
+            actionCount: Type.Literal(0),
+          },
+          { additionalProperties: false },
+        ),
+      ]),
+      { maxItems: 20 },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+type SegmentOutcome = "passed" | "failed";
+
+export interface ActiveWorkflowRun {
+  readonly record: RunRecord;
+  readonly plan: CompiledWorkflowExecution;
+  readonly pending: Map<string, number>;
+  readonly outcomes: Map<number, SegmentOutcome>;
+  nextSegment: number;
+  mismatch: boolean;
+  failure: "tool-error" | "invalid-result" | undefined;
+}
+
+export const startActiveRun = (
+  record: RunRecord,
+  plan: CompiledWorkflowExecution,
+): ActiveWorkflowRun => ({
+  record,
+  plan,
+  pending: new Map(),
+  outcomes: new Map(),
+  nextSegment: 0,
+  mismatch: false,
+  failure: undefined,
+});
+
+export const observeRunToolCall = (
+  run: ActiveWorkflowRun,
+  event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly input: Record<string, unknown>;
+  },
+): void => {
+  if (event.toolName !== "run_ui_segment") return;
+  const planned = run.plan.segments[run.nextSegment];
+
+  if (planned === undefined || run.pending.has(event.toolCallId)) {
+    run.mismatch = true;
+
+    return;
   }
-  return JSON.stringify(value);
+
+  try {
+    const actual = Parse(SegmentInputSchema, event.input);
+    const expected = Parse(SegmentInputSchema, planned.input);
+
+    if (!Equal(actual, expected)) {
+      run.mismatch = true;
+
+      return;
+    }
+  } catch {
+    run.mismatch = true;
+
+    return;
+  }
+
+  run.pending.set(event.toolCallId, run.nextSegment);
+  run.nextSegment += 1;
 };
 
-const workflowHash = (workflow: WorkflowDefinition): string =>
-  createHash("sha256").update(stableJson(workflow)).digest("hex");
+const validCompletedSteps = (details: unknown, planned: WorkflowExecutionPlan): boolean => {
+  try {
+    const decoded = Parse(SegmentResultDetailsSchema, details);
 
-const same = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
+    return (
+      decoded.completed.length === planned.input.steps.length &&
+      decoded.completed.every((entry, index) => {
+        const plannedStep = planned.input.steps[index];
+        if (entry.step !== index + 1 || plannedStep === undefined) return false;
+        return "assert" in plannedStep
+          ? "kind" in entry && entry.kind === "assert" && entry.actionCount === 0
+          : !("kind" in entry) && entry.actionCount === plannedStep.actions.length;
+      })
+    );
+  } catch {
+    return false;
+  }
+};
 
-const optimizeWorkflow = (
-  source: WorkflowDefinition,
-): {
-  readonly workflow: WorkflowDefinition;
-  readonly removedRedundantObservations: number;
-  readonly removedRedundantRootLookups: number;
-} => {
-  const steps: WorkflowDefinition["steps"][number][] = [];
-  let removedRedundantObservations = 0;
-  let removedRedundantRootLookups = 0;
+const INTERVENING_COMPUTER_TOOLS = new Set([
+  "find_roots",
+  "observe_ui",
+  "search_ui",
+  "expand_ui",
+  "inspect_ui",
+  "act_ui",
+  "read_text",
+  "wait_for",
+  "launch_browser",
+  "navigate_browser",
+  "close_browser",
+  "evaluate_browser",
+]);
 
-  for (const step of source.steps) {
-    const prior = steps.at(-1);
-    if (step.kind === "observe" && prior?.kind === "observe" && same(step, prior)) {
-      removedRedundantObservations += 1;
-      continue;
-    }
-    if (step.kind === "find_roots" && prior?.kind === "find_roots" && same(step, prior)) {
-      removedRedundantRootLookups += 1;
-      continue;
-    }
-    steps.push(step);
+export const observeInterveningVerificationTool = (
+  run: ActiveWorkflowRun,
+  toolName: string,
+): void => {
+  if (INTERVENING_COMPUTER_TOOLS.has(toolName)) run.mismatch = true;
+};
+
+export const observeRunToolResult = (
+  run: ActiveWorkflowRun,
+  event: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly isError: boolean;
+    readonly details: unknown;
+  },
+): void => {
+  if (event.toolName !== "run_ui_segment") return;
+  const segmentIndex = run.pending.get(event.toolCallId);
+
+  if (segmentIndex === undefined) return;
+  run.pending.delete(event.toolCallId);
+  const planned = run.plan.segments[segmentIndex];
+
+  if (planned === undefined) {
+    run.mismatch = true;
+
+    return;
+  }
+
+  if (event.isError) {
+    run.outcomes.set(segmentIndex, "failed");
+    run.failure ??= "tool-error";
+
+    return;
+  }
+
+  if (!validCompletedSteps(event.details, planned)) {
+    run.outcomes.set(segmentIndex, "failed");
+    run.failure ??= "invalid-result";
+
+    return;
+  }
+
+  run.outcomes.set(segmentIndex, "passed");
+};
+
+const expectedCondition = (step: WorkflowExecutionPlan["input"]["steps"][number]) =>
+  "assert" in step ? step.assert : step.expect;
+
+export const finishActiveRun = (run: ActiveWorkflowRun, now = new Date()): RunSummary => {
+  const checks = run.plan.segments.flatMap((segment, segmentIndex) => {
+    const segmentOutcome = run.outcomes.get(segmentIndex);
+
+    return segment.input.steps.map((step, stepIndex) => ({
+      sourceStep: segment.sourceSteps[stepIndex] ?? 1,
+      expected: expectedCondition(step),
+      outcome:
+        segmentOutcome === "passed"
+          ? ("passed" as const)
+          : segmentOutcome === "failed"
+            ? ("failed" as const)
+            : ("not-run" as const),
+    }));
+  });
+
+  const passed = [...run.outcomes.values()].filter((outcome) => outcome === "passed").length;
+  const failed = [...run.outcomes.values()].filter((outcome) => outcome === "failed").length;
+  let overall: RunSummary["overall"];
+  let stopReason: RunSummary["stopReason"];
+
+  if (run.failure !== undefined) {
+    overall = "failed";
+    stopReason = run.failure;
+  } else if (run.mismatch) {
+    overall = "incomplete";
+    stopReason = "input-mismatch";
+  } else if (run.plan.segments.length === 0 || run.plan.manual.length > 0) {
+    overall = "incomplete";
+    stopReason = "manual-steps";
+  } else if (
+    run.nextSegment < run.plan.segments.length ||
+    run.pending.size > 0 ||
+    run.outcomes.size < run.plan.segments.length
+  ) {
+    overall = "incomplete";
+    stopReason = "unfinished-segments";
+  } else {
+    overall = "passed";
+    stopReason = "completed";
   }
 
   return {
-    workflow: validateWorkflowDefinition({ ...source, steps }),
-    removedRedundantObservations,
-    removedRedundantRootLookups,
-  };
-};
-
-const observableSteps = (workflow: WorkflowDefinition): readonly unknown[] => {
-  const normalized: unknown[] = [];
-  for (const step of workflow.steps) {
-    if (step.kind === "observe") continue;
-    const prior = normalized.at(-1);
-    if (step.kind === "find_roots" && prior !== undefined && same(step, prior)) continue;
-    normalized.push(step);
-  }
-  return normalized;
-};
-
-export const makeWorkflowSaveCandidate = (input: {
-  readonly workflow: unknown;
-  readonly sourceDraftId: string;
-  readonly baseRevision?: string;
-  readonly bindings: Readonly<Record<string, string>>;
-  readonly draft: WorkflowDraft;
-  readonly now?: Date;
-}): WorkflowSaveCandidate => {
-  const source = validateWorkflowDefinition(input.workflow);
-  const optimized = optimizeWorkflow(source);
-  const sourceObservable = observableSteps(source);
-  const candidateObservable = observableSteps(optimized.workflow);
-
-  if (!same(sourceObservable, candidateObservable)) {
-    throw new Error("Workflow optimization changed an action, checkpoint, or durable root lookup.");
-  }
-
-  const compiled = compileExecutionPlan(optimized.workflow);
-  const resolved = resolveWorkflowTemplates(optimized.workflow, input.bindings);
-  const finalCheckpoint = resolved.steps
-    .toReversed()
-    .map((step) =>
-      step.kind === "wait" ? step.condition : "checkpoint" in step ? step.checkpoint : undefined,
-    )
-    .find((checkpoint) => checkpoint !== undefined);
-  if (finalCheckpoint === undefined)
-    throw new Error("A saved workflow requires a final observable checkpoint.");
-
-  const sameCondition = (condition: {
-    readonly text?: string;
-    readonly role?: string;
-    readonly until?: "present" | "absent";
-  }) =>
-    condition.text === finalCheckpoint.text &&
-    condition.role === finalCheckpoint.role &&
-    (condition.until ?? "present") === finalCheckpoint.until;
-  const finalRecordedOutcome = input.draft.calls
-    .toReversed()
-    .find(
-      (call) =>
-        call.input.kind === "wait_for" ||
-        call.input.kind === "semantic_segment" ||
-        (call.input.kind === "safe_actions" && call.input.expect !== undefined),
-    );
-  const trailingCalls =
-    finalRecordedOutcome === undefined
-      ? input.draft.calls
-      : input.draft.calls.filter((call) => call.sequence > finalRecordedOutcome.sequence);
-  const safeAfterTerminalOutcome = trailingCalls.every(
-    (call) =>
-      call.outcome === "success" &&
-      (call.input.kind === "find_roots" ||
-        call.input.kind === "observe_ui" ||
-        call.input.kind === "search_ui" ||
-        call.toolName === "expand_ui" ||
-        call.toolName === "inspect_ui" ||
-        call.toolName === "read_text" ||
-        call.toolName === "close_browser"),
-  );
-  const hasPendingSourceCall = input.draft.issues.some((issue) =>
-    issue.includes("had not completed when recording stopped"),
-  );
-  const recordedFinalPassed = (() => {
-    if (finalRecordedOutcome?.outcome !== "success") return false;
-    if (finalRecordedOutcome.input.kind === "wait_for")
-      return sameCondition(finalRecordedOutcome.input);
-    if (
-      finalRecordedOutcome.input.kind === "safe_actions" &&
-      finalRecordedOutcome.input.expect !== undefined
-    )
-      return sameCondition(finalRecordedOutcome.input.expect);
-    if (finalRecordedOutcome.input.kind === "semantic_segment") {
-      const final = finalRecordedOutcome.input.steps.at(-1);
-      return final !== undefined && sameCondition("assert" in final ? final.assert : final.expect);
-    }
-    return false;
-  })();
-  if (!recordedFinalPassed || !safeAfterTerminalOutcome || hasPendingSourceCall) {
-    throw new Error(
-      "The candidate final checkpoint is not the terminal successful recorded task outcome.",
-    );
-  }
-  return Parse(WorkflowSaveCandidateSchema, {
-    format: "ziggy-workflow-save-candidate",
+    format: "ziggy-computer-workflow-run-summary",
     formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateHash: workflowHash(optimized.workflow),
-    sourceHash: workflowHash(source),
-    verificationBindingsHash: createHash("sha256").update(stableJson(input.bindings)).digest("hex"),
-    sourceDraftId: input.sourceDraftId,
-    baseRevision: input.baseRevision ?? null,
-    createdAt: (input.now ?? new Date()).toISOString(),
-    workflow: optimized.workflow,
-    optimization: {
-      removedRedundantObservations: optimized.removedRedundantObservations,
-      removedRedundantRootLookups: optimized.removedRedundantRootLookups,
-      segmentCount: compiled.segments.length,
+    id: run.record.id,
+    workflowId: run.record.workflowId,
+    revision: run.record.revision,
+    sessionId: run.record.sessionId,
+    preparedAt: run.record.preparedAt,
+    finishedAt: now.toISOString(),
+    overall,
+    checks,
+    segments: {
+      planned: run.plan.segments.length,
+      matched: run.nextSegment,
+      passed,
+      failed,
     },
-  });
-};
-
-export const proveWorkflowSaveCandidate = (input: {
-  readonly candidate: WorkflowSaveCandidate;
-  readonly summary: RunSummary;
-  readonly now?: Date;
-}): WorkflowSaveProof => {
-  if (workflowHash(input.candidate.workflow) !== input.candidate.candidateHash) {
-    throw new Error("Workflow save candidate content no longer matches its hash.");
-  }
-  if (
-    input.summary.workflowId !== input.candidate.workflow.id ||
-    input.summary.revision !== input.candidate.candidateHash
-  ) {
-    throw new Error("Workflow verification evidence belongs to a different candidate revision.");
-  }
-  if (input.summary.overall !== "passed" || input.summary.stopReason !== "completed") {
-    throw new Error("Workflow verification did not pass every planned segment and checkpoint.");
-  }
-  if (
-    input.summary.segments.planned === 0 ||
-    input.summary.segments.passed !== input.summary.segments.planned ||
-    input.summary.checks.length === 0 ||
-    input.summary.checks.some((check) => check.outcome !== "passed")
-  ) {
-    throw new Error("Workflow verification evidence is incomplete.");
-  }
-
-  return Parse(WorkflowSaveProofSchema, {
-    format: "ziggy-workflow-save-proof",
-    formatVersion: 1,
-    id: crypto.randomUUID(),
-    candidateId: input.candidate.id,
-    candidateHash: input.candidate.candidateHash,
-    runSummaryId: input.summary.id,
-    verifiedAt: (input.now ?? new Date()).toISOString(),
-    outcome: "passed",
-  });
+    stopReason,
+  };
 };

@@ -241,7 +241,7 @@ export class McpStdioClient {
             new McpClientError({
               server: this.#server,
               operation: "tools/call",
-              reason: "MCP tool reported failure.",
+              reason: `MCP tool reported failure: ${JSON.stringify({ content: decoded.value.content, structuredContent: decoded.value.structuredContent }).slice(0, 4096)}`,
             }),
           );
         }

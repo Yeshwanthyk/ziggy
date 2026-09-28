@@ -138,7 +138,8 @@ export const loadConfig = (profilePath: string) => {
         catch: (cause) =>
           new CodeModeConfigError({
             path,
-            reason: "Could not open physical codemode.json without following symlinks.",
+            reason:
+              "Could not open physical codemode.json without following symlinks. Create <profile>/codemode.json as a regular file; see the codemode-setup skill or codemode README for the schema.",
             cause,
           }),
       }),

@@ -14,7 +14,8 @@
     "fmt": "oxfmt index.ts src test"
   },
   "pi": {
-    "extensions": ["./dist/index.js"]
+    "extensions": ["./dist/index.js"],
+    "skills": ["./skills"]
   },
   "dependencies": {
     "acorn": "8.15.0",

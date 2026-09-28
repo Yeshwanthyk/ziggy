@@ -134,6 +134,7 @@ describe("codemode extension", () => {
 
     type CapturedTool = {
       readonly name: string;
+      readonly description: string;
       readonly execute: (
         id: string,
         input: { readonly code: string },
@@ -158,6 +159,8 @@ describe("codemode extension", () => {
     codeMode(fakePi);
 
     expect(registered?.name).toBe("codemode_execute");
+    expect(registered?.description).toContain("Classic for loops and try/catch are not supported");
+    expect(registered?.description).toContain("codemode-setup");
     const tool = registered as CapturedTool;
 
     const response = await tool.execute(
@@ -182,6 +185,20 @@ describe("codemode extension", () => {
       toolCalls: [{ path: "$codemode.search" }, { path: "fixture.echo" }],
     });
     await shutdown?.();
+  });
+
+  test("missing Profile config gives an actionable schema pointer", async () => {
+    const root = await mkdtemp(join("/tmp", "ziggy-codemode-missing-"));
+    roots.push(root);
+
+    const result = await Effect.runPromise(
+      executeCodeMode(createCodeModeSession(), root, "return 1;"),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "CodeModeConfigError", message: expect.stringContaining("codemode-setup") },
+    });
   });
 
   test("does not start MCP until code searches or calls a tool", async () => {
@@ -239,9 +256,23 @@ describe("codemode extension", () => {
     await Effect.runPromise(session.close());
   });
 
-  test("fails MCP isError, malformed protocol, repeated cursors, and duplicate names closed", async () => {
+  test("preserves MCP isError content", async () => {
+    const root = await profile();
+    const session = createCodeModeSession();
+
+    const result = await Effect.runPromise(
+      executeCodeMode(session, root, "return await tools.fixture.fail({});"),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "ToolFailure", message: expect.stringContaining("fixture failure") },
+    });
+    await Effect.runPromise(session.close());
+  });
+
+  test("fails malformed protocol, repeated cursors, and duplicate names closed", async () => {
     const scenarios = [
-      { mode: undefined, code: "return await tools.fixture.fail({});", kind: "ToolFailure" },
       { mode: "malformed", code: "return await tools.$codemode.search({});", kind: "ToolFailure" },
       {
         mode: "repeat-cursor",
@@ -252,10 +283,11 @@ describe("codemode extension", () => {
     ];
 
     for (const scenario of scenarios) {
-      const root = await profile(scenario.mode === undefined ? {} : { mode: scenario.mode });
+      const root = await profile({ mode: scenario.mode });
       const session = createCodeModeSession();
       const result = await Effect.runPromise(executeCodeMode(session, root, scenario.code));
       expect(result).toMatchObject({ ok: false, error: { kind: scenario.kind } });
+
       expect(result).not.toHaveProperty("error.line");
       await Effect.runPromise(session.close());
     }

@@ -1,172 +1,65 @@
-/* oxlint-disable ziggy-effect/no-error-constructor, ziggy-effect/no-try-catch-or-throw -- Package admission fails at this external module boundary. */
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- The Pi entrypoint must dynamically load the pinned external ESM runtime. */
-/* oxlint-disable ziggy/no-unknown-parameters -- The dynamic module is validated before its factory enters Pi. */
-/* oxlint-disable ziggy/no-runtime-typeof -- A dynamic third-party module must expose one callable default export. */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { executeSegment, type SegmentBridge } from "./segment.ts";
+# Windows Bridge
 
-type ExtensionFactory = (pi: ExtensionAPI) => void;
+`windows-bridge.exe` is the native helper for the root-forest Windows backend. It is spawned by the TypeScript helper client and speaks stdin/stdout JSON-lines protocol version **3**.
 
-type SegmentBridgeModule = {
-  readonly COMPUTER_USE_BROWSER_BRIDGE_CHANNEL: string;
-  readonly handleBrowserBridgeRequest: (data: unknown) => void;
-  readonly executeAct: SegmentBridge["act"];
-  readonly executeFind: SegmentBridge["find"];
-  readonly executeObserve: SegmentBridge["observe"];
-  readonly executeSearchUi: SegmentBridge["search"];
-  readonly executeWaitFor: SegmentBridge["wait"];
-};
+## Backend contract
 
-const isExtensionModule = (value: unknown): value is { readonly default: ExtensionFactory } => {
-  if (value !== Object(value)) return false;
-  const descriptor = Object.getOwnPropertyDescriptor(value, "default");
+The TypeScript Windows backend is intentionally stateless. It forwards root-forest seam calls to the Rust helper:
 
-  return typeof descriptor?.value === "function";
-};
+- `listRoots({ pid? })`: cheap HWND metadata only. Roots do not fabricate pairing or sheet counts; HWND/class/style diagnostics live under `metadata` when useful.
+- `look`: atomic observe result with `lookId`, outline, window payload (`rootRef`, `kind`, frame, scale), and optional image. Menu/outline-only roots omit `image`; coordinate acts against those roots fail with `coordinate_unavailable_for_root`.
+- `act`: forwards the typed `PlatformActRequest` whole. The helper validates `lookId`, resolves refs from helper-owned look state, applies policy, executes, and returns honest outcome/evidence plus `performed.deltaSource` and shallow `rootDelta`.
+- `uiaReadText` / `uiaWaitFor`: helper-side live UIA reads/polls. No TypeScript screenshot polling or module-level element state is used.
 
-const isSegmentBridgeModule = (value: unknown): value is SegmentBridgeModule => {
-  if (value !== Object(value)) return false;
+## Root metadata
 
-  return (
-    typeof Object.getOwnPropertyDescriptor(value, "COMPUTER_USE_BROWSER_BRIDGE_CHANNEL")?.value ===
-      "string" &&
-    [
-      "handleBrowserBridgeRequest",
-      "executeAct",
-      "executeFind",
-      "executeObserve",
-      "executeSearchUi",
-      "executeWaitFor",
-    ].every((name) => typeof Object.getOwnPropertyDescriptor(value, name)?.value === "function")
-  );
-};
+Windows roots are top-level HWNDs:
 
-const upstreamModule: unknown = await import(
-  new URL("./dist/extensions/computer-use.mjs", import.meta.url).href
-);
+- `#32768` class => `kind: "menu"`
+- `#32770` class => `kind: "dialog"`
+- owned popups => `kind: "popover"`
+- other HWNDs => `kind: "window"`
 
-if (!isExtensionModule(upstreamModule)) {
-  throw new Error("The pinned computer-use runtime has no default extension factory.");
-}
+The helper declares per-monitor-v2 DPI awareness at startup and reports `scaleFactor = GetDpiForWindow(hwnd) / 96`.
 
-const bridgeModule: unknown = await import(new URL("./dist/src/bridge.mjs", import.meta.url).href);
+## Refs, actions, and deltas
 
-if (!isSegmentBridgeModule(bridgeModule)) {
-  throw new Error("The pinned computer-use runtime has no compatible semantic bridge executors.");
-}
+Observed `@e` refs store UIA RuntimeId and AutomationId metadata. Ref-targeted actions resolve a live `IUIAutomationElement` first:
 
-const Target = Type.Object(
-  {
-    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-  },
-  { additionalProperties: false, minProperties: 1 },
-);
+- `press`/`click`: `InvokePattern`, then `TogglePattern`, then `SelectionItemPattern`, then `ExpandCollapsePattern`, then LegacyIAccessible default action; successful pattern grounding reports `grounding: "description"`, `delivery: "ax"`. Coordinate fallback is blocked by `ax_only` and preflights occlusion with `ElementFromPoint`.
+- `setText`: `ValuePattern.SetValue`, then `CurrentValue` read-back. `evidence.value` is the value actually read.
+- `scroll`: `ScrollPattern` where exposed; wheel fallback is raw input and policy-gated.
+- `typeText`, `keypress`, `drag`, `moveMouse`, and coordinate targets remain raw input and report `unknown` unless verified.
 
-const Condition = Type.Object(
-  {
-    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
-    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
-    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
-  },
-  { additionalProperties: false },
-);
+`readText` resolves the live element and reads TextPattern → ValuePattern → CurrentName. `waitFor` polls the live UIA subtree at about 150ms intervals.
 
-const RootQuery = Type.Object(
-  {
-    text: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-    app: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-    bundleId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-    kind: Type.Optional(
-      Type.Union([
-        Type.Literal("window"),
-        Type.Literal("menu"),
-        Type.Literal("sheet"),
-        Type.Literal("popover"),
-        Type.Literal("dialog"),
-        Type.Literal("browser_page"),
-      ]),
-    ),
-  },
-  { additionalProperties: false, minProperties: 1 },
-);
+Root deltas are baselined at act time. The helper polls a cheap top-level HWND signature for early settle (`deltaSource: "win-poll"`), then takes short catch-up snapshots before returning the final full before/after diff. If no change is seen before the cap, it returns the full snapshot timeout path (`"snapshot"`).
 
-const SegmentAction = Type.Union([
-  Type.Object(
-    {
-      action: Type.Literal("click"),
-      button: Type.Optional(
-        Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]),
-      ),
-      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("keypress"),
-      keys: Type.Array(Type.String({ pattern: "^[A-Za-z0-9+_-]{1,32}$" }), {
-        minItems: 1,
-        maxItems: 20,
-      }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("scroll"),
-      scrollX: Type.Optional(Type.Number({ minimum: -10_000, maximum: 10_000 })),
-      scrollY: Type.Optional(Type.Number({ minimum: -10_000, maximum: 10_000 })),
-    },
-    { additionalProperties: false },
-  ),
-]);
+## Protocol
 
-const ActionStep = Type.Object(
-  {
-    target: Target,
-    actions: Type.Array(SegmentAction, { minItems: 1, maxItems: 20 }),
-    expect: Condition,
-  },
-  { additionalProperties: false },
-);
+Request envelope:
 
-const AssertionStep = Type.Object({ assert: Condition }, { additionalProperties: false });
+```json
+{ "protocolVersion": 3, "id": "req_1", "cmd": "listRoots", "args": {} }
+```
 
-export default ((pi: ExtensionAPI): void => {
-  upstreamModule.default(pi);
-  pi.events.on(
-    bridgeModule.COMPUTER_USE_BROWSER_BRIDGE_CHANNEL,
-    bridgeModule.handleBrowserBridgeRequest,
-  );
-  pi.registerTool({
-    name: "run_ui_segment",
-    label: "Run Semantic UI Segment",
-    description:
-      "Execute a bounded group of semantic desktop/CDP actions with fresh unique target resolution and mandatory verified postconditions. This tool accepts no text-entry, secret-value, coordinate, or JavaScript fields.",
-    parameters: Type.Object(
-      {
-        root: Type.Optional(Type.String({ pattern: "^@r[0-9]+$" })),
-        rootQuery: Type.Optional(RootQuery),
-        steps: Type.Array(Type.Union([ActionStep, AssertionStep]), {
-          minItems: 1,
-          maxItems: 20,
-        }),
-      },
-      { additionalProperties: false },
-    ),
-    executionMode: "sequential",
-    async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
-      return await executeSegment(toolCallId, parameters, signal, ctx, {
-        observe: bridgeModule.executeObserve,
-        find: bridgeModule.executeFind,
-        search: bridgeModule.executeSearchUi,
-        act: bridgeModule.executeAct,
-        wait: bridgeModule.executeWaitFor,
-      });
-    },
-  });
-}) satisfies ExtensionFactory;
+Response envelope:
+
+```json
+{ "protocolVersion": 3, "id": "req_1", "ok": true, "result": { } }
+```
+
+Diagnostics (`cmd: "diagnostics"`) returns the protocol version and helper process metadata. The TypeScript backend rejects a mismatched version with a “Restart Pi …” error.
+
+## Remote acceptance notes
+
+- **Item 5 / menus:** click Notepad's File menu, read `rootDelta`, then observe the `appeared` root's `ref`. Menus are separate roots; observing the original Notepad window will not show the menu contents.
+- **Item 7 / occlusion:** record element coordinates from a fresh look, cover the window, then issue a coordinate act (`target: { "x": ..., "y": ... }`, `policy: "default"`). Expect `occluded_target`. Ref-targeted acts may re-resolve and do not exercise this coordinate preflight path.
+- **Item 8 / ref re-resolve:** fresh look, capture any element ref, move the window, then act on the same ref with the same `lookId`. RuntimeId/AutomationId re-resolution should succeed with refound semantics, not `stale_ref`.
+- **Pressability smoke:** a fresh look at Win11 Notepad must show `canPress: true` on menu bar items and buttons. If not, attach the raw outline dump so the capability matrix can be inspected.
+
+## Local constraints
+
+- Local child process only; no service, socket, or network listener.
+- Helper path: `%USERPROFILE%\.pi\agent\helpers\pi-computer-use\windows-bridge.exe`.
+- UIAccess/elevated-window limitations are reported as errors; there is no interactive permission grant loop.

@@ -1,136 +1,222 @@
-import { parseLookResponse } from "../../outline.mjs";
-import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.mjs";
-import { WINDOWS_HELPER_PROTOCOL_VERSION, windowsHelper } from "./helper.mjs";
-import { assertPlatformArchitecture } from "../architecture.mjs";
-function normalizedProcessName(appName) {
-    return appName.toLowerCase().replace(/\.exe$/i, "");
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { LookResponse } from "../outline.mts";
+import type { PermissionStatus } from "../permissions.mts";
+
+export type PlatformName = "macos" | "windows" | "linux";
+export type NativeInputDelivery = "hid" | "pid";
+export type ActOutcome = "worked" | "didnt" | "unknown";
+/**
+ * Best-effort presentation hint for a root. The seam guarantees only the
+ * `window` vs transient distinction; specific transient kinds are display hints
+ * and must never drive behavior in shared code. Platforms that need precise
+ * distinctions internally should use native signals.
+ */
+export type PlatformRootKind = "window" | "menu" | "sheet" | "popover" | "dialog";
+
+export interface PlatformDiagnostics {
+	protocolVersion: number;
+	architectureVersion?: number;
+	invariants?: string[];
+	pid: number;
+	parentPid?: number;
+	parentAppName?: string;
+	parentBundleId?: string;
+	parentPath?: string;
+	executablePath?: string;
+	os?: string;
+	arch?: string;
+	accessibility?: boolean;
+	screenRecording?: boolean;
 }
-function classifyBrowser(appName) {
-    switch (normalizedProcessName(appName)) {
-        case "chrome":
-        case "chromium":
-            return "chrome";
-        case "msedge":
-        case "edge":
-            return "edge";
-        case "brave":
-        case "brave-browser":
-            return "brave";
-        case "firefox":
-            return "firefox";
-        case "vivaldi":
-            return "vivaldi";
-        case "opera":
-        case "opera_gx":
-            return "opera";
-        default:
-            return false;
-    }
+
+export interface PlatformReadyState {
+	permissionStatus?: PermissionStatus;
+	lastPermissionCheckAt: number;
+	helperDiagnostics?: PlatformDiagnostics;
 }
-function parseFramePoints(raw) {
-    const frame = raw?.framePoints ?? raw?.bounds ?? {};
-    return {
-        x: toFiniteNumber(frame.x, 0),
-        y: toFiniteNumber(frame.y, 0),
-        w: Math.max(1, toFiniteNumber(frame.w ?? frame.width, 1)),
-        h: Math.max(1, toFiniteNumber(frame.h ?? frame.height, 1)),
-    };
+
+export interface PlatformRootQuery {
+	pid?: number;
+	title?: string;
 }
-function parseRootKind(raw) {
-    return raw === "menu" || raw === "dialog" || raw === "popover" || raw === "window" ? raw : "window";
+
+export interface PlatformApp {
+	appName: string;
+	bundleId?: string;
+	pid: number;
+	isFrontmost?: boolean;
 }
-function parseRoots(result) {
-    const array = Array.isArray(result) ? result : result?.roots;
-    if (!Array.isArray(array))
-        return [];
-    return array.map((raw, index) => {
-        return {
-            kind: parseRootKind(raw?.kind),
-            rootRef: toOptionalString(raw?.rootRef ?? raw?.windowRef ?? raw?.ref),
-            windowRef: toOptionalString(raw?.windowRef ?? raw?.rootRef ?? raw?.ref),
-            windowId: Number.isFinite(raw?.windowId) ? Math.trunc(raw.windowId) : undefined,
-            pid: Number.isFinite(raw?.pid) ? Math.trunc(raw.pid) : undefined,
-            appName: toOptionalString(raw?.appName ?? raw?.processName),
-            bundleId: toOptionalString(raw?.bundleId),
-            title: toOptionalString(raw?.title) ?? "",
-            role: toOptionalString(raw?.role),
-            subrole: toOptionalString(raw?.subrole),
-            zOrder: Math.trunc(toFiniteNumber(raw?.zOrder, index)),
-            framePoints: parseFramePoints(raw),
-            scaleFactor: Math.max(1, toFiniteNumber(raw?.scaleFactor, 1)),
-            isOnscreen: raw?.isOnscreen === undefined ? true : toBoolean(raw?.isOnscreen),
-            isFocused: toBoolean(raw?.isFocused),
-            isMinimized: toBoolean(raw?.isMinimized),
-            isMain: toBoolean(raw?.isMain ?? raw?.isFocused),
-            isModal: toBoolean(raw?.isModal),
-            metadata: raw?.metadata,
-        };
-    });
+
+export interface FramePoints {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
 }
-function appsFromRoots(roots) {
-    const seen = new Set();
-    return roots.flatMap((root) => {
-        if (!root.pid || seen.has(root.pid))
-            return [];
-        seen.add(root.pid);
-        return [{ appName: root.appName ?? "Unknown", bundleId: root.bundleId, pid: root.pid, isFrontmost: root.isFocused }];
-    });
+
+export interface PlatformRoot {
+	kind: PlatformRootKind;
+	rootRef?: string;
+	windowRef?: string;
+	windowId?: number;
+	pid?: number;
+	appName?: string;
+	bundleId?: string;
+	title: string;
+	role?: string;
+	subrole?: string;
+	zOrder: number;
+	framePoints: FramePoints;
+	scaleFactor: number;
+	isOnscreen: boolean;
+	isFocused: boolean;
+	isMinimized: boolean;
+	/** Best-effort; platforms without a main-window concept may mirror `isFocused`. */
+	isMain: boolean;
+	/** Platform-reported modality fact, including platform-specific modal/dialog/sheet signals. */
+	isModal: boolean;
+	metadata?: Record<string, unknown>;
 }
-function helperAction(request) {
-    if (!("focus" in request.target))
-        return { ...request };
-    return { ...request, target: request.target.focus, params: { ...request.params, preserveFocus: true } };
+
+export interface PlatformFrontmostResult {
+	appName: string;
+	bundleId?: string;
+	pid: number;
+	windowTitle?: string;
+	windowId?: number;
+	rootRef?: string;
 }
-async function ensureReady(_ctx, state, signal) {
-    await windowsHelper.ensureInstalled(signal);
-    const diagnostics = await windowsHelper.command("diagnostics", {}, { signal, timeoutMs: 5_000 });
-    if (diagnostics?.protocolVersion !== WINDOWS_HELPER_PROTOCOL_VERSION) {
-        throw new Error(`Windows helper protocol mismatch: expected ${WINDOWS_HELPER_PROTOCOL_VERSION}, got ${diagnostics?.protocolVersion ?? "unknown"}. Restart Pi to use the installed helper.`);
-    }
-    assertPlatformArchitecture("Windows", diagnostics);
-    return { ...state, lastPermissionCheckAt: Date.now(), helperDiagnostics: diagnostics };
+
+export interface PlatformFocusWindowResult {
+	focused: boolean;
+	alreadyFocused?: boolean;
+	reason?: string;
 }
-export const windowsBackend = {
-    name: "windows",
-    shutdown() { windowsHelper.dispose(); },
-    ensureReady,
-    async listApps(signal) {
-        return appsFromRoots(parseRoots(await windowsHelper.command("listRoots", {}, { signal })));
-    },
-    async listRoots(query, signal) {
-        const roots = parseRoots(await windowsHelper.command("listRoots", Number.isFinite(query.pid) ? { pid: Math.trunc(query.pid) } : {}, { signal }));
-        const title = query.title?.trim().toLowerCase();
-        return title ? roots.filter((root) => root.title.trim().toLowerCase().includes(title)) : roots;
-    },
-    async getFrontmost(signal) {
-        const roots = parseRoots(await windowsHelper.command("listRoots", {}, { signal }));
-        const focused = roots.find((root) => root.isFocused) ?? roots[0];
-        if (!focused?.pid)
-            throw new Error("No frontmost window was available.");
-        return { appName: focused.appName ?? "Unknown", bundleId: focused.bundleId, pid: focused.pid, windowTitle: focused.title, windowId: focused.windowId, rootRef: focused.rootRef };
-    },
-    async focusWindow(target, signal) {
-        return await windowsHelper.command("focusWindow", { ...target }, { signal });
-    },
-    async observe(request, options) {
-        return parseLookResponse(await windowsHelper.command("look", { ...request.target, baseLookId: request.baseLookId, maxDimension: request.maxDimension, readText: request.readText, scopeRef: request.scopeRef, includeImage: request.includeImage }, options));
-    },
-    async act(request, options) {
-        return await windowsHelper.command("act", helperAction(request), options);
-    },
-    async actBatch(requests, options) {
-        return await windowsHelper.command("actBatch", { actions: requests.map(helperAction) }, options);
-    },
-    async readText(args, options) {
-        return await windowsHelper.command("uiaReadText", { ...args }, options);
-    },
-    async waitFor(args, options) {
-        return await windowsHelper.command("uiaWaitFor", { ...args }, options);
-    },
-    isBrowserApp(appName) { return classifyBrowser(appName) !== false; },
-    isChromeFamilyApp(appName) { return classifyBrowser(appName) === "chrome" || classifyBrowser(appName) === "edge" || classifyBrowser(appName) === "brave"; },
-    async openBrowserLocation(target, url, signal) {
-        await windowsHelper.command("openBrowserLocation", { ...target, url }, { signal, timeoutMs: 10_000 });
-        return true;
-    },
-};
+
+export interface HelperActPerformed {
+	grounding?: "description" | "coordinates" | "keyboard-events";
+	/** `ax` means the platform accessibility API (AX on macOS, UIA on Windows). */
+	delivery?: "ax" | NativeInputDelivery;
+	refound?: boolean;
+	/** Free-form diagnostic naming the platform's delta mechanism. */
+	deltaSource?: string;
+	selectionGrounding?: "ax" | "keyboard";
+	transaction?: boolean;
+	actionCount?: number;
+	activated?: boolean;
+	raised?: boolean;
+	focused?: boolean;
+}
+
+export interface PlatformRootDelta {
+	change: "appeared" | "closed" | "focused";
+	kind: string;
+	ref?: string;
+	title?: string;
+	pid: number;
+	isModal?: boolean;
+	metadata?: Record<string, unknown>;
+}
+
+export interface HelperActResult {
+	outcome: ActOutcome;
+	performed?: HelperActPerformed;
+	evidence?: Record<string, unknown>;
+	error?: { code?: string; message?: string; whatIsThere?: unknown };
+	rootDelta?: PlatformRootDelta[];
+	steps?: HelperActResult[];
+	stoppedAt?: number;
+}
+
+export interface PlatformTarget {
+	pid?: number;
+	windowId?: number;
+	rootRef?: string;
+}
+
+export interface PlatformObserveRequest {
+	target: PlatformTarget;
+	/** Existing immutable look whose untouched refs/coordinate geometry survive a scoped refresh. */
+	baseLookId?: string;
+	readText: "auto" | "always" | "never";
+	scopeRef?: string;
+	maxDimension?: number;
+	includeImage?: boolean;
+}
+
+export type PlatformActTarget = { ref: string } | { x: number; y: number } | { focus: PlatformPoint };
+type PlatformDeliveryPolicy = "ax_only" | "background" | "default" | "foreground";
+type PlatformMouseButton = "left" | "right" | "middle";
+type PlatformActDeliveryParam = { delivery?: NativeInputDelivery };
+export type PlatformPoint = { x: number; y: number };
+
+export interface PlatformActRequestBase {
+	lookId: string;
+	pid?: number;
+	target: PlatformActTarget;
+	policy: PlatformDeliveryPolicy;
+}
+
+export type PlatformActRequest = PlatformActRequestBase & (
+	| { action: "press" | "click"; params: { button?: PlatformMouseButton; clickCount?: number } & PlatformActDeliveryParam }
+	| { action: "setText"; params: { text: string } & PlatformActDeliveryParam }
+	| { action: "typeText"; params: { text: string } & PlatformActDeliveryParam }
+	| { action: "keypress"; params: { keys: string[] } & PlatformActDeliveryParam }
+	| { action: "scroll"; params: { scrollX: number; scrollY: number } & PlatformActDeliveryParam }
+	| { action: "drag"; params: { path: PlatformPoint[] } & PlatformActDeliveryParam }
+	| { action: "moveMouse"; params: PlatformActDeliveryParam }
+);
+
+export interface PlatformReadTextRequest {
+	/** Observation that owns the element ref. Native backends must not resolve across observations. */
+	lookId: string;
+	elementRef: string;
+	offset: number;
+	limit: number;
+}
+
+export interface PlatformReadTextResponse {
+	text: string;
+	offset: number;
+	limit: number;
+	totalChars: number;
+	hasMore: boolean;
+}
+
+export interface PlatformWaitForRequest extends PlatformTarget {
+	lookId?: string;
+	text?: string;
+	role?: string;
+	value?: string;
+	scopeRef?: string;
+	scopeExact?: boolean;
+	gone: boolean;
+	timeoutMs: number;
+}
+
+export interface PlatformWaitForResponse {
+	found: boolean;
+	gone?: boolean;
+	timedOut?: boolean;
+	nodeCount?: number;
+}
+
+export interface ComputerUsePlatformBackend {
+	name: PlatformName;
+	/** Release process-local resources when the Pi session is torn down. */
+	shutdown?(): void | Promise<void>;
+	ensureReady(ctx: ExtensionContext, state: PlatformReadyState, signal?: AbortSignal): Promise<PlatformReadyState>;
+	listApps(signal?: AbortSignal): Promise<PlatformApp[]>;
+	listRoots(query: PlatformRootQuery, signal?: AbortSignal): Promise<PlatformRoot[]>;
+	getFrontmost(signal?: AbortSignal): Promise<PlatformFrontmostResult>;
+	focusWindow(target: PlatformTarget, signal?: AbortSignal): Promise<PlatformFocusWindowResult>;
+	observe(request: PlatformObserveRequest, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<LookResponse>;
+	act(request: PlatformActRequest, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<HelperActResult>;
+	/** Execute one-resource actions with one root baseline and one final settle. */
+	actBatch?(requests: PlatformActRequest[], options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<HelperActResult>;
+	readText(args: PlatformReadTextRequest, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<PlatformReadTextResponse>;
+	waitFor(args: PlatformWaitForRequest, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<PlatformWaitForResponse>;
+	isBrowserApp(appName: string, bundleId?: string): boolean;
+	isChromeFamilyApp(appName: string, bundleId?: string): boolean;
+	openBrowserLocation(target: { appName: string; bundleId?: string }, url: string, signal?: AbortSignal): Promise<boolean>;
+}

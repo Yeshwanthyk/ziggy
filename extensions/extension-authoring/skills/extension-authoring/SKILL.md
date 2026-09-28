@@ -73,7 +73,7 @@ into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. Cl
 admission only from that tool's structured success result; preserve and report its operation,
 stage, code, and message fields on failure. Profile-owned packages take precedence over approved
 catalogue packages with the same ID. Reopening that Profile or restarting its resident Ziggy
-process applies the change. All registered tools must be usable from TUI, print runs, gateway
+process applies the change. All registered tools must be usable from the resident web UI, print runs, gateway
 chats, and automations when the package is selected.
 
 Specialists never receive `profile_extensions`. A specialist may prepare or review package files,

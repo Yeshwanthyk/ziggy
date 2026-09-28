@@ -1,123 +1,92 @@
-# Development
+# Configuration
 
-## Repository layout
+Configuration controls browser access, strict accessibility execution, and the macOS agent cursor.
 
-```text
-extensions/computer-use.ts       Public Pi tool registration
-src/bridge.ts                    TypeScript runtime and tool implementation
-src/actions.ts                   Action preparation and result reconciliation
-src/runtime.ts                   Immutable state store and resource scheduler
-src/state.ts                     Saved UI state ownership and restoration
-src/view.ts                      Stable refs and resulting-state change views
-src/outline.ts                   Outline parsing, folding, search, and ref mapping
-src/note.ts                      Disposable running-note generation
-native/macos/bridge.swift        macOS helper for AX, capture, permissions, and input
-native/windows/                 Windows backend/helper code when developing on Windows
-native/linux/bridge-rs/         Linux AT-SPI2 helper (Rust)
-scripts/build-native.mjs         macOS helper build script
-scripts/setup-helper.mjs         macOS helper install script
-scripts/check-invariants.mjs     Architecture invariant checks
-scripts/check-runtime-concurrency.mjs Scheduler/state concurrency checks
-scripts/pi-cubench-agent.mjs     Cubench gateway adapter using registered Pi tools
-```
+## Files
 
-The public tool surface lives in `extensions/computer-use.ts`. Keep it small. Internal complexity belongs in `src/bridge.ts`, `src/outline.ts`, `src/note.ts`, and the native helper.
-
-## Checks
-
-Run all static checks:
-
-```bash
-npm test
-```
-
-This runs TypeScript, tool-schema compatibility checks, architecture invariants, and native helper checks available on the current platform.
-
-On macOS, rebuild the native helper after Swift changes:
-
-```bash
-npm run build:native
-```
-
-## Architecture rules
-
-The runtime is state-scoped and outline-first:
-
-- `observe_ui` returns a folded UI outline and running note.
-- `search_ui`, `expand_ui`, and `inspect_ui` provide progressive disclosure.
-- `act_ui` is the only public desktop action entrypoint.
-- UI observations are immutable records; request-local hydration replaces global current state.
-- Cached queries bypass scheduling; live work is ordered per physical resource.
-- Browser pages and desktop surfaces share the `@r` root forest and `@e` outline contract.
-- The helper owns grounding, preflight, execution, and verification.
-- Removed direct tools such as `screenshot`, `click`, `set_text`, and `computer_actions` should not reappear as public extension tools.
-
-Run invariants after architecture changes:
-
-```bash
-npm run test:invariants
-```
-
-Set `PI_CU_LIVE=1` only when you want live helper checks in addition to static checks.
-
-## Cubench
-
-`scripts/pi-cubench-agent.mjs` drives a headed Cubench Chromium window through the same registered Pi tools used by the extension. Cubench must launch its web driver headed (the current development tree accepts `CUBENCH_HEADLESS=0`):
-
-```bash
-CUBENCH_HEADLESS=0 node ../cubench/bin/cubench.mjs suite run \
-  --suite ../cubench/suites/core.json \
-  --agent "node --experimental-transform-types $PWD/scripts/pi-cubench-agent.mjs" \
-  --driver web \
-  --trials 3 \
-  --label picu
-```
-
-The adapter uses Cubench only for the instruction and final oracle; UI observation and action go through `pi-computer-use`. Gateway action/observation counters therefore do not trigger Cubench interference hooks, so stale/reorder cases need a native-driver integration before their interference timing can be treated as benchmark evidence.
-
-## Native platform helpers
-
-On macOS, the helper installed for permissions is normally:
+Global config:
 
 ```text
-~/Applications/pi-computer-use.app
+~/.pi/agent/extensions/pi-computer-use.json
 ```
 
-Existing writable system-wide installs remain at `/Applications/pi-computer-use.app`. The macOS helper targets macOS 14+ and uses ScreenCaptureKit. Local development can use ad-hoc signing. Release builds must use the release workflow so the helper app is signed with the stable release certificate.
+Project config:
 
-On Windows, development uses the Windows platform backend/helper and the active desktop session rather than the macOS app bundle or TCC permission model.
+```text
+.pi/computer-use.json
+```
 
-On Linux, install Rust/Cargo and run `npm run build:linux`, `npm run test:linux`, and `npm run test:linux-scripts`. Live checks must run inside the target user's graphical D-Bus session. The helper installs to `~/.pi/agent/helpers/pi-computer-use/linux-bridge`.
+Project config overrides global config. Environment variables override both.
 
-## Release signing
+Example:
 
-This section applies to macOS releases. macOS TCC keys Accessibility and Screen Recording grants to an app's code-signing identity. Ad-hoc and locally self-signed development builds may require permission review whenever their native code changes. Only Developer ID-signed release bundles should be treated as having a stable update identity.
+```json
+{
+  "browser_use": true,
+  "managed_browser": "chrome",
+  "headless": false,
+  "cursor_overlay": true
+}
+```
 
-Release setup:
+Run `/computer-use` in Pi to show the active config and its source.
 
-1. Run `./scripts/make-signing-cert.sh` once, or use a Developer ID Application certificate.
-2. Add repository secrets:
-   - `APPLICATION_CERT_BASE64`
-   - `CERT_PASSWORD`
-   - `SIGN_IDENTITY`
-3. For Developer ID notarization, set repository variable `NOTARIZE=true` and add:
-   - `TEAM_ID`
-   - `APPLE_ID`
-   - `APP_SPECIFIC_PASSWORD`
-4. Push a `v*` tag or run the `Release` workflow manually.
+## Options
 
-For macOS, `.github/workflows/publish-npm.yml` builds the universal helper, signs it, optionally notarizes it, stages a draft GitHub Release, injects the same signed helper app into the npm package, publishes npm, and only then publishes the GitHub Release.
+### `browser_use`
 
-For an isolated X11 acceptance run, install Xvfb, xfwm4, the AT-SPI2 runtime,
-xfce4-appfinder, and xfce4-terminal, then build and install the helper before
-running the explicitly gated live suite:
+Default: `true`
+
+When `false`, the extension refuses known browser windows. This is useful for projects that should not control browsers.
+
+Known browser families include Safari, Chrome and Chromium-family browsers, Firefox, Arc, Brave, Edge, Vivaldi, and Helium.
+
+### `managed_browser`
+
+Default: `"chrome"`
+
+Selects `"helium"` or `"chrome"` for `launch_browser`. The debugging port is always allocated internally and isn't part of the model-facing contract.
+
+### `headless`
+
+Default: `false`
+
+When `true`, actions must remain in the background. Raw pointer events, raw keyboard events, foreground focus fallback, cursor takeover, and the agent cursor overlay are blocked. When `false` (the default), Pi prefers verified semantic activation when it is credible, preserves the focus established by editable clicks for dependent keyboard input, and may retry keyboard input in the foreground when a background attempt conclusively produced no value change. Ambiguous pointer actions are never replayed blindly.
+
+### `cursor_overlay`
+
+Default: `true`
+
+When `true`, macOS pointer actions enqueue a click-through agent cursor animation to the native grounded point during non-headless background delivery. Foreground actions that control the physical cursor don't display the overlay. The overlay doesn't move the system pointer, accept input, or delay the action. Set it to `false` for invisible automation. `headless: true` always suppresses it regardless of this setting.
+
+## Environment variables
 
 ```bash
-npm run build:linux
-node scripts/setup-helper.mjs --platform linux
-npm run test:linux-live
+PI_COMPUTER_USE_BROWSER_USE=0
+PI_COMPUTER_USE_BROWSER_USE=1
+PI_COMPUTER_USE_MANAGED_BROWSER=helium
+PI_COMPUTER_USE_MANAGED_BROWSER=chrome
+PI_COMPUTER_USE_CHROME_EXECUTABLE=/absolute/path/to/chrome
+PI_COMPUTER_USE_HELIUM_EXECUTABLE=/absolute/path/to/helium
+PI_COMPUTER_USE_HEADLESS=0
+PI_COMPUTER_USE_HEADLESS=1
+PI_COMPUTER_USE_CURSOR_OVERLAY=0
+PI_COMPUTER_USE_CURSOR_OVERLAY=1
+PI_COMPUTER_USE_DELIVERY_POLICY=default
+PI_COMPUTER_USE_DELIVERY_POLICY=foreground
+PI_COMPUTER_USE_CDP_PORT=9222
 ```
 
-The harness creates its own D-Bus and Xvfb session. It fails rather than
-silently passing when the live flag, helper, accessibility bridge, or required
-X11 applications are unavailable.
+`PI_COMPUTER_USE_HEADLESS=1` prohibits foreground fallback. `PI_COMPUTER_USE_DELIVERY_POLICY` is a debugging input; normal policy belongs in configuration rather than individual model calls.
+
+`launch_browser` searches common platform install locations and `PATH`. Use `PI_COMPUTER_USE_CHROME_EXECUTABLE` or `PI_COMPUTER_USE_HELIUM_EXECUTABLE` for an AppImage, portable install, or any non-standard location. An explicit override is authoritative and must name an executable file.
+
+## CDP browser support
+
+`PI_COMPUTER_USE_CDP_PORT` enables Chrome DevTools Protocol support for Chromium-family browsers. Launch the browser with `--remote-debugging-port=<port>` and set this variable to the same port.
+
+Use a dedicated, non-default profile with `--user-data-dir=<directory>`. Chrome 136 and later ignore remote-debugging switches for the default data directory as a security measure. `launch_browser` already creates a temporary, separate CDP profile and binds discovery to a randomly allocated loopback port.
+
+When CDP is active, discovered pages participate in the same root and state system as desktop UI. `launch_browser` configures CDP automatically and returns an observed page state. `navigate_browser` and `evaluate_browser` accept only CDP browser-page states; native browser windows continue to use the normal desktop observe/act tools.
+
+With the variable unset, CDP is inactive.
