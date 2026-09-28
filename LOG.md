@@ -1114,3 +1114,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Tests: multi-process lease race, killed holder releases, interruption, pre-teardown switch failure, quarantine pausing, per-turn memory refresh.
 - Left for the cleanup pass: loading extension factories once under quarantine; doctor and resident policy still partly in adapters. Web session adoption goes to webui round 2.
 - Verification: `bun run check` and `bun run test` (756 pass) passed. Two Opus review rounds resolved.
+
+## Live session controls
+
+- Chat and runtime session handles expose the current model and thinking level, session-scoped `setModel`/`setThinkingLevel` (the Profile default is unchanged), and `resume` by session id or a path inside the Profile's `sessions/`. Resume reuses the lease transitions: a held target is refused and the current session stays usable.
+- Controls and Pi-command session switches run one at a time and fail with a typed `SessionBusy` while a turn is streaming. Event subscribers follow the session across resume, `/new` and `/fork`.
+- `listProfileSessionSummaries` lists id, title, last activity and whether the session is held, without opening transcripts for writing; bad transcripts are skipped with a warning. Real lease acquirers wait up to 40 ms so a listing probe can't cause a false refusal.
+- `listProfileExtensionsWithHealth` returns the listing plus skipped packages and their diagnostics for the UI gateway.
+- Verification: `bun run check` and `bun run test` (758 pass) passed. Opus review findings resolved.

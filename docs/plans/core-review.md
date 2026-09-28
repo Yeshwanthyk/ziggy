@@ -162,7 +162,7 @@ Status: done (review/cli). Codex OAuth import is on hold for an owner decision.
 
 ## 11. Runtime interface and preloaded skills
 
-Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gateway/sessions.ts` goes to webui round 2. Runtime interface: adapter round 3. Preloaded skills audit pending.
+Status: 11a (session writer lease) done (review/adapter). UI adoption at `ui-gateway/sessions.ts` goes to webui round 2. Runtime interface: done (adapter round 3). Preloaded skills audit pending.
 
 - Add a small runtime interface in `src/adapters/pi/`: open, prompt, steer, abort, events, close.
   The resident, UI and chat gateways depend on it, and headless Pi implements it. Pi is the only
@@ -203,7 +203,7 @@ reading the owner lease before it starts; nothing falls back after the fact.
 
 ## 13. Web UI parity
 
-Status: extension picker done (review/webui). Model/thinking switching and resume wait on adapter capabilities.
+Status: extension picker done (review/webui). Adapter capabilities for model/thinking switching, resume and extension health are on main (adapter round 3); webui round 2 wires them.
 
 The web UI is the only interactive face since 1b. It lacks:
 
