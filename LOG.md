@@ -1032,3 +1032,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Breaking changes in 0.86/0.87 (`shouldStopAfterTurn`, canonical `SessionManager` context, `TurnEndEvent`, `TranscriptContext`) touch no Ziggy source. Only a TUI-extension test fixture needed the new `NormalizedBuildSystemPromptOptions` shape.
 - Regenerated pi-docs embeds and the builtin catalog; version strings in pi-docs, tui-themes, and their tests follow the pin.
 - Verification: `bun run check` and `bun run test` (733 pass) passed. Live: a fresh Profile on `openai-codex/gpt-6-luna` high answered in 2.5–4s; one first request stalled until the 300s Codex WebSocket idle timeout before Pi's retry succeeded. The installed binary and `~/.ziggy` were not touched.
+
+## 2026-09-28 — Core review plan and workstream base
+
+- Added `docs/plans/core-review.md`: section-by-section tightening pass from the 2026-09-28 core review, with a Workstreams table that splits parallel sessions by file ownership.
+- Decisions: keep Pi as the only agent loop, headless, and don't own the core (PiG and openclaw show the cost); remove the TUI in favour of the resident-served web UI and UI SDK; no Codex app-server or Claude SDK runtime; extensions stay plain Pi extensions.
+- Added `fast-check@4.10.2` as a dev dependency so every stream can add property and fuzz tests without touching `package.json`.

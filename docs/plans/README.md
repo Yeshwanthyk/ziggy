@@ -2,6 +2,7 @@
 
 Completed and superseded plans are removed; use Git history to read them.
 
+- [Core review](core-review.md): section-by-section tightening pass from the 2026-09-28 core review; the status line per section tracks progress.
 - [UI capabilities](ui-capabilities-squarey-web.md): reconcile the original scope with the current web client, add UI authoring guidance, and define a full acceptance sweep. Its original worktree/status section is historical, not current status.
 - [Proactive curator](proactive-curator.md): pending/reviewed state, foreground eligibility, adoption, scheduling, and empty-reply handling remain unfinished.
 - [Profile extension lifecycle](profile-extension-lifecycle.md): retain for safe runtime rollover; much of the transactional lifecycle has shipped.
