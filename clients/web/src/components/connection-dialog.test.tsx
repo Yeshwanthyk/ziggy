@@ -156,7 +156,7 @@ it("renders a selected id absent from the catalog so it can be disabled", () => 
     true,
   );
   expect(screen.getByText(/Extension list truncated/u)).not.toBeNull();
-  expect(screen.getByText(/ziggy serve restart 'squarey'/u)).not.toBeNull();
+  expect(screen.getByText(/ziggy serve restart <profile>/u)).not.toBeNull();
   fireEvent.click(screen.getByRole("checkbox", { name: "missing-one" }));
   expect(toggle).toHaveBeenCalledExactlyOnceWith("missing-one", true);
 });

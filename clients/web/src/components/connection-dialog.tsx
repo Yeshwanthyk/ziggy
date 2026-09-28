@@ -34,11 +34,6 @@ interface SettingsDialogProps {
   ) => Promise<void>;
 }
 
-const restartProfileName = (displayName: string): string => {
-  const name = displayName.charAt(0).toLowerCase() + displayName.slice(1);
-  return `'${name.replaceAll("'", "'\\''")}'`;
-};
-
 const endpointKey = "ziggy.web.endpoint";
 const tokenKey = "ziggy.web.session-token";
 
@@ -390,7 +385,7 @@ export function SettingsDialog({
                 {modelSettings?.restartRequired ? (
                   <p role="status">
                     Restart the resident to apply extension changes:{" "}
-                    <code>{`ziggy serve restart ${restartProfileName(profileName)}`}</code>
+                    <code>ziggy serve restart &lt;profile&gt;</code>
                   </p>
                 ) : null}
                 {modelSettings?.extensions?.truncated ? (
