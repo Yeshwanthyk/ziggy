@@ -13,10 +13,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-28
+
 ### Removed
 
+- Removed the local TUI. The resident-served web UI and UI SDK are the interactive faces; bare `ziggy <profile>` attaches to a running or installed resident and prints the UI URL, and `ziggy tui` reports the removal.
 - Removed the optional bundled Jev extension; it rejected valid Score answers from the live API.
 - Removed the bundled `dev-browser` and `agent-browser` extensions; browser control is provided by `computer-use`.
+
+### Added
+
+- Web UI: per-session model and thinking switching, a resume picker for older web sessions, and an extension picker that shows skipped packages with diagnostics.
+- Web UI redesign: design tokens with a dark theme, a tabbed Settings dialog (Model, Session, Extensions, Providers, Connection), a searchable model picker, a Faster/Smarter thinking slider limited to the model's supported levels, extension switches with a restart bar that names the exact Profile target, and reworked sidebar, chat, automation dialogs and mobile drawer.
+- `ziggy wake` hands off to a running resident over its UI socket and runs in-process otherwise.
+- `ziggy extensions update --restart` stops the managed resident, applies the update under the update lock and starts it again.
+- Required core packages (`extension-authoring`, `pi-packages`, `ziggy-operations`) get an update receipt and refresh at resident start when the bundled content changed and the copy is unedited. Doctor reports edited and behind-bundle copies with the command that fixes each.
+
+### Changed
+
+- Pi packages pinned to 0.87.1, which adds the GPT-6 models.
+- Persistent sessions take a per-session writer lease; a session held by another process is refused with a plain message naming the holder instead of silently forking.
+- Broken optional extension packages are skipped with a warning instead of stopping the Profile; automations they own pause until the package loads again.
+- `deliver` to a `conversation:` target works without a registry and stays idempotent.
+- `automations status` and `extensions add` warn when schedules will not fire because no resident service is installed.
+- Pairing uses the running resident's recorded port when the configured port is 0 and never prints the token.
+- A scheduled automation whose definition changed after it was claimed is recorded as superseded instead of running the stale definition.
+
+### Fixed
+
+- UI commands no longer stop or run twice when the socket that sent them closes.
+- Slack and Discord gateways bound pending turns and frame sizes and recover from oversized or malformed frames; a cancelled Slack turn no longer skews health counts.
+- Codemode reports missing config with a schema hint and names config key paths in errors, never values.
 
 ## [0.2.13] - 2026-09-19
 

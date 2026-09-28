@@ -1164,3 +1164,8 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - The restart hint uses a server-sent `cliTarget` from `profile.current`: the folder name only when it resolves back to the same path under the Profiles directory, otherwise the absolute path.
 - Sidebar rows share one grid; the chat header is centred on the transcript column with author shown once per run; automation detail shows a readable name and schedule; mobile drawer uses the shared easing and 40px touch targets.
 - Verification: `bun run check` and `bun run test` (785 pass) passed; web suite 80 pass. Opus review findings resolved.
+- Polish after a live check: settings load once the socket and Profile are ready (startup no longer auto-opens or auto-closes the dialog), full-width thinking slider, visible off switches in dark mode, restored extension row padding, and a `min(640px, 100dvh - 64px)` desktop dialog height.
+
+## 2026-09-28 — Release 0.3.0
+
+- Bumped to 0.3.0 and moved the Unreleased removals into a 0.3.0 changelog covering the core review: TUI removal, session writer lease, skipped broken extensions, wake handoff, `extensions update --restart`, required-package refresh, Pi 0.87.1 and the web UI redesign.
