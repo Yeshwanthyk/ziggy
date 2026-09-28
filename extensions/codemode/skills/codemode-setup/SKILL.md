@@ -1,6 +1,6 @@
 ---
 name: codemode-setup
-description: Set up or troubleshoot Ziggy Code Mode for a Profile: select the package, create codemode.json, allow MCP stdio tools, and reopen the runtime.
+description: "Set up or troubleshoot Ziggy Code Mode for a Profile: select the package, create codemode.json, allow MCP stdio tools, and reopen the runtime."
 ---
 
 # Code Mode setup
