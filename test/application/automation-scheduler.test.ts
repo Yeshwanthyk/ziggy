@@ -18,6 +18,7 @@ import {
   readScheduleRecords,
 } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
+import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import {
   AutomationDatabaseError,
   AutomationSchedulerError,
@@ -309,6 +310,7 @@ describe("automation scheduler engine", () => {
           gate: { run: () => Effect.succeed({ kind: "passed" }) },
           files: automationFileStore,
           printReply: () => Effect.void,
+          appendStoredResult: appendStoredAutomationResult,
           loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
           loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
           loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
@@ -536,6 +538,7 @@ describe("automation scheduler engine", () => {
       gate: { run: () => Effect.succeed({ kind: "passed" }) },
       files: automationFileStore,
       printReply: () => Effect.void,
+      appendStoredResult: appendStoredAutomationResult,
       loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
       loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
       loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),

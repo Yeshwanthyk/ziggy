@@ -8,6 +8,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Schema } from "effect";
 import { makeAutomationRunStore, readAutomationRuns } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
+import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
 import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
 import { readSessionHistory } from "ziggy/adapters/pi/session-history";
@@ -104,6 +105,7 @@ const capabilities: AutomationCapabilities = {
   gate: { run: () => Effect.succeed({ kind: "passed" }) },
   files: automationFileStore,
   printReply: () => Effect.void,
+  appendStoredResult: appendStoredAutomationResult,
   loadTelegramConfig: () => Effect.never,
   loadDiscordConfig: () => Effect.never,
   loadSlackConfig: () => Effect.never,

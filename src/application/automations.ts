@@ -72,7 +72,7 @@ export interface AutomationCapabilities {
   readonly gate: AutomationGate;
   readonly files: AutomationFileStore;
   readonly printReply: (reply: string) => Effect.Effect<void>;
-  readonly appendStoredResult?: typeof appendStoredAutomationResult;
+  readonly appendStoredResult: typeof appendStoredAutomationResult;
   readonly loadTelegramConfig: typeof loadGatewayConfig;
   readonly loadDiscordConfig: typeof loadDiscordGatewayConfig;
   readonly loadSlackConfig: typeof loadSlackGatewayConfig;
@@ -225,7 +225,7 @@ const deliver = (
 
       return yield* (
         context?.registry === undefined
-          ? (capabilities.appendStoredResult ?? appendStoredAutomationResult)(profile.path, result)
+          ? capabilities.appendStoredResult(profile.path, result)
           : context.registry.deliverAutomationResult(profile, result)
       ).pipe(
         Effect.mapError(

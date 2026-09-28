@@ -6,7 +6,6 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import { Deferred, Effect, Exit, Fiber, Option } from "effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -24,6 +23,7 @@ import {
   type RunTerminal,
 } from "ziggy/adapters/bun/automation-sqlite";
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
+import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { TelegramApiError } from "ziggy/adapters/telegram/api";
 import {
   ProviderCallError,
@@ -141,6 +141,7 @@ const harness = (
         }),
     },
     files: automationFileStore,
+    appendStoredResult: appendStoredAutomationResult,
     printReply: (reply) =>
       Effect.sync(() => {
         events.push(`reply:${reply}`);
