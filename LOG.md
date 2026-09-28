@@ -1122,3 +1122,10 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `listProfileSessionSummaries` lists id, title, last activity and whether the session is held, without opening transcripts for writing; bad transcripts are skipped with a warning. Real lease acquirers wait up to 40 ms so a listing probe can't cause a false refusal.
 - `listProfileExtensionsWithHealth` returns the listing plus skipped packages and their diagnostics for the UI gateway.
 - Verification: `bun run check` and `bun run test` (758 pass) passed. Opus review findings resolved.
+
+## Adapter resume hardening
+
+- Session lookup skips unrelated corrupt, symlinked and duplicate transcripts, and refuses only an ambiguous id, so one bad file no longer blocks resuming good sessions.
+- Resume marks the session as switching: prompts, steers, follow-ups and re-entrant extension session commands fail with `SessionBusy` instead of racing teardown or deadlocking on the control lock.
+- Event subscriptions rebind before extension binding, and each rebind listener is removable on its own.
+- Verification: `bun run check` and `bun run test` (759 pass) passed.
