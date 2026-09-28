@@ -2,17 +2,17 @@
 
 A folder that is an assistant. Drop the binary, `ziggy init`, shape `SOUL.md`, talk to it. Zero tokens while idle. Local first; channels and automations after local chat works.
 
-Two standing principles: the Profile is plain visible files — open the folder and grok the whole assistant at a glance. And every face — TUI, CLI, gateway channels (Telegram first; Slack, GUI, anything after) — talks to the same client-neutral core; nothing is gated to one client.
+Two standing principles: the Profile is plain visible files — open the folder and grok the whole assistant at a glance. And every face — web UI, CLI, ACP, and gateway channels — talks to the same client-neutral core; nothing is gated to one client.
 
 One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.87.1` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
 
-Start local and in-process: `init`, TUI, CLI. No daemon, attach client, socket protocol, replay layer, or compiled-executable gate. A resident gateway arrives only when the first channel needs an independent lifetime; from then on the gateway owns live sessions for its Profile and local faces attach.
+The resident gateway owns live sessions and serves the web UI. `ziggy <name|path>` starts or attaches to it and prints its local URL. `run` remains the one-shot CLI face; there is no local TUI or second session owner.
 
 ## Ownership
 
-**Pi owns:** loop execution, model/provider implementations, auth mechanics, session JSONL (append-only tree, compaction, branching), tool execution, skill parsing and progressive disclosure, event stream, interactive TUI, print mode, RPC mode.
+**Pi owns:** loop execution, model/provider implementations, auth mechanics, session JSONL (append-only tree, compaction, branching), tool execution, skill parsing and progressive disclosure, event stream, print mode, RPC mode.
 
-**Ziggy owns:** Profile discovery/init policy; which Pi resources are admitted; `SOUL.md`, `MEMORY.md`, `USER.md` (deferred — not implemented; see docs/plans/open-ziggy-readiness.md), Profile agent and automation files, later channel routing; Effect services and typed product errors; parent/child session relation policy; process ownership once a gateway exists; command naming and user-facing composition; the sole approved extension catalogue in repository-root `catalog.json`; bundled package payloads compiled from `extensions/`; and Profile-owned Pi packages under `<profile>/extensions/`. A package may contain progressively loaded Agent Skills, executable Pi extensions, or both. One hidden internal Pi extension shapes the TUI.
+**Ziggy owns:** Profile discovery/init policy; which Pi resources are admitted; `SOUL.md`, `MEMORY.md`, `USER.md` (deferred — not implemented; see docs/plans/open-ziggy-readiness.md), Profile agent and automation files, later channel routing; Effect services and typed product errors; parent/child session relation policy; process ownership once a gateway exists; command naming and user-facing composition; the sole approved extension catalogue in repository-root `catalog.json`; bundled package payloads compiled from `extensions/`; and Profile-owned Pi packages under `<profile>/extensions/`. A package may contain progressively loaded Agent Skills, executable Pi extensions, or both.
 
 For extensions, the shelf folder name and `extensions.json` selection ID are Ziggy's local identity; `package.json.name` is independent upstream package metadata. For example, shelf ID `computer-use` may retain the upstream name `@injaneity/pi-computer-use`.
 
@@ -26,7 +26,7 @@ The one Pi-importing adapter constructs a runtime per Profile:
 2. `SessionManager.create(profilePath, join(profilePath, "sessions"))` — Pi supports a custom session directory; its JSONL is already append-only, tree-structured, versioned.
 3. `createAgentSessionServices({ cwd: profilePath, agentDir: profilePath, resourceLoaderOptions })` → `createAgentSessionFromServices(...)` → `createAgentSessionRuntime(...)`.
 4. Before constructing Pi, decode `<profile>/extensions.json` (missing means no optional packages), resolve each selected ID from `<profile>/extensions/<id>/` first or from an ID compiled into Ziggy from `catalog.json`, and copy required plus selected packages onto that Profile shelf. The repository package folder is generator input, not a runtime catalogue: an unapproved ID is rejected. Keep Pi discovery disabled. Skills load from those Profile folders: selected packages first, then required `extension-authoring`, `pi-packages`, and `ziggy-operations`. Executable code comes from copied Profile package manifests. Selection changes apply only to a newly opened runtime or restarted resident process.
-5. Use Pi's `ModelRuntime` and `SettingsManager` pointed at Profile-local `auth.json`, `models.json`, and settings. Profile files are authoritative when Ziggy constructs any new or resumed runtime: resolve the model through those Pi services and pass it explicitly to `createAgentSessionFromServices`. The Profile default comes from `settings.json`; an automation may override `provider`/`model`/`thinking` in its own frontmatter for that run's session only. Never rewrite session JSONL to publish a Profile model change. An already-open TUI or resident chat keeps its in-memory model until reopened or restarted. No Ziggy provider or session formats.
+5. Use Pi's `ModelRuntime` and `SettingsManager` pointed at Profile-local `auth.json`, `models.json`, and settings. Profile files are authoritative when Ziggy constructs any new or resumed runtime: resolve the model through those Pi services and pass it explicitly to `createAgentSessionFromServices`. The Profile default comes from `settings.json`; an automation may override `provider`/`model`/`thinking` in its own frontmatter for that run's session only. Never rewrite session JSONL to publish a Profile model change. An already-open resident chat keeps its in-memory model until reopened or restarted. No Ziggy provider or session formats.
 
 See `docs/research/pi-sdk-surface.md` for exact signatures.
 
@@ -35,13 +35,13 @@ See `docs/research/pi-sdk-surface.md` for exact signatures.
 One package, source directories, no workspaces:
 
 ```text
-faces/{init,tui,cli}   ->  application/ZiggyAgent (Effect service)
+faces/{cli,web,acp}   ->  application/ZiggyAgent (Effect service)
 application            ->  domain schemas/errors/policies
 application            ->  adapters/pi/PiAgent (only Pi SDK importer)
 adapters               ->  filesystem/Bun + published Pi SDK
 ```
 
-`ZiggyAgent` is client-neutral: open a Profile, submit/steer/abort a Session, observe events, close resources. The TUI face delegates to Pi `InteractiveMode`; the CLI face delegates to `runPrintMode`. The gateway later invokes the same application service in-process.
+`ZiggyAgent` is client-neutral: open a Profile, submit/steer/abort a Session, observe events, close resources. The CLI face delegates to `runPrintMode`; the web UI and other channels use resident-owned sessions through the same application service.
 
 ```text
 face -> ZiggyAgent Effect -> PiAgent adapter -> Pi AgentSessionRuntime Promise API
@@ -54,7 +54,7 @@ Only the adapter imports Pi. Only executable entrypoints run Effects.
 
 ```text
 ziggy init <name|path>       create a Profile (SOUL.md); names resolve under ~/.ziggy/profiles
-ziggy <name|path>            open the Profile in the TUI
+ziggy <name|path>            start or attach to the resident and print the web UI URL
 ziggy run [-c] <name|path> "…"   one-shot answer; -c continues the latest session
 ziggy wake <name|path> <id>  manually wake an automation (gate can stop it before any model call)
 ziggy sessions list <name|path>              list safe Pi session metadata
@@ -76,9 +76,9 @@ Each primitive ships with one walking-skeleton proof before the next begins.
 
 1. **Profile** — path is identity; `init` is idempotent and never overwrites changed human content. Creates `SOUL.md` only; Pi-owned files appear when Pi needs them. _Proof:_ `ziggy init` twice — first creates, second refuses to clobber.
 2. **Provider** — Pi's provider/model/auth vocabulary unchanged; a Provider never owns a loop. _Proof:_ one non-persistent, no-tools prompt via `SessionManager.inMemory()` returns streamed text or a typed config/provider error.
-3. **Session** — Pi's Profile-local `SessionManager`; client-neutral prompt/steer/abort/events. Read-only list/show recursively project only path, IDs, lineage, timestamps, entry counts, model/thinking changes, usage, and terminal state; they reject symlinked roots/files and never expose transcript content. _Proof:_ one TUI turn, exit, resume the same JSONL session via CLI print; filesystem snapshots prove list/show create and rewrite nothing.
+3. **Session** — Pi's Profile-local `SessionManager`; client-neutral prompt/steer/abort/events. Read-only list/show recursively project only path, IDs, lineage, timestamps, entry counts, model/thinking changes, usage, and terminal state; they reject symlinked roots/files and never expose transcript content. _Proof:_ one resident turn, disconnect, inspect the same JSONL session via CLI; filesystem snapshots prove list/show create and rewrite nothing.
 4. **Memory** — retained facts separate from transcripts, all plain markdown in the Profile. `MEMORY.md` is assistant-wide; `memory/users/<id>.md` is per-person and loaded only in 1:1 contexts; `memory/groups/<id>.md` is shared per group and is the only extra memory loaded in group contexts — individual user memories never leak into groups. Capped, reject-on-overflow, never silent truncation. _Proof:_ a Ziggy-owned Pi tool atomically replaces a bounded memory doc mid-chat; the next session sees the fact via prompt context; transcript untouched. A session-recall package may build a disposable projection of Pi JSONL, but it is never a second memory or compaction authority.
-5. **Extension** — `catalog.json` is the sole approved public catalogue. Approved packages are compiled into the Ziggy executable; `<profile>/extensions/<id>/` holds copied bundled packages and Profile-owned packages. `<profile>/extensions.json` is the sole active-selection record, and a Profile-owned package wins over an approved bundled package with the same ID. `pi-packages`, `extension-authoring`, and `ziggy-operations` remain mandatory required packages. CLI and TUI share one select/deactivate lifecycle, and all faces share one runtime resolver. _Proof:_ missing, invalid, and unapproved selections fail closed; Profile-owned packages and skills win collisions; selected and required packages load from Profile folders; catalogue list/show use generated metadata; and selection writes are atomic.
+5. **Extension** — `catalog.json` is the sole approved public catalogue. Approved packages are compiled into the Ziggy executable; `<profile>/extensions/<id>/` holds copied bundled packages and Profile-owned packages. `<profile>/extensions.json` is the sole active-selection record, and a Profile-owned package wins over an approved bundled package with the same ID. `pi-packages`, `extension-authoring`, and `ziggy-operations` remain mandatory required packages. CLI owns select/deactivate; the web UI currently lists selected extensions but has no picker. All faces share one runtime resolver. _Proof:_ missing, invalid, and unapproved selections fail closed; Profile-owned packages and skills win collisions; selected and required packages load from Profile folders; catalogue list/show use generated metadata; and selection writes are atomic.
 6. **Gateway** — first resident process; first channel is Telegram, with embedded `ZiggyAgent` in-process. Channel adapters are thin: receive message, resolve context (1:1 vs group) for memory admission, invoke the core, deliver the reply. _Proof:_ one owner-authorized Telegram message in, one reply out; gateway exclusively owns live sessions.
 7. **Automation** — file-authored triggers with a cheap wake-gate; a run gets a fresh session. Optional `provider`/`model`/`thinking` frontmatter override the Profile default for that automation's own session; omitted fields inherit. A leading `@agent-id` still uses `agents/<id>.md`. _Proof:_ gate false → zero model calls; gate true → fresh session + one result through the existing delivery face.
 8. **Profile Agent** — `agents/<id>.md` is the sole role/model/reasoning/tool policy authority. Every face discovers and selects agents identically; a leading `@agent-id` is validated before a provider call and guides the parent model. Children cannot use `memory_write`, `agent_run`, or `agent_discuss`, and discussion children have no tools. _Proof:_ a completed parent tool call has one linked child JSONL, and one completed direct run has one root JSONL with matching resolved policy.
@@ -95,4 +95,4 @@ Per slice: the walking-skeleton proof, tests only for a real invariant or regres
 
 ## Not building
 
-Custom agent loop, provider abstraction, or session engine. Multi-package workspaces. Daemon/attach/reconnect before a channel needs residency. Custom lint rule suites. Stage manifests, evidence bundles, verifier agents, scenario registries, coverage-driven Pi mocks, or a custom network protocol.
+Custom agent loop, provider abstraction, or session engine. Multi-package workspaces. A separate local TUI or agent loop outside the resident. Custom lint rule suites. Stage manifests, evidence bundles, verifier agents, scenario registries, coverage-driven Pi mocks, or a custom network protocol.

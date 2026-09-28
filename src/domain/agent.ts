@@ -231,5 +231,3 @@ export type ProfileSpecialistError =
   | SpecialistThinkingUnsupported
   | SpecialistToolUnsupported
   | SpecialistRunFailed;
-
-export type OpenTuiError = ZiggyAgentError | ProfileAgentInvalid;

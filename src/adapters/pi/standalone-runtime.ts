@@ -3,7 +3,12 @@ import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { setBedrockProviderModule } from "@earendil-works/pi-ai/compat";
 import type { ObjectEncodingOptions, PathOrFileDescriptor } from "node:fs";
 import { Predicate } from "effect";
-import { compiledAssetPath, piBuiltinPhotonWasmPath } from "./tui-themes";
+import photonWasmFile from "../../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" };
+
+const piBuiltinPhotonWasmPath: string = `${photonWasmFile}`;
+
+const compiledAssetPath = (path: string): boolean =>
+  path.includes("$bunfs") || path.includes("~BUN") || path.includes("%7EBUN");
 
 const photonWasmFilename = "photon_rs_bg.wasm";
 

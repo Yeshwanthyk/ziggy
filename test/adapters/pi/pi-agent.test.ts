@@ -43,7 +43,6 @@ import {
   makeSessionChatHandle,
   openChat,
   openSpecialistChat,
-  openTui,
   promptForAssistantText,
   progressToolDetail,
   runSpecialist,
@@ -1393,7 +1392,7 @@ describe("Profile specialist runtime integration", () => {
 });
 
 describe("Profile agent admission across faces", () => {
-  test("TUI, print, and gateway chat reject the same invalid agent before Pi opens", async () => {
+  test("print and gateway chat reject the same invalid agent before Pi opens", async () => {
     const profilePath = await temporaryProfile();
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
     await mkdir(join(profilePath, "agents"), { recursive: true });
@@ -1406,7 +1405,6 @@ describe("Profile agent admission across faces", () => {
     const target = { path: profilePath, name: "Profile" };
 
     const results = await Promise.all([
-      Effect.runPromise(openTui(target, { kind: "local" }, process.cwd()).pipe(Effect.result)),
       Effect.runPromise(
         askOnce(target, "prompt", false, { kind: "local" }, process.cwd()).pipe(Effect.result),
       ),

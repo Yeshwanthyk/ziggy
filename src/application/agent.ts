@@ -1,10 +1,8 @@
 import { Context, Effect, Layer } from "effect";
-import type { AutomationTuiHandler } from "../adapters/pi/automation-tui";
 import { PiAgent, type ChatSessionMode } from "../adapters/pi/pi-agent";
 import type {
   ChatModelOverride,
   ChatNotStreaming,
-  OpenTuiError,
   ProfileAgentRunContext,
   ProfileAgentRunResult,
   ProfileSpecialistError,
@@ -107,11 +105,6 @@ export interface ZiggyAgentApi {
     context: ChatContext,
     options?: RunOnceOptions,
   ) => Effect.Effect<number, ZiggyAgentError>;
-  readonly openTui: (
-    target: ProfileTarget,
-    context: ChatContext,
-    automationHandler?: AutomationTuiHandler,
-  ) => Effect.Effect<number, OpenTuiError>;
   readonly openChat: (
     target: ProfileTarget,
     context: ChatContext,
@@ -152,11 +145,6 @@ export const ZiggyAgentLive = Layer.effect(
         context: ChatContext,
         options?: RunOnceOptions,
       ) => piAgent.askOnce(target, prompt, continueSession, context, options),
-      openTui: (
-        target: ProfileTarget,
-        context: ChatContext,
-        automationHandler?: AutomationTuiHandler,
-      ) => piAgent.openTui(target, context, automationHandler),
       openChat: (
         target: ProfileTarget,
         context: ChatContext,

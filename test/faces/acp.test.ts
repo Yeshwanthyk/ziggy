@@ -48,7 +48,6 @@ const decodeNewSessionWithModels = Schema.decodeUnknownSync(
 
 const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
   runOnce: () => Effect.never,
-  openTui: () => Effect.never,
   openChat,
   openSpecialistChat: () => Effect.never,
   runSpecialist: () => Effect.never,
@@ -328,7 +327,6 @@ test("ACP routes sessions to a specialist when --agent is set", async () => {
           false,
           {
             runOnce: () => Effect.never,
-            openTui: () => Effect.never,
             openChat: () => Effect.never,
             openSpecialistChat: (target, agentId) =>
               Effect.sync(() => {
@@ -419,7 +417,6 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
     const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
     const agent = {
       runOnce: () => Effect.never,
-      openTui: () => Effect.never,
       openChat: () => Effect.sync(() => {
         console.log("incidental open log");
         return handle;

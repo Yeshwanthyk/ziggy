@@ -20,7 +20,6 @@ export const ziggyHelpTopics = [
   "serve",
   "web",
   "gateway",
-  "tui",
 ] as const satisfies ReadonlyArray<HelpTopic>;
 
 export const isZiggyHelpTopic = (value: string): value is HelpTopic =>
@@ -38,7 +37,6 @@ const serveHelp = `usage:
 
 const generalHelp = `Usage:
   ziggy [<name|path>]
-  ziggy tui [<name|path>]
   ziggy run [-c|--continue] [--json] [--session <id>] <name|path> <prompt...>
   ziggy acp <name|path> [--shared] [--agent <agent-id>]
   ziggy init <name|path> [--minimal] [--provider <id>] [--model <id>] [--thinking <level>] [--non-interactive]
@@ -94,7 +92,6 @@ const topicHelp = {
   serve: serveHelp,
   web: "usage:\n  ziggy web configure <name|path> --port <port> [--public-url <url>]\n  ziggy web pair <name|path>\n  ziggy web revoke <name|path>",
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
-  tui: "usage: ziggy tui [<name|path>]",
 } satisfies Record<HelpTopic, string>;
 
 export const renderZiggyHelp = (topic?: HelpTopic): string =>

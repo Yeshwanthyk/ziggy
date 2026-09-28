@@ -40,6 +40,8 @@ ziggy sessions show <name|path> <session-id|relative-path>
 ziggy serve <name|path>
 ```
 
+`ziggy [<name|path>]` starts or attaches to the resident and prints its local web UI URL. New browsers need a pairing link from `ziggy web pair <name|path>`.
+
 `serve` runs the resident Profile owner, including the automation scheduler and any configured channel loops. `ziggy gateway <name|path>` remains a compatibility alias.
 
 Run `ziggy help` for the complete command surface.

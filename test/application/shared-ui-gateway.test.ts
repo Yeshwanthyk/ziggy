@@ -138,7 +138,6 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
 
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
-    openTui: () => Effect.succeed(0),
     openChat: (target) => {
       openedPaths.push(target.path);
       const handle = handles.get(target.path);

@@ -20,8 +20,7 @@ export type HelpTopic =
   | "memory"
   | "serve"
   | "web"
-  | "gateway"
-  | "tui";
+  | "gateway";
 
 export type CliCommand =
   | { readonly _tag: "Help"; readonly topic?: HelpTopic }
@@ -152,7 +151,7 @@ export type CliCommand =
   | { readonly _tag: "WebRevoke"; readonly target: string }
   | { readonly _tag: "Gateway"; readonly target: string }
   | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
-  | { readonly _tag: "Tui"; readonly target: string };
+  | { readonly _tag: "Open"; readonly target: string };
 
 export class CliInputInvalid extends Schema.TaggedErrorClass<CliInputInvalid>()("CliInputInvalid", {
   message: Schema.String,

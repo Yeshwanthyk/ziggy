@@ -127,7 +127,7 @@ test("preflight uses the production resource-loader shape for arbitrary packages
   expect(result).toEqual({
     extensionPathCount: 1,
     skillPathCount: 4,
-    extensionFactoryCount: 7,
+    extensionFactoryCount: 6,
   });
   const loaderOptions = snapshots[0]?.resourceLoaderOptions;
   expect(loaderOptions).toMatchObject({
@@ -148,24 +148,17 @@ test("preflight uses the production resource-loader shape for arbitrary packages
     "pi_docs",
     "ziggy_help",
     "ziggy-session-name",
-    "ziggy-tui",
     "ziggy-profile-agents",
     "ziggy-profile-memory",
     "ziggy-ephemeral-prompt-context",
   ]);
   const inlineExtensions = servicesSnapshots[0]?.resourceLoader.getExtensions().extensions ?? [];
-  const ziggyTui = inlineExtensions.find((extension) => extension.path === "<inline:ziggy-tui>");
 
   const naming = inlineExtensions.find(
     (extension) => extension.path === "<inline:ziggy-session-name>",
   );
 
   expect(naming?.handlers.get("before_agent_start")).toHaveLength(1);
-  expect(ziggyTui === undefined ? [] : [...ziggyTui.commands.keys()]).toEqual([
-    "agents",
-    "automations",
-    "extensions",
-  ]);
   expect(inlineExtensions.map((extension) => extension.path)).toEqual(
     expect.arrayContaining([
       "<inline:ziggy-profile-agents>",
@@ -212,28 +205,6 @@ test("preflight reports skill diagnostics independently of extension loading", a
     expect.arrayContaining([
       expect.objectContaining({
         source: join(profilePath, "extensions", "bad-skill", "skills", "bad-skill", "SKILL.md"),
-      }),
-    ]),
-  );
-});
-
-test("preflight rejects a package command that conflicts with a Ziggy core registration", async () => {
-  const profilePath = await makeProfile();
-  await writePackage(profilePath, "conflict", { commandConflict: "agents" });
-  await stageRequiredPackages(profilePath);
-
-  const failure = await failureFor(profilePath, ["conflict"]);
-
-  expect(failure).toMatchObject({
-    _tag: "ProfileExtensionPreflightFailed",
-    stage: "extensions",
-  });
-  const diagnostics = failure._tag === "ProfileExtensionPreflightFailed" ? failure.diagnostics : [];
-  expect(diagnostics).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        source: "<inline:ziggy-tui>",
-        message: expect.stringContaining('Command "agents" conflicts with'),
       }),
     ]),
   );

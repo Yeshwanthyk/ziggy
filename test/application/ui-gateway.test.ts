@@ -71,7 +71,6 @@ const makeAgent = (
   overrides: Partial<ZiggyAgentApi> = {},
 ): ZiggyAgentApi => ({
   runOnce: () => Effect.succeed(0),
-  openTui: () => Effect.succeed(0),
   openChat: () => Effect.succeed(handle),
   openSpecialistChat: () => Effect.succeed(handle),
   runSpecialist: () =>

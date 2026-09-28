@@ -28,16 +28,6 @@ declare module "*.mjs" {
   export default path;
 }
 
-declare module "*theme/dark.json" {
-  const path: string;
-  export default path;
-}
-
-declare module "*theme/light.json" {
-  const path: string;
-  export default path;
-}
-
 declare module "*.png" {
   const path: string;
   export default path;
@@ -64,21 +54,6 @@ declare module "*.js" {
 }
 
 declare module "*.webp" {
-  const path: string;
-  export default path;
-}
-
-declare module "*export-html/template.js" {
-  const path: string;
-  export default path;
-}
-
-declare module "*export-html/vendor/highlight.min.js" {
-  const path: string;
-  export default path;
-}
-
-declare module "*export-html/vendor/marked.min.js" {
   const path: string;
   export default path;
 }

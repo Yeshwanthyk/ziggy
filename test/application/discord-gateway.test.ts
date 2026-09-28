@@ -113,7 +113,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -207,7 +206,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -354,7 +352,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -526,7 +523,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
@@ -609,7 +605,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (target, context, sessionDirectory) =>
@@ -700,7 +695,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -820,7 +814,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -914,7 +907,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, _context, sessionDirectory) =>
@@ -1040,7 +1032,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1165,7 +1156,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1263,7 +1253,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1356,7 +1345,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () => {
@@ -1435,7 +1423,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1531,7 +1518,6 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>

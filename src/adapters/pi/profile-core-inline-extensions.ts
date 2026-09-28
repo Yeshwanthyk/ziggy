@@ -10,13 +10,8 @@ import { ProviderConfigError } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { renderMemoryForPrompt, type MemoryDocument } from "../../domain/memory";
 import { fileSystemCauseDetails } from "../fs/cause";
-import type { AutomationTuiDispatch } from "./automation-tui";
 import { createPiDocsExtension } from "./pi-docs";
-import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
-import {
-  createProfileAgentGuidanceExtension,
-  createZiggyTuiExtension,
-} from "./ziggy-tui-extension";
+import { createProfileAgentGuidanceExtension } from "./profile-agent-guidance";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { createSessionNamingExtension } from "./session-name";
 
@@ -157,8 +152,6 @@ export interface ProfileCoreInlineExtensionOptions {
   readonly profilePath: string;
   readonly agents: ReadonlyArray<ProfileAgent>;
   readonly memoryDocuments: ReadonlyArray<MemoryDocument>;
-  readonly extensionSelection?: ProfileExtensionSelectionRunner | undefined;
-  readonly automationDispatch?: AutomationTuiDispatch | undefined;
   readonly ephemeralPromptContext: () => string | undefined;
 }
 
@@ -178,14 +171,11 @@ export const createProfileCoreInlineExtensions: ProfileCoreInlineExtensionFactor
   profilePath,
   agents,
   memoryDocuments,
-  extensionSelection,
-  automationDispatch,
   ephemeralPromptContext,
 }) => [
   createPiDocsExtension(),
   createZiggyHelpExtension(),
   createSessionNamingExtension(),
-  createZiggyTuiExtension(profilePath, agents, extensionSelection, automationDispatch),
   ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
   createProfileMemoryExtension(profilePath, memoryDocuments),
   createEphemeralPromptContextExtension(ephemeralPromptContext),

@@ -444,7 +444,6 @@ describe("resident gateway supervision", () => {
 
     const agent: ZiggyAgentApi = {
       runOnce: () => Effect.never,
-      openTui: () => Effect.never,
       openChat: () => Effect.never,
       openSpecialistChat: () => Effect.never,
       runSpecialist: () => Effect.never,

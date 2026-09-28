@@ -115,7 +115,6 @@ const makeFixture = async (broadcast: string) => {
 
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
-    openTui: () => Effect.succeed(0),
     openChat: (_target, context, directory, mode) =>
       Effect.sync(() => {
         opened.push({ context: context.kind, directory, mode });

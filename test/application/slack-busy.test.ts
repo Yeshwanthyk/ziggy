@@ -61,7 +61,6 @@ for (const scenario of [
 
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
-          openTui: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({ answer: "unused", session: { id: "unused", file: "/unused" } }),
           openSpecialistChat: () => Effect.succeed(handle),

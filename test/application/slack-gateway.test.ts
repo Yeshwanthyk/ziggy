@@ -80,7 +80,6 @@ describe("Slack gateway boundary", () => {
 
           const agent: ZiggyAgentApi = {
             runOnce: () => Effect.succeed(0),
-            openTui: () => Effect.succeed(0),
             openChat: () => Effect.never,
             openSpecialistChat: () => Effect.never,
             runSpecialist: () => Effect.never,
@@ -704,7 +703,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -892,7 +890,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1158,7 +1155,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, _context, sessionDirectory) =>
@@ -1338,7 +1334,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1541,7 +1536,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, context, sessionDirectory) =>
@@ -1817,7 +1811,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -1968,7 +1961,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2119,7 +2111,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2231,7 +2222,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2395,7 +2385,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2496,7 +2485,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2612,7 +2600,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2707,7 +2694,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -2787,7 +2773,6 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>

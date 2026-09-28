@@ -133,7 +133,6 @@ describe("Telegram gateway startup", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: (_target, context, sessionDirectory) =>
@@ -219,7 +218,6 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -292,7 +290,6 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -364,7 +361,6 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>

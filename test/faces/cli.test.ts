@@ -42,10 +42,10 @@ describe("CLI decoding", () => {
     await expect(decode(["-V"])).resolves.toEqual({ _tag: "Version" });
   });
 
-  test("keeps bare and explicit TUI entry", async () => {
-    await expect(decode([])).resolves.toEqual({ _tag: "Tui", target: "." });
-    await expect(decode(["buddy"])).resolves.toEqual({ _tag: "Tui", target: "buddy" });
-    await expect(decode(["tui", "help"])).resolves.toEqual({ _tag: "Tui", target: "help" });
+  test("opens the resident UI for a bare profile", async () => {
+    await expect(decode([])).resolves.toEqual({ _tag: "Open", target: "." });
+    await expect(decode(["buddy"])).resolves.toEqual({ _tag: "Open", target: "buddy" });
+    await expect(decode(["tui", "help"])).rejects.toMatchObject({ _tag: "CliInputInvalid" });
   });
 
   test("preserves current command shapes", async () => {
@@ -411,7 +411,7 @@ describe("CLI decoding", () => {
   });
 
   test("renders stable general and command help", () => {
-    expect(renderHelp()).toContain("ziggy tui [<name|path>]");
+    expect(renderHelp()).toContain("ziggy [<name|path>]");
     expect(renderHelp()).toContain("ziggy models set");
     expect(renderHelp()).toContain("ziggy agents create|list|show|validate|run");
     expect(renderHelp()).toContain(

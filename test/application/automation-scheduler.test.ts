@@ -285,7 +285,6 @@ describe("automation scheduler engine", () => {
               answer: "local reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openTui: () => Effect.succeed(0),
           openSpecialistChat: () =>
             Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
           openChat: () =>
@@ -517,7 +516,6 @@ describe("automation scheduler engine", () => {
           answer: "local reply",
           session: { id: "specialist", file: "/sessions/specialist.jsonl" },
         }),
-      openTui: () => Effect.succeed(0),
       openSpecialistChat: () =>
         Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
       openChat: () =>

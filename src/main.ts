@@ -3,11 +3,7 @@ import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Clock, Effect, Exit, Layer, Runtime } from "effect";
 import packageJson from "../package.json" with { type: "json" };
-import type {
-  AutomationTuiFailureCategory,
-  AutomationTuiHandler,
-  AutomationTuiResponse,
-} from "./adapters/pi/automation-tui";
+import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
 import { ProfileExtensionPreflightLive } from "./adapters/pi/profile-extension-preflight";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
@@ -197,24 +193,6 @@ const fail = (message: string) =>
     process.exitCode = 1;
   });
 
-interface AutomationTuiOperationFailure {
-  readonly _tag: string;
-  readonly message: string;
-}
-
-const automationTuiFailure = (failure: AutomationTuiOperationFailure): AutomationTuiResponse => {
-  const category: AutomationTuiFailureCategory =
-    failure._tag === "AutomationInvalid"
-      ? "invalid"
-      : failure._tag === "AutomationEditConflict"
-        ? "changed"
-        : failure._tag === "AutomationNotFound" || failure._tag === "AutomationPaused"
-          ? "not-found"
-          : "unavailable";
-
-  return { kind: "failure", category, message: failure.message };
-};
-
 const program = Effect.gen(function* () {
   const command = yield* decodeCliCommand(process.argv.slice(2));
 
@@ -286,7 +264,7 @@ const program = Effect.gen(function* () {
       }
 
       if (result.minimal) {
-        console.log(`next: ziggy tui ${JSON.stringify(result.profilePath)}`);
+        console.log(`next: ziggy ${JSON.stringify(result.profilePath)}`);
 
         return;
       }
@@ -314,7 +292,7 @@ const program = Effect.gen(function* () {
         }
       }
 
-      console.log(`ready: ziggy tui ${JSON.stringify(result.profilePath)}`);
+      console.log(`ready: ziggy ${JSON.stringify(result.profilePath)}`);
 
       return;
     }
@@ -833,72 +811,20 @@ const program = Effect.gen(function* () {
       return;
     }
 
-    case "Tui": {
+    case "Open": {
       const target = resolveProfileTarget(command.target, resolutionOptions);
+      const owner = yield* residentGateway.status(target);
 
-      const automationHandler: AutomationTuiHandler = (request) =>
-        Effect.gen(function* () {
-          switch (request.kind) {
-            case "overview": {
-              const [definitions, status] = yield* Effect.all(
-                [automationDefinitions.list(target), automationScheduler.status(target)],
-                { concurrency: 2 },
-              );
+      if (owner._tag !== "running") {
+        const started = yield* residentService.install(target, { force: false, start: true });
 
-              return {
-                kind: "overview",
-                definitions,
-                statusText: renderAutomationStatus(status),
-              } satisfies AutomationTuiResponse;
-            }
+        if (started.ready !== true) {
+          return yield* fail("resident did not become ready; inspect ziggy serve status and logs");
+        }
+      }
 
-            case "document": {
-              const document = yield* automationDefinitions.show(target, request.id);
-
-              return { kind: "document", ...document } satisfies AutomationTuiResponse;
-            }
-
-            case "save": {
-              const document = yield* automationDefinitions.save(
-                target,
-                request.id,
-                request.expectedSource,
-                request.source,
-              );
-
-              return { kind: "saved", ...document } satisfies AutomationTuiResponse;
-            }
-
-            case "runs": {
-              const automationId =
-                request.id === undefined ? undefined : yield* validateAutomationId(request.id);
-
-              const runs = yield* automationScheduler.runs(target, automationId);
-
-              return {
-                kind: "runs",
-                text: renderAutomationRuns(runs, yield* Clock.currentTimeMillis),
-                ...Object.fromEntries(
-                  request.id === undefined ? [] : ([["automationId", request.id]] as const),
-                ),
-              } satisfies AutomationTuiResponse;
-            }
-
-            case "pause":
-            case "resume": {
-              const transitioned = yield* request.kind === "pause"
-                ? automationDefinitions.pause(target, request.id)
-                : automationDefinitions.resume(target, request.id);
-
-              return {
-                kind: "transitioned",
-                ...transitioned,
-              } satisfies AutomationTuiResponse;
-            }
-          }
-        }).pipe(Effect.catch((failure) => Effect.succeed(automationTuiFailure(failure))));
-
-      process.exitCode = yield* agent.openTui(target, { kind: "local" }, automationHandler);
+      const ui = yield* readUiServerProjection(target.path);
+      console.log(`http://127.0.0.1:${ui.port}`);
 
       return;
     }

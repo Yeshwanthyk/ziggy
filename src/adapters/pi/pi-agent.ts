@@ -8,13 +8,11 @@ import {
   type AutomationConversationResult,
 } from "../../domain/automation";
 import {
-  InteractiveMode,
   SessionManager,
   createAgentSessionFromServices,
   defineTool,
   createAgentSessionRuntime,
   createAgentSessionServices,
-  initTheme,
   runPrintMode,
   type AgentSessionEvent,
   type AgentSessionRuntime,
@@ -36,7 +34,6 @@ import {
   ProviderConfigError,
   SpecialistAgentNotFound,
   type ChatModelOverride,
-  type OpenTuiError,
   type ProfileAgentRunContext,
   type ProfileAgentRunResult,
   type ProfileSpecialistError,
@@ -84,17 +81,10 @@ import {
 } from "./specialist";
 import { sessionReference } from "./session-lineage";
 import {
-  makeAutomationTuiDispatch,
-  type AutomationTuiDispatch,
-  type AutomationTuiHandler,
-} from "./automation-tui";
-import { createProfileExtensionSelectionRunner } from "./profile-extension-selection";
-import {
   ProfileExtensionRollbackFailed,
   type ProfileExtensionPreflightFailed,
   type ProfileExtensionsApi,
 } from "../../domain/profile-extension";
-import { leaseCompiledPiTuiAssets } from "./tui-themes";
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
 import { ensurePiSessionName } from "./session-name";
@@ -119,11 +109,6 @@ export interface PiAgentApi {
     context: ChatContext,
     options?: RunOnceOptions,
   ) => Effect.Effect<number, ZiggyAgentError>;
-  readonly openTui: (
-    target: ProfileTarget,
-    context: ChatContext,
-    automationHandler?: AutomationTuiHandler,
-  ) => Effect.Effect<number, OpenTuiError>;
   readonly openChat: (
     target: ProfileTarget,
     context: ChatContext,
@@ -246,13 +231,6 @@ const isProfileExtensionPreflightFailure = (
   cause: unknown,
 ): cause is ProfileExtensionPreflightFailed =>
   Predicate.isTagged(cause, "ProfileExtensionPreflightFailed");
-
-const unavailableAutomationDispatch: AutomationTuiDispatch = () =>
-  Promise.resolve({
-    kind: "failure",
-    category: "unavailable",
-    message: "automation dispatch is unavailable for this Pi runtime",
-  });
 
 interface AgentSessionRuntimeRef {
   current?: AgentSessionRuntime;
@@ -1116,7 +1094,6 @@ interface ProfileRuntime extends AgentSessionRuntime {
 
 interface ProfileRuntimeOptions {
   admittedAgents?: ReadonlyArray<ProfileAgent>;
-  automationDispatch?: AutomationTuiDispatch;
   profileExtensions?: ProfileExtensionsApi;
   modelOverride?: ChatModelOverride;
   runtimeFactory?: typeof createAgentSessionRuntime;
@@ -1245,25 +1222,10 @@ const createProfileRuntime = (
       const ephemeralPromptContext: EphemeralPromptContextState = { generation: 0 };
       const voiceHub = createSpecialistVoiceHub();
 
-      const extensionSelection =
-        runtimeOptions.profileExtensions === undefined
-          ? undefined
-          : createProfileExtensionSelectionRunner(
-              profilePath,
-              repositoryRoot,
-              runtimeOptions.profileExtensions,
-            );
-
       const inlineExtensions = createProfileCoreInlineExtensions({
         profilePath,
         agents,
         memoryDocuments: paths.documents,
-        extensionSelection,
-        automationDispatch:
-          runtimeOptions.automationDispatch ??
-          (runtimeOptions.profileExtensions === undefined
-            ? undefined
-            : unavailableAutomationDispatch),
         ephemeralPromptContext: () => ephemeralPromptContext.value,
       });
 
@@ -2308,64 +2270,6 @@ export const runSpecialist = (
     }),
   );
 
-export const openTui = (
-  target: ProfileTarget,
-  context: ChatContext,
-  repositoryRoot: string,
-  automationHandler?: AutomationTuiHandler,
-  profileExtensions?: ProfileExtensionsApi,
-): Effect.Effect<number, OpenTuiError> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const soulPath = yield* requireSoul(target.path);
-
-      const assets = yield* piPromise(target.path, "prepare Pi package assets", () =>
-        leaseCompiledPiTuiAssets(),
-      );
-
-      yield* Effect.addFinalizer(() =>
-        piPromise(target.path, "remove Pi package assets", assets.release).pipe(
-          Effect.catch((failure) => Effect.logWarning("Pi asset cleanup failed", { failure })),
-        ),
-      );
-      const sessionManager = createLocalSessionManager(target.path, "main");
-
-      const automationDispatch =
-        automationHandler === undefined
-          ? undefined
-          : yield* makeAutomationTuiDispatch(automationHandler);
-
-      const runtimeOptions: ProfileRuntimeOptions = {};
-
-      if (automationDispatch !== undefined) runtimeOptions.automationDispatch = automationDispatch;
-
-      if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
-
-      const runtime = yield* createProfileRuntime(
-        target.path,
-        repositoryRoot,
-        soulPath,
-        sessionManager,
-        context,
-        runtimeOptions,
-      );
-
-      yield* Effect.addFinalizer(() =>
-        piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
-          Effect.catch((failure) => Effect.logWarning("Pi runtime cleanup failed", { failure })),
-        ),
-      );
-
-      yield* piPromise(target.path, "open interactive mode", async () => {
-        initTheme();
-        const interactiveMode = new InteractiveMode(runtime, {});
-        await interactiveMode.run();
-      });
-
-      return 0;
-    }),
-  );
-
 export const makePiAgent = (
   repositoryRoot: string,
   profileExtensions: ProfileExtensionsApi,
@@ -2374,8 +2278,6 @@ export const makePiAgent = (
     runSpecialist(target, agentId, task, context, repositoryRoot, profileExtensions),
   askOnce: (target, prompt, continueSession, context, options) =>
     askOnce(target, prompt, continueSession, context, repositoryRoot, options, profileExtensions),
-  openTui: (target, context, automationHandler) =>
-    openTui(target, context, repositoryRoot, automationHandler, profileExtensions),
   openChat: (target, context, sessionDirectory, sessionMode, modelOverride, sessionName) =>
     openChat(
       target,

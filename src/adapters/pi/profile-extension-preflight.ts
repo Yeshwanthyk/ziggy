@@ -11,13 +11,11 @@ import {
   type ProfileExtensionPreflightApi,
   type ProfileExtensionPreflightResult,
 } from "../../domain/profile-extension";
-import type { AutomationTuiDispatch } from "./automation-tui";
 import {
   createProfileCoreInlineExtensions,
   type ProfileCoreInlineExtensionFactory,
   type ProfileCoreInlineExtensionOptions,
 } from "./profile-core-inline-extensions";
-import type { ProfileExtensionSelectionRunner } from "./profile-extension-selection";
 import {
   collectPiResourceDiagnostics,
   piResourceDiagnosticFailure,
@@ -25,18 +23,6 @@ import {
 import { profileResourceLoaderOptions } from "./profile-resource-loader";
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { composePiResources } from "./resources";
-
-const preflightSelection: ProfileExtensionSelectionRunner = {
-  list: () => Promise.resolve({ available: [], selected: [] }),
-  setSelected: (ids) => Promise.resolve({ changed: false, selected: [...ids].sort() }),
-};
-
-const preflightAutomationDispatch: AutomationTuiDispatch = () =>
-  Promise.resolve({
-    kind: "failure",
-    category: "unavailable",
-    message: "automation dispatch is unavailable during Pi preflight",
-  });
 
 const preflightCoreOptions = (
   profilePath: string,
@@ -50,8 +36,6 @@ const preflightCoreOptions = (
     profilePath,
     agents,
     memoryDocuments: memory.documents,
-    extensionSelection: preflightSelection,
-    automationDispatch: preflightAutomationDispatch,
     ephemeralPromptContext: () => undefined,
   };
 };

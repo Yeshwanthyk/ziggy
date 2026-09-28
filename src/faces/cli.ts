@@ -200,7 +200,7 @@ const parseRun = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => 
 const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInputInvalid => {
   const [word, ...rest] = args;
 
-  if (word === undefined) return { _tag: "Tui", target: "." };
+  if (word === undefined) return { _tag: "Open", target: "." };
 
   if (word === "help" || word === "--help" || word === "-h") {
     if (rest.length === 0) return { _tag: "Help" };
@@ -222,12 +222,6 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     if (rest.length !== 0) return invalid("usage: ziggy update");
 
     return { _tag: "Update" };
-  }
-
-  if (word === "tui") {
-    if (rest.length > 1) return invalid("usage: ziggy tui [<name|path>]");
-
-    return { _tag: "Tui", target: rest[0] ?? "." };
   }
 
   if (word === "init") return parseInit(rest);
@@ -718,7 +712,7 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
 
   if (rest.length !== 0) return invalid("usage: ziggy <name|path>");
 
-  return { _tag: "Tui", target: word };
+  return { _tag: "Open", target: word };
 };
 
 export const decodeCliCommand = (

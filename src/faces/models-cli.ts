@@ -23,5 +23,5 @@ export const renderModelSelection = (selection: ModelSelection): string =>
   [
     `selected ${selection.providerId}/${selection.modelId}${selection.thinking === undefined ? "" : ` with thinking ${selection.thinking}`}`,
     "new and resumed sessions use this selection when they open",
-    "reopen an active TUI or run `ziggy serve restart <name|path>` for resident chats",
+    "run `ziggy serve restart <name|path>` to apply the change to resident chats",
   ].join("\n");

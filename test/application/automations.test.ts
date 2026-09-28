@@ -83,7 +83,6 @@ const harness = (
           session: { id: "specialist", file: join(context.sessionDirectory, "specialist.jsonl") },
         })),
       ),
-    openTui: () => Effect.succeed(0),
     openSpecialistChat: () =>
       Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
     openChat: (target, context, sessionPath, mode, model) =>

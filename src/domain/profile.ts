@@ -105,7 +105,7 @@ export type LeadingProfileAgentMention =
 
 const profileAgentIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** Apply the one leading @agent-id policy shared by TUI and automation bodies. */
+/** Apply the one leading @agent-id policy shared by chat and automation bodies. */
 export const parseLeadingProfileAgentMention = (text: string): LeadingProfileAgentMention => {
   if (!text.startsWith("@")) return { kind: "untagged" };
   const tokenEnd = text.search(/\s/u);
