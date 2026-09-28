@@ -79,6 +79,22 @@ test("init creates safe starter folders idempotently without changing human-owne
   }
 });
 
+test("concurrent init creates SOUL.md exactly once", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ziggy-init-race-"));
+  const target = { path: path.join(root, "profile"), name: "Profile" };
+
+  try {
+    const outcomes = await Promise.all(
+      Array.from({ length: 12 }, () => useProfiles((profiles) => profiles.initProfile(target))),
+    );
+
+    expect(outcomes.filter((outcome) => outcome.created)).toHaveLength(1);
+    expect(await readFile(path.join(target.path, "SOUL.md"), "utf8")).toContain("Profile");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOUL.md", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ziggy-minimal-init-test-"));
 

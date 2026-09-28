@@ -256,11 +256,17 @@ const initProfile = (
     let created = false;
 
     if (soulStatus === undefined) {
-      yield* Effect.tryPromise({
+      created = yield* Effect.tryPromise({
         try: () => writeFile(soulPath, soulTemplate(target.name), { flag: "wx" }),
         catch: (cause) => fileSystemError("write", soulPath, cause),
-      });
-      created = true;
+      }).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (failure) => failure.code === "EEXIST",
+          () =>
+            lstatPath(soulPath).pipe(Effect.flatMap(validMemoryFile(soulPath)), Effect.as(false)),
+        ),
+      );
     }
 
     const createdDirectories: Array<"agents" | "automations"> = [];
