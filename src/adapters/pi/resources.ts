@@ -119,8 +119,7 @@ export const composePiResources = (
       ),
     );
 
-    return {
-      optionalPackages: selected.map((item) => ({ id: item.id, packagePath: item.packagePath })),
+    const resources: PiResources = {
       extensionPaths: selected.flatMap((item) =>
         item.extensionPaths.length > 0 ? [item.packagePath] : [],
       ),
@@ -130,6 +129,16 @@ export const composePiResources = (
       ],
       extensionFactories: [],
     };
+
+    return selected.length === 0
+      ? resources
+      : {
+          ...resources,
+          optionalPackages: selected.map((item) => ({
+            id: item.id,
+            packagePath: item.packagePath,
+          })),
+        };
   });
 
 export const discoverPiResources = (
