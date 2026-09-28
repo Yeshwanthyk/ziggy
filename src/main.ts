@@ -487,6 +487,11 @@ const program = Effect.gen(function* () {
 
       if (updated.backupPath !== undefined) console.log(`backup ${updated.backupPath}`);
 
+      if (updated.residentStopped)
+        console.log(
+          `resident stopped; run ziggy serve start ${JSON.stringify(target.path)} (or install the service first)`,
+        );
+
       return;
     }
 

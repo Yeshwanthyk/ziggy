@@ -26,5 +26,6 @@ export interface ExtensionUpdateResult {
   readonly previousHash: string;
   readonly contentHash: string;
   readonly adoptedUnknownOrigin: boolean;
+  readonly residentStopped?: boolean;
   readonly backupPath?: string;
 }

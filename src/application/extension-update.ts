@@ -40,6 +40,7 @@ export const makeExtensionUpdate = (
     readonly catalog?: ExtensionCatalog;
     readonly stage?: ReturnType<typeof makeExtensionInstaller>["installBundled"];
     readonly fence?: typeof withProfileUpdateLock;
+    readonly pending?: typeof hasPendingExtensionUpdates;
     readonly inspectOwner?: typeof inspectGatewayOwner;
     readonly preflight?: ReturnType<typeof makeProfileExtensionPreflight>;
     readonly resident?: {
@@ -54,6 +55,7 @@ export const makeExtensionUpdate = (
   const catalog = options.catalog ?? BUILTIN_EXTENSION_CATALOG;
   const stage = options.stage ?? makeExtensionInstaller(archiveClient).installBundled;
   const fence = options.fence ?? withProfileUpdateLock;
+  const pendingUpdates = options.pending ?? hasPendingExtensionUpdates;
   const inspectOwner = options.inspectOwner ?? inspectGatewayOwner;
   const preflight = options.preflight ?? makeProfileExtensionPreflight();
 
@@ -195,9 +197,33 @@ export const makeExtensionUpdate = (
               } satisfies ExtensionUpdateResult;
             });
 
-            if (oldHash === contentHash) return yield* apply;
+            if (owner._tag !== "running") {
+              const applied = yield* oldHash === contentHash ? apply : fence(target.path, apply);
 
-            if (owner._tag !== "running") return yield* fence(target.path, apply);
+              if (!request.restart || options.resident === undefined)
+                return { ...applied, residentStopped: true };
+
+              const service = yield* options.resident.status(target);
+
+              if (
+                service.managed._tag !== "Success" ||
+                service.managed.success._tag === "not-installed"
+              )
+                return { ...applied, residentStopped: true };
+
+              const started = yield* options.resident.start(target).pipe(Effect.result);
+
+              if (started._tag === "Failure" || started.success.ready !== true)
+                return yield* error(
+                  "resident",
+                  "Update applied; resident not running; use ziggy serve start.",
+                  started._tag === "Failure" ? started.failure : started.success,
+                );
+
+              return applied;
+            }
+
+            if (oldHash === contentHash) return yield* apply;
 
             const resident = options.resident;
 
@@ -250,22 +276,30 @@ export const makeExtensionUpdate = (
                 }
 
                 const applied = yield* fence(target.path, apply).pipe(Effect.result);
+
+                if (applied._tag === "Failure") {
+                  const pending = yield* pendingUpdates(target.path).pipe(Effect.result);
+
+                  if (pending._tag === "Failure" || pending.success) {
+                    const quoted = JSON.stringify(target.path);
+
+                    return yield* error(
+                      "recovery",
+                      `Update failed; recovery needed; rerun \`ziggy extensions update ${quoted} ${id}${request.adopt ? " --adopt" : ""}\`, then \`ziggy serve start ${quoted}\`; resident not running.`,
+                      applied.failure,
+                    );
+                  }
+                }
+
                 const started = yield* resident.start(target).pipe(Effect.result);
                 const running = started._tag === "Success" && started.success.ready === true;
 
-                if (applied._tag === "Failure") {
-                  const pending = yield* hasPendingExtensionUpdates(target.path).pipe(
-                    Effect.result,
-                  );
-
-                  const recovery = pending._tag === "Failure" || pending.success;
-
+                if (applied._tag === "Failure")
                   return yield* error(
-                    recovery ? "recovery" : "filesystem",
-                    `Update failed; ${recovery ? `recovery needed; rerun \`ziggy extensions update ${target.path} ${id}${request.adopt ? " --adopt" : ""} --restart\`` : "old or new version applied"}; resident ${running ? "running" : "not running"}.`,
+                    "filesystem",
+                    `Update failed; old or new version applied; resident ${running ? "running" : "not running"}.`,
                     applied.failure,
                   );
-                }
 
                 if (!running)
                   return yield* error(
@@ -286,7 +320,7 @@ export const makeExtensionUpdate = (
           );
         }),
       );
-    });
+    }).pipe(Effect.map((result): ExtensionUpdateResult => result));
   };
 
   return { update };

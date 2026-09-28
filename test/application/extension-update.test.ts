@@ -45,7 +45,7 @@ const archive = {
     ),
 };
 
-const fixture = async (residentRunning = false) => {
+const fixture = async (residentRunning = false, pendingJournal = false) => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-extension-update-"));
   temporaryRoots.push(root);
   const profile = join(root, "profile");
@@ -91,6 +91,15 @@ const fixture = async (residentRunning = false) => {
   const target = { name: "profile", path: profile };
 
   const service = makeExtensionUpdate(archive, profiles, lock, {
+    pending: pendingJournal
+      ? () =>
+          Effect.promise(() =>
+            writeFile(
+              join(profile, ".runtime", "extension-updates", "weather", "journal.json"),
+              "pending",
+            ),
+          ).pipe(Effect.as(true))
+      : hasPendingExtensionUpdates,
     inspectOwner: () =>
       Effect.succeed(
         running
@@ -287,6 +296,21 @@ describe("bundled extension update", () => {
     expect(f.lifecycle).toEqual(["stage", "stop", "start"]);
   });
 
+  test("a pending journal blocks restart and gives quoted recovery commands", async () => {
+    const f = await fixture(true, true);
+    f.failValidation();
+    await expect(
+      Effect.runPromise(f.service.update(f.target, "weather", { adopt: true, restart: true })),
+    ).rejects.toMatchObject({
+      reason: "recovery",
+      message: expect.stringContaining(
+        `rerun \`ziggy extensions update ${JSON.stringify(f.profile)} weather --adopt\`, then \`ziggy serve start ${JSON.stringify(f.profile)}\``,
+      ),
+    });
+    expect(f.lifecycle).toEqual(["stage", "stop"]);
+    expect(await Effect.runPromise(hasPendingExtensionUpdates(f.profile))).toBe(true);
+  });
+
   test("failed apply restarts the resident and keeps the previous package", async () => {
     const f = await fixture(true);
     f.failValidation();
@@ -297,6 +321,26 @@ describe("bundled extension update", () => {
     expect(await readFile(join(f.profile, "extensions", "weather", "index.ts"), "utf8")).toBe(
       "old bytes\n",
     );
+  });
+
+  test("a stopped resident is reported or started when restart was requested", async () => {
+    const stopped = await fixture();
+
+    const updated = await Effect.runPromise(
+      stopped.service.update(stopped.target, "weather", { adopt: true }),
+    );
+
+    expect(updated.residentStopped).toBe(true);
+    expect(stopped.lifecycle).toEqual(["stage"]);
+
+    const restart = await fixture();
+
+    const restarted = await Effect.runPromise(
+      restart.service.update(restart.target, "weather", { adopt: true, restart: true }),
+    );
+
+    expect(restarted.residentStopped).toBeUndefined();
+    expect(restart.lifecycle).toEqual(["stage", "start"]);
   });
 
   test("failed restart reports that the new package is applied but the resident is down", async () => {
@@ -311,6 +355,7 @@ describe("bundled extension update", () => {
       "new bytes\n",
     );
   });
+
   test("requires explicit adoption, keeps backup, detects same-version content, rejects managed edits", async () => {
     const f = await fixture();
     await expect(Effect.runPromise(f.service.update(f.target, "weather"))).rejects.toMatchObject({
