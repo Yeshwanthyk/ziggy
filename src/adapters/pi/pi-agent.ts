@@ -90,11 +90,13 @@ import {
 import { loadProfileSystemPrompt } from "./profile-prompt";
 import { createProfileCoreInlineExtensions } from "./profile-core-inline-extensions";
 import { ensurePiSessionName } from "./session-name";
+import { findRecentSessionFile, readSessionHeaderOnly } from "./session-discovery";
 import {
   acquireSessionLease,
   makeSessionLeaseTransitions,
   scopedSessionLease,
   SessionLeaseHeld,
+  SessionLeaseFailed,
 } from "./session-lease";
 import { createProfileExtensionTool } from "./profile-extension-tool";
 import {
@@ -896,6 +898,55 @@ export const createLocalSessionManager = (
     ? SessionManager.continueRecent(profilePath, localMainSessionDirectory(profilePath))
     : SessionManager.create(profilePath, join(profilePath, "sessions"));
 
+const prepareLeasedSession = (
+  profilePath: string,
+  directory: string,
+  mode: "continue" | "fresh",
+  explicitFile?: string,
+) =>
+  Effect.uninterruptibleMask(() =>
+    Effect.gen(function* () {
+      const file =
+        explicitFile ??
+        (mode === "continue" ? yield* findRecentSessionFile(profilePath, directory) : undefined);
+
+      const header = file === undefined ? undefined : yield* readSessionHeaderOnly(file);
+      const fresh = file === undefined ? SessionManager.create(profilePath, directory) : undefined;
+      const id = header?.id ?? fresh?.getSessionId();
+
+      if (id === undefined)
+        return yield* sessionLeaseError(profilePath, new Error("session has no id"));
+
+      const release = yield* acquireSessionLease(profilePath, id).pipe(
+        Effect.mapError((cause) => sessionLeaseError(profilePath, cause)),
+      );
+
+      const manager = yield* Effect.try({
+        try: () => (file === undefined ? fresh : SessionManager.open(file, directory, profilePath)),
+        catch: (cause) => providerError(profilePath, "open session", cause),
+      }).pipe(
+        Effect.flatMap((opened) =>
+          opened === undefined || opened.getSessionId() !== id
+            ? Effect.fail(
+                sessionLeaseError(profilePath, new Error("session header changed while opening")),
+              )
+            : Effect.succeed(opened),
+        ),
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? release.pipe(
+                Effect.catch((failure) =>
+                  Effect.logWarning("Session lease release failed", { failure }),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+
+      return { manager, release };
+    }),
+  );
+
 export const askOnce = (
   target: ProfileTarget,
   prompt: string,
@@ -909,15 +960,41 @@ export const askOnce = (
     Effect.gen(function* () {
       const soulPath = yield* requireSoul(target.path);
 
-      const sessionManager =
+      const { manager: sessionManager, release } = yield* prepareLeasedSession(
+        target.path,
         options?.sessionPath === undefined
-          ? createLocalSessionManager(target.path, continueSession ? "main" : "fresh")
-          : SessionManager.open(options.sessionPath, dirname(options.sessionPath), target.path);
-
-      const runtimeOptions: ProfileRuntimeOptions = {};
-      yield* scopedSessionLease(target.path, sessionManager.getSessionId()).pipe(
-        Effect.mapError((failure) => sessionLeaseError(target.path, failure)),
+          ? continueSession
+            ? localMainSessionDirectory(target.path)
+            : join(target.path, "sessions")
+          : dirname(options.sessionPath),
+        continueSession ? "continue" : "fresh",
+        options?.sessionPath,
+      ).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+        ),
       );
+
+      const lease = makeSessionLeaseTransitions(
+        target.path,
+        sessionManager.getSessionId(),
+        release,
+      );
+
+      yield* Effect.addFinalizer(() =>
+        lease.close.pipe(
+          Effect.catch((failure) => Effect.logWarning("Session lease release failed", { failure })),
+        ),
+      );
+
+      const runtimeOptions: ProfileRuntimeOptions = {
+        beforeServices: async (nextManager) => {
+          if (!lease.owns(nextManager.getSessionId())) {
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi Promise factory bridge.
+            await Effect.runPromise(lease.reserve(nextManager.getSessionId()));
+          }
+        },
+      };
 
       if (profileExtensions !== undefined) runtimeOptions.profileExtensions = profileExtensions;
 
@@ -929,6 +1006,16 @@ export const askOnce = (
         context,
         runtimeOptions,
       );
+
+      // Pi print mode replaces command handlers itself. Fail closed rather than allow
+      // an extension command to change the transcript without transferring its lease.
+      const rejectReplacement = async (): Promise<never> => {
+        throw new Error("session replacement is unavailable in ziggy run; use the resident UI");
+      };
+
+      runtime.newSession = rejectReplacement;
+      runtime.fork = rejectReplacement;
+      runtime.switchSession = rejectReplacement;
 
       yield* Effect.addFinalizer(() =>
         piPromise(target.path, "dispose agent runtime", () => runtime.dispose()).pipe(
@@ -1400,7 +1487,9 @@ const bindChatRuntime = async (
         },
         switchSession: async (sessionPath, options) => {
           if (lease !== undefined) {
-            const id = SessionManager.open(sessionPath).getSessionId();
+            // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
+            const id = (await Effect.runPromise(readSessionHeaderOnly(sessionPath))).id;
+
             // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
             await Effect.runPromise(lease.reserve(id));
           }
@@ -1974,15 +2063,15 @@ export const openChat = (
 
     if (runtimeFactory !== undefined) runtimeOptions.runtimeFactory = runtimeFactory;
 
-    const sessionManager =
-      sessionMode === "continue"
-        ? SessionManager.continueRecent(target.path, sessionDirectory)
-        : SessionManager.create(target.path, sessionDirectory);
-
-    const releaseLease = yield* acquireSessionLease(
+    const { manager: sessionManager, release: releaseLease } = yield* prepareLeasedSession(
       target.path,
-      sessionManager.getSessionId(),
-    ).pipe(Effect.mapError((failure) => sessionLeaseError(target.path, failure)));
+      sessionDirectory,
+      sessionMode,
+    ).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+      ),
+    );
 
     const lease = makeSessionLeaseTransitions(
       target.path,
@@ -2175,15 +2264,16 @@ export const openSpecialistChat = (
 
       const { selected, environment } = selectedEnvironment;
 
-      const specialistManager = SessionManager.continueRecent(
-        target.path,
-        localSpecialistSessionDirectory(target.path, agentId),
-      );
-
-      const releaseSpecialist = yield* acquireSessionLease(
-        target.path,
-        specialistManager.getSessionId(),
-      ).pipe(Effect.mapError((cause) => sessionLeaseError(target.path, cause)));
+      const { manager: specialistManager, release: releaseSpecialist } =
+        yield* prepareLeasedSession(
+          target.path,
+          localSpecialistSessionDirectory(target.path, agentId),
+          "continue",
+        ).pipe(
+          Effect.mapError((cause) =>
+            cause instanceof SessionLeaseFailed ? sessionLeaseError(target.path, cause) : cause,
+          ),
+        );
 
       const specialistLease = makeSessionLeaseTransitions(
         target.path,

@@ -123,7 +123,7 @@ test("stored delivery refuses a live writer without changing its transcript", as
       ),
     ).rejects.toMatchObject({
       _tag: "AutomationConversationDeliveryFailed",
-      message: "this session is open in the resident; use the UI, or start a new session",
+      message: expect.stringContaining("this session is open in another Ziggy process (pid "),
     });
     expect(await readFile(file)).toEqual(before);
   } finally {

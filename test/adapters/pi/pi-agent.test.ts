@@ -205,8 +205,9 @@ test("run --session refuses a session held by another writer before creating Pi"
       id: manager.getSessionId(),
       timestamp: new Date().toISOString(),
       cwd: profilePath,
-    })}\n`,
+    })}\n{"type":"message","id":"unfinished"}`,
   );
+  const before = await readFile(file);
   const release = await Effect.runPromise(acquireSessionLease(profilePath, manager.getSessionId()));
 
   try {
@@ -225,9 +226,52 @@ test("run --session refuses a session held by another writer before creating Pi"
       ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))?.message
       : undefined;
 
-    expect(message).toBe(
-      "this session is open in the resident; use the UI, or start a new session",
+    expect(message).toEqual(
+      expect.stringContaining("this session is open in another Ziggy process (pid "),
     );
+    expect(await readFile(file)).toEqual(before);
+  } finally {
+    await Effect.runPromise(release);
+  }
+});
+
+test("a held chat refuses before calling Pi's runtime factory", async () => {
+  const profilePath = await temporaryProfile();
+  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
+  const directory = join(profilePath, "sessions", "chat");
+  await mkdir(directory, { recursive: true });
+  const file = join(directory, "held.jsonl");
+  await writeFile(
+    file,
+    `${JSON.stringify({ type: "session", version: 3, id: "held-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
+  );
+  const before = await readFile(file);
+  const release = await Effect.runPromise(acquireSessionLease(profilePath, "held-chat"));
+  let factoryCalls = 0;
+
+  const factory: typeof createAgentSessionRuntime = (...args) => {
+    factoryCalls += 1;
+
+    return createAgentSessionRuntime(...args);
+  };
+
+  try {
+    const exit = await Effect.runPromiseExit(
+      openChat(
+        { path: profilePath, name: "Profile" },
+        { kind: "local" },
+        directory,
+        profilePath,
+        "continue",
+        undefined,
+        undefined,
+        factory,
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(factoryCalls).toBe(0);
+    expect(await readFile(file)).toEqual(before);
   } finally {
     await Effect.runPromise(release);
   }
@@ -1470,8 +1514,8 @@ describe("specialist chat rails", () => {
           ? Option.getOrUndefined(Cause.findErrorOption(competing.cause))?.message
           : undefined;
 
-        expect(competingMessage).toBe(
-          "this session is open in the resident; use the UI, or start a new session",
+        expect(competingMessage).toEqual(
+          expect.stringContaining("this session is open in another Ziggy process (pid "),
         );
         await Effect.runPromise(handle.prompt("second rail turn"));
       } finally {
