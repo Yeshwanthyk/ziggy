@@ -31,6 +31,7 @@ import { Memory, MemoryLive } from "./application/memory";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents, ProfileAgentsLive } from "./application/profile-agents";
 import { Profiles, ProfilesLive } from "./application/profiles";
+import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ResidentGateway, makeResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentService, ResidentServiceLive } from "./application/resident-service";
 import { Sessions, SessionsLive } from "./application/sessions";
@@ -996,7 +997,7 @@ const program = Effect.gen(function* () {
   }),
   Effect.provide(
     Layer.mergeAll(
-      ProfilesLive,
+      ProfilesLive.pipe(Layer.provide(ProfileStoreLive)),
       AutomationDefinitionsLive,
       AuthLive,
       ModelsLive,
@@ -1004,7 +1005,7 @@ const program = Effect.gen(function* () {
       SetupLive.pipe(
         Layer.provide(
           Layer.mergeAll(
-            ProfilesLive,
+            ProfilesLive.pipe(Layer.provide(ProfileStoreLive)),
             AuthLive,
             ModelsLive,
             DoctorLive.pipe(

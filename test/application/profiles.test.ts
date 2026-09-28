@@ -4,9 +4,10 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { expect, test } from "bun:test";
 import { Profiles, ProfilesLive, type ProfilesApi } from "ziggy/application/profiles";
+import { ProfileStoreLive } from "ziggy/adapters/fs/profile-store";
 
 const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
   const snapshot: string[] = [];
@@ -38,7 +39,7 @@ const useProfiles = <Value, Error>(
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* operation(yield* Profiles);
-    }).pipe(Effect.provide(ProfilesLive)),
+    }).pipe(Effect.provide(ProfilesLive.pipe(Layer.provide(ProfileStoreLive)))),
   );
 
 test("init creates safe starter folders idempotently without changing human-owned bytes", async () => {
