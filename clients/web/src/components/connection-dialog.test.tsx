@@ -306,7 +306,9 @@ it("shows quarantined extension diagnostics and the resident restart hint", () =
     />,
   );
   expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
-  expect(screen.getByRole("alert").textContent).toContain("invalid command registration");
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Some packages were skipped. Fix them, then restart the resident.",
+  );
   expect((screen.getByRole("checkbox", { name: "broken-one" }) as HTMLInputElement).checked).toBe(
     true,
   );

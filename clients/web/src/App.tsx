@@ -152,6 +152,15 @@ export function HistoryEntry({
   );
 }
 
+const shortAgentDescription = (description: string, profileName: string): string | undefined => {
+  const first = description.split(/\.\s/u)[0];
+  const suffix = ` for ${profileName}`;
+
+  return first?.replace(/\.$/u, "").endsWith(suffix)
+    ? first.replace(/\.$/u, "").slice(0, -suffix.length)
+    : first;
+};
+
 export function App() {
   const gateway = useZiggyGateway();
   const [connectionOpen, setConnectionOpen] = useState(() => readSavedConnection() === undefined);
@@ -532,7 +541,10 @@ export function App() {
                       conversation.active,
                   )}
                   description={agent.description}
-                  shortDescription={agent.description.split(/\.\s/u)[0]}
+                  shortDescription={shortAgentDescription(
+                    agent.description,
+                    gateway.profile?.name ?? "Ziggy",
+                  )}
                   disabled={!connected || gateway.sidebarBusy}
                   key={agent.id}
                   name={agent.id}

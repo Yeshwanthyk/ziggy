@@ -578,8 +578,7 @@ export function SettingsDialog({
                 {modelSettings?.extensions?.skipped.length ? (
                   <div role="alert" className="form-error">
                     <strong>
-                      Some packages were skipped. Fix them, then restart the resident:{" "}
-                      <code>ziggy serve restart &lt;profile&gt;</code>
+                      Some packages were skipped. Fix them, then restart the resident.
                     </strong>
                     {modelSettings.extensions.skipped.map((item, index) => (
                       <div key={`${item.id}-${index}`}>
