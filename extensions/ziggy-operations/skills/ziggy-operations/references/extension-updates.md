@@ -12,7 +12,8 @@ ziggy extensions update squarey computer-workflows
 Close all sessions using the Profile and stop its resident before updating. This first version
 does not drain active work, schedule an update, download another executable, or restart Squarey.
 Runtimes with update fencing block package replacement while open. Older Ziggy processes do not
-participate in that fence: close old TUI/run/ACP sessions before the initial upgrade as well.
+participate in that fence: close old web, run, ACP, wake, and specialist sessions and stop older
+residents before the initial upgrade as well.
 
 ## Adopt an existing installation
 

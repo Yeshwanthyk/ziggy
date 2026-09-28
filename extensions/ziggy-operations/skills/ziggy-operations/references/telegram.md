@@ -24,8 +24,8 @@ session routing.
 - Replies are split at Telegram's 4,096 Unicode-code-point message limit. Specialist progress is
   delivered as bounded text messages before the final reply when a specialist emits progress.
 - Messages from other users, unsupported chat types, and updates without text are ignored.
-- Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Telegram command.
+- Request skills in natural language in Telegram or the resident web UI; do not send Pi's
+  `/skill:<name>` syntax as a Telegram command.
 
 Telegram keeps the current update offset in process memory. On startup Ziggy performs a zero-timeout
 poll, advances past the returned updates, and logs that the pending backlog was discarded. A restart

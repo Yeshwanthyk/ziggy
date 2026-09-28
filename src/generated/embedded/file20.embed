@@ -43,7 +43,8 @@ codex exec "Create a minimal example and verify it."
 Use the host's background-process capability for long tasks. Follow the host tool's actual
 schema rather than assuming particular field names.
 
-- Use a PTY only when the selected command is interactive.
+- Use a PTY only when the selected command needs a terminal; use non-prompting CLI modes in the
+  headless resident and hand any required human input back to the user.
 - Capture output and exit status.
 - Send input only when the agent asks a concrete question.
 - Do not kill a healthy process merely because it is slow.

@@ -57,8 +57,8 @@ channel-specific session routing.
   removes the obsolete `kiri-bind`, `kiri-run`, `kiri-diff`, `kiri-status`, and `kiri-queue`
   definitions from this application at both global and connected-guild scope. Other command names
   remain untouched.
-- Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Discord slash command.
+- Request skills in natural language in Discord or the resident web UI; do not send Pi's
+  `/skill:<name>` syntax as a Discord slash command.
 
 The ingress journal promises durable at-least-once processing after conversation resolution, not
 exactly-once model execution or Discord delivery. Top-level server messages must first create their

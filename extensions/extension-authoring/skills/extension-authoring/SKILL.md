@@ -73,8 +73,10 @@ into `ziggy`, invoke a Ziggy CLI command, or edit `extensions.json` directly. Cl
 admission only from that tool's structured success result; preserve and report its operation,
 stage, code, and message fields on failure. Profile-owned packages take precedence over approved
 catalogue packages with the same ID. Reopening that Profile or restarting its resident Ziggy
-process applies the change. All registered tools must be usable from the resident web UI, print runs, gateway
-chats, and automations when the package is selected.
+process applies the change. Extensions run headless in the resident, print runs, ACP, wake, and
+specialists when the package is selected. Do not depend on `ctx.ui`: `confirm` returns `false`,
+while `select` and `input` return `undefined`. Use explicit tool inputs and results instead of
+local prompts.
 
 Specialists never receive `profile_extensions`. A specialist may prepare or review package files,
 then must return the shelf ID, changed paths, and proof results to the parent Profile agent for

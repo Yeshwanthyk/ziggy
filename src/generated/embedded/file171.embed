@@ -24,17 +24,21 @@ Create an active starter with:
 ziggy automations create <profile> <id>
 ```
 
-Creation refuses to proceed if either the active or paused form already exists. Edit definitions
-with the TUI's built-in `/automations` manager or a normal editor, and remove them with normal
-filesystem operations. Ziggy intentionally adds no CLI edit or remove command.
+Creation refuses to proceed if either the active or paused form already exists. The resident web
+UI provides automation list, show, create, save, validate, pause, resume, run, and run-history
+actions. Its editor can change the complete Markdown; a save requires a valid definition, rejects
+bytes changed since the editor opened, and uses a same-directory atomic replacement. It does not
+create a second definition store or runtime owner. A normal editor can also change definitions;
+remove them with normal filesystem operations. Ziggy intentionally adds no CLI edit or remove
+command.
 
-The TUI manager reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
-CLI. Choose an automation to view its metadata, edit its complete Markdown, inspect run history, or
-pause/resume it; choose the scheduler overview to see heartbeat, tick, next-due, and latest-run
-state. `/automations <id>` opens one definition directly. A TUI edit must parse as a complete valid
-definition before Ziggy writes it, refuses to replace bytes changed since the editor opened, and
-uses a same-directory atomic replacement. It does not create a second definition store or runtime
-owner.
+The web UI reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
+`ziggy automations` CLI. Use `ziggy serve <profile>` to run the resident; the web UI is the
+interactive face, and `ziggy web pair <profile>` pairs a browser. The CLI provides create, list,
+validate, pause, resume, status, and runs; `ziggy wake <profile> <id>` runs a definition manually.
+The CLI has no show, save, or `automations run` subcommand. In the web UI, choose an automation to
+inspect its metadata, edit it, inspect run history, or change lifecycle; the scheduler overview
+shows heartbeat, tick, next-due, and latest-run state.
 
 ## Model override
 
@@ -133,7 +137,7 @@ Every admitted model-backed run receives a fresh Pi session under
 completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
 history authority.
 
-Inspect both authorities from the CLI or open `/automations` in the TUI:
+Inspect both authorities from the CLI or the resident web UI automation view:
 
 ```sh
 ziggy automations runs <profile> [id] [--json]

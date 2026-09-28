@@ -22,7 +22,7 @@ View Notes
 Create Notes
 
 - Add a new note: `memo notes -a`
-  - Opens an interactive editor; run this in a user-owned terminal, not the resident.
+  - Opens a terminal editor; ask the user to run this in their own terminal, not the resident.
 - Quick add with title: `memo notes -a "Note Title"`
 
 Edit Notes
@@ -48,7 +48,7 @@ Export Notes
 Limitations
 
 - Cannot edit notes containing images or attachments.
-- Use noninteractive `memo notes` forms from a Ziggy run where possible. For editor and selection
+- Use non-prompting `memo notes` forms from a Ziggy run where possible. For editor and selection
   prompts, hand off to a user-owned terminal; the resident web UI cannot answer CLI prompts.
 
 Notes

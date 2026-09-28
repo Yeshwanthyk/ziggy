@@ -112,8 +112,8 @@ session routing.
   event text.
   Message edits use at most four idempotent retries. New message posts retry only explicit Slack rate
   limits, never ambiguous network or server failures that could otherwise duplicate a reply.
-- Skills are used through natural-language requests. Pi's `/skill:<name>` syntax is a TUI command,
-  not a Slack slash command.
+- Request skills in natural language in Slack or the resident web UI; do not send Pi's
+  `/skill:<name>` syntax as a Slack slash command.
 
 ## Prerequisites
 
@@ -350,8 +350,8 @@ ignored. `/stop` has the same gateway meaning if Slack delivers it as message te
 ### Selected extensions
 
 Use natural language to exercise one selected package, for example a weather lookup or an Apple
-Reminders request. The resident must be restarted after changing `<profile>/extensions.json`; a TUI
-`/reload` does not recreate the resident or reread its startup admission set.
+Reminders request. Restart the resident after changing `<profile>/extensions.json` so it rereads
+the selected extension set. Existing web, run, and ACP sessions do not hot-load new resources.
 
 ## Troubleshooting
 
@@ -422,9 +422,9 @@ a direct message or channel the bot can access. The configured provider/model mu
 input. Unsupported or inaccessible files intentionally become bounded notices while the text turn
 continues; Ziggy never forwards a private Slack URL to the model.
 
-### A selected command-line extension works in the TUI but not under `serve`
+### A selected command-line extension works in a local run but not in the resident
 
-A managed service does not inherit the interactive terminal's shell initialization. Ziggy therefore
+A managed resident does not inherit a local terminal's shell initialization. Ziggy therefore
 renders absolute `HOME` and `ZIGGY_HOME` values, an absolute service executable in
 `ProgramArguments`, and a deterministic default `PATH` in both launchd and systemd definitions:
 `<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`. This includes the canonical
