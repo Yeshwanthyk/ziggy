@@ -386,6 +386,7 @@ const deliveryFailureCategories: ReadonlySet<string> = new Set([
 ]);
 
 const executionFailureCategories: ReadonlySet<string> = new Set([
+  "session-held",
   "schedule-superseded",
   "AutomationInvalid",
   "AutomationNotFound",

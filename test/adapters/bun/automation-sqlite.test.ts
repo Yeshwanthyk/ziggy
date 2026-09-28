@@ -557,6 +557,32 @@ describe("automation SQLite", () => {
     });
   });
 
+  test("persists and decodes an execution refused by a held session", async () => {
+    const path = await profile();
+    const runId = "manual:00000000-0000-4000-8000-000000000002";
+
+    await run(automationRunStore.admitManual(path, "daily", runId, 100));
+    await run(automationRunStore.start(path, runId, 110, null));
+    await run(
+      automationRunStore.finish(
+        path,
+        runId,
+        {
+          state: "failed",
+          atMs: 150,
+          localCompleted: false,
+          failureCategory: "session-held",
+          gateExitCode: null,
+        },
+        [],
+      ),
+    );
+
+    expect(await run(readAutomationRuns(path))).toMatchObject([
+      { runId, state: "failed", localCompleted: false, failureCategory: "session-held" },
+    ]);
+  });
+
   test("persists ordered partial delivery truth in one terminal transaction", async () => {
     const path = await profile();
     const runId = "manual:00000000-0000-4000-8000-000000000001";
