@@ -5,8 +5,11 @@ import { createMemoryWriteTool } from "./memory-write-tool";
 import { createChatEventProjector } from "./chat-event-projector";
 import { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding";
 import { providerError, piPromise } from "./provider-failure";
+import { promptForAssistantText, type PromptSession, type SpecialistVoiceHub } from "./prompt-turn";
 
 export { providerError } from "./provider-failure";
+
+export { promptForAssistantText } from "./prompt-turn";
 
 export { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding";
 
@@ -41,7 +44,6 @@ import { Context, Effect, Exit, Layer, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProfileNotInitialized,
-  ProviderCallError,
   ProviderConfigError,
   SessionBusy,
   SessionHeld,
@@ -64,7 +66,6 @@ import {
 import type {
   ChatEvent,
   ChatHandle,
-  ChatPromptOptions,
   ChatSessionModelState,
   RunOnceOptions,
 } from "../../application/agent";
@@ -394,11 +395,6 @@ export const askOnce = (
     }),
   );
 
-interface SpecialistVoiceHub {
-  readonly emit: (agentId: string, text: string) => void;
-  readonly subscribe: (listener: (agentId: string, text: string) => void) => () => void;
-}
-
 const createSpecialistVoiceHub = (): SpecialistVoiceHub => {
   const listeners = new Set<(agentId: string, text: string) => void>();
 
@@ -686,11 +682,6 @@ const createProfileRuntime = (
       return profileRuntime;
     }),
   );
-
-type PromptSession = Pick<
-  AgentSessionRuntime["session"],
-  "abort" | "isIdle" | "prompt" | "subscribe"
->;
 
 type ChatSession = Pick<
   AgentSessionRuntime["session"],
@@ -1156,90 +1147,6 @@ export const currentPiSessionReference = (
         fileSystemCauseDetails(cause).code === "ENOENT"
           ? Effect.succeed(undefined)
           : Effect.fail(providerError(profilePath, "inspect agent session transcript", cause)),
-      ),
-    );
-  });
-
-export const promptForAssistantText = (
-  profilePath: string,
-  session: PromptSession,
-  text: string,
-  options?: ChatPromptOptions,
-  voiceHub?: SpecialistVoiceHub,
-): Effect.Effect<string, ProviderConfigError | ProviderCallError> =>
-  Effect.callback((resume) => {
-    let assistantText = "";
-    let assistantError: string | undefined;
-    let finished = false;
-    let unsubscribe: () => void = () => undefined;
-    let unsubscribeVoice: () => void = () => undefined;
-    const projector = createChatEventProjector();
-
-    const finish = (result: Effect.Effect<string, ProviderConfigError | ProviderCallError>) => {
-      if (finished) return;
-      finished = true;
-      unsubscribe();
-      unsubscribeVoice();
-      resume(result);
-    };
-
-    const completeAssistant = () =>
-      assistantError === undefined
-        ? Effect.succeed(assistantText)
-        : Effect.fail(providerError(profilePath, "call provider", new Error(assistantError)));
-
-    unsubscribe = session.subscribe((event) => {
-      for (const chatEvent of projector(event)) {
-        if (chatEvent.kind === "assistant-text" || chatEvent.kind === "tool") {
-          options?.onProgress?.(chatEvent);
-        }
-      }
-
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        assistantText = event.message.content
-          .filter((content) => content.type === "text")
-          .map((content) => content.text)
-          .join("");
-        assistantError =
-          event.message.stopReason === "error" || event.message.stopReason === "aborted"
-            ? (event.message.errorMessage ?? `Request ${event.message.stopReason}`)
-            : undefined;
-      }
-
-      if (event.type === "agent_settled") finish(completeAssistant());
-    });
-
-    if (voiceHub !== undefined && options?.onProgress !== undefined) {
-      const onProgress = options.onProgress;
-      unsubscribeVoice = voiceHub.subscribe((agentId, text) => {
-        onProgress({ kind: "voice", agentId, text });
-      });
-    }
-
-    const promptOptions = options?.images === undefined ? undefined : { images: options.images };
-    void session.prompt(text, promptOptions).then(
-      () => {
-        if (session.isIdle) finish(completeAssistant());
-      },
-      (cause: unknown) => finish(Effect.fail(providerError(profilePath, "call provider", cause))),
-    );
-
-    return Effect.sync(() => {
-      if (finished) return false;
-      finished = true;
-      unsubscribe();
-      unsubscribeVoice();
-
-      return true;
-    }).pipe(
-      Effect.flatMap((shouldAbort) =>
-        shouldAbort
-          ? piPromise(profilePath, "abort agent session", () => session.abort()).pipe(
-              Effect.catch((failure) =>
-                Effect.logWarning("Pi prompt interruption cleanup failed", { failure }),
-              ),
-            )
-          : Effect.void,
       ),
     );
   });
