@@ -487,10 +487,12 @@ export const makeSessionDispatcher = (
 
           const result = yield* withSessionControl(
             entry.handle,
-            entry.handle.resume(target.path).pipe(
-              Effect.mapError((cause) => toGatewayError(request.method, cause)),
-              Effect.tap((result) =>
-                result.cancelled ? Effect.void : branch.registry.resetTranscript(ref.key),
+            Effect.uninterruptible(
+              entry.handle.resume(target.path).pipe(
+                Effect.mapError((cause) => toGatewayError(request.method, cause)),
+                Effect.tap((result) =>
+                  result.cancelled ? Effect.void : branch.registry.resetTranscript(ref.key),
+                ),
               ),
             ),
           );
