@@ -2038,6 +2038,83 @@ test("successful resume selects the resolved web transcript and resets live hist
   ).toBe(true);
 });
 
+test("concurrent resumes publish each reset before the next switch starts", async () => {
+  const frames: string[] = [];
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const calls: string[] = [];
+        const registry = yield* makeChatRegistry();
+
+        const handle = makeChatHandle({
+          prompt: () => Effect.succeed(""),
+          resume: (path) =>
+            Effect.gen(function* () {
+              calls.push(path);
+
+              if (calls.length === 1) {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+              }
+
+              return { cancelled: false };
+            }),
+        });
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
+            },
+          }),
+        )).connect((frame) => frames.push(frame));
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+
+        const request = (id: string) =>
+          connection.request({
+            id,
+            method: "session.resume",
+            params: { ref, sessionId: id },
+          });
+
+        const first = yield* Effect.forkChild(request("first"));
+        yield* Deferred.await(entered);
+        const second = yield* Effect.forkChild(request("second"));
+        yield* registry.publish(ref.key, { kind: "assistant-text", delta: "old", snapshot: "old" });
+        expect(calls).toEqual(["ui/work/first.jsonl"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        expect(calls).toEqual(["ui/work/first.jsonl", "ui/work/second.jsonl"]);
+
+        const events = frames.flatMap((frame) => {
+          const decoded = decodeEventResult(frame);
+
+          return Result.isSuccess(decoded) ? [decoded.success] : [];
+        });
+
+        expect(
+          events.filter((event) => event.event === "session-state").map((event) => event.seq),
+        ).toEqual([2, 3]);
+        const replay = yield* registry.replay(ref.key, 2);
+        expect(replay.events.map((event) => event.event)).toEqual([
+          { kind: "session-state", scope: "transcript" },
+        ]);
+      }),
+    ),
+  );
+});
+
 test("a streaming model switch reports SessionBusy without changing the session", async () => {
   const frames: string[] = [];
 

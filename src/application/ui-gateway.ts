@@ -5,14 +5,12 @@ import {
   UiEmptyParams,
   UiGatewayError,
   UiProfileScopedParams,
-  UiResponseFrame,
   UiSystemCapabilitiesResult,
   UI_EVENTS,
   UI_METHODS,
   UiCommandId,
   type UiGatewayResult,
   type UiRequestEnvelope,
-  type UiRequestId,
 } from "../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
 import { profileCliTarget } from "../domain/profile";
@@ -32,6 +30,7 @@ import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types"
 export type { UiGatewayDependencies } from "./ui-gateway/types";
 
 import { badParams, boundedText, protocolFailure, toGatewayError } from "./ui-gateway/errors";
+import { resultFrame, failureFrame, sendResponse, safeFingerprint } from "./ui-gateway/transport";
 
 const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty: "error" });
 
@@ -49,8 +48,6 @@ const decodeCommandProbe = Schema.decodeUnknownOption(UiCommandProbe, {
 });
 
 const isKnownMethod = Schema.is(Schema.Literals(UI_METHODS));
-
-const encodeResponse = Schema.encodeSync(Schema.fromJsonString(UiResponseFrame));
 
 export interface UiGatewayConnection {
   readonly request: (request: UiRequestEnvelope) => Effect.Effect<void>;
@@ -85,38 +82,6 @@ const mapHealthMessage = (message: string): string => {
 
   return boundedText(message);
 };
-
-const resultFrame = (id: UiRequestId, result: UiGatewayResult): UiResponseFrame => ({
-  id,
-  ok: true,
-  result,
-});
-
-const failureFrame = (id: UiRequestId, error: UiGatewayError): UiResponseFrame => ({
-  id,
-  ok: false,
-  error:
-    error.details === undefined
-      ? { code: error.code, message: boundedText(error.message) }
-      : { code: error.code, message: boundedText(error.message), details: error.details },
-});
-
-const encodeResponseForTransport = (frame: UiResponseFrame): Effect.Effect<string> =>
-  Effect.try({
-    try: () => encodeResponse(frame),
-    catch: (cause) =>
-      new UiGatewayError({
-        code: "internal",
-        message: "response could not be encoded",
-        cause,
-      }),
-  }).pipe(Effect.catch((error) => Effect.succeed(JSON.stringify(failureFrame(frame.id, error)))));
-
-const sendResponse = (send: (frame: string) => void, frame: UiResponseFrame): Effect.Effect<void> =>
-  encodeResponseForTransport(frame).pipe(
-    Effect.tap((encoded) => Effect.sync(() => send(encoded))),
-    Effect.asVoid,
-  );
 
 export const makeUiGateway = (
   config: UiGatewayDependencies,
@@ -408,8 +373,6 @@ export const makeUiGateway = (
       },
     };
   });
-
-const safeFingerprint = (value: Schema.Json): string => JSON.stringify(value);
 
 /** Build one current-protocol gateway with isolated, explicitly-routable Profile branches. */
 export const makeSharedUiGateway = (

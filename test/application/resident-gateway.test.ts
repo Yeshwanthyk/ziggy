@@ -633,6 +633,9 @@ describe("gateway CLI", () => {
 
     for (let attempt = 0; attempt < 200 && !(await exists(lockPath)); attempt += 1)
       await Bun.sleep(10);
+    // The owner lock precedes UI startup. Kill only after the resident has finished starting;
+    // otherwise this tests a partially-started process, not crash recovery.
+    const firstUi = await waitForUiProjection(target.path);
     const firstProjection = await readFile(lockPath, "utf8");
     first.kill("SIGKILL");
     await first.exited;
@@ -649,6 +652,22 @@ describe("gateway CLI", () => {
     }
 
     expect(secondProjection).not.toBe(firstProjection);
+    // Likewise, don't interrupt the replacement while it is still starting. Its projection
+    // must be a fresh listener rather than the crashed process's stale advertisement.
+    let secondUi: UiServerProjection | undefined;
+
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const read = await Effect.runPromise(readUiServerProjection(target.path).pipe(Effect.result));
+
+      if (Result.isSuccess(read) && read.success.token !== firstUi.token) {
+        secondUi = read.success;
+        break;
+      }
+
+      await Bun.sleep(10);
+    }
+
+    expect(secondUi?.token).toBeDefined();
     second.kill("SIGINT");
     expect(await second.exited).toBe(0);
     expect(await exists(lockPath)).toBe(false);

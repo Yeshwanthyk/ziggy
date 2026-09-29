@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Effect, Option, Predicate, Schema } from "effect";
+import { Effect, Option, Predicate, Schema, Semaphore } from "effect";
 import {
   UiSessionHistoryParams,
   UiSessionOpenParams,
@@ -22,7 +22,7 @@ import {
 } from "../../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
-import type { ChatPromptOptions } from "../agent";
+import type { ChatHandle, ChatPromptOptions } from "../agent";
 import type { ChatRegistryEvent, ChatRegistryListEntry } from "../chat-registry";
 import {
   badParams,
@@ -147,6 +147,21 @@ export const makeSessionDispatcher = (
   serverEpoch: string,
   ensureGroup: ReturnType<typeof makeEnsureGroup>,
 ) => {
+  // A switch must publish its transcript reset before another switch can start. The Pi control
+  // lock covers the switch itself, but not this gateway-owned replay publication.
+  const sessionControls = new WeakMap<ChatHandle, ReturnType<typeof Semaphore.makeUnsafe>>();
+
+  const withSessionControl = <A, E>(handle: ChatHandle, effect: Effect.Effect<A, E>) => {
+    let permit = sessionControls.get(handle);
+
+    if (permit === undefined) {
+      permit = Semaphore.makeUnsafe(1);
+      sessionControls.set(handle, permit);
+    }
+
+    return permit.withPermit(effect);
+  };
+
   const subscribe = (
     send: (frame: string) => void,
     branch: UiGatewayBranch,
@@ -453,8 +468,9 @@ export const makeSessionDispatcher = (
           if (params.ref.kind !== "live")
             return yield* protocolFailure("watch_only", "stored sessions cannot resume here");
 
-          const branch = yield* route(params.ref.profileId);
-          const entry = yield* branch.registry.get(params.ref.key);
+          const ref = params.ref;
+          const branch = yield* route(ref.profileId);
+          const entry = yield* branch.registry.get(ref.key);
 
           if (!resumableEntry(entry))
             return yield* protocolFailure(
@@ -469,11 +485,15 @@ export const makeSessionDispatcher = (
           if (!resumableTranscript(target.path))
             return yield* protocolFailure("watch_only", "Only web transcripts can be resumed here");
 
-          const result = yield* entry.handle
-            .resume(target.path)
-            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
-
-          if (!result.cancelled) yield* branch.registry.resetTranscript(params.ref.key);
+          const result = yield* withSessionControl(
+            entry.handle,
+            entry.handle.resume(target.path).pipe(
+              Effect.mapError((cause) => toGatewayError(request.method, cause)),
+              Effect.tap((result) =>
+                result.cancelled ? Effect.void : branch.registry.resetTranscript(ref.key),
+              ),
+            ),
+          );
 
           return {
             profileId: branch.profileId,
@@ -512,25 +532,32 @@ export const makeSessionDispatcher = (
           if (params.ref.kind !== "live")
             return yield* protocolFailure("watch_only", "stored sessions cannot be switched");
 
-          const branch = yield* route(params.ref.profileId);
-          const entry = yield* branch.registry.get(params.ref.key);
+          const ref = params.ref;
+          const branch = yield* route(ref.profileId);
+          const entry = yield* branch.registry.get(ref.key);
 
           if (entry.kind !== "ui")
             return yield* protocolFailure("watch_only", "channel sessions cannot be switched here");
 
-          const state = yield* (
+          const change = (
             params.operation === "model"
               ? entry.handle.setModel(params.providerId, params.modelId)
               : params.operation === "thinking"
                 ? entry.handle.setThinkingLevel(params.thinking)
                 : entry.handle.modelState
-          ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+          ).pipe(
+            Effect.mapError((cause) => toGatewayError(request.method, cause)),
+            Effect.tap(() =>
+              params.operation === "status"
+                ? Effect.void
+                : branch.registry.publish(ref.key, {
+                    kind: "session-state",
+                    scope: "model",
+                  }),
+            ),
+          );
 
-          if (params.operation !== "status")
-            yield* branch.registry.publish(params.ref.key, {
-              kind: "session-state",
-              scope: "model",
-            });
+          const state = yield* withSessionControl(entry.handle, change);
 
           return {
             profileId: branch.profileId,
