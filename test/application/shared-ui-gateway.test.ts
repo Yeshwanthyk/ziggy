@@ -76,6 +76,7 @@ const makeDirectory = (): ProfileDirectoryApi => {
 
 const makeSessions = (): SessionsApi => ({
   summaries: () => Effect.succeed([]),
+  held: () => Effect.succeed(false),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
   resolve: (_target, reference) =>

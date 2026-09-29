@@ -443,6 +443,7 @@ describe("resident gateway supervision", () => {
 
     const sessions: SessionsApi = {
       summaries: () => Effect.succeed([]),
+      held: () => Effect.succeed(false),
       list: () => Effect.succeed([]),
       show: () => Effect.never,
       resolve: () => Effect.never,

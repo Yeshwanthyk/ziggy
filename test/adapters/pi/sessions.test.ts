@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Result, Schema } from "effect";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
+import { acquireSessionLease, isSessionLeaseHeld } from "ziggy/adapters/pi/session-lease";
 import * as transcriptLines from "ziggy/adapters/pi/transcript-lines";
 import {
   listProfileSessionSummaries,
@@ -547,7 +547,7 @@ describe("Pi session metadata adapter", () => {
   });
 });
 
-test("read-only session summaries use first user text and observe a live writer", async () => {
+test("read-only session summaries use first user text while a writer holds the lease", async () => {
   const root = await profile();
   const file = join(root, "sessions", "one.jsonl");
   await writeJsonl(file, [
@@ -567,15 +567,15 @@ test("read-only session summaries use first user text and observe a live writer"
         path: "one.jsonl",
         title: "Hello Ziggy",
         updatedAt: "2026-08-08T10:00:04.000Z",
-        held: true,
       },
     ]);
+    expect(await Effect.runPromise(isSessionLeaseHeld(root, "one"))).toBe(true);
     expect(await readFile(file)).toEqual(before);
   } finally {
     await Effect.runPromise(release);
   }
 
-  expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.held).toBe(false);
+  expect(await Effect.runPromise(isSessionLeaseHeld(root, "one"))).toBe(false);
 });
 
 test("summary projection reuses unchanged transcripts and rescans changed ones", async () => {

@@ -12,7 +12,6 @@ import type {
 } from "../../domain/session";
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
 import { fileSystemCauseDetails } from "../fs/cause";
-import { isSessionLeaseHeld, SessionLeaseFailed } from "./session-lease";
 import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
 
 const isOversizedLineCause = Schema.is(Schema.Struct({ kind: Schema.Literal("line-too-large") }));
@@ -520,17 +519,15 @@ export const listProfileSessions = (
 
 const summaryCacheLimit = 512;
 
-type SummaryProjection = Omit<ProfileSessionSummary, "held">;
-
 const summaryCache = new Map<
   string,
-  { mtimeMs: number; size: number; summary: SummaryProjection }
+  { mtimeMs: number; size: number; summary: ProfileSessionSummary }
 >();
 
-/** Reads transcripts without SessionManager.open; lease probing never opens a transcript for writing. */
+/** Reads transcripts without SessionManager.open. Lease state is probed separately per displayed row. */
 export const listProfileSessionSummaries = (
   profilePath: string,
-): Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed | SessionLeaseFailed> =>
+): Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed> =>
   Effect.gen(function* () {
     const root = path.join(profilePath, "sessions");
     const files = yield* discoverFiles(root, true);
@@ -561,7 +558,7 @@ export const listProfileSessionSummaries = (
       }
 
       const cached = summaryCache.get(canonical);
-      let summary: SummaryProjection;
+      let summary: ProfileSessionSummary;
 
       if (
         cached !== undefined &&
@@ -612,7 +609,7 @@ export const listProfileSessionSummaries = (
       }
 
       seen.add(summary.id);
-      summaries.push({ ...summary, held: yield* isSessionLeaseHeld(profilePath, summary.id) });
+      summaries.push(summary);
     }
 
     return summaries.sort(

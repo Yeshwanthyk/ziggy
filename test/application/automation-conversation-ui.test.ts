@@ -65,6 +65,7 @@ const profileExtensions: ProfileExtensionsApi = {
 
 const sessions: SessionsApi = {
   summaries: () => Effect.succeed([]),
+  held: () => Effect.succeed(false),
   list: (target) => listProfileSessions(target.path),
   show: (target, reference) => showProfileSession(target.path, reference),
   resolve: (target, id) =>

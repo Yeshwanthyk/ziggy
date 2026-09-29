@@ -74,6 +74,7 @@ const makeProfileExtensions = (
 
 const makeSessions = (): SessionsApi => ({
   summaries: () => Effect.succeed([]),
+  held: () => Effect.succeed(false),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
   resolve: (_target, reference) =>
@@ -1807,9 +1808,10 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
   expect(JSON.stringify(response)).toContain('"providerId":"provider-11"');
 });
 
-test("session picker filters channel, group, and specialist transcripts before its bound", async () => {
+test("session picker filters transcripts before its bound and probes leases only for returned rows", async () => {
   const responses: Array<typeof UiResponseFrame.Type> = [];
   const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+  const probed: string[] = [];
 
   const summaries = [
     ...Array.from({ length: 40 }, (_, i) => ({
@@ -1817,35 +1819,30 @@ test("session picker filters channel, group, and specialist transcripts before i
       path: `telegram/chat/${i}.jsonl`,
       title: "Channel",
       updatedAt: "2026-01-01",
-      held: false,
     })),
     ...Array.from({ length: 33 }, (_, i) => ({
       id: `web-${i}`,
       path: `ui/work/${i}.jsonl`,
       title: "Web",
       updatedAt: "2026-01-01",
-      held: false,
     })),
     {
       id: "group",
       path: "ui/group-work/group.jsonl",
       title: "Group",
       updatedAt: "2026-01-01",
-      held: false,
     },
     {
       id: "agent",
       path: "local/agents/agent.jsonl",
       title: "Agent",
       updatedAt: "2026-01-01",
-      held: false,
     },
     {
       id: ".invalid",
       path: "local/main/invalid.jsonl",
       title: "Invalid",
       updatedAt: "2026-01-01",
-      held: false,
     },
   ];
 
@@ -1860,7 +1857,16 @@ test("session picker filters channel, group, and specialist transcripts before i
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
             undefined,
             {
-              sessions: { ...makeSessions(), summaries: () => Effect.succeed(summaries) },
+              sessions: {
+                ...makeSessions(),
+                summaries: () => Effect.succeed(summaries),
+                held: (_target, id) =>
+                  Effect.sync(() => {
+                    probed.push(id);
+
+                    return id === "web-0";
+                  }),
+              },
             },
           ),
         );
@@ -1881,6 +1887,8 @@ test("session picker filters channel, group, and specialist transcripts before i
 
   expect(result.sessions).toHaveLength(32);
   expect(result.sessions.every((item) => item.id.startsWith("web-"))).toBe(true);
+  expect(probed).toEqual(result.sessions.map((item) => item.id));
+  expect(result.sessions.filter((item) => item.held).map((item) => item.id)).toEqual(["web-0"]);
 });
 
 test("resume rejects non-web targets and non-plain web contexts without touching the handle", async () => {

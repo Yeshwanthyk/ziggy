@@ -5,7 +5,7 @@ import {
   showProfileSession,
 } from "../adapters/pi/sessions";
 import { readSessionHistory } from "../adapters/pi/session-history";
-import type { SessionLeaseFailed } from "../adapters/pi/session-lease";
+import { isSessionLeaseHeld, type SessionLeaseFailed } from "../adapters/pi/session-lease";
 import type { ProfileTarget } from "../domain/profile";
 import {
   SessionNotFound,
@@ -19,7 +19,9 @@ export type SessionsError = SessionReadFailed | SessionNotFound;
 export interface SessionsApi {
   readonly summaries: (
     target: ProfileTarget,
-  ) => Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed | SessionLeaseFailed>;
+  ) => Effect.Effect<ReadonlyArray<ProfileSessionSummary>, SessionReadFailed>;
+  /** A momentary lease observation, not a reservation; callers probe only rows they display. */
+  readonly held: (target: ProfileTarget, id: string) => Effect.Effect<boolean, SessionLeaseFailed>;
   readonly list: (
     target: ProfileTarget,
   ) => Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed>;
@@ -43,6 +45,7 @@ export class Sessions extends Context.Service<Sessions, SessionsApi>()("ziggy/Se
 export const SessionsLive = Layer.succeed(Sessions, {
   list: (target) => listProfileSessions(target.path),
   summaries: (target) => listProfileSessionSummaries(target.path),
+  held: (target, id) => isSessionLeaseHeld(target.path, id),
   show: (target, reference) => showProfileSession(target.path, reference),
   resolve: (target, id) =>
     Effect.gen(function* () {

@@ -447,15 +447,23 @@ export const makeSessionDispatcher = (
               id: session.id,
               title: boundedText(session.title ?? "Untitled session", 160, "Untitled session"),
               updatedAt: session.updatedAt,
-              held: session.held,
+              held: false,
             }))
             .filter(isSessionSummary);
+
+          // Lease files outlive their holders, so probe only the rows this page returns.
+          const page = yield* Effect.forEach(valid.slice(0, 32), (session) =>
+            config.sessions.held(branch.target, session.id).pipe(
+              Effect.map((held) => ({ ...session, held })),
+              Effect.mapError((cause) => toGatewayError(request.method, cause)),
+            ),
+          );
 
           return {
             profileId: branch.profileId,
             canResume,
             currentSessionId: current?.id ?? null,
-            sessions: valid.slice(0, 32),
+            sessions: page,
             truncated: valid.length > 32,
           };
         });
