@@ -5,11 +5,16 @@ import type {
   AuthInteraction,
   AuthPrompt,
   CredentialStore,
+  LoginOptions,
   ModelsStore,
 } from "@earendil-works/pi-ai";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import type { Credential } from "@earendil-works/pi-ai";
-import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
+import {
+  ModelRuntime,
+  readStoredCredential,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import {
   AuthFlowFailed,
@@ -62,6 +67,7 @@ export interface PiAuthRuntime {
     providerId: string,
     type: ProviderAuthType,
     interaction: AuthInteraction,
+    options?: LoginOptions,
   ) => Promise<Credential>;
 }
 
@@ -280,7 +286,16 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
               ? signal
               : AbortSignal.any([interaction.signal, signal]);
 
-          return runtime.login(providerId, type, { ...interaction, signal: loginSignal });
+          // Sign in with ChatGPT identifies the agent host; Pi keeps the UUID in the Profile's settings.json.
+          return runtime.login(
+            providerId,
+            type,
+            { ...interaction, signal: loginSignal },
+            {
+              getDeviceId: () =>
+                SettingsManager.create(profilePath, profilePath).getOrCreateDeviceId(),
+            },
+          );
         },
         catch: (cause) =>
           new AuthFlowFailed({

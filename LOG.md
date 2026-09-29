@@ -1241,3 +1241,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Regenerated the builtin catalog and pi-docs embeds.
 - Squarey was backed up first to `~/.ziggy/backups/squarey-full-20260929` (APFS clone; sockets and Chrome singleton links skipped).
 - Verification: `bun run check` and `bun run test` (812 pass) passed. A development standalone binary built and passed `smoke-standalone-executable --allow-development`. No live model turn was run, and the installed binary and `~/.ziggy` were not touched.
+
+## Sign in with ChatGPT
+
+- `ziggy auth <profile> openai --type oauth` now works. Pi 0.99's Sign in with ChatGPT needs `LoginOptions.getDeviceId`, and without it the login failed before any network call. `src/adapters/pi/auth.ts` passes Pi's own `SettingsManager.getOrCreateDeviceId()` for the Profile, so each Profile keeps a stable UUID in its `settings.json`, created on first login.
+- `openai-codex` (Pi's "legacy" provider) is left available, not hidden; new Profiles should use `openai`.
+- Verification: `bun run check` passed. The rebuilt dev binary, run against a scratch Profile, printed the `auth.openai.com` authorize URL with `ext_agent_host_id=urn:uuid:<id>` and the ChatGPT token scopes, and wrote the ID to `settings.json`. The browser consent and a live model turn were not completed.

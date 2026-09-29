@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Sign in with ChatGPT: `ziggy auth <profile> openai --type oauth` uses a ChatGPT subscription with the OpenAI provider.
+
 ### Changed
 
 - Pi packages pinned to 0.99.1.
