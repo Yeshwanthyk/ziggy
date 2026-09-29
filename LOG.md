@@ -1195,3 +1195,16 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Tests: a skill that breaks mid-lifetime is quarantined on the next `newSession` (it fails on the old code), and the picker checks holds only for the rows it returns.
 - Left open: the resident-service parsers are exported but have no users outside their module.
 - Verification: `bun run check` and `bun run test` (796 pass) passed. Opus review rounds resolved. One full test run had a single failure that didn't recur in the next two runs.
+
+## Slack turn progress redesign
+
+- Each turn gets one Slack message. A native stream starts when the turn is accepted and carries the plan and the answer; placeholder-then-update delivery is the fallback when streaming is unavailable. The plan title is the headline ("Running tests · 1m 40s", then "Done in … · N steps", "Stopped after …" or "Couldn't finish · …"), and `assistant.threads.setStatus` mirrors it, updating on a phase change or at most every 10s.
+- A pure reducer (`domain/slack-turn-progress.ts`) groups tool calls into phase steps by toolCallId, so parallel calls interleave correctly. A failed or interrupted call never shows as complete, and completed steps read in the past tense with edited file names. Steers add a "Picked up your note" step and a reaction. Specialists show as steps, and their voice posts are kept.
+- Delivery of the final answer alone decides the outcome of the turn. Failures of progress appends, status updates or reactions are only logged. If `stopStream` fails, the first chunk is posted instead. Streamed text is a stable prefix: at finish, only the remainder is posted, in chunks of at most 4,000 characters, and divergent text goes in a follow-up post instead of replacing the plan.
+- Slack API requests now time out after 30s as retryable network errors, so a stalled transport can't hang final delivery or shutdown.
+- Accepted residual risks:
+  - If `startStream` times out after Slack created the stream, an orphaned "Thinking" plan can sit beside the fallback answer.
+  - An overflow post that fails partway re-posts from the first chunk, so text is duplicated rather than lost.
+  - A failed step reads "failed", because Pi tool-end events carry no reason.
+- Tests: reducer properties over interleaved tool calls; long answers delivered exactly once across newline and hard chunk boundaries (fails on the pre-fix code); the restored gateway invariants (attachments and images, health write failure, disposal, ingress order, recipient ids, interrupted progress). No live Slack workspace check was run.
+- Verification: `bun run check` and `bun run test` (804 pass) passed. Three Opus review rounds resolved.
