@@ -740,9 +740,15 @@ export const makeSessionDispatcher = (
               const options: ChatPromptOptions =
                 synthesisContext.length === 0 ? {} : { ephemeralContext: synthesisContext };
 
-              yield* branch.registry.submit(params.ref.key, params.text, options);
+              yield* withSessionControl(
+                live.handle,
+                branch.registry.submit(params.ref.key, params.text, options),
+              );
             } else {
-              yield* branch.registry.submit(params.ref.key, params.text);
+              yield* withSessionControl(
+                live.handle,
+                branch.registry.submit(params.ref.key, params.text),
+              );
             }
           } else if (request.method === "session.steer")
             yield* branch.registry.steer(params.ref.key, params.text);
