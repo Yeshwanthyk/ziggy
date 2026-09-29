@@ -4,6 +4,14 @@ export const DoctorSeverity = Schema.Literals(["ok", "warn", "error"]);
 
 export type DoctorSeverity = typeof DoctorSeverity.Type;
 
+export type BundledCopyState =
+  | "missing"
+  | "untracked-current"
+  | "untracked-behind"
+  | "modified"
+  | "tracked-behind"
+  | "current";
+
 export const DoctorCheck = Schema.Struct({
   id: Schema.String,
   severity: DoctorSeverity,

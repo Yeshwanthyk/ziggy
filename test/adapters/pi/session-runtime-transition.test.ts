@@ -12,11 +12,8 @@ import {
   type AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import {
-  bindChatRuntime,
-  makeLiveChatControls,
-  makeSessionChatHandle,
-} from "ziggy/adapters/pi/pi-agent";
+import { makeLiveChatControls, makeSessionChatHandle } from "ziggy/adapters/pi/pi-agent";
+import { bindChatRuntime } from "ziggy/adapters/pi/chat-runtime-binding";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { acquireSessionLease, makeSessionLeaseTransitions } from "ziggy/adapters/pi/session-lease";
 

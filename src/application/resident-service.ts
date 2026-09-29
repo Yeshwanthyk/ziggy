@@ -9,7 +9,6 @@ import type {
 import type { SlackHealthProjection, SlackHealthProjectionError } from "../domain/slack-health";
 import type { ProfileTarget } from "../domain/profile";
 import {
-  type ResidentServiceDefinition,
   type ResidentServiceDefinitionState,
   ResidentServiceError,
   type ResidentServiceManager,
@@ -94,74 +93,6 @@ export class ResidentServiceOperations extends Context.Service<
 
 export const ResidentServiceLive = Layer.effect(ResidentService, ResidentServiceOperations);
 
-export const managerFor = (
-  platform: NodeJS.Platform,
-): Effect.Effect<ResidentServiceManager, ResidentServiceError> =>
-  platform === "darwin"
-    ? Effect.succeed("launchd")
-    : platform === "linux"
-      ? Effect.succeed("systemd")
-      : Effect.fail(
-          new ResidentServiceError({
-            operation: "detect service manager",
-            reason: "unsupported-platform",
-            path: undefined,
-            message: `resident services are unsupported on ${platform}`,
-            cause: undefined,
-          }),
-        );
-
-export const commandFailure = (
-  operation: string,
-  definition: ResidentServiceDefinition,
-  result: { readonly exitCode: number; readonly stderr: string },
-): ResidentServiceError =>
-  new ResidentServiceError({
-    operation,
-    reason: "command",
-    path: definition.path,
-    message: `${operation} failed for ${definition.identity.key} (exit ${result.exitCode})${result.stderr.trim().length === 0 ? "" : `: ${result.stderr.trim().slice(0, 160)}`}`,
-    cause: undefined,
-  });
-
-export const launchdSupervisorStatus = (result: {
-  readonly exitCode: number;
-  readonly stderr: string;
-  readonly stdout: string;
-}): ResidentSupervisorStatus => {
-  if (result.exitCode !== 0)
-    return /Could not find service\b/u.test(result.stderr)
-      ? { state: "stopped" }
-      : { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
-
-  return /\bstate\s*=\s*running\b/u.test(result.stdout)
-    ? { state: "running" }
-    : { state: "stopped" };
-};
-
-export const systemdSupervisorStatus = (
-  active: { readonly exitCode: number; readonly stdout: string },
-  pidResult?: { readonly exitCode: number; readonly stdout: string },
-): ResidentSupervisorStatus => {
-  const state = active.stdout.trim();
-
-  if (state === "failed") return { state: "failed" };
-
-  if (state !== "active")
-    return state === "inactive" || state === "deactivating"
-      ? { state: "stopped" }
-      : {
-          state: "unknown",
-          reason: `systemctl is-active reported ${state || `exit ${active.exitCode}`}`,
-        };
-
-  const pid = Number(pidResult?.stdout.trim());
-
-  return pidResult?.exitCode === 0 && Number.isSafeInteger(pid) && pid > 0
-    ? { state: "running", pid }
-    : { state: "running" };
-};
-
 /** A restart is ready only after a new owner has published its lease. */
 export const residentReady = (
   supervisor: ResidentSupervisorStatus,
@@ -170,6 +101,15 @@ export const residentReady = (
   mode: "running" | "stopped",
 ): boolean => {
   if (supervisor.state !== mode || observed?._tag !== mode) return false;
+
+  if (
+    mode === "running" &&
+    supervisor.state === "running" &&
+    supervisor.pid !== undefined &&
+    observed?._tag === "running" &&
+    supervisor.pid !== observed.pid
+  )
+    return false;
 
   if (mode === "stopped" || previous === undefined) return true;
 

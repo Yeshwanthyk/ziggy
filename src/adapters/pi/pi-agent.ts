@@ -7,22 +7,8 @@ import { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding
 import { providerError, piPromise } from "./provider-failure";
 import { promptForAssistantText, type PromptSession, type SpecialistVoiceHub } from "./prompt-turn";
 
-export { providerError } from "./provider-failure";
-
-export { promptForAssistantText } from "./prompt-turn";
-
-export { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding";
-
-export {
-  createChatEventProjector,
-  safeProgressToolName,
-  progressToolDetail,
-} from "./chat-event-projector";
-
 import { selectSessionModel } from "../../application/models";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-
-export { createMemoryWriteTool } from "./memory-write-tool";
 
 import {
   AutomationConversationDeliveryFailed,
@@ -473,6 +459,7 @@ const createProfileRuntime = (
       const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
       let acceptedResources = resources;
       let skippedPackages: ReadonlyArray<SkippedPiPackage> = [];
+      let partitioned = false;
 
       const runtime = yield* Effect.tryPromise({
         try: async () => {
@@ -485,43 +472,49 @@ const createProfileRuntime = (
                 agentDir,
                 resourceLoaderOptions: profileResourceLoaderOptions(
                   systemPrompt,
-                  resources,
+                  acceptedResources,
                   inlineExtensions,
                 ),
               });
 
-              const partition = partitionPiResourceDiagnostics(
-                resources,
-                collectPiResourceDiagnostics(services),
-              );
+              if (!partitioned) {
+                const partition = partitionPiResourceDiagnostics(
+                  resources,
+                  collectPiResourceDiagnostics(services),
+                );
 
-              const fatal = piResourceDiagnosticFailure(profilePath, services, partition.fatal);
+                const fatal = piResourceDiagnosticFailure(profilePath, services, partition.fatal);
 
-              if (fatal !== undefined) throw fatal;
+                if (fatal !== undefined) throw fatal;
 
-              if (partition.skipped.length > 0) {
-                services = await createAgentSessionServices({
-                  cwd,
-                  agentDir,
-                  resourceLoaderOptions: profileResourceLoaderOptions(
-                    systemPrompt,
-                    partition.resources,
-                    inlineExtensions,
-                  ),
-                });
+                if (partition.skipped.length > 0) {
+                  services = await createAgentSessionServices({
+                    cwd,
+                    agentDir,
+                    resourceLoaderOptions: profileResourceLoaderOptions(
+                      systemPrompt,
+                      partition.resources,
+                      inlineExtensions,
+                    ),
+                  });
+                  assertNoPiResourceDiagnostics(profilePath, services);
+                  acceptedResources = partition.resources;
+                  skippedPackages = partition.skipped.map((item) => ({
+                    ...item,
+                    diagnostics: [
+                      ...item.diagnostics.slice(0, 11),
+                      {
+                        source: item.id,
+                        message:
+                          "Package-owned automations are disabled while quarantined; stored definitions are retained",
+                      },
+                    ],
+                  }));
+                }
+
+                partitioned = true;
+              } else {
                 assertNoPiResourceDiagnostics(profilePath, services);
-                acceptedResources = partition.resources;
-                skippedPackages = partition.skipped.map((item) => ({
-                  ...item,
-                  diagnostics: [
-                    ...item.diagnostics.slice(0, 11),
-                    {
-                      source: item.id,
-                      message:
-                        "Package-owned automations are disabled while quarantined; stored definitions are retained",
-                    },
-                  ],
-                }));
               }
 
               const specialistRunner =

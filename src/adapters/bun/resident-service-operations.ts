@@ -44,14 +44,78 @@ import { ResidentGateway, type ResidentGatewayApi } from "../../application/resi
 import {
   ResidentServiceOperations,
   type ResidentServiceApi,
-  type ResidentSupervisorStatus,
-  managerFor,
-  commandFailure,
-  launchdSupervisorStatus,
-  systemdSupervisorStatus,
   residentReady,
 } from "../../application/resident-service";
+import type { ResidentSupervisorStatus } from "../../application/resident-service";
 import type { GatewayOwnerStatus } from "../../domain/gateway";
+
+export const managerFor = (
+  platform: NodeJS.Platform,
+): Effect.Effect<ResidentServiceDefinition["manager"], ResidentServiceError> =>
+  platform === "darwin"
+    ? Effect.succeed("launchd")
+    : platform === "linux"
+      ? Effect.succeed("systemd")
+      : Effect.fail(
+          new ResidentServiceError({
+            operation: "detect service manager",
+            reason: "unsupported-platform",
+            path: undefined,
+            message: `resident services are unsupported on ${platform}`,
+            cause: undefined,
+          }),
+        );
+
+export const commandFailure = (
+  operation: string,
+  definition: ResidentServiceDefinition,
+  result: { readonly exitCode: number; readonly stderr: string },
+): ResidentServiceError =>
+  new ResidentServiceError({
+    operation,
+    reason: "command",
+    path: definition.path,
+    message: `${operation} failed for ${definition.identity.key} (exit ${result.exitCode})${result.stderr.trim().length === 0 ? "" : `: ${result.stderr.trim().slice(0, 160)}`}`,
+    cause: undefined,
+  });
+
+export const launchdSupervisorStatus = (result: {
+  readonly exitCode: number;
+  readonly stderr: string;
+  readonly stdout: string;
+}): ResidentSupervisorStatus => {
+  if (result.exitCode !== 0)
+    return /Could not find service\b/u.test(result.stderr)
+      ? { state: "stopped" }
+      : { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
+
+  return /\bstate\s*=\s*running\b/u.test(result.stdout)
+    ? { state: "running" }
+    : { state: "stopped" };
+};
+
+export const systemdSupervisorStatus = (
+  active: { readonly exitCode: number; readonly stdout: string },
+  pidResult?: { readonly exitCode: number; readonly stdout: string },
+): ResidentSupervisorStatus => {
+  const state = active.stdout.trim();
+
+  if (state === "failed") return { state: "failed" };
+
+  if (state !== "active")
+    return state === "inactive" || state === "deactivating"
+      ? { state: "stopped" }
+      : {
+          state: "unknown",
+          reason: `systemctl is-active reported ${state || `exit ${active.exitCode}`}`,
+        };
+
+  const pid = Number(pidResult?.stdout.trim());
+
+  return pidResult?.exitCode === 0 && Number.isSafeInteger(pid) && pid > 0
+    ? { state: "running", pid }
+    : { state: "running" };
+};
 
 export interface ResidentServiceRuntime {
   readonly platform: NodeJS.Platform;

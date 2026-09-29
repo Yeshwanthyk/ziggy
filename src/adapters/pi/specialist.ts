@@ -38,7 +38,7 @@ import type { ProfileAgent } from "../../domain/profile";
 import { createPiDocsExtension } from "./pi-docs";
 import { leaseProfileRuntime } from "./profile-runtime-lease";
 import { acquireSessionLease } from "./session-lease";
-import { promptForAssistantText } from "./pi-agent";
+import { promptForAssistantText } from "./prompt-turn";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
 import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";

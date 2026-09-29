@@ -2,20 +2,36 @@ import { expect, test } from "bun:test";
 import fc from "fast-check";
 import { residentReady } from "ziggy/application/resident-service";
 
-test("a restart never accepts the previous resident lease as ready", () => {
+test("restart waits for a fresh owner matching the supervisor process", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100_000 }),
+      fc.integer({ min: 1, max: 100_000 }),
       fc.string({ maxLength: 24 }),
-      (pid, acquiredAt) => {
-        const previous = { _tag: "running" as const, path: "/profile", pid, acquiredAt };
-        expect(residentReady({ state: "running", pid }, previous, previous, "running")).toBe(false);
+      fc.boolean(),
+      (oldPid, nextPid, acquiredAt, supervisorHasPid) => {
+        const previous = { _tag: "running" as const, path: "/profile", pid: oldPid, acquiredAt };
+        const newOwner = { ...previous, pid: nextPid, acquiredAt: `${acquiredAt}-new` };
+
+        const supervisor = supervisorHasPid
+          ? { state: "running" as const, pid: nextPid }
+          : { state: "running" as const };
+
+        expect(residentReady(supervisor, previous, previous, "running")).toBe(false);
+        expect(residentReady(supervisor, newOwner, previous, "running")).toBe(true);
+        expect(
+          residentReady({ state: "running", pid: oldPid }, newOwner, previous, "running"),
+        ).toBe(oldPid === nextPid);
+        expect(
+          residentReady(supervisor, previous, { _tag: "stopped", path: "/profile" }, "running"),
+        ).toBe(!supervisorHasPid || nextPid === oldPid);
+        expect(residentReady({ state: "stopped" }, newOwner, previous, "running")).toBe(false);
         expect(
           residentReady(
-            { state: "running", pid },
-            { ...previous, acquiredAt: `${acquiredAt}-new` },
+            { state: "stopped" },
+            { _tag: "stopped", path: "/profile" },
             previous,
-            "running",
+            "stopped",
           ),
         ).toBe(true);
       },

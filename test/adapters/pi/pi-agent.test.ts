@@ -32,7 +32,6 @@ import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
   askOnce,
-  createChatEventProjector,
   createLocalSessionManager,
   currentPiSessionReference,
   localMainSessionDirectory,
@@ -40,11 +39,14 @@ import {
   makeSessionChatHandle,
   openChat,
   openSpecialistChat,
-  promptForAssistantText,
-  progressToolDetail,
   runSpecialist,
-  providerError,
 } from "ziggy/adapters/pi/pi-agent";
+import {
+  createChatEventProjector,
+  progressToolDetail,
+} from "ziggy/adapters/pi/chat-event-projector";
+import { promptForAssistantText } from "ziggy/adapters/pi/prompt-turn";
+import { providerError } from "ziggy/adapters/pi/provider-failure";
 
 const assistantMessage = (
   text: string,

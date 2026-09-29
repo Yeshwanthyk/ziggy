@@ -1,7 +1,7 @@
 import type { AgentSessionRuntime } from "@earendil-works/pi-coding-agent";
 import { Effect, Semaphore } from "effect";
 import { SessionBusy } from "../../domain/agent";
-import { makeSessionLeaseTransitions } from "./session-lease";
+import type { makeSessionLeaseTransitions } from "./session-lease";
 import { readSessionHeaderOnly } from "./session-discovery";
 
 interface NavigateTreeOptions {

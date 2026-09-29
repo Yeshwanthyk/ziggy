@@ -4,7 +4,7 @@ import { Auth } from "./auth";
 import type { ModelsApi } from "./models";
 import { Models } from "./models";
 import { ProfileExtensions } from "./profile-extensions";
-import type { DoctorCheck, DoctorReport } from "../domain/doctor";
+import type { BundledCopyState, DoctorCheck, DoctorReport } from "../domain/doctor";
 import type { SlackHealthProjection } from "../domain/slack-health";
 import type { DiscordHealthProjection } from "../domain/discord-health";
 import type { ProfileAgent, ProfileTarget } from "../domain/profile";
@@ -131,7 +131,7 @@ export const classifyDiscordRuntime = (projection: DiscordHealthProjection): Doc
 export const bundledCopyCheck = (
   profilePath: string,
   id: string,
-  state: string,
+  state: BundledCopyState,
 ): DoctorCheck | undefined => {
   if (state === "modified")
     return warn(
