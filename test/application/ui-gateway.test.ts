@@ -2189,6 +2189,8 @@ test("a prompt submitted during resume starts after the transcript reset", async
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+        // Release the uninterruptible resume on failure so a regression fails fast instead of hanging.
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
         const prompted = yield* Deferred.make<void>();
         const registry = yield* makeChatRegistry();
 
