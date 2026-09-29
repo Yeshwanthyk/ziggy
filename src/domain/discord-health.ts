@@ -1,3 +1,4 @@
+import { turnHealthCounts } from "./chat-health";
 import { Schema } from "effect";
 
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -111,38 +112,28 @@ export const evolveDiscordHealth = (
     case "accepted":
       return {
         ...base,
-        activeTurnCount: current.activeTurnCount + 1,
-        queuedTurnCount: current.queuedTurnCount + (event.queued ? 1 : 0),
-        acceptedTurnCount: current.acceptedTurnCount + 1,
+        ...turnHealthCounts(current, event),
       };
     case "started":
       return {
         ...base,
-        queuedTurnCount: event.wasQueued
-          ? Math.max(0, current.queuedTurnCount - 1)
-          : current.queuedTurnCount,
+        ...turnHealthCounts(current, event),
       };
     case "completed":
       return {
         ...base,
         lastTurnCompletedAtMs: event.atMs,
-        activeTurnCount: Math.max(0, current.activeTurnCount - 1),
-        completedTurnCount: current.completedTurnCount + (event.succeeded ? 1 : 0),
-        failedTurnCount: current.failedTurnCount + (event.succeeded ? 0 : 1),
+        ...turnHealthCounts(current, event),
         lastFailure: event.succeeded ? current.lastFailure : "turn",
       };
     case "cancelled":
       return {
         ...base,
         lastTurnCompletedAtMs: event.atMs,
-        activeTurnCount: Math.max(0, current.activeTurnCount - 1),
-        queuedTurnCount: event.wasQueued
-          ? Math.max(0, current.queuedTurnCount - 1)
-          : current.queuedTurnCount,
-        cancelledTurnCount: current.cancelledTurnCount + 1,
+        ...turnHealthCounts(current, event),
       };
     case "stopped":
-      return { ...base, state: "stopped", activeTurnCount: 0, queuedTurnCount: 0 };
+      return { ...base, state: "stopped", ...turnHealthCounts(current, event) };
   }
 };
 
