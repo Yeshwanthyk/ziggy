@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Cause, Deferred, Duration, Effect, Exit, Queue } from "effect";
-import { DiscordApiError } from "../../adapters/discord/api";
+import type { DiscordApiError } from "../../adapters/discord/api";
 import type { DiscordGatewayConfig } from "../../domain/discord";
 import type {
   DiscordIngressPayload as InboundMessage,
@@ -31,8 +31,8 @@ import type {
   DiscordTransport,
   DiscordHealthRuntime,
   DiscordIngressRuntime,
-  DiscordProgressUpdateState,
-} from "./runtime";
+} from "./model";
+import type { DiscordProgressUpdateState } from "./delivery";
 
 const TYPING_REFRESH_SECONDS = 8;
 

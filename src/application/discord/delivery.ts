@@ -1,11 +1,9 @@
-import { Result } from "effect";
+import { Duration, Effect, Result } from "effect";
 import { codePointLength } from "../../domain/memory";
 import type { DiscordIngressTerminalState } from "../../domain/discord-ingress";
-import type { DiscordProgressUpdateState } from "./runtime";
-import { Duration, Effect } from "effect";
 import {
   DISCORD_IMAGE_MIME_TYPES,
-  DiscordApiError,
+  type DiscordApiError,
   isDiscordAttachmentUrl,
   MAX_DISCORD_IMAGE_BYTES,
   type DiscordImageContent,
@@ -15,15 +13,20 @@ import type {
   DiscordIngressAttachmentReference,
 } from "../../domain/discord-ingress";
 
-export const DISCORD_MESSAGE_LIMIT = 2_000;
+export interface DiscordProgressUpdateState {
+  readonly atMs: number;
+  readonly text: string;
+}
 
-export const MAX_RETRY_SECONDS = 30;
+const DISCORD_MESSAGE_LIMIT = 2_000;
 
-export const MAX_DELIVERY_ATTEMPTS = 4;
+const MAX_RETRY_SECONDS = 30;
 
-export const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
+const MAX_DELIVERY_ATTEMPTS = 4;
 
-export const PROGRESS_UPDATE_GROWTH = 48;
+const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
+
+const PROGRESS_UPDATE_GROWTH = 48;
 
 export const WORKING_MESSAGE = "Working on that…";
 

@@ -1,22 +1,5 @@
-import { makeDiscordTurnProcessor } from "./turn";
-import type { DiscordIngressPayload as InboundMessage } from "../../domain/discord-ingress";
-import {
-  normalizeDiscordMessage,
-  discordThreadConversation,
-  threadName,
-  isDiscordStopCommand,
-  THREAD_TYPES,
-  ROOT_CHANNEL_TYPES,
-  type AdmittedMessage,
-} from "./intake";
-import {
-  retryDiscordDelivery,
-  discordIngressTerminalState,
-  discordDeliveryOutcomeUnknown,
-} from "./delivery";
 import { randomUUID } from "node:crypto";
 import { Context, Deferred, Duration, Effect, Exit, Layer, Result, Semaphore } from "effect";
-import type * as Scope from "effect/Scope";
 import {
   admitDiscordIngress,
   finishDiscordIngress,
@@ -25,14 +8,12 @@ import {
   requeueDiscordIngress,
   recoverDiscordIngress,
   startDiscordIngress,
-  type DiscordIngressAdmission,
 } from "../../adapters/bun/discord-ingress-sqlite";
 import {
   addReaction,
   createMessageWithReceipt,
   downloadAttachment,
   DiscordApiError,
-  type DiscordImageContent,
   ensureDiscordCommands,
   getChannel,
   removeReaction,
@@ -42,140 +23,58 @@ import {
   updateMessage,
 } from "../../adapters/discord/api";
 import {
-  type DiscordInboundInteraction,
-  type DiscordSocket,
-  type DiscordSocketError,
   openDiscordSocket,
+  type DiscordInboundInteraction,
+  type DiscordSocketError,
 } from "../../adapters/discord/socket";
 import { writeDiscordHealth } from "../../adapters/fs/discord-health";
-import { loadDiscordConfigFile } from "../../adapters/fs/gateway-config";
-import { type ZiggyAgentError } from "../../domain/agent";
-import type { DiscordGatewayConfig } from "../../domain/discord";
+import type { ZiggyAgentError } from "../../domain/agent";
 import {
-  type DiscordIngressAttachmentReference,
   DiscordIngressDatabaseError,
-  type DiscordIngressPayload,
-  type DiscordIngressTerminalState,
+  type DiscordIngressPayload as InboundMessage,
 } from "../../domain/discord-ingress";
 import {
   evolveDiscordHealth,
   initialDiscordHealth,
   type DiscordHealthEvent,
-  type DiscordHealthProjectionError,
-  type DiscordHealthSnapshot,
 } from "../../domain/discord-health";
-import type { ProfileTarget } from "../../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
 import type { UiGatewayError } from "../../domain/ui-gateway";
+import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
+import type { ChatRegistryApi } from "../chat-registry";
+import {
+  retryDiscordDelivery,
+  discordIngressTerminalState,
+  discordDeliveryOutcomeUnknown,
+} from "./delivery";
+import {
+  normalizeDiscordMessage,
+  discordThreadConversation,
+  threadName,
+  isDiscordStopCommand,
+  THREAD_TYPES,
+  ROOT_CHANNEL_TYPES,
+  type AdmittedMessage,
+} from "./intake";
+import type {
+  ChatState,
+  ScheduledDiscordTurn,
+  DiscordTransport,
+  DiscordGatewayApi,
+  DiscordHealthRuntime,
+  DiscordIngressRuntime,
+  DiscordChannel,
+} from "./model";
+import { makeDiscordTurnProcessor } from "./turn";
+
+export class DiscordGateway extends Context.Service<DiscordGateway, DiscordGatewayApi>()(
+  "ziggy/DiscordGateway",
+) {}
 
 const DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 
 const MAX_PENDING_TURNS_PER_CHAT = 8;
 
 const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
-
-export type DiscordGatewayError = DiscordApiError | DiscordIngressDatabaseError;
-
-interface DiscordChannel {
-  readonly id: string;
-  readonly type: number;
-  readonly name?: string | undefined;
-  readonly guild_id?: string | undefined;
-  readonly parent_id?: string | null | undefined;
-}
-
-export interface DiscordTransport {
-  readonly openSocket: (
-    token: string,
-    intents: number,
-  ) => Effect.Effect<DiscordSocket, DiscordSocketError, Scope.Scope>;
-  readonly getChannel: (
-    token: string,
-    channelId: string,
-  ) => Effect.Effect<DiscordChannel, DiscordApiError>;
-  readonly startThreadFromMessage: (
-    token: string,
-    channelId: string,
-    messageId: string,
-    name: string,
-  ) => Effect.Effect<DiscordChannel, DiscordApiError>;
-  readonly createMessage: (
-    token: string,
-    channelId: string,
-    text: string,
-  ) => Effect.Effect<{ readonly id: string }, DiscordApiError>;
-  readonly updateMessage: (
-    token: string,
-    channelId: string,
-    messageId: string,
-    text: string,
-  ) => Effect.Effect<void, DiscordApiError>;
-  readonly triggerTyping: (
-    token: string,
-    channelId: string,
-  ) => Effect.Effect<void, DiscordApiError>;
-  readonly addReaction: (
-    token: string,
-    channelId: string,
-    messageId: string,
-    emoji: string,
-  ) => Effect.Effect<void, DiscordApiError>;
-  readonly removeReaction: (
-    token: string,
-    channelId: string,
-    messageId: string,
-    emoji: string,
-  ) => Effect.Effect<void, DiscordApiError>;
-  readonly downloadAttachment?: (
-    attachment: DiscordIngressAttachmentReference,
-  ) => Effect.Effect<DiscordImageContent, DiscordApiError>;
-  readonly ensureCommands?: (
-    token: string,
-    guildIds: ReadonlyArray<string>,
-  ) => Effect.Effect<void, DiscordApiError>;
-  readonly respondToInteraction?: (
-    interactionId: string,
-    interactionToken: string,
-    text: string,
-  ) => Effect.Effect<void, DiscordApiError>;
-}
-
-export interface DiscordGatewayApi {
-  readonly runLoop: (
-    target: ProfileTarget,
-    config: DiscordGatewayConfig,
-    registry?: ChatRegistryApi,
-  ) => Effect.Effect<never, DiscordGatewayError>;
-}
-
-export class DiscordGateway extends Context.Service<DiscordGateway, DiscordGatewayApi>()(
-  "ziggy/DiscordGateway",
-) {}
-
-export interface ScheduledDiscordTurn {
-  readonly cancellation: Deferred.Deferred<void>;
-  readonly generation: number;
-  readonly message: InboundMessage;
-  cancelled: boolean;
-  terminalAttempted: boolean;
-}
-
-export interface ChatState {
-  readonly semaphore: Semaphore.Semaphore;
-  readonly turns: Set<ScheduledDiscordTurn>;
-  generation: number;
-  handle?: ChatHandle;
-  pending: number;
-  busyNoticePending: boolean;
-}
-
-export interface DiscordProgressUpdateState {
-  readonly atMs: number;
-  readonly text: string;
-}
-
-export const loadDiscordGatewayConfig = loadDiscordConfigFile;
 
 const disposeChats = (
   chats: Map<string, ChatState>,
@@ -222,15 +121,6 @@ const liveDiscordTransport: DiscordTransport = {
   respondToInteraction: respondToDiscordInteraction,
 };
 
-export interface DiscordHealthRuntime {
-  readonly now: () => number;
-  readonly waitForHeartbeat: Effect.Effect<void>;
-  readonly write: (
-    profilePath: string,
-    snapshot: DiscordHealthSnapshot,
-  ) => Effect.Effect<void, DiscordHealthProjectionError>;
-}
-
 const liveDiscordHealthRuntime: DiscordHealthRuntime = {
   now: Date.now,
   waitForHeartbeat: Effect.sleep(Duration.seconds(30)),
@@ -242,40 +132,6 @@ const silentDiscordHealthRuntime: DiscordHealthRuntime = {
   waitForHeartbeat: Effect.never,
   write: () => Effect.void,
 };
-
-export interface DiscordIngressRuntime {
-  readonly initialize: (profilePath: string) => Effect.Effect<void, DiscordIngressDatabaseError>;
-  readonly admit: (
-    profilePath: string,
-    payload: DiscordIngressPayload,
-    atMs: number,
-  ) => Effect.Effect<DiscordIngressAdmission, DiscordIngressDatabaseError>;
-  readonly recover: (
-    profilePath: string,
-    ownerId: string,
-  ) => Effect.Effect<void, DiscordIngressDatabaseError>;
-  readonly readReplayable: (
-    profilePath: string,
-  ) => Effect.Effect<ReadonlyArray<DiscordIngressPayload>, DiscordIngressDatabaseError>;
-  readonly start: (
-    profilePath: string,
-    payload: DiscordIngressPayload,
-    ownerId: string,
-    atMs: number,
-  ) => Effect.Effect<boolean, DiscordIngressDatabaseError>;
-  readonly requeue: (
-    profilePath: string,
-    payload: DiscordIngressPayload,
-    ownerId: string,
-  ) => Effect.Effect<void, DiscordIngressDatabaseError>;
-  readonly finish: (
-    profilePath: string,
-    payload: DiscordIngressPayload,
-    ownerId: string,
-    state: DiscordIngressTerminalState,
-    atMs: number,
-  ) => Effect.Effect<void, DiscordIngressDatabaseError>;
-}
 
 const liveDiscordIngressRuntime: DiscordIngressRuntime = {
   initialize: initializeDiscordIngressDatabase,

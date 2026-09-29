@@ -1,5 +1,27 @@
-export * from "./discord/runtime";
+export { DiscordGateway, DiscordGatewayLive, makeDiscordGateway } from "./discord/runtime";
 
-export * from "./discord/intake";
+export { loadDiscordGatewayConfig } from "./discord/intake";
 
-export * from "./discord/delivery";
+export type {
+  DiscordGatewayApi,
+  DiscordGatewayError,
+  DiscordTransport,
+  DiscordHealthRuntime,
+  DiscordIngressRuntime,
+} from "./discord/model";
+
+export type { DiscordProgressUpdateState } from "./discord/delivery";
+
+export {
+  normalizeDiscordMessage,
+  isDiscordStopCommand,
+  discordThreadConversation,
+} from "./discord/intake";
+
+export {
+  shouldUpdateDiscordProgress,
+  discordMessageChunks,
+  prepareDiscordAttachmentPrompt,
+  discordIngressTerminalState,
+  retryDiscordDelivery,
+} from "./discord/delivery";

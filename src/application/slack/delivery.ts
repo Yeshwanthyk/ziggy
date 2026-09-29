@@ -1,22 +1,24 @@
-import type { SlackIngressTerminalState } from "../../domain/slack-ingress";
-import { SLACK_BROADCAST_MENTION } from "./intake";
 import { Duration, Effect } from "effect";
 import {
   isSlackPrivateFileUrl,
   MAX_SLACK_IMAGE_BYTES,
   SLACK_IMAGE_MIME_TYPES,
-  SlackApiError,
+  type SlackApiError,
   type SlackImageContent,
   type SlackStartStreamOptions,
   type SlackTaskUpdateChunk,
   type SlackThreadHistory,
 } from "../../adapters/slack/api";
-import type { SlackIngressFileReference, SlackIngressPayload } from "../../domain/slack-ingress";
+import type {
+  SlackIngressFileReference,
+  SlackIngressPayload,
+  SlackIngressTerminalState,
+} from "../../domain/slack-ingress";
 import { codePointLength } from "../../domain/memory";
 import { slackTaskTitle } from "../slack-tool-progress";
-import { normalizeSlackUserText } from "./intake";
+import { normalizeSlackUserText, SLACK_BROADCAST_MENTION } from "./intake";
 
-export const SLACK_MESSAGE_LIMIT = 4_000;
+const SLACK_MESSAGE_LIMIT = 4_000;
 
 const PROGRESS_UPDATE_GROWTH = 48;
 
@@ -24,9 +26,9 @@ const PROGRESS_UPDATE_INTERVAL_MS = 1_500;
 
 const MAX_PROMPT_IMAGES = 4;
 
-export const MAX_RETRY_SECONDS = 30;
+const MAX_RETRY_SECONDS = 30;
 
-export const MAX_DELIVERY_ATTEMPTS = 4;
+const MAX_DELIVERY_ATTEMPTS = 4;
 
 const MAX_THREAD_CONTEXT_CODE_POINTS = 30_000;
 

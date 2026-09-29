@@ -1,14 +1,5 @@
-import { makeSlackTurnProcessor } from "./turn";
-import {
-  classifySlackCommand,
-  resolveSlackChannelMode,
-  isSlackStopCommand,
-  slackReplyThreadTs,
-} from "./intake";
-import { uniqueSlackStatusTargets } from "./delivery";
 import { randomUUID } from "node:crypto";
 import { Context, Deferred, Duration, Effect, Layer, Result, Semaphore } from "effect";
-import type * as Scope from "effect/Scope";
 import {
   addReaction,
   appendStream,
@@ -20,10 +11,6 @@ import {
   removeReaction,
   setStatus,
   SlackApiError,
-  type SlackImageContent,
-  type SlackStartStreamOptions,
-  type SlackTaskUpdateChunk,
-  type SlackThreadHistory,
   startStream,
   stopStream,
   updateMessage,
@@ -37,139 +24,44 @@ import {
   startSlackIngress,
 } from "../../adapters/bun/slack-ingress-sqlite";
 import {
-  type SlackSocket,
   SlackSocketError,
-  type SlackSocketInboundAdmit,
   openSlackSocket,
+  type SlackSocketInboundAdmit,
 } from "../../adapters/slack/socket";
 import { writeSlackHealth } from "../../adapters/fs/slack-health";
-import { type SlackGatewayConfig } from "../../domain/slack";
-import {
-  type SlackIngressDatabaseError,
-  type SlackIngressFileReference,
-  type SlackIngressPayload,
-  type SlackIngressRecord,
-  type SlackIngressTerminalState,
-} from "../../domain/slack-ingress";
+import type { SlackIngressDatabaseError, SlackIngressPayload } from "../../domain/slack-ingress";
 import {
   evolveSlackHealth,
   initialSlackHealth,
   type SlackHealthEvent,
-  type SlackHealthProjectionError,
-  type SlackHealthSnapshot,
 } from "../../domain/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
-import { ZiggyAgent, type ChatHandle, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
 import { automationTargetFromString } from "../../domain/automation";
-
-const MAX_PENDING_TURNS_PER_CHAT = 8;
-
-const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
-
-export type SlackGatewayError = SlackApiError | SlackIngressDatabaseError;
-
-export interface SlackTransport {
-  readonly authTest: (token: string) => Effect.Effect<{ readonly userId: string }, SlackApiError>;
-  readonly getConversation?: (
-    token: string,
-    channel: string,
-  ) => Effect.Effect<{ readonly id: string; readonly name?: string | undefined }, SlackApiError>;
-  readonly openSocket: (
-    appToken: string,
-    admitInbound?: SlackSocketInboundAdmit,
-  ) => Effect.Effect<SlackSocket, SlackSocketError, Scope.Scope>;
-  readonly postMessage: (
-    token: string,
-    channel: string,
-    text: string,
-    threadTs?: string,
-  ) => Effect.Effect<{ readonly ts: string }, SlackApiError>;
-  readonly getThreadReplies: (
-    token: string,
-    channel: string,
-    threadTs: string,
-    latestTs: string,
-  ) => Effect.Effect<SlackThreadHistory, SlackApiError>;
-  readonly updateMessage: (
-    token: string,
-    channel: string,
-    ts: string,
-    text: string,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly setStatus: (
-    token: string,
-    channel: string,
-    threadTs: string,
-    status: string,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly startStream?: (
-    token: string,
-    channel: string,
-    threadTs: string,
-    options?: SlackStartStreamOptions,
-  ) => Effect.Effect<{ readonly ts: string }, SlackApiError>;
-  readonly appendStream?: (
-    token: string,
-    channel: string,
-    ts: string,
-    chunks: ReadonlyArray<SlackTaskUpdateChunk>,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly stopStream?: (
-    token: string,
-    channel: string,
-    ts: string,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly addReaction: (
-    token: string,
-    channel: string,
-    ts: string,
-    name: string,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly removeReaction: (
-    token: string,
-    channel: string,
-    ts: string,
-    name: string,
-  ) => Effect.Effect<void, SlackApiError>;
-  readonly downloadFile?: (
-    token: string,
-    file: SlackIngressFileReference,
-  ) => Effect.Effect<SlackImageContent, SlackApiError>;
-}
-
-export interface SlackGatewayApi {
-  readonly runLoop: (
-    target: ProfileTarget,
-    config: SlackGatewayConfig,
-    registry?: ChatRegistryApi,
-  ) => Effect.Effect<never, SlackGatewayError>;
-}
+import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
+import type { ChatRegistryApi } from "../chat-registry";
+import { uniqueSlackStatusTargets } from "./delivery";
+import {
+  classifySlackCommand,
+  resolveSlackChannelMode,
+  isSlackStopCommand,
+  slackReplyThreadTs,
+} from "./intake";
+import type {
+  ChatState,
+  ScheduledSlackTurn,
+  SlackTransport,
+  SlackGatewayApi,
+  SlackIngressRuntime,
+  SlackHealthRuntime,
+} from "./model";
+import { makeSlackTurnProcessor } from "./turn";
 
 export class SlackGateway extends Context.Service<SlackGateway, SlackGatewayApi>()(
   "ziggy/SlackGateway",
 ) {}
 
-type InboundMessage = SlackIngressPayload;
+const MAX_PENDING_TURNS_PER_CHAT = 8;
 
-export interface ChatState {
-  readonly semaphore: Semaphore.Semaphore;
-  readonly statusSemaphore: Semaphore.Semaphore;
-  readonly turns: Set<ScheduledSlackTurn>;
-  generation: number;
-  handle?: ChatHandle;
-  activeMessage?: InboundMessage;
-  pending: number;
-  busyNoticePending: boolean;
-}
-
-export interface ScheduledSlackTurn {
-  readonly cancellation: Deferred.Deferred<void>;
-  readonly generation: number;
-  readonly message: InboundMessage;
-  cancelled: boolean;
-  terminalAttempted: boolean;
-}
+const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
 
 const disposeChats = (
   chats: Map<string, ChatState>,
@@ -227,35 +119,6 @@ const liveSlackTransport: SlackTransport = {
   updateMessage,
 };
 
-export interface SlackIngressRuntime {
-  readonly initialize: (profilePath: string) => Effect.Effect<void, SlackIngressDatabaseError>;
-  readonly recover: (
-    profilePath: string,
-    ownerId: string,
-  ) => Effect.Effect<void, SlackIngressDatabaseError>;
-  readonly replayable: (
-    profilePath: string,
-  ) => Effect.Effect<ReadonlyArray<SlackIngressRecord>, SlackIngressDatabaseError>;
-  readonly admit: (
-    profilePath: string,
-    record: SlackIngressRecord,
-    atMs: number,
-  ) => Effect.Effect<"accepted" | "duplicate", SlackIngressDatabaseError>;
-  readonly start: (
-    profilePath: string,
-    payload: SlackIngressPayload,
-    ownerId: string,
-    atMs: number,
-  ) => Effect.Effect<boolean, SlackIngressDatabaseError>;
-  readonly finish: (
-    profilePath: string,
-    payload: SlackIngressPayload,
-    ownerId: string,
-    state: SlackIngressTerminalState,
-    atMs: number,
-  ) => Effect.Effect<void, SlackIngressDatabaseError>;
-}
-
 const liveSlackIngressRuntime: SlackIngressRuntime = {
   initialize: initializeSlackIngressDatabase,
   recover: recoverSlackIngress,
@@ -273,15 +136,6 @@ const volatileSlackIngressRuntime: SlackIngressRuntime = {
   start: () => Effect.succeed(true),
   finish: () => Effect.void,
 };
-
-export interface SlackHealthRuntime {
-  readonly now: () => number;
-  readonly waitForHeartbeat: Effect.Effect<void>;
-  readonly write: (
-    profilePath: string,
-    snapshot: SlackHealthSnapshot,
-  ) => Effect.Effect<void, SlackHealthProjectionError>;
-}
 
 const liveSlackHealthRuntime: SlackHealthRuntime = {
   now: Date.now,
@@ -523,7 +377,7 @@ export const makeSlackGateway = (
         // Slack may steer a new text turn into the active handle; cancelled ingress is
         // settled as cancelled. Discord instead queues turns and requeues interrupted ingress.
 
-        const registerMessage = (message: InboundMessage) =>
+        const registerMessage = (message: SlackIngressPayload) =>
           Effect.gen(function* () {
             yield* rememberChannel(message.channel);
 
@@ -665,14 +519,14 @@ export const makeSlackGateway = (
             ).pipe(Effect.ensuring(cleanup));
           });
 
-        const scheduleMessage = (message: InboundMessage) =>
+        const scheduleMessage = (message: SlackIngressPayload) =>
           Effect.gen(function* () {
             const work = yield* registerMessage(message);
 
             if (work !== undefined) yield* work.pipe(Effect.forkScoped);
           });
 
-        const stopMessage = (message: InboundMessage) =>
+        const stopMessage = (message: SlackIngressPayload) =>
           Effect.gen(function* () {
             const started = yield* ingressRuntime.start(
               target.path,
@@ -781,7 +635,7 @@ export const makeSlackGateway = (
             ).pipe(Effect.forkScoped);
           });
 
-        const dispatchMessage = (message: InboundMessage) =>
+        const dispatchMessage = (message: SlackIngressPayload) =>
           isSlackStopCommand(message.text) ? stopMessage(message) : scheduleMessage(message);
 
         const replayWork: Array<Effect.Effect<void>> = [];

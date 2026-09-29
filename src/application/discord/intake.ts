@@ -1,3 +1,4 @@
+import { loadDiscordConfigFile } from "../../adapters/fs/gateway-config";
 import type { DiscordInboundMessage } from "../../adapters/discord/socket";
 import type {
   DiscordIngressAttachmentReference,
@@ -54,6 +55,8 @@ export const normalizeDiscordMessage = (
     ),
   };
 };
+
+export const loadDiscordGatewayConfig = loadDiscordConfigFile;
 
 export const isDiscordStopCommand = (text: string): boolean =>
   text.trim().toLocaleLowerCase() === "stop";

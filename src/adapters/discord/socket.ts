@@ -1,4 +1,14 @@
-import { liveConnection } from "./connection";
+import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
+import type * as Scope from "effect/Scope";
+import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
+import { makeRecentIds } from "../bun/recent-ids";
+import { MAX_CHAT_FRAME_SIZE } from "../slack-discord-frame-limit";
+import { type DiscordApiError, getGatewayBot } from "./api";
+import {
+  liveConnection,
+  type DiscordSocketConnection,
+  type DiscordWebSocketMessageData,
+} from "./connection";
 import {
   normalizeGatewayFrame,
   decodeGatewayFrameJson,
@@ -9,12 +19,8 @@ import {
   decodeInteractionPayload,
   type GatewayFrame,
 } from "./frame";
-import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
-import type * as Scope from "effect/Scope";
-import { type DiscordApiError, getGatewayBot } from "./api";
-import { makeRecentIds } from "../bun/recent-ids";
-import { MAX_CHAT_FRAME_SIZE } from "../slack-discord-frame-limit";
-import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
+
+export type { DiscordSocketConnection, DiscordWebSocketMessageData } from "./connection";
 
 export interface DiscordInboundMessage {
   readonly id: string;
@@ -78,18 +84,6 @@ export type DiscordSocketConnectionState =
       readonly reason: "authentication" | "connection" | "queue-overflow" | "socket";
     }
   | { readonly state: "stopped" };
-
-export type DiscordWebSocketMessageData = string | Uint8Array;
-
-export interface DiscordSocketConnection {
-  readonly readyState: () => number;
-  readonly send: (data: string) => void;
-  readonly close: (code?: number) => void;
-  readonly onOpen: (listener: () => void) => () => void;
-  readonly onMessage: (listener: (data: DiscordWebSocketMessageData) => void) => () => void;
-  readonly onError: (listener: () => void) => () => void;
-  readonly onClose: (listener: (code: number) => void) => () => void;
-}
 
 export interface DiscordSocketDependencies {
   readonly getGatewayBot: (

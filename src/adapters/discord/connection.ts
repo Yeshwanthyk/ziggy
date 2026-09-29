@@ -1,4 +1,14 @@
-import type { DiscordSocketConnection, DiscordWebSocketMessageData } from "./socket";
+export type DiscordWebSocketMessageData = string | Uint8Array;
+
+export interface DiscordSocketConnection {
+  readonly readyState: () => number;
+  readonly send: (data: string) => void;
+  readonly close: (code?: number) => void;
+  readonly onOpen: (listener: () => void) => () => void;
+  readonly onMessage: (listener: (data: DiscordWebSocketMessageData) => void) => () => void;
+  readonly onError: (listener: () => void) => () => void;
+  readonly onClose: (listener: (code: number) => void) => () => void;
+}
 
 const normalizeWebSocketMessageData = (
   data: MessageEvent["data"],

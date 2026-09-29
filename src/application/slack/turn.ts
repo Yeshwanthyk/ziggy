@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Deferred, Duration, Effect, Exit, Option, Queue, Result, Semaphore } from "effect";
-import { SlackApiError } from "../../adapters/slack/api";
+import type { SlackApiError } from "../../adapters/slack/api";
 import { codePointLength } from "../../domain/memory";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
@@ -36,7 +36,7 @@ import type {
   SlackHealthRuntime,
   SlackIngressRuntime,
   SlackTransport,
-} from "./runtime";
+} from "./model";
 
 const HEARTBEAT_SECONDS = 30;
 
