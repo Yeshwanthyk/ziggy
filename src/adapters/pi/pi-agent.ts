@@ -459,7 +459,6 @@ const createProfileRuntime = (
       const runtimeFactory = runtimeOptions.runtimeFactory ?? createAgentSessionRuntime;
       let acceptedResources = resources;
       let skippedPackages: ReadonlyArray<SkippedPiPackage> = [];
-      let partitioned = false;
 
       const runtime = yield* Effect.tryPromise({
         try: async () => {
@@ -477,32 +476,36 @@ const createProfileRuntime = (
                 ),
               });
 
-              if (!partitioned) {
-                const partition = partitionPiResourceDiagnostics(
-                  resources,
-                  collectPiResourceDiagnostics(services),
-                );
+              // Rebuilds start from the accepted set, so a healthy rebuild runs each factory once.
+              // A package that breaks mid-lifetime is quarantined the same way as at startup; a
+              // quarantined package stays excluded until the runtime is recreated (no hot reload).
+              const partition = partitionPiResourceDiagnostics(
+                acceptedResources,
+                collectPiResourceDiagnostics(services),
+              );
 
-                const fatal = piResourceDiagnosticFailure(profilePath, services, partition.fatal);
+              const fatal = piResourceDiagnosticFailure(profilePath, services, partition.fatal);
 
-                if (fatal !== undefined) throw fatal;
+              if (fatal !== undefined) throw fatal;
 
-                if (partition.skipped.length > 0) {
-                  // Pi services have no dispose method; invalidate the discarded loader's
-                  // extension runtime to release its event-bus subscriptions and stale API.
-                  services.resourceLoader.getExtensions().runtime.invalidate();
-                  services = await createAgentSessionServices({
-                    cwd,
-                    agentDir,
-                    resourceLoaderOptions: profileResourceLoaderOptions(
-                      systemPrompt,
-                      partition.resources,
-                      inlineExtensions,
-                    ),
-                  });
-                  assertNoPiResourceDiagnostics(profilePath, services);
-                  acceptedResources = partition.resources;
-                  skippedPackages = partition.skipped.map((item) => ({
+              if (partition.skipped.length > 0) {
+                // Pi services have no dispose method; invalidate the discarded loader's
+                // extension runtime to release its event-bus subscriptions and stale API.
+                services.resourceLoader.getExtensions().runtime.invalidate();
+                services = await createAgentSessionServices({
+                  cwd,
+                  agentDir,
+                  resourceLoaderOptions: profileResourceLoaderOptions(
+                    systemPrompt,
+                    partition.resources,
+                    inlineExtensions,
+                  ),
+                });
+                assertNoPiResourceDiagnostics(profilePath, services);
+                acceptedResources = partition.resources;
+                skippedPackages = [
+                  ...skippedPackages,
+                  ...partition.skipped.map((item) => ({
                     ...item,
                     diagnostics: [
                       ...item.diagnostics.slice(0, 11),
@@ -512,12 +515,8 @@ const createProfileRuntime = (
                           "Package-owned automations are disabled while quarantined; stored definitions are retained",
                       },
                     ],
-                  }));
-                }
-
-                partitioned = true;
-              } else {
-                assertNoPiResourceDiagnostics(profilePath, services);
+                  })),
+                ];
               }
 
               const specialistRunner =

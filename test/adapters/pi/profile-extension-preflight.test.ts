@@ -289,6 +289,72 @@ test("runtime opens with healthy package while a broken package is reported", as
   }
 });
 
+test("a package that breaks mid-lifetime is quarantined on the next rebuild", async () => {
+  const profilePath = await makeProfile();
+  await writePackage(profilePath, "breaks-later");
+  await writePackage(profilePath, "healthy");
+  await stageRequiredPackages(profilePath);
+  await writeFile(
+    join(profilePath, "extensions.json"),
+    JSON.stringify({ extensions: ["breaks-later", "healthy"] }),
+  );
+  await writeFile(
+    join(profilePath, "settings.json"),
+    JSON.stringify({ defaultProvider: "fixture", defaultModel: "fixture-model" }),
+  );
+  await writeFile(
+    join(profilePath, "models.json"),
+    JSON.stringify({
+      providers: {
+        fixture: {
+          baseUrl: "http://127.0.0.1:1/v1",
+          api: "openai-completions",
+          apiKey: "fixture-key",
+          models: [{ id: "fixture-model" }],
+        },
+      },
+    }),
+  );
+  let runtimeRef: Awaited<ReturnType<typeof createAgentSessionRuntime>> | undefined;
+
+  const factory: typeof createAgentSessionRuntime = async (create, options) => {
+    const runtime = await createAgentSessionRuntime(create, options);
+    runtimeRef = runtime;
+
+    return runtime;
+  };
+
+  const handle = await Effect.runPromise(
+    openChat(
+      { path: profilePath, name: "Profile" },
+      { kind: "local" },
+      join(profilePath, "sessions"),
+      "/repository",
+      "fresh",
+      undefined,
+      undefined,
+      factory,
+    ),
+  );
+
+  const skills = () =>
+    (runtimeRef?.services.resourceLoader.getSkills().skills ?? [])
+      .map((skill) => skill.name)
+      .filter((name) => name === "breaks-later" || name === "healthy")
+      .sort();
+
+  try {
+    expect(skills()).toEqual(["breaks-later", "healthy"]);
+    await writePackage(profilePath, "breaks-later", { skillDiagnostic: true });
+
+    if (runtimeRef === undefined) throw new Error("expected Pi runtime");
+    await runtimeRef.newSession();
+    expect(skills()).toEqual(["healthy"]);
+  } finally {
+    await Effect.runPromise(handle.dispose);
+  }
+});
+
 test("preflight aggregates a service error without creating an AgentSession or provider turn", async () => {
   const profilePath = await makeProfile();
   await writePackage(profilePath, "alpha");
