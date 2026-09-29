@@ -136,6 +136,7 @@ const makeSelectionHarness = (agent: ProfileAgent, parentModel: Model<Api>, mode
       name,
       description: "",
       parameters: Type.Object({}),
+      exposure: "direct",
       sourceInfo: { path: "", source: "", scope: "user", origin: "top-level" },
     }),
   );

@@ -543,8 +543,8 @@ describe("Pi provider failure classification", () => {
             releaseAbort = resolve;
           });
         },
-        steer: () => Promise.resolve(),
-        followUp: () => Promise.resolve(),
+        steer: () => Promise.resolve("queued" as const),
+        followUp: () => Promise.resolve("queued" as const),
         sendCustomMessage: () => Promise.resolve(),
         sessionManager,
         subscribe: (listener) => {
@@ -1294,7 +1294,7 @@ describe("Profile extension tool admission", () => {
 });
 
 describe("Profile specialist runtime integration", () => {
-  test("Pi persistent mode allocates a lazy path before any JSONL exists", async () => {
+  test("Pi persistent mode allocates a lazy path and writes JSONL on the first user message", async () => {
     const profilePath = await temporaryProfile();
     const manager = SessionManager.create(profilePath, join(profilePath, "sessions", "lazy"));
     const file = manager.getSessionFile();
@@ -1306,11 +1306,11 @@ describe("Profile specialist runtime integration", () => {
 
     manager.appendMessage({
       role: "user",
-      content: [{ type: "text", text: "not enough to materialize JSONL" }],
+      content: [{ type: "text", text: "materializes JSONL before any assistant reply" }],
       timestamp: Date.now(),
     });
 
-    expect(await Bun.file(file).exists()).toBe(false);
+    expect(await Bun.file(file).exists()).toBe(true);
   });
 
   test("rejects an unknown direct agent before creating a root session", async () => {

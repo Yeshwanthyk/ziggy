@@ -230,7 +230,7 @@ describe("pi docs generator freshness", () => {
         .update(
           JSON.stringify({
             package: "@earendil-works/pi-coding-agent",
-            version: "0.87.1",
+            version: "0.99.1",
             files,
           }),
         )

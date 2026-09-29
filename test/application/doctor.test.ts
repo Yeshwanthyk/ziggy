@@ -193,7 +193,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
     expect(rendered.exitCode).toBe(0);
     expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.3.0");
     expect(report.checks.find((check) => check.id === "pi_docs")?.message).toMatch(
-      /^@earendil-works\/pi-coding-agent@0\.87\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
+      /^@earendil-works\/pi-coding-agent@0\.99\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
     );
     expect(
       rendered.text.split("\n").map((line) => line.split("\t").slice(0, 2).join("\t")),

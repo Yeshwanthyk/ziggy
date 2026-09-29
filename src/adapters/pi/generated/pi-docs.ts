@@ -13,6 +13,7 @@ import fileDocsIndex from "../../../../node_modules/@earendil-works/pi-coding-ag
 import fileDocsJson from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/json.md" with { type: "file" };
 import fileDocsKeybindings from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/keybindings.md" with { type: "file" };
 import fileDocsLlamaCpp from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/llama-cpp.md" with { type: "file" };
+import fileDocsMcp from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/mcp.md" with { type: "file" };
 import fileDocsMessageTypes from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/message-types.md" with { type: "file" };
 import fileDocsModels from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/models.md" with { type: "file" };
 import fileDocsPackages from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/packages.md" with { type: "file" };
@@ -36,12 +37,13 @@ import fileDocsThemes from "../../../../node_modules/@earendil-works/pi-coding-a
 import fileDocsTmux from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/tmux.md" with { type: "file" };
 import fileDocsTui from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/tui.md" with { type: "file" };
 import fileDocsUsage from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/usage.md" with { type: "file" };
+import fileDocsVirtualModels from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/virtual-models.md" with { type: "file" };
 import fileDocsWindows from "../../../../node_modules/@earendil-works/pi-coding-agent/docs/windows.md" with { type: "file" };
 import fileZiggyResources from "../../../../tooling/pi-docs/ziggy-resources.md" with { type: "file" };
 
 export const PI_DOCS_PACKAGE = "@earendil-works/pi-coding-agent";
-export const PI_DOCS_VERSION = "0.87.1";
-export const PI_DOCS_FINGERPRINT = "efda9f4a6e83cc239338c7bada0986e8372adc88f655d92af03f2eb98990296f";
+export const PI_DOCS_VERSION = "0.99.1";
+export const PI_DOCS_FINGERPRINT = "9703d47e19b0ec069fc42222b14002189d60e4abdf6c190d57aa2cd4f1ee1ec4";
 
 export const PI_DOC_FILES = new Map<string, string>([
   ["README.md", fileReadme],
@@ -58,6 +60,7 @@ export const PI_DOC_FILES = new Map<string, string>([
   ["docs/json.md", fileDocsJson],
   ["docs/keybindings.md", fileDocsKeybindings],
   ["docs/llama-cpp.md", fileDocsLlamaCpp],
+  ["docs/mcp.md", fileDocsMcp],
   ["docs/message-types.md", fileDocsMessageTypes],
   ["docs/models.md", fileDocsModels],
   ["docs/packages.md", fileDocsPackages],
@@ -81,6 +84,7 @@ export const PI_DOC_FILES = new Map<string, string>([
   ["docs/tmux.md", fileDocsTmux],
   ["docs/tui.md", fileDocsTui],
   ["docs/usage.md", fileDocsUsage],
+  ["docs/virtual-models.md", fileDocsVirtualModels],
   ["docs/windows.md", fileDocsWindows],
   ["ziggy/resources.md", fileZiggyResources],
 ]);

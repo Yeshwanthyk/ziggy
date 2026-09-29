@@ -4,7 +4,7 @@ A folder that is an assistant. Drop the binary, `ziggy init`, shape `SOUL.md`, t
 
 Two standing principles: the Profile is plain visible files — open the folder and grok the whole assistant at a glance. And every face — web UI, CLI, ACP, and gateway channels — talks to the same client-neutral core; nothing is gated to one client.
 
-One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.87.1` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
+One Bun/TypeScript package wrapping the published `@earendil-works/pi-coding-agent@0.99.1` (pinned exactly). Pi owns agent infrastructure; Ziggy owns Profile policy and product composition. Effect v4 throughout Ziggy application code; Pi's Promise API converted once inside a single adapter.
 
 The resident gateway is the only interactive session owner and serves the web UI. `ziggy <name|path>` attaches to a running resident, starts an installed service if stopped, or prints how to start one; it then prints the local URL. `run` and non-shared ACP still own in-process one-shot sessions. There is no local TUI.
 
@@ -87,7 +87,7 @@ Invariants carried throughout: no durable fact has two writable authorities; Ses
 
 ## Baseline
 
-Pinned exactly: `@earendil-works/pi-coding-agent@0.87.1`, `effect@4.0.0-beta.99`, `@effect/platform-bun@4.0.0-beta.99`, `@effect/tsgo@0.21.0`, `typescript@7.0.2`, Bun `1.3.13`, exact `oxfmt`/`oxlint`.
+Pinned exactly: `@earendil-works/pi-coding-agent@0.99.1`, `effect@4.0.0-beta.99`, `@effect/platform-bun@4.0.0-beta.99`, `@effect/tsgo@0.21.0`, `typescript@7.0.2`, Bun `1.3.13`, exact `oxfmt`/`oxlint`.
 
 Effect usage: `Context.Service` for capabilities, Layers for construction, Schema decoding at filesystem/CLI boundaries, `Schema.TaggedErrorClass` for expected failures, scopes/acquire-release for runtime ownership. Each Pi Promise wrapped once with `Effect.tryPromise`; no native Promises escape Ziggy services. Small total functions stay plain expressions inside services.
 

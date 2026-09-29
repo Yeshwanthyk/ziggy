@@ -197,12 +197,12 @@ test("live idle delivery appends without prompting, publishes once, and busy del
       steer: () => {
         steers += 1;
 
-        return Promise.resolve();
+        return Promise.resolve("queued" as const);
       },
       followUp: () => {
         followUps += 1;
 
-        return Promise.resolve();
+        return Promise.resolve("queued" as const);
       },
       sendCustomMessage: (message, options) => {
         customMessages += 1;
@@ -322,8 +322,8 @@ test("a live append rejection never dedupes from memory and a reopened owner can
       sessionManager: manager,
       prompt: () => Promise.resolve(),
       abort: () => Promise.resolve(),
-      steer: () => Promise.resolve(),
-      followUp: () => Promise.resolve(),
+      steer: () => Promise.resolve("queued" as const),
+      followUp: () => Promise.resolve("queued" as const),
       sendCustomMessage: (message) => {
         failedSends += 1;
         memoryOnly.push(message);
@@ -377,8 +377,8 @@ test("a live append rejection never dedupes from memory and a reopened owner can
             sessionManager: reopenedManager,
             prompt: () => Promise.resolve(),
             abort: () => Promise.resolve(),
-            steer: () => Promise.resolve(),
-            followUp: () => Promise.resolve(),
+            steer: () => Promise.resolve("queued" as const),
+            followUp: () => Promise.resolve("queued" as const),
             sendCustomMessage: (message) => {
               reopenedManager.appendCustomMessageEntry(
                 message.customType,

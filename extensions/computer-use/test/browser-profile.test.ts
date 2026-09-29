@@ -9,7 +9,7 @@ import {
   createEventBus,
   discoverAndLoadExtensions,
   type AgentToolResult,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
@@ -36,7 +36,7 @@ test("persists browser storage from a headed named profile into a background rel
   const loaded = await discoverAndLoadExtensions([packageRoot], packageRoot, fixture, eventBus);
   expect(loaded.errors).toEqual([]);
   const extension = loaded.extensions[0];
-  const ctx = { cwd: fixture } as unknown as ExtensionContext;
+  const ctx = { cwd: fixture } as unknown as ExtensionToolContext;
 
   const execute = async (
     name: string,

@@ -1227,3 +1227,17 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - gog and self-improvement keep their intentional local edits. pi-bridge, imessage-capture, frontend-design and research-source-triage stay Profile-local.
 - Codex OAuth import skipped: Squarey already has its own `openai-codex` login, and sharing `~/.codex` would make two clients rotate one refresh token.
 - Verification: doctor green apart from the pre-existing 3 broken session parent links; no quarantine in the resident log.
+
+## Pi family upgrade to 0.99.1
+
+- Pinned `@earendil-works/pi-coding-agent@0.99.1`; the lockfile resolves `pi-ai`, `pi-agent-core` and siblings at 0.99.1. Extension peer pins, the pi-docs generator pin and the version strings in docs and tests follow. `typebox` stays at 1.3.27.
+- Reason: 0.99.0 adds Sign in with ChatGPT on the `openai` provider and renames `openai-codex` to "OpenAI Codex (legacy)".
+- No Ziggy source changed. The API changes only touched test fixtures:
+  - `steer`/`followUp` now resolve to a `QueuedInputDisposition`.
+  - `ToolInfo` requires `exposure`.
+  - Tools receive an `ExtensionToolContext`.
+- Behaviour change: Pi now writes a persistent session's JSONL on the first user message, not the first assistant reply (Pi #10000). The lazy-session test now asserts that.
+- Pi's new built-in codemode, tool-search, MCP and llama.cpp extensions load only in Pi's CLI. SDK hosts such as Ziggy must opt in, so nothing collides with the bundled `codemode` or `mcporter`.
+- Regenerated the builtin catalog and pi-docs embeds.
+- Squarey was backed up first to `~/.ziggy/backups/squarey-full-20260929` (APFS clone; sockets and Chrome singleton links skipped).
+- Verification: `bun run check` and `bun run test` (812 pass) passed. A development standalone binary built and passed `smoke-standalone-executable --allow-development`. No live model turn was run, and the installed binary and `~/.ziggy` were not touched.

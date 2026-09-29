@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Pi packages pinned to 0.99.1.
+
 ## [0.3.0] - 2026-09-28
 
 ### Removed

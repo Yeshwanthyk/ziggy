@@ -14,7 +14,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { recursive: true })));
 });
 
-test("declares the concrete Pi 0.87.1 entrypoint and expected tool surface", async () => {
+test("declares the concrete Pi 0.99.1 entrypoint and expected tool surface", async () => {
   const manifest = await Bun.file(join(packageRoot, "package.json")).json();
 
   const source = await readFile(
@@ -29,7 +29,7 @@ test("declares the concrete Pi 0.87.1 entrypoint and expected tool surface", asy
     version: "0.5.0",
     pi: { extensions: ["./index.ts"] },
     peerDependencies: {
-      "@earendil-works/pi-coding-agent": "0.87.1",
+      "@earendil-works/pi-coding-agent": "0.99.1",
       typebox: "1.3.27",
     },
   });
@@ -49,7 +49,7 @@ test("declares the concrete Pi 0.87.1 entrypoint and expected tool surface", asy
   ]);
 });
 
-test("loads the upstream tools and Ziggy segment tool through Pi 0.87.1's public loader", async () => {
+test("loads the upstream tools and Ziggy segment tool through Pi 0.99.1's public loader", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "ziggy-computer-use-loader-"));
   fixtures.push(fixture);
   const loaded = await discoverAndLoadExtensions([packageRoot], packageRoot, fixture);
