@@ -6,7 +6,7 @@ import { SlackApiError } from "ziggy/adapters/slack/api";
 import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
 import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
-import type { SlackHealthSnapshot } from "ziggy/domain/slack-health";
+import { SlackHealthProjectionError, type SlackHealthSnapshot } from "ziggy/domain/slack-health";
 import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {
@@ -1648,9 +1648,7 @@ describe("Slack gateway boundary", () => {
             channel: "C123",
             ts: "stream-1",
             markdownText: "hello back",
-            chunks: expect.arrayContaining([
-              { type: "plan_update", title: "Done in 0s · 1 steps" },
-            ]),
+            chunks: expect.arrayContaining([{ type: "plan_update", title: "Done in 0s · 1 step" }]),
           },
         });
         expect(posts).toEqual([]);
@@ -1769,6 +1767,12 @@ describe("Slack gateway boundary", () => {
 
   test("stops a channel plan stream on cancel and never starts a second one", () => {
     const streams: Array<string> = [];
+
+    const recipients: Array<{
+      readonly userId: string | undefined;
+      readonly teamId: string | undefined;
+    }> = [];
+
     let nextCall = 0;
 
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Bun test is the Effect execution boundary.
@@ -1817,9 +1821,13 @@ describe("Slack gateway boundary", () => {
               close: Effect.void,
             }),
           setStatus: () => Effect.void,
-          startStream: () =>
+          startStream: (_token, _channel, _thread, options) =>
             Effect.gen(function* () {
               streams.push("startStream");
+              recipients.push({
+                userId: options?.recipientUserId,
+                teamId: options?.recipientTeamId,
+              });
               yield* Deferred.succeed(streamStarted, undefined);
 
               return { ts: "stream-1" };
@@ -1877,6 +1885,7 @@ describe("Slack gateway boundary", () => {
         );
 
         expect(streams).toEqual(["startStream", "stopStream"]);
+        expect(recipients).toEqual([{ userId: "U123", teamId: "T1" }]);
       }),
     );
   });
@@ -1991,6 +2000,7 @@ describe("Slack gateway boundary", () => {
   test("does not retry an ambiguous channel stream start", () => {
     const streams: Array<string> = [];
     const updates: Array<string> = [];
+    const reactions: Array<string> = [];
     let nextCall = 0;
 
     // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Bun test is the Effect execution boundary.
@@ -1999,7 +2009,10 @@ describe("Slack gateway boundary", () => {
         const settled = yield* Deferred.make<void>();
 
         const transport: SlackTransport = {
-          addReaction: () => Effect.void,
+          addReaction: (_token, _channel, _ts, name) =>
+            Effect.sync(() => {
+              reactions.push(name);
+            }),
           authTest: () => Effect.succeed({ userId: "UBOT" }),
           getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
           openSocket: () =>
@@ -2101,6 +2114,7 @@ describe("Slack gateway boundary", () => {
 
         expect(streams).toEqual(["startStream"]);
         expect(updates).toContain("hello back");
+        expect(reactions).toContain("white_check_mark");
       }),
     );
   });
@@ -2367,3 +2381,300 @@ describe("Slack gateway boundary", () => {
       }),
     ));
 });
+
+test("failed stop still posts chunk zero before a successful terminal receipt", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      const posts: Array<string> = [];
+      const reactions: Array<string> = [];
+      let next = 0;
+
+      const failure = new SlackApiError({
+        operation: "stopStream",
+        reason: "network",
+        retriable: true,
+        message: "timeout",
+        cause: "fixture",
+      });
+
+      const transport: SlackTransport = {
+        authTest: () => Effect.succeed({ userId: "UBOT" }),
+        getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+        openSocket: () =>
+          Effect.succeed({
+            next: Effect.suspend(() => (++next === 1 ? Effect.succeed(message()) : Effect.never)),
+            nextConnectionState: Effect.never,
+            close: Effect.void,
+          }),
+        addReaction: (_token, _channel, _ts, name) =>
+          Effect.sync(() => {
+            reactions.push(name);
+          }),
+        removeReaction: () => Effect.void,
+        setStatus: (_token, _channel, _ts, status) =>
+          status === "" ? Deferred.succeed(settled, undefined) : Effect.void,
+        postMessage: (_token, _channel, text) =>
+          Effect.sync(() => {
+            posts.push(text);
+
+            return { ts: "posted" };
+          }),
+        updateMessage: () => Effect.fail(failure),
+        startStream: () => Effect.succeed({ ts: "stream" }),
+        appendStream: () => Effect.void,
+        stopStream: () => Effect.fail(failure),
+      };
+
+      const agent: ZiggyAgentApi = {
+        runOnce: () => Effect.succeed(0),
+        openSpecialistChat: () => Effect.never,
+        runSpecialist: () => Effect.never,
+        openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("answer") })),
+      };
+
+      yield* Effect.raceFirst(
+        makeSlackGateway(agent, transport).runLoop(
+          { path: "/tmp/ziggy-slack-stop-fallback", name: "Test" },
+          { botToken: "token", appToken: "app", ownerUserId: "U123" },
+        ),
+        Deferred.await(settled),
+      );
+      expect(posts).toEqual(["answer"]);
+      expect(reactions).toContain("white_check_mark");
+    }),
+  ));
+
+test("attachment ingress survives health write failure and closes its resources after final delivery", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      const operations: Array<string> = [];
+      const images: Array<unknown> = [];
+      const prompts: Array<string> = [];
+      const posts: Array<string> = [];
+      let closed = false;
+      let disposed = false;
+      let next = 0;
+
+      const ingress: SlackIngressRuntime = {
+        initialize: () =>
+          Effect.sync(() => {
+            operations.push("initialize");
+          }),
+        recover: () =>
+          Effect.sync(() => {
+            operations.push("recover");
+          }),
+        replayable: () =>
+          Effect.sync(() => {
+            operations.push("replayable");
+
+            return [];
+          }),
+        admit: () =>
+          Effect.sync(() => {
+            operations.push("admit");
+
+            return "accepted" as const;
+          }),
+        start: () =>
+          Effect.sync(() => {
+            operations.push("start");
+
+            return true;
+          }),
+        finish: (_path, _message, _owner, state) =>
+          Effect.gen(function* () {
+            operations.push(`finish:${state}`);
+            yield* Deferred.succeed(settled, undefined);
+          }),
+      };
+
+      const transport: SlackTransport = {
+        authTest: () => Effect.succeed({ userId: "UBOT" }),
+        getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+        downloadFile: () => Effect.succeed({ type: "image", data: "AQID", mimeType: "image/png" }),
+        openSocket: (_token, admit) =>
+          Effect.succeed({
+            next: Effect.suspend(() => {
+              if (++next > 1) return Effect.never;
+
+              const inbound = message({
+                threadTs: "0.9",
+                files: [
+                  {
+                    id: "F1",
+                    name: "photo.png",
+                    mimeType: "image/png",
+                    size: 3,
+                    urlPrivate: "https://files.slack.com/files-pri/T-F1/download",
+                  },
+                ],
+              });
+
+              return admit === undefined
+                ? Effect.succeed(inbound)
+                : admit(inbound, "event-1").pipe(Effect.as(inbound));
+            }),
+            nextConnectionState: Effect.never,
+            close: Effect.sync(() => {
+              closed = true;
+            }),
+          }),
+        addReaction: () => Effect.void,
+        removeReaction: () => Effect.void,
+        setStatus: () => Effect.void,
+        postMessage: (_token, _channel, text) =>
+          Effect.sync(() => {
+            posts.push(text);
+
+            return { ts: "post" };
+          }),
+        updateMessage: () => Effect.void,
+        startStream: () => Effect.succeed({ ts: "stream" }),
+        appendStream: () => Effect.void,
+        stopStream: (_token, _channel, _ts, text) =>
+          Effect.sync(() => {
+            posts.push(text ?? "");
+          }),
+      };
+
+      const agent: ZiggyAgentApi = {
+        runOnce: () => Effect.succeed(0),
+        openSpecialistChat: () => Effect.never,
+        runSpecialist: () => Effect.never,
+        openChat: () =>
+          Effect.succeed(
+            makeChatHandle({
+              prompt: (text, options) =>
+                Effect.sync(() => {
+                  prompts.push(text);
+                  images.push(options?.images);
+
+                  return "answer";
+                }),
+              dispose: Effect.sync(() => {
+                disposed = true;
+              }),
+            }),
+          ),
+      };
+
+      yield* Effect.raceFirst(
+        makeSlackGateway(
+          agent,
+          transport,
+          {
+            now: () => 100,
+            waitForHeartbeat: Effect.never,
+            write: () =>
+              Effect.fail(
+                new SlackHealthProjectionError({
+                  operation: "write",
+                  path: "/unwritable/slack-health.json",
+                  message: "fixture",
+                  cause: "fixture",
+                }),
+              ),
+          },
+          ingress,
+        ).runLoop(
+          { path: "/tmp/ziggy-slack-attachment-health", name: "Test" },
+          { botToken: "token", appToken: "app", ownerUserId: "U123" },
+        ),
+        Deferred.await(settled),
+      );
+      expect(prompts[0]).toContain("Slack attachment metadata");
+      expect(prompts[0]).toContain("photo.png");
+      expect(images).toEqual([[{ type: "image", data: "AQID", mimeType: "image/png" }]]);
+      expect(posts).toEqual(["answer"]);
+      expect(operations).toEqual([
+        "initialize",
+        "recover",
+        "replayable",
+        "admit",
+        "start",
+        "finish:completed",
+      ]);
+      expect(closed).toBe(true);
+      expect(disposed).toBe(true);
+    }),
+  ));
+
+test("final placeholder update waits for interrupted progress edit", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const settled = yield* Deferred.make<void>();
+      const progressStarted = yield* Deferred.make<void>();
+      let interrupted = false;
+      let finalAfterInterrupt = false;
+      let next = 0;
+      let now = 0;
+
+      const transport: SlackTransport = {
+        authTest: () => Effect.succeed({ userId: "UBOT" }),
+        getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+        openSocket: () =>
+          Effect.succeed({
+            next: Effect.suspend(() => (++next === 1 ? Effect.succeed(message()) : Effect.never)),
+            nextConnectionState: Effect.never,
+            close: Effect.void,
+          }),
+        addReaction: () => Effect.void,
+        removeReaction: () => Effect.void,
+        setStatus: (_token, _channel, _ts, status) =>
+          status === "" ? Deferred.succeed(settled, undefined) : Effect.void,
+        postMessage: () => Effect.succeed({ ts: "placeholder" }),
+        updateMessage: (_token, _channel, _ts, text) =>
+          text.startsWith("progress")
+            ? Deferred.succeed(progressStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    interrupted = true;
+                  }),
+                ),
+              )
+            : Effect.sync(() => {
+                if (text === "final answer") finalAfterInterrupt = interrupted;
+              }),
+      };
+
+      const agent: ZiggyAgentApi = {
+        runOnce: () => Effect.succeed(0),
+        openSpecialistChat: () => Effect.never,
+        runSpecialist: () => Effect.never,
+        openChat: () =>
+          Effect.succeed(
+            makeChatHandle({
+              prompt: (_text, options) =>
+                Effect.gen(function* () {
+                  now = 2_000;
+                  options?.onProgress?.({
+                    kind: "assistant-text",
+                    snapshot: `progress ${"x".repeat(80)}`,
+                    delta: "progress",
+                  });
+                  yield* Deferred.await(progressStarted);
+
+                  return "final answer";
+                }),
+            }),
+          ),
+      };
+
+      yield* Effect.raceFirst(
+        makeSlackGateway(agent, transport, {
+          now: () => now,
+          waitForHeartbeat: Effect.never,
+          write: () => Effect.void,
+        }).runLoop(
+          { path: "/tmp/ziggy-slack-progress-interruption", name: "Test" },
+          { botToken: "token", appToken: "app", ownerUserId: "U123" },
+        ),
+        Deferred.await(settled),
+      );
+      expect(finalAfterInterrupt).toBe(true);
+    }),
+  ));

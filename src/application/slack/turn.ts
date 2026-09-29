@@ -113,7 +113,6 @@ export const makeSlackTurnProcessor =
         healthRuntime.now,
         (kind, failure) =>
           Effect.sync(() => {
-            if (deliveryOutcomeUnknown(failure)) deliveryUnknown = true;
             console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
           }),
       );
@@ -136,6 +135,7 @@ export const makeSlackTurnProcessor =
           let lastStreamTextAt = initialAtMs;
           let latestText = "";
           let lastStatus = "";
+          let lastStatusAt = initialAtMs;
 
           while (true) {
             const signal = yield* Queue.take(signals);
@@ -168,7 +168,7 @@ export const makeSlackTurnProcessor =
                     .updateMessage(config.botToken, message.channel, workingMessage.ts, text)
                     .pipe(
                       Effect.catch((failure) =>
-                        logMessageDeliveryFailure("progress message update", failure),
+                        Effect.logWarning("Slack progress message update failed", { failure }),
                       ),
                     );
                 }
@@ -182,9 +182,12 @@ export const makeSlackTurnProcessor =
                 kind: "tool",
                 atMs: healthRuntime.now(),
                 phase: signal.phase,
+                toolCallId: signal.toolCallId,
                 category: slackTaskTitle(signal.toolName, signal.detail),
                 failed: signal.failed,
-                ...(signal.detail === undefined ? undefined : { detail: signal.detail }),
+                ...(signal.phase === "start" && signal.detail !== undefined
+                  ? { detail: signal.detail }
+                  : undefined),
               });
             } else if (signal.kind === "steer") {
               yield* progress.change({
@@ -207,8 +210,15 @@ export const makeSlackTurnProcessor =
             const headline = progress.headline;
             const status = `is ${headline.charAt(0).toLowerCase()}${headline.slice(1)}`;
 
-            if (status !== lastStatus) {
+            if (
+              status !== lastStatus &&
+              (signal.kind !== "heartbeat" || healthRuntime.now() - lastStatusAt >= 10_000) &&
+              (signal.kind !== "tool" ||
+                signal.phase !== "update" ||
+                healthRuntime.now() - lastStatusAt >= 10_000)
+            ) {
               lastStatus = status;
+              lastStatusAt = healthRuntime.now();
               yield* updateStatus(status);
             }
           }
@@ -233,7 +243,7 @@ export const makeSlackTurnProcessor =
           Effect.catch((failure) =>
             Effect.gen(function* () {
               if (failure.reason === "authentication") disableReactions();
-              yield* logMessageDeliveryFailure(`${operation} ${name} reaction`, failure);
+              yield* Effect.logWarning(`Slack ${operation} ${name} reaction failed`, { failure });
             }),
           ),
         );
@@ -261,7 +271,9 @@ export const makeSlackTurnProcessor =
           )
           .pipe(
             Effect.catch((failure) =>
-              logMessageDeliveryFailure("working message", failure).pipe(Effect.as(undefined)),
+              Effect.logWarning("Slack working message failed", { failure }).pipe(
+                Effect.as(undefined),
+              ),
             ),
           );
       });
@@ -293,7 +305,7 @@ export const makeSlackTurnProcessor =
                     )
                     .pipe(
                       Effect.catch((failure) =>
-                        logMessageDeliveryFailure("queued-message update", failure),
+                        Effect.logWarning("Slack queued-message update failed", { failure }),
                       ),
                     );
                 }
@@ -361,7 +373,7 @@ export const makeSlackTurnProcessor =
                         ),
                       ).pipe(
                         Effect.catch((failure) =>
-                          logMessageDeliveryFailure("specialist voice", failure),
+                          Effect.logWarning("Slack specialist voice failed", { failure }),
                         ),
                       );
                     }
@@ -450,22 +462,26 @@ export const makeSlackTurnProcessor =
 
                   yield* Queue.offer(voiceSignals, { kind: "done" });
                   yield* Deferred.await(voicesDrained);
-                  const flushed = yield* Deferred.make<void>();
-                  yield* Queue.offer(progressSignals, { kind: "flush", done: flushed });
-                  yield* Deferred.await(flushed);
+
+                  if (progress.started) {
+                    const flushed = yield* Deferred.make<void>();
+                    yield* Queue.offer(progressSignals, { kind: "flush", done: flushed });
+                    // A stalled progress append must not hold the final answer hostage.
+                    yield* Deferred.await(flushed).pipe(Effect.timeoutOption(Duration.seconds(2)));
+                  }
 
                   return reply;
                 }),
               );
 
               if (!isFresh()) return yield* Effect.interrupt;
-              yield* progress.finish("done", reply);
+              const streamDelivered = yield* progress.finish("done", reply);
               const replyChunks = slackMessageChunks(reply);
               const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
               const firstChunk = chunks[0];
               let firstUnsentChunk = 0;
 
-              if (progress.started) firstUnsentChunk = 1;
+              if (streamDelivered) firstUnsentChunk = 1;
 
               if (workingMessage !== undefined && firstChunk !== undefined) {
                 if (!isFresh()) return yield* Effect.interrupt;
@@ -551,10 +567,7 @@ export const makeSlackTurnProcessor =
                       )
                       .pipe(
                         Effect.catch((failure) =>
-                          logMessageDeliveryFailure(
-                            cancelled ? "stopped-message update" : "failure-message update",
-                            failure,
-                          ),
+                          Effect.logWarning("Slack terminal feedback update failed", { failure }),
                         ),
                       )
                   : Effect.void,

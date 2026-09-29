@@ -2,79 +2,142 @@ import { expect, test } from "bun:test";
 import fc from "fast-check";
 import { reduceTurnProgress, type TurnProgressEvent } from "ziggy/domain/slack-turn-progress";
 
-const categories = ["Reading a file", "Running tests", "Editing a file", "Asked ada"] as const;
+const categories = ["Reading a file", "Running tests", "Editing a file", "Checking code"] as const;
 
-test("consecutive tool categories form one step per change and failures remain errors", () => {
+test("parallel starts and ends belong to their call's phase, even when completion is interleaved", () => {
   fc.assert(
     fc.property(
-      fc.array(fc.constantFrom(...categories), { minLength: 1, maxLength: 80 }),
-      fc.array(fc.boolean(), { minLength: 1, maxLength: 80 }),
-      (names, failures) => {
+      fc.array(fc.constantFrom(...categories), { minLength: 2, maxLength: 30 }),
+      fc.array(fc.boolean(), { minLength: 1, maxLength: 30 }),
+      fc.array(fc.nat(), { minLength: 1, maxLength: 30 }),
+      (names, failures, ordering) => {
         let state = reduceTurnProgress(undefined, { kind: "start", atMs: 0, queued: false });
-        let changes = 0;
-        let categoryFailed = false;
 
-        for (const [index, category] of names.entries()) {
-          if (category !== names[index - 1]) {
-            changes += 1;
-            categoryFailed = false;
-          }
+        const calls = names.map((category, index) => ({
+          category,
+          id: `call-${index}`,
+          failed: failures[index % failures.length] ?? false,
+        }));
 
-          const failed = failures[index % failures.length] ?? false;
+        const event = (
+          call: (typeof calls)[number],
+          phase: "start" | "end",
+        ): TurnProgressEvent => ({
+          kind: "tool",
+          phase,
+          category: call.category,
+          toolCallId: call.id,
+          failed: phase === "end" && call.failed,
+          atMs: 100,
+        });
 
-          const events: ReadonlyArray<TurnProgressEvent> = [
-            { kind: "tool", phase: "start", category, atMs: index * 1000, failed: false },
-            {
-              kind: "tool",
-              phase: "end",
-              category,
-              atMs: index * 1000 + 20,
-              failed,
-              detail: "2 failing",
-            },
-          ];
+        for (const call of calls) state = reduceTurnProgress(state, event(call, "start"));
 
-          for (const event of events) state = reduceTurnProgress(state, event);
-          expect(state.steps.length).toBe(changes);
+        const completed = calls
+          .map((call, index) => ({ call, order: ordering[index % ordering.length] ?? 0, index }))
+          .sort((a, b) => a.order - b.order || a.index - b.index);
 
-          categoryFailed ||= failed;
-          expect(state.steps.at(-1)?.status === "error").toBe(categoryFailed);
-          expect(
-            state.steps.every(
-              (step) => step.title.length <= 80 && (step.details?.length ?? 0) <= 120,
-            ),
-          ).toBe(true);
+        for (const { call } of completed) {
+          state = reduceTurnProgress(state, event(call, "end"));
+          state = reduceTurnProgress(state, event(call, "end")); // duplicate delivery
+          const stepId = state.calls[call.id]?.stepId;
+          expect(state.steps.filter((step) => step.id === stepId)).toHaveLength(1);
         }
 
-        expect(state.toolCount).toBe(names.length);
+        state = reduceTurnProgress(state, { kind: "finish", outcome: "done", atMs: 1000 });
+        expect(state.steps.every((step) => step.status !== "in_progress")).toBe(true);
+
+        for (const call of calls.filter((item) => item.failed)) {
+          expect(state.steps.find((step) => step.id === state.calls[call.id]?.stepId)?.status).toBe(
+            "error",
+          );
+        }
+
+        expect(state.toolCount).toBe(calls.length);
       },
     ),
     { numRuns: 200 },
   );
 });
 
-test("queued, running and terminal headlines reflect elapsed time and tool count", () => {
-  const queued = reduceTurnProgress(undefined, { kind: "start", queued: true, atMs: 0 });
-  expect(queued.headline).toBe("Queued behind an earlier request");
-  const active = reduceTurnProgress(queued, { kind: "active", atMs: 12_000 });
-  expect(active.headline).toBe("Thinking · 12s");
+test("a read/test/read/test interleaving closes two phases, not four", () => {
+  let state = reduceTurnProgress(undefined, { kind: "start", atMs: 0, queued: false });
 
-  const tool = reduceTurnProgress(active, {
+  for (const [id, category, phase, failed] of [
+    ["read", "Reading a file", "start", false],
+    ["test", "Running tests", "start", false],
+    ["read", "Reading a file", "end", false],
+    ["test", "Running tests", "end", true],
+  ] as const)
+    state = reduceTurnProgress(state, {
+      kind: "tool",
+      toolCallId: id,
+      category,
+      phase,
+      failed,
+      atMs: 100,
+    });
+  state = reduceTurnProgress(state, { kind: "finish", outcome: "done", atMs: 1000 });
+  expect(state.steps.map((step) => step.status)).toEqual(["complete", "error"]);
+  expect(state.headline).toBe("Done in 1s · 2 steps");
+});
+
+test("unfinished calls never become completed at turn termination", () => {
+  let state = reduceTurnProgress(undefined, { kind: "start", atMs: 0, queued: false });
+  state = reduceTurnProgress(state, {
     kind: "tool",
+    toolCallId: "a",
+    category: "Reading a file",
+    phase: "start",
+    failed: false,
+    atMs: 0,
+  });
+  state = reduceTurnProgress(state, { kind: "finish", outcome: "stopped", atMs: 40_000 });
+  expect(state.steps[0]?.status).toBe("error");
+  expect(state.headline).toBe("Stopped after 40s");
+});
+
+test("completed edits name available files and failed commands do not expose command text as a reason", () => {
+  let state = reduceTurnProgress(undefined, { kind: "start", atMs: 0, queued: false });
+
+  state = reduceTurnProgress(state, {
+    kind: "tool",
+    toolCallId: "edit",
+    category: "Editing a file",
+    phase: "start",
+    failed: false,
+    detail: "src/application/slack/turn.ts",
+    atMs: 0,
+  });
+  state = reduceTurnProgress(state, {
+    kind: "tool",
+    toolCallId: "edit",
+    category: "Editing a file",
+    phase: "end",
+    failed: false,
+    atMs: 0,
+  });
+  state = reduceTurnProgress(state, {
+    kind: "tool",
+    toolCallId: "test",
     category: "Running tests",
     phase: "start",
     failed: false,
-    atMs: 100_000,
+    detail: "bun test secret-argument",
+    atMs: 0,
+  });
+  state = reduceTurnProgress(state, {
+    kind: "tool",
+    toolCallId: "test",
+    category: "Running tests",
+    phase: "end",
+    failed: true,
+    detail: "bun test secret-argument",
+    atMs: 0,
   });
 
-  expect(tool.headline).toBe("Running tests · 1m 40s");
-  expect(
-    reduceTurnProgress(tool, { kind: "finish", atMs: 192_000, outcome: "done" }).headline,
-  ).toBe("Done in 3m 12s · 1 steps");
-  expect(
-    reduceTurnProgress(active, { kind: "finish", atMs: 40_000, outcome: "stopped" }).headline,
-  ).toBe("Stopped after 40s");
-  expect(
-    reduceTurnProgress(active, { kind: "finish", atMs: 65_000, outcome: "failed" }).headline,
-  ).toBe("Couldn't finish · 1m 5s");
+  expect(state.steps.map((step) => ({ title: step.title, details: step.details }))).toEqual([
+    { title: "Edited turn.ts", details: undefined },
+    { title: "Running tests: failed", details: "Failed" },
+  ]);
 });

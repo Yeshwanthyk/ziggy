@@ -26,6 +26,8 @@ export const makeTurnProgress = (
   let snapshot = "";
   let diverged = false;
   let closed = false;
+  let delivered = false;
+  let lastPlanAt = 0;
   const permit = Semaphore.makeUnsafe(1);
 
   const render = () =>
@@ -34,10 +36,6 @@ export const makeTurnProgress = (
 
       if (progress === undefined || ts === undefined || closed || append === undefined) return;
       const chunks: Array<SlackStreamChunk> = [];
-
-      if (sent?.headline !== progress.headline) {
-        chunks.push({ type: "plan_update", title: progress.headline });
-      }
 
       for (const step of progress.steps) {
         const old = sent?.steps.find((item) => item.id === step.id);
@@ -51,6 +49,13 @@ export const makeTurnProgress = (
           status: step.status,
           ...(step.details !== undefined ? { details: step.details } : undefined),
         });
+      }
+
+      if (
+        sent?.headline !== progress.headline &&
+        (chunks.length > 0 || now() - lastPlanAt >= 10_000)
+      ) {
+        chunks.unshift({ type: "plan_update", title: progress.headline });
       }
 
       const answer = slackMessageChunks(snapshot)[0] ?? "";
@@ -72,6 +77,8 @@ export const makeTurnProgress = (
       }
 
       if (!diverged) appended = answer;
+
+      if (chunks.some((chunk) => chunk.type === "plan_update")) lastPlanAt = now();
       sent = progress;
     });
 
@@ -115,6 +122,8 @@ export const makeTurnProgress = (
             .pipe(Effect.result);
 
           if (Result.isFailure(result)) {
+            // A timeout may have created a stream, but without a returned ts we
+            // cannot stop it. The fallback can leave an orphan plan.
             yield* log("stream start", result.failure);
 
             return false;
@@ -122,6 +131,7 @@ export const makeTurnProgress = (
 
           ts = result.success.ts;
           sent = progress;
+          lastPlanAt = now();
 
           return true;
         }),
@@ -138,9 +148,9 @@ export const makeTurnProgress = (
       Effect.uninterruptible(
         permit.withPermit(
           Effect.gen(function* () {
-            if (closed) return;
+            if (closed) return delivered;
 
-            if (progress === undefined) return;
+            if (progress === undefined) return false;
             progress = reduceTurnProgress(progress, { kind: "finish", atMs: now(), outcome });
 
             const final =
@@ -149,11 +159,11 @@ export const makeTurnProgress = (
                   (outcome === "stopped" ? "Stopped." : "I couldn't complete that request."),
               )[0] ?? "Done.";
 
-            if (ts === undefined || transport.stopStream === undefined) return;
+            if (ts === undefined || transport.stopStream === undefined) return false;
             const streamTs = ts;
 
-            // Final chunks go with stop even when an earlier append failed. Slack may have
-            // committed an ambiguous append, so any divergent text is corrected by chat.update.
+            // Preserve the plan and partial answer. Divergent text needs a separate
+            // follow-up, not a chat.update that would erase the stream's plan.
             const suffix =
               !diverged && final.startsWith(appended) ? final.slice(appended.length) : "";
 
@@ -178,11 +188,22 @@ export const makeTurnProgress = (
 
             if (Result.isFailure(result)) yield* log("stream stop", result.failure);
 
-            if (diverged || !final.startsWith(appended) || Result.isFailure(result)) {
-              yield* transport
-                .updateMessage(token, channel, streamTs, final)
-                .pipe(Effect.catch((failure) => log("stream final correction", failure)));
+            // Acknowledged appends already carry the full text even if stop fails.
+            delivered =
+              appended === final ||
+              (Result.isSuccess(result) && !diverged && final.startsWith(appended));
+
+            if (!delivered && outcome === "done" && (diverged || !final.startsWith(appended))) {
+              const correction = yield* transport
+                .postMessage(token, channel, final, threadTs)
+                .pipe(Effect.result);
+
+              if (Result.isFailure(correction))
+                yield* log("stream final follow-up", correction.failure);
+              delivered = Result.isSuccess(correction);
             }
+
+            return delivered;
           }),
         ),
       ),
