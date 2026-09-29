@@ -503,17 +503,21 @@ const createProfileRuntime = (
                 });
                 assertNoPiResourceDiagnostics(profilePath, services);
                 acceptedResources = partition.resources;
+
+                // Automation activation runs once at startup, so only a startup quarantine pauses
+                // package-owned automations; a later one takes effect on the next restart.
+                const automations =
+                  runtimeRef.current === undefined
+                    ? "Package-owned automations are disabled while quarantined; stored definitions are retained"
+                    : "Quarantined after startup; package-owned automations keep their state until the Profile restarts";
+
                 skippedPackages = [
                   ...skippedPackages,
                   ...partition.skipped.map((item) => ({
                     ...item,
                     diagnostics: [
                       ...item.diagnostics.slice(0, 11),
-                      {
-                        source: item.id,
-                        message:
-                          "Package-owned automations are disabled while quarantined; stored definitions are retained",
-                      },
+                      { source: item.id, message: automations },
                     ],
                   })),
                 ];
