@@ -3,6 +3,12 @@ import { dirname, join } from "node:path";
 
 import { createMemoryWriteTool } from "./memory-write-tool";
 import { createChatEventProjector } from "./chat-event-projector";
+import { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding";
+import { providerError, piPromise } from "./provider-failure";
+
+export { providerError } from "./provider-failure";
+
+export { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding";
 
 export {
   createChatEventProjector,
@@ -31,7 +37,7 @@ import {
   type CreateAgentSessionFromServicesOptions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Context, Effect, Exit, Layer, Predicate, Result, Semaphore } from "effect";
+import { Context, Effect, Exit, Layer, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProfileNotInitialized,
@@ -155,71 +161,6 @@ const sessionLeaseError = (
         cause,
       });
 
-const runtimeFailureHint = (cause: unknown): string => {
-  if (!(cause instanceof Error)) return "check Profile extension diagnostics with ziggy doctor";
-
-  const message = cause.message;
-
-  if (/no models available/iu.test(message))
-    return "no models available; configure a provider or run /login";
-
-  if (/authentication|unauthorized|api key/iu.test(message))
-    return "provider authentication unavailable; check Profile credentials";
-
-  if (/extension|skill|command conflict/iu.test(message))
-    return "check Profile extension diagnostics with ziggy doctor";
-
-  return "check ziggy doctor and the local runtime logs";
-};
-
-export const providerError = (
-  profilePath: string,
-  operation: string,
-  cause: unknown,
-): ProviderConfigError | ProviderCallError => {
-  if (cause instanceof ProviderConfigError || cause instanceof ProviderCallError) {
-    return cause;
-  }
-
-  if (operation === "call provider") {
-    return new ProviderCallError({
-      profilePath,
-      operation,
-      message: "provider request failed",
-      cause,
-    });
-  }
-
-  if (operation === "select model") {
-    return new ProviderConfigError({
-      profilePath,
-      operation,
-      message: `provider configuration failed; place credentials in ${join(profilePath, "auth.json")} and model configuration in ${join(profilePath, "models.json")}`,
-      cause,
-    });
-  }
-
-  return new ProviderConfigError({
-    profilePath,
-    operation,
-    message:
-      operation === "create agent runtime"
-        ? `${operation} failed: ${runtimeFailureHint(cause)}`
-        : `${operation} failed`,
-    cause,
-  });
-};
-
-const piPromise = <A>(
-  profilePath: string,
-  operation: string,
-  run: (signal: AbortSignal) => Promise<A>,
-): Effect.Effect<A, ProviderConfigError | ProviderCallError> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) => providerError(profilePath, operation, cause),
-  });
-
 const requireSoul = (profilePath: string) => {
   const soulPath = join(profilePath, "SOUL.md");
 
@@ -258,13 +199,6 @@ const isProfileExtensionPreflightFailure = (
 
 interface AgentSessionRuntimeRef {
   current?: AgentSessionRuntime;
-}
-
-interface NavigateTreeOptions {
-  summarize?: boolean;
-  customInstructions?: string;
-  replaceInstructions?: boolean;
-  label?: string;
 }
 
 interface EphemeralPromptContextState {
@@ -752,211 +686,6 @@ const createProfileRuntime = (
       return profileRuntime;
     }),
   );
-
-export interface ChatRuntimeBinding {
-  readonly switchSession: AgentSessionRuntime["switchSession"];
-  readonly switchSessionUnderControl: AgentSessionRuntime["switchSession"];
-  readonly withControl: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
-  readonly withSessionSwitch: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
-  readonly isSwitching: () => boolean;
-  readonly onRebind: (callback: () => void) => () => void;
-}
-
-export const bindChatRuntime = async (
-  runtime: AgentSessionRuntime,
-  lease?: ReturnType<typeof makeSessionLeaseTransitions>,
-): Promise<ChatRuntimeBinding> => {
-  const semaphore = Semaphore.makeUnsafe(1);
-
-  const rebindListeners = new Set<() => void>();
-  let switching = false;
-
-  const serialized = <A>(operation: () => Promise<A>): Promise<A> =>
-    switching
-      ? Promise.reject(
-          new SessionBusy({
-            profilePath: runtime.session.sessionManager.getCwd(),
-            message: "session is switching; wait for the resume to finish",
-          }),
-        )
-      : // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-        Effect.runPromise(
-          semaphore.withPermit(Effect.tryPromise({ try: operation, catch: (cause) => cause })),
-        );
-
-  let invalidatedSession: AgentSessionRuntime["session"] | undefined;
-  runtime.setBeforeSessionInvalidate(() => {
-    invalidatedSession = runtime.session;
-  });
-
-  const replacementFailed = async (previous: AgentSessionRuntime["session"]): Promise<void> => {
-    if (lease === undefined) return;
-
-    if (runtime.session !== previous || invalidatedSession === previous) lease.poison();
-
-    // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-    await Effect.runPromise(lease.cancelReservation);
-  };
-
-  const switchSessionUnserialized: AgentSessionRuntime["switchSession"] = async (
-    sessionPath,
-    options,
-  ) => {
-    const previous = runtime.session;
-
-    if (lease !== undefined) {
-      // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-      const id = (await Effect.runPromise(readSessionHeaderOnly(sessionPath))).id;
-
-      // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-      await Effect.runPromise(lease.reserve(id));
-    }
-
-    try {
-      const result = await runtime.switchSession(sessionPath, options);
-
-      if (lease !== undefined) {
-        // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-        await Effect.runPromise(
-          result.cancelled
-            ? lease.cancelReservation
-            : lease.transition(runtime.session.sessionManager.getSessionId()),
-        );
-      }
-
-      return result;
-    } catch (cause) {
-      await replacementFailed(previous);
-      throw cause;
-    }
-  };
-
-  const switchSession: AgentSessionRuntime["switchSession"] = (sessionPath, options) =>
-    serialized(() => switchSessionUnserialized(sessionPath, options));
-
-  const bindSession = async (): Promise<void> => {
-    const session = runtime.session;
-
-    for (const listener of rebindListeners) listener();
-
-    await session.bindExtensions({
-      mode: "print",
-      commandContextActions: {
-        waitForIdle: () => session.waitForIdle(),
-        newSession: (options) =>
-          serialized(async () => {
-            const previous = runtime.session;
-            let result: Awaited<ReturnType<typeof runtime.newSession>>;
-
-            try {
-              result = await runtime.newSession(options);
-            } catch (cause) {
-              await replacementFailed(previous);
-              throw cause;
-            }
-
-            if (lease !== undefined) {
-              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-              await Effect.runPromise(
-                result.cancelled
-                  ? lease.cancelReservation
-                  : lease.transition(runtime.session.sessionManager.getSessionId()),
-              );
-            }
-
-            return result;
-          }),
-        fork: (entryId, options) =>
-          serialized(async () => {
-            const previous = runtime.session;
-            let result: Awaited<ReturnType<typeof runtime.fork>>;
-
-            try {
-              result = await runtime.fork(entryId, options);
-            } catch (cause) {
-              await replacementFailed(previous);
-              throw cause;
-            }
-
-            if (lease !== undefined) {
-              // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi callback bridge.
-              await Effect.runPromise(
-                result.cancelled
-                  ? lease.cancelReservation
-                  : lease.transition(runtime.session.sessionManager.getSessionId()),
-              );
-            }
-
-            return { cancelled: result.cancelled };
-          }),
-        navigateTree: async (targetId, options) => {
-          if (
-            options?.summarize === undefined &&
-            options?.customInstructions === undefined &&
-            options?.replaceInstructions === undefined &&
-            options?.label === undefined
-          ) {
-            const result = await session.navigateTree(targetId);
-
-            return { cancelled: result.cancelled };
-          }
-
-          const navigateOptions: NavigateTreeOptions = {};
-
-          if (options?.summarize !== undefined) navigateOptions.summarize = options.summarize;
-
-          if (options?.customInstructions !== undefined) {
-            navigateOptions.customInstructions = options.customInstructions;
-          }
-
-          if (options?.replaceInstructions !== undefined) {
-            navigateOptions.replaceInstructions = options.replaceInstructions;
-          }
-
-          if (options?.label !== undefined) navigateOptions.label = options.label;
-          const result = await session.navigateTree(targetId, navigateOptions);
-
-          return { cancelled: result.cancelled };
-        },
-        switchSession,
-        reload: () => session.reload(),
-      },
-      onError: (error) => {
-        console.error(`Extension error (${error.extensionPath}): ${error.error}`);
-      },
-    });
-  };
-
-  runtime.setRebindSession(bindSession);
-  await bindSession();
-
-  return {
-    switchSession,
-    switchSessionUnderControl: switchSessionUnserialized,
-    withControl: (effect) => semaphore.withPermit(effect),
-    withSessionSwitch: (effect) =>
-      semaphore.withPermit(
-        Effect.sync(() => {
-          switching = true;
-        }).pipe(
-          Effect.andThen(effect),
-          Effect.ensuring(
-            Effect.sync(() => {
-              switching = false;
-            }),
-          ),
-        ),
-      ),
-    isSwitching: () => switching,
-    onRebind: (callback) => {
-      rebindListeners.add(callback);
-
-      return () => {
-        rebindListeners.delete(callback);
-      };
-    },
-  };
-};
 
 type PromptSession = Pick<
   AgentSessionRuntime["session"],

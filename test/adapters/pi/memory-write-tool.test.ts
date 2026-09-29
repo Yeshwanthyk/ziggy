@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { memoryEntries } from "ziggy/domain/memory";
-import { createMemoryWriteTool } from "ziggy/adapters/pi/pi-agent";
+import { createMemoryWriteTool } from "ziggy/adapters/pi/memory-write-tool";
 
 const temporaryProfiles: Array<string> = [];
 
