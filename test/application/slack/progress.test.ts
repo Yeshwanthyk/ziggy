@@ -305,7 +305,8 @@ for (const boundary of ["line", "hard"] as const) {
           () => Effect.void,
         );
 
-        const prefix = "a".repeat(3_980);
+        // The early newline makes the snapshot's chunk boundary fall behind the streamed prefix.
+        const prefix = `x\n${"a".repeat(3_980)}`;
         const answer = `${prefix}${boundary === "line" ? "\n" : "b"}${"c".repeat(4_200)}`;
 
         yield* progress.start(false, true);

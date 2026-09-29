@@ -382,6 +382,9 @@ const classifyHttpFailure = (
   });
 };
 
+/** Bounds a stalled transport so turn delivery and shutdown cannot wait on it forever. */
+const slackRequestTimeout = "30 seconds";
+
 export const request = (
   client: HttpClient.HttpClient,
   token: string,
@@ -407,6 +410,7 @@ export const request = (
         })),
       ),
     ),
+    Effect.timeout(slackRequestTimeout),
     Effect.mapError((cause) => apiError(operation, "network", true, cause, token)),
   );
 };
@@ -482,6 +486,7 @@ export const queryRequest = (
         })),
       ),
     ),
+    Effect.timeout(slackRequestTimeout),
     Effect.mapError((cause) => apiError(operation, "network", true, cause, token)),
   );
 };
