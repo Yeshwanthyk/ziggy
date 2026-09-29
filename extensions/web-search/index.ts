@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { fetchUrl, MAX_OUTPUT_CHARS } from "./fetch-url.ts";
 
 const TIMEOUT_MS = 30_000;
 
@@ -13,6 +14,27 @@ const executable = join(import.meta.dirname, "bin", "web-search.ts");
 
 const Parameters = Type.Object(
   { args: Type.Array(Type.String(), { description: "Query words and optional --n <count>." }) },
+  { additionalProperties: false },
+);
+
+const FetchParameters = Type.Object(
+  {
+    url: Type.String({
+      minLength: 1,
+      maxLength: 4096,
+      description: "Public HTTP(S) URL to fetch.",
+    }),
+    jinaFallback: Type.Optional(
+      Type.Boolean({ description: "Use Jina Reader when direct extraction is blocked or poor." }),
+    ),
+    maxChars: Type.Optional(
+      Type.Integer({
+        minimum: 1000,
+        maximum: MAX_OUTPUT_CHARS,
+        description: "Maximum returned text length.",
+      }),
+    ),
+  },
   { additionalProperties: false },
 );
 
@@ -71,6 +93,20 @@ export default function webSearch(pi: Pick<ExtensionAPI, "exec" | "registerTool"
         content: [{ type: "text", text }],
         details: result,
       };
+    },
+  });
+
+  pi.registerTool({
+    name: "fetch_url",
+    label: "fetch_url",
+    description:
+      "Fetch a public HTTP(S) URL as readable text. Private and local addresses are refused; Jina Reader is the fallback for blocked or JavaScript-heavy pages.",
+    parameters: FetchParameters,
+    executionMode: "parallel",
+    async execute(_toolCallId, { url, jinaFallback = true, maxChars = 20_000 }, signal) {
+      const result = await fetchUrl(url, { jinaFallback, maxChars, signal });
+
+      return { content: [{ type: "text", text: result.text }], details: result.details };
     },
   });
 }

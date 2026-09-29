@@ -20,7 +20,7 @@ const Output = Type.Object({
   ),
 });
 
-test("registers the native web_search tool", () => {
+test("registers the native web_search and fetch_url tools", () => {
   const names: string[] = [];
 
   const registerTool: ExtensionAPI["registerTool"] = (tool) => {
@@ -36,7 +36,7 @@ test("registers the native web_search tool", () => {
 
   registerWebSearch({ exec, registerTool });
 
-  expect(names).toEqual(["web_search"]);
+  expect(names).toEqual(["web_search", "fetch_url"]);
 });
 
 test("runs the package-relative helper through pi.exec with the Profile boundary", async () => {

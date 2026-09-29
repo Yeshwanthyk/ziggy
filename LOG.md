@@ -1208,3 +1208,12 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
   - A failed step reads "failed", because Pi tool-end events carry no reason.
 - Tests: reducer properties over interleaved tool calls; long answers delivered exactly once across newline and hard chunk boundaries (fails on the pre-fix code); the restored gateway invariants (attachments and images, health write failure, disposal, ingress order, recipient ids, interrupted progress). No live Slack workspace check was run.
 - Verification: `bun run check` and `bun run test` (804 pass) passed. Three Opus review rounds resolved.
+
+## web-search gains fetch_url
+
+- Squarey's local `web-access` package re-registered the bundled `web_search` name and added `fetch_url`, which the `librarian` agent depends on. The owner chose to keep web-search as the only web package, so `fetch_url` moved into `extensions/web-search/fetch-url.ts`. Squarey can now swap `web-access` for `web-search` without editing `librarian.md`.
+- `fetch_url` accepts only HTTP(S). It refuses local hostnames and private, loopback, link-local, CGNAT and multicast addresses, both as literals and after DNS resolution, and re-checks every redirect hop (up to 5). Unrecognised address shapes, including hex-form IPv4-mapped IPv6 such as `::ffff:7f00:1`, are treated as private. Bodies are capped at 5 MiB and output at 24 KiB. Jina Reader is used only for an error status or a short or JavaScript-shell HTML page, and receives the final public URL.
+- Changes from the web-access original: the tool's abort signal now cancels requests, the IPv4-mapped IPv6 check was added, redirect bodies are released, and the user agent is `ziggy-web-search/0.1`.
+- Known limit: DNS is resolved separately from the fetch, so a host that rebinds between the check and the connection can still reach a private address.
+- Tests: address classification, rejection of non-public targets before any network I/O, the body byte cap, and the registered tool list. A live smoke fetched example.com through the Jina fallback and refused an httpbin redirect to 127.0.0.1.
+- Verification: `bun run check` and `bun run test` (812 pass) passed.
