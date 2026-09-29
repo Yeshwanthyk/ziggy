@@ -1169,3 +1169,10 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 ## 2026-09-28 — Release 0.3.0
 
 - Bumped to 0.3.0 and moved the Unreleased removals into a 0.3.0 changelog covering the core review: TUI removal, session writer lease, skipped broken extensions, wake handoff, `extensions update --restart`, required-package refresh, Pi 0.87.1 and the web UI redesign.
+
+## Chat gateway cleanup
+
+- Slack and Discord gateways are split into intake, delivery, turn and runtime modules, with shared contracts in `slack/model.ts` and `discord/model.ts`. The Slack API is split into protocol and client code, and the Discord socket into framing and connection code. The public gateway exports are unchanged.
+- The two gateways shared identical health-counter transitions, which now live in `domain/chat-health.ts` and return complete counts. The turn schedulers stay separate on purpose: Slack can steer an active turn and settles cancelled ingress, while Discord queues accepted turns and requeues interrupted ingress.
+- Fixed: a Slack turn stopped during acceptance left `activeTurnCount` one too high. Acceptance is now recorded inside the uninterruptible acquire, so a release always follows it.
+- Verification: `bun run check` and `bun run test` (786 pass) passed. An Opus review found no behavior drift, and its findings are resolved.
