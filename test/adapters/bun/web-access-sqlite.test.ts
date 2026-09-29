@@ -1,6 +1,6 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests own disposable adapter boundaries */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -48,6 +48,32 @@ describe("durable browser access", () => {
 
     const database = new Database(webAccessDatabasePath(profilePath));
     database.exec("PRAGMA user_version = 99");
+    database.close(false);
+    expect(() => openWebAccessStore(profilePath)).toThrow("could not open web access database");
+  });
+
+  test("rebuilds a partially created version-0 database after interrupted initialization", async () => {
+    const profilePath = await makeProfile();
+    await mkdir(join(profilePath, ".gateway"));
+    const database = new Database(webAccessDatabasePath(profilePath), { create: true });
+    database.exec("CREATE TABLE pairing (token_hash TEXT PRIMARY KEY)");
+    database.close(false);
+
+    const store = openWebAccessStore(profilePath);
+    const pairing = store.issuePairing(1_000);
+    expect(store.redeemPairing(pairing.token, 2_000)).toBeDefined();
+    store.close();
+
+    const reopened = new Database(webAccessDatabasePath(profilePath));
+    expect(reopened.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
+    reopened.close(false);
+  });
+
+  test("rejects unknown objects in a version-0 database", async () => {
+    const profilePath = await makeProfile();
+    await mkdir(join(profilePath, ".gateway"));
+    const database = new Database(webAccessDatabasePath(profilePath), { create: true });
+    database.exec("CREATE TABLE unrelated (value TEXT)");
     database.close(false);
     expect(() => openWebAccessStore(profilePath)).toThrow("could not open web access database");
   });

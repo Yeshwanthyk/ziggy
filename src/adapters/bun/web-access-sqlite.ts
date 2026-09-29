@@ -91,13 +91,17 @@ export const openWebAccessStore = (profilePath: string): WebAccessStore => {
       db.query("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all(),
     ).map((row) => row.name);
 
-    if (version === 0 && objects.length === 0) {
-      db.exec(SCHEMA);
-      db.exec("PRAGMA user_version = 1");
-    } else if (
-      version !== 1 ||
-      objects.join("|") !== "browser_session|browser_session_expiry|pairing"
-    ) {
+    const schemaObjects = ["browser_session", "browser_session_expiry", "pairing"];
+
+    if (version === 0 && objects.every((object) => schemaObjects.includes(object))) {
+      db.transaction(() => {
+        // A killed initializer may have committed any prefix of the old non-atomic schema.
+        // Rebuild only known version-0 objects; never discard an unknown database object.
+        db.exec("DROP TABLE IF EXISTS browser_session; DROP TABLE IF EXISTS pairing");
+        db.exec(SCHEMA);
+        db.exec("PRAGMA user_version = 1");
+      })();
+    } else if (version !== 1 || objects.join("|") !== schemaObjects.join("|")) {
       db.close(false);
       throw new Error("unsupported or malformed web access database schema");
     }
