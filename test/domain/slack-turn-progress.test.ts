@@ -141,3 +141,31 @@ test("completed edits name available files and failed commands do not expose com
     { title: "Running tests: failed", details: "Failed" },
   ]);
 });
+
+test("prototype-shaped tool call ids are ordinary ids", () => {
+  let state = reduceTurnProgress(undefined, { kind: "start", atMs: 0, queued: false });
+
+  for (const id of ["__proto__", "constructor", "toString"]) {
+    state = reduceTurnProgress(state, {
+      kind: "tool",
+      toolCallId: id,
+      category: "Running tests",
+      phase: "start",
+      failed: false,
+      atMs: 0,
+    });
+    state = reduceTurnProgress(state, {
+      kind: "tool",
+      toolCallId: id,
+      category: "Running tests",
+      phase: "end",
+      failed: false,
+      atMs: 0,
+    });
+  }
+
+  expect(state.toolCount).toBe(3);
+  expect(state.steps.map((step) => ({ count: step.count, status: step.status }))).toEqual([
+    { count: 3, status: "complete" },
+  ]);
+});

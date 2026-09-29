@@ -177,7 +177,9 @@ export const reduceTurnProgress = (
     return { ...previous, steps: [...previous.steps, step] };
   }
 
-  const call = previous.calls[event.toolCallId];
+  const call = Object.hasOwn(previous.calls, event.toolCallId)
+    ? previous.calls[event.toolCallId]
+    : undefined;
 
   // Updates and ends without a known start cannot create a phantom phase. Replayed
   // starts/ends likewise cannot increment the count or undo an error.
