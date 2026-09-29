@@ -1176,3 +1176,12 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - The two gateways shared identical health-counter transitions, which now live in `domain/chat-health.ts` and return complete counts. The turn schedulers stay separate on purpose: Slack can steer an active turn and settles cancelled ingress, while Discord queues accepted turns and requeues interrupted ingress.
 - Fixed: a Slack turn stopped during acceptance left `activeTurnCount` one too high. Acceptance is now recorded inside the uninterruptible acquire, so a release always follows it.
 - Verification: `bun run check` and `bun run test` (786 pass) passed. An Opus review found no behavior drift, and its findings are resolved.
+
+## UI gateway cleanup
+
+- The wire protocol in `domain/ui-gateway` is split into fields, result families and frames, behind an explicit barrel with main's export list. Response transport encoding moved out of the application dispatcher, and cache fingerprinting now sits with the command cache.
+- Session switches are serialized per live handle. Resume plus its transcript reset runs uninterruptibly under the session-control lock, while waiting for the lock stays interruptible. Prompt submission takes the same lock only for submission, so a prompt can't land between the Pi switch and the reset. Model status stays lock-free.
+- Fixed: a `serve` killed while first creating `.gateway/web-access.sqlite` left a half-built database, and every later `serve` for that Profile failed. The schema check, the rebuild of a known partial version-0 file, and the version write now run in one immediate transaction with a busy timeout, and concurrent openers tolerate the `.gateway` directory already existing. Three concurrent openers on a fresh Profile succeeded 180 of 180 times.
+- Tests: controlled interleavings for overlapping resumes, interruption before reset, and prompt-before-reset (each fails on the old code); partial-schema recovery; the resident hard-crash test waits for UI startup and passed 20 of 20 runs.
+- Left open: the session-summary scan cost needs a per-transcript cache in `adapters/pi/sessions.ts` (after the Pi adapter cleanup). A prompt followed by a resume can still fail the prompt instead of ordering them.
+- Verification: `bun run check` and `bun run test` (791 pass) passed. Two Opus review rounds resolved.
