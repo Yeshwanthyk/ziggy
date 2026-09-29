@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Deferred, Duration, Effect, Exit, Option, Queue, Result, Semaphore } from "effect";
+import { Deferred, Duration, Effect, Exit, Queue, Result } from "effect";
 import type { SlackApiError } from "../../adapters/slack/api";
 import { codePointLength } from "../../domain/memory";
 import type { SlackGatewayConfig } from "../../domain/slack";
@@ -10,7 +10,8 @@ import type { UiGatewayError } from "../../domain/ui-gateway";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";
-import { slackToolStatus } from "../slack-tool-progress";
+import { slackTaskTitle } from "../slack-tool-progress";
+import { makeTurnProgress } from "./progress";
 import { slackReplyThreadTs } from "./intake";
 import {
   prepareSlackAttachmentPrompt,
@@ -19,15 +20,12 @@ import {
   retrySlackDelivery,
   slackIngressTerminalState,
   shouldUpdateSlackProgress,
-  slackTaskChunk,
-  slackProgressStreamStartOptions,
   deliveryOutcomeUnknown,
   WORKING_MESSAGE,
   QUEUED_MESSAGE,
   FAILED_MESSAGE,
   STOPPED_MESSAGE,
   type SlackProgressSignal,
-  type SlackProgressStreamState,
   type SlackProgressUpdateState,
 } from "./delivery";
 import type {
@@ -99,112 +97,28 @@ export const makeSlackTurnProcessor =
           ),
         );
 
-      const progressStream: SlackProgressStreamState = {
-        ts: undefined,
-        failed: false,
-        closed: false,
-      };
+      const progress = makeTurnProgress(
+        transport,
+        config.botToken,
+        message.channel,
+        message.statusThreadTs,
+        message.context.kind === "user"
+          ? undefined
+          : message.teamId === undefined
+            ? undefined
+            : {
+                userId: config.ownerUserId,
+                teamId: message.teamId,
+              },
+        healthRuntime.now,
+        (kind, failure) =>
+          Effect.sync(() => {
+            if (deliveryOutcomeUnknown(failure)) deliveryUnknown = true;
+            console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+          }),
+      );
 
-      const streamPermit = Semaphore.makeUnsafe(1);
-
-      const canUseProgressStream =
-        transport.startStream !== undefined &&
-        transport.appendStream !== undefined &&
-        transport.stopStream !== undefined &&
-        (message.context.kind === "user" || message.teamId !== undefined);
-
-      const logFeedbackFailure = (kind: string, failure: SlackApiError) =>
-        Effect.sync(() => {
-          console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
-        });
-
-      const applyToolCard = (event: Extract<SlackProgressSignal, { kind: "tool" }>) =>
-        Effect.gen(function* () {
-          const start = transport.startStream;
-          const append = transport.appendStream;
-
-          if (
-            !canUseProgressStream ||
-            progressStream.failed ||
-            progressStream.closed ||
-            start === undefined ||
-            append === undefined
-          ) {
-            return;
-          }
-
-          const chunk = slackTaskChunk(event);
-
-          if (progressStream.ts === undefined) {
-            if (!isFresh()) return;
-
-            const options = slackProgressStreamStartOptions(message, config.ownerUserId, chunk);
-
-            if (options === undefined) {
-              progressStream.failed = true;
-
-              return;
-            }
-
-            const started = yield* Effect.uninterruptible(
-              start(config.botToken, message.channel, message.statusThreadTs, options).pipe(
-                Effect.result,
-                Effect.tap((result) =>
-                  Effect.sync(() => {
-                    if (Result.isFailure(result)) {
-                      progressStream.failed = true;
-
-                      return;
-                    }
-
-                    progressStream.ts = result.success.ts;
-                  }),
-                ),
-              ),
-            );
-
-            if (Result.isFailure(started)) {
-              yield* logFeedbackFailure("progress stream start", started.failure);
-            }
-
-            return;
-          }
-
-          if (!isFresh()) return;
-          yield* append(config.botToken, message.channel, progressStream.ts, [chunk]).pipe(
-            Effect.catch((failure) => logFeedbackFailure("progress stream append", failure)),
-          );
-        });
-
-      const publishToolCard = (event: Extract<SlackProgressSignal, { kind: "tool" }>) =>
-        Effect.uninterruptible(streamPermit.withPermit(applyToolCard(event)));
-
-      const closeProgressStream = (toolSignals?: Queue.Dequeue<SlackProgressSignal>) =>
-        Effect.uninterruptible(
-          streamPermit.withPermit(
-            Effect.gen(function* () {
-              if (toolSignals !== undefined) {
-                while (true) {
-                  const pending = yield* Queue.poll(toolSignals);
-
-                  if (Option.isNone(pending)) break;
-
-                  if (pending.value.kind === "tool") yield* applyToolCard(pending.value);
-                }
-              }
-
-              progressStream.closed = true;
-              const ts = progressStream.ts;
-              const stop = transport.stopStream;
-
-              if (ts === undefined || stop === undefined) return;
-              progressStream.ts = undefined;
-              yield* stop(config.botToken, message.channel, ts).pipe(
-                Effect.catch((failure) => logFeedbackFailure("progress stream stop", failure)),
-              );
-            }),
-          ),
-        );
+      const canStream = message.context.kind === "user" || message.teamId !== undefined;
 
       const logMessageDeliveryFailure = (kind: string, failure: SlackApiError) =>
         Effect.sync(() => {
@@ -215,89 +129,97 @@ export const makeSlackTurnProcessor =
       const runProgress = (
         workingMessage: { readonly ts: string } | undefined,
         initialAtMs: number,
-        statusSignals: Queue.Dequeue<SlackProgressSignal>,
-        textSignals: Queue.Dequeue<SlackProgressSignal>,
-        toolSignals: Queue.Dequeue<SlackProgressSignal>,
+        signals: Queue.Dequeue<SlackProgressSignal>,
       ): Effect.Effect<never> =>
         Effect.gen(function* () {
+          let lastPlaceholder: SlackProgressUpdateState = { atMs: initialAtMs, text: "" };
+          let lastStreamTextAt = initialAtMs;
           let latestText = "";
-          let lastStatus = "is thinking...";
-
-          let lastPlaceholder: SlackProgressUpdateState = {
-            atMs: initialAtMs,
-            text: "",
-          };
-
-          const publishStatus = (status: string) =>
-            Effect.suspend(() => {
-              if (!isFresh() || status === lastStatus) return Effect.void;
-              lastStatus = status;
-
-              return updateStatus(status);
-            });
-
-          const publishText = () =>
-            Effect.suspend(() => {
-              if (
-                !isFresh() ||
-                workingMessage === undefined ||
-                !shouldUpdateSlackProgress(lastPlaceholder, latestText, healthRuntime.now())
-              ) {
-                return Effect.void;
-              }
-
-              const text = slackMessageChunks(latestText)[0];
-
-              if (text === undefined) return Effect.void;
-              lastPlaceholder = { atMs: healthRuntime.now(), text: latestText };
-
-              return transport
-                .updateMessage(config.botToken, message.channel, workingMessage.ts, text)
-                .pipe(
-                  Effect.catch((failure) => logFeedbackFailure("progress message update", failure)),
-                );
-            });
+          let lastStatus = "";
 
           while (true) {
-            const signal = yield* Effect.raceFirst(
-              Queue.take(statusSignals),
-              Effect.raceFirst(Queue.take(textSignals), Queue.take(toolSignals)),
-            );
+            const signal = yield* Queue.take(signals);
 
             if (!isFresh()) continue;
 
+            if (signal.kind === "flush") {
+              if (progress.started) yield* progress.text(latestText);
+              yield* Deferred.succeed(signal.done, undefined);
+              continue;
+            }
+
             if (signal.kind === "text") {
               latestText = signal.snapshot;
-              yield* publishText();
+
+              if (progress.started) {
+                if (healthRuntime.now() - lastStreamTextAt >= 1_500) {
+                  lastStreamTextAt = healthRuntime.now();
+                  yield* progress.text(latestText);
+                }
+              } else if (
+                workingMessage !== undefined &&
+                shouldUpdateSlackProgress(lastPlaceholder, latestText, healthRuntime.now())
+              ) {
+                const text = slackMessageChunks(latestText)[0];
+
+                if (text !== undefined) {
+                  lastPlaceholder = { atMs: healthRuntime.now(), text: latestText };
+                  yield* transport
+                    .updateMessage(config.botToken, message.channel, workingMessage.ts, text)
+                    .pipe(
+                      Effect.catch((failure) =>
+                        logMessageDeliveryFailure("progress message update", failure),
+                      ),
+                    );
+                }
+              }
+
               continue;
             }
 
             if (signal.kind === "tool") {
-              yield* publishToolCard(signal);
-              continue;
+              yield* progress.change({
+                kind: "tool",
+                atMs: healthRuntime.now(),
+                phase: signal.phase,
+                category: slackTaskTitle(signal.toolName, signal.detail),
+                failed: signal.failed,
+                ...(signal.detail === undefined ? undefined : { detail: signal.detail }),
+              });
+            } else if (signal.kind === "steer") {
+              yield* progress.change({
+                kind: "steer",
+                atMs: healthRuntime.now(),
+                excerpt: signal.excerpt,
+              });
+            } else if (signal.kind === "specialist") {
+              yield* progress.change({
+                kind: "specialist",
+                atMs: healthRuntime.now(),
+                agentId: signal.agentId,
+              });
+            } else if (signal.kind === "heartbeat") {
+              yield* progress.change({ kind: "tick", atMs: healthRuntime.now() });
+            } else if (signal.kind === "active") {
+              yield* progress.change({ kind: "active", atMs: healthRuntime.now() });
             }
 
-            yield* publishText();
-            yield* publishStatus(signal.status);
+            const headline = progress.headline;
+            const status = `is ${headline.charAt(0).toLowerCase()}${headline.slice(1)}`;
+
+            if (status !== lastStatus) {
+              lastStatus = status;
+              yield* updateStatus(status);
+            }
           }
         });
 
-      const offerProgressHeartbeats = (
-        signals: Queue.Enqueue<SlackProgressSignal>,
-        activeToolStatus: () => string | undefined,
-      ) =>
-        Effect.gen(function* () {
-          let elapsedSeconds = HEARTBEAT_SECONDS;
-
-          while (true) {
-            yield* Effect.sleep(Duration.seconds(HEARTBEAT_SECONDS));
-            yield* Queue.offer(signals, {
-              kind: "status",
-              status: activeToolStatus() ?? `is still working... (${elapsedSeconds}s)`,
-            });
-            elapsedSeconds += HEARTBEAT_SECONDS;
-          }
-        });
+      const offerProgressHeartbeats = (signals: Queue.Enqueue<SlackProgressSignal>) =>
+        Effect.forever(
+          Effect.sleep(Duration.seconds(HEARTBEAT_SECONDS)).pipe(
+            Effect.andThen(Queue.offer(signals, { kind: "heartbeat" })),
+          ),
+        );
 
       const reaction = (operation: "add" | "remove", name: string) => {
         if (!reactionsAvailable()) return Effect.void;
@@ -311,7 +233,7 @@ export const makeSlackTurnProcessor =
           Effect.catch((failure) =>
             Effect.gen(function* () {
               if (failure.reason === "authentication") disableReactions();
-              yield* logFeedbackFailure(`${operation} ${name} reaction`, failure);
+              yield* logMessageDeliveryFailure(`${operation} ${name} reaction`, failure);
             }),
           ),
         );
@@ -325,7 +247,10 @@ export const makeSlackTurnProcessor =
 
         if (!isFresh()) return undefined;
         yield* reaction("add", "eyes");
-        yield* updateStatus(queued ? "is queued..." : "is thinking...");
+        const streaming = yield* progress.start(queued, canStream);
+        yield* updateStatus(`is ${progress.headline.toLowerCase()}`);
+
+        if (streaming) return undefined;
 
         return yield* transport
           .postMessage(
@@ -355,7 +280,8 @@ export const makeSlackTurnProcessor =
               });
 
               if (queued) {
-                yield* updateStatus("is thinking...");
+                yield* progress.change({ kind: "active", atMs: healthRuntime.now() });
+                yield* updateStatus(`is ${progress.headline.toLowerCase()}`);
 
                 if (workingMessage !== undefined) {
                   yield* transport
@@ -397,9 +323,9 @@ export const makeSlackTurnProcessor =
               const reply = yield* Effect.scoped(
                 Effect.gen(function* () {
                   const progressStartedAtMs = healthRuntime.now();
-                  const statusSignals = yield* Queue.sliding<SlackProgressSignal>(1);
-                  const textSignals = yield* Queue.sliding<SlackProgressSignal>(1);
-                  const toolSignals = yield* Queue.unbounded<SlackProgressSignal>();
+                  const progressSignals = yield* Queue.unbounded<SlackProgressSignal>();
+                  chatState.progressSink = (excerpt) =>
+                    Queue.offerUnsafe(progressSignals, { kind: "steer", excerpt });
 
                   const voiceSignals = yield* Queue.unbounded<
                     | {
@@ -411,25 +337,10 @@ export const makeSlackTurnProcessor =
                   >();
 
                   const voicesDrained = yield* Deferred.make<void>();
-                  const activeTools = new Map<string, string>();
-
-                  const activeToolStatus = (): string | undefined => {
-                    const names = [...activeTools.values()];
-                    const name = names[names.length - 1];
-
-                    return name;
-                  };
-
-                  yield* offerProgressHeartbeats(statusSignals, activeToolStatus).pipe(
+                  yield* offerProgressHeartbeats(progressSignals).pipe(Effect.forkScoped);
+                  yield* runProgress(workingMessage, progressStartedAtMs, progressSignals).pipe(
                     Effect.forkScoped,
                   );
-                  yield* runProgress(
-                    workingMessage,
-                    progressStartedAtMs,
-                    statusSignals,
-                    textSignals,
-                    toolSignals,
-                  ).pipe(Effect.forkScoped);
                   yield* Effect.gen(function* () {
                     while (true) {
                       const signal = yield* Queue.take(voiceSignals);
@@ -437,6 +348,10 @@ export const makeSlackTurnProcessor =
                       if (signal.kind === "done") break;
 
                       if (!isFresh()) continue;
+                      Queue.offerUnsafe(progressSignals, {
+                        kind: "specialist",
+                        agentId: signal.agentId,
+                      });
                       yield* retrySlackDelivery("post", () =>
                         transport.postMessage(
                           config.botToken,
@@ -493,7 +408,7 @@ export const makeSlackTurnProcessor =
                         }
 
                         if (event.kind === "assistant-text") {
-                          Queue.offerUnsafe(textSignals, {
+                          Queue.offerUnsafe(progressSignals, {
                             kind: "text",
                             snapshot: event.snapshot,
                           });
@@ -503,39 +418,16 @@ export const makeSlackTurnProcessor =
 
                         if (event.kind !== "tool") return;
 
-                        if (event.phase === "end") {
-                          activeTools.delete(event.toolCallId);
-                        } else {
-                          activeTools.delete(event.toolCallId);
-
-                          if (activeTools.size >= 16) {
-                            const oldest = activeTools.keys().next().value;
-
-                            if (oldest !== undefined) activeTools.delete(oldest);
-                          }
-
-                          activeTools.set(event.toolCallId, slackToolStatus(event));
-                        }
-
-                        Queue.offerUnsafe(statusSignals, {
-                          kind: "status",
-                          status: activeToolStatus() ?? "is thinking...",
+                        Queue.offerUnsafe(progressSignals, {
+                          kind: "tool",
+                          phase: event.phase,
+                          toolCallId: event.toolCallId,
+                          toolName: event.toolName,
+                          failed: event.failed,
+                          ...Object.fromEntries(
+                            event.detail === undefined ? [] : ([["detail", event.detail]] as const),
+                          ),
                         });
-
-                        if (canUseProgressStream) {
-                          Queue.offerUnsafe(toolSignals, {
-                            kind: "tool",
-                            phase: event.phase,
-                            toolCallId: event.toolCallId,
-                            toolName: event.toolName,
-                            failed: event.failed,
-                            ...Object.fromEntries(
-                              event.detail === undefined
-                                ? []
-                                : ([["detail", event.detail]] as const),
-                            ),
-                          });
-                        }
                       },
                       ...Object.fromEntries(
                         [
@@ -558,18 +450,22 @@ export const makeSlackTurnProcessor =
 
                   yield* Queue.offer(voiceSignals, { kind: "done" });
                   yield* Deferred.await(voicesDrained);
-                  yield* closeProgressStream(toolSignals);
+                  const flushed = yield* Deferred.make<void>();
+                  yield* Queue.offer(progressSignals, { kind: "flush", done: flushed });
+                  yield* Deferred.await(flushed);
 
                   return reply;
                 }),
               );
 
               if (!isFresh()) return yield* Effect.interrupt;
-              yield* closeProgressStream();
+              yield* progress.finish("done", reply);
               const replyChunks = slackMessageChunks(reply);
               const chunks = replyChunks.length === 0 ? ["Done."] : replyChunks;
               const firstChunk = chunks[0];
               let firstUnsentChunk = 0;
+
+              if (progress.started) firstUnsentChunk = 1;
 
               if (workingMessage !== undefined && firstChunk !== undefined) {
                 if (!isFresh()) return yield* Effect.interrupt;
@@ -586,7 +482,7 @@ export const makeSlackTurnProcessor =
                 if (Result.isSuccess(updateResult)) {
                   firstUnsentChunk = 1;
                 } else {
-                  yield* logFeedbackFailure(
+                  yield* logMessageDeliveryFailure(
                     deliveryOutcomeUnknown(updateResult.failure)
                       ? "final working-message update outcome unknown"
                       : "final working-message update",
@@ -618,7 +514,10 @@ export const makeSlackTurnProcessor =
           ),
         (workingMessage, exit) =>
           Effect.gen(function* () {
-            yield* closeProgressStream();
+            if (chatState.progressSink !== undefined) delete chatState.progressSink;
+            yield* progress.finish(
+              turn.cancelled ? "stopped" : Exit.isSuccess(exit) ? "done" : "failed",
+            );
             const cancelled = turn.cancelled;
 
             const terminalState = cancelled

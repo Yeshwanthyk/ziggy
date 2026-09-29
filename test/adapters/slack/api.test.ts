@@ -135,11 +135,19 @@ describe("Slack HTTP adapter", () => {
     );
 
     await Effect.runPromise(
-      api.appendStream("bot-secret", "D123", started.ts, [
-        { type: "task_update", id: "tool-1", title: "read", status: "complete" },
+      api.appendStream(
+        "bot-secret",
+        "D123",
+        started.ts,
+        [{ type: "task_update", id: "tool-1", title: "read", status: "complete" }],
+        "hello",
+      ),
+    );
+    await Effect.runPromise(
+      api.stopStream("bot-secret", "D123", started.ts, " world", [
+        { type: "plan_update", title: "Done" },
       ]),
     );
-    await Effect.runPromise(api.stopStream("bot-secret", "D123", started.ts));
 
     expect(started).toEqual({ ts: "2.0" });
     expect(requests).toEqual([
@@ -167,11 +175,17 @@ describe("Slack HTTP adapter", () => {
           channel: "D123",
           ts: "2.0",
           chunks: [{ type: "task_update", id: "tool-1", title: "read", status: "complete" }],
+          markdown_text: "hello",
         }),
       },
       {
         url: "https://slack.com/api/chat.stopStream",
-        body: JSON.stringify({ channel: "D123", ts: "2.0" }),
+        body: JSON.stringify({
+          channel: "D123",
+          ts: "2.0",
+          markdown_text: " world",
+          chunks: [{ type: "plan_update", title: "Done" }],
+        }),
       },
     ]);
   });

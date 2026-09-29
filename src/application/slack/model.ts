@@ -4,7 +4,7 @@ import type {
   SlackApiError,
   SlackImageContent,
   SlackStartStreamOptions,
-  SlackTaskUpdateChunk,
+  SlackStreamChunk,
   SlackThreadHistory,
 } from "../../adapters/slack/api";
 import type {
@@ -71,12 +71,15 @@ export interface SlackTransport {
     token: string,
     channel: string,
     ts: string,
-    chunks: ReadonlyArray<SlackTaskUpdateChunk>,
+    chunks: ReadonlyArray<SlackStreamChunk>,
+    markdownText?: string,
   ) => Effect.Effect<void, SlackApiError>;
   readonly stopStream?: (
     token: string,
     channel: string,
     ts: string,
+    markdownText?: string,
+    chunks?: ReadonlyArray<SlackStreamChunk>,
   ) => Effect.Effect<void, SlackApiError>;
   readonly addReaction: (
     token: string,
@@ -111,6 +114,7 @@ export interface ChatState {
   generation: number;
   handle?: ChatHandle;
   activeMessage?: SlackIngressPayload;
+  progressSink?: (excerpt: string) => void;
   pending: number;
   busyNoticePending: boolean;
 }

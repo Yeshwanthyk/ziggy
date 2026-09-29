@@ -5,8 +5,6 @@ import {
   SLACK_IMAGE_MIME_TYPES,
   type SlackApiError,
   type SlackImageContent,
-  type SlackStartStreamOptions,
-  type SlackTaskUpdateChunk,
   type SlackThreadHistory,
 } from "../../adapters/slack/api";
 import type {
@@ -15,7 +13,6 @@ import type {
   SlackIngressTerminalState,
 } from "../../domain/slack-ingress";
 import { codePointLength } from "../../domain/memory";
-import { slackTaskTitle } from "../slack-tool-progress";
 import { normalizeSlackUserText, SLACK_BROADCAST_MENTION } from "./intake";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
@@ -118,7 +115,10 @@ export const shouldUpdateSlackProgress = (
 
 export type SlackProgressSignal =
   | { readonly kind: "text"; readonly snapshot: string }
-  | { readonly kind: "status"; readonly status: string }
+  | { readonly kind: "heartbeat" | "active" }
+  | { readonly kind: "steer"; readonly excerpt: string }
+  | { readonly kind: "specialist"; readonly agentId: string }
+  | { readonly kind: "flush"; readonly done: import("effect").Deferred.Deferred<void> }
   | {
       readonly kind: "tool";
       readonly phase: "start" | "update" | "end";
@@ -127,51 +127,6 @@ export type SlackProgressSignal =
       readonly failed: boolean;
       readonly detail?: string;
     };
-
-export type SlackProgressStreamState = {
-  ts: string | undefined;
-  failed: boolean;
-  closed: boolean;
-};
-
-export const slackTaskChunk = (
-  event: Extract<SlackProgressSignal, { kind: "tool" }>,
-): SlackTaskUpdateChunk => {
-  const details =
-    event.phase === "end" && event.failed
-      ? event.detail === undefined
-        ? "Didn't complete"
-        : `${event.detail} — didn't complete`
-      : event.detail;
-
-  return {
-    type: "task_update",
-    id: event.toolCallId,
-    title: slackTaskTitle(event.toolName, event.detail),
-    status: event.phase === "end" ? "complete" : "in_progress",
-    ...Object.fromEntries(details === undefined ? [] : ([["details", details]] as const)),
-  };
-};
-
-export const slackProgressStreamStartOptions = (
-  message: SlackIngressPayload,
-  ownerUserId: string,
-  chunk: SlackTaskUpdateChunk,
-): SlackStartStreamOptions | undefined => {
-  const chunks = [{ type: "plan_update", title: "Working" } as const, chunk];
-
-  if (message.context.kind === "user") {
-    return { chunks };
-  }
-
-  if (message.teamId === undefined) return undefined;
-
-  return {
-    chunks,
-    recipientUserId: ownerUserId,
-    recipientTeamId: message.teamId,
-  };
-};
 
 export const uniqueSlackStatusTargets = (
   messages: ReadonlyArray<Pick<SlackIngressPayload, "channel" | "statusThreadTs">>,

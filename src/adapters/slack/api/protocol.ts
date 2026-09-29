@@ -428,9 +428,15 @@ type SlackAppendStreamBody = {
   channel: string;
   ts: string;
   chunks: ReadonlyArray<SlackEncodedStreamChunk>;
+  markdown_text?: string;
 };
 
-type SlackStopStreamBody = { channel: string; ts: string };
+type SlackStopStreamBody = {
+  channel: string;
+  ts: string;
+  markdown_text?: string;
+  chunks?: ReadonlyArray<SlackEncodedStreamChunk>;
+};
 
 type SlackJsonRequestBody =
   | Record<string, never>

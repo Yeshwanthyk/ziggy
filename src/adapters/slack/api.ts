@@ -5,7 +5,7 @@ import {
   SlackApiError,
   type SlackImageContent,
   type SlackStartStreamOptions,
-  type SlackTaskUpdateChunk,
+  type SlackStreamChunk,
   type SlackThreadHistory,
 } from "./api/protocol";
 import type { SlackIngressFileReference } from "../../domain/slack-ingress";
@@ -97,16 +97,19 @@ export const appendStream = (
   token: string,
   channel: string,
   ts: string,
-  chunks: ReadonlyArray<SlackTaskUpdateChunk>,
+  chunks: ReadonlyArray<SlackStreamChunk>,
+  markdownText?: string,
 ): Effect.Effect<void, SlackApiError> =>
-  withLiveClient((api) => api.appendStream(token, channel, ts, chunks));
+  withLiveClient((api) => api.appendStream(token, channel, ts, chunks, markdownText));
 
 export const stopStream = (
   token: string,
   channel: string,
   ts: string,
+  markdownText?: string,
+  chunks?: ReadonlyArray<SlackStreamChunk>,
 ): Effect.Effect<void, SlackApiError> =>
-  withLiveClient((api) => api.stopStream(token, channel, ts));
+  withLiveClient((api) => api.stopStream(token, channel, ts, markdownText, chunks));
 
 export const addReaction = (
   token: string,

@@ -11,7 +11,7 @@ import {
   type SlackDownloadAccumulator,
   type SlackImageContent,
   type SlackStartStreamOptions,
-  type SlackTaskUpdateChunk,
+  type SlackStreamChunk,
   type SlackThreadHistory,
   type SlackThreadMessage,
   ThreadReplyFile,
@@ -281,12 +281,14 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     token: string,
     channel: string,
     ts: string,
-    chunks: ReadonlyArray<SlackTaskUpdateChunk>,
+    chunks: ReadonlyArray<SlackStreamChunk>,
+    markdownText?: string,
   ) =>
     jsonRequest(client, token, "appendStream", "chat.appendStream", {
       channel,
       ts,
       chunks: chunks.map(encodeStreamChunk),
+      ...(markdownText !== undefined ? { markdown_text: markdownText } : undefined),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "appendStream", response)),
       Effect.flatMap((response) =>
@@ -302,10 +304,18 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
         ),
       ),
     ),
-  stopStream: (token: string, channel: string, ts: string) =>
+  stopStream: (
+    token: string,
+    channel: string,
+    ts: string,
+    markdownText?: string,
+    chunks?: ReadonlyArray<SlackStreamChunk>,
+  ) =>
     jsonRequest(client, token, "stopStream", "chat.stopStream", {
       channel,
       ts,
+      ...(markdownText !== undefined ? { markdown_text: markdownText } : undefined),
+      ...(chunks !== undefined ? { chunks: chunks.map(encodeStreamChunk) } : undefined),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "stopStream", response)),
       Effect.flatMap((response) =>

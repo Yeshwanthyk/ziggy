@@ -426,6 +426,28 @@ export const makeSlackGateway = (
               const steered = yield* handle.steer(message.text).pipe(Effect.result);
 
               if (Result.isSuccess(steered)) {
+                chatState.progressSink?.(message.text);
+
+                if (reactionsAvailable) {
+                  yield* transport
+                    .addReaction(
+                      config.botToken,
+                      message.channel,
+                      message.sourceTs,
+                      "speech_balloon",
+                    )
+                    .pipe(
+                      Effect.catch((failure) =>
+                        Effect.sync(() => {
+                          if (failure.reason === "authentication") reactionsAvailable = false;
+                          console.error(
+                            `[slack] ${message.chatKey} steer reaction failed: ${failure.message}`,
+                          );
+                        }),
+                      ),
+                    );
+                }
+
                 yield* ingressRuntime.finish(
                   target.path,
                   message,
