@@ -559,7 +559,9 @@ export const makeSessionDispatcher = (
             ),
           );
 
-          const state = yield* withSessionControl(entry.handle, change);
+          const state = yield* params.operation === "status"
+            ? change
+            : withSessionControl(entry.handle, change);
 
           return {
             profileId: branch.profileId,
