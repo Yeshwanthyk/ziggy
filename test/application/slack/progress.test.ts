@@ -263,3 +263,57 @@ test("elapsed-time progress does not append plan updates for every event", () =>
       expect(plans).toEqual(["Thinking · 10s"]);
     }),
   ));
+
+for (const boundary of ["line", "hard"] as const) {
+  test(`a long streamed answer crosses the ${boundary} boundary exactly once`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const delivered: Array<string> = [];
+
+        const transport: SlackTransport = {
+          authTest: () => Effect.succeed({ userId: "bot" }),
+          openSocket: () => Effect.never,
+          getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+          postMessage: (_token, _channel, text) =>
+            Effect.sync(() => {
+              delivered.push(text);
+
+              return { ts: "post" };
+            }),
+          updateMessage: () => Effect.void,
+          setStatus: () => Effect.void,
+          addReaction: () => Effect.void,
+          removeReaction: () => Effect.void,
+          startStream: () => Effect.succeed({ ts: "one" }),
+          appendStream: (_token, _channel, _ts, _chunks, text) =>
+            Effect.sync(() => {
+              if (text !== undefined) delivered.push(text);
+            }),
+          stopStream: (_token, _channel, _ts, text) =>
+            Effect.sync(() => {
+              if (text !== undefined) delivered.push(text);
+            }),
+        };
+
+        const progress = makeTurnProgress(
+          transport,
+          "token",
+          "D1",
+          "1.0",
+          undefined,
+          () => 1000,
+          () => Effect.void,
+        );
+
+        const prefix = "a".repeat(3_980);
+        const answer = `${prefix}${boundary === "line" ? "\n" : "b"}${"c".repeat(4_200)}`;
+
+        yield* progress.start(false, true);
+        yield* progress.text(prefix);
+        yield* progress.text(answer);
+        expect(yield* progress.finish("done", answer)).toBe(true);
+        expect(delivered.join("")).toBe(answer);
+        expect(delivered.every((text) => [...text].length <= 4_000)).toBe(true);
+      }),
+    ));
+}

@@ -58,9 +58,12 @@ export const makeTurnProgress = (
         chunks.unshift({ type: "plan_update", title: progress.headline });
       }
 
-      const answer = slackMessageChunks(snapshot)[0] ?? "";
+      const boundary = slackMessageChunks(snapshot)[0] ?? "";
+      // Once a boundary has been streamed it cannot move backward when a later
+      // snapshot introduces a newline or whitespace before the 4,000th character.
+      const answer = boundary.startsWith(appended) ? boundary : appended;
 
-      if (!diverged && !answer.startsWith(appended)) diverged = true;
+      if (!slackMessageChunks(snapshot).join("").startsWith(appended)) diverged = true;
       const suffix = !diverged ? answer.slice(appended.length) : "";
 
       if (chunks.length === 0 && suffix.length === 0) return;
@@ -157,15 +160,16 @@ export const makeTurnProgress = (
               slackMessageChunks(
                 finalText ??
                   (outcome === "stopped" ? "Stopped." : "I couldn't complete that request."),
-              )[0] ?? "Done.";
+              ).join("") || "Done.";
 
             if (ts === undefined || transport.stopStream === undefined) return false;
             const streamTs = ts;
 
             // Preserve the plan and partial answer. Divergent text needs a separate
             // follow-up, not a chat.update that would erase the stream's plan.
-            const suffix =
-              !diverged && final.startsWith(appended) ? final.slice(appended.length) : "";
+            const extendsStream = !diverged && final.startsWith(appended);
+            const remaining = extendsStream ? final.slice(appended.length) : "";
+            const suffix = [...remaining].slice(0, 4_000 - [...appended].length).join("");
 
             const chunks: Array<SlackStreamChunk> = [
               { type: "plan_update", title: progress.headline },
@@ -188,19 +192,38 @@ export const makeTurnProgress = (
 
             if (Result.isFailure(result)) yield* log("stream stop", result.failure);
 
-            // Acknowledged appends already carry the full text even if stop fails.
-            delivered =
-              appended === final ||
-              (Result.isSuccess(result) && !diverged && final.startsWith(appended));
+            // The stream owns the prefix; post only the rest, never chunk zero
+            // again after its boundary shifted during streaming.
+            delivered = extendsStream && (Result.isSuccess(result) || appended === final);
 
-            if (!delivered && outcome === "done" && (diverged || !final.startsWith(appended))) {
-              const correction = yield* transport
-                .postMessage(token, channel, final, threadTs)
-                .pipe(Effect.result);
+            if (delivered) {
+              for (const chunk of slackMessageChunks(remaining.slice(suffix.length))) {
+                const post = yield* transport
+                  .postMessage(token, channel, chunk, threadTs)
+                  .pipe(Effect.result);
 
-              if (Result.isFailure(correction))
-                yield* log("stream final follow-up", correction.failure);
-              delivered = Result.isSuccess(correction);
+                if (Result.isFailure(post)) {
+                  yield* log("stream overflow follow-up", post.failure);
+                  delivered = false;
+                  break;
+                }
+              }
+            }
+
+            if (!delivered && outcome === "done" && !extendsStream) {
+              delivered = true;
+
+              for (const chunk of slackMessageChunks(final)) {
+                const correction = yield* transport
+                  .postMessage(token, channel, chunk, threadTs)
+                  .pipe(Effect.result);
+
+                if (Result.isFailure(correction)) {
+                  yield* log("stream final follow-up", correction.failure);
+                  delivered = false;
+                  break;
+                }
+              }
             }
 
             return delivered;

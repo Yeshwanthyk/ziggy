@@ -86,10 +86,8 @@ export const makeSlackTurnProcessor =
                   .setStatus(config.botToken, message.channel, message.statusThreadTs, status)
                   .pipe(
                     Effect.catch((failure) =>
-                      Effect.sync(() => {
-                        console.error(
-                          `[slack] ${message.chatKey} status update failed: ${failure.message}`,
-                        );
+                      Effect.logWarning(`[slack] ${message.chatKey} status update failed`, {
+                        failure,
                       }),
                     ),
                   )
@@ -112,17 +110,15 @@ export const makeSlackTurnProcessor =
               },
         healthRuntime.now,
         (kind, failure) =>
-          Effect.sync(() => {
-            console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
-          }),
+          Effect.logWarning(`[slack] ${message.chatKey} ${kind} failed`, { failure }),
       );
 
       const canStream = message.context.kind === "user" || message.teamId !== undefined;
 
       const logMessageDeliveryFailure = (kind: string, failure: SlackApiError) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           if (deliveryOutcomeUnknown(failure)) deliveryUnknown = true;
-          console.error(`[slack] ${message.chatKey} ${kind} failed: ${failure.message}`);
+          yield* Effect.logWarning(`[slack] ${message.chatKey} ${kind} failed`, { failure });
         });
 
       const runProgress = (
@@ -134,7 +130,8 @@ export const makeSlackTurnProcessor =
           let lastPlaceholder: SlackProgressUpdateState = { atMs: initialAtMs, text: "" };
           let lastStreamTextAt = initialAtMs;
           let latestText = "";
-          let lastStatus = "";
+          let lastStatus = `is ${progress.headline.charAt(0).toLowerCase()}${progress.headline.slice(1)}`;
+          let lastStatusPhase = lastStatus.replace(/ · \d+(?:m \d+)?s$/u, "");
           let lastStatusAt = initialAtMs;
 
           while (true) {
@@ -210,14 +207,14 @@ export const makeSlackTurnProcessor =
             const headline = progress.headline;
             const status = `is ${headline.charAt(0).toLowerCase()}${headline.slice(1)}`;
 
+            const statusPhase = status.replace(/ · \d+(?:m \d+)?s$/u, "");
+
             if (
               status !== lastStatus &&
-              (signal.kind !== "heartbeat" || healthRuntime.now() - lastStatusAt >= 10_000) &&
-              (signal.kind !== "tool" ||
-                signal.phase !== "update" ||
-                healthRuntime.now() - lastStatusAt >= 10_000)
+              (statusPhase !== lastStatusPhase || healthRuntime.now() - lastStatusAt >= 10_000)
             ) {
               lastStatus = status;
+              lastStatusPhase = statusPhase;
               lastStatusAt = healthRuntime.now();
               yield* updateStatus(status);
             }
@@ -466,8 +463,9 @@ export const makeSlackTurnProcessor =
                   if (progress.started) {
                     const flushed = yield* Deferred.make<void>();
                     yield* Queue.offer(progressSignals, { kind: "flush", done: flushed });
-                    // A stalled progress append must not hold the final answer hostage.
-                    yield* Deferred.await(flushed).pipe(Effect.timeoutOption(Duration.seconds(2)));
+                    // The append owns the delivery cursor; do not build a final
+                    // suffix from stale acknowledgement state while it is running.
+                    yield* Deferred.await(flushed);
                   }
 
                   return reply;
@@ -481,7 +479,7 @@ export const makeSlackTurnProcessor =
               const firstChunk = chunks[0];
               let firstUnsentChunk = 0;
 
-              if (streamDelivered) firstUnsentChunk = 1;
+              if (streamDelivered) firstUnsentChunk = chunks.length;
 
               if (workingMessage !== undefined && firstChunk !== undefined) {
                 if (!isFresh()) return yield* Effect.interrupt;
@@ -601,9 +599,7 @@ export const makeSlackTurnProcessor =
       yield* work.pipe(
         Effect.catch(
           (failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError | UiGatewayError) =>
-            Effect.sync(() => {
-              console.error(`[slack] ${message.chatKey} failed: ${failure.message}`);
-            }),
+            Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
         ),
       );
     });

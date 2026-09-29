@@ -258,7 +258,10 @@ export const reduceTurnProgress = (
     steps,
     calls,
     toolCount: previous.toolCount + (event.phase === "start" ? 1 : 0),
-    phase: event.phase === "end" && active === 0 ? "Thinking" : category,
+    phase:
+      event.phase === "end" && active === 0
+        ? (steps.findLast((item) => item.active > 0)?.category ?? "Thinking")
+        : category,
   };
 
   return { ...next, headline: headline(next, event.atMs) };

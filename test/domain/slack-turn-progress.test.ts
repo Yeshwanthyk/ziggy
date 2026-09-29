@@ -39,6 +39,12 @@ test("parallel starts and ends belong to their call's phase, even when completio
 
         for (const { call } of completed) {
           state = reduceTurnProgress(state, event(call, "end"));
+          const running = state.steps.filter((step) => step.active > 0);
+          expect(
+            running.length === 0
+              ? state.headline === "Thinking · 0s"
+              : running.some((step) => state.headline === `${step.category} · 0s`),
+          ).toBe(true);
           state = reduceTurnProgress(state, event(call, "end")); // duplicate delivery
           const stepId = state.calls[call.id]?.stepId;
           expect(state.steps.filter((step) => step.id === stepId)).toHaveLength(1);
