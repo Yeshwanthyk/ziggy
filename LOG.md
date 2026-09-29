@@ -1217,3 +1217,13 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Known limit: DNS is resolved separately from the fetch, so a host that rebinds between the check and the connection can still reach a private address.
 - Tests: address classification, rejection of non-public targets before any network I/O, the body byte cap, and the registered tool list. A live smoke fetched example.com through the Jina fallback and refused an httpbin redirect to 127.0.0.1.
 - Verification: `bun run check` and `bun run test` (812 pass) passed.
+
+## Squarey extensions cleanup
+
+- `~/.local/bin/ziggy` rebuilt from `ec06c08f`, then one planned stop/start of the Squarey resident, rehearsed first on a scratch copy of the Profile.
+- `--adopt` updates brought web-search (now with `fetch_url`), apple-reminders, computer-use, computer-workflows, executor and github up to the bundle. For all but web-search the only differences were Pi peer pins and blank lines.
+- web-access was replaced by web-search in the selection, so `librarian` keeps `web_search` and `fetch_url`. jev was unselected.
+- The jev, dev-browser, pi-web-access, lossless-claw and web-access folders moved to `.runtime/extension-backups/cleanup-20260929-191307/`.
+- gog and self-improvement keep their intentional local edits. pi-bridge, imessage-capture, frontend-design and research-source-triage stay Profile-local.
+- Codex OAuth import skipped: Squarey already has its own `openai-codex` login, and sharing `~/.codex` would make two clients rotate one refresh token.
+- Verification: doctor green apart from the pre-existing 3 broken session parent links; no quarantine in the resident log.
