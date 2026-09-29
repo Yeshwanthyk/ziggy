@@ -1,3 +1,14 @@
+import { liveConnection } from "./connection";
+import {
+  normalizeGatewayFrame,
+  decodeGatewayFrameJson,
+  decodeReadyPayload,
+  decodeHelloPayload,
+  decodeMessagePayload,
+  decodeMessageAttachment,
+  decodeInteractionPayload,
+  type GatewayFrame,
+} from "./frame";
 import { Cause, Duration, Effect, Option, Queue, Result, Schema } from "effect";
 import type * as Scope from "effect/Scope";
 import { type DiscordApiError, getGatewayBot } from "./api";
@@ -111,92 +122,6 @@ interface AttachedSocket {
   readonly removeListeners: () => void;
 }
 
-const Integer = Schema.Finite.check(Schema.isInt());
-
-const GatewayFrameSchema = Schema.Struct({
-  op: Integer,
-  d: Schema.optional(Schema.Unknown),
-  s: Schema.optional(Schema.NullOr(Integer)),
-  t: Schema.optional(Schema.NullOr(Schema.String)),
-});
-
-const ReadySchema = Schema.Struct({
-  session_id: Schema.String,
-  resume_gateway_url: Schema.String,
-  user: Schema.Struct({ id: Schema.String }),
-  guilds: Schema.Array(Schema.Struct({ id: Schema.String })),
-});
-
-const HelloSchema = Schema.Struct({
-  heartbeat_interval: Schema.Finite.check(Schema.isGreaterThan(0)),
-});
-
-const MessageSchema = Schema.Struct({
-  id: Schema.String,
-  channel_id: Schema.String,
-  guild_id: Schema.optional(Schema.String),
-  author: Schema.Struct({
-    id: Schema.String,
-    bot: Schema.optional(Schema.Boolean),
-  }),
-  content: Schema.optional(Schema.String.check(Schema.isMaxLength(16_000))),
-  attachments: Schema.optional(Schema.Array(Schema.Unknown)),
-});
-
-const MessageAttachmentSchema = Schema.Struct({
-  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
-  filename: Schema.optional(Schema.String.check(Schema.isMaxLength(512))),
-  content_type: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
-  size: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  url: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
-});
-
-const InteractionSchema = Schema.Struct({
-  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
-  token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
-  type: Integer,
-  guild_id: Schema.optional(Schema.String),
-  channel_id: Schema.optional(Schema.String),
-  channel: Schema.optional(
-    Schema.Struct({
-      id: Schema.String,
-      type: Integer,
-      parent_id: Schema.optional(Schema.NullOr(Schema.String)),
-    }),
-  ),
-  member: Schema.optional(Schema.Struct({ user: Schema.Struct({ id: Schema.String }) })),
-  user: Schema.optional(Schema.Struct({ id: Schema.String })),
-  data: Schema.optional(
-    Schema.Struct({
-      type: Integer,
-      name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32)),
-    }),
-  ),
-});
-
-const decodeGatewayFrameJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(GatewayFrameSchema),
-);
-
-const decodeReadyPayload = Schema.decodeUnknownEffect(ReadySchema);
-
-const decodeHelloPayload = Schema.decodeUnknownEffect(HelloSchema);
-
-const decodeMessagePayload = Schema.decodeUnknownEffect(MessageSchema);
-
-const decodeMessageAttachment = Schema.decodeUnknownEffect(MessageAttachmentSchema);
-
-const decodeInteractionPayload = Schema.decodeUnknownEffect(InteractionSchema);
-
-const normalizeGatewayFrame = (decoded: typeof GatewayFrameSchema.Type) => ({
-  op: decoded.op,
-  d: decoded.d,
-  s: decoded.s ?? null,
-  t: decoded.t ?? null,
-});
-
-type GatewayFrame = ReturnType<typeof normalizeGatewayFrame>;
-
 type DiscordGatewayOutboundPayload =
   | { op: 1; d: number | null }
   | { op: 6; d: { token: string; session_id: string; seq: number } }
@@ -211,26 +136,6 @@ type DiscordGatewayOutboundPayload =
 
 const websocketMessageText = (data: DiscordWebSocketMessageData): string =>
   ArrayBuffer.isView(data) ? new TextDecoder().decode(data) : data;
-
-const normalizeWebSocketMessageData = (
-  data: MessageEvent["data"],
-): DiscordWebSocketMessageData | undefined => {
-  if (ArrayBuffer.isView(data)) {
-    return data instanceof Uint8Array
-      ? data
-      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
-  }
-
-  if (data instanceof Blob) {
-    return undefined;
-  }
-
-  return data;
-};
 
 const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
 
@@ -275,45 +180,6 @@ const gatewaySocketUrl = (baseUrl: string): Effect.Effect<string, DiscordSocketE
     },
     catch: (cause) => error("connect", "connection", true, cause),
   });
-
-const liveConnection = (url: string): DiscordSocketConnection => {
-  const socket = new WebSocket(url);
-
-  return {
-    readyState: () => socket.readyState,
-    send: (data) => socket.send(data),
-    close: (code) => socket.close(code),
-    onOpen: (listener) => {
-      socket.addEventListener("open", listener);
-
-      return () => socket.removeEventListener("open", listener);
-    },
-    onMessage: (listener) => {
-      const handle = (event: MessageEvent) => {
-        const data = normalizeWebSocketMessageData(event.data);
-
-        if (data !== undefined) {
-          listener(data);
-        }
-      };
-
-      socket.addEventListener("message", handle);
-
-      return () => socket.removeEventListener("message", handle);
-    },
-    onError: (listener) => {
-      socket.addEventListener("error", listener);
-
-      return () => socket.removeEventListener("error", listener);
-    },
-    onClose: (listener) => {
-      const handle = (event: CloseEvent) => listener(event.code);
-      socket.addEventListener("close", handle);
-
-      return () => socket.removeEventListener("close", handle);
-    },
-  };
-};
 
 const liveDependencies: DiscordSocketDependencies = {
   getGatewayBot,
