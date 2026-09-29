@@ -27,14 +27,20 @@ import {
   type ProfileExtensionsApi,
 } from "../../domain/profile-extension";
 import { inspectPiPackageHealth } from "./profile-extension-preflight";
-import { DoctorChecks, type DoctorChecksApi } from "../../application/doctor";
+import {
+  DoctorChecks,
+  type DoctorChecksApi,
+  ok,
+  warn,
+  error,
+  classifySlackRuntime,
+  classifyDiscordRuntime,
+  bundledCopyCheck,
+  modelDoctorCheck,
+  authDoctorCheck,
+  agentsDoctorCheck,
+} from "../../application/doctor";
 import packageJson from "../../../package.json" with { type: "json" };
-
-const ok = (id: string, message: string): DoctorCheck => ({ id, severity: "ok", message });
-
-const warn = (id: string, message: string): DoctorCheck => ({ id, severity: "warn", message });
-
-const error = (id: string, message: string): DoctorCheck => ({ id, severity: "error", message });
 
 const inspect = (targetPath: string) =>
   Effect.tryPromise({
@@ -81,14 +87,7 @@ const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const modelCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<DoctorCheck> =>
   models.readOnlyStatus(target).pipe(
-    Effect.map((status) =>
-      status.providerId === undefined || status.modelId === undefined
-        ? error("model", "No effective Pi model is selected")
-        : ok(
-            "model",
-            `Pi model settings resolve to ${status.providerId}/${status.modelId} (${status.thinking})`,
-          ),
-    ),
+    Effect.map(modelDoctorCheck),
     Effect.catch(() =>
       Effect.succeed(error("model", "Pi model settings are invalid or unreadable")),
     ),
@@ -102,14 +101,11 @@ const authCheck = (
   Effect.gen(function* () {
     const status = yield* models.readOnlyStatus(target);
 
-    if (status.providerId === undefined)
-      return warn("auth", "Provider auth cannot be checked until a model is selected");
-    const providers = yield* auth.readOnlyStatus(target);
-    const provider = providers.find((candidate) => candidate.id === status.providerId);
+    if (status.providerId === undefined) return authDoctorCheck(undefined, []);
 
-    return provider?.configured === undefined
-      ? error("auth", `Provider ${status.providerId} is not authenticated`)
-      : ok("auth", `Provider ${status.providerId} authentication is configured`);
+    const providers = yield* auth.readOnlyStatus(target);
+
+    return authDoctorCheck(status.providerId, providers);
   }).pipe(
     Effect.catch(() =>
       Effect.succeed(error("auth", "Provider authentication could not be checked")),
@@ -124,28 +120,7 @@ const agentsCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<Do
       ? yield* models.list(target)
       : [];
 
-    for (const agent of agents) {
-      if (agent.provider === undefined || agent.model === undefined) continue;
-
-      const model = known.find(
-        (candidate) => candidate.providerId === agent.provider && candidate.modelId === agent.model,
-      );
-
-      if (model === undefined)
-        return error("agents", `Profile agent ${agent.id} selects an unknown Pi model`);
-
-      if (agent.thinking !== undefined && !model.thinkingLevels.includes(agent.thinking)) {
-        return error(
-          "agents",
-          `Profile agent ${agent.id} selects unsupported thinking ${agent.thinking}`,
-        );
-      }
-    }
-
-    return ok(
-      "agents",
-      `${agents.length} Profile agent file${agents.length === 1 ? "" : "s"} valid`,
-    );
+    return agentsDoctorCheck(agents, known);
   }).pipe(
     Effect.catch(() =>
       Effect.succeed(error("agents", "Profile agent files are invalid or unreadable")),
@@ -288,17 +263,9 @@ const resourcesCheck = (
 
       const copy = yield* classifyBundledCopy(target.path, entry);
 
-      if (copy.state === "modified")
-        return warn(
-          "resources",
-          `${entry.id} has local changes; copy your edits elsewhere and restore the original files, then run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id}`,
-        );
+      const copyCheck = bundledCopyCheck(target.path, entry.id, copy.state);
 
-      if (copy.state === "untracked-behind")
-        return warn(
-          "resources",
-          `${entry.id} is behind the bundle and untracked; run ziggy extensions update ${JSON.stringify(target.path)} ${entry.id} --adopt`,
-        );
+      if (copyCheck !== undefined) return copyCheck;
     }
 
     return ok(
@@ -376,39 +343,7 @@ const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const slackRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   readSlackHealth(target.path, Date.now()).pipe(
-    Effect.map((projection) => {
-      if (projection._tag === "not-configured") {
-        return ok("slack-runtime", "Slack is not configured");
-      }
-
-      if (projection._tag === "not-observed") {
-        return warn("slack-runtime", "Slack is configured but has no runtime observation");
-      }
-
-      const { snapshot } = projection;
-
-      const stale =
-        snapshot.updatedAtMs > projection.observedAtMs ||
-        projection.observedAtMs - snapshot.updatedAtMs > 90_000;
-
-      if (stale) return warn("slack-runtime", "Slack runtime observation is stale");
-
-      if (snapshot.state === "connected") {
-        return ok(
-          "slack-runtime",
-          `Slack is connected; ${snapshot.activeTurnCount} active and ${snapshot.queuedTurnCount} queued turn${snapshot.queuedTurnCount === 1 ? "" : "s"}`,
-        );
-      }
-
-      if (snapshot.state === "failed") {
-        return error(
-          "slack-runtime",
-          `Slack runtime failed (${snapshot.lastFailure ?? "unknown"})`,
-        );
-      }
-
-      return warn("slack-runtime", `Slack runtime is ${snapshot.state}`);
-    }),
+    Effect.map(classifySlackRuntime),
     Effect.catch(() =>
       Effect.succeed(error("slack-runtime", "Slack runtime observation is invalid or unreadable")),
     ),
@@ -416,39 +351,7 @@ const slackRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const discordRuntimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   readDiscordHealth(target.path, Date.now()).pipe(
-    Effect.map((projection) => {
-      if (projection._tag === "not-configured") {
-        return ok("discord-runtime", "Discord is not configured");
-      }
-
-      if (projection._tag === "not-observed") {
-        return warn("discord-runtime", "Discord is configured but has no runtime observation");
-      }
-
-      const { snapshot } = projection;
-
-      const stale =
-        snapshot.updatedAtMs > projection.observedAtMs ||
-        projection.observedAtMs - snapshot.updatedAtMs > 90_000;
-
-      if (stale) return warn("discord-runtime", "Discord runtime observation is stale");
-
-      if (snapshot.state === "connected") {
-        return ok(
-          "discord-runtime",
-          `Discord is connected; ${snapshot.activeTurnCount} active and ${snapshot.queuedTurnCount} queued turn${snapshot.queuedTurnCount === 1 ? "" : "s"}`,
-        );
-      }
-
-      if (snapshot.state === "failed") {
-        return error(
-          "discord-runtime",
-          `Discord runtime failed (${snapshot.lastFailure ?? "unknown"})`,
-        );
-      }
-
-      return warn("discord-runtime", `Discord runtime is ${snapshot.state}`);
-    }),
+    Effect.map(classifyDiscordRuntime),
     Effect.catch(() =>
       Effect.succeed(
         error("discord-runtime", "Discord runtime observation is invalid or unreadable"),

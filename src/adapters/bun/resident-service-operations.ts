@@ -34,7 +34,6 @@ import {
   deriveResidentServiceIdentity,
   type ResidentServiceDefinition,
   ResidentServiceError,
-  type ResidentServiceManager,
 } from "../../domain/resident-service";
 import {
   AutomationScheduler,
@@ -46,6 +45,11 @@ import {
   ResidentServiceOperations,
   type ResidentServiceApi,
   type ResidentSupervisorStatus,
+  managerFor,
+  commandFailure,
+  launchdSupervisorStatus,
+  systemdSupervisorStatus,
+  residentReady,
 } from "../../application/resident-service";
 import type { GatewayOwnerStatus } from "../../domain/gateway";
 
@@ -80,23 +84,6 @@ const liveRuntime: ResidentServiceRuntime = {
   ensureDirectory: ensureResidentServiceDirectory,
   sleep: (milliseconds) => Effect.sleep(Duration.millis(milliseconds)),
 };
-
-const managerFor = (
-  platform: NodeJS.Platform,
-): Effect.Effect<ResidentServiceManager, ResidentServiceError> =>
-  platform === "darwin"
-    ? Effect.succeed("launchd")
-    : platform === "linux"
-      ? Effect.succeed("systemd")
-      : Effect.fail(
-          new ResidentServiceError({
-            operation: "detect service manager",
-            reason: "unsupported-platform",
-            path: undefined,
-            message: `resident services are unsupported on ${platform}`,
-            cause: undefined,
-          }),
-        );
 
 const definitionFor = (
   target: ProfileTarget,
@@ -140,19 +127,6 @@ const definitionFor = (
         });
   });
 
-const commandFailure = (
-  operation: string,
-  definition: ResidentServiceDefinition,
-  result: { readonly exitCode: number; readonly stderr: string },
-): ResidentServiceError =>
-  new ResidentServiceError({
-    operation,
-    reason: "command",
-    path: definition.path,
-    message: `${operation} failed for ${definition.identity.key} (exit ${result.exitCode})${result.stderr.trim().length === 0 ? "" : `: ${result.stderr.trim().slice(0, 160)}`}`,
-    cause: undefined,
-  });
-
 const runRequired = (
   runtime: ResidentServiceRuntime,
   definition: ResidentServiceDefinition,
@@ -179,43 +153,20 @@ const inspectSupervisor = (
         launchdStatusCommand(runtime.uid, definition.identity),
       );
 
-      if (result.exitCode !== 0) {
-        return /Could not find service\b/u.test(result.stderr)
-          ? { state: "stopped" }
-          : { state: "unknown", reason: `launchctl print exited ${result.exitCode}` };
-      }
-
-      return /\bstate\s*=\s*running\b/u.test(result.stdout)
-        ? { state: "running" }
-        : { state: "stopped" };
+      return launchdSupervisorStatus(result);
     }
 
     const active = yield* runtime.commands.run(
       systemdCommand("is-active", definition.identity.systemdUnit),
     );
 
-    const state = active.stdout.trim();
-
-    if (state === "failed") return { state: "failed" };
-
-    if (state !== "active") {
-      return state === "inactive" || state === "deactivating"
-        ? { state: "stopped" }
-        : {
-            state: "unknown",
-            reason: `systemctl is-active reported ${state || `exit ${active.exitCode}`}`,
-          };
-    }
+    if (active.stdout.trim() !== "active") return systemdSupervisorStatus(active);
 
     const pidResult = yield* runtime.commands.run(
       systemdMainPidCommand(definition.identity.systemdUnit),
     );
 
-    const pid = Number(pidResult.stdout.trim());
-
-    return pidResult.exitCode === 0 && Number.isSafeInteger(pid) && pid > 0
-      ? { state: "running", pid }
-      : { state: "running" };
+    return systemdSupervisorStatus(active, pidResult);
   });
 
 const startDefinition = (
@@ -274,17 +225,10 @@ const waitForReady = (
 
       if (Result.isSuccess(owner)) observed = owner.success;
 
-      const ownerChanged =
-        observed?._tag === "running" &&
-        (previous?._tag !== "running" ||
-          observed.pid !== previous.pid ||
-          observed.acquiredAt !== previous.acquiredAt);
-
       if (
         Result.isSuccess(supervisor) &&
-        supervisor.success.state === "running" &&
         observed?._tag === "running" &&
-        (previous === undefined || ownerChanged)
+        residentReady(supervisor.success, observed, previous, "running")
       ) {
         return { ready: true, owner: observed } as const;
       }
@@ -316,8 +260,8 @@ const waitForStopped = (
 
       if (
         Result.isSuccess(supervisor) &&
-        supervisor.success.state === "stopped" &&
-        observed?._tag === "stopped"
+        observed?._tag === "stopped" &&
+        residentReady(supervisor.success, observed, undefined, "stopped")
       ) {
         return { ready: true, owner: observed } as const;
       }
