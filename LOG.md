@@ -1185,3 +1185,13 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Tests: controlled interleavings for overlapping resumes, interruption before reset, and prompt-before-reset (each fails on the old code); partial-schema recovery; the resident hard-crash test waits for UI startup and passed 20 of 20 runs.
 - Left open: the session-summary scan cost needs a per-transcript cache in `adapters/pi/sessions.ts` (after the Pi adapter cleanup). A prompt followed by a resume can still fail the prompt instead of ordering them.
 - Verification: `bun run check` and `bun run test` (791 pass) passed. Two Opus review rounds resolved.
+
+## Pi adapter cleanup
+
+- `adapters/pi/pi-agent.ts` shrank from 2,871 to about 1,620 lines. The memory tool, event projection, chat runtime binding, provider failure mapping and prompt turn each moved into their own modules. Model selection moved to `application/models.ts`, and resident readiness to `application/resident-service.ts`, with the launchctl/systemctl parsers in `adapters/bun/resident-service-operations.ts`. Doctor models bundled-copy state as a `BundledCopyState` union.
+- Every runtime rebuild (new session, resume) now partitions resource diagnostics against the accepted set. A healthy rebuild runs each package factory once, which resolves the factory-once deferral. An optional package that breaks mid-lifetime is quarantined instead of killing the chat. Core and inline failures stay fatal. Two behavior changes: a quarantined package stays excluded until the runtime is recreated, even if it heals, and a quarantine after startup doesn't pause that package's automations until the Profile restarts (its diagnostic says so).
+- `residentReady` now rejects an owner pid that differs from the supervisor pid.
+- Session summaries: a 512-entry cache keyed by path, mtime and size closes the summary-scan item left open by the UI gateway cleanup. Lease files outlive their holders, so listings no longer check holds for every transcript. `Sessions.held` checks only the at most 32 rows the web picker returns.
+- Tests: a skill that breaks mid-lifetime is quarantined on the next `newSession` (it fails on the old code), and the picker checks holds only for the rows it returns.
+- Left open: the resident-service parsers are exported but have no users outside their module.
+- Verification: `bun run check` and `bun run test` (796 pass) passed. Opus review rounds resolved. One full test run had a single failure that didn't recur in the next two runs.
