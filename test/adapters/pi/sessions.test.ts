@@ -1,5 +1,5 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   lstat,
   mkdir,
@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Result, Schema } from "effect";
 import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
+import * as transcriptLines from "ziggy/adapters/pi/transcript-lines";
 import {
   listProfileSessionSummaries,
   listProfileSessions,
@@ -575,6 +576,29 @@ test("read-only session summaries use first user text and observe a live writer"
   }
 
   expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.held).toBe(false);
+});
+
+test("summary projection reuses unchanged transcripts and rescans changed ones", async () => {
+  const root = await profile();
+  const file = join(root, "sessions", "cache.jsonl");
+  await writeJsonl(file, [header("cache")]);
+  const scan = spyOn(transcriptLines, "scanTranscriptLines");
+
+  try {
+    expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.title).toBeUndefined();
+    expect(scan).toHaveBeenCalledTimes(1);
+    await Effect.runPromise(listProfileSessionSummaries(root));
+    expect(scan).toHaveBeenCalledTimes(1);
+
+    await writeJsonl(file, [
+      header("cache"),
+      entry("name", null, { type: "session_info", name: "Renamed" }),
+    ]);
+    expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.title).toBe("Renamed");
+    expect(scan).toHaveBeenCalledTimes(2);
+  } finally {
+    scan.mockRestore();
+  }
 });
 
 test("summary listing isolates bad transcripts, sorts by activity and truncates Unicode titles", async () => {

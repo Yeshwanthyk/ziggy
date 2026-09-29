@@ -518,6 +518,15 @@ export const listProfileSessions = (
 ): Effect.Effect<ReadonlyArray<SessionMetadata>, SessionReadFailed> =>
   readParsedProfileSessions(profilePath).pipe(Effect.flatMap(projectSessions));
 
+const summaryCacheLimit = 512;
+
+type SummaryProjection = Omit<ProfileSessionSummary, "held">;
+
+const summaryCache = new Map<
+  string,
+  { mtimeMs: number; size: number; summary: SummaryProjection }
+>();
+
 /** Reads transcripts without SessionManager.open; lease probing never opens a transcript for writing. */
 export const listProfileSessionSummaries = (
   profilePath: string,
@@ -527,36 +536,83 @@ export const listProfileSessionSummaries = (
     const files = yield* discoverFiles(root, true);
     const seen = new Set<string>();
     const summaries: Array<ProfileSessionSummary> = [];
+    const present = new Set(files.map((file) => path.resolve(file)));
+
+    for (const cached of summaryCache.keys()) {
+      const relative = path.relative(root, cached);
+
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+        continue;
+
+      if (!present.has(cached)) summaryCache.delete(cached);
+    }
 
     for (const file of files) {
-      const parsed = yield* Effect.result(parseSession(root, file));
+      const canonical = path.resolve(file);
+      const status = yield* Effect.result(io(file, "read", () => lstat(file)));
 
-      if (parsed._tag === "Failure") {
+      if (status._tag === "Failure") {
+        summaryCache.delete(canonical);
         yield* Effect.logWarning("Skipped unreadable session transcript", {
           path: file,
-          message: parsed.failure.message,
+          message: status.failure.message,
         });
         continue;
       }
 
-      const session = parsed.success;
+      const cached = summaryCache.get(canonical);
+      let summary: SummaryProjection;
 
-      if (seen.has(session.header.id)) {
+      if (
+        cached !== undefined &&
+        cached.mtimeMs === status.success.mtimeMs &&
+        cached.size === status.success.size
+      ) {
+        summaryCache.delete(canonical);
+        summaryCache.set(canonical, cached);
+        summary = cached.summary;
+      } else {
+        summaryCache.delete(canonical);
+        const parsed = yield* Effect.result(parseSession(root, file));
+
+        if (parsed._tag === "Failure") {
+          yield* Effect.logWarning("Skipped unreadable session transcript", {
+            path: file,
+            message: parsed.failure.message,
+          });
+          continue;
+        }
+
+        const session = parsed.success;
+        summary = {
+          id: session.header.id,
+          path: session.relativePath,
+          title: session.name ?? session.firstUserMessage,
+          updatedAt: session.activityAt,
+        };
+        summaryCache.set(canonical, {
+          mtimeMs: status.success.mtimeMs,
+          size: status.success.size,
+          summary,
+        });
+
+        if (summaryCache.size > summaryCacheLimit) {
+          const oldest = summaryCache.keys().next().value;
+
+          if (oldest !== undefined) summaryCache.delete(oldest);
+        }
+      }
+
+      if (seen.has(summary.id)) {
         yield* Effect.logWarning("Skipped duplicate session transcript", {
           path: file,
-          id: session.header.id,
+          id: summary.id,
         });
         continue;
       }
 
-      seen.add(session.header.id);
-      summaries.push({
-        id: session.header.id,
-        path: session.relativePath,
-        title: session.name ?? session.firstUserMessage,
-        updatedAt: session.activityAt,
-        held: yield* isSessionLeaseHeld(profilePath, session.header.id),
-      });
+      seen.add(summary.id);
+      summaries.push({ ...summary, held: yield* isSessionLeaseHeld(profilePath, summary.id) });
     }
 
     return summaries.sort(
