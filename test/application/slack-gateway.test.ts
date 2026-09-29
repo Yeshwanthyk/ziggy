@@ -6,7 +6,7 @@ import { SlackApiError } from "ziggy/adapters/slack/api";
 import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
 import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
-import { SlackHealthProjectionError } from "ziggy/domain/slack-health";
+import { SlackHealthProjectionError, type SlackHealthSnapshot } from "ziggy/domain/slack-health";
 import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {
@@ -708,6 +708,76 @@ describe("Slack gateway boundary", () => {
       }),
     );
   });
+
+  test("balances health when an accepted turn is interrupted during its projection write", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const acceptedWriting = yield* Deferred.make<void>();
+        const releaseWrite = yield* Deferred.make<void>();
+        const snapshots: Array<SlackHealthSnapshot> = [];
+        let delivered = false;
+
+        const transport: SlackTransport = {
+          addReaction: () => Effect.void,
+          authTest: () => Effect.succeed({ userId: "UBOT" }),
+          getThreadReplies: () => Effect.succeed({ messages: [], truncated: false }),
+          openSocket: () =>
+            Effect.succeed({
+              next: Effect.suspend(() => {
+                if (delivered) return Effect.never;
+                delivered = true;
+
+                return Effect.succeed(message());
+              }),
+              nextConnectionState: Effect.never,
+              close: Effect.void,
+            }),
+          postMessage: () => Effect.succeed({ ts: "placeholder" }),
+          removeReaction: () => Effect.void,
+          setStatus: () => Effect.void,
+          updateMessage: () => Effect.void,
+        };
+
+        const agent: ZiggyAgentApi = {
+          runOnce: () => Effect.succeed(0),
+          openChat: () => Effect.never,
+          openSpecialistChat: () => Effect.never,
+          runSpecialist: () => Effect.never,
+        };
+
+        const gateway = makeSlackGateway(agent, transport, {
+          now: () => 0,
+          waitForHeartbeat: Effect.never,
+          write: (_path, snapshot) =>
+            snapshot.acceptedTurnCount === 1 && snapshot.cancelledTurnCount === 0
+              ? Deferred.succeed(acceptedWriting, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseWrite)),
+                  Effect.andThen(Effect.sync(() => snapshots.push(snapshot))),
+                  Effect.asVoid,
+                )
+              : Effect.sync(() => {
+                  snapshots.push(snapshot);
+                }),
+        });
+
+        const running = yield* gateway
+          .runLoop(
+            { path: "/tmp/ziggy-slack-health-race", name: "Test" },
+            { botToken: "bot-token", appToken: "app-token", ownerUserId: "U123" },
+          )
+          .pipe(Effect.forkChild);
+
+        yield* Deferred.await(acceptedWriting);
+        const stopping = yield* Fiber.interrupt(running).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseWrite, undefined);
+        yield* Fiber.join(stopping);
+
+        expect(snapshots.some((snapshot) => snapshot.failedTurnCount === 1)).toBe(true);
+        expect(snapshots.at(-1)?.activeTurnCount).toBe(0);
+        expect(snapshots.at(-1)?.queuedTurnCount).toBe(0);
+      }),
+    ));
 
   test("stop cancels running and queued turns, then admits a fresh generation", () =>
     Effect.runPromise(

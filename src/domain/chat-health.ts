@@ -18,28 +18,32 @@ export type ChatTurnHealthEvent =
 export const turnHealthCounts = (
   current: ChatHealthCounts,
   event: ChatTurnHealthEvent,
-): Partial<ChatHealthCounts> => {
+): ChatHealthCounts => {
   switch (event._tag) {
     case "accepted":
       return {
+        ...current,
         activeTurnCount: current.activeTurnCount + 1,
         queuedTurnCount: current.queuedTurnCount + (event.queued ? 1 : 0),
         acceptedTurnCount: current.acceptedTurnCount + 1,
       };
     case "started":
       return {
+        ...current,
         queuedTurnCount: event.wasQueued
           ? Math.max(0, current.queuedTurnCount - 1)
           : current.queuedTurnCount,
       };
     case "completed":
       return {
+        ...current,
         activeTurnCount: Math.max(0, current.activeTurnCount - 1),
         completedTurnCount: current.completedTurnCount + (event.succeeded ? 1 : 0),
         failedTurnCount: current.failedTurnCount + (event.succeeded ? 0 : 1),
       };
     case "cancelled":
       return {
+        ...current,
         activeTurnCount: Math.max(0, current.activeTurnCount - 1),
         queuedTurnCount: event.wasQueued
           ? Math.max(0, current.queuedTurnCount - 1)
@@ -47,6 +51,6 @@ export const turnHealthCounts = (
         cancelledTurnCount: current.cancelledTurnCount + 1,
       };
     case "stopped":
-      return { activeTurnCount: 0, queuedTurnCount: 0 };
+      return { ...current, activeTurnCount: 0, queuedTurnCount: 0 };
   }
 };

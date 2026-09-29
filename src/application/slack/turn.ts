@@ -80,12 +80,6 @@ export const makeSlackTurnProcessor =
       let deliveryUnknown = false;
       let started = false;
 
-      const accepted = observe({
-        _tag: "accepted",
-        atMs: healthRuntime.now(),
-        queued,
-      });
-
       const updateStatus = (status: string) =>
         chatState.statusSemaphore.withPermit(
           Effect.suspend(() =>
@@ -324,6 +318,11 @@ export const makeSlackTurnProcessor =
       };
 
       const acquireFeedback = Effect.gen(function* () {
+        // Acquisition is uninterruptible: every accepted observation has a release observation,
+        // even when stop wins the race while the health projection is being written.
+
+        yield* observe({ _tag: "accepted", atMs: healthRuntime.now(), queued });
+
         if (!isFresh()) return undefined;
         yield* reaction("add", "eyes");
         yield* updateStatus(queued ? "is queued..." : "is thinking...");
@@ -687,8 +686,7 @@ export const makeSlackTurnProcessor =
           }),
       );
 
-      yield* accepted.pipe(
-        Effect.andThen(work),
+      yield* work.pipe(
         Effect.catch(
           (failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError | UiGatewayError) =>
             Effect.sync(() => {

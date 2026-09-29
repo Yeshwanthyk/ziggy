@@ -105,27 +105,36 @@ export const evolveSlackHealth = (
       return {
         ...base,
         ...turnHealthCounts(current, event),
+        updatedAtMs: event.atMs,
       };
     case "started":
       return {
         ...base,
         ...turnHealthCounts(current, event),
+        updatedAtMs: event.atMs,
       };
     case "completed":
       return {
         ...base,
-        lastTurnCompletedAtMs: event.atMs,
         ...turnHealthCounts(current, event),
+        updatedAtMs: event.atMs,
+        lastTurnCompletedAtMs: event.atMs,
         lastFailure: event.succeeded ? current.lastFailure : "turn",
       };
     case "cancelled":
       return {
         ...base,
-        lastTurnCompletedAtMs: event.atMs,
         ...turnHealthCounts(current, event),
+        updatedAtMs: event.atMs,
+        lastTurnCompletedAtMs: event.atMs,
       };
     case "stopped":
-      return { ...base, state: "stopped", ...turnHealthCounts(current, event) };
+      return {
+        ...base,
+        ...turnHealthCounts(current, event),
+        updatedAtMs: event.atMs,
+        state: "stopped",
+      };
   }
 };
 
