@@ -43,5 +43,3 @@ export const sendResponse = (
     Effect.tap((encoded) => Effect.sync(() => send(encoded))),
     Effect.asVoid,
   );
-
-export const safeFingerprint = (value: Schema.Json): string => JSON.stringify(value);

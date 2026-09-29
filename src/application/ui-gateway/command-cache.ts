@@ -1,6 +1,8 @@
-import { Cause, Deferred, Effect, Exit, Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Schema, Scope } from "effect";
 import type { UiResponseFrame, UiRequestId } from "../../domain/ui-gateway";
 import { protocolFailure } from "./errors";
+
+export const safeFingerprint = (value: Schema.Json): string => JSON.stringify(value);
 
 const MAX_CACHE = 512;
 

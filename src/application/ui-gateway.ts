@@ -15,7 +15,7 @@ import {
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
 import { profileCliTarget } from "../domain/profile";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
-import { makeCommandCache } from "./ui-gateway/command-cache";
+import { makeCommandCache, safeFingerprint } from "./ui-gateway/command-cache";
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
 import { dispatchGroups, makeEnsureGroup } from "./ui-gateway/groups";
 import { dispatchAgents } from "./ui-gateway/management-agents";
@@ -30,7 +30,7 @@ import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types"
 export type { UiGatewayDependencies } from "./ui-gateway/types";
 
 import { badParams, boundedText, protocolFailure, toGatewayError } from "./ui-gateway/errors";
-import { resultFrame, failureFrame, sendResponse, safeFingerprint } from "./ui-gateway/transport";
+import { resultFrame, failureFrame, sendResponse } from "./ui-gateway/transport";
 
 const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty: "error" });
 

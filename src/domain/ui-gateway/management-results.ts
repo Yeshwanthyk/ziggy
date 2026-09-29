@@ -9,8 +9,8 @@ import {
   UiExtensionId,
   UiGroupRecord,
   UiPin,
+  UiGatewayMessage,
 } from "./fields";
-import { UiGatewayMessage } from "./fields";
 
 export const UiAutomationDefinition = Schema.Struct({
   id: UiAutomationId,

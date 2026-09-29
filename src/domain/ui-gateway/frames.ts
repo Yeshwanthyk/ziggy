@@ -12,10 +12,10 @@ import {
   UiRequestId,
   UiServerEpoch,
   UiSessionRef,
+  UI_PROTOCOL_MAX_FRAME_BYTES,
 } from "./fields";
 import { UiGatewayErrorCode } from "./core-results";
 import { UiGatewayResult } from "./results";
-import { UI_PROTOCOL_MAX_FRAME_BYTES } from "./fields";
 
 const UiSuccessResponse = Schema.Struct({
   id: UiRequestId,
