@@ -2046,6 +2046,7 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
     Effect.scoped(
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>();
+        const secondShown = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const calls: string[] = [];
         const registry = yield* makeChatRegistry();
@@ -2069,7 +2070,12 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
           makeConfig(registry, makeAgent(handle), undefined, {
             sessions: {
               ...makeSessions(),
-              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
+              show: (_target, id) =>
+                Effect.gen(function* () {
+                  if (id === "second") yield* Deferred.succeed(secondShown, undefined);
+
+                  return sessionAt(id, `ui/work/${id}.jsonl`);
+                }),
             },
           }),
         )).connect((frame) => frames.push(frame));
@@ -2090,6 +2096,8 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
         const first = yield* Effect.forkChild(request("first"));
         yield* Deferred.await(entered);
         const second = yield* Effect.forkChild(request("second"));
+        yield* Deferred.await(secondShown);
+        yield* Effect.yieldNow;
         yield* registry.publish(ref.key, { kind: "assistant-text", delta: "old", snapshot: "old" });
         expect(calls).toEqual(["ui/work/first.jsonl"]);
         yield* Deferred.succeed(release, undefined);
@@ -2110,6 +2118,143 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
         expect(replay.events.map((event) => event.event)).toEqual([
           { kind: "session-state", scope: "transcript" },
         ]);
+      }),
+    ),
+  );
+});
+
+test("interrupting a resume waits for Pi and publishes its reset before releasing control", async () => {
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const registry = yield* makeChatRegistry();
+
+        const handle = makeChatHandle({
+          prompt: () => Effect.succeed(""),
+          resume: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+
+              return { cancelled: false };
+            }),
+        });
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
+            },
+          }),
+        )).connect(() => {});
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+
+        const first = yield* Effect.forkChild(
+          connection.request({
+            id: "resume",
+            method: "session.resume",
+            params: { ref, sessionId: "first" },
+          }),
+        );
+
+        yield* Deferred.await(entered);
+        const interrupted = yield* Effect.forkChild(Fiber.interrupt(first));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(interrupted);
+        const replay = yield* registry.replay(ref.key);
+        expect(replay.events.map((event) => event.event)).toEqual([
+          { kind: "session-state", scope: "transcript" },
+        ]);
+      }),
+    ),
+  );
+});
+
+test("a prompt submitted during resume starts after the transcript reset", async () => {
+  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const prompted = yield* Deferred.make<void>();
+        const registry = yield* makeChatRegistry();
+
+        const handle = makeChatHandle({
+          prompt: () =>
+            registry
+              .publish(ref.key, { kind: "assistant-text", delta: "new", snapshot: "new" })
+              .pipe(
+                Effect.catch(() => Effect.void),
+                Effect.andThen(Deferred.succeed(prompted, undefined)),
+                Effect.as(""),
+              ),
+          resume: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+
+              return { cancelled: false };
+            }),
+        });
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(registry, makeAgent(handle), undefined, {
+            sessions: {
+              ...makeSessions(),
+              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
+            },
+          }),
+        )).connect(() => {});
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+
+        const resume = yield* Effect.forkChild(
+          connection.request({
+            id: "resume",
+            method: "session.resume",
+            params: { ref, sessionId: "first" },
+          }),
+        );
+
+        yield* Deferred.await(entered);
+
+        const prompt = yield* Effect.forkChild(
+          connection.request({
+            id: "prompt",
+            method: "prompt.submit",
+            params: { ref, text: "hi" },
+          }),
+        );
+
+        yield* Effect.yieldNow;
+        expect(yield* Deferred.isDone(prompted)).toBe(false);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(resume);
+        yield* Fiber.join(prompt);
+        yield* Deferred.await(prompted);
+        const replay = yield* registry.replay(ref.key);
+        expect(replay.events.map((event) => event.event)).toContainEqual({
+          kind: "assistant-text",
+          delta: "new",
+          snapshot: "new",
+        });
       }),
     ),
   );
