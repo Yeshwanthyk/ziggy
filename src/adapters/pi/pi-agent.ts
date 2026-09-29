@@ -488,6 +488,9 @@ const createProfileRuntime = (
                 if (fatal !== undefined) throw fatal;
 
                 if (partition.skipped.length > 0) {
+                  // Pi services have no dispose method; invalidate the discarded loader's
+                  // extension runtime to release its event-bus subscriptions and stale API.
+                  services.resourceLoader.getExtensions().runtime.invalidate();
                   services = await createAgentSessionServices({
                     cwd,
                     agentDir,
