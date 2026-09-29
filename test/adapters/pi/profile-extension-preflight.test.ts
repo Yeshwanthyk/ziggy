@@ -216,6 +216,11 @@ test("runtime opens with healthy package while a broken package is reported", as
   const profilePath = await makeProfile();
   await writePackage(profilePath, "broken", { brokenImport: true });
   await writePackage(profilePath, "healthy", { commandConflict: "healthy-command" });
+  const factoryLog = join(profilePath, "factory-runs.txt");
+  await writeFile(
+    join(profilePath, "extensions", "healthy", "index.ts"),
+    `import { appendFileSync } from "node:fs";\nexport default function (pi) { appendFileSync(${JSON.stringify(factoryLog)}, "x"); pi.registerCommand("healthy-command", { description: "healthy", handler: async () => {} }); }\n`,
+  );
   await stageRequiredPackages(profilePath);
   await writeFile(
     join(profilePath, "extensions.json"),
@@ -239,9 +244,11 @@ test("runtime opens with healthy package while a broken package is reported", as
     }),
   );
   let loaded: string[] = [];
+  let runtimeRef: Awaited<ReturnType<typeof createAgentSessionRuntime>> | undefined;
 
   const factory: typeof createAgentSessionRuntime = async (create, options) => {
     const runtime = await createAgentSessionRuntime(create, options);
+    runtimeRef = runtime;
     loaded = runtime.services.resourceLoader
       .getExtensions()
       .extensions.map((extension) => extension.path);
@@ -265,6 +272,13 @@ test("runtime opens with healthy package while a broken package is reported", as
   try {
     expect(loaded).toContain(join(profilePath, "extensions", "healthy", "index.ts"));
     expect(loaded).not.toContain(join(profilePath, "extensions", "broken", "index.ts"));
+    const before = (await readFile(factoryLog, "utf8")).length;
+
+    if (runtimeRef === undefined) throw new Error("expected Pi runtime");
+    // A session replacement rebuilds services; the accepted package factory runs once.
+    await runtimeRef.newSession();
+    expect((await readFile(factoryLog, "utf8")).length - before).toBe(1);
+    expect(before).toBeGreaterThan(0);
     expect(
       (await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"))).map(
         (item) => item.id,
