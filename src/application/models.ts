@@ -1,4 +1,5 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Result } from "effect";
+import { ProviderConfigError } from "../domain/agent";
 import {
   getModelStatusReadOnly,
   type KnownModel,
@@ -54,3 +55,103 @@ export const ModelsLive = Layer.succeed(Models, {
   set: (target, providerId, modelId, thinking) =>
     setModel(target.path, providerId, modelId, thinking),
 });
+
+const configuredSessionModelError = (profilePath: string, message: string) =>
+  new ProviderConfigError({
+    profilePath,
+    operation: "select model",
+    message,
+    cause: undefined,
+  });
+
+export const selectSessionModel = <M, T extends string>(
+  profilePath: string,
+  services: {
+    readonly settingsManager: {
+      readonly getDefaultProvider: () => string | undefined;
+      readonly getDefaultModel: () => string | undefined;
+      readonly getDefaultThinkingLevel: () => T | undefined;
+    };
+    readonly modelRuntime: {
+      readonly getProvider: (providerId: string) => object | undefined;
+      readonly getModel: (providerId: string, modelId: string) => M | undefined;
+      readonly supportedThinkingLevels: (model: M) => ReadonlyArray<string>;
+      readonly hasConfiguredAuth: (providerId: string) => boolean;
+    };
+  },
+  override:
+    | { readonly provider?: string; readonly model?: string; readonly thinking?: T }
+    | undefined,
+) => {
+  const overrideProvider = override?.provider;
+  const overrideModel = override?.model;
+
+  if ((overrideProvider === undefined) !== (overrideModel === undefined)) {
+    return Result.fail(
+      configuredSessionModelError(profilePath, "provider and model must be provided together"),
+    );
+  }
+
+  const providerId = overrideProvider ?? services.settingsManager.getDefaultProvider();
+  const modelId = overrideModel ?? services.settingsManager.getDefaultModel();
+  const thinking = override?.thinking ?? services.settingsManager.getDefaultThinkingLevel();
+
+  const model =
+    providerId === undefined || modelId === undefined
+      ? undefined
+      : services.modelRuntime.getModel(providerId, modelId);
+
+  if (overrideProvider !== undefined) {
+    if (services.modelRuntime.getProvider(overrideProvider) === undefined) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `provider is not configured in the Profile model registry: ${overrideProvider}`,
+        ),
+      );
+    }
+
+    if (model === undefined) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `model is not configured in the Profile model registry: ${overrideProvider}/${overrideModel}`,
+        ),
+      );
+    }
+
+    if (!services.modelRuntime.hasConfiguredAuth(overrideProvider)) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `provider auth is not configured in the Profile: ${overrideProvider}`,
+        ),
+      );
+    }
+  } else if (override?.thinking !== undefined && model === undefined) {
+    return Result.fail(
+      configuredSessionModelError(
+        profilePath,
+        "thinking override requires a configured Profile model",
+      ),
+    );
+  }
+
+  const overridePresent = overrideProvider !== undefined || override?.thinking !== undefined;
+
+  if (
+    overridePresent &&
+    model !== undefined &&
+    thinking !== undefined &&
+    !services.modelRuntime.supportedThinkingLevels(model).some((level) => level === thinking)
+  ) {
+    return Result.fail(
+      configuredSessionModelError(
+        profilePath,
+        `thinking level is not supported by ${providerId}/${modelId}: ${thinking}`,
+      ),
+    );
+  }
+
+  return Result.succeed({ model, thinking });
+};
