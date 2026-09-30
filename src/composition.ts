@@ -152,3 +152,11 @@ export const CliLayer = Layer.mergeAll(
 export const ModelsCommandsLayer = Layer.mergeAll(ModelsLive, ZiggyPathsLive).pipe(
   Layer.provide(PiStandaloneRuntimeLive),
 );
+
+/** `ziggy sessions ...`: a Profile's session history. */
+export const SessionsCommandsLayer = Layer.mergeAll(SessionsLive, ZiggyPathsLive).pipe(
+  Layer.provide(PiStandaloneRuntimeLive),
+);
+
+/** `ziggy memory ...`: a Profile's memory files, read-only. */
+export const MemoryCommandsLayer = Layer.mergeAll(MemoryLayer, ZiggyPathsLive);

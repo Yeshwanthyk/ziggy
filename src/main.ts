@@ -16,7 +16,6 @@ import { Automations } from "./application/automations";
 import { ProfileExtensions } from "./application/profile-extensions";
 import { manageExtensions } from "./application/extension-manager";
 import { Doctor } from "./application/doctor";
-import { Memory } from "./application/memory";
 import { Models } from "./application/models";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents } from "./application/profile-agents";
@@ -27,13 +26,17 @@ import { Sessions } from "./application/sessions";
 import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
-import { CliLayer, ModelsCommandsLayer } from "./composition";
+import {
+  CliLayer,
+  MemoryCommandsLayer,
+  ModelsCommandsLayer,
+  SessionsCommandsLayer,
+} from "./composition";
 import { CliCommandFailed, exitWith } from "./faces/cli-exit";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { ZiggyPaths } from "./application/ziggy-paths";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
-import { parseMemoryScopeReference } from "./domain/memory";
 import {
   renderProfileAgent,
   renderProfileAgents,
@@ -68,24 +71,17 @@ import {
   renderProfileExtensions,
 } from "./faces/extensions-cli";
 import { type ModelsCommand, runModelsCommand } from "./faces/commands/models";
-import {
-  renderMemoryList,
-  renderMemoryListJson,
-  renderMemoryShow,
-  renderMemoryShowJson,
-} from "./faces/memory-cli";
+import { type SessionsCommand, runSessionsCommand } from "./faces/commands/sessions";
+import { type MemoryCommand, runMemoryCommand } from "./faces/commands/memory";
 import { renderProfiles, renderProfilesJson } from "./faces/profiles-cli";
 import { runAcp } from "./faces/acp";
 import { wakeInResident } from "./faces/wake-resident";
-import {
-  renderSession,
-  renderSessionJson,
-  renderSessionList,
-  renderSessionListJson,
-} from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 
-type LegacyCommand = Exclude<CliCommand, { readonly _tag: "Help" | "Version" } | ModelsCommand>;
+type LegacyCommand = Exclude<
+  CliCommand,
+  { readonly _tag: "Help" | "Version" } | ModelsCommand | SessionsCommand | MemoryCommand
+>;
 
 const runCommand = (command: LegacyCommand) =>
   Effect.gen(function* () {
@@ -105,7 +101,6 @@ const runCommand = (command: LegacyCommand) =>
     const profileExtensions = yield* ProfileExtensions;
     const selfUpdate = yield* SelfUpdate;
     const extensionUpdate = yield* ExtensionUpdate;
-    const memory = yield* Memory;
     const paths = yield* ZiggyPaths;
     const style = yield* TerminalStyle;
 
@@ -632,41 +627,6 @@ const runCommand = (command: LegacyCommand) =>
         return rendered.exitCode;
       }
 
-      case "SessionsList": {
-        const listed = yield* sessions.list(paths.resolveTarget(command.target));
-
-        console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed));
-
-        return;
-      }
-
-      case "SessionsShow": {
-        const shown = yield* sessions.show(paths.resolveTarget(command.target), command.reference);
-
-        console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
-
-        return;
-      }
-
-      case "MemoryList": {
-        const listed = yield* memory.list(paths.resolveTarget(command.target ?? "."));
-
-        console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed));
-
-        return;
-      }
-
-      case "MemoryShow": {
-        const shown = yield* memory.show(
-          paths.resolveTarget(command.target),
-          parseMemoryScopeReference(command.scope),
-        );
-
-        console.log(command.json ? renderMemoryShowJson(shown) : renderMemoryShow(shown));
-
-        return;
-      }
-
       case "ServeInstall": {
         const result = yield* residentService.install(paths.resolveTarget(command.target), {
           force: command.force,
@@ -821,6 +781,12 @@ const runCommand = (command: LegacyCommand) =>
 const modelsArea = (command: ModelsCommand) =>
   runModelsCommand(command).pipe(Effect.provide(ModelsCommandsLayer));
 
+const sessionsArea = (command: SessionsCommand) =>
+  runSessionsCommand(command).pipe(Effect.provide(SessionsCommandsLayer));
+
+const memoryArea = (command: MemoryCommand) =>
+  runMemoryCommand(command).pipe(Effect.provide(MemoryCommandsLayer));
+
 // Commands not yet moved into an area module still run through `runCommand` with every service.
 const legacy = (command: LegacyCommand) => runCommand(command).pipe(Effect.provide(CliLayer));
 
@@ -859,10 +825,10 @@ const dispatch = (command: CliCommand) =>
     AutomationsStatus: legacy,
     AutomationsRuns: legacy,
     Wake: legacy,
-    SessionsList: legacy,
-    SessionsShow: legacy,
-    MemoryList: legacy,
-    MemoryShow: legacy,
+    SessionsList: sessionsArea,
+    SessionsShow: sessionsArea,
+    MemoryList: memoryArea,
+    MemoryShow: memoryArea,
     Serve: legacy,
     ServeInstall: legacy,
     ServeStart: legacy,

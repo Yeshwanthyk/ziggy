@@ -1320,3 +1320,10 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
   - the plain-language areas, the work order, and three open questions.
 
   Documentation only; no checks run.
+
+## Per-area CLI handlers: sessions and memory
+
+- `ziggy sessions list|show` and `ziggy memory list|show` moved to `src/faces/commands/sessions.ts` and `memory.ts`. They run under `SessionsCommandsLayer` and `MemoryCommandsLayer`, so they build only their own services.
+- Verification:
+  - `bun run check` and `bun run test` (812 pass) passed.
+  - Smoke-tested from a scratch `ZIGGY_HOME`: `memory list` and `sessions list` on a fresh Profile both exit 0.
