@@ -573,6 +573,15 @@ We build piece by piece: core first, then what sits on it. Every step runs end t
 - [ ] **7. On the core.** In any order:
   - [ ] `agents/`: one policy function, no selection runtime, tools through the seam.
   - [ ] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
+  - [ ] Delivery through gateway-owned targets:
+    - one `deliver(target, text)` seam;
+    - each gateway (Slack, Discord, Telegram, ui-sdk conversation) owns its target syntax,
+      chunking and send;
+    - `automations.ts` stops importing chat adapters and loses its per-gateway branches;
+    - a Discord thread is a channel id, so `discord:channel:<thread id>` already works; say so in
+      the automation docs;
+    - the chat APIs take a base URL, so the harness can prove Slack, Discord and Telegram delivery
+      against the fake server.
   - [ ] `resident/live-sessions.ts`:
     - split out the destination book;
     - move delivery into `automations.ts` and drop the fence;
@@ -596,10 +605,11 @@ Only the first three need your answer before work starts. The rest have a defaul
    - Pi imports move from "only `adapters/pi/`" to "only the `[Pi]` files".
    - The alternative keeps layer folders and just cuts files, which keeps every change spread across 5–7 folders.
    - My pick: concept folders.
-2. **Is "automation result posted into a conversation" something you use?**
-   - This covers `conversation:` targets and delivery receipts.
-   - If not, about 200 lines and one proof go away.
-   - I'll check the Squarey and Buzz Profiles before step 0 either way.
+2. **Is "automation result posted into a conversation" something you use?** Answered: yes.
+   - Squarey's `linkedin-jobs` sends to `slack:channel:…` and `conversation:<ui session>` at once.
+   - Delivery must reach any place a gateway can: a Slack channel or thread, a Discord channel or
+     thread, a Telegram chat, or a conversation in a ui-sdk UI.
+   - This shapes the delivery item in step 7.
 3. **A prompt that arrives while a session is resuming: wait or reject?**
    - Today it waits.
    - My pick: keep waiting.
