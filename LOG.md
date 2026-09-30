@@ -1480,7 +1480,7 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 ## Step 8: per-command layers
 
 - `main.ts` is the entry and a dispatch table only (about 150 lines, was 904). Every command belongs to an area module in `src/faces/commands/` (`profile`, `update`, `extensions`, `agents`, `run`, `automations`, `resident`, `serve`, plus the existing `models`, `sessions`, `memory`), and each area is provided its own layer from `composition.ts`. `runCommand`, `LegacyCommand` and `CliLayer` are gone; the case bodies moved unchanged.
-- `ResidentService` no longer needs the whole resident: it inspects the owner lease directly (`inspectGatewayOwner`) and exposes it as `owner(target)`, which `extensions add`, `automations status`, `wake` and `open` use instead of `ResidentGateway.status`. Only `ziggy serve <profile>` builds `ResidentGateway` and the channel gateways.
+- `ResidentService` no longer needs `ResidentGateway`: it inspects the owner lease directly (`inspectGatewayOwner`) and exposes it as `owner(target)`, which `extensions add`, `automations status`, `wake` and `open` use instead of `ResidentGateway.status`. Only `ziggy serve <profile>` builds `ResidentGateway` and the channel gateways. (It still reaches the agent stack through `AutomationScheduler`, for `scheduler.status` only.)
 - `bun run check`; 745 unit pass plus one codemode cancellation test that failed once under parallel load and passed 3/3 alone; 44 e2e pass.
 
 **Live sessions verifier fixes.** The review of 986ef4f6 confirmed four defects, all in coordination the old registry permit used to give:
@@ -1495,3 +1495,8 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - Deleted `src/application/agent.ts`, the last old-path re-export (`export * from "../session"`); its 17 source and 14 test importers use `session/` directly. `application/discord-gateway.ts`, `application/slack-gateway.ts` and `domain/ui-gateway.ts` stay: they are deliberate public faces of their folders, not leftovers of a move.
 - Face tests already build handles through the one fake, `test/harness/chat-handle.ts` (the plan called it `fake-chat.ts`; not renamed). The only other handle builders are the real-handle tests over `fakePiRuntime` (`test/session/{agent,handle}.test.ts`, `test/adapters/pi/automation-result.test.ts`).
 - `bun run check`, 747 unit and 44 e2e pass.
+
+## Resident service owner check (step 8 verifier follow-up)
+
+- `makeResidentService` takes an `inspectOwner` function instead of a `Pick<ResidentGatewayApi, "status">`; the adapter no longer imports the gateway application type.
+- LOG step 8 entry corrected: the service layer still builds the agent stack through `AutomationScheduler`.

@@ -8,7 +8,6 @@ import { makeResidentPlatformCommands } from "ziggy/adapters/bun/resident-servic
 import { AutomationProjectionError } from "ziggy/domain/automation";
 import { ResidentServiceError, type ResidentLaunchVector } from "ziggy/domain/resident-service";
 import type { AutomationSchedulerApi } from "ziggy/application/automation-scheduler";
-import type { ResidentGatewayApi } from "ziggy/application/resident-gateway";
 import {
   makeResidentService,
   type ResidentServiceRuntime,
@@ -28,9 +27,9 @@ afterEach(async () =>
   Promise.all(paths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
 
-const gateway = (state: "running" | "stopped" = "running"): ResidentGatewayApi => ({
-  run: () => Effect.never,
-  status: (target) =>
+const owner =
+  (state: "running" | "stopped" = "running") =>
+  (target: { readonly path: string }) =>
     Effect.succeed(
       state === "running"
         ? {
@@ -40,8 +39,7 @@ const gateway = (state: "running" | "stopped" = "running"): ResidentGatewayApi =
             acquiredAt: "2026-01-01T00:00:00.000Z",
           }
         : { _tag: "stopped" as const, path: join(target.path, ".runtime", "gateway-owner.lock") },
-    ),
-});
+    );
 
 const scheduler = (fail = false): AutomationSchedulerApi => ({
   run: () => Effect.never,
@@ -103,7 +101,7 @@ describe("resident service orchestration", () => {
     const seen: Array<ReadonlyArray<string>> = [];
 
     const service = makeResidentService(
-      gateway(),
+      owner(),
       scheduler(),
       runtime(target.path, seen, (command) => ({
         exitCode: 0,
@@ -129,7 +127,7 @@ describe("resident service orchestration", () => {
     const seen: Array<ReadonlyArray<string>> = [];
 
     const service = makeResidentService(
-      gateway(),
+      owner(),
       scheduler(),
       runtime(target.path, seen, () => ({ exitCode: 0, stdout: "", stderr: "" }), {
         platform: "darwin",
@@ -148,7 +146,7 @@ describe("resident service orchestration", () => {
     const seen: Array<ReadonlyArray<string>> = [];
 
     const service = makeResidentService(
-      gateway(),
+      owner(),
       scheduler(),
       runtime(target.path, seen, (command) => ({
         exitCode: 0,
@@ -184,7 +182,7 @@ describe("resident service orchestration", () => {
     const seen: Array<ReadonlyArray<string>> = [];
 
     const service = makeResidentService(
-      gateway(),
+      owner(),
       scheduler(),
       runtime(target.path, seen, () => ({ exitCode: 0, stdout: "state = running\n", stderr: "" }), {
         platform: "darwin",
@@ -206,7 +204,7 @@ describe("resident service orchestration", () => {
     const seen: Array<ReadonlyArray<string>> = [];
 
     const service = makeResidentService(
-      gateway("stopped"),
+      owner("stopped"),
       scheduler(),
       runtime(
         target.path,
@@ -247,7 +245,7 @@ describe("resident service orchestration", () => {
     });
 
     const service = makeResidentService(
-      gateway(),
+      owner(),
       scheduler(true),
       runtime(
         target.path,
