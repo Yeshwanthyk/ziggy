@@ -96,3 +96,17 @@ test("memory inventory rejects symlinked documents and wrong-kind roots", async 
     await rm(externalPath, { recursive: true, force: true });
   }
 });
+
+test("memory list on a missing Profile path fails instead of reporting no documents", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-memory-missing-"));
+
+  try {
+    const exit = await Effect.runPromiseExit(
+      memory.list({ path: join(root, "nonexistent"), name: "nonexistent" }),
+    );
+
+    expect(exit._tag).toBe("Failure");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

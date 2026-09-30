@@ -83,7 +83,8 @@ export const createMemoryWriteTool = (
             : `applied ${operations.length} operation(s); ${codePointLength(applied.content)}/${document.cap} code points in ${document.relativePath}`,
       ),
       Effect.catch((failure) =>
-        Effect.logWarning("memory_write failed", failure).pipe(
+        // One line: in the interactive TUI stderr is the user's screen.
+        Effect.logWarning(`memory_write failed: ${failure.message}`).pipe(
           Effect.as(
             failure._tag === "MemoryFileError" && failure.operation === "backup"
               ? "ERROR: memory backup failed"

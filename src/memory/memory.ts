@@ -132,6 +132,16 @@ const listDocuments = (
   profilePath: string,
 ): Effect.Effect<ReadonlyArray<MemoryDocument>, MemoryDocumentInvalid | MemoryFileError> =>
   Effect.gen(function* () {
+    // A mistyped Profile path must not read as a Profile with no memory.
+    if (!(yield* inspectDirectory(profilePath, "list", invalidDirectory))) {
+      return yield* new MemoryFileError({
+        operation: "list",
+        path: profilePath,
+        message: `could not list Profile memory at ${profilePath}: the Profile directory does not exist`,
+        cause: undefined,
+      });
+    }
+
     const found: Array<MemoryDocument> = [];
     const shared = documentFromRelativePath(profilePath, "MEMORY.md");
 
