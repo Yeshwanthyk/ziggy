@@ -535,9 +535,10 @@ Each proof is a behaviour that must hold throughout, and each step lands its pro
 
 We build piece by piece: core first, then what sits on it. Every step runs end to end and leaves faces working.
 
-Progress board: `docs/plans/tight-core/status.html`, published at
-https://claude.ai/artifact/RBZWGTckwnaZ1TwGPCJnkX. After each item, edit its `STATUS` object and
-republish to that URL (Artifact tool, `url` set).
+Progress board: https://claude.ai/artifact/RBZWGTckwnaZ1TwGPCJnkX, built from the untracked,
+gitignored `docs/plans/tight-core/status.html`. It is not committed. After each item, edit its
+`STATUS` object and republish to that URL (Artifact tool, `url` set). If the local file is missing,
+read the artifact back first.
 
 - [x] **0. Harness and proofs** against today's code. Mark the two known bugs red.
 - [ ] **1. Free fixes and deletions.** Each is its own commit:
