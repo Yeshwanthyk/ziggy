@@ -15,6 +15,7 @@ import type {
   DiscordHealthSnapshot,
 } from "../../domain/discord-health";
 import type { ChatHandle } from "../agent";
+import type { DestinationBook } from "../../resident/destinations";
 import type { ChatRegistryApi } from "../chat-registry";
 import { type ProfileTarget } from "../../profile";
 
@@ -89,6 +90,7 @@ export interface DiscordGatewayApi {
     target: ProfileTarget,
     config: DiscordGatewayConfig,
     registry?: ChatRegistryApi,
+    destinations?: DestinationBook,
   ) => Effect.Effect<never, DiscordGatewayError>;
 }
 

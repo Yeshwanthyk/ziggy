@@ -14,6 +14,7 @@ import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeDestinationBook } from "ziggy/resident/destinations";
 import {
   stableProfileId,
   type ProfileDirectoryApi,
@@ -239,10 +240,21 @@ test("automation.run routes through the selected Profile registry and reloads th
             profileId: defaultProfileId,
             target: defaultTarget,
             registry: defaultRegistry,
+            destinations: makeDestinationBook(),
           },
           branches: [
-            { profileId: defaultProfileId, target: defaultTarget, registry: defaultRegistry },
-            { profileId: fixture.profileId, target: fixture.target, registry },
+            {
+              profileId: defaultProfileId,
+              target: defaultTarget,
+              registry: defaultRegistry,
+              destinations: makeDestinationBook(),
+            },
+            {
+              profileId: fixture.profileId,
+              target: fixture.target,
+              registry,
+              destinations: makeDestinationBook(),
+            },
           ],
           profileDirectory,
           sessions,
@@ -281,17 +293,20 @@ test("automation.run routes through the selected Profile registry and reloads th
             profileId: defaultProfileId,
             target: defaultTarget,
             registry: restartedDefaultRegistry,
+            destinations: makeDestinationBook(),
           },
           branches: [
             {
               profileId: defaultProfileId,
               target: defaultTarget,
               registry: restartedDefaultRegistry,
+              destinations: makeDestinationBook(),
             },
             {
               profileId: fixture.profileId,
               target: fixture.target,
               registry: restartedRegistry,
+              destinations: makeDestinationBook(),
             },
           ],
           profileDirectory,
@@ -348,7 +363,12 @@ test("a missing destination records a terminal failure without a fallback conver
         const registry = yield* makeChatRegistry(fixture.target.path);
 
         const gateway = yield* makeUiGateway({
-          defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
+          defaultProfile: {
+            profileId: fixture.profileId,
+            target: fixture.target,
+            registry,
+            destinations: makeDestinationBook(),
+          },
           sessions,
           agent: fixture.agent,
           profileExtensions,
@@ -520,7 +540,9 @@ test("destination.list pages the selected Profile's stored and external destinat
             }),
           ),
         );
-        yield* registry.rememberDestination({
+        const destinations = makeDestinationBook();
+        const otherDestinations = makeDestinationBook();
+        yield* destinations.remember({
           target: {
             _tag: "telegram",
             target: "telegram:chat:-100123",
@@ -528,7 +550,7 @@ test("destination.list pages the selected Profile's stored and external destinat
           },
           label: "🚀".repeat(170),
         });
-        yield* otherRegistry.rememberDestination({
+        yield* otherDestinations.remember({
           target: {
             _tag: "discord",
             target: "discord:channel:999999999",
@@ -542,11 +564,23 @@ test("destination.list pages the selected Profile's stored and external destinat
           [{ profileId: otherProfileId, target: otherTarget }],
         );
 
+        const own = {
+          profileId: fixture.profileId,
+          target: fixture.target,
+          registry,
+          destinations,
+        };
+
         const gateway = yield* makeSharedUiGateway({
-          defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
+          defaultProfile: own,
           branches: [
-            { profileId: fixture.profileId, target: fixture.target, registry },
-            { profileId: otherProfileId, target: otherTarget, registry: otherRegistry },
+            own,
+            {
+              profileId: otherProfileId,
+              target: otherTarget,
+              registry: otherRegistry,
+              destinations: otherDestinations,
+            },
           ],
           profileDirectory: directory,
           sessions: manySessions,

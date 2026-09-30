@@ -10,6 +10,7 @@ import type { DiscordHealthEvent } from "../../domain/discord-health";
 import { codePointLength } from "../../platform/text";
 import { automationTargetFromString } from "../../domain/automation";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
+import type { DestinationBook } from "../../resident/destinations";
 import type { ChatRegistryApi } from "../chat-registry";
 import {
   prepareDiscordAttachmentPrompt,
@@ -44,6 +45,7 @@ interface DiscordTurnContext {
   readonly target: ProfileTarget;
   readonly config: DiscordGatewayConfig;
   readonly registry: ChatRegistryApi | undefined;
+  readonly destinations: DestinationBook | undefined;
   readonly ingressOwnerId: string;
   readonly observe: (event: DiscordHealthEvent) => Effect.Effect<void>;
 }
@@ -56,6 +58,7 @@ export const makeDiscordTurnProcessor = ({
   target,
   config,
   registry,
+  destinations,
   ingressOwnerId,
   observe,
 }: DiscordTurnContext) => {
@@ -167,14 +170,14 @@ export const makeDiscordTurnProcessor = ({
           }
 
           if (chatState.handle === undefined) {
-            if (registry !== undefined) {
+            if (destinations !== undefined) {
               const target = automationTargetFromString(`discord:channel:${message.channelId}`);
 
               if (target !== undefined) {
                 const destination =
                   message.label === undefined ? { target } : { target, label: message.label };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
               }
             }
 

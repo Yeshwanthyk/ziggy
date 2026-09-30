@@ -22,6 +22,7 @@ import type {
 } from "../../domain/slack-ingress";
 import type { SlackHealthProjectionError, SlackHealthSnapshot } from "../../domain/slack-health";
 import type { ChatHandle } from "../agent";
+import type { DestinationBook } from "../../resident/destinations";
 import type { ChatRegistryApi } from "../chat-registry";
 import { type ProfileTarget } from "../../profile";
 
@@ -104,6 +105,7 @@ export interface SlackGatewayApi {
     target: ProfileTarget,
     config: SlackGatewayConfig,
     registry?: ChatRegistryApi,
+    destinations?: DestinationBook,
   ) => Effect.Effect<never, SlackGatewayError>;
 }
 

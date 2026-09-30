@@ -12,6 +12,7 @@ import type { ProfileSpecialistError } from "../domain/agent";
 import { codePointLength } from "../platform/text";
 import type { ChatContext } from "../session";
 import type { TelegramGatewayConfig } from "../domain/telegram";
+import type { DestinationBook } from "../resident/destinations";
 import type { ChatRegistryApi } from "./chat-registry";
 import {
   apiFailure,
@@ -54,6 +55,7 @@ export interface GatewayApi {
     target: ProfileTarget,
     config: TelegramGatewayConfig,
     registry?: ChatRegistryApi,
+    destinations?: DestinationBook,
   ) => Effect.Effect<never, GatewayError>;
 }
 
@@ -233,7 +235,7 @@ export const makeTelegramGateway = (
   agent: ZiggyAgentApi,
   transport: TelegramTransport = liveTelegramTransport,
 ): GatewayApi => ({
-  runLoop: (target, config, registry) =>
+  runLoop: (target, config, registry, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
@@ -251,14 +253,14 @@ export const makeTelegramGateway = (
 
           return chatState.semaphore.withPermit(
             Effect.gen(function* () {
-              if (registry !== undefined) {
+              if (destinations !== undefined) {
                 const target = automationTargetFromString(`telegram:chat:${message.chatId}`);
 
                 if (target !== undefined) {
                   const destination =
                     message.label === undefined ? { target } : { target, label: message.label };
 
-                  yield* registry.rememberDestination(destination);
+                  yield* destinations.remember(destination);
                 }
               }
 

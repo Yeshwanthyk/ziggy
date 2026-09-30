@@ -10,6 +10,7 @@ import { SlackHealthProjectionError, type SlackHealthSnapshot } from "ziggy/doma
 import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeDestinationBook } from "ziggy/resident/destinations";
 import {
   classifySlackCommand,
   makeSlackGateway,
@@ -45,6 +46,7 @@ describe("Slack gateway boundary", () => {
         Effect.gen(function* () {
           const opened = yield* Deferred.make<void>();
           const registry = yield* makeChatRegistry();
+          const destinations = makeDestinationBook();
 
           const transport: SlackTransport = {
             addReaction: () => Effect.void,
@@ -98,12 +100,13 @@ describe("Slack gateway boundary", () => {
                 },
               },
               registry,
+              destinations,
             )
             .pipe(Effect.forkScoped);
           yield* TestClock.adjust(2_000);
           yield* Deferred.await(opened);
 
-          expect(yield* registry.destinations).toEqual([
+          expect(yield* destinations.list).toEqual([
             {
               target: {
                 _tag: "slack",

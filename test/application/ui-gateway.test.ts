@@ -16,6 +16,7 @@ import {
   type ChatRegistryApi,
   type ChatRegistryEvent,
 } from "ziggy/application/chat-registry";
+import { makeDestinationBook } from "ziggy/resident/destinations";
 import type { ProfileAgentsApi } from "ziggy/agents/index";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
@@ -140,7 +141,7 @@ const makeConfig = (
   profileExtensions = makeProfileExtensions(),
   extra: TestConfigExtras = {},
 ) => ({
-  defaultProfile: { profileId, target, registry },
+  defaultProfile: { profileId, target, registry, destinations: makeDestinationBook() },
   sessions: makeSessions(),
   agent,
   profileExtensions,

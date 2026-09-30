@@ -197,7 +197,7 @@ export const dispatchGroups = (
           config.sessions
             .list(branch.target)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
-          branch.registry.destinations,
+          branch.destinations.list,
           pins
             .read(branch.target.path)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),

@@ -5,6 +5,7 @@ import { Effect, Result, Schema } from "effect";
 import { type ChatEvent, type ChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeDestinationBook } from "ziggy/resident/destinations";
 import { makeSharedUiGateway } from "ziggy/application/ui-gateway";
 import type {
   ProfileDirectoryApi,
@@ -153,12 +154,24 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
         const alphaRegistry = yield* makeChatRegistry();
         const betaRegistry = yield* makeChatRegistry();
 
+        const alpha = {
+          profileId: alphaId,
+          target: alphaTarget,
+          registry: alphaRegistry,
+          destinations: makeDestinationBook(),
+        };
+
         const gateway = yield* makeSharedUiGateway({
           profileDirectory: makeDirectory(),
-          defaultProfile: { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
+          defaultProfile: alpha,
           branches: [
-            { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
-            { profileId: betaId, target: betaTarget, registry: betaRegistry },
+            alpha,
+            {
+              profileId: betaId,
+              target: betaTarget,
+              registry: betaRegistry,
+              destinations: makeDestinationBook(),
+            },
           ],
           sessions: makeSessions(),
           agent,

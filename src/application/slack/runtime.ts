@@ -155,7 +155,7 @@ export const makeSlackGateway = (
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
   ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
 ): SlackGatewayApi => ({
-  runLoop: (target, config, registry) =>
+  runLoop: (target, config, registry, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -205,7 +205,7 @@ export const makeSlackGateway = (
         let reactionsAvailable = true;
 
         const rememberChannel = (channel: string): Effect.Effect<void> =>
-          registry === undefined
+          destinations === undefined
             ? Effect.void
             : Effect.gen(function* () {
                 const target = automationTargetFromString(`slack:channel:${channel}`);
@@ -217,7 +217,7 @@ export const makeSlackGateway = (
                 const destination =
                   knownLabel === undefined ? { target } : { target, label: knownLabel };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
 
                 if (transport.getConversation === undefined || channelLookups.has(channel)) return;
 
@@ -234,7 +234,7 @@ export const makeSlackGateway = (
                 if (label.length === 0) return;
 
                 channelLabels.set(channel, label);
-                yield* registry.rememberDestination({
+                yield* destinations.remember({
                   target,
                   label,
                 });
@@ -381,7 +381,7 @@ export const makeSlackGateway = (
           Effect.gen(function* () {
             yield* rememberChannel(message.channel);
 
-            if (registry !== undefined && message.context.kind === "group") {
+            if (destinations !== undefined && message.context.kind === "group") {
               const threadTs = message.statusThreadTs;
               const channelLabel = channelLabels.get(message.channel);
 
@@ -395,7 +395,7 @@ export const makeSlackGateway = (
                     ? { target }
                     : { target, label: `${channelLabel} · thread` };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
               }
             }
 

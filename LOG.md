@@ -1461,3 +1461,11 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 **Proofs.** `test/harness/chat.ts` is a fake chat server. `test/e2e/automations.test.ts` wakes an automation broadcasting to a Slack thread, a Discord thread channel and a Telegram chat, and checks each post's path and body, including the Discord split at 2,000 characters. verify-ziggy AUT-7 documents it; the uncovered list drops channel delivery and `agent_discuss`. The automation docs list the channel target forms and say `discord:channel:<thread id>` posts into a thread. `bun run check`, 748 unit and 44 e2e pass (one earlier unit run had 5 failures that did not repeat in three reruns).
 
 **Step 7 delivery verifier follow-ups.** The review of b44c8ef5 found no defects. Three hardening notes taken: `withBaseUrl` rewrites only the origin itself or a path under it (not `https://slack.com/apiX`); `chatApiUrl` treats an empty value as unset, strips a trailing `/`, and reports a value that is not a URL as a `configuration` failure instead of a retriable transport failure. Not taken: pinning per-gateway failure categories with a failing fake server (the mapping moved unchanged). `bun run check`; automations unit and e2e pass.
+
+## Step 7: destination book out of the chat registry
+
+- `src/resident/destinations.ts`: `DestinationBook` (`list`, `remember`) replaces the registry's
+  `destinations`/`rememberDestination`. The resident makes one per run and passes it to the UI
+  branch and the channel loops next to the registry; shared-UI branches for other Profiles get an
+  empty book, as before.
+- The label-keeping test moved to `test/resident/destinations.test.ts`.

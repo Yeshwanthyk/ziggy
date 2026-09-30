@@ -5,11 +5,13 @@ import {
   type ProfileId,
   type ResolvedProfile,
 } from "../domain/profile-directory";
+import type { DestinationBook } from "../resident/destinations";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { ProfileDirectoryApi, ProfileDirectoryEntry } from "./profile-directory";
 
 export interface ResidentProfileBranch extends ResolvedProfile {
   readonly registry: ChatRegistryApi;
+  readonly destinations: DestinationBook;
 }
 
 export interface ProfileRuntimeDirectoryApi extends ProfileDirectoryApi {

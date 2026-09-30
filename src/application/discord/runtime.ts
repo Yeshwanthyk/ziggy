@@ -159,7 +159,7 @@ export const makeDiscordGateway = (
   healthRuntime: DiscordHealthRuntime = silentDiscordHealthRuntime,
   ingressRuntime: DiscordIngressRuntime = volatileDiscordIngressRuntime,
 ): DiscordGatewayApi => ({
-  runLoop: (target, config, registry) =>
+  runLoop: (target, config, registry, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -376,6 +376,7 @@ export const makeDiscordGateway = (
           target,
           config,
           registry,
+          destinations,
           ingressOwnerId,
           observe,
         });
