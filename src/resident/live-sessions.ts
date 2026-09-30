@@ -57,7 +57,10 @@ export interface LiveSessionsApi {
     open: Effect.Effect<ChatHandle, unknown>,
     metadata?: LiveSessionMetadata,
   ) => Effect.Effect<ChatHandle, LiveSessionRefused>;
-  /** Forget `key` (only while it still holds `handle`, when given), stop its turn and dispose it. */
+  /**
+   * Forget `key` (only while it still holds `handle`, when given), stop its turn and dispose it.
+   * A key that is still opening is left alone. The key is free again before disposal finishes.
+   */
   readonly release: (
     key: UiSessionKey,
     handle?: ChatHandle,
@@ -328,14 +331,13 @@ export const makeLiveSessions = (): Effect.Effect<LiveSessionsApi, never, Scope.
                 refused(key, "replay-gap", `replay for ${key} does not contain ${afterSeq}`),
               );
 
-            return Effect.sync(() => {
-              for (const event of live.replay) if (event.seq > replayAfter) listener(event);
+            // Replay and attach in the same step as the gap check, so no event falls between them.
+            for (const event of live.replay) if (event.seq > replayAfter) listener(event);
 
-              live.watchers.add(listener);
+            live.watchers.add(listener);
 
-              return () => {
-                live.watchers.delete(listener);
-              };
+            return Effect.succeed(() => {
+              live.watchers.delete(listener);
             });
           }),
         ),

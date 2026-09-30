@@ -205,10 +205,9 @@ const deliver = (
         owner === undefined
           ? stored
           : owner.handle.appendAutomationResult(result).pipe(
-              // The owner switched transcripts or lost its lease; the target is now stored.
+              // The owner switched to another transcript; the target is now stored.
               Effect.catchIf(
-                (failure) =>
-                  failure.category === "destination-missing" || failure.category === "session-held",
+                (failure) => failure.category === "destination-missing",
                 () => stored,
               ),
               Effect.asVoid,

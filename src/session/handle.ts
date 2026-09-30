@@ -146,6 +146,7 @@ export const makeChatHandle = (
     const project = createChatEventProjector();
     const abort = shareAbort(() => runtime.session.abort());
     let unsubscribeSession: () => void = () => undefined;
+    let promptPending = false;
 
     const publish = (event: ChatEvent) => {
       for (const listener of listeners) listener(event);
@@ -363,7 +364,22 @@ export const makeChatHandle = (
                     "could not append the automation result to the conversation",
                     cause,
                   ),
-          }),
+          }).pipe(
+            // Watchers see the result while the permit still holds off the next turn or switch.
+            Effect.tap((appended) =>
+              appended
+                ? Effect.sync(() =>
+                    publish({
+                      kind: "automation-result",
+                      automationId: result.automationId,
+                      runId: result.runId,
+                      text: [...automationResultContent(result)].slice(0, 1_024).join(""),
+                      timestamp: new Date().toISOString(),
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
         )
         .pipe(
           Effect.flatMap(
@@ -374,19 +390,6 @@ export const makeChatHandle = (
                 ),
               onSome: Effect.succeed,
             }),
-          ),
-          Effect.tap((appended) =>
-            appended
-              ? Effect.sync(() =>
-                  publish({
-                    kind: "automation-result",
-                    automationId: result.automationId,
-                    runId: result.runId,
-                    text: [...automationResultContent(result)].slice(0, 1_024).join(""),
-                    timestamp: new Date().toISOString(),
-                  }),
-                )
-              : Effect.void,
           ),
         );
 
@@ -473,14 +476,24 @@ export const makeChatHandle = (
         currentReference(profilePath, runtime.session.sessionManager),
       ),
       appendAutomationResult,
+      // A prompt waits behind a control (resume, model switch, automation append), never behind
+      // another prompt: a second one is refused while the first is waiting or running.
       prompt: (text, promptOptions) =>
-        turn
-          .withPermitsIfAvailable(1)(prompt(text, promptOptions))
-          .pipe(
-            Effect.flatMap(
-              Option.match({ onNone: () => Effect.fail(busy()), onSome: Effect.succeed }),
-            ),
-          ),
+        Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            if (promptPending) return Effect.fail(busy());
+
+            promptPending = true;
+
+            return restore(turn.withPermits(1)(prompt(text, promptOptions))).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  promptPending = false;
+                }),
+              ),
+            );
+          }),
+        ),
       abort: piPromise(profilePath, "abort agent session", abort),
       steer: (text) => whileStreaming("steer", () => runtime.session.steer(text)),
       followUp: (text) => whileStreaming("followUp", () => runtime.session.followUp(text)),
@@ -491,12 +504,15 @@ export const makeChatHandle = (
           listeners.delete(listener);
         };
       },
-      dispose: Effect.sync(() => {
-        unsubscribeSession();
-        unsubscribeVoice();
-      }).pipe(
-        Effect.andThen(disposeRuntime(profilePath, runtime)),
-        Effect.ensuring(Effect.sync(() => leases.keepOnly(undefined))),
+      // Disposal waits for the turn, so nothing still writes the transcript when its lease is freed.
+      dispose: turn.withPermits(1)(
+        Effect.sync(() => {
+          unsubscribeSession();
+          unsubscribeVoice();
+        }).pipe(
+          Effect.andThen(disposeRuntime(profilePath, runtime)),
+          Effect.ensuring(Effect.sync(() => leases.keepOnly(undefined))),
+        ),
       ),
     };
 

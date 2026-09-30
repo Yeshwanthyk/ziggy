@@ -1482,3 +1482,10 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - `main.ts` is the entry and a dispatch table only (about 150 lines, was 904). Every command belongs to an area module in `src/faces/commands/` (`profile`, `update`, `extensions`, `agents`, `run`, `automations`, `resident`, `serve`, plus the existing `models`, `sessions`, `memory`), and each area is provided its own layer from `composition.ts`. `runCommand`, `LegacyCommand` and `CliLayer` are gone; the case bodies moved unchanged.
 - `ResidentService` no longer needs the whole resident: it inspects the owner lease directly (`inspectGatewayOwner`) and exposes it as `owner(target)`, which `extensions add`, `automations status`, `wake` and `open` use instead of `ResidentGateway.status`. Only `ziggy serve <profile>` builds `ResidentGateway` and the channel gateways.
 - `bun run check`; 745 unit pass plus one codemode cancellation test that failed once under parallel load and passed 3/3 alone; 44 e2e pass.
+
+**Live sessions verifier fixes.** The review of 986ef4f6 confirmed four defects, all in coordination the old registry permit used to give:
+- `dispose` now waits for the handle's turn, so an in-flight automation append finishes before the lease is freed (red-then-green test in `test/session/handle.test.ts`).
+- The `automation-result` event is published inside the append's permit, so a following resume or prompt cannot slip in before it.
+- A prompt waits behind a control or append instead of failing busy (the plan's "keep waiting"); a second prompt is still refused while the first is waiting or running. The resume test now proves the prompt starts after the transcript reset.
+- `session.close` releases the handle it checked, not whatever holds the key by then.
+- Also: dropped the dead `session-held` branch in conversation delivery (only the stored append produces it), `watch` replays and attaches in the same step as its gap check, and `release` documents that an opening key is left alone. Not changed: `findBySessionId` still reports an unreadable transcript as `open-failed`. `bun run check`, 747 unit and 44 e2e pass.

@@ -7,7 +7,6 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Deferred, Effect, Fiber } from "effect";
 import { makeChatHandle } from "ziggy/session/handle";
 import { makeSessionLeaseSet } from "ziggy/session/lease";
-import type { ChatEvent } from "ziggy/session/types";
 import { fakePiRuntime } from "../harness/pi-runtime";
 
 const roots: string[] = [];
@@ -44,13 +43,13 @@ const persisted = (profilePath: string, id: string): SessionManager => {
   return manager;
 };
 
-test("a prompt during a resume is refused, and the reset is published before the handle frees", async () => {
+test("a prompt during a resume waits, and starts after the transcript reset", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-handle-resume-"));
   roots.push(profilePath);
   const current = persisted(profilePath, "current");
   persisted(profilePath, "target");
   const { promise: switched, resolve: finishSwitch } = Promise.withResolvers<void>();
-  const events: ChatEvent["kind"][] = [];
+  const order: string[] = [];
 
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -60,7 +59,14 @@ test("a prompt during a resume is refused, and the reset is published before the
         profilePath,
         leases: makeSessionLeaseSet(profilePath),
         runtime: {
-          ...fakePiRuntime({ sessionManager: current, prompt: () => Promise.resolve() }),
+          ...fakePiRuntime({
+            sessionManager: current,
+            prompt: () => {
+              order.push("prompt");
+
+              return Promise.resolve();
+            },
+          }),
           switchSession: async () => {
             Deferred.doneUnsafe(entered, Effect.void);
             await switched;
@@ -70,18 +76,77 @@ test("a prompt during a resume is refused, and the reset is published before the
         },
       });
 
-      handle.subscribe((event) => events.push(event.kind));
+      handle.subscribe((event) => order.push(event.kind));
       const resume = yield* handle.resume("target").pipe(Effect.forkChild);
       yield* Deferred.await(entered);
-
-      expect(yield* Effect.result(handle.prompt("too early"))).toMatchObject({
-        failure: { _tag: "SessionBusy" },
-      });
+      const prompt = yield* handle.prompt("after the switch").pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(order).toEqual([]);
 
       finishSwitch();
       expect(yield* Fiber.join(resume)).toEqual({ cancelled: false });
-      expect(events).toEqual(["session-state"]);
+      yield* Fiber.join(prompt);
+      expect(order.slice(0, 2)).toEqual(["session-state", "prompt"]);
       yield* handle.dispose;
+    }),
+  );
+});
+
+test("disposal waits for an automation append, so the lease outlives the write", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-handle-dispose-"));
+  roots.push(profilePath);
+  const manager = persisted(profilePath, "live");
+  const { promise: written, resolve: finishWrite } = Promise.withResolvers<void>();
+  let disposed = false;
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+
+      const handle = yield* makeChatHandle({
+        profilePath,
+        leases: makeSessionLeaseSet(profilePath),
+        runtime: {
+          ...fakePiRuntime({
+            sessionManager: manager,
+            sendCustomMessage: async (message) => {
+              Deferred.doneUnsafe(entered, Effect.void);
+              await written;
+              manager.appendCustomMessageEntry(
+                message.customType,
+                message.content,
+                message.display,
+                message.details,
+              );
+            },
+          }),
+          dispose: () => {
+            disposed = true;
+
+            return Promise.resolve();
+          },
+        },
+      });
+
+      const append = yield* handle
+        .appendAutomationResult({
+          automationId: "daily-note",
+          runId: "manual:dispose",
+          targetSessionId: "live",
+          text: "result",
+          timestamp: "2026-09-30T12:00:00.000Z",
+        })
+        .pipe(Effect.forkChild);
+
+      yield* Deferred.await(entered);
+      const dispose = yield* handle.dispose.pipe(Effect.forkChild);
+      yield* Effect.sleep("20 millis");
+      expect(disposed).toBe(false);
+
+      finishWrite();
+      expect(yield* Fiber.join(append)).toBe(true);
+      yield* Fiber.join(dispose);
+      expect(disposed).toBe(true);
     }),
   );
 });

@@ -633,9 +633,9 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
           subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
           subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
-          yield* uiEntry(branch, params.ref.key);
+          const entry = yield* uiEntry(branch, params.ref.key);
           yield* branch.live
-            .release(params.ref.key)
+            .release(params.ref.key, entry.handle)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
           return { acknowledged: true as const };
