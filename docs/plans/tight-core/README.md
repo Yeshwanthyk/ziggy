@@ -562,7 +562,7 @@ read the artifact back first.
   - Adopt them in memory, gateway-owner and the extension lock.
   - Add the folder-import lint rule and the `[Pi]` import rule.
   - Update `CLAUDE.md` and the Effect skills with §4 and §5.
-- [ ] **3. Core: `profile/`.**
+- [x] **3. Core: `profile/`.**
   - Split `domain/profile.ts`.
   - Merge `ProfileStore` in and move models and auth.
   - Use the new service syntax.
@@ -666,3 +666,7 @@ Add one dated line per session: what landed, which proofs went green, and what w
   - `src/platform/` holds `file-lock.ts`, `atomic-write.ts`, `paths.ts` and `cause.ts`; memory, the gateway owner and the extension lock use them.
   - `ziggy/import-boundaries` enforces the `[Pi]` rule, a Ziggy-free `platform/` and folder-index imports.
   - `AGENTS.md` and the Effect skills carry §4 and §5.
+- 2026-09-30: Step 3 landed.
+  - `src/profile/` holds `types`, `profiles`, `models` and the `[Pi]` files `pi-models` and `pi-auth`; `ProfileStore` and `application/{profiles,models,auth}` are gone.
+  - `Profiles` reads `ZiggyPaths` itself: `init`, `register`, `list`.
+  - Left for step 7: `application/profile-directory.ts` still reads the registry for the ui-gateway.
