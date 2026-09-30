@@ -10,7 +10,6 @@ import {
 import { readExtensionPackage } from "../adapters/fs/profile-extensions";
 import { inspectGatewayOwner } from "../adapters/bun/gateway-owner";
 import { makeProfileExtensionPreflight } from "../adapters/pi/profile-extension-preflight";
-import { withProfileUpdateLock } from "../adapters/bun/profile-runtime-lock";
 import { ProfileExtensions } from "./profile-extensions";
 import {
   ProfileExtensionId,
@@ -64,7 +63,6 @@ export const makeExtensionUpdate = (
   options: {
     readonly catalog?: ExtensionCatalog;
     readonly stage?: typeof installBundledPackage;
-    readonly fence?: typeof withProfileUpdateLock;
     readonly pending?: typeof hasPendingExtensionUpdates;
     readonly inspectOwner?: typeof inspectGatewayOwner;
     readonly preflight?: ReturnType<typeof makeProfileExtensionPreflight>;
@@ -79,7 +77,6 @@ export const makeExtensionUpdate = (
 ) => {
   const catalog = options.catalog ?? BUILTIN_EXTENSION_CATALOG;
   const stage = options.stage ?? installBundledPackage;
-  const fence = options.fence ?? withProfileUpdateLock;
   const pendingUpdates = options.pending ?? hasPendingExtensionUpdates;
   const inspectOwner = options.inspectOwner ?? inspectGatewayOwner;
   const preflight = options.preflight ?? makeProfileExtensionPreflight();
@@ -222,7 +219,7 @@ export const makeExtensionUpdate = (
             });
 
             if (owner._tag !== "running") {
-              const applied = yield* oldHash === contentHash ? apply : fence(target.path, apply);
+              const applied = yield* apply;
 
               if (!request.restart || options.resident === undefined)
                 return { ...applied, residentStopped: true };
@@ -299,7 +296,7 @@ export const makeExtensionUpdate = (
                   );
                 }
 
-                const applied = yield* fence(target.path, apply).pipe(Effect.result);
+                const applied = yield* apply.pipe(Effect.result);
 
                 if (applied._tag === "Failure") {
                   const pending = yield* pendingUpdates(target.path).pipe(Effect.result);

@@ -33,8 +33,8 @@ import {
   scheduledRunId,
   validateAutomationId,
 } from "../domain/automation";
-import type { ChatModelOverride, ProfileSpecialistError } from "../domain/agent";
-import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
+import type { ProfileSpecialistError } from "../domain/agent";
+import { ZiggyAgent, type OpenSession, type ZiggyAgentApi } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
 import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
 import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
@@ -318,18 +318,21 @@ const gateFailureCategory = (
 // oxfmt-ignore
 const failedCategory = (error: AutomationError): NonNullable<RunTerminal["failureCategory"]> => Match.value(error).pipe(Match.tagsExhaustive({ AutomationInvalid: () => "AutomationInvalid" as const, AutomationNotFound: () => "AutomationNotFound" as const, AutomationPaused: () => "AutomationPaused" as const, AutomationScheduleSuperseded: () => "schedule-superseded" as const, AutomationFileSystemError: () => "AutomationFileSystemError" as const, AutomationGateFailed: (failure) => gateFailureCategory(failure.reason), AutomationDatabaseError: () => "AutomationDatabaseError" as const, ProfileNotInitialized: () => "ProfileNotInitialized" as const, ProviderConfigError: () => "ProviderConfigError" as const, SessionHeld: () => "session-held" as const, SessionBusy: () => "SessionBusy" as const, ProviderCallError: () => "ProviderCallError" as const, MemoryIdInvalid: () => "MemoryIdInvalid" as const, ProfileExtensionInvalid: () => "ProfileExtensionInvalid" as const, ProfileFileSystemError: () => "ProfileFileSystemError" as const, ProfileExtensionPreflightFailed: () => "ProfileExtensionPreflightFailed" as const, ProfileExtensionLockFailed: () => "ProfileExtensionLockFailed" as const, ProfileExtensionRollbackFailed: () => "ProfileExtensionRollbackFailed" as const, ProfileAgentInvalid: () => "ProfileAgentInvalid" as const, ProfileAgentMentionInvalid: () => "ProfileAgentMentionInvalid" as const, SpecialistAgentNotFound: () => "SpecialistAgentNotFound" as const, SpecialistProviderUnsupported: () => "SpecialistProviderUnsupported" as const, SpecialistModelUnsupported: () => "SpecialistModelUnsupported" as const, SpecialistAuthUnavailable: () => "SpecialistAuthUnavailable" as const, SpecialistThinkingUnsupported: () => "SpecialistThinkingUnsupported" as const, SpecialistToolUnsupported: () => "SpecialistToolUnsupported" as const, SpecialistRunFailed: () => "SpecialistRunFailed" as const }))
 
-const chatModelOverride = (automation: Automation): ChatModelOverride | undefined => {
+const chatModelOverride = (automation: Automation): Pick<OpenSession, "model"> => {
   if (automation.provider !== undefined && automation.model !== undefined) {
-    return automation.thinking === undefined
-      ? { provider: automation.provider, model: automation.model }
-      : {
-          provider: automation.provider,
-          model: automation.model,
-          thinking: automation.thinking,
-        };
+    return {
+      model:
+        automation.thinking === undefined
+          ? { provider: automation.provider, model: automation.model }
+          : {
+              provider: automation.provider,
+              model: automation.model,
+              thinking: automation.thinking,
+            },
+    };
   }
 
-  return automation.thinking === undefined ? undefined : { thinking: automation.thinking };
+  return automation.thinking === undefined ? {} : { model: { thinking: automation.thinking } };
 };
 
 export const makeAutomations = (
@@ -448,14 +451,14 @@ export const makeAutomations = (
           const reply =
             automation.specialist === undefined
               ? yield* Effect.acquireUseRelease(
-                  agent.openChat(
+                  agent.open({
                     target,
-                    { kind: "local" },
-                    join(target.path, "sessions", "automations", automation.id),
-                    "fresh",
-                    chatModelOverride(automation),
-                    `Automation · ${automation.id}`,
-                  ),
+                    context: { kind: "local" },
+                    directory: join(target.path, "sessions", "automations", automation.id),
+                    session: "new",
+                    name: `Automation · ${automation.id}`,
+                    ...chatModelOverride(automation),
+                  }),
                   (handle) => handle.prompt(automation.prompt),
                   (handle) =>
                     handle.dispose.pipe(

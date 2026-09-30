@@ -128,7 +128,6 @@ export interface ChatRegistryApi {
     afterSeq?: number,
   ) => Effect.Effect<() => void, UiGatewayError>;
   readonly publish: (key: UiSessionKey, event: ChatEvent) => Effect.Effect<void, UiGatewayError>;
-  readonly resetTranscript: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
   readonly submit: (
     key: UiSessionKey,
     text: string,
@@ -163,6 +162,9 @@ const emit = (entry: LiveEntry, event: ChatEvent): void => {
   if (entry.phase._tag === "Prompting" && event.kind === "error") {
     entry.phase.errorSeen = true;
   }
+
+  // A transcript reset invalidates everything before it, so replay starts over from here.
+  if (event.kind === "session-state" && event.scope === "transcript") entry.replay.length = 0;
 
   const sequenced = {
     seq: entry.nextSeq++,
@@ -602,16 +604,6 @@ export const makeChatRegistry = (
         requireLive(key).pipe(
           Effect.tap((entry) => Effect.sync(() => emit(entry, event))),
           Effect.asVoid,
-        ),
-      resetTranscript: (key) =>
-        statePermit.withPermit(
-          Effect.gen(function* () {
-            const entry = entries.get(key);
-
-            if (entry === undefined || entry._tag !== "Live") return yield* unknownSession(key);
-            entry.replay.length = 0;
-            emit(entry, { kind: "session-state", scope: "transcript" });
-          }),
         ),
       submit: (key, text, options) =>
         Effect.uninterruptible(

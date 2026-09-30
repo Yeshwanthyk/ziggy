@@ -23,6 +23,7 @@ import {
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 import type { ChatHandle, ChatPromptOptions } from "../agent";
+import { localSpecialistSessionDirectory } from "../agent";
 import type { ChatRegistryEvent, ChatRegistryListEntry } from "../chat-registry";
 import {
   badParams,
@@ -359,17 +360,23 @@ export const makeSessionDispatcher = (
 
           const open =
             params.agentId === undefined
-              ? config.agent.openChat(
-                  branch.target,
+              ? config.agent.open({
+                  target: branch.target,
                   context,
-                  sessionDirectory,
-                  "continue",
-                  undefined,
-                  params.name === undefined && context.kind === "local"
-                    ? "Local · Main"
-                    : undefined,
-                )
-              : config.agent.openSpecialistChat(branch.target, params.agentId);
+                  directory: sessionDirectory,
+                  session: "continue",
+                  name:
+                    params.name === undefined && context.kind === "local"
+                      ? "Local · Main"
+                      : undefined,
+                })
+              : config.agent.open({
+                  target: branch.target,
+                  context: { kind: "local" },
+                  directory: localSpecialistSessionDirectory(branch.target.path, params.agentId),
+                  session: "continue",
+                  agent: params.agentId,
+                });
 
           const metadata =
             params.agentId === undefined ? { context } : { context, agentId: params.agentId };
@@ -485,12 +492,9 @@ export const makeSessionDispatcher = (
           const result = yield* withSessionControl(
             entry.handle,
             Effect.uninterruptible(
-              entry.handle.resume(target.path).pipe(
-                Effect.mapError((cause) => toGatewayError(request.method, cause)),
-                Effect.tap((result) =>
-                  result.cancelled ? Effect.void : branch.registry.resetTranscript(ref.key),
-                ),
-              ),
+              entry.handle
+                .resume(target.path)
+                .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
             ),
           );
 

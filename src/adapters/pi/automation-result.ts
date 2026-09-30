@@ -7,7 +7,8 @@ import {
 } from "../../domain/automation";
 import { SessionNotFound } from "../../domain/session";
 import { showProfileSession } from "./sessions";
-import { scopedSessionLease, SessionLeaseHeld } from "./session-lease";
+import { SessionHeld } from "../../domain/agent";
+import { takeSessionLease } from "../../session";
 
 export const AUTOMATION_RESULT_CUSTOM_TYPE = "ziggy.automation-result";
 
@@ -81,17 +82,18 @@ export const appendStoredAutomationResult = (
     Effect.flatMap((metadata) =>
       Effect.scoped(
         Effect.gen(function* () {
-          yield* scopedSessionLease(profilePath, result.targetSessionId).pipe(
-            Effect.mapError((cause) =>
-              failure(
-                cause instanceof SessionLeaseHeld ? "session-held" : "write",
-                true,
-                cause instanceof SessionLeaseHeld
-                  ? cause.message
-                  : "could not acquire session lease",
-                cause,
+          yield* Effect.acquireRelease(
+            Effect.fromResult(takeSessionLease(profilePath, result.targetSessionId)).pipe(
+              Effect.mapError((cause) =>
+                failure(
+                  cause instanceof SessionHeld ? "session-held" : "write",
+                  true,
+                  cause instanceof SessionHeld ? cause.message : "could not acquire session lease",
+                  cause,
+                ),
               ),
             ),
+            (lease) => Effect.sync(lease.release),
           );
 
           return yield* Effect.try({

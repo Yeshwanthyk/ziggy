@@ -13,7 +13,7 @@ import {
   inspectPiPackageHealth,
   listProfileExtensionsWithHealth,
 } from "ziggy/adapters/pi/profile-extension-preflight";
-import { openChat } from "ziggy/adapters/pi/pi-agent";
+import { openSession } from "ziggy/session/index";
 import { createAgentSessionRuntime } from "@earendil-works/pi-coding-agent";
 import {
   MAX_PI_DIAGNOSTIC_MESSAGE,
@@ -257,14 +257,14 @@ test("runtime opens with healthy package while a broken package is reported", as
   };
 
   const handle = await Effect.runPromise(
-    openChat(
-      { path: profilePath, name: "Profile" },
-      { kind: "local" },
-      join(profilePath, "sessions"),
-      "fresh",
-      undefined,
-      undefined,
-      factory,
+    openSession(
+      {
+        target: { path: profilePath, name: "Profile" },
+        context: { kind: "local" },
+        directory: join(profilePath, "sessions"),
+        session: "new",
+      },
+      { runtimeFactory: factory },
     ),
   );
 
@@ -322,14 +322,14 @@ test("a package that breaks mid-lifetime is quarantined on the next rebuild", as
   };
 
   const handle = await Effect.runPromise(
-    openChat(
-      { path: profilePath, name: "Profile" },
-      { kind: "local" },
-      join(profilePath, "sessions"),
-      "fresh",
-      undefined,
-      undefined,
-      factory,
+    openSession(
+      {
+        target: { path: profilePath, name: "Profile" },
+        context: { kind: "local" },
+        directory: join(profilePath, "sessions"),
+        session: "new",
+      },
+      { runtimeFactory: factory },
     ),
   );
 

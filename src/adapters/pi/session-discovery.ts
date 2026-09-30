@@ -3,7 +3,11 @@ import { open, readdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Effect, Schema } from "effect";
 import { fileSystemCauseDetails } from "../../platform/cause";
-import { SessionLeaseFailed } from "./session-lease";
+
+export class SessionFileUnreadable extends Schema.TaggedErrorClass<SessionFileUnreadable>()(
+  "SessionFileUnreadable",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
 
 const Header = Schema.Struct({
   type: Schema.Literal("session"),
@@ -20,7 +24,8 @@ export const readSessionHeaderOnly = (file: string) =>
   Effect.acquireUseRelease(
     Effect.tryPromise({
       try: () => open(file, constants.O_RDONLY | constants.O_NOFOLLOW),
-      catch: (cause) => new SessionLeaseFailed({ message: "could not open session header", cause }),
+      catch: (cause) =>
+        new SessionFileUnreadable({ message: "could not open session header", cause }),
     }),
     (handle) =>
       Effect.tryPromise({
@@ -35,12 +40,12 @@ export const readSessionHeaderOnly = (file: string) =>
           return buffer.subarray(0, newline).toString("utf8");
         },
         catch: (cause) =>
-          new SessionLeaseFailed({ message: "could not read session header", cause }),
+          new SessionFileUnreadable({ message: "could not read session header", cause }),
       }).pipe(
         Effect.flatMap((text) =>
           decodeHeader(text).pipe(
             Effect.mapError(
-              (cause) => new SessionLeaseFailed({ message: "invalid session header", cause }),
+              (cause) => new SessionFileUnreadable({ message: "invalid session header", cause }),
             ),
           ),
         ),
@@ -54,7 +59,7 @@ export const findRecentSessionFile = (cwd: string, directory: string) =>
     const entries = yield* Effect.tryPromise({
       try: () => readdir(directory),
       catch: (cause) =>
-        new SessionLeaseFailed({ message: "could not list session directory", cause }),
+        new SessionFileUnreadable({ message: "could not list session directory", cause }),
     }).pipe(
       Effect.catch((cause) =>
         fileSystemCauseDetails(cause.cause).code === "ENOENT"

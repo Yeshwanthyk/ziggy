@@ -5,12 +5,14 @@ import { ZiggyPathsLive } from "./platform/paths";
 import { MemoryFilesLive } from "./adapters/fs/memory-files";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
-import { makePiAgent } from "./adapters/pi/pi-agent";
+import { memoryTools } from "./adapters/pi/memory-write-tool";
 import {
   listProfileExtensionsWithHealth,
   ProfileExtensionPreflightLive,
 } from "./adapters/pi/profile-extension-preflight";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
+import { agentTools } from "./adapters/pi/specialist";
+import { extensionTools } from "./adapters/pi/profile-extension-tool";
 import { ZiggyAgent } from "./application/agent";
 import { AutomationDefinitionsLive } from "./application/automation-definitions";
 import { AutomationSchedulerLive } from "./application/automation-scheduler";
@@ -30,6 +32,7 @@ import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { Auth, Models, Profiles } from "./profile";
+import { makeZiggyAgent } from "./session";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -41,7 +44,12 @@ const ProfileExtensionsLayer = ProfileExtensionsLive.pipe(
 /** The agent every face and gateway talks to, backed by the Pi SDK adapter. */
 const ZiggyAgentLayer = Layer.effect(
   ZiggyAgent,
-  Effect.map(ProfileExtensions, (profileExtensions) => makePiAgent(profileExtensions)),
+  Effect.map(ProfileExtensions, (extensions) =>
+    makeZiggyAgent({
+      extensions,
+      tools: [memoryTools, extensionTools(extensions), agentTools],
+    }),
+  ),
 ).pipe(Layer.provide(ProfileExtensionsLayer));
 
 const DoctorLayer = DoctorLive.pipe(

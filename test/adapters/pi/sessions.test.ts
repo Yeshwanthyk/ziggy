@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect, Result, Schema } from "effect";
-import { acquireSessionLease, isSessionLeaseHeld } from "ziggy/adapters/pi/session-lease";
+import { isSessionHeld, takeSessionLease } from "ziggy/session/index";
 import * as transcriptLines from "ziggy/adapters/pi/transcript-lines";
 import {
   listProfileSessionSummaries,
@@ -572,7 +572,7 @@ test("read-only session summaries use first user text while a writer holds the l
     }),
   ]);
   const before = await readFile(file);
-  const release = await Effect.runPromise(acquireSessionLease(root, "one"));
+  const lease = Result.getOrThrow(takeSessionLease(root, "one"));
 
   try {
     expect(await Effect.runPromise(listProfileSessionSummaries(root))).toEqual([
@@ -583,13 +583,13 @@ test("read-only session summaries use first user text while a writer holds the l
         updatedAt: "2026-08-08T10:00:04.000Z",
       },
     ]);
-    expect(await Effect.runPromise(isSessionLeaseHeld(root, "one"))).toBe(true);
+    expect(Result.getOrThrow(isSessionHeld(root, "one"))).toBe(true);
     expect(await readFile(file)).toEqual(before);
   } finally {
-    await Effect.runPromise(release);
+    lease.release();
   }
 
-  expect(await Effect.runPromise(isSessionLeaseHeld(root, "one"))).toBe(false);
+  expect(Result.getOrThrow(isSessionHeld(root, "one"))).toBe(false);
 });
 
 test("summary projection reuses unchanged transcripts and rescans changed ones", async () => {

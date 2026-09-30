@@ -8,7 +8,7 @@ import {
   type TelegramUpdate,
 } from "../adapters/telegram/api";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
-import type { ZiggyAgentError } from "../domain/agent";
+import type { ProfileSpecialistError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
@@ -236,14 +236,13 @@ export const makeTelegramGateway = (
               }
 
               if (chatState.handle === undefined) {
-                const open = agent.openChat(
+                const open = agent.open({
                   target,
-                  message.context,
-                  join(target.path, "sessions", "telegram", message.chatKey),
-                  "continue",
-                  undefined,
-                  message.label === undefined ? undefined : `Telegram · ${message.label}`,
-                );
+                  context: message.context,
+                  directory: join(target.path, "sessions", "telegram", message.chatKey),
+                  session: "continue",
+                  name: message.label === undefined ? undefined : `Telegram · ${message.label}`,
+                });
 
                 chatState.handle =
                   registry === undefined
@@ -309,7 +308,7 @@ export const makeTelegramGateway = (
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((failure: ZiggyAgentError | TelegramApiError | UiGatewayError) =>
+              Effect.catch((failure: ProfileSpecialistError | TelegramApiError | UiGatewayError) =>
                 Effect.sync(() => {
                   console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
                 }),

@@ -76,13 +76,14 @@ describe("run", () => {
     expect(result.stdout.split("\n")[0]).toStartWith('{"type":"session","version":3,');
   });
 
-  test("a model error exits 1 with one stderr line", async () => {
+  test("a model error exits 1 and ends stderr with Ziggy's stable line", async () => {
     // 400, not 5xx: Pi retries server errors, and a retry would get the default reply.
     server.push(fail(400, "scripted failure"));
     const result = await ziggy(profile, "run", profile.path, "hi");
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe("provider request failed\n");
+    // Pi's print mode reports the provider's own error first.
+    expect(result.stderr).toEndWith('scripted failure"}\nprovider request failed\n');
   });
 });
 

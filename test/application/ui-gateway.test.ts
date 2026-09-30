@@ -94,8 +94,7 @@ const makeAgent = (
   overrides: Partial<ZiggyAgentApi> = {},
 ): ZiggyAgentApi => ({
   runOnce: () => Effect.succeed(0),
-  openChat: () => Effect.succeed(handle),
-  openSpecialistChat: () => Effect.succeed(handle),
+  open: () => Effect.succeed(handle),
   runSpecialist: () =>
     Effect.succeed({ answer: "specialist answer", session: { id: "child", file: "child.jsonl" } }),
   ...overrides,
@@ -141,7 +140,7 @@ test("session.open refuses a held writer with a plain session_busy error", async
   const responses: Array<typeof UiResponseFrame.Type> = [];
 
   const agent = makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") }), {
-    openChat: () => Effect.fail(new SessionHeld({ profilePath: "/secret", message: "held" })),
+    open: () => Effect.fail(new SessionHeld({ profilePath: "/secret", message: "held" })),
   });
 
   await Effect.runPromise(
@@ -192,7 +191,7 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
   });
 
   const agent = makeAgent(handle, {
-    openChat: (_target, context, directory, mode) => {
+    open: ({ context, directory, session: mode }) => {
       opened = { directory, mode, context: context.kind };
 
       return Effect.succeed(handle);
@@ -576,7 +575,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
         let opens = 0;
 
         const agent = makeAgent(handle, {
-          openChat: () =>
+          open: () =>
             Effect.sync(() => {
               opens += 1;
 
@@ -685,7 +684,7 @@ test("command retries preserve the current transport request id", async () => {
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
 
   const agent = makeAgent(handle, {
-    openChat: () => {
+    open: () => {
       openCount += 1;
 
       return Effect.succeed(handle);
@@ -1053,13 +1052,8 @@ test("specialist session.open uses local specialist Pi primitive, never a channe
   const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
 
   const agent = makeAgent(handle, {
-    openChat: () => {
-      calls.push("channel-or-host");
-
-      return Effect.succeed(handle);
-    },
-    openSpecialistChat: (_target, agentId) => {
-      calls.push(`specialist:${agentId}`);
+    open: ({ agent }) => {
+      calls.push(agent === undefined ? "channel-or-host" : `specialist:${agent}`);
 
       return Effect.succeed(handle);
     },

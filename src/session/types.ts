@@ -1,0 +1,151 @@
+import { Context, Effect } from "effect";
+import type {
+  ChatModelOverride,
+  ChatNotStreaming,
+  ProfileAgentRunContext,
+  ProfileAgentRunResult,
+  ProfileSpecialistError,
+  SessionReference,
+  ZiggyAgentError,
+} from "../domain/agent";
+import type { ChatContext } from "../domain/memory";
+import type { ProfileAgentThinking } from "../domain/profile";
+import type { SessionNotFound, SessionReadFailed } from "../domain/session";
+import type {
+  AutomationConversationDeliveryFailed,
+  AutomationConversationResult,
+} from "../domain/automation";
+import type { ProfileTarget } from "../profile";
+
+export interface ChatPromptImage {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export type ChatEvent =
+  | {
+      readonly kind: "assistant-text";
+      readonly delta: string;
+      readonly snapshot: string;
+    }
+  | {
+      readonly kind: "thinking";
+      readonly delta: string;
+    }
+  | {
+      readonly kind: "tool";
+      readonly phase: "start" | "update" | "end";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly failed: boolean;
+      readonly detail?: string;
+    }
+  | {
+      readonly kind: "voice";
+      readonly agentId: string;
+      readonly text: string;
+    }
+  | {
+      readonly kind: "automation-result";
+      readonly automationId: string;
+      readonly runId: string;
+      readonly text: string;
+      readonly timestamp: string;
+    }
+  | { readonly kind: "session-state"; readonly scope: "transcript" | "model" }
+  | { readonly kind: "settled" }
+  | { readonly kind: "error"; readonly message: string };
+
+export type ChatProgressEvent = Extract<ChatEvent, { kind: "assistant-text" | "tool" | "voice" }>;
+
+export const formatSpecialistVoice = (agentId: string, text: string): string =>
+  `**${agentId}:**\n${text}`;
+
+export interface ChatPromptOptions {
+  readonly images?: Array<ChatPromptImage>;
+  /** Context for only this provider turn. It is not added to the persisted user message. */
+  readonly ephemeralContext?: string;
+  readonly onProgress?: (event: ChatProgressEvent) => void;
+}
+
+export interface ChatSessionModelState {
+  readonly providerId?: string;
+  readonly modelId?: string;
+  readonly thinking: ProfileAgentThinking;
+}
+
+export interface ChatResumeResult {
+  readonly cancelled: boolean;
+}
+
+export interface ChatHandle {
+  /** Live session state; changing it never persists a Profile-wide default. */
+  readonly modelState: Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  readonly setModel: (
+    providerId: string,
+    modelId: string,
+  ) => Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  readonly setThinkingLevel: (
+    level: ProfileAgentThinking,
+  ) => Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
+  /** Accepts a Profile session id or a path relative to its sessions directory. */
+  readonly resume: (
+    reference: string,
+  ) => Effect.Effect<ChatResumeResult, ZiggyAgentError | SessionReadFailed | SessionNotFound>;
+  readonly isIdle: boolean;
+  /** The current persisted Pi transcript identity, resolved at read time. */
+  readonly currentSession: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
+  readonly appendAutomationResult: (
+    result: AutomationConversationResult,
+  ) => Effect.Effect<boolean, AutomationConversationDeliveryFailed>;
+  readonly prompt: (
+    text: string,
+    options?: ChatPromptOptions,
+  ) => Effect.Effect<string, ZiggyAgentError>;
+  readonly abort: Effect.Effect<void, ZiggyAgentError>;
+  readonly steer: (text: string) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
+  readonly followUp: (text: string) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
+  readonly subscribe: (listener: (event: ChatEvent) => void) => () => void;
+  readonly dispose: Effect.Effect<void, ZiggyAgentError>;
+}
+
+/** Everything needed to open a live Profile session. */
+export interface OpenSession {
+  readonly target: ProfileTarget;
+  readonly context: ChatContext;
+  /** Where the transcript lives; `continue` resumes the most recent one there. */
+  readonly directory: string;
+  readonly session: "new" | "continue";
+  /** Talk to this Profile agent instead of the Profile itself. */
+  readonly agent?: string;
+  readonly model?: ChatModelOverride;
+  /** Transcript name, set on the first prompt if the transcript has none. */
+  readonly name?: string | undefined;
+}
+
+export interface ZiggyAgentApi {
+  readonly open: (
+    request: OpenSession,
+  ) => Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError>;
+  readonly runOnce: (
+    target: ProfileTarget,
+    prompt: string,
+    continueSession: boolean,
+    context: ChatContext,
+    options?: RunOnceOptions,
+  ) => Effect.Effect<number, ZiggyAgentError>;
+  readonly runSpecialist: (
+    target: ProfileTarget,
+    agentId: string,
+    task: string,
+    context: ProfileAgentRunContext,
+  ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
+}
+
+export interface RunOnceOptions {
+  readonly mode?: "text" | "json";
+  readonly sessionPath?: string;
+}
+
+export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentApi>()("ziggy/ZiggyAgent") {}

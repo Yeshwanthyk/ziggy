@@ -4,7 +4,7 @@ import type { SlackApiError } from "../../adapters/slack/api";
 import { codePointLength } from "../../domain/memory";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
-import type { ZiggyAgentError } from "../../domain/agent";
+import type { ProfileSpecialistError } from "../../domain/agent";
 import type { UiGatewayError } from "../../domain/ui-gateway";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
@@ -311,16 +311,15 @@ export const makeSlackTurnProcessor =
               let handle = chatState.handle;
 
               if (handle === undefined) {
-                const open = agent.openChat(
+                const label = channelLabels.get(message.channel);
+
+                const open = agent.open({
                   target,
-                  message.context,
-                  join(target.path, "sessions", "slack", message.chatKey),
-                  "continue",
-                  undefined,
-                  channelLabels.get(message.channel) === undefined
-                    ? undefined
-                    : `Slack · ${channelLabels.get(message.channel)}`,
-                );
+                  context: message.context,
+                  directory: join(target.path, "sessions", "slack", message.chatKey),
+                  session: "continue",
+                  name: label === undefined ? undefined : `Slack · ${label}`,
+                });
 
                 handle =
                   registry === undefined
@@ -598,8 +597,13 @@ export const makeSlackTurnProcessor =
 
       yield* work.pipe(
         Effect.catch(
-          (failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError | UiGatewayError) =>
-            Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
+          (
+            failure:
+              | ProfileSpecialistError
+              | SlackApiError
+              | SlackIngressDatabaseError
+              | UiGatewayError,
+          ) => Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
         ),
       );
     });

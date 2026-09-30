@@ -80,8 +80,7 @@ describe("Slack gateway boundary", () => {
 
           const agent: ZiggyAgentApi = {
             runOnce: () => Effect.succeed(0),
-            openChat: () => Effect.never,
-            openSpecialistChat: () => Effect.never,
+            open: () => Effect.never,
             runSpecialist: () => Effect.never,
           };
 
@@ -675,9 +674,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () => {
@@ -741,8 +738,7 @@ describe("Slack gateway boundary", () => {
 
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
-          openChat: () => Effect.never,
-          openSpecialistChat: () => Effect.never,
+          open: () => Effect.never,
           runSpecialist: () => Effect.never,
         };
 
@@ -932,9 +928,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text, options) => {
@@ -1198,9 +1192,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: (_target, _context, sessionDirectory) =>
+          open: ({ directory: sessionDirectory }) =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text, options) => {
@@ -1355,9 +1347,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
+          open: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
         };
 
         yield* Effect.raceFirst(
@@ -1471,9 +1461,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text) =>
@@ -1590,9 +1578,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) =>
@@ -1724,9 +1710,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) =>
@@ -1855,9 +1839,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) =>
@@ -1956,9 +1938,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) =>
@@ -2075,9 +2055,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) =>
@@ -2170,9 +2148,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () =>
@@ -2249,9 +2225,7 @@ describe("Slack gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) => {
@@ -2356,8 +2330,7 @@ describe("Slack gateway boundary", () => {
         const agent: ZiggyAgentApi = {
           runOnce: () => Effect.succeed(0),
           runSpecialist: () => Effect.never,
-          openSpecialistChat: () => Effect.never,
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 isIdle: false,
@@ -2430,9 +2403,8 @@ test("failed stop still posts chunk zero before a successful terminal receipt", 
 
       const agent: ZiggyAgentApi = {
         runOnce: () => Effect.succeed(0),
-        openSpecialistChat: () => Effect.never,
         runSpecialist: () => Effect.never,
-        openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("answer") })),
+        open: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("answer") })),
       };
 
       yield* Effect.raceFirst(
@@ -2544,9 +2516,8 @@ test("attachment ingress survives health write failure and closes its resources 
 
       const agent: ZiggyAgentApi = {
         runOnce: () => Effect.succeed(0),
-        openSpecialistChat: () => Effect.never,
         runSpecialist: () => Effect.never,
-        openChat: () =>
+        open: () =>
           Effect.succeed(
             makeChatHandle({
               prompt: (text, options) =>
@@ -2645,9 +2616,8 @@ test("final placeholder update waits for interrupted progress edit", () =>
 
       const agent: ZiggyAgentApi = {
         runOnce: () => Effect.succeed(0),
-        openSpecialistChat: () => Effect.never,
         runSpecialist: () => Effect.never,
-        openChat: () =>
+        open: () =>
           Effect.succeed(
             makeChatHandle({
               prompt: (_text, options) =>

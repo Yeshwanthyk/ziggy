@@ -1,5 +1,9 @@
 import { basename } from "node:path";
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  defineTool,
+  type AgentToolResult,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -13,6 +17,7 @@ import type {
 import { inspectPiPackageHealth } from "./profile-extension-preflight";
 import type { SkippedPiPackage } from "./profile-extension-diagnostics";
 import { type ProfileTarget } from "../../profile";
+import type { SessionTools } from "../../session";
 
 export const PROFILE_EXTENSIONS_MAX_ID_CODE_POINTS = 96;
 
@@ -794,3 +799,8 @@ export const createProfileExtensionsTool = createProfileExtensionTool;
 export const profileExtensionsToolParameters = profileExtensionsParameters;
 
 export const profileExtensionsToolDetailsSchema = profileExtensionToolDetailsSchema;
+
+/** Contributes the `profile_extension` tool, bound to this composition's extension service. */
+export const extensionTools =
+  (profileExtensions: ProfileExtensionsApi): SessionTools =>
+  ({ profilePath }) => [defineTool(createProfileExtensionTool(profilePath, profileExtensions))];

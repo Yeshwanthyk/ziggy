@@ -124,9 +124,13 @@ const makeFixture = async (broadcast: string) => {
 
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
-    openChat: (_target, context, directory, mode) =>
+    open: (request) =>
       Effect.sync(() => {
-        opened.push({ context: context.kind, directory, mode });
+        opened.push({
+          context: request.context.kind,
+          directory: request.directory,
+          mode: request.session,
+        });
 
         return makeChatHandle({
           prompt: (prompt) =>
@@ -137,8 +141,6 @@ const makeFixture = async (broadcast: string) => {
             }),
         });
       }),
-    openSpecialistChat: () =>
-      Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
     runSpecialist: () =>
       Effect.succeed({ answer: "unused", session: { id: "unused", file: "unused.jsonl" } }),
   };
@@ -357,7 +359,7 @@ test("automation.run routes through the selected Profile registry and reloads th
     {
       context: "local",
       directory: join(fixture.target.path, "sessions", "automations", "daily-note"),
-      mode: "fresh",
+      mode: "new",
     },
   ]);
   expect(fixture.prompts).toEqual(["Write the daily note."]);

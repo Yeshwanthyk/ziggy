@@ -19,7 +19,7 @@ import {
   type Model,
   type Usage,
 } from "@earendil-works/pi-ai";
-import { Effect, Exit } from "effect";
+import { Effect } from "effect";
 import { Value } from "typebox/value";
 import { type Static, Type } from "typebox";
 import {
@@ -35,14 +35,13 @@ import {
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { createPiDocsExtension } from "./pi-docs";
-import { leaseProfileRuntime } from "./profile-runtime-lease";
-import { acquireSessionLease } from "./session-lease";
 import { promptForAssistantText } from "./prompt-turn";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
 import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { ProviderConfigError } from "../../profile";
+import type { SessionTools } from "../../session";
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -276,85 +275,75 @@ export const specialistRuntime = (
   thinking: ThinkingLevel,
   tools: ReadonlyArray<string>,
   sessionManager: SessionManager,
-  beforeServices?: (manager: SessionManager) => Promise<void>,
+  beforeServices?: (manager: SessionManager) => void,
 ): Effect.Effect<AgentSessionRuntime, SpecialistRunFailed> =>
-  leaseProfileRuntime(
-    profilePath,
-    loadProfileAgentsPrompt(profilePath).pipe(
-      Effect.mapError((error) => specialistFailure(profilePath, "read AGENTS.md", error)),
-      Effect.flatMap((agentsPrompt) =>
-        Effect.tryPromise({
-          try: () =>
-            createAgentSessionRuntime(
-              async ({
+  loadProfileAgentsPrompt(profilePath).pipe(
+    Effect.mapError((error) => specialistFailure(profilePath, "read AGENTS.md", error)),
+    Effect.flatMap((agentsPrompt) =>
+      Effect.tryPromise({
+        try: () =>
+          createAgentSessionRuntime(
+            async ({ cwd, agentDir, sessionManager: runtimeSessionManager, sessionStartEvent }) => {
+              beforeServices?.(runtimeSessionManager);
+
+              const services = await createAgentSessionServices({
                 cwd,
                 agentDir,
-                sessionManager: runtimeSessionManager,
-                sessionStartEvent,
-              }) => {
-                await beforeServices?.(runtimeSessionManager);
+                modelRuntime: environment.services.modelRuntime,
+                resourceLoaderOptions: (() => {
+                  const options: SpecialistResourceLoaderOptions = {
+                    systemPrompt: composeProfileSystemPrompt(agentsPrompt, agent.body),
+                    noExtensions: true,
+                    noSkills: true,
+                    noPromptTemplates: true,
+                    noThemes: true,
+                    noContextFiles: true,
+                    extensionFactories: [
+                      ...environment.resources.extensionFactories,
+                      ...specialistReferenceExtensions(),
+                    ],
+                  };
 
-                const services = await createAgentSessionServices({
-                  cwd,
-                  agentDir,
-                  modelRuntime: environment.services.modelRuntime,
-                  resourceLoaderOptions: (() => {
-                    const options: SpecialistResourceLoaderOptions = {
-                      systemPrompt: composeProfileSystemPrompt(agentsPrompt, agent.body),
-                      noExtensions: true,
-                      noSkills: true,
-                      noPromptTemplates: true,
-                      noThemes: true,
-                      noContextFiles: true,
-                      extensionFactories: [
-                        ...environment.resources.extensionFactories,
-                        ...specialistReferenceExtensions(),
-                      ],
-                    };
+                  if (environment.resources.extensionPaths.length > 0) {
+                    options.additionalExtensionPaths = [...environment.resources.extensionPaths];
+                  }
 
-                    if (environment.resources.extensionPaths.length > 0) {
-                      options.additionalExtensionPaths = [...environment.resources.extensionPaths];
+                  if (environment.resources.skillPaths.length > 0) {
+                    options.additionalSkillPaths = [...environment.resources.skillPaths];
+                  }
+
+                  return options;
+                })(),
+              });
+
+              const created = await createAgentSessionFromServices(
+                sessionStartEvent === undefined
+                  ? {
+                      services,
+                      sessionManager: runtimeSessionManager,
+                      model,
+                      thinkingLevel: thinking,
+                      tools: [...tools],
+                      noTools: "all" as const,
                     }
+                  : {
+                      services,
+                      sessionManager: runtimeSessionManager,
+                      sessionStartEvent,
+                      model,
+                      thinkingLevel: thinking,
+                      tools: [...tools],
+                      noTools: "all" as const,
+                    },
+              );
 
-                    if (environment.resources.skillPaths.length > 0) {
-                      options.additionalSkillPaths = [...environment.resources.skillPaths];
-                    }
-
-                    return options;
-                  })(),
-                });
-
-                const created = await createAgentSessionFromServices(
-                  sessionStartEvent === undefined
-                    ? {
-                        services,
-                        sessionManager: runtimeSessionManager,
-                        model,
-                        thinkingLevel: thinking,
-                        tools: [...tools],
-                        noTools: "all" as const,
-                      }
-                    : {
-                        services,
-                        sessionManager: runtimeSessionManager,
-                        sessionStartEvent,
-                        model,
-                        thinkingLevel: thinking,
-                        tools: [...tools],
-                        noTools: "all" as const,
-                      },
-                );
-
-                return { ...created, services, diagnostics: services.diagnostics };
-              },
-              { cwd: profilePath, agentDir: profilePath, sessionManager },
-            ),
-          catch: (cause) => specialistFailure(profilePath, "create specialist runtime", cause),
-        }),
-      ),
+              return { ...created, services, diagnostics: services.diagnostics };
+            },
+            { cwd: profilePath, agentDir: profilePath, sessionManager },
+          ),
+        catch: (cause) => specialistFailure(profilePath, "create specialist runtime", cause),
+      }),
     ),
-  ).pipe(
-    Effect.mapError((cause) => specialistFailure(profilePath, "lease specialist runtime", cause)),
   );
 
 const childRuntime = (
@@ -379,12 +368,7 @@ const childRuntime = (
       );
     }
 
-    const release = yield* acquireSessionLease(options.profilePath, child.reference.id).pipe(
-      Effect.mapError((cause) =>
-        specialistFailure(options.profilePath, "open child session", cause),
-      ),
-    );
-
+    // A child transcript's id is known only to this runtime, so it takes no lease.
     const runtime = yield* specialistRuntime(
       options.profilePath,
       parent,
@@ -393,28 +377,14 @@ const childRuntime = (
       thinking,
       tools,
       child.manager,
-    ).pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit)
-          ? release.pipe(
-              Effect.catch((failure) =>
-                Effect.logWarning("Child session lease release failed", { failure }),
-              ),
-            )
-          : Effect.void,
-      ),
     );
 
     return {
       session: runtime.session,
       reference: child.reference,
       dispose: async () => {
-        try {
-          await runtime.dispose();
-        } finally {
-          // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi child disposal Promise bridge.
-          await Effect.runPromise(release);
-        }
+        await runtime.session.abort();
+        await runtime.dispose();
       },
     };
   });
@@ -1025,3 +995,27 @@ export const createAgentDiscussTool = (
 });
 
 export const specialistThinkingLevels = thinkingLevels;
+
+/** Contributes `agent_run` and `agent_discuss` when the Profile has agents. */
+export const agentTools: SessionTools = ({
+  profilePath,
+  agents,
+  services,
+  resources,
+  session,
+  voice,
+}) => {
+  if (agents.length === 0) return [];
+
+  const runner = makeSpecialistRunner({
+    profilePath,
+    agents,
+    parent: () => {
+      const current = session();
+
+      return current === undefined ? undefined : { session: current, services, resources };
+    },
+  });
+
+  return [createAgentRunTool(runner, voice), createAgentDiscussTool(runner, voice)];
+};

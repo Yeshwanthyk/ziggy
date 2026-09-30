@@ -134,13 +134,12 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
 
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
-    openChat: (target) => {
+    open: ({ target }) => {
       openedPaths.push(target.path);
       const handle = handles.get(target.path);
 
       return handle === undefined ? Effect.never : Effect.succeed(handle);
     },
-    openSpecialistChat: () => Effect.succeed(alphaHandle),
     runSpecialist: () => Effect.succeed({ answer: "", session: { id: "child", file: "child" } }),
   };
 

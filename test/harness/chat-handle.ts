@@ -14,27 +14,51 @@ const unsupportedLiveControl = (operation: string) =>
     }),
   );
 
+/** Like the real handle, a completed `resume` tells subscribers the transcript changed. */
 export const makeChatHandle = (
   methods: Pick<ChatHandle, "prompt"> & Partial<Omit<ChatHandle, "prompt">>,
-): ChatHandle => ({
-  isIdle: true,
-  modelState: unsupportedLiveControl("read model"),
-  setModel: () => unsupportedLiveControl("set model"),
-  setThinkingLevel: () => unsupportedLiveControl("set thinking"),
-  resume: () => unsupportedLiveControl("resume session"),
-  currentSession: Effect.succeed(undefined),
-  appendAutomationResult: () =>
-    Effect.fail(
-      new AutomationConversationDeliveryFailed({
-        category: "owner-unavailable",
-        retriable: true,
-        message: "this fake handle cannot accept automation results",
-      }),
-    ),
-  abort: Effect.void,
-  steer: () => Effect.void,
-  followUp: () => Effect.void,
-  subscribe: () => () => undefined,
-  dispose: Effect.void,
-  ...methods,
-});
+): ChatHandle => {
+  const listeners = new Set<Parameters<ChatHandle["subscribe"]>[0]>();
+  const resume = methods.resume;
+
+  return {
+    isIdle: true,
+    modelState: unsupportedLiveControl("read model"),
+    setModel: () => unsupportedLiveControl("set model"),
+    setThinkingLevel: () => unsupportedLiveControl("set thinking"),
+    currentSession: Effect.succeed(undefined),
+    appendAutomationResult: () =>
+      Effect.fail(
+        new AutomationConversationDeliveryFailed({
+          category: "owner-unavailable",
+          retriable: true,
+          message: "this fake handle cannot accept automation results",
+        }),
+      ),
+    abort: Effect.void,
+    steer: () => Effect.void,
+    followUp: () => Effect.void,
+    subscribe: (listener) => {
+      listeners.add(listener);
+
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    dispose: Effect.void,
+    ...methods,
+    resume: (reference) =>
+      resume === undefined
+        ? unsupportedLiveControl("resume session")
+        : resume(reference).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                if (result.cancelled) return;
+
+                for (const listener of listeners)
+                  listener({ kind: "session-state", scope: "transcript" });
+              }),
+            ),
+          ),
+  };
+};

@@ -566,7 +566,7 @@ read the artifact back first.
   - Split `domain/profile.ts`.
   - Merge `ProfileStore` in and move models and auth.
   - Use the new service syntax.
-- [ ] **4. Core: `session/`.**
+- [x] **4. Core: `session/`.**
   - Split into runtime, handle, lease, agent and tools.
   - Add `OpenSession` and the tool seam; agent and memory tools are plugged in through it unchanged.
   - The handle emits `session-state`.

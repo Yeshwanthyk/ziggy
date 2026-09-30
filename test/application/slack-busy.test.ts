@@ -64,8 +64,7 @@ for (const scenario of [
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({ answer: "unused", session: { id: "unused", file: "/unused" } }),
-          openSpecialistChat: () => Effect.succeed(handle),
-          openChat: () => Effect.succeed(handle),
+          open: () => Effect.succeed(handle),
         };
 
         const transport: SlackTransport = {

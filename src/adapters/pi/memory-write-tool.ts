@@ -4,6 +4,7 @@ import type { Dirent } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { SessionTools } from "../../session";
 import { Effect, Schema } from "effect";
 import { Type } from "typebox";
 import {
@@ -544,3 +545,8 @@ const readMemoryDocument = (
         ? cause
         : new MemoryWriteIoError({ operation: "read", path: document.absolutePath, cause }),
   });
+
+/** Contributes `memory_write` to every Profile session. */
+export const memoryTools: SessionTools = ({ profilePath, context }) => [
+  createMemoryWriteTool(profilePath, context),
+];

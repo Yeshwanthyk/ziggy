@@ -292,9 +292,7 @@ describe("automation scheduler engine", () => {
               answer: "local reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () =>
@@ -524,9 +522,7 @@ describe("automation scheduler engine", () => {
           answer: "local reply",
           session: { id: "specialist", file: "/sessions/specialist.jsonl" },
         }),
-      openSpecialistChat: () =>
-        Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-      openChat: () =>
+      open: () =>
         Effect.succeed(
           makeChatHandle({
             prompt: () => Effect.never,

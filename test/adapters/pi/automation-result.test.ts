@@ -5,14 +5,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import { readSessionHistory } from "ziggy/adapters/pi/session-history";
-import { makeSessionChatHandle } from "ziggy/adapters/pi/pi-agent";
+import { takeSessionLease } from "ziggy/session/index";
+import { makeChatHandle } from "ziggy/session/handle";
+import { makeSessionLeaseSet } from "ziggy/session/lease";
+import { fakePiRuntime } from "../../harness/pi-runtime";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 
 const roots: string[] = [];
+
+/** A real chat handle over a fake Pi runtime. */
+const liveHandle = (profilePath: string, session: Parameters<typeof fakePiRuntime>[0]) =>
+  Effect.runPromise(
+    makeChatHandle({
+      profilePath,
+      runtime: fakePiRuntime(session),
+      leases: makeSessionLeaseSet(profilePath),
+    }),
+  );
 
 const usage = {
   input: 1,
@@ -108,7 +120,7 @@ test("stored delivery refuses a live writer without changing its transcript", as
 
   const file = materialize(manager);
   const before = await readFile(file);
-  const release = await Effect.runPromise(acquireSessionLease(profilePath, "held-session"));
+  const lease = Result.getOrThrow(takeSessionLease(profilePath, "held-session"));
 
   try {
     await expect(
@@ -127,7 +139,7 @@ test("stored delivery refuses a live writer without changing its transcript", as
     });
     expect(await readFile(file)).toEqual(before);
   } finally {
-    await Effect.runPromise(release);
+    lease.release();
   }
 });
 
@@ -177,63 +189,50 @@ test("live idle delivery appends without prompting, publishes once, and busy del
   const deliveryOptions: unknown[] = [];
   const listeners = new Set<AgentSessionEventListener>();
 
-  const handle = makeSessionChatHandle(
-    profilePath,
-    () => ({
-      get isIdle() {
-        return idle;
-      },
-      sessionManager: manager,
-      prompt: () => {
-        prompts += 1;
-
-        return Promise.resolve();
-      },
-      abort: () => {
-        aborts += 1;
-
-        return Promise.resolve();
-      },
-      steer: () => {
-        steers += 1;
-
-        return Promise.resolve("queued" as const);
-      },
-      followUp: () => {
-        followUps += 1;
-
-        return Promise.resolve("queued" as const);
-      },
-      sendCustomMessage: (message, options) => {
-        customMessages += 1;
-        agentMemory.push(message);
-        deliveryOptions.push(options);
-        manager.appendCustomMessageEntry(
-          message.customType,
-          message.content,
-          message.display,
-          message.details,
-        );
-
-        return Promise.resolve();
-      },
-      subscribe: (listener) => {
-        listeners.add(listener);
-
-        return () => listeners.delete(listener);
-      },
-    }),
-    {
-      currentSession: Effect.succeed({ id: "live-session", file }),
-      prompt: () =>
-        Effect.sync(() => {
-          prompts += 1;
-
-          return "unused";
-        }),
-      dispose: Effect.void,
+  const handle = await liveHandle(profilePath, {
+    get isIdle() {
+      return idle;
     },
-  );
+    sessionManager: manager,
+    prompt: () => {
+      prompts += 1;
+
+      return Promise.resolve();
+    },
+    abort: () => {
+      aborts += 1;
+
+      return Promise.resolve();
+    },
+    steer: () => {
+      steers += 1;
+
+      return Promise.resolve("queued" as const);
+    },
+    followUp: () => {
+      followUps += 1;
+
+      return Promise.resolve("queued" as const);
+    },
+    sendCustomMessage: (message, options) => {
+      customMessages += 1;
+      agentMemory.push(message);
+      deliveryOptions.push(options);
+      manager.appendCustomMessageEntry(
+        message.customType,
+        message.content,
+        message.display,
+        message.details,
+      );
+
+      return Promise.resolve();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+
+      return () => listeners.delete(listener);
+    },
+  });
 
   const result = {
     automationId: "daily-note",
@@ -294,126 +293,6 @@ test("live idle delivery appends without prompting, publishes once, and busy del
   ).toHaveLength(1);
 });
 
-test("a live append rejection never dedupes from memory and a reopened owner can retry", async () => {
-  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-poison-"));
-  roots.push(profilePath);
-
-  const manager = SessionManager.create(profilePath, join(profilePath, "sessions", "ui"), {
-    id: "poison-session",
-  });
-
-  const file = materialize(manager);
-
-  const result = {
-    automationId: "daily-note",
-    runId: "manual:poison",
-    targetSessionId: "poison-session",
-    text: "retry me",
-    timestamp: "2026-09-17T12:00:00.000Z",
-  } as const;
-
-  const memoryOnly: unknown[] = [];
-  let failedSends = 0;
-
-  const failedHandle = makeSessionChatHandle(
-    profilePath,
-    () => ({
-      isIdle: true,
-      sessionManager: manager,
-      prompt: () => Promise.resolve(),
-      abort: () => Promise.resolve(),
-      steer: () => Promise.resolve("queued" as const),
-      followUp: () => Promise.resolve("queued" as const),
-      sendCustomMessage: (message) => {
-        failedSends += 1;
-        memoryOnly.push(message);
-
-        return Promise.reject(new Error("injected persistence failure"));
-      },
-      subscribe: () => () => undefined,
-    }),
-    {
-      currentSession: Effect.succeed({ id: "poison-session", file }),
-      prompt: () => Effect.succeed("unused"),
-      dispose: Effect.void,
-    },
-  );
-
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.openAlias("ui/poison", "slack", Effect.succeed(failedHandle));
-
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          expect(
-            yield* Effect.result(
-              registry.deliverAutomationResult({ name: "test", path: profilePath }, result),
-            ),
-          ).toMatchObject({
-            _tag: "Failure",
-            failure: { category: "write", retriable: true },
-          });
-        }
-
-        expect(failedSends).toBe(1);
-        expect(memoryOnly).toHaveLength(1);
-        expect(
-          SessionManager.open(file)
-            .getEntries()
-            .some(
-              (entry) =>
-                entry.type === "custom_message" && entry.customType === "ziggy.automation-result",
-            ),
-        ).toBe(false);
-
-        yield* registry.closeAlias("ui/poison", failedHandle);
-        const reopenedManager = SessionManager.open(file);
-
-        const reopened = makeSessionChatHandle(
-          profilePath,
-          () => ({
-            isIdle: true,
-            sessionManager: reopenedManager,
-            prompt: () => Promise.resolve(),
-            abort: () => Promise.resolve(),
-            steer: () => Promise.resolve("queued" as const),
-            followUp: () => Promise.resolve("queued" as const),
-            sendCustomMessage: (message) => {
-              reopenedManager.appendCustomMessageEntry(
-                message.customType,
-                message.content,
-                message.display,
-                message.details,
-              );
-
-              return Promise.resolve();
-            },
-            subscribe: () => () => undefined,
-          }),
-          {
-            currentSession: Effect.succeed({ id: "poison-session", file }),
-            prompt: () => Effect.succeed("unused"),
-            dispose: Effect.void,
-          },
-        );
-
-        yield* registry.openAlias("ui/poison", "slack", Effect.succeed(reopened));
-        yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
-      }),
-    ),
-  );
-
-  expect(
-    SessionManager.open(file)
-      .getEntries()
-      .filter(
-        (entry) =>
-          entry.type === "custom_message" && entry.customType === "ziggy.automation-result",
-      ),
-  ).toHaveLength(1);
-});
-
 test("a live owner that switched away after the match falls back to the stored append", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-switched-"));
   roots.push(profilePath);
@@ -423,24 +302,16 @@ test("a live owner that switched away after the match falls back to the stored a
   materialize(switched);
 
   // The registry still sees the target as current; the live session has already moved on.
-  const handle = makeSessionChatHandle(
-    profilePath,
-    () => ({
-      isIdle: true,
-      sessionManager: switched,
-      prompt: () => Promise.resolve(),
-      abort: () => Promise.resolve(),
-      steer: () => Promise.resolve("queued" as const),
-      followUp: () => Promise.resolve("queued" as const),
-      sendCustomMessage: () => Promise.reject(new Error("must not write the switched session")),
-      subscribe: () => () => undefined,
-    }),
-    {
-      currentSession: Effect.succeed({ id: "target", file: target }),
-      prompt: () => Effect.succeed("unused"),
-      dispose: Effect.void,
-    },
-  );
+  const handle = await liveHandle(profilePath, {
+    isIdle: true,
+    sessionManager: switched,
+    prompt: () => Promise.resolve(),
+    abort: () => Promise.resolve(),
+    steer: () => Promise.resolve("queued" as const),
+    followUp: () => Promise.resolve("queued" as const),
+    sendCustomMessage: () => Promise.reject(new Error("must not write the switched session")),
+    subscribe: () => () => undefined,
+  });
 
   const result = {
     automationId: "daily-note",

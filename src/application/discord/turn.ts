@@ -178,14 +178,13 @@ export const makeDiscordTurnProcessor = ({
               }
             }
 
-            const open = agent.openChat(
+            const open = agent.open({
               target,
-              message.context,
-              join(target.path, "sessions", "discord", message.chatKey),
-              "continue",
-              undefined,
-              message.label === undefined ? undefined : `Discord · ${message.label}`,
-            );
+              context: message.context,
+              directory: join(target.path, "sessions", "discord", message.chatKey),
+              session: "continue",
+              name: message.label === undefined ? undefined : `Discord · ${message.label}`,
+            });
 
             chatState.handle =
               registry === undefined

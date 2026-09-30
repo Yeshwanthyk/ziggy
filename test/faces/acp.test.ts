@@ -46,10 +46,9 @@ const decodeNewSessionWithModels = Schema.decodeUnknownSync(
   }),
 );
 
-const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
+const stubAgent = (open: ZiggyAgentApi["open"]): ZiggyAgentApi => ({
   runOnce: () => Effect.never,
-  openChat,
-  openSpecialistChat: () => Effect.never,
+  open,
   runSpecialist: () => Effect.never,
 });
 
@@ -114,7 +113,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
         const app = yield* makeAcpAgent(
           target,
           false,
-          stubAgent((_target, context, directory, mode) => {
+          stubAgent(({ context, directory, session: mode }) => {
             opened = { context: context.kind, directory, mode };
 
             return Effect.succeed(handle);
@@ -179,7 +178,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
   expect(opened).toEqual({
     context: "local",
     directory: `/profile/sessions/acp/${result.session.sessionId}`,
-    mode: "fresh",
+    mode: "new",
   });
   expect(promptText).toBe(
     "Review this\n\nResource: spec\nURI: file:///workspace/spec.md\nDescription: the specification",
@@ -205,7 +204,7 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
         const app = yield* makeAcpAgent(
           target,
           true,
-          stubAgent((_target, context) => {
+          stubAgent(({ context }) => {
             groupId = context.kind === "group" ? context.groupId : undefined;
 
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
@@ -333,8 +332,7 @@ test("ACP routes sessions to a specialist when --agent is set", async () => {
           false,
           {
             runOnce: () => Effect.never,
-            openChat: () => Effect.never,
-            openSpecialistChat: (target, agentId) =>
+            open: ({ target, agent: agentId }) =>
               Effect.sync(() => {
                 opened.push(`${target.name}:${agentId}`);
 
@@ -424,11 +422,10 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
     const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
     const agent = {
       runOnce: () => Effect.never,
-      openChat: () => Effect.sync(() => {
+      open: () => Effect.sync(() => {
         console.log("incidental open log");
         return handle;
       }),
-      openSpecialistChat: () => Effect.never,
       runSpecialist: () => Effect.never,
     };
     const models = {

@@ -6,8 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
-import { Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Result } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
 import {
@@ -33,7 +32,7 @@ import {
   validateAutomationId,
   type AutomationTargetOutcome,
 } from "ziggy/domain/automation";
-import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { takeSessionLease, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
@@ -97,9 +96,7 @@ const harness = (
           session: { id: "specialist", file: join(context.sessionDirectory, "specialist.jsonl") },
         })),
       ),
-    openSpecialistChat: () =>
-      Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-    openChat: (target, context, sessionPath, mode, model) =>
+    open: ({ target, context, directory: sessionPath, session: mode, model }) =>
       Effect.sync(() => {
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
 
@@ -243,7 +240,7 @@ describe("automation run", () => {
     const outcome = await run(harness(events), target);
     expect(outcome).toEqual({ kind: "executed", delivery: { kind: "resolved", targets: [] } });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
       "reply:local reply",
@@ -362,7 +359,7 @@ describe("automation run", () => {
       delivery: { kind: "resolved", targets: [] },
     });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "model:anthropic/claude-sonnet/high",
       "prompt:Write the daily note.",
       "dispose",
@@ -628,7 +625,7 @@ describe("automation run", () => {
       delivery: { kind: "resolution-failed", category: "broadcasts-invalid" },
     });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
       "reply:local reply",
@@ -737,7 +734,7 @@ describe("automation run", () => {
       (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
     ).toHaveLength(1);
 
-    const release = await Effect.runPromise(acquireSessionLease(target.path, id));
+    const lease = Result.getOrThrow(takeSessionLease(target.path, id));
 
     try {
       const held = await run(harness([], { manualRunId: "manual:held" }), target);
@@ -759,7 +756,7 @@ describe("automation run", () => {
         (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
       ).toHaveLength(1);
     } finally {
-      await Effect.runPromise(release);
+      lease.release();
     }
   });
 
@@ -876,7 +873,7 @@ describe("automation run", () => {
     expect(result).toBe(databaseFailure);
     expect(finishCalls).toBe(1);
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
     ]);

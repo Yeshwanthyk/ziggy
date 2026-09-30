@@ -114,9 +114,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
             ),
@@ -207,9 +205,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.sync(() => {
               openChatCalls += 1;
 
@@ -353,9 +349,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text, options) =>
@@ -524,9 +518,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () => {
+          open: () => {
             openChatCalls += 1;
 
             return Effect.succeed(
@@ -606,9 +598,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: (target, context, sessionDirectory) =>
+          open: ({ target, context, directory: sessionDirectory }) =>
             Effect.sync(() => {
               events.push(`openChat:${target.name}:${JSON.stringify(context)}:${sessionDirectory}`);
 
@@ -696,9 +686,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) => {
@@ -815,9 +803,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () => Deferred.await(typingSeen).pipe(Effect.as("done")),
@@ -908,9 +894,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: (_target, _context, sessionDirectory) =>
+          open: ({ directory: sessionDirectory }) =>
             Effect.sync(() => {
               opened.push(sessionDirectory);
 
@@ -1033,9 +1017,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () =>
@@ -1157,9 +1139,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text: string) =>
@@ -1254,9 +1234,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text) =>
@@ -1346,9 +1324,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () => {
+          open: () => {
             promptCalls += 1;
 
             return Effect.succeed(
@@ -1424,9 +1400,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () =>
@@ -1516,9 +1490,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
+          open: () => Effect.succeed(makeChatHandle({ prompt: () => Effect.never })),
         };
 
         yield* Effect.raceFirst(
@@ -1604,9 +1576,7 @@ describe("Discord gateway boundary", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (text) =>

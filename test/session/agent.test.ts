@@ -22,27 +22,27 @@ import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
 import { createProfileAgentChildSession } from "ziggy/adapters/pi/session-lineage";
 import { profileResourceLoaderOptions } from "ziggy/adapters/pi/profile-resource-loader";
 import { specialistRuntime } from "ziggy/adapters/pi/specialist";
+import { extensionTools } from "ziggy/adapters/pi/profile-extension-tool";
 import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
 import type { PiResources } from "ziggy/adapters/pi/resources";
 import {
-  askOnce,
-  createLocalSessionManager,
-  currentPiSessionReference,
-  localMainSessionDirectory,
+  isSessionHeld,
   localSpecialistSessionDirectory,
-  makeSessionChatHandle,
-  openChat,
-  openSpecialistChat,
-  runSpecialist,
-} from "ziggy/adapters/pi/pi-agent";
+  openSession,
+  takeSessionLease,
+  type OpenSession,
+} from "ziggy/session/index";
+import { runOnce, runSpecialist } from "ziggy/session/agent";
+import { makeChatHandle } from "ziggy/session/handle";
+import { makeSessionLeaseSet } from "ziggy/session/lease";
+import { fakePiRuntime } from "../harness/pi-runtime";
 import {
   createChatEventProjector,
   progressToolDetail,
 } from "ziggy/adapters/pi/chat-event-projector";
 import { promptForAssistantText } from "ziggy/adapters/pi/prompt-turn";
 import { providerError } from "ziggy/adapters/pi/provider-failure";
-import { ProviderConfigError } from "ziggy/profile/index";
+import { ProviderConfigError, type ProfileTarget } from "ziggy/profile/index";
 
 const assistantMessage = (
   text: string,
@@ -141,237 +141,64 @@ afterEach(async () => {
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
-test("current Pi session reference is empty until materialized and follows session switches", async () => {
-  const profilePath = await temporaryProfile();
-  const sessionDirectory = join(profilePath, "sessions", "ui", "main");
-  const manager = SessionManager.create(profilePath, sessionDirectory, { id: "initial-session" });
-  const initialFile = manager.getSessionFile();
-
-  if (initialFile === undefined) throw new Error("persistent session did not allocate a file");
-
-  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toBeUndefined();
-
-  await writeFile(
-    initialFile,
-    `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: "initial-session",
-      timestamp: "2026-09-15T12:00:00.000Z",
-      cwd: profilePath,
-    })}\n`,
-    "utf8",
-  );
-  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toEqual({
-    id: "initial-session",
-    file: initialFile,
-  });
-
-  const switchedFile = join(sessionDirectory, "switched.jsonl");
-  await writeFile(
-    switchedFile,
-    `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: "switched-session",
-      timestamp: "2026-09-15T12:01:00.000Z",
-      cwd: profilePath,
-    })}\n`,
-    "utf8",
-  );
-  manager.setSessionFile(switchedFile);
-
-  expect(await Effect.runPromise(currentPiSessionReference(profilePath, manager))).toEqual({
-    id: "switched-session",
-    file: switchedFile,
-  });
-});
-
-test("run --session refuses a session held by another writer before creating Pi", async () => {
+const heldTranscript = async (id: string) => {
   const profilePath = await temporaryProfile();
   await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
-  const manager = createLocalSessionManager(profilePath, "main");
-  const file = manager.getSessionFile();
-
-  if (file === undefined) throw new Error("expected persistent session file");
-  await mkdir(join(profilePath, "sessions", "local", "main"), { recursive: true });
+  const directory = join(profilePath, "sessions", "chat");
+  await mkdir(directory, { recursive: true });
+  const file = join(directory, `${id}.jsonl`);
   await writeFile(
     file,
-    `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: manager.getSessionId(),
-      timestamp: new Date().toISOString(),
-      cwd: profilePath,
-    })}\n{"type":"message","id":"unfinished"}`,
+    `${JSON.stringify({ type: "session", version: 3, id, cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
   );
-  const before = await readFile(file);
-  const release = await Effect.runPromise(acquireSessionLease(profilePath, manager.getSessionId()));
 
-  try {
-    const exit = await Effect.runPromiseExit(
-      askOnce(
-        { path: profilePath, name: "Profile" },
-        "hello",
-        false,
-        { kind: "local" },
-        { sessionPath: file },
-      ),
-    );
+  return { profilePath, directory, file };
+};
 
-    const message = Exit.isFailure(exit)
-      ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))?.message
-      : undefined;
-
-    expect(message).toEqual(
-      expect.stringContaining("this session is open in another Ziggy process (pid "),
-    );
-    expect(await readFile(file)).toEqual(before);
-  } finally {
-    await Effect.runPromise(release);
-  }
+const openRequest = (profilePath: string, directory: string): OpenSession => ({
+  target: { path: profilePath, name: "Profile" },
+  context: { kind: "local" },
+  directory,
+  session: "continue",
 });
 
 test("a failed chat runtime build releases the transcript lease", async () => {
-  const profilePath = await temporaryProfile();
-
-  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
-
-  const directory = join(profilePath, "sessions", "chat");
-  await mkdir(directory, { recursive: true });
-
-  const file = join(directory, "reopen.jsonl");
-  await writeFile(
-    file,
-    `${JSON.stringify({ type: "session", version: 3, id: "reopen-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
-  );
-
-  const args = [
-    { path: profilePath, name: "Profile" },
-    { kind: "local" },
-    directory,
-    "continue",
-  ] as const;
+  const { profilePath, directory } = await heldTranscript("reopen-chat");
 
   const failed = await Effect.runPromiseExit(
-    openChat(...args, undefined, undefined, async () => {
-      throw new Error("injected runtime build failure");
+    openSession(openRequest(profilePath, directory), {
+      runtimeFactory: async () => {
+        throw new Error("injected runtime build failure");
+      },
     }),
   );
 
   expect(Exit.isFailure(failed)).toBe(true);
-
-  let reopenedFactoryCalls = 0;
-
-  const reopened = await Effect.runPromiseExit(
-    openChat(...args, undefined, undefined, (...factoryArgs) => {
-      reopenedFactoryCalls += 1;
-
-      return createAgentSessionRuntime(...factoryArgs);
-    }),
-  );
-
-  expect(reopenedFactoryCalls).toBe(1);
-
-  if (Exit.isSuccess(reopened)) await Effect.runPromise(reopened.value.dispose);
-});
-
-test("interrupting a pending runtime build releases the transcript lease", async () => {
-  const profilePath = await temporaryProfile();
-
-  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
-
-  const directory = join(profilePath, "sessions", "chat");
-  await mkdir(directory, { recursive: true });
-
-  await writeFile(
-    join(directory, "interrupted.jsonl"),
-    `${JSON.stringify({ type: "session", version: 3, id: "interrupted-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
-  );
-
-  const reached = Promise.withResolvers<void>();
-
-  const pending = Promise.withResolvers<AgentSessionRuntime>();
-
-  const running = Effect.runFork(
-    openChat(
-      { path: profilePath, name: "Profile" },
-      { kind: "local" },
-      directory,
-      "continue",
-      undefined,
-      undefined,
-      async () => {
-        reached.resolve();
-
-        return pending.promise;
-      },
-    ),
-  );
-
-  await reached.promise;
-  const interruption = Effect.runPromise(Fiber.interrupt(running));
-  pending.reject(new Error("injected interrupted build failure"));
-  await interruption;
-
-  let reopenedFactoryCalls = 0;
-  await Effect.runPromiseExit(
-    openChat(
-      { path: profilePath, name: "Profile" },
-      { kind: "local" },
-      directory,
-      "continue",
-      undefined,
-      undefined,
-      (...args) => {
-        reopenedFactoryCalls += 1;
-
-        return createAgentSessionRuntime(...args);
-      },
-    ),
-  );
-
-  expect(reopenedFactoryCalls).toBe(1);
+  expect(Result.getOrThrow(isSessionHeld(profilePath, "reopen-chat"))).toBe(false);
 });
 
 test("a held chat refuses before calling Pi's runtime factory", async () => {
-  const profilePath = await temporaryProfile();
-  await writeFile(join(profilePath, "SOUL.md"), "# Profile\n");
-  const directory = join(profilePath, "sessions", "chat");
-  await mkdir(directory, { recursive: true });
-  const file = join(directory, "held.jsonl");
-  await writeFile(
-    file,
-    `${JSON.stringify({ type: "session", version: 3, id: "held-chat", cwd: profilePath, timestamp: new Date().toISOString() })}\n`,
-  );
+  const { profilePath, directory, file } = await heldTranscript("held-chat");
   const before = await readFile(file);
-  const release = await Effect.runPromise(acquireSessionLease(profilePath, "held-chat"));
+  const lease = Result.getOrThrow(takeSessionLease(profilePath, "held-chat"));
   let factoryCalls = 0;
-
-  const factory: typeof createAgentSessionRuntime = (...args) => {
-    factoryCalls += 1;
-
-    return createAgentSessionRuntime(...args);
-  };
 
   try {
     const exit = await Effect.runPromiseExit(
-      openChat(
-        { path: profilePath, name: "Profile" },
-        { kind: "local" },
-        directory,
-        "continue",
-        undefined,
-        undefined,
-        factory,
-      ),
+      openSession(openRequest(profilePath, directory), {
+        runtimeFactory: (...args) => {
+          factoryCalls += 1;
+
+          return createAgentSessionRuntime(...args);
+        },
+      }),
     );
 
     expect(Exit.isFailure(exit)).toBe(true);
     expect(factoryCalls).toBe(0);
     expect(await readFile(file)).toEqual(before);
   } finally {
-    await Effect.runPromise(release);
+    lease.release();
   }
 });
 
@@ -520,37 +347,33 @@ describe("Pi provider failure classification", () => {
     const events: Array<ChatEvent> = [];
     const sessionManager = SessionManager.inMemory("/profile");
 
-    const handle = makeSessionChatHandle(
-      "/profile",
-      () => ({
-        get isIdle() {
-          return idle;
-        },
-        prompt: () => Promise.resolve(),
-        abort: () => {
-          aborted += 1;
-
-          return new Promise<void>((resolve) => {
-            releaseAbort = resolve;
-          });
-        },
-        steer: () => Promise.resolve("queued" as const),
-        followUp: () => Promise.resolve("queued" as const),
-        sendCustomMessage: () => Promise.resolve(),
-        sessionManager,
-        subscribe: (listener) => {
-          listeners.add(listener);
-
-          return () => {
-            listeners.delete(listener);
-          };
-        },
-      }),
-      {
-        currentSession: Effect.succeed(undefined),
-        prompt: () => Effect.succeed("unused"),
-        dispose: Effect.void,
+    const runtime = fakePiRuntime({
+      get isIdle() {
+        return idle;
       },
+      abort: () => {
+        aborted += 1;
+
+        if (aborted > 1) return Promise.resolve();
+
+        return new Promise<void>((resolve) => {
+          releaseAbort = resolve;
+        });
+      },
+      steer: () => Promise.resolve("queued" as const),
+      followUp: () => Promise.resolve("queued" as const),
+      sessionManager,
+      subscribe: (listener) => {
+        listeners.add(listener);
+
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    });
+
+    const handle = await Effect.runPromise(
+      makeChatHandle({ profilePath: "/profile", runtime, leases: makeSessionLeaseSet("/profile") }),
     );
 
     const unsubscribe = handle.subscribe((event) => events.push(event));
@@ -664,12 +487,12 @@ describe("Pi ephemeral prompt context", () => {
       );
 
       const handle = await Effect.runPromise(
-        openChat(
-          { path: profilePath, name: "Profile" },
-          { kind: "group", groupId: "slC123" },
-          sessionDirectory,
-          "fresh",
-        ),
+        openSession({
+          target: { path: profilePath, name: "Profile" },
+          context: { kind: "group", groupId: "slC123" },
+          directory: sessionDirectory,
+          session: "new",
+        }),
       );
 
       try {
@@ -792,12 +615,12 @@ describe("Profile-authoritative model selection", () => {
       );
 
       const handle = await Effect.runPromise(
-        openChat(
-          { path: profilePath, name: "Profile" },
-          { kind: "group", groupId: "slC123" },
-          sessionDirectory,
-          "continue",
-        ),
+        openSession({
+          target: { path: profilePath, name: "Profile" },
+          context: { kind: "group", groupId: "slC123" },
+          directory: sessionDirectory,
+          session: "continue",
+        }),
       );
 
       try {
@@ -1067,14 +890,14 @@ describe("Profile runtime activation rollback", () => {
     };
 
     const exit = await Effect.runPromiseExit(
-      openChat(
-        { path: profilePath, name: "Profile" },
-        { kind: "local" },
-        join(profilePath, "sessions"),
-        "fresh",
-        undefined,
-        profileExtensions,
-        runtimeFactory,
+      openSession(
+        {
+          target: { path: profilePath, name: "Profile" },
+          context: { kind: "local" },
+          directory: join(profilePath, "sessions"),
+          session: "new",
+        },
+        { extensions: profileExtensions, runtimeFactory },
       ),
     );
 
@@ -1145,14 +968,14 @@ describe("Profile runtime activation rollback", () => {
     };
 
     const exit = await Effect.runPromiseExit(
-      openChat(
-        { path: profilePath, name: "Profile" },
-        { kind: "local" },
-        join(profilePath, "sessions"),
-        "fresh",
-        undefined,
-        profileExtensions,
-        runtimeFactory,
+      openSession(
+        {
+          target: { path: profilePath, name: "Profile" },
+          context: { kind: "local" },
+          directory: join(profilePath, "sessions"),
+          session: "new",
+        },
+        { extensions: profileExtensions, runtimeFactory },
       ),
     );
 
@@ -1218,14 +1041,18 @@ describe("Profile extension tool admission", () => {
     };
 
     const parentExit = await Effect.runPromiseExit(
-      openChat(
-        { path: profilePath, name: "Profile" },
-        { kind: "local" },
-        join(profilePath, "sessions", "parent"),
-        "fresh",
-        undefined,
-        profileExtensions,
-        runtimeFactory,
+      openSession(
+        {
+          target: { path: profilePath, name: "Profile" },
+          context: { kind: "local" },
+          directory: join(profilePath, "sessions", "parent"),
+          session: "new",
+        },
+        {
+          extensions: profileExtensions,
+          tools: [extensionTools(profileExtensions)],
+          runtimeFactory,
+        },
       ),
     );
 
@@ -1463,11 +1290,16 @@ describe("Profile agent admission across faces", () => {
     const target = { path: profilePath, name: "Profile" };
 
     const results = await Promise.all([
-      Effect.runPromise(askOnce(target, "prompt", false, { kind: "local" }).pipe(Effect.result)),
       Effect.runPromise(
-        openChat(target, { kind: "local" }, join(profilePath, "sessions", "gateway")).pipe(
-          Effect.result,
-        ),
+        runOnce(target, "prompt", false, { kind: "local" }, undefined).pipe(Effect.result),
+      ),
+      Effect.runPromise(
+        openSession({
+          target,
+          context: { kind: "local" },
+          directory: join(profilePath, "sessions", "gateway"),
+          session: "continue",
+        }).pipe(Effect.result),
       ),
     ]);
 
@@ -1482,44 +1314,12 @@ describe("Profile agent admission across faces", () => {
   });
 });
 
-describe("local session routing", () => {
-  test("main continuation is isolated while a plain run stays fresh at the root", async () => {
-    const profilePath = await temporaryProfile();
-    const mainDirectory = localMainSessionDirectory(profilePath);
-    const tui = createLocalSessionManager(profilePath, "main");
-    tui.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: "first main turn" }],
-      timestamp: Date.now(),
-    });
-    tui.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "first main reply" }],
-      api: "test",
-      provider: "test",
-      model: "test",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    });
-    const continuedRun = createLocalSessionManager(profilePath, "main");
-    const plainRun = createLocalSessionManager(profilePath, "fresh");
-    const nextPlainRun = createLocalSessionManager(profilePath, "fresh");
-
-    expect(tui.getSessionDir()).toBe(mainDirectory);
-    expect(continuedRun.getSessionDir()).toBe(mainDirectory);
-    expect(continuedRun.getSessionFile()).toBe(tui.getSessionFile());
-    expect(plainRun.getSessionDir()).toBe(join(profilePath, "sessions"));
-    expect(nextPlainRun.getSessionDir()).toBe(join(profilePath, "sessions"));
-    expect(nextPlainRun.getSessionFile()).not.toBe(plainRun.getSessionFile());
-  });
+const specialistRail = (target: ProfileTarget, agent: string): OpenSession => ({
+  target,
+  context: { kind: "local" },
+  directory: localSpecialistSessionDirectory(target.path, agent),
+  session: "continue",
+  agent,
 });
 
 describe("specialist chat rails", () => {
@@ -1528,7 +1328,7 @@ describe("specialist chat rails", () => {
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
     expect(
       await Effect.runPromiseExit(
-        openSpecialistChat({ path: profilePath, name: "Profile" }, "missing"),
+        openSession(specialistRail({ path: profilePath, name: "Profile" }, "missing")),
       ),
     ).toEqual(
       Exit.fail(
@@ -1582,12 +1382,14 @@ describe("specialist chat rails", () => {
       );
 
       const target = { path: profilePath, name: "Profile" };
-      const handle = await Effect.runPromise(openSpecialistChat(target, "reviewer"));
+      const handle = await Effect.runPromise(openSession(specialistRail(target, "reviewer")));
 
       try {
         await Effect.runPromise(handle.prompt("first rail turn"));
 
-        const competing = await Effect.runPromiseExit(openSpecialistChat(target, "reviewer"));
+        const competing = await Effect.runPromiseExit(
+          openSession(specialistRail(target, "reviewer")),
+        );
 
         const competingMessage = Exit.isFailure(competing)
           ? Option.getOrUndefined(Cause.findErrorOption(competing.cause))?.message

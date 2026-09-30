@@ -28,7 +28,7 @@ import {
   type DiscordSocketError,
 } from "../../adapters/discord/socket";
 import { writeDiscordHealth } from "../../adapters/fs/discord-health";
-import type { ZiggyAgentError } from "../../domain/agent";
+import type { ProfileSpecialistError } from "../../domain/agent";
 import {
   DiscordIngressDatabaseError,
   type DiscordIngressPayload as InboundMessage,
@@ -440,7 +440,7 @@ export const makeDiscordGateway = (
               Effect.catch(
                 (
                   failure:
-                    | ZiggyAgentError
+                    | ProfileSpecialistError
                     | DiscordApiError
                     | DiscordIngressDatabaseError
                     | UiGatewayError,

@@ -15,6 +15,7 @@ import {
 import { Effect, Queue, Result, Schema, Semaphore, type Scope } from "effect";
 import packageJson from "../../package.json" with { type: "json" };
 import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../application/agent";
+import { localSpecialistSessionDirectory } from "../application/agent";
 import { type ModelsApi, type ProfileTarget } from "../profile";
 
 /** Buzz/ACP unstable session-model state (SessionModelState). */
@@ -246,13 +247,21 @@ export const makeAcpAgent = (
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
                 (specialAgent === undefined
-                  ? agentApi.openChat(
+                  ? agentApi.open({
                       target,
-                      shared ? { kind: "group", groupId: `acp-${sessionId}` } : { kind: "local" },
-                      join(target.path, "sessions", "acp", sessionId),
-                      "fresh",
-                    )
-                  : agentApi.openSpecialistChat(target, specialAgent)
+                      context: shared
+                        ? { kind: "group", groupId: `acp-${sessionId}` }
+                        : { kind: "local" },
+                      directory: join(target.path, "sessions", "acp", sessionId),
+                      session: "new",
+                    })
+                  : agentApi.open({
+                      target,
+                      context: { kind: "local" },
+                      directory: localSpecialistSessionDirectory(target.path, specialAgent),
+                      session: "continue",
+                      agent: specialAgent,
+                    })
                 ).pipe(
                   Effect.mapError(() =>
                     RequestError.internalError(

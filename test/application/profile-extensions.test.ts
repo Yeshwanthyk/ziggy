@@ -23,7 +23,7 @@ import {
   inspectPiPackageHealth,
   makeProfileExtensionPreflight,
 } from "ziggy/adapters/pi/profile-extension-preflight";
-import { openChat } from "ziggy/adapters/pi/pi-agent";
+import { openSession } from "ziggy/session/index";
 import {
   makeProfileExtensions,
   type ProfileExtensionAutomationOperations,
@@ -522,13 +522,14 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
   const service = makeService(noPreflight, noLock);
 
   const result = await Effect.runPromise(
-    openChat(
-      fixture.target,
-      { kind: "local" },
-      join(fixture.profilePath, "sessions"),
-      "fresh",
-      undefined,
-      service,
+    openSession(
+      {
+        target: fixture.target,
+        context: { kind: "local" },
+        directory: join(fixture.profilePath, "sessions"),
+        session: "new",
+      },
+      { extensions: service },
     ).pipe(Effect.result),
   );
 

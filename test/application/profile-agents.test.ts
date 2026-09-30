@@ -22,9 +22,7 @@ const profile = async () => {
 
 const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
   runOnce: () => Effect.succeed(0),
-  openSpecialistChat: () =>
-    Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-  openChat: () =>
+  open: () =>
     Effect.succeed(
       makeChatHandle({ prompt: () => Effect.succeed("unused"), dispose: Effect.void }),
     ),
