@@ -6,7 +6,7 @@ import {
   type UiSessionRef,
 } from "../../domain/ui-gateway";
 import type { ProfileId } from "../../domain/profile-directory";
-import type { ChatRegistryEvent } from "../chat-registry";
+import type { LiveSessionEvent } from "../../resident/live-sessions";
 import { boundedText } from "./errors";
 
 const decodeEventFrame = Schema.decodeUnknownSync(UiEventFrame);
@@ -40,7 +40,7 @@ const wireTextBytes = (value: string, maximum: number): string => {
 export const eventFrame = (
   profileId: ProfileId,
   ref: UiSessionRef,
-  event: ChatRegistryEvent,
+  event: LiveSessionEvent,
   epoch: string,
   correlationId?: UiCommandId,
 ): UiEventFrameValue => {

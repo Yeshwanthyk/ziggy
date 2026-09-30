@@ -78,6 +78,8 @@ export interface ChatHandleOptions {
 
 const transcriptChanged: ChatEvent = { kind: "session-state", scope: "transcript" };
 
+const modelChanged: ChatEvent = { kind: "session-state", scope: "model" };
+
 /** Pi rethrows a lease refusal from the runtime factory; keep it typed. */
 const piStep = <A>(profilePath: string, operation: string, run: () => Promise<A>) =>
   Effect.tryPromise({
@@ -242,6 +244,13 @@ export const makeChatHandle = (
         : { providerId: model.provider, modelId: model.id, thinking: thinkingLevel };
     };
 
+    /** Watchers learn about a model or thinking change while the control still holds the turn. */
+    const modelChangedState = (): ChatSessionModelState => {
+      publish(modelChanged);
+
+      return modelState();
+    };
+
     const prompt = (text: string, promptOptions?: Parameters<ChatHandle["prompt"]>[1]) =>
       (options.prepare?.(text) ?? Effect.succeed(text)).pipe(
         Effect.flatMap((prepared) => {
@@ -366,6 +375,19 @@ export const makeChatHandle = (
               onSome: Effect.succeed,
             }),
           ),
+          Effect.tap((appended) =>
+            appended
+              ? Effect.sync(() =>
+                  publish({
+                    kind: "automation-result",
+                    automationId: result.automationId,
+                    runId: result.runId,
+                    text: [...automationResultContent(result)].slice(0, 1_024).join(""),
+                    timestamp: new Date().toISOString(),
+                  }),
+                )
+              : Effect.void,
+          ),
         );
 
     const whileStreaming = (
@@ -417,14 +439,14 @@ export const makeChatHandle = (
                         })
                       : providerError(profilePath, "set session model", cause),
                 });
-          }).pipe(Effect.andThen(Effect.sync(modelState))),
+          }).pipe(Effect.andThen(Effect.sync(modelChangedState))),
         ),
       setThinkingLevel: (level) =>
         control(
           Effect.sync(() => {
             runtime.session.setThinkingLevel(level, { persist: false });
 
-            return modelState();
+            return modelChangedState();
           }),
         ),
       resume: (sessionId) =>

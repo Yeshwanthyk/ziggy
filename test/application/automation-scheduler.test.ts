@@ -24,7 +24,7 @@ import {
   AutomationSchedulerError,
   AutomationScheduleSuperseded,
 } from "ziggy/domain/automation";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import {
@@ -63,9 +63,9 @@ const runScheduler = (
   Effect.scoped(
     Effect.gen(function* () {
       const owner = yield* acquireGatewayOwner(target);
-      const registry = yield* makeChatRegistry(target.path);
+      const live = yield* makeLiveSessions();
 
-      return yield* scheduler.run(target, owner, registry);
+      return yield* scheduler.run(target, owner, live);
     }),
   ).pipe(
     Effect.mapError((cause) =>

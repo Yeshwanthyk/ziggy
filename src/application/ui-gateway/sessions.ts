@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Effect, Option, Predicate, Schema, Semaphore } from "effect";
+import { Effect, Option, Schema } from "effect";
 import {
   UiSessionHistoryParams,
   UiSessionOpenParams,
@@ -22,12 +22,13 @@ import {
 } from "../../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
-import type { ChatHandle, ChatPromptOptions } from "../agent";
+import type { ChatPromptOptions } from "../agent";
 import { localSpecialistSessionDirectory } from "../../agents";
-import type { ChatRegistryEvent, ChatRegistryListEntry } from "../chat-registry";
+import type { LiveSessionEvent, LiveSessionView } from "../../resident/live-sessions";
 import {
   badParams,
   boundedText,
+  liveFailure,
   protocolFailure,
   safeFailureMessage,
   toGatewayError,
@@ -96,7 +97,7 @@ const sessionRef = (
   key,
 });
 
-const liveSessionProjection = (profileId: ProfileId, entry: ChatRegistryListEntry) => {
+const liveSessionProjection = (profileId: ProfileId, entry: LiveSessionView) => {
   const base = {
     ref: sessionRef(profileId, entry.key),
     kind: entry.kind,
@@ -132,7 +133,7 @@ const resumableTranscript = (path: string): boolean => {
   );
 };
 
-const resumableEntry = (entry: ChatRegistryListEntry): boolean =>
+const resumableEntry = (entry: LiveSessionView): boolean =>
   entry.kind === "ui" &&
   entry.context?.kind === "local" &&
   entry.agentId === undefined &&
@@ -147,20 +148,59 @@ export const makeSessionDispatcher = (
   serverEpoch: string,
   ensureGroup: ReturnType<typeof makeEnsureGroup>,
 ) => {
-  // A switch must publish its transcript reset before another switch can start. The Pi control
-  // lock covers the switch itself, but not this gateway-owned replay publication.
-  const sessionControls = new WeakMap<ChatHandle, ReturnType<typeof Semaphore.makeUnsafe>>();
+  const liveEntry = (branch: UiGatewayBranch, key: UiSessionKey) =>
+    branch.live.get(key).pipe(Effect.mapError(liveFailure));
 
-  const withSessionControl = <A, E>(handle: ChatHandle, effect: Effect.Effect<A, E>) => {
-    let permit = sessionControls.get(handle);
+  const uiEntry = (branch: UiGatewayBranch, key: UiSessionKey) =>
+    liveEntry(branch, key).pipe(
+      Effect.filterOrFail(
+        (entry) => entry.kind === "ui",
+        () => protocolFailure("watch_only", `${key} is watch-only`),
+      ),
+    );
 
-    if (permit === undefined) {
-      permit = Semaphore.makeUnsafe(1);
-      sessionControls.set(handle, permit);
-    }
+  /** Start a prompt that outlives this request; its failure reaches watchers as an error event. */
+  const submit = (
+    branch: UiGatewayBranch,
+    key: UiSessionKey,
+    text: string,
+    options?: ChatPromptOptions,
+  ) =>
+    uiEntry(branch, key).pipe(
+      Effect.andThen(
+        branch.live.runExclusive(key, (handle) =>
+          Effect.suspend(() => {
+            let errorSeen = false;
 
-    return permit.withPermit(effect);
-  };
+            const unsubscribe = handle.subscribe((event) => {
+              if (event.kind === "error") errorSeen = true;
+            });
+
+            return handle.prompt(text, options).pipe(
+              Effect.asVoid,
+              Effect.catch((cause) =>
+                (errorSeen
+                  ? Effect.void
+                  : branch.live
+                      .publish(key, {
+                        kind: "error",
+                        message: safeFailureMessage(cause, "UI session prompt failed"),
+                      })
+                      // A session closed mid-turn has no watcher left to tell.
+                      .pipe(Effect.catchTag("LiveSessionRefused", () => Effect.void))
+                ).pipe(
+                  Effect.andThen(Effect.logWarning("UI session prompt failed", { key, cause })),
+                ),
+              ),
+              Effect.ensuring(Effect.sync(unsubscribe)),
+            );
+          }),
+        ),
+      ),
+      Effect.mapError((cause) =>
+        cause._tag === "LiveSessionRefused" ? liveFailure(cause) : cause,
+      ),
+    );
 
   const subscribe = (
     send: (frame: string) => void,
@@ -181,11 +221,11 @@ export const makeSessionDispatcher = (
         protocolFailure("replay_gap", "server epoch changed; reload session history"),
       );
 
-    const onEvent = (event: ChatRegistryEvent) => {
+    const onEvent = (event: LiveSessionEvent) => {
       send(encodeEvent(eventFrame(branch.profileId, ref, event, serverEpoch, correlationId)));
     };
 
-    return branch.registry.subscribeSequenced(ref.key, onEvent, afterSeq);
+    return branch.live.watch(ref.key, onEvent, afterSeq).pipe(Effect.mapError(liveFailure));
   };
 
   return (
@@ -202,7 +242,7 @@ export const makeSessionDispatcher = (
           );
 
           const branch = yield* route(params.profileId);
-          const live = yield* branch.registry.list;
+          const live = yield* branch.live.list;
 
           const stored = yield* config.sessions
             .list(branch.target)
@@ -228,9 +268,7 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
 
           if (params.ref.kind === "live") {
-            const entry = yield* branch.registry
-              .get(params.ref.key)
-              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+            const entry = yield* liveEntry(branch, params.ref.key);
 
             const current = yield* entry.handle.currentSession.pipe(
               Effect.mapError((cause) => toGatewayError(request.method, cause)),
@@ -273,9 +311,7 @@ export const makeSessionDispatcher = (
           if (params.ref.kind === "stored") {
             reference = params.ref.id;
           } else {
-            const entry = yield* branch.registry
-              .get(params.ref.key)
-              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+            const entry = yield* liveEntry(branch, params.ref.key);
 
             const current = yield* entry.handle.currentSession.pipe(
               Effect.mapError((cause) => toGatewayError(request.method, cause)),
@@ -379,19 +415,7 @@ export const makeSessionDispatcher = (
           const metadata =
             params.agentId === undefined ? { context } : { context, agentId: params.agentId };
 
-          yield* branch.registry
-            .getOrOpenUi(key, open, metadata)
-            .pipe(
-              Effect.mapError((cause) =>
-                Predicate.isTagged(cause.cause, "SessionHeld")
-                  ? protocolFailure(
-                      "session_busy",
-                      "This session is held by another process; close it there or start a new session",
-                      cause.cause,
-                    )
-                  : cause,
-              ),
-            );
+          yield* branch.live.acquire(key, "ui", open, metadata).pipe(Effect.mapError(liveFailure));
           const ref = sessionRef(branch.profileId, key);
           const subscriptionKey = `${branch.profileId}:${key}`;
 
@@ -421,7 +445,7 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
 
           const entry =
-            params.ref.kind === "live" ? yield* branch.registry.get(params.ref.key) : undefined;
+            params.ref.kind === "live" ? yield* liveEntry(branch, params.ref.key) : undefined;
 
           const canResume = entry !== undefined && resumableEntry(entry);
 
@@ -472,7 +496,7 @@ export const makeSessionDispatcher = (
 
           const ref = params.ref;
           const branch = yield* route(ref.profileId);
-          const entry = yield* branch.registry.get(ref.key);
+          const entry = yield* liveEntry(branch, ref.key);
 
           if (!resumableEntry(entry))
             return yield* protocolFailure(
@@ -487,13 +511,10 @@ export const makeSessionDispatcher = (
           if (!resumableTranscript(target.path))
             return yield* protocolFailure("watch_only", "Only web transcripts can be resumed here");
 
-          const result = yield* withSessionControl(
-            entry.handle,
-            Effect.uninterruptible(
-              entry.handle
-                .resume(target.id)
-                .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
-            ),
+          const result = yield* Effect.uninterruptible(
+            entry.handle
+              .resume(target.id)
+              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
           );
 
           return {
@@ -535,32 +556,18 @@ export const makeSessionDispatcher = (
 
           const ref = params.ref;
           const branch = yield* route(ref.profileId);
-          const entry = yield* branch.registry.get(ref.key);
+          const entry = yield* liveEntry(branch, ref.key);
 
           if (entry.kind !== "ui")
             return yield* protocolFailure("watch_only", "channel sessions cannot be switched here");
 
-          const change = (
+          const state = yield* (
             params.operation === "model"
               ? entry.handle.setModel(params.providerId, params.modelId)
               : params.operation === "thinking"
                 ? entry.handle.setThinkingLevel(params.thinking)
                 : entry.handle.modelState
-          ).pipe(
-            Effect.mapError((cause) => toGatewayError(request.method, cause)),
-            Effect.tap(() =>
-              params.operation === "status"
-                ? Effect.void
-                : branch.registry.publish(ref.key, {
-                    kind: "session-state",
-                    scope: "model",
-                  }),
-            ),
-          );
-
-          const state = yield* params.operation === "status"
-            ? change
-            : withSessionControl(entry.handle, change);
+          ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
           return {
             profileId: branch.profileId,
@@ -626,7 +633,10 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
           subscriptions.get(`${params.ref.profileId}:${params.ref.key}`)?.();
           subscriptions.delete(`${params.ref.profileId}:${params.ref.key}`);
-          yield* branch.registry.closeUi(params.ref.key);
+          yield* uiEntry(branch, params.ref.key);
+          yield* branch.live
+            .release(params.ref.key)
+            .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
           return { acknowledged: true as const };
         });
@@ -645,9 +655,7 @@ export const makeSessionDispatcher = (
           const branch = yield* route(params.ref.profileId);
 
           if (request.method === "prompt.submit") {
-            const live = yield* branch.registry
-              .get(params.ref.key)
-              .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+            const live = yield* liveEntry(branch, params.ref.key);
 
             const group = live.context?.kind === "group" ? live.context : undefined;
 
@@ -720,11 +728,13 @@ export const makeSessionDispatcher = (
                   );
 
                 answers.push(child);
-                yield* branch.registry.publish(params.ref.key, {
-                  kind: "voice",
-                  agentId: child.agentId,
-                  text: child.answer,
-                });
+                yield* branch.live
+                  .publish(params.ref.key, {
+                    kind: "voice",
+                    agentId: child.agentId,
+                    text: child.answer,
+                  })
+                  .pipe(Effect.mapError(liveFailure));
               }
 
               const synthesisContext = boundedText(
@@ -739,19 +749,22 @@ export const makeSessionDispatcher = (
               const options: ChatPromptOptions =
                 synthesisContext.length === 0 ? {} : { ephemeralContext: synthesisContext };
 
-              yield* withSessionControl(
-                live.handle,
-                branch.registry.submit(params.ref.key, params.text, options),
-              );
+              yield* submit(branch, params.ref.key, params.text, options);
             } else {
-              yield* withSessionControl(
-                live.handle,
-                branch.registry.submit(params.ref.key, params.text),
-              );
+              yield* submit(branch, params.ref.key, params.text);
             }
-          } else if (request.method === "session.steer")
-            yield* branch.registry.steer(params.ref.key, params.text);
-          else yield* branch.registry.followUp(params.ref.key, params.text);
+          } else {
+            const entry = yield* uiEntry(branch, params.ref.key);
+
+            if (request.method === "session.steer" && entry.idle)
+              return yield* protocolFailure("not_streaming", `${params.ref.key} is not streaming`);
+
+            yield* (
+              request.method === "session.steer"
+                ? entry.handle.steer(params.text)
+                : entry.handle.followUp(params.text)
+            ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
+          }
 
           return { acknowledged: true as const };
         });
@@ -766,7 +779,14 @@ export const makeSessionDispatcher = (
           }
 
           const branch = yield* route(params.ref.profileId);
-          yield* branch.registry.abort(params.ref.key);
+          const entry = yield* uiEntry(branch, params.ref.key);
+
+          if (!entry.idle) {
+            yield* entry.handle.abort.pipe(
+              Effect.mapError((cause) => toGatewayError(request.method, cause)),
+            );
+            yield* branch.live.interrupt(params.ref.key);
+          }
 
           return { acknowledged: true as const };
         });

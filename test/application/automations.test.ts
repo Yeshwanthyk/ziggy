@@ -36,7 +36,7 @@ import { takeSessionLease, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 import { apiFailure } from "ziggy/application/delivery";
 import { ProviderConfigError, type ProfileTarget } from "ziggy/profile/index";
@@ -574,9 +574,9 @@ describe("automation run", () => {
         Effect.gen(function* () {
           yield* TestClock.setTime(observedAt);
           const owner = yield* acquireGatewayOwner(target);
-          const registry = yield* makeChatRegistry(target.path);
+          const live = yield* makeLiveSessions();
           const scheduler = makeAutomationScheduler({ run: () => Effect.never });
-          const fiber = yield* Effect.forkScoped(scheduler.run(target, owner, registry));
+          const fiber = yield* Effect.forkScoped(scheduler.run(target, owner, live));
 
           while (
             (yield* readAutomationStatus(target.path, observedAt)).heartbeatAtMs !== observedAt

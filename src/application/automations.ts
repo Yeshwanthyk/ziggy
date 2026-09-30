@@ -35,8 +35,8 @@ import type { Deliver, DeliveryFailure } from "./delivery";
 import { deliverDiscord } from "./discord-gateway";
 import { deliverTelegram } from "./gateway";
 import { deliverSlack } from "./slack-gateway";
-import type { ChatRegistryApi } from "./chat-registry";
 import { type ProfileTarget } from "../profile";
+import type { LiveSessionsApi } from "../resident/live-sessions";
 
 export type AutomationError =
   | AutomationInvalid
@@ -58,7 +58,8 @@ export interface AutomationsApi {
 }
 
 export interface AutomationInvocationContext {
-  readonly registry?: ChatRegistryApi;
+  /** Conversation results for an open session go through its handle, so watchers see them. */
+  readonly live?: LiveSessionsApi;
 }
 
 export class Automations extends Context.Service<Automations, AutomationsApi>()(
@@ -187,10 +188,31 @@ const deliver = (
         timestamp,
       };
 
+      const stored = capabilities.appendStoredResult(profile.path, result);
+
+      const owner =
+        context?.live === undefined
+          ? undefined
+          : yield* context.live
+              .findBySessionId(result.targetSessionId)
+              .pipe(
+                Effect.mapError(
+                  (): DeliveryFailure => ({ category: "owner-unavailable", retriable: true }),
+                ),
+              );
+
       return yield* (
-        context?.registry === undefined
-          ? capabilities.appendStoredResult(profile.path, result)
-          : context.registry.deliverAutomationResult(profile, result)
+        owner === undefined
+          ? stored
+          : owner.handle.appendAutomationResult(result).pipe(
+              // The owner switched transcripts or lost its lease; the target is now stored.
+              Effect.catchIf(
+                (failure) =>
+                  failure.category === "destination-missing" || failure.category === "session-held",
+                () => stored,
+              ),
+              Effect.asVoid,
+            )
       ).pipe(
         Effect.mapError(
           (failure): DeliveryFailure => ({

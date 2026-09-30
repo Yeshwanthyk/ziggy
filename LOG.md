@@ -1469,3 +1469,10 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
   branch and the channel loops next to the registry; shared-UI branches for other Profiles get an
   empty book, as before.
 - The label-keeping test moved to `test/resident/destinations.test.ts`.
+
+## Step 7: live sessions replace the chat registry
+
+- `src/resident/live-sessions.ts` (`LiveSessions`) replaces `application/chat-registry.ts`: `acquire`, `release`, `get`, `list`, `findBySessionId`, `watch` (replay ring, resume cursor), `publish`, and `runExclusive`/`interrupt` for background UI turns. Refusals are one `LiveSessionRefused` with a `reason`; the UI maps reasons to protocol codes in `ui-gateway/errors.ts` (`liveFailure`), so channel runtimes no longer catch `UiGatewayError`. It is about 360 lines, not the planned 220: the open/close state machine and the owned turn fibers stayed.
+- UI prompt verbs (submit, steer, follow-up, abort, close) live in `ui-gateway/sessions.ts`. The per-handle `WeakMap` lock is gone: the handle's own `control` refuses a prompt during resume or a model switch (SessionBusy), and the handle publishes the transcript reset and the model change itself, while it still holds the turn.
+- Conversation delivery moved into `automations.ts`: find the live owner by session id, append through its handle (which publishes `automation-result`), fall back to the stored append when there is no owner, the owner switched away, or the lease is held elsewhere. The registry's global fence is gone; the per-session writer lease is the guard.
+- Tests: `test/resident/live-sessions.test.ts` (6) and `test/session/handle.test.ts` (a prompt during a resume is refused and the reset lands before the handle frees). Deleted the registry tests and the three gateway lock-choreography tests. `bun run check`, 746 unit and 44 e2e pass.

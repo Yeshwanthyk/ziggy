@@ -16,7 +16,7 @@ import type {
 } from "../../domain/discord-health";
 import type { ChatHandle } from "../agent";
 import type { DestinationBook } from "../../resident/destinations";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { type ProfileTarget } from "../../profile";
 
 export type DiscordGatewayError = DiscordApiError | DiscordIngressDatabaseError;
@@ -89,7 +89,7 @@ export interface DiscordGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: DiscordGatewayConfig,
-    registry?: ChatRegistryApi,
+    live?: LiveSessionsApi,
     destinations?: DestinationBook,
   ) => Effect.Effect<never, DiscordGatewayError>;
 }

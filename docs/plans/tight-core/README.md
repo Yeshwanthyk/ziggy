@@ -589,7 +589,7 @@ read the artifact back first.
       the automation docs;
     - the chat APIs take a base URL, so the harness can prove Slack, Discord and Telegram delivery
       against the fake server.
-  - [ ] `resident/live-sessions.ts`:
+  - [x] `resident/live-sessions.ts`:
     - split out the destination book;
     - move delivery into `automations.ts` and drop the fence;
     - delete the transcript reset;

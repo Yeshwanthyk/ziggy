@@ -38,9 +38,8 @@ import {
   initialDiscordHealth,
   type DiscordHealthEvent,
 } from "../../domain/discord-health";
-import type { UiGatewayError } from "../../domain/ui-gateway";
 import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionRefused, LiveSessionsApi } from "../../resident/live-sessions";
 import {
   retryDiscordDelivery,
   discordIngressTerminalState,
@@ -76,18 +75,15 @@ const MAX_PENDING_TURNS_PER_CHAT = 8;
 
 const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
 
-const disposeChats = (
-  chats: Map<string, ChatState>,
-  registry?: ChatRegistryApi,
-): Effect.Effect<void> =>
+const disposeChats = (chats: Map<string, ChatState>, live?: LiveSessionsApi): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : (registry === undefined
+        : (live === undefined
             ? state.handle.dispose
-            : registry.closeAlias(`discord/${chatKey}`, state.handle)
+            : live.release(`discord/${chatKey}`, state.handle)
           ).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
@@ -159,7 +155,7 @@ export const makeDiscordGateway = (
   healthRuntime: DiscordHealthRuntime = silentDiscordHealthRuntime,
   ingressRuntime: DiscordIngressRuntime = volatileDiscordIngressRuntime,
 ): DiscordGatewayApi => ({
-  runLoop: (target, config, registry, destinations) =>
+  runLoop: (target, config, live, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -204,7 +200,7 @@ export const makeDiscordGateway = (
             Effect.catch((failure) =>
               Effect.logWarning("Discord socket close failed", { failure }),
             ),
-            Effect.andThen(disposeChats(chats, registry)),
+            Effect.andThen(disposeChats(chats, live)),
             Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() })),
           ),
         );
@@ -375,7 +371,7 @@ export const makeDiscordGateway = (
           ingressRuntime,
           target,
           config,
-          registry,
+          live,
           destinations,
           ingressOwnerId,
           observe,
@@ -444,7 +440,7 @@ export const makeDiscordGateway = (
                     | ProfileSpecialistError
                     | DiscordApiError
                     | DiscordIngressDatabaseError
-                    | UiGatewayError,
+                    | LiveSessionRefused,
                 ) =>
                   Effect.sync(() => {
                     console.error(`[discord] ${message.chatKey} failed: ${failure.message}`);

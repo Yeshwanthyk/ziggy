@@ -23,7 +23,7 @@ import type {
 import type { SlackHealthProjectionError, SlackHealthSnapshot } from "../../domain/slack-health";
 import type { ChatHandle } from "../agent";
 import type { DestinationBook } from "../../resident/destinations";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { type ProfileTarget } from "../../profile";
 
 export type SlackGatewayError = SlackApiError | SlackIngressDatabaseError;
@@ -104,7 +104,7 @@ export interface SlackGatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: SlackGatewayConfig,
-    registry?: ChatRegistryApi,
+    live?: LiveSessionsApi,
     destinations?: DestinationBook,
   ) => Effect.Effect<never, SlackGatewayError>;
 }

@@ -15,7 +15,7 @@ import {
   type UiRequestEnvelope,
 } from "../../domain/ui-gateway";
 import type { ProfileId } from "../../domain/profile-directory";
-import { badParams, boundedText, protocolFailure, toGatewayError } from "./errors";
+import { badParams, boundedText, liveFailure, protocolFailure, toGatewayError } from "./errors";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 
 const decodeScoped = Schema.decodeUnknownEffect(UiProfileScopedParams, {
@@ -268,11 +268,13 @@ export const dispatchGroups = (
           } else {
             const liveKey = pin.ref.key;
 
-            const entry = yield* branch.registry
+            const entry = yield* branch.live
               .get(liveKey)
               .pipe(
                 Effect.catch((cause) =>
-                  cause.code === "unknown_session" ? Effect.succeed(undefined) : Effect.fail(cause),
+                  cause.reason === "not-found"
+                    ? Effect.succeed(undefined)
+                    : Effect.fail(liveFailure(cause)),
                 ),
               );
 

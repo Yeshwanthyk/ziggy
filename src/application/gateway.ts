@@ -13,7 +13,7 @@ import { codePointLength } from "../platform/text";
 import type { ChatContext } from "../session";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { DestinationBook } from "../resident/destinations";
-import type { ChatRegistryApi } from "./chat-registry";
+import type { LiveSessionRefused, LiveSessionsApi } from "../resident/live-sessions";
 import {
   apiFailure,
   chatApiUrl,
@@ -21,7 +21,6 @@ import {
   type DeliveryFailure,
   type GatewayTarget,
 } from "./delivery";
-import type { UiGatewayError } from "../domain/ui-gateway";
 import { automationTargetFromString } from "../domain/automation";
 import { type ProfileTarget } from "../profile";
 
@@ -54,7 +53,7 @@ export interface GatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: TelegramGatewayConfig,
-    registry?: ChatRegistryApi,
+    live?: LiveSessionsApi,
     destinations?: DestinationBook,
   ) => Effect.Effect<never, GatewayError>;
 }
@@ -204,18 +203,15 @@ const retryTelegram = <A>(
     }
   });
 
-const disposeChats = (
-  chats: Map<string, ChatState>,
-  registry?: ChatRegistryApi,
-): Effect.Effect<void> =>
+const disposeChats = (chats: Map<string, ChatState>, live?: LiveSessionsApi): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : (registry === undefined
+        : (live === undefined
             ? state.handle.dispose
-            : registry.closeAlias(`telegram/${chatKey}`, state.handle)
+            : live.release(`telegram/${chatKey}`, state.handle)
           ).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
@@ -235,11 +231,11 @@ export const makeTelegramGateway = (
   agent: ZiggyAgentApi,
   transport: TelegramTransport = liveTelegramTransport,
 ): GatewayApi => ({
-  runLoop: (target, config, registry, destinations) =>
+  runLoop: (target, config, live, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
-        yield* Effect.addFinalizer(() => disposeChats(chats, registry));
+        yield* Effect.addFinalizer(() => disposeChats(chats, live));
 
         const processMessage = (message: InboundMessage) => {
           let state = chats.get(message.chatKey);
@@ -274,9 +270,9 @@ export const makeTelegramGateway = (
                 });
 
                 chatState.handle =
-                  registry === undefined
+                  live === undefined
                     ? yield* open
-                    : yield* registry.openAlias(`telegram/${message.chatKey}`, "telegram", open);
+                    : yield* live.acquire(`telegram/${message.chatKey}`, "telegram", open);
               }
 
               const handle = chatState.handle;
@@ -337,10 +333,11 @@ export const makeTelegramGateway = (
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((failure: ProfileSpecialistError | TelegramApiError | UiGatewayError) =>
-                Effect.sync(() => {
-                  console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
-                }),
+              Effect.catch(
+                (failure: ProfileSpecialistError | TelegramApiError | LiveSessionRefused) =>
+                  Effect.sync(() => {
+                    console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
+                  }),
               ),
             ),
           );

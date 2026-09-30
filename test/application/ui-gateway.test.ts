@@ -11,11 +11,11 @@ import {
 import { makeChatHandle } from "../harness/chat-handle";
 import { SessionBusy, SessionHeld } from "ziggy/domain/agent";
 import {
-  CHAT_REPLAY_LIMIT,
-  makeChatRegistry,
-  type ChatRegistryApi,
-  type ChatRegistryEvent,
-} from "ziggy/application/chat-registry";
+  LIVE_REPLAY_LIMIT,
+  makeLiveSessions,
+  type LiveSessionEvent,
+  type LiveSessionsApi,
+} from "ziggy/resident/live-sessions";
 import { makeDestinationBook } from "ziggy/resident/destinations";
 import type { ProfileAgentsApi } from "ziggy/agents/index";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
@@ -47,10 +47,10 @@ const decodeSummaryResult = Schema.decodeUnknownSync(UiSessionSummaryResult);
 const decodeEmptyGroupState = Schema.decodeUnknownSync(UiGroupState);
 
 /** The retained live events after `afterSeq`, read through a throwaway subscription. */
-const retainedEvents = (registry: ChatRegistryApi, key: string, afterSeq?: number) =>
+const retainedEvents = (live: LiveSessionsApi, key: string, afterSeq?: number) =>
   Effect.gen(function* () {
-    const events: ChatRegistryEvent[] = [];
-    const stop = yield* registry.subscribeSequenced(key, (event) => events.push(event), afterSeq);
+    const events: LiveSessionEvent[] = [];
+    const stop = yield* live.watch(key, (event) => events.push(event), afterSeq);
     stop();
 
     return events;
@@ -136,12 +136,12 @@ interface TestConfigExtras {
 }
 
 const makeConfig = (
-  registry: ChatRegistryApi,
+  live: LiveSessionsApi,
   agent: ZiggyAgentApi,
   profileExtensions = makeProfileExtensions(),
   extra: TestConfigExtras = {},
 ) => ({
-  defaultProfile: { profileId, target, registry, destinations: makeDestinationBook() },
+  defaultProfile: { profileId, target, live, destinations: makeDestinationBook() },
   sessions: makeSessions(),
   agent,
   profileExtensions,
@@ -158,9 +158,9 @@ test("session.open refuses a held writer with a plain session_busy error", async
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
+        const connection = (yield* makeUiGateway(makeConfig(live, agent))).connect((frame) =>
           responses.push(decodeResponse(frame)),
         );
 
@@ -213,9 +213,9 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
+        const connection = (yield* makeUiGateway(makeConfig(live, agent))).connect((frame) =>
           sent.push(frame),
         );
 
@@ -286,7 +286,7 @@ test("UI gateway opens local Pi sessions, emits sequenced events, and detaches o
 
         for (const listener of listeners) listener({ kind: "settled" });
         expect(sent).toHaveLength(beforeClose);
-        expect((yield* registry.get("ui/main")).handle).toBe(handle);
+        expect((yield* live.get("ui/main")).handle).toBe(handle);
       }),
     ),
   );
@@ -326,10 +326,10 @@ test("live session history resolves the handle's current transcript identity at 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { sessions }),
         )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
@@ -392,10 +392,10 @@ test("live session history is empty only while its Pi transcript is not material
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { sessions }),
         )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
@@ -464,10 +464,10 @@ test("live session history preserves transcript read failures without exposing i
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { sessions }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { sessions }),
         )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
@@ -508,8 +508,8 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
-        const gateway = yield* makeUiGateway(makeConfig(registry, makeAgent(handle)));
+        const live = yield* makeLiveSessions();
+        const gateway = yield* makeUiGateway(makeConfig(live, makeAgent(handle)));
         const first = gateway.connect((frame) => events.push(frame));
         yield* first.request({
           id: "open",
@@ -554,8 +554,8 @@ test("UI gateway uses sequenced replay and reports epoch/replay gaps", async () 
 
         const restarted: (typeof UiResponseFrame.Type)[] = [];
 
-        const third = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
-          (frame) => restarted.push(decodeResponse(frame)),
+        const third = (yield* makeUiGateway(makeConfig(live, makeAgent(handle)))).connect((frame) =>
+          restarted.push(decodeResponse(frame)),
         );
 
         yield* third.request({
@@ -577,7 +577,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const handle = makeChatHandle({
           prompt: () => Effect.succeed("ok"),
@@ -618,7 +618,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
             }),
         };
 
-        const gateway = yield* makeUiGateway(makeConfig(registry, agent, undefined, { sessions }));
+        const gateway = yield* makeUiGateway(makeConfig(live, agent, undefined, { sessions }));
         const frames: string[] = [];
         const connection = gateway.connect((frame) => frames.push(frame));
         const ref = { profileId, kind: "live" as const, key: "local/main" };
@@ -628,8 +628,8 @@ test("rolled replay windows allow fresh opens and watches without losing history
           params: { profileId, context: { kind: "local" } },
         });
 
-        for (let index = 0; index <= CHAT_REPLAY_LIMIT; index += 1) {
-          yield* registry.publish("local/main", { kind: "settled" });
+        for (let index = 0; index <= LIVE_REPLAY_LIMIT; index += 1) {
+          yield* live.publish("local/main", { kind: "settled" });
         }
 
         for (const method of ["session.open", "session.watch"] as const) {
@@ -646,9 +646,9 @@ test("rolled replay windows allow fresh opens and watches without losing history
             .filter(Result.isSuccess)
             .map((result) => result.success);
 
-          expect(events).toHaveLength(CHAT_REPLAY_LIMIT);
+          expect(events).toHaveLength(LIVE_REPLAY_LIMIT);
           expect(events[0]?.seq).toBe(2);
-          expect(events.at(-1)?.seq).toBe(CHAT_REPLAY_LIMIT + 1);
+          expect(events.at(-1)?.seq).toBe(LIVE_REPLAY_LIMIT + 1);
         }
 
         expect(opens).toBe(1);
@@ -661,7 +661,7 @@ test("rolled replay windows allow fresh opens and watches without losing history
 
         for (const params of [
           { ref, afterSeq: 0 },
-          { ref, afterSeq: CHAT_REPLAY_LIMIT + 1, epoch: "expired-epoch" },
+          { ref, afterSeq: LIVE_REPLAY_LIMIT + 1, epoch: "expired-epoch" },
         ]) {
           yield* connection.request({ id: "invalid-resume", method: "session.watch", params });
           expect(decodeResponse(frames.at(-1) ?? "null")).toMatchObject({
@@ -671,19 +671,19 @@ test("rolled replay windows allow fresh opens and watches without losing history
         }
 
         frames.length = 0;
-        yield* registry.publish("local/main", { kind: "settled" });
+        yield* live.publish("local/main", { kind: "settled" });
         expect(frames).toHaveLength(1);
         expect(decodeEventResult(frames[0] ?? "null")).toMatchObject({
-          success: { seq: CHAT_REPLAY_LIMIT + 2 },
+          success: { seq: LIVE_REPLAY_LIMIT + 2 },
         });
         yield* connection.request({ id: "unwatch", method: "session.unwatch", params: { ref } });
         frames.length = 0;
-        yield* registry.publish("local/main", { kind: "settled" });
+        yield* live.publish("local/main", { kind: "settled" });
         expect(frames).toEqual([]);
         yield* connection.request({ id: "rewatch", method: "session.watch", params: { ref } });
         yield* connection.close;
         frames.length = 0;
-        yield* registry.publish("local/main", { kind: "settled" });
+        yield* live.publish("local/main", { kind: "settled" });
         expect(frames).toEqual([]);
       }),
     ),
@@ -706,9 +706,9 @@ test("command retries preserve the current transport request id", async () => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect((frame) =>
+        const connection = (yield* makeUiGateway(makeConfig(live, agent))).connect((frame) =>
           sent.push(frame),
         );
 
@@ -736,7 +736,7 @@ test("a disconnected command owner does not interrupt another connection's agent
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
 
@@ -753,7 +753,7 @@ test("a disconnected command owner does not interrupt another connection's agent
 
         const gateway = yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
             makeProfileExtensions(),
             { profileAgents: agents },
@@ -826,10 +826,10 @@ test("agent document/save preserves source, deduplicates command ids, and maps c
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { profileAgents }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { profileAgents }),
         )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
@@ -905,10 +905,10 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { auth }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { auth }),
         )).connect((frame) => sent.push(frame));
 
         yield* connection.request({
@@ -970,9 +970,9 @@ test("reopening a session replaces its subscription instead of leaking listeners
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+        const connection = (yield* makeUiGateway(makeConfig(live, makeAgent(handle)))).connect(
           (frame) => sent.push(frame),
         );
 
@@ -1032,11 +1032,11 @@ test("returns a bounded internal frame when a successful result cannot be encode
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
             makeProfileExtensions(),
             { sessions: oversizedSessions },
@@ -1074,12 +1074,10 @@ test("specialist session.open uses local specialist Pi primitive, never a channe
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
-        yield* registry.openAlias("slack/user-1", "slack", Effect.succeed(handle));
+        const live = yield* makeLiveSessions();
+        yield* live.acquire("slack/user-1", "slack", Effect.succeed(handle));
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect(
-          () => undefined,
-        );
+        const connection = (yield* makeUiGateway(makeConfig(live, agent))).connect(() => undefined);
 
         yield* connection.request({
           id: "specialist",
@@ -1118,11 +1116,11 @@ test("group.list discovers persisted groups for the requested Profile", async ()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("ok") })),
             makeProfileExtensions(),
             { groups },
@@ -1202,11 +1200,11 @@ test("group prompts run bounded specialist turns sequentially and synthesize thr
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
         const sent: string[] = [];
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, agent, makeProfileExtensions(), {
+          makeConfig(live, agent, makeProfileExtensions(), {
             groups,
           }),
         )).connect((frame) => sent.push(frame));
@@ -1393,11 +1391,11 @@ test("UI gateway routes all management operations through decoded explicit Profi
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             profileExtensions,
           ),
@@ -1466,10 +1464,10 @@ test("held resume refuses without replacing the current UI session", async () =>
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
+          makeConfig(live, makeAgent(handle), undefined, {
             sessions: {
               ...makeSessions(),
               show: () => Effect.succeed(sessionAt("older-1", "local/main/older-1.jsonl")),
@@ -1551,10 +1549,10 @@ test("session model and thinking mutations stay on the open handle, not the Prof
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), makeProfileExtensions(), { models }),
+          makeConfig(live, makeAgent(handle), makeProfileExtensions(), { models }),
         )).connect((frame) => {
           if (Result.isFailure(decodeEventResult(frame))) responses.push(decodeResponse(frame));
         });
@@ -1621,11 +1619,11 @@ test("UI extension listing respects the frame budget and reports truncation", as
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway({
           ...makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             makeProfileExtensions({
               listForProfile: () => Effect.succeed(listing),
@@ -1661,11 +1659,11 @@ test("extension listing reports quarantined package diagnostics", async () => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway({
           ...makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
             makeProfileExtensions({
               health: () =>
@@ -1733,11 +1731,11 @@ test("UI gateway maps extension failures to bounded typed details without filesy
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             profileExtensions,
           ),
@@ -1791,11 +1789,11 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const connection = (yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
             makeProfileExtensions(),
             { models: modelService },
@@ -1866,11 +1864,11 @@ test("session picker filters transcripts before its bound and probes leases only
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const gateway = yield* makeUiGateway(
           makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
             undefined,
             {
@@ -1925,10 +1923,10 @@ test("resume rejects non-web targets and non-plain web contexts without touching
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const gateway = yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
+          makeConfig(live, makeAgent(handle), undefined, {
             sessions: {
               ...makeSessions(),
               show: (_target, id) =>
@@ -1953,7 +1951,7 @@ test("resume rejects non-web targets and non-plain web contexts without touching
           method: "session.resume",
           params: { ref: { profileId, kind: "live", key: "local/main" }, sessionId: "channel" },
         });
-        yield* registry.getOrOpenUi("ui/group-test", Effect.succeed(handle), {
+        yield* live.acquire("ui/group-test", "ui", Effect.succeed(handle), {
           context: { kind: "group", groupId: "test" },
         });
         yield* connection.request({
@@ -1961,7 +1959,7 @@ test("resume rejects non-web targets and non-plain web contexts without touching
           method: "session.resume",
           params: { ref: { profileId, kind: "live", key: "ui/group-test" }, sessionId: "allowed" },
         });
-        yield* registry.getOrOpenUi("local/agents/specialist", Effect.succeed(handle), {
+        yield* live.acquire("local/agents/specialist", "ui", Effect.succeed(handle), {
           context: { kind: "local" },
           agentId: "specialist",
         });
@@ -2004,10 +2002,10 @@ test("successful resume selects the resolved web transcript and resets live hist
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const gateway = yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
+          makeConfig(live, makeAgent(handle), undefined, {
             sessions: {
               ...makeSessions(),
               show: () => Effect.succeed(sessionAt("new", "ui/work/new.jsonl")),
@@ -2028,7 +2026,7 @@ test("successful resume selects the resolved web transcript and resets live hist
           method: "session.open",
           params: { profileId, context: { kind: "local" } },
         });
-        yield* registry.publish("local/main", {
+        yield* live.publish("local/main", {
           kind: "assistant-text",
           delta: "old",
           snapshot: "old",
@@ -2039,7 +2037,7 @@ test("successful resume selects the resolved web transcript and resets live hist
           params: { ref, sessionId: "new" },
         });
         yield* connection.request({ id: "history", method: "session.history", params: { ref } });
-        const replay = yield* retainedEvents(registry, "local/main", 0).pipe(Effect.result);
+        const replay = yield* retainedEvents(live, "local/main", 0).pipe(Effect.result);
         expect(replay._tag).toBe("Failure");
       }),
     ),
@@ -2063,230 +2061,6 @@ test("successful resume selects the resolved web transcript and resets live hist
   ).toBe(true);
 });
 
-test("concurrent resumes publish each reset before the next switch starts", async () => {
-  const frames: string[] = [];
-  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
-
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const secondShown = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const calls: string[] = [];
-        const registry = yield* makeChatRegistry();
-
-        const handle = makeChatHandle({
-          prompt: () => Effect.succeed(""),
-          resume: (sessionId) =>
-            Effect.gen(function* () {
-              calls.push(sessionId);
-
-              if (calls.length === 1) {
-                yield* Deferred.succeed(entered, undefined);
-                yield* Deferred.await(release);
-              }
-
-              return { cancelled: false };
-            }),
-        });
-
-        const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
-            sessions: {
-              ...makeSessions(),
-              show: (_target, id) =>
-                Effect.gen(function* () {
-                  if (id === "second") yield* Deferred.succeed(secondShown, undefined);
-
-                  return sessionAt(id, `ui/work/${id}.jsonl`);
-                }),
-            },
-          }),
-        )).connect((frame) => frames.push(frame));
-
-        yield* connection.request({
-          id: "open",
-          method: "session.open",
-          params: { profileId, context: { kind: "local" } },
-        });
-
-        const request = (id: string) =>
-          connection.request({
-            id,
-            method: "session.resume",
-            params: { ref, sessionId: id },
-          });
-
-        const first = yield* Effect.forkChild(request("first"));
-        yield* Deferred.await(entered);
-        const second = yield* Effect.forkChild(request("second"));
-        yield* Deferred.await(secondShown);
-        yield* Effect.yieldNow;
-        yield* registry.publish(ref.key, { kind: "assistant-text", delta: "old", snapshot: "old" });
-        expect(calls).toEqual(["first"]);
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(first);
-        yield* Fiber.join(second);
-        expect(calls).toEqual(["first", "second"]);
-
-        const events = frames.flatMap((frame) => {
-          const decoded = decodeEventResult(frame);
-
-          return Result.isSuccess(decoded) ? [decoded.success] : [];
-        });
-
-        expect(
-          events.filter((event) => event.event === "session-state").map((event) => event.seq),
-        ).toEqual([2, 3]);
-        const replay = yield* retainedEvents(registry, ref.key, 2);
-        expect(replay.map((event) => event.event)).toEqual([
-          { kind: "session-state", scope: "transcript" },
-        ]);
-      }),
-    ),
-  );
-});
-
-test("interrupting a resume waits for Pi and publishes its reset before releasing control", async () => {
-  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
-
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const registry = yield* makeChatRegistry();
-
-        const handle = makeChatHandle({
-          prompt: () => Effect.succeed(""),
-          resume: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(entered, undefined);
-              yield* Deferred.await(release);
-
-              return { cancelled: false };
-            }),
-        });
-
-        const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
-            sessions: {
-              ...makeSessions(),
-              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
-            },
-          }),
-        )).connect(() => {});
-
-        yield* connection.request({
-          id: "open",
-          method: "session.open",
-          params: { profileId, context: { kind: "local" } },
-        });
-
-        const first = yield* Effect.forkChild(
-          connection.request({
-            id: "resume",
-            method: "session.resume",
-            params: { ref, sessionId: "first" },
-          }),
-        );
-
-        yield* Deferred.await(entered);
-        const interrupted = yield* Effect.forkChild(Fiber.interrupt(first));
-        yield* Effect.yieldNow;
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(interrupted);
-        const replay = yield* retainedEvents(registry, ref.key);
-        expect(replay.map((event) => event.event)).toEqual([
-          { kind: "session-state", scope: "transcript" },
-        ]);
-      }),
-    ),
-  );
-});
-
-test("a prompt submitted during resume starts after the transcript reset", async () => {
-  const ref = { profileId, kind: "live" as const, key: "local/main" as const };
-
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        // Release the uninterruptible resume on failure so a regression fails fast instead of hanging.
-        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
-        const prompted = yield* Deferred.make<void>();
-        const registry = yield* makeChatRegistry();
-
-        const handle = makeChatHandle({
-          prompt: () =>
-            registry
-              .publish(ref.key, { kind: "assistant-text", delta: "new", snapshot: "new" })
-              .pipe(
-                Effect.catch(() => Effect.void),
-                Effect.andThen(Deferred.succeed(prompted, undefined)),
-                Effect.as(""),
-              ),
-          resume: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(entered, undefined);
-              yield* Deferred.await(release);
-
-              return { cancelled: false };
-            }),
-        });
-
-        const connection = (yield* makeUiGateway(
-          makeConfig(registry, makeAgent(handle), undefined, {
-            sessions: {
-              ...makeSessions(),
-              show: (_target, id) => Effect.succeed(sessionAt(id, `ui/work/${id}.jsonl`)),
-            },
-          }),
-        )).connect(() => {});
-
-        yield* connection.request({
-          id: "open",
-          method: "session.open",
-          params: { profileId, context: { kind: "local" } },
-        });
-
-        const resume = yield* Effect.forkChild(
-          connection.request({
-            id: "resume",
-            method: "session.resume",
-            params: { ref, sessionId: "first" },
-          }),
-        );
-
-        yield* Deferred.await(entered);
-
-        const prompt = yield* Effect.forkChild(
-          connection.request({
-            id: "prompt",
-            method: "prompt.submit",
-            params: { ref, text: "hi" },
-          }),
-        );
-
-        yield* Effect.yieldNow;
-        expect(yield* Deferred.isDone(prompted)).toBe(false);
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(resume);
-        yield* Fiber.join(prompt);
-        yield* Deferred.await(prompted);
-        const replay = yield* retainedEvents(registry, ref.key);
-        expect(replay.map((event) => event.event)).toContainEqual({
-          kind: "assistant-text",
-          delta: "new",
-          snapshot: "new",
-        });
-      }),
-    ),
-  );
-});
-
 test("a streaming model switch reports SessionBusy without changing the session", async () => {
   const frames: string[] = [];
 
@@ -2298,9 +2072,9 @@ test("a streaming model switch reports SessionBusy without changing the session"
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
-        const connection = (yield* makeUiGateway(makeConfig(registry, makeAgent(handle)))).connect(
+        const connection = (yield* makeUiGateway(makeConfig(live, makeAgent(handle)))).connect(
           (frame) => frames.push(frame),
         );
 
@@ -2339,7 +2113,7 @@ test("health inspection failure still lists selected extensions with a diagnosti
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry();
+        const live = yield* makeLiveSessions();
 
         const extensions = makeProfileExtensions({
           listForProfile: () =>
@@ -2358,7 +2132,7 @@ test("health inspection failure still lists selected extensions with a diagnosti
 
         const connection = (yield* makeUiGateway({
           ...makeConfig(
-            registry,
+            live,
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
             extensions,
           ),

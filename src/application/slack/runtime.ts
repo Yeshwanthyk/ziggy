@@ -37,7 +37,7 @@ import {
 } from "../../domain/slack-health";
 import { automationTargetFromString } from "../../domain/automation";
 import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { uniqueSlackStatusTargets } from "./delivery";
 import {
   classifySlackCommand,
@@ -63,18 +63,15 @@ const MAX_PENDING_TURNS_PER_CHAT = 8;
 
 const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
 
-const disposeChats = (
-  chats: Map<string, ChatState>,
-  registry?: ChatRegistryApi,
-): Effect.Effect<void> =>
+const disposeChats = (chats: Map<string, ChatState>, live?: LiveSessionsApi): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : (registry === undefined
+        : (live === undefined
             ? state.handle.dispose
-            : registry.closeAlias(`slack/${chatKey}`, state.handle)
+            : live.release(`slack/${chatKey}`, state.handle)
           ).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
@@ -155,7 +152,7 @@ export const makeSlackGateway = (
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
   ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
 ): SlackGatewayApi => ({
-  runLoop: (target, config, registry, destinations) =>
+  runLoop: (target, config, live, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -309,7 +306,7 @@ export const makeSlackGateway = (
                   Effect.logWarning("Slack socket close failed", { failure }),
                 ),
               ),
-              disposeChats(chats, registry),
+              disposeChats(chats, live),
             ],
             { concurrency: "unbounded", discard: true },
           ).pipe(Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() }))),
@@ -363,7 +360,7 @@ export const makeSlackGateway = (
           ingressRuntime,
           target,
           config,
-          registry,
+          live,
           ingressOwnerId,
           botUserId: bot.userId,
           channelLabels,

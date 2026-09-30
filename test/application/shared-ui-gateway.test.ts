@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { Effect, Result, Schema } from "effect";
 import { type ChatEvent, type ChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { makeDestinationBook } from "ziggy/resident/destinations";
 import { makeSharedUiGateway } from "ziggy/application/ui-gateway";
 import type {
@@ -151,13 +151,13 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const alphaRegistry = yield* makeChatRegistry();
-        const betaRegistry = yield* makeChatRegistry();
+        const alphaLive = yield* makeLiveSessions();
+        const betaLive = yield* makeLiveSessions();
 
         const alpha = {
           profileId: alphaId,
           target: alphaTarget,
-          registry: alphaRegistry,
+          live: alphaLive,
           destinations: makeDestinationBook(),
         };
 
@@ -169,7 +169,7 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
             {
               profileId: betaId,
               target: betaTarget,
-              registry: betaRegistry,
+              live: betaLive,
               destinations: makeDestinationBook(),
             },
           ],

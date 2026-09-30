@@ -62,7 +62,7 @@ export interface UiGatewayApi {
  * Composition input for a gateway shared by multiple resident Profile branches.
  *
  * Branches are deliberately supplied as a complete set at construction time. Each branch owns
- * its ChatRegistry, while the directory remains the source of Profile identity and availability.
+ * its live sessions, while the directory remains the source of Profile identity and availability.
  * The runtime directory then makes branch lookup explicit for every routed operation.
  */
 export interface SharedUiGatewayDependencies extends Omit<

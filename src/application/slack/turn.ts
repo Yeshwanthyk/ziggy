@@ -5,10 +5,9 @@ import { codePointLength } from "../../platform/text";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
 import type { ProfileSpecialistError } from "../../domain/agent";
-import type { UiGatewayError } from "../../domain/ui-gateway";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionRefused, LiveSessionsApi } from "../../resident/live-sessions";
 import { slackTaskTitle } from "../slack-tool-progress";
 import { makeTurnProgress } from "./progress";
 import { slackReplyThreadTs } from "./intake";
@@ -45,7 +44,7 @@ interface SlackTurnContext {
   readonly ingressRuntime: SlackIngressRuntime;
   readonly target: ProfileTarget;
   readonly config: SlackGatewayConfig;
-  readonly registry: ChatRegistryApi | undefined;
+  readonly live: LiveSessionsApi | undefined;
   readonly ingressOwnerId: string;
   readonly botUserId: string;
   readonly channelLabels: Map<string, string>;
@@ -62,7 +61,7 @@ export const makeSlackTurnProcessor =
     ingressRuntime,
     target,
     config,
-    registry,
+    live,
     ingressOwnerId,
     botUserId,
     channelLabels,
@@ -322,9 +321,9 @@ export const makeSlackTurnProcessor =
                 });
 
                 handle =
-                  registry === undefined
+                  live === undefined
                     ? yield* open
-                    : yield* registry.openAlias(`slack/${message.chatKey}`, "slack", open);
+                    : yield* live.acquire(`slack/${message.chatKey}`, "slack", open);
                 chatState.handle = handle;
               }
 
@@ -602,7 +601,7 @@ export const makeSlackTurnProcessor =
               | ProfileSpecialistError
               | SlackApiError
               | SlackIngressDatabaseError
-              | UiGatewayError,
+              | LiveSessionRefused,
           ) => Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
         ),
       );

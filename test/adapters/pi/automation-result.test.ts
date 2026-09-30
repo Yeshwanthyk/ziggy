@@ -11,7 +11,6 @@ import { sessionHistory, takeSessionLease } from "ziggy/session/index";
 import { makeChatHandle } from "ziggy/session/handle";
 import { makeSessionLeaseSet } from "ziggy/session/lease";
 import { fakePiRuntime } from "../../harness/pi-runtime";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
 
 const roots: string[] = [];
 
@@ -244,22 +243,15 @@ test("live idle delivery appends without prompting, publishes once, and busy del
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.openAlias("discord/live", "discord", Effect.succeed(handle));
         const events: unknown[] = [];
-        yield* registry.subscribeSequenced("discord/live", ({ event }) => events.push(event));
-        yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
-        yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
-        expect(events).toHaveLength(1);
+        handle.subscribe((event) => events.push(event));
+        yield* handle.appendAutomationResult(result);
+        yield* handle.appendAutomationResult(result);
+        expect(events).toMatchObject([{ kind: "automation-result", runId: "manual:live" }]);
 
         idle = false;
         expect(
-          yield* Effect.result(
-            registry.deliverAutomationResult(
-              { name: "test", path: profilePath },
-              { ...result, runId: "manual:busy" },
-            ),
-          ),
+          yield* Effect.result(handle.appendAutomationResult({ ...result, runId: "manual:busy" })),
         ).toMatchObject({
           _tag: "Failure",
           failure: { category: "session-busy", retriable: true },
@@ -338,15 +330,15 @@ test("live delivery trusts the transcript receipt, not the send promise", async 
   await Effect.runPromise(handle.dispose);
 });
 
-test("a live owner that switched away after the match falls back to the stored append", async () => {
+test("a live owner that switched away refuses the result instead of writing the other transcript", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-switched-"));
   roots.push(profilePath);
   const directory = join(profilePath, "sessions", "local", "main");
-  const target = materialize(SessionManager.create(profilePath, directory, { id: "target" }));
+  materialize(SessionManager.create(profilePath, directory, { id: "target" }));
   const switched = SessionManager.create(profilePath, directory, { id: "switched" });
   materialize(switched);
 
-  // The registry still sees the target as current; the live session has already moved on.
+  // The caller matched the target as current; the live session has already moved on.
   const handle = await liveHandle(profilePath, {
     isIdle: true,
     sessionManager: switched,
@@ -366,22 +358,7 @@ test("a live owner that switched away after the match falls back to the stored a
     timestamp: "2026-09-17T12:00:00.000Z",
   } as const;
 
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.openAlias("ui/main", "slack", Effect.succeed(handle));
-        yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
-      }),
-    ),
-  );
-
   expect(
-    SessionManager.open(target)
-      .getEntries()
-      .filter(
-        (entry) =>
-          entry.type === "custom_message" && entry.customType === "ziggy.automation-result",
-      ),
-  ).toHaveLength(1);
+    await Effect.runPromise(Effect.result(handle.appendAutomationResult(result))),
+  ).toMatchObject({ failure: { category: "destination-missing" } });
 });

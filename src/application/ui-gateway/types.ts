@@ -10,7 +10,7 @@ import type { AutomationsApi } from "../automations";
 import type { MemoryApi } from "../../memory";
 import type { SessionsApi } from "../../session";
 import type { ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import {
   type ProviderAuthStatus,
   type KnownModel,
@@ -49,7 +49,7 @@ export interface UiGatewayDependencies {
 export type UiGatewayCapabilityTypes = {
   readonly profileId: ProfileId;
   readonly target: ProfileTarget;
-  readonly registry: ChatRegistryApi;
+  readonly live: LiveSessionsApi;
   readonly model?: KnownModel;
   readonly auth?: ProviderAuthStatus;
 };

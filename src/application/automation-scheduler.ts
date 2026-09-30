@@ -31,11 +31,11 @@ import {
 } from "../domain/automation";
 import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { Automations, type AutomationsApi } from "./automations";
-import type { ChatRegistryApi } from "./chat-registry";
+import type { LiveSessionsApi } from "../resident/live-sessions";
 import { type ProfileTarget } from "../profile";
 
 // oxfmt-ignore
-export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle, registry: ChatRegistryApi) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
+export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle, live: LiveSessionsApi) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }
 
 // oxfmt-ignore
 export class AutomationScheduler extends Context.Service<AutomationScheduler, AutomationSchedulerApi>()("ziggy/AutomationScheduler") {}
@@ -256,7 +256,7 @@ export const makeAutomationScheduler = (
   const run = (
     target: ProfileTarget,
     owner: GatewayOwnerHandle,
-    registry: ChatRegistryApi,
+    live: LiveSessionsApi,
   ): Effect.Effect<never, AutomationSchedulerError> =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -278,7 +278,7 @@ export const makeAutomationScheduler = (
                     scheduleFingerprint: claim.scheduleFingerprint,
                     residentOwnerId: owner.ownerId,
                   },
-                  { registry },
+                  { live },
                 )
                 .pipe(
                   Effect.catchTag("AutomationScheduleSuperseded", () =>

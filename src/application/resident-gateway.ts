@@ -36,7 +36,7 @@ import { Memory, type MemoryApi } from "../memory";
 import { ProfileAgents, type ProfileAgentsApi } from "../agents";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { makeDestinationBook, type DestinationBook } from "../resident/destinations";
-import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";
+import { makeLiveSessions, type LiveSessionsApi } from "../resident/live-sessions";
 import {
   DiscordGateway,
   type DiscordGatewayApi,
@@ -114,7 +114,7 @@ export interface ResidentGatewayRuntime {
 export interface ResidentUiRuntime {
   readonly run: (
     target: ProfileTarget,
-    registry: ChatRegistryApi,
+    live: LiveSessionsApi,
     destinations: DestinationBook,
   ) => Effect.Effect<never, UiServerError, Scope.Scope>;
 }
@@ -147,7 +147,7 @@ const makeLiveUiRuntime = (
   profileRegistryPath?: string,
   profilesDirectory?: string,
 ): ResidentUiRuntime => ({
-  run: (target, registry, destinations) =>
+  run: (target, live, destinations) =>
     Effect.gen(function* () {
       const webConfig = yield* readWebAccessConfig(target.path).pipe(
         Effect.mapError(
@@ -163,7 +163,7 @@ const makeLiveUiRuntime = (
       const defaultBranch: ResidentProfileBranch = {
         profileId: stableProfileId(target.path),
         target,
-        registry,
+        live,
         destinations,
       };
 
@@ -196,12 +196,12 @@ const makeLiveUiRuntime = (
           (entry) =>
             entry.profileId === defaultBranch.profileId
               ? Effect.succeed(defaultBranch)
-              : makeChatRegistry(entry.target.path).pipe(
+              : makeLiveSessions().pipe(
                   Effect.map(
-                    (profileRegistry): ResidentProfileBranch => ({
+                    (profileLive): ResidentProfileBranch => ({
                       profileId: entry.profileId,
                       target: entry.target,
-                      registry: profileRegistry,
+                      live: profileLive,
                       destinations: makeDestinationBook(),
                     }),
                   ),
@@ -272,15 +272,15 @@ export const makeResidentGateway = (
         Effect.gen(function* () {
           const owner = yield* runtime.acquireOwner(target);
           yield* removeStaleUiServerProjection(target.path);
-          const registry = yield* makeChatRegistry(target.path);
+          const live = yield* makeLiveSessions();
           const destinations = makeDestinationBook();
 
           const branches: Array<
             Effect.Effect<never, AutomationSchedulerError | UiServerError, Scope.Scope>
           > = [
-            scheduler.run(target, owner, registry),
+            scheduler.run(target, owner, live),
             ui
-              .run(target, registry, destinations)
+              .run(target, live, destinations)
               .pipe(
                 Effect.tapError((failure) =>
                   runtime.logError(`[gateway] UI server stopped: ${failure.message}`),
@@ -291,7 +291,7 @@ export const makeResidentGateway = (
           if (config.telegram !== undefined)
             branches.push(
               telegram
-                .runLoop(target, config.telegram, registry, destinations)
+                .runLoop(target, config.telegram, live, destinations)
                 .pipe(
                   Effect.catchTag("TelegramApiError", (failure: TelegramApiError) =>
                     runtime
@@ -303,7 +303,7 @@ export const makeResidentGateway = (
 
           if (config.discord !== undefined)
             branches.push(
-              discord.runLoop(target, config.discord, registry, destinations).pipe(
+              discord.runLoop(target, config.discord, live, destinations).pipe(
                 Effect.catchTag("DiscordApiError", (failure: DiscordApiError) =>
                   runtime
                     .logError(`[gateway] Discord stopped: ${failure.message}`)
@@ -321,7 +321,7 @@ export const makeResidentGateway = (
 
           if (config.slack !== undefined)
             branches.push(
-              slack.runLoop(target, config.slack, registry, destinations).pipe(
+              slack.runLoop(target, config.slack, live, destinations).pipe(
                 Effect.catchTag("SlackApiError", (failure: SlackApiError) =>
                   runtime
                     .logError(`[gateway] Slack stopped: ${failure.message}`)

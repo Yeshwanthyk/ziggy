@@ -9,7 +9,7 @@ import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
 import { SlackHealthProjectionError, type SlackHealthSnapshot } from "ziggy/domain/slack-health";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { makeDestinationBook } from "ziggy/resident/destinations";
 import {
   classifySlackCommand,
@@ -45,7 +45,7 @@ describe("Slack gateway boundary", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const opened = yield* Deferred.make<void>();
-          const registry = yield* makeChatRegistry();
+          const live = yield* makeLiveSessions();
           const destinations = makeDestinationBook();
 
           const transport: SlackTransport = {
@@ -99,7 +99,7 @@ describe("Slack gateway boundary", () => {
                   C222222222: "mention",
                 },
               },
-              registry,
+              live,
               destinations,
             )
             .pipe(Effect.forkScoped);

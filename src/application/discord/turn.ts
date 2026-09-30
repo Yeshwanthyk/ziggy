@@ -11,7 +11,7 @@ import { codePointLength } from "../../platform/text";
 import { automationTargetFromString } from "../../domain/automation";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
 import type { DestinationBook } from "../../resident/destinations";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import {
   prepareDiscordAttachmentPrompt,
   discordMessageChunks,
@@ -44,7 +44,7 @@ interface DiscordTurnContext {
   readonly ingressRuntime: DiscordIngressRuntime;
   readonly target: ProfileTarget;
   readonly config: DiscordGatewayConfig;
-  readonly registry: ChatRegistryApi | undefined;
+  readonly live: LiveSessionsApi | undefined;
   readonly destinations: DestinationBook | undefined;
   readonly ingressOwnerId: string;
   readonly observe: (event: DiscordHealthEvent) => Effect.Effect<void>;
@@ -57,7 +57,7 @@ export const makeDiscordTurnProcessor = ({
   ingressRuntime,
   target,
   config,
-  registry,
+  live,
   destinations,
   ingressOwnerId,
   observe,
@@ -190,9 +190,9 @@ export const makeDiscordTurnProcessor = ({
             });
 
             chatState.handle =
-              registry === undefined
+              live === undefined
                 ? yield* open
-                : yield* registry.openAlias(`discord/${message.chatKey}`, "discord", open);
+                : yield* live.acquire(`discord/${message.chatKey}`, "discord", open);
           }
 
           const handle = chatState.handle;

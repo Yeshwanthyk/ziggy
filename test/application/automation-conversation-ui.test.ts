@@ -13,7 +13,7 @@ import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { makeDestinationBook } from "ziggy/resident/destinations";
 import {
   stableProfileId,
@@ -194,7 +194,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-test("automation.run routes through the selected Profile registry and reloads the durable result", async () => {
+test("automation.run routes through the selected Profile branch and reloads the durable result", async () => {
   const fixture = await makeFixture("conversation:pinned-session");
   const defaultTarget = await makeProfile("none");
   const defaultProfileId = stableProfileId(defaultTarget.path);
@@ -227,8 +227,8 @@ test("automation.run routes through the selected Profile registry and reloads th
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const defaultRegistry = yield* makeChatRegistry(defaultTarget.path);
-        const registry = yield* makeChatRegistry(fixture.target.path);
+        const defaultLive = yield* makeLiveSessions();
+        const live = yield* makeLiveSessions();
 
         const profileDirectory = makeProfileDirectory(
           { profileId: defaultProfileId, target: defaultTarget },
@@ -239,20 +239,20 @@ test("automation.run routes through the selected Profile registry and reloads th
           defaultProfile: {
             profileId: defaultProfileId,
             target: defaultTarget,
-            registry: defaultRegistry,
+            live: defaultLive,
             destinations: makeDestinationBook(),
           },
           branches: [
             {
               profileId: defaultProfileId,
               target: defaultTarget,
-              registry: defaultRegistry,
+              live: defaultLive,
               destinations: makeDestinationBook(),
             },
             {
               profileId: fixture.profileId,
               target: fixture.target,
-              registry,
+              live,
               destinations: makeDestinationBook(),
             },
           ],
@@ -285,27 +285,27 @@ test("automation.run routes through the selected Profile registry and reloads th
         });
         expect((yield* listSessions(defaultTarget.path)).map((item) => item.id)).toEqual([]);
 
-        const restartedDefaultRegistry = yield* makeChatRegistry(defaultTarget.path);
-        const restartedRegistry = yield* makeChatRegistry(fixture.target.path);
+        const restartedDefaultLive = yield* makeLiveSessions();
+        const restartedLive = yield* makeLiveSessions();
 
         const restartedGateway = yield* makeSharedUiGateway({
           defaultProfile: {
             profileId: defaultProfileId,
             target: defaultTarget,
-            registry: restartedDefaultRegistry,
+            live: restartedDefaultLive,
             destinations: makeDestinationBook(),
           },
           branches: [
             {
               profileId: defaultProfileId,
               target: defaultTarget,
-              registry: restartedDefaultRegistry,
+              live: restartedDefaultLive,
               destinations: makeDestinationBook(),
             },
             {
               profileId: fixture.profileId,
               target: fixture.target,
-              registry: restartedRegistry,
+              live: restartedLive,
               destinations: makeDestinationBook(),
             },
           ],
@@ -360,13 +360,13 @@ test("a missing destination records a terminal failure without a fallback conver
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry(fixture.target.path);
+        const live = yield* makeLiveSessions();
 
         const gateway = yield* makeUiGateway({
           defaultProfile: {
             profileId: fixture.profileId,
             target: fixture.target,
-            registry,
+            live,
             destinations: makeDestinationBook(),
           },
           sessions,
@@ -481,8 +481,8 @@ test("destination.list pages the selected Profile's stored and external destinat
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const registry = yield* makeChatRegistry(fixture.target.path);
-        const otherRegistry = yield* makeChatRegistry(otherTarget.path);
+        const live = yield* makeLiveSessions();
+        const otherLive = yield* makeLiveSessions();
         const pins = makeUiPinStore();
         yield* pins.set(
           fixture.target.path,
@@ -528,8 +528,9 @@ test("destination.list pages the selected Profile's stored and external destinat
           3,
           "pin-restart-label",
         );
-        yield* registry.getOrOpenUi(
+        yield* live.acquire(
           "ui/chat-live",
+          "ui",
           Effect.succeed(
             makeChatHandle({
               prompt: () => Effect.succeed("unused"),
@@ -567,7 +568,7 @@ test("destination.list pages the selected Profile's stored and external destinat
         const own = {
           profileId: fixture.profileId,
           target: fixture.target,
-          registry,
+          live,
           destinations,
         };
 
@@ -578,7 +579,7 @@ test("destination.list pages the selected Profile's stored and external destinat
             {
               profileId: otherProfileId,
               target: otherTarget,
-              registry: otherRegistry,
+              live: otherLive,
               destinations: otherDestinations,
             },
           ],
