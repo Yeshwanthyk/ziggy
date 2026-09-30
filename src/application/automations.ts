@@ -7,10 +7,7 @@ import {
   type AutomationRunStore,
   type RunTerminal,
 } from "../adapters/bun/automation-sqlite";
-import { createMessage, DiscordApiError } from "../adapters/discord/api";
 import { automationFileStore, type AutomationFileStore } from "../adapters/fs/automation-files";
-import { postMessage, SlackApiError } from "../adapters/slack/api";
-import { sendMessage, TelegramApiError } from "../adapters/telegram/api";
 import { appendStoredAutomationResult } from "../adapters/pi/automation-result";
 import {
   type Automation,
@@ -22,7 +19,6 @@ import {
   AutomationPaused,
   AutomationScheduleSuperseded,
   automationScheduleFingerprint,
-  type AutomationDeliveryFailureCategory,
   type AutomationRunOutcome,
   type AutomationTrigger,
   type AutomationTarget,
@@ -35,9 +31,10 @@ import {
 } from "../domain/automation";
 import type { ProfileSpecialistError } from "../domain/agent";
 import { ZiggyAgent, type OpenSession, type ZiggyAgentApi } from "./agent";
-import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
-import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
-import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
+import type { Deliver, DeliveryFailure } from "./delivery";
+import { deliverDiscord } from "./discord-gateway";
+import { deliverTelegram } from "./gateway";
+import { deliverSlack } from "./slack-gateway";
 import type { ChatRegistryApi } from "./chat-registry";
 import { type ProfileTarget } from "../profile";
 
@@ -73,31 +70,23 @@ export interface AutomationCapabilities {
   readonly files: AutomationFileStore;
   readonly printReply: (reply: string) => Effect.Effect<void>;
   readonly appendStoredResult: typeof appendStoredAutomationResult;
-  readonly loadTelegramConfig: typeof loadGatewayConfig;
-  readonly loadDiscordConfig: typeof loadDiscordGatewayConfig;
-  readonly loadSlackConfig: typeof loadSlackGatewayConfig;
-  readonly sendTelegram: typeof sendMessage;
-  readonly sendDiscord: typeof createMessage;
-  readonly sendSlack: (
-    token: string,
-    channel: string,
-    text: string,
-    threadTs?: string,
-  ) => Effect.Effect<void, SlackApiError>;
+  readonly deliver: Deliver;
 }
+
+/** Each gateway owns its config, chunking and send. */
+const deliverToGateway: Deliver = (profile, target, text) =>
+  Match.valueTags(target, {
+    telegram: (telegram) => deliverTelegram(profile, telegram, text),
+    discord: (discord) => deliverDiscord(profile, discord, text),
+    slack: (slack) => deliverSlack(profile, slack, text),
+  });
 
 const liveCapabilities: AutomationCapabilities = {
   gate: liveAutomationGate,
   files: automationFileStore,
   printReply: (reply) => Effect.sync(() => console.log(reply)),
   appendStoredResult: appendStoredAutomationResult,
-  loadTelegramConfig: loadGatewayConfig,
-  loadDiscordConfig: loadDiscordGatewayConfig,
-  loadSlackConfig: loadSlackGatewayConfig,
-  sendTelegram: sendMessage,
-  sendDiscord: createMessage,
-  sendSlack: (token, channel, text, threadTs) =>
-    postMessage(token, channel, text, threadTs).pipe(Effect.asVoid),
+  deliver: deliverToGateway,
 };
 
 const readAutomation = (
@@ -178,31 +167,6 @@ const resolveTargets = (
     return { ok: true, targets: resolved };
   });
 
-type DeliveryFailure = {
-  readonly category: AutomationDeliveryFailureCategory;
-  readonly retriable: boolean;
-};
-
-const apiFailure = (error: TelegramApiError | DiscordApiError | SlackApiError): DeliveryFailure => {
-  switch (error.reason) {
-    case "network":
-    case "gateway":
-    case "socket":
-      return { category: "transport", retriable: error.retriable };
-    case "authentication":
-      return { category: "authentication", retriable: error.retriable };
-    case "rate-limited":
-      return { category: "rate-limited", retriable: error.retriable };
-    case "invalid-response":
-    case "decode":
-      return { category: "invalid-response", retriable: error.retriable };
-    case "server":
-    case "rejected":
-    case "api":
-      return { category: "remote", retriable: error.retriable };
-  }
-};
-
 const deliver = (
   capabilities: AutomationCapabilities,
   profile: ProfileTarget,
@@ -237,46 +201,7 @@ const deliver = (
       );
     }
 
-    if (Predicate.isTagged("telegram")(target)) {
-      const config = yield* capabilities
-        .loadTelegramConfig(profile)
-        .pipe(
-          Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-        );
-
-      for (const chunk of telegramMessageChunks(reply))
-        yield* capabilities
-          .sendTelegram(config.botToken, target.chatId, chunk)
-          .pipe(Effect.mapError(apiFailure));
-
-      return;
-    }
-
-    if (Predicate.isTagged("discord")(target)) {
-      const config = yield* capabilities
-        .loadDiscordConfig(profile)
-        .pipe(
-          Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-        );
-
-      for (const chunk of discordMessageChunks(reply))
-        yield* capabilities
-          .sendDiscord(config.botToken, target.channelId, chunk)
-          .pipe(Effect.mapError(apiFailure));
-
-      return;
-    }
-
-    const config = yield* capabilities
-      .loadSlackConfig(profile)
-      .pipe(
-        Effect.mapError((): DeliveryFailure => ({ category: "configuration", retriable: false })),
-      );
-
-    for (const chunk of slackMessageChunks(reply))
-      yield* capabilities
-        .sendSlack(config.botToken, target.channelId, chunk, target.threadTs)
-        .pipe(Effect.mapError(apiFailure));
+    return yield* capabilities.deliver(profile, target, reply);
   });
 
   return operation.pipe(

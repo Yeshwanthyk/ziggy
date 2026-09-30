@@ -580,7 +580,7 @@ read the artifact back first.
 - [ ] **7. On the core.** In any order:
   - [x] `agents/`: one policy function, no selection runtime, tools through the seam.
   - [x] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
-  - [ ] Delivery through gateway-owned targets:
+  - [x] Delivery through gateway-owned targets:
     - one `deliver(target, text)` seam;
     - each gateway (Slack, Discord, Telegram, ui-sdk conversation) owns its target syntax,
       chunking and send;

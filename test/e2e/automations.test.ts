@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ziggy } from "../harness/cli";
+import { startChatServer } from "../harness/chat";
+import { ziggy, ziggyWith } from "../harness/cli";
 import { scratchProfile, sessionFiles, type ScratchProfile } from "../harness/profile";
 import { gate, held, type ModelServer, startModelServer, text } from "../harness/provider";
 import { eventually } from "../harness/eventually";
@@ -170,4 +171,48 @@ describe("automation delivery", () => {
     await startResident(profile, 1_500);
     expect(await stopResidents()).toEqual([0]);
   });
+});
+
+test("wake delivers to a Slack thread, a Discord thread and a Telegram chat, chunked per gateway", async () => {
+  const chat = startChatServer();
+
+  try {
+    const config = (name: string, value: Readonly<Record<string, string | number>>) =>
+      writeFile(join(profile.path, name), JSON.stringify(value), "utf8");
+
+    await config("slack.json", { botToken: "xoxb-s", appToken: "xapp-s", ownerUserId: "U1" });
+    await config("discord.json", { botToken: "discord-token", ownerUserId: "123" });
+    await config("telegram.json", { botToken: "telegram-token", ownerUserId: 123 });
+    await mkdir(join(profile.path, "automations"), { recursive: true });
+    await writeFile(
+      join(profile.path, "automations", "digest.md"),
+      "---\nversion: 1\ncron: 0 9 * * *\ntimezone: UTC\nbroadcast: slack:channel:C0123ABCDE:thread:1700000000.000100,discord:channel:111222333,telegram:chat:2\n---\n\nWrite the digest.\n",
+      "utf8",
+    );
+    const reply = "d".repeat(2_500);
+    server.push(text(reply));
+
+    const result = await ziggyWith(profile, chat.env, "wake", profile.path, "digest");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      "wake delivered: slack:channel:C0123ABCDE:thread:1700000000.000100",
+    );
+
+    expect(chat.posts.map((post) => [post.gateway, post.path])).toEqual([
+      ["slack", "/chat.postMessage"],
+      ["discord", "/channels/111222333/messages"],
+      ["discord", "/channels/111222333/messages"],
+      ["telegram", "/bottelegram-token/sendMessage"],
+    ]);
+    expect(chat.posts[0]?.body).toMatchObject({
+      channel: "C0123ABCDE",
+      thread_ts: "1700000000.000100",
+      markdown_text: reply,
+    });
+    expect(chat.posts[1]?.body).toMatchObject({ content: "d".repeat(2_000) });
+    expect(chat.posts[2]?.body).toMatchObject({ content: "d".repeat(500) });
+    expect(chat.posts[3]?.body).toMatchObject({ chat_id: 2, text: reply });
+  } finally {
+    chat.stop();
+  }
 });

@@ -29,6 +29,7 @@ export {
   prepareSlackAttachmentPrompt,
   renderSlackThreadContext,
   retrySlackDelivery,
+  deliverSlack,
 } from "./slack/delivery";
 
 export type { SlackProgressUpdateState } from "./slack/delivery";

@@ -13,6 +13,13 @@ import { codePointLength } from "../platform/text";
 import type { ChatContext } from "../session";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
+import {
+  apiFailure,
+  chatApiUrl,
+  configurationFailure,
+  type DeliveryFailure,
+  type GatewayTarget,
+} from "./delivery";
 import type { UiGatewayError } from "../domain/ui-gateway";
 import { automationTargetFromString } from "../domain/automation";
 import { type ProfileTarget } from "../profile";
@@ -137,6 +144,25 @@ export const telegramMessageChunks = (text: string): ReadonlyArray<string> => {
 
   return chunks;
 };
+
+/** Post `text` to a Telegram chat in Telegram-sized chunks. */
+export const deliverTelegram = (
+  profile: ProfileTarget,
+  target: Extract<GatewayTarget, { readonly _tag: "telegram" }>,
+  text: string,
+): Effect.Effect<void, DeliveryFailure> =>
+  Effect.gen(function* () {
+    const config = yield* loadGatewayConfig(profile).pipe(
+      Effect.mapError(() => configurationFailure),
+    );
+
+    const baseUrl = yield* chatApiUrl("ZIGGY_TELEGRAM_API_URL");
+
+    for (const chunk of telegramMessageChunks(text))
+      yield* sendMessage(config.botToken, target.chatId, chunk, baseUrl).pipe(
+        Effect.mapError(apiFailure),
+      );
+  });
 
 export const nextTelegramOffset = (updates: ReadonlyArray<TelegramUpdate>, fallback = 0): number =>
   updates.reduce((nextOffset, update) => Math.max(nextOffset, update.update_id + 1), fallback);

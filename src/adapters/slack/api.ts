@@ -1,5 +1,6 @@
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { Effect } from "effect";
+import { withBaseUrl } from "../http-base";
 import { makeSlackApi, type SlackApi } from "./api/client";
 import {
   SlackApiError,
@@ -35,11 +36,16 @@ export { makeSlackApi };
 
 export type { SlackApi };
 
-const withLiveClient = <A, E>(use: (api: SlackApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
+export const SLACK_API_URL = "https://slack.com/api";
+
+const withLiveClient = <A, E>(
+  use: (api: SlackApi) => Effect.Effect<A, E>,
+  baseUrl?: string,
+): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
 
-    return yield* use(makeSlackApi(client));
+    return yield* use(makeSlackApi(withBaseUrl(client, SLACK_API_URL, baseUrl)));
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const authTest = (
@@ -58,8 +64,9 @@ export const postMessage = (
   channel: string,
   text: string,
   threadTs?: string,
+  baseUrl?: string,
 ): Effect.Effect<{ readonly ts: string }, SlackApiError> =>
-  withLiveClient((api) => api.postMessage(token, channel, text, threadTs));
+  withLiveClient((api) => api.postMessage(token, channel, text, threadTs), baseUrl);
 
 export const getThreadReplies = (
   token: string,

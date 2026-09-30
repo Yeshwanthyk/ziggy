@@ -16,11 +16,10 @@ documents a known bug and turns green when the work order fixes it; **uncovered*
 | [Single writer](single-writer.md) | a live session refuses a second writer by name | green — `resident.test.ts` |
 | [Agents](agents.md) | `agent_run` makes one linked child with only its declared tools | green — `agents.test.ts` |
 | [Memory](memory.md) | memory persists, is visible next turn, and respects scope and cap | green — `memory.test.ts` |
-| [Automations](automations.md) | an automation's result reaches its target conversation once | green — `automations.test.ts` |
+| [Automations](automations.md) | an automation's result reaches each target once: a conversation, Slack, Discord or Telegram | green — `automations.test.ts` |
 | [Extensions](extensions.md) | a chosen package loads; a broken one is skipped, never fatal | green — `extensions.test.ts` |
 | [ACP](acp.md) | an editor prompts over ACP and gets streamed answers | green — `acp.test.ts` |
 
 Uncovered, recorded rather than implied: web `/new` then `run -c`; resume/new/fork ordering;
-channel (Telegram/Discord) watch-only; automation delivery to Slack, Discord or Telegram (the chat APIs have no
-base URL to point at the fake server until step 7); `agent_discuss`; the web UI in a real
-browser (drive by hand with `web pair`, see `../SKILL.md`).
+channel (Telegram/Discord) watch-only; the web UI in a real browser (drive by hand with
+`web pair`, see `../SKILL.md`).

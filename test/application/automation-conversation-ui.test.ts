@@ -91,12 +91,7 @@ const capabilities: AutomationCapabilities = {
   files: automationFileStore,
   printReply: () => Effect.void,
   appendStoredResult: appendStoredAutomationResult,
-  loadTelegramConfig: () => Effect.never,
-  loadDiscordConfig: () => Effect.never,
-  loadSlackConfig: () => Effect.never,
-  sendTelegram: () => Effect.never,
-  sendDiscord: () => Effect.never,
-  sendSlack: () => Effect.never,
+  deliver: () => Effect.never,
 };
 
 const makeFixture = async (broadcast: string) => {

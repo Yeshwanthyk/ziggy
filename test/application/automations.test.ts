@@ -38,6 +38,7 @@ import { makeAutomationDefinitions } from "ziggy/application/automation-definiti
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
+import { apiFailure } from "ziggy/application/delivery";
 import { ProviderConfigError, type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
@@ -140,37 +141,12 @@ const harness = (
       Effect.sync(() => {
         events.push(`reply:${reply}`);
       }),
-    loadTelegramConfig: () =>
-      Effect.sync(() => {
-        events.push("config:telegram");
-
-        return { botToken: "t", ownerUserId: 1 };
-      }),
-    loadDiscordConfig: () =>
-      Effect.sync(() => {
-        events.push("config:discord");
-
-        return { botToken: "d", ownerUserId: "1" };
-      }),
-    loadSlackConfig: () =>
-      Effect.sync(() => {
-        events.push("config:slack");
-
-        return { botToken: "s", appToken: "a", ownerUserId: "U" };
-      }),
-    sendTelegram: (_token, id, text) =>
+    deliver: (_profile, destination, text) =>
       Effect.gen(function* () {
-        events.push(`send:telegram:${id}:${text}`);
+        events.push(`deliver:${destination.target}:${text}`);
 
-        if (options.telegramFailure !== undefined) return yield* options.telegramFailure;
-      }),
-    sendDiscord: (_token, id, text) =>
-      Effect.sync(() => {
-        events.push(`send:discord:${id}:${text}`);
-      }),
-    sendSlack: (_token, id, text, thread) =>
-      Effect.sync(() => {
-        events.push(`send:slack:${id}:${thread ?? "-"}:${text}`);
+        if (destination._tag === "telegram" && options.telegramFailure !== undefined)
+          return yield* Effect.fail(apiFailure(options.telegramFailure));
       }),
   };
 
@@ -654,13 +630,10 @@ describe("automation run", () => {
         ],
       },
     });
-    expect(events.slice(-6)).toEqual([
-      "config:slack",
-      "send:slack:C0123ABCDE:-:local reply",
-      "config:telegram",
-      "send:telegram:2:local reply",
-      "config:discord",
-      "send:discord:3:local reply",
+    expect(events.slice(-3)).toEqual([
+      "deliver:slack:channel:C0123ABCDE:local reply",
+      "deliver:telegram:chat:2:local reply",
+      "deliver:discord:channel:3:local reply",
     ]);
   });
 
@@ -1129,10 +1102,10 @@ describe("automation run", () => {
         ],
       },
     });
-    expect(events.filter((event) => event.startsWith("send:"))).toEqual([
-      "send:discord:1:local reply",
-      "send:telegram:2:local reply",
-      "send:slack:C0123ABCDE:-:local reply",
+    expect(events.filter((event) => event.startsWith("deliver:"))).toEqual([
+      "deliver:discord:channel:1:local reply",
+      "deliver:telegram:chat:2:local reply",
+      "deliver:slack:channel:C0123ABCDE:local reply",
     ]);
     const persisted = (await Effect.runPromise(readAutomationRuns(target.path)))[0];
     expect({

@@ -310,12 +310,7 @@ describe("automation scheduler engine", () => {
           files: automationFileStore,
           printReply: () => Effect.void,
           appendStoredResult: appendStoredAutomationResult,
-          loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
-          loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
-          loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
-          sendTelegram: () => Effect.void,
-          sendDiscord: () => Effect.void,
-          sendSlack: () => Effect.void,
+          deliver: () => Effect.void,
         };
 
         const automations = makeAutomations(agent, capabilities);
@@ -536,12 +531,7 @@ describe("automation scheduler engine", () => {
       files: automationFileStore,
       printReply: () => Effect.void,
       appendStoredResult: appendStoredAutomationResult,
-      loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
-      loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
-      loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
-      sendTelegram: () => Effect.void,
-      sendDiscord: () => Effect.void,
-      sendSlack: () => Effect.void,
+      deliver: () => Effect.void,
     };
 
     const automations = makeAutomations(agent, capabilities, {

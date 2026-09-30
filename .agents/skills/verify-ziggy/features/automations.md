@@ -16,6 +16,9 @@ An automation's result reaches its target conversation exactly once per run.
   A switch that lands between the registry match and the live append (resume is not under the
   registry permit) also falls back to the stored append; that race is proven below the CLI in
   `test/adapters/pi/automation-result.test.ts`.
+- AUT-7: `wake` delivers to a Slack thread (`chat.postMessage` with `thread_ts`), a Discord thread
+  (`discord:channel:<thread id>`, split at 2,000 characters) and a Telegram chat (`sendMessage`),
+  in `broadcast` order, against the fake chat server (`test/harness/chat.ts`).
 
 Unreachable end to end: "delivering one run twice gives one receipt". Nothing re-sends a run
 (no retry path in `src/application/automations.ts`), so dedupe of the same `runId` is only
@@ -40,10 +43,14 @@ broadcast: conversation:<session-header-id>
 Write the digest.
 ```
 
+For channel targets, write `slack.json`, `discord.json` and `telegram.json` with any tokens, start
+`startChatServer()` and run `ziggyWith(profile, chat.env, "wake", …)`; `chat.env` points
+`ZIGGY_SLACK_API_URL`, `ZIGGY_DISCORD_API_URL` and `ZIGGY_TELEGRAM_API_URL` at it.
+
 ## Proof
 
 `wake delivered: conversation:<id>` on stderr; `custom_message` count in the target `.jsonl`;
-ui-sdk `automation-result` event.
+ui-sdk `automation-result` event; `chat.posts` paths and bodies for channel targets.
 
 ## Gotchas
 
