@@ -542,7 +542,7 @@ republish to that URL (Artifact tool, `url` set).
 - [x] **0. Harness and proofs** against today's code. Mark the two known bugs red.
 - [ ] **1. Free fixes and deletions.** Each is its own commit:
   - [x] Profile `list` stops writing the registry.
-  - [ ] ACP `set_model` actually applies.
+  - [x] ACP `set_model` actually applies.
   - [ ] `agent_run` output is bounded and no longer duplicated.
   - [ ] Children refuse `profile_extensions` (a guard until step 6).
   - [ ] A live delivery into a switched session retries or falls back to the stored append.

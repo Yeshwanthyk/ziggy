@@ -1365,3 +1365,7 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 **Delivery targets decided.** Conversation delivery stays: Squarey's `linkedin-jobs` sends to a Slack channel and a UI conversation at once. Plan step 7 now routes delivery through gateway-owned targets (Slack/Discord channel or thread, Telegram chat, ui-sdk conversation) behind one `deliver` seam, and gives the chat APIs a base URL so the harness can prove gateway delivery.
 
 **A cron that never fires is invalid.** `parseAutomationFile` rejects a cron that parses but never fires (`0 0 31 2 *`) with "cron never fires", so Effect's throwing `Cron.next` is never reached and `serve` starts. AUT-5 is green.
+
+**ACP `set_model` applies.** The face stored a `modelOverride` nothing read; it now calls the session handle's `setModel` and the field is gone. ACP-2 is green; the face unit test's fake handle records the applied model.
+
+Once, a combined `bun run test` stalled with one worker at 100% CPU; three reruns and every folder alone pass (836 in ~12 s). Not reproduced; watch for it.

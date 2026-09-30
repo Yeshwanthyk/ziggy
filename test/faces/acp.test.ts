@@ -261,13 +261,25 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
 });
 
 test("ACP session/new announces auth-configured models and session/set_model validates them", async () => {
+  const applied: Array<string> = [];
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed("ok"),
+    setModel: (providerId, modelId) =>
+      Effect.sync(() => {
+        applied.push(`${providerId}/${modelId}`);
+
+        return { providerId, modelId, thinking: "low" as const };
+      }),
+  });
+
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const app = yield* makeAcpAgent(
           target,
           false,
-          stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
+          stubAgent(() => Effect.succeed(handle)),
           stubModels,
         );
 
@@ -297,6 +309,7 @@ test("ACP session/new announces auth-configured models and session/set_model val
             });
 
             expect(accepted).toEqual({});
+            expect(applied).toEqual(["openai/gpt-5"]);
             await expect(
               agentContext.request("session/set_model", {
                 sessionId: session.sessionId,

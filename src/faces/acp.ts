@@ -39,7 +39,6 @@ interface AcpTurn {
 
 interface AcpSession {
   readonly handle: ChatHandle;
-  modelOverride: { readonly providerId: string; readonly modelId: string } | undefined;
   active: AcpTurn | undefined;
 }
 
@@ -271,7 +270,6 @@ export const makeAcpAgent = (
                     Effect.sync(() =>
                       sessions.set(sessionId, {
                         handle,
-                        modelOverride: undefined,
                         active: undefined,
                       }),
                     ),
@@ -335,19 +333,21 @@ export const makeAcpAgent = (
                 return yield* Effect.fail(invalidParams(`unknown session model ${params.modelId}`));
               }
 
-              yield* statePermit.withPermit(
-                Effect.gen(function* () {
-                  const session = sessions.get(params.sessionId);
-
-                  if (session === undefined) {
-                    return yield* Effect.fail(invalidParams("unknown ACP session"));
-                  }
-
-                  session.modelOverride = { providerId, modelId };
-
-                  return session;
-                }),
+              const session = yield* statePermit.withPermit(
+                Effect.sync(() => sessions.get(params.sessionId)),
               );
+
+              if (session === undefined) {
+                return yield* Effect.fail(invalidParams("unknown ACP session"));
+              }
+
+              yield* session.handle
+                .setModel(providerId, modelId)
+                .pipe(
+                  Effect.mapError(() =>
+                    RequestError.internalError(undefined, "could not set the session model"),
+                  ),
+                );
 
               return {};
             }),

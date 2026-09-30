@@ -77,8 +77,7 @@ describe("acp", () => {
     expect(server.request(0).model).toBe("harness-model");
   });
 
-  // Red until work-order step 1: set_model stores an override nothing reads.
-  test.failing("session/set_model changes the next request's model", async () => {
+  test("session/set_model changes the next request's model", async () => {
     await withAcp(async (agent) => {
       await agent.request(methods.agent.initialize, {
         protocolVersion: PROTOCOL_VERSION,

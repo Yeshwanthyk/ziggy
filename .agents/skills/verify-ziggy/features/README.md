@@ -17,7 +17,7 @@ documents a known bug and turns green when the work order fixes it; **uncovered*
 | [Agents](agents.md) | `agent_run` makes one linked child with only its declared tools | green / red — `agents.test.ts` |
 | [Memory](memory.md) | memory persists, is visible next turn, and respects scope and cap | green — `memory.test.ts` |
 | [Automations](automations.md) | an automation's result reaches its target conversation once | green — `automations.test.ts` |
-| [ACP](acp.md) | an editor prompts over ACP and gets streamed answers | green / red — `acp.test.ts` |
+| [ACP](acp.md) | an editor prompts over ACP and gets streamed answers | green — `acp.test.ts` |
 
 Uncovered, recorded rather than implied: web `/new` then `run -c`; resume/new/fork ordering;
 channel (Telegram/Discord) watch-only; a live automation delivery into a session the UI
