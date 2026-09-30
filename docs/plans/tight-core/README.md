@@ -541,7 +541,7 @@ gitignored `docs/plans/tight-core/status.html`. It is not committed. After each 
 read the artifact back first.
 
 - [x] **0. Harness and proofs** against today's code. Mark the two known bugs red.
-- [ ] **1. Free fixes and deletions.** Each is its own commit:
+- [x] **1. Free fixes and deletions.** Each is its own commit:
   - [x] Profile `list` stops writing the registry.
   - [x] ACP `set_model` actually applies.
   - [x] `agent_run` output is bounded and no longer duplicated.
@@ -549,7 +549,7 @@ read the artifact back first.
   - [x] A live delivery into a switched session retries or falls back to the stored append.
   - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
   - [x] Session stats count Pi's `usage` entries and history drops the `toolCall` branch.
-  - [ ] Delete dead code:
+  - [x] Delete dead code:
     - the GitHub catalog and tar extractor;
     - 4 unused registry members;
     - `runtime.ts`;
@@ -655,3 +655,8 @@ Add one dated line per session: what landed, which proofs went green, and what w
   - Effect patterns before and after;
   - each area in plain language;
   - three open questions.
+- 2026-09-30: Step 1 landed. Every fix is its own commit with a red-first proof where one could be made.
+  - Dead code deleted: `runtime.ts`, `ZiggyAgentLive`, four test-only `ChatRegistry` members, the GitHub extension source and the tar extractor.
+  - A verifier pass found no bugs; its follow-ups (ACP `set_model` busy error, weak assertions, wording) landed together.
+  - E2E proofs get a 30 s default timeout; one cold-start timing flake is fixed, and two unreproduced flakes are recorded in LOG.md.
+  - Starting step 2 on the picks in §9, since the go-ahead was to build this plan.
