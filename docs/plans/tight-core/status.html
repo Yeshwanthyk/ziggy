@@ -134,10 +134,10 @@ section { display: grid; gap: 14px; }
 // The only part to edit when progress changes.
 const STATUS = {
   updated: "2026-09-30 · step 1 in progress",
-  suite: "bun run test: 836 pass in ~13 s · bun run test:e2e: 24 proofs in ~7 s",
+  suite: "bun run test: 836 pass in ~12 s · bun run test:e2e: 24 proofs in ~6 s",
   next: {
     step: "Step 1 · Free fixes and deletions",
-    item: "ACP set_model actually applies (src/faces/acp.ts sets session.modelOverride, which nothing reads)",
+    item: "A live delivery into a switched session retries or falls back to the stored append (write the proof first)",
     read: [
       "docs/plans/tight-core/README.md (§8 work order)",
       "LOG.md (last entry)",
@@ -152,10 +152,10 @@ const STATUS = {
     { n: 1, title: "Free fixes and deletions", state: "active", items: [
       { text: "Profile list stops writing the registry", state: "done", sha: "25531d0b" },
       { text: "The scheduler survives a cron that never fires", state: "done", sha: "dc7bd430" },
-      { text: "ACP set_model actually applies", state: "active" },
-      { text: "agent_run output is bounded and no longer duplicated", state: "todo" },
-      { text: "Children refuse profile_extensions and misspelled tools", state: "todo" },
-      { text: "A live delivery into a switched session retries or falls back (proof first)", state: "todo" },
+      { text: "ACP set_model actually applies", state: "done", sha: "63d2a053" },
+      { text: "agent_run output is bounded and no longer duplicated", state: "done", sha: "744bc084" },
+      { text: "Children refuse profile_extensions and misspelled tools", state: "done", sha: "4bb2237a" },
+      { text: "A live delivery into a switched session retries or falls back (proof first)", state: "active" },
       { text: "Session stats count Pi's usage entries", state: "todo" },
       { text: "Delete dead code: GitHub catalog, tar extractor, 4 registry members, runtime.ts, ZiggyAgentLive", state: "todo" },
       { text: "Optional test-seam members become required; makeChatHandle moves to test/harness/", state: "todo" },
@@ -215,9 +215,9 @@ const STATUS = {
     ]},
     { name: "Agents", file: "agents.test.ts", proofs: [
       { text: "agent_run makes one linked child file running only the declared tools", state: "green" },
-      { text: "The parent's tool result stays bounded", state: "red", note: "today the whole 20,004-char child answer comes back" },
-      { text: "A child declaring a misspelled tool is refused before the model call", state: "red" },
-      { text: "A child declaring profile_extensions is refused before the model call", state: "red" },
+      { text: "The parent's tool result stays bounded and names the child file", state: "green", note: "was red; fixed in 744bc084" },
+      { text: "agent_run refuses a misspelled tool before the child reaches the model", state: "green" },
+      { text: "agent_run refuses profile_extensions before the child reaches the model", state: "green", note: "was red; fixed in 4bb2237a" },
     ]},
     { name: "Memory", file: "memory.test.ts", proofs: [
       { text: "memory_write lands on disk and in the next turn's prompt", state: "green" },
@@ -233,7 +233,7 @@ const STATUS = {
     ]},
     { name: "ACP", file: "acp.test.ts", proofs: [
       { text: "A prompt streams the model's answer back", state: "green" },
-      { text: "session/set_model changes the next request's model", state: "red", note: "the override is stored and never read" },
+      { text: "session/set_model changes the next request's model", state: "green", note: "was red; fixed in 63d2a053" },
     ]},
   ],
   uncovered: [
@@ -253,6 +253,10 @@ const STATUS = {
       text: "Rebuild freely. Faces, gateways, ui-sdk and the web UI must keep working, and the proofs above guard that." },
   ],
   commits: [
+    { sha: "744bc084", text: "Bound agent_run results and stop duplicating the answer" },
+    { sha: "4bb2237a", text: "Refuse profile_extensions in child agents" },
+    { sha: "63d2a053", text: "Apply ACP session/set_model to the live session" },
+    { sha: "e48340ab", text: "Add the tight-core progress board" },
     { sha: "dc7bd430", text: "Reject automation crons that never fire" },
     { sha: "d81bdcf7", text: "Plan gateway-owned automation delivery targets" },
     { sha: "25531d0b", text: "Make profiles listing read-only" },
