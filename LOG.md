@@ -1279,3 +1279,11 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `makeResidentGatewayLive(registry, extensionHealth, directory)` is now a plain `ResidentGatewayLive` that yields `ZiggyPaths` and a new `ExtensionHealth` service. `composition.ts` exports a constant `CliLayer`.
 - Fix: resident service operations read `ZIGGY_HOME` raw, not resolved against cwd, so a relative `ZIGGY_HOME` could reach launchd/systemd unresolved. They now use `ZiggyPaths`, and their host runtime is built in the layer instead of at module load.
 - Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles`, `extensions show apple-notes`, and `profiles` with a relative `ZIGGY_HOME` from a scratch directory.
+
+## CLI exit codes and terminal style through Effect
+
+- `main.ts` no longer writes `process.exitCode` or prints-then-succeeds. Commands return their exit code; `exitWith` fails with `CliExit` (`src/faces/cli-exit.ts`), which carries `Runtime.errorExitCode` and suppresses `runMain`'s report. `CliCommandFailed` replaces the `fail(message)` helper.
+- Failure rendering is 7 `catchTags` entries for tags with extra detail plus one `Effect.catch` on `.message`, down from 61 entries. Any typed failure is now reported, not only listed tags.
+- `disableErrorReporting` is removed from `runMain`, so defects print instead of exiting 1 silently.
+- `TerminalStyle` (`src/faces/terminal-ui.ts`) replaces `terminalRenderOptions()`. It reads `TERM` and `NO_COLOR` through `Config` and the stdout TTY and columns when its layer builds.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested exit codes from source: `--version`/`help`/`profiles` 0; doctor on a missing Profile, unknown extension, `serve status` on an uninstalled Profile, and an uninitialized Profile all 1 with one printed report. Under a pseudo-TTY `profiles` renders the pretty panel, and `NO_COLOR` drops colors.

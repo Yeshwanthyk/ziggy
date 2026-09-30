@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Clock, Effect, Exit, Result, Runtime, Schedule } from "effect";
+import { Cause, Clock, Console, Effect, Exit, Result, Runtime, Schedule } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { fileSystemCauseDetails } from "./adapters/fs/cause";
@@ -28,6 +28,8 @@ import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
 import { CliLayer } from "./composition";
+import { CliCommandFailed, exitWith } from "./faces/cli-exit";
+import { TerminalStyle } from "./faces/terminal-ui";
 import { ZiggyPaths } from "./application/ziggy-paths";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
@@ -83,22 +85,6 @@ import {
 } from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 
-const terminalRenderOptions = () => {
-  const pretty = process.stdout.isTTY === true && process.env.TERM !== "dumb";
-
-  return {
-    pretty,
-    colors: pretty && process.env.NO_COLOR === undefined,
-    columns: process.stdout.columns ?? 80,
-  } as const;
-};
-
-const fail = (message: string) =>
-  Effect.sync(() => {
-    console.error(message);
-    process.exitCode = 1;
-  });
-
 type ServiceCommand = Exclude<CliCommand, { readonly _tag: "Help" | "Version" }>;
 
 const runCommand = (command: ServiceCommand) =>
@@ -121,6 +107,7 @@ const runCommand = (command: ServiceCommand) =>
     const extensionUpdate = yield* ExtensionUpdate;
     const memory = yield* Memory;
     const paths = yield* ZiggyPaths;
+    const style = yield* TerminalStyle;
 
     switch (command._tag) {
       case "Init": {
@@ -184,10 +171,9 @@ const runCommand = (command: ServiceCommand) =>
           console.log(rendered.text);
 
           if (rendered.exitCode !== 0) {
-            process.exitCode = rendered.exitCode;
             console.error(renderSetupRecovery(result.doctor));
 
-            return;
+            return rendered.exitCode;
           }
         }
 
@@ -212,7 +198,7 @@ const runCommand = (command: ServiceCommand) =>
 
         console.log(
           renderProfiles(listings, {
-            ...terminalRenderOptions(),
+            ...style,
             homeDirectory: paths.homedir,
           }),
         );
@@ -245,7 +231,7 @@ const runCommand = (command: ServiceCommand) =>
               },
         );
 
-        console.log(renderExtensionManagerResult(result, terminalRenderOptions()));
+        console.log(renderExtensionManagerResult(result, style));
 
         return;
       }
@@ -267,7 +253,7 @@ const runCommand = (command: ServiceCommand) =>
           return;
         }
 
-        console.log(renderExtensions(extensions, terminalRenderOptions()));
+        console.log(renderExtensions(extensions, style));
 
         return;
       }
@@ -318,7 +304,7 @@ const runCommand = (command: ServiceCommand) =>
                   : extensionPath,
               ),
             },
-            terminalRenderOptions(),
+            style,
             profile,
           ),
         );
@@ -334,7 +320,7 @@ const runCommand = (command: ServiceCommand) =>
           ? profileExtensions.add(target, command.id)
           : profileExtensions.remove(target, command.id);
 
-        console.log(renderExtensionMutation(result, terminalRenderOptions()));
+        console.log(renderExtensionMutation(result, style));
 
         if (command._tag === "ExtensionsAdd" && result.selected && result.changed) {
           const extension = yield* readSelectedExtensionPackage(target.path, result.id).pipe(
@@ -476,9 +462,7 @@ const runCommand = (command: ServiceCommand) =>
 
         console.log(renderProfileAgentValidation(validation));
 
-        if (validation.some((item) => !item.valid)) process.exitCode = 1;
-
-        return;
+        return validation.some((item) => !item.valid) ? 1 : 0;
       }
 
       case "AgentsRun": {
@@ -515,9 +499,7 @@ const runCommand = (command: ServiceCommand) =>
             : { mode: command.json ? "json" : "text", sessionPath },
         );
 
-        process.exitCode = exitCode;
-
-        return;
+        return exitCode;
       }
 
       case "Acp":
@@ -575,9 +557,7 @@ const runCommand = (command: ServiceCommand) =>
 
         console.log(renderAutomationValidation(validation));
 
-        if (validation.some((item) => !item.valid)) process.exitCode = 1;
-
-        return;
+        return validation.some((item) => !item.valid) ? 1 : 0;
       }
 
       case "AutomationsStatus": {
@@ -630,14 +610,12 @@ const runCommand = (command: ServiceCommand) =>
 
         if (owner._tag === "running") {
           const projection = yield* readUiServerProjection(target.path).pipe(
-            Effect.catch((failure) =>
+            Effect.mapError((failure) =>
               fileSystemCauseDetails(failure.cause).code === "ENOENT"
-                ? fail("resident is starting; retry")
-                : Effect.fail(failure),
+                ? new CliCommandFailed({ message: "resident is starting; retry" })
+                : failure,
             ),
           );
-
-          if (projection === undefined) return;
 
           const result = yield* wakeInResident(target, command.automationId, projection);
           outcome = result.runOutcome;
@@ -650,9 +628,8 @@ const runCommand = (command: ServiceCommand) =>
         const rendered = renderAutomationOutcome(outcome);
 
         for (const line of rendered.stderr) console.error(line);
-        process.exitCode = rendered.exitCode;
 
-        return;
+        return rendered.exitCode;
       }
 
       case "SessionsList": {
@@ -698,9 +675,7 @@ const runCommand = (command: ServiceCommand) =>
 
         console.log(renderResidentLifecycle(result));
 
-        if (result.ready === false) process.exitCode = 1;
-
-        return;
+        return result.ready === false ? 1 : 0;
       }
 
       case "ServeStart":
@@ -720,9 +695,7 @@ const runCommand = (command: ServiceCommand) =>
 
         console.log(renderResidentLifecycle(result));
 
-        if (result.ready === false) process.exitCode = 1;
-
-        return;
+        return result.ready === false ? 1 : 0;
       }
 
       case "ServeStatus": {
@@ -730,9 +703,8 @@ const runCommand = (command: ServiceCommand) =>
 
         const rendered = renderServeStatus(status);
         console.log(rendered.text);
-        process.exitCode = rendered.exitCode;
 
-        return;
+        return rendered.exitCode;
       }
 
       case "ServeLogs": {
@@ -744,9 +716,8 @@ const runCommand = (command: ServiceCommand) =>
         const rendered = renderResidentLogs(logs);
 
         if (rendered.length > 0) console.log(rendered);
-        process.exitCode = logs.exitCode;
 
-        return;
+        return logs.exitCode;
       }
 
       case "Serve":
@@ -760,9 +731,9 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "UnsupportedResidentAlias":
-        return yield* fail(
-          `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
-        );
+        return yield* new CliCommandFailed({
+          message: `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
+        });
       case "WebConfigure": {
         const target = paths.resolveTarget(command.target);
         yield* configureWebAccess(target, command.port, command.publicUrl);
@@ -801,9 +772,9 @@ const runCommand = (command: ServiceCommand) =>
           if (status.managed.success._tag === "not-installed") {
             const profile = JSON.stringify(command.target);
 
-            return yield* fail(
-              `resident not running; start it with: ziggy serve ${profile}  (or install: ziggy serve install ${profile})`,
-            );
+            return yield* new CliCommandFailed({
+              message: `resident not running; start it with: ziggy serve ${profile}  (or install: ziggy serve install ${profile})`,
+            });
           }
 
           const started = yield* residentService.start(target).pipe(Effect.result);
@@ -814,9 +785,9 @@ const runCommand = (command: ServiceCommand) =>
             if (current._tag !== "running") {
               if (Result.isFailure(started)) return yield* started.failure;
 
-              return yield* fail(
-                "resident did not become ready; inspect ziggy serve status and logs",
-              );
+              return yield* new CliCommandFailed({
+                message: "resident did not become ready; inspect ziggy serve status and logs",
+              });
             }
           }
         }
@@ -841,9 +812,8 @@ const runCommand = (command: ServiceCommand) =>
 
         const rendered = renderDoctor(report);
         console.log(rendered.text);
-        process.exitCode = rendered.exitCode;
 
-        return;
+        return rendered.exitCode;
       }
 
       case "ModelsStatus": {
@@ -877,6 +847,8 @@ const runCommand = (command: ServiceCommand) =>
     }
   });
 
+const reportFailure = (message: string) => Console.error(message).pipe(Effect.as(1));
+
 const program = Effect.gen(function* () {
   const command = yield* decodeCliCommand(process.argv.slice(2));
 
@@ -894,80 +866,36 @@ const program = Effect.gen(function* () {
 
   return yield* runCommand(command).pipe(Effect.provide(CliLayer));
 }).pipe(
+  // Typed failures print one line and exit 1; a few tags carry detail beyond their message.
   Effect.catchTags({
-    CliInputInvalid: (failure) => fail(failure.message),
     TerminalInteractionFailed: (failure) =>
-      fail(`terminal interaction failed during ${failure.operation}`),
+      reportFailure(`terminal interaction failed during ${failure.operation}`),
     ProfileTargetNotDirectory: (failure) =>
-      fail(`profile target is not a directory: ${failure.path}`),
+      reportFailure(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>
-      fail(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
-    ProfileExtensionInvalid: (failure) => fail(failure.message),
-    ProfileExtensionPreflightFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
-    ProfileExtensionLockFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
-    ProfileExtensionRollbackFailed: (failure) => fail(renderProfileExtensionFailure(failure)),
-    ProfileAgentInvalid: (failure) => fail(failure.message),
-    SpecialistAgentNotFound: (failure) => fail(failure.message),
-    SpecialistProviderUnsupported: (failure) => fail(failure.message),
-    SpecialistModelUnsupported: (failure) => fail(failure.message),
-    SpecialistAuthUnavailable: (failure) => fail(failure.message),
-    SpecialistThinkingUnsupported: (failure) => fail(failure.message),
-    SpecialistToolUnsupported: (failure) => fail(failure.message),
-    SpecialistRunFailed: (failure) => fail(failure.message),
-    ProfileNotInitialized: (failure) => fail(failure.message),
-    SessionBusy: (failure) => fail(failure.message),
+      reportFailure(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
+    ProfileExtensionPreflightFailed: (failure) =>
+      reportFailure(renderProfileExtensionFailure(failure)),
+    ProfileExtensionLockFailed: (failure) => reportFailure(renderProfileExtensionFailure(failure)),
+    ProfileExtensionRollbackFailed: (failure) =>
+      reportFailure(renderProfileExtensionFailure(failure)),
     SessionHeld: (failure) =>
-      fail(
+      reportFailure(
         `this session is open in another process${failure.pid === undefined ? "" : ` (pid ${failure.pid})`}; use the UI, or start a new session`,
       ),
-    ProviderConfigError: (failure) => fail(failure.message),
-    ProviderCallError: (failure) => fail(failure.message),
-    AuthProviderUnknown: (failure) => fail(failure.message),
-    AuthTypeUnsupported: (failure) => fail(failure.message),
-    AuthFlowFailed: (failure) => fail(failure.message),
-    ModelProviderUnknown: (failure) => fail(failure.message),
-    ModelUnknown: (failure) => fail(failure.message),
-    ModelThinkingUnsupported: (failure) => fail(failure.message),
-    ModelOperationFailed: (failure) => fail(failure.message),
-    ModelSettingsWriteFailed: (failure) => fail(failure.message),
-    SetupIncomplete: (failure) => fail(failure.message),
-    MemoryIdInvalid: (failure) => fail(failure.message),
-    MemoryDocumentInvalid: (failure) => fail(failure.message),
-    MemoryFileSystemError: (failure) => fail(failure.message),
-    AutomationInvalid: (failure) => fail(failure.message),
-    AutomationNotFound: (failure) => fail(failure.message),
-    AutomationPaused: (failure) => fail(failure.message),
-    AutomationFileSystemError: (failure) => fail(failure.message),
-    AutomationGateFailed: (failure) => fail(failure.message),
-    AutomationDatabaseError: (failure) => fail(failure.message),
-    AutomationProjectionError: (failure) => fail(failure.message),
-    AutomationSchedulerError: (failure) => fail(failure.message),
-    GatewayConfigError: (failure) => fail(failure.message),
-    GatewayOwnerError: (failure) => fail(failure.message),
-    ResidentServiceError: (failure) => fail(failure.message),
-    UiServerError: (failure) => fail(failure.message),
-    UiGatewayError: (failure) => fail(failure.message),
-    WebAccessError: (failure) => fail(failure.message),
-    SessionReadFailed: (failure) => fail(failure.message),
-    SessionNotFound: (failure) => fail(failure.message),
-    ExtensionCatalogInvalid: (failure) => fail(failure.message),
-    ExtensionCatalogUnavailable: (failure) => fail(failure.message),
-    ExtensionCatalogInstallFailed: (failure) => fail(failure.message),
-    ZiggyUpdateUnavailable: (failure) => fail(failure.message),
-    ExtensionUpdateError: (failure) => fail(failure.message),
-    AcpFaceError: (failure) => fail(failure.message),
   }),
+  Effect.catch((failure) => reportFailure(failure.message)),
+  Effect.flatMap(exitWith),
 );
 
 BunRuntime.runMain(
   program,
   isForegroundResidentArguments(process.argv.slice(2))
     ? {
-        disableErrorReporting: true,
         teardown: (exit, onExit) => {
           if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) onExit(0);
           else Runtime.defaultTeardown(exit, onExit);
         },
       }
-    : { disableErrorReporting: true },
+    : undefined,
 );

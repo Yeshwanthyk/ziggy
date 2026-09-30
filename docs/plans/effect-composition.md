@@ -108,9 +108,14 @@ src/faces/commands/    one handler module per command area; handlers yield servi
    - `makeCliLayer(options)` is now the constant `CliLayer`.
    - Covers part of review comment 5. The resident's wide dependency merge shrinks with the
      per-area layers in slice 5.
-4. **CLI output and exit.** Status: pending.
-   - Add a `TerminalOutput` service, `CliExit`, and `renderCliFailure`.
-   - Delete `fail` and every `process.exitCode` write.
+4. **CLI output and exit.** Status: done.
+   - `TerminalStyle` (`faces/terminal-ui.ts`, next to `TerminalRenderOptions`) reads the TTY,
+     `TERM`, `NO_COLOR` and columns once, in its layer. Printing stays on `console` until slice 5.
+   - A command's result is its exit code. `exitWith` turns a non-zero code into `CliExit`, which
+     sets `Runtime.errorExitCode` and `Runtime.errorReported = false`.
+   - `CliCommandFailed` replaces `fail(message)`. The 61-tag `catchTags` is down to the 7 tags that
+     render more than `.message`, then one `Effect.catch`.
+   - `disableErrorReporting` is gone, so defects are reported instead of exiting 1 silently.
    - Covers review comment 1.
 5. **Per-area handlers.** Status: pending.
    - One area per commit: models, sessions, memory, auth, agents, automations, extensions,

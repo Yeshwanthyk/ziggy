@@ -33,6 +33,7 @@ import { SelfUpdateLive } from "./application/self-update";
 import { SessionsLive } from "./application/sessions";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
+import { TerminalStyle } from "./faces/terminal-ui";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -144,4 +145,5 @@ export const CliLayer = Layer.mergeAll(
   MemoryLayer,
   ResidentLayer,
   ZiggyPathsLive,
+  TerminalStyle.layer,
 ).pipe(Layer.provide(PiStandaloneRuntimeLive));
