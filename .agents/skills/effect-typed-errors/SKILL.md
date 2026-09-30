@@ -10,11 +10,14 @@ error channel. Reserve defects for violated invariants that cannot be handled me
 
 1. Identify the face, application, domain, filesystem, CLI, or Pi adapter boundary.
 2. Find an existing domain error before adding another class.
-3. Add a new tagged error only when callers need a distinct recovery, retry, UI, exit, or
-   telemetry path.
+3. One error class per distinct recovery path: add a tagged error only when callers need a
+   distinct recovery, retry, UI, exit, or telemetry path. Variants that share a path share a class
+   and differ by a `reason` literal.
 4. Preserve failure semantics; do not replace a failure with `false`, `undefined`, `[]`, or a
    generic message merely to simplify the type.
-5. Keep unknown external causes in a typed error's `cause` field. Do not derive product behavior
+5. Platform helpers fail with their own errors (`FileLockFailed`, `AtomicWriteFailed`). Map them
+   once, at the caller, to the error its own callers branch on.
+6. Keep unknown external causes in a typed error's `cause` field. Do not derive product behavior
    or user copy by probing unknown thrown values.
 
 ## Define expected failures

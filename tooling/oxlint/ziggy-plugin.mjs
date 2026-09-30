@@ -1,3 +1,4 @@
+import importBoundaries from "./ziggy/rules/import-boundaries.mjs";
 import noChainedTypeAssertions from "./ziggy/rules/no-chained-type-assertions.mjs";
 import noConditionalEmptyObjectSpread from "./ziggy/rules/no-conditional-empty-object-spread.mjs";
 import noKnownValueWidening from "./ziggy/rules/no-known-value-widening.mjs";
@@ -19,6 +20,7 @@ import requireSafetyCommentForTypeAssertion from "./ziggy/rules/require-safety-c
 export default {
   meta: { name: "ziggy" },
   rules: {
+    "import-boundaries": importBoundaries,
     "no-chained-type-assertions": noChainedTypeAssertions,
     "no-conditional-empty-object-spread": noConditionalEmptyObjectSpread,
     "no-known-value-widening": noKnownValueWidening,
