@@ -1,7 +1,7 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { classifyBundledCopy } from "../fs/extension-update";
 import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../../catalog";
 import { discoverProfileAgents } from "../fs/profile-agents";

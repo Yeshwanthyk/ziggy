@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path";
 import { Effect, Schema } from "effect";
 import { WebAccessConfig, WebAccessError } from "../../domain/web-access";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 const DEFAULT_PORT = 0;
 

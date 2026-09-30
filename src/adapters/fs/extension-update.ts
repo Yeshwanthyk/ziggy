@@ -7,7 +7,7 @@ import type { BundledExtensionCatalogEntry } from "../../domain/extension-catalo
 import { installBundledPackage } from "./extension-installer";
 import { Effect, Schema } from "effect";
 import { ExtensionUpdateError } from "../../domain/extension-update";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 const Id = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 

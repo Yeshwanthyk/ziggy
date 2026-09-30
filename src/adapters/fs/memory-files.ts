@@ -9,7 +9,7 @@ import {
   memoryDocumentFromRelativePath,
   type MemoryDocument,
 } from "../../domain/memory";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export interface MemoryDocumentRead {
   readonly document: MemoryDocument;

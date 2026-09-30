@@ -8,7 +8,7 @@ import {
   REQUIRED_BUNDLED_EXTENSION_IDS,
 } from "../../catalog";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   bundledExtensionPackage,
   readExtensionPackage,

@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Effect, Schema } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { SessionLeaseFailed } from "./session-lease";
 
 const Header = Schema.Struct({

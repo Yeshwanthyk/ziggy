@@ -8,7 +8,7 @@ import {
   type DiscordHealthSnapshot,
   DiscordHealthSnapshot as DiscordHealthSnapshotSchema,
 } from "../../domain/discord-health";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 const decodeSnapshotJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DiscordHealthSnapshotSchema),

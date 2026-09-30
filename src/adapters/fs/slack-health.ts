@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Result, Schema } from "effect";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   type SlackHealthProjection,
   SlackHealthProjectionError,

@@ -51,7 +51,7 @@ import { ProfileExtensions } from "./profile-extensions";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import type { UiGatewayDependencies } from "./ui-gateway/types";
 import { Sessions, type SessionsApi } from "./sessions";
-import { ZiggyPaths } from "./ziggy-paths";
+import { ZiggyPaths } from "../platform/paths";
 import {
   makeSharedUiGateway,
   makeUiGateway,

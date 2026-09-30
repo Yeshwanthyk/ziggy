@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect } from "effect";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { fileSystemCauseDetails } from "../platform/cause";
 import type { ProfileTarget } from "../domain/profile";
 import {
   DefaultProfileUnavailable,

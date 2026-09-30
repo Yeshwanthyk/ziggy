@@ -4,7 +4,7 @@ import { readFile, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Effect, Schema, Scope } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export class SessionLeaseHeld extends Schema.TaggedErrorClass<SessionLeaseHeld>()(
   "SessionLeaseHeld",

@@ -1,6 +1,7 @@
 import { Console, Effect, Match } from "effect";
 import { Sessions } from "../../application/sessions";
-import { ZiggyPaths } from "../../application/ziggy-paths";
+import { resolveProfileTarget } from "../../domain/profile";
+import { ZiggyPaths } from "../../platform/paths";
 import type { CliCommand } from "../cli-command";
 import {
   renderSession,
@@ -22,7 +23,7 @@ export const runSessionsCommand = (command: SessionsCommand) =>
     return yield* Match.valueTags(command, {
       SessionsList: (command) =>
         sessions
-          .list(paths.resolveTarget(command.target))
+          .list(resolveProfileTarget(command.target, paths))
           .pipe(
             Effect.flatMap((listed) =>
               Console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed)),
@@ -30,7 +31,7 @@ export const runSessionsCommand = (command: SessionsCommand) =>
           ),
       SessionsShow: (command) =>
         sessions
-          .show(paths.resolveTarget(command.target), command.reference)
+          .show(resolveProfileTarget(command.target, paths), command.reference)
           .pipe(
             Effect.flatMap((shown) =>
               Console.log(command.json ? renderSessionJson(shown) : renderSession(shown)),

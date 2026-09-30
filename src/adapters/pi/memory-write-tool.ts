@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import type { Dirent } from "node:fs";
-import { link, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Database } from "bun:sqlite";
-import { Clock, Effect, Result, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { Type } from "typebox";
 import {
   applyMemoryOperations,
@@ -17,7 +16,9 @@ import {
   type MemoryScope,
   type MemoryDocument,
 } from "../../domain/memory";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
+import { writeFileAtomic } from "../../platform/atomic-write";
+import { withFileLock } from "../../platform/file-lock";
 
 const memoryOperationParameters = Type.Union([
   Type.Object({
@@ -55,28 +56,6 @@ class MemoryWriteIoError extends Schema.TaggedErrorClass<MemoryWriteIoError>()(
     cause: Schema.Defect(),
   },
 ) {}
-
-const memoryIo = <A>(
-  operation: MemoryWriteIoError["operation"],
-  path: string,
-  run: (signal: AbortSignal) => PromiseLike<A>,
-): Effect.Effect<A, MemoryWriteIoError> =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) => new MemoryWriteIoError({ operation, path, cause }),
-  });
-
-const logMemoryCleanupFailure = (operation: string, path: string, cause: unknown) =>
-  Effect.logWarning("Pi memory cleanup failed", { operation, path, cause });
-
-const removeTemporaryMemoryFile = (path: string): Effect.Effect<void> =>
-  memoryIo("write", path, () => rm(path)).pipe(
-    Effect.catch((failure) =>
-      fileSystemCauseDetails(failure.cause).code === "ENOENT"
-        ? Effect.void
-        : logMemoryCleanupFailure("remove temporary file", path, failure.cause),
-    ),
-  );
 
 type LoadedMemoryDocument = {
   readonly content: string;
@@ -428,131 +407,43 @@ const backupExistingMemoryDocument = (
 const atomicReplace = (
   document: MemoryDocument,
   content: string,
-): Effect.Effect<void, MemoryWriteIoError | MemoryDocumentInvalid> => {
-  const temporaryPath = join(dirname(document.absolutePath), `.${randomUUID()}.memory-write.tmp`);
-
-  const publish = Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => ensureMemoryParentDirectories(document),
-      catch: (cause) =>
-        cause instanceof MemoryDocumentInvalid
-          ? cause
-          : new MemoryWriteIoError({
-              operation: "write",
-              path: dirname(document.absolutePath),
-              cause,
-            }),
-    });
-    yield* Effect.acquireUseRelease(
-      memoryIo("write", temporaryPath, () => open(temporaryPath, "wx", 0o600)),
-      (temporaryFile) =>
-        memoryIo("write", temporaryPath, async () => {
-          await temporaryFile.writeFile(content, "utf8");
-          await temporaryFile.sync();
-        }),
-      (temporaryFile) =>
-        memoryIo("write", temporaryPath, () => temporaryFile.close()).pipe(
-          Effect.catch((failure) =>
-            logMemoryCleanupFailure("close temporary file", temporaryPath, failure.cause),
-          ),
+): Effect.Effect<void, MemoryWriteIoError | MemoryDocumentInvalid> =>
+  Effect.tryPromise({
+    try: () => ensureMemoryParentDirectories(document),
+    catch: (cause) =>
+      cause instanceof MemoryDocumentInvalid
+        ? cause
+        : new MemoryWriteIoError({
+            operation: "write",
+            path: dirname(document.absolutePath),
+            cause,
+          }),
+  }).pipe(
+    Effect.andThen(memoryFileExists(document.absolutePath)),
+    Effect.andThen(
+      writeFileAtomic(document.absolutePath, content).pipe(
+        Effect.mapError(
+          (failure) =>
+            new MemoryWriteIoError({ operation: "write", path: failure.path, cause: failure }),
         ),
-    );
-    yield* memoryFileExists(document.absolutePath);
-    yield* memoryIo("write", document.absolutePath, () =>
-      rename(temporaryPath, document.absolutePath),
-    );
-  });
-
-  return publish.pipe(Effect.ensuring(removeTemporaryMemoryFile(temporaryPath)));
-};
-
-const memoryLockPath = (profilePath: string, document: MemoryDocument): string =>
-  join(
-    profilePath,
-    ".runtime",
-    "memory-locks",
-    `${encodeURIComponent(document.relativePath)}.sqlite`,
+      ),
+    ),
   );
-
-const ensureMemoryLockDirectories = async (profilePath: string): Promise<void> => {
-  for (const directoryPath of [
-    profilePath,
-    join(profilePath, ".runtime"),
-    join(profilePath, ".runtime", "memory-locks"),
-  ]) {
-    await ensureMemoryDirectory(directoryPath);
-  }
-};
-
-const releaseMemoryDatabase = (database: Database, path: string): Effect.Effect<void> =>
-  Effect.try({
-    try: () => {
-      if (database.inTransaction) database.exec("ROLLBACK");
-      database.close();
-    },
-    catch: (cause) => new MemoryWriteIoError({ operation: "lock", path, cause }),
-  }).pipe(Effect.catch((failure) => logMemoryCleanupFailure("release lock", path, failure.cause)));
 
 const withMemoryLock = <A, E>(
   profilePath: string,
   document: MemoryDocument,
   use: Effect.Effect<A, E>,
-): Effect.Effect<A, E | MemoryWriteIoError | MemoryDocumentInvalid> => {
-  const lockPath = memoryLockPath(profilePath, document);
-
-  return Effect.tryPromise({
-    try: () => ensureMemoryLockDirectories(profilePath),
-    catch: (cause) =>
-      cause instanceof MemoryDocumentInvalid
-        ? cause
-        : new MemoryWriteIoError({ operation: "lock", path: dirname(lockPath), cause }),
-  }).pipe(
-    Effect.andThen(
-      Effect.acquireUseRelease(
-        Effect.try({
-          try: () => {
-            const database = new Database(lockPath, { create: true });
-            database.exec("PRAGMA busy_timeout = 0");
-
-            return database;
-          },
-          catch: (cause) => new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
-        }),
-        (database) =>
-          Effect.gen(function* () {
-            const deadline = (yield* Clock.currentTimeMillis) + 2_000;
-
-            while (true) {
-              const acquired = yield* Effect.try({
-                try: () => database.exec("BEGIN IMMEDIATE"),
-                catch: (cause) =>
-                  new MemoryWriteIoError({ operation: "lock", path: lockPath, cause }),
-              }).pipe(Effect.result);
-
-              if (Result.isSuccess(acquired)) break;
-
-              if (
-                fileSystemCauseDetails(acquired.failure.cause).code?.startsWith("SQLITE_BUSY") !==
-                true
-              )
-                return yield* acquired.failure;
-
-              if ((yield* Clock.currentTimeMillis) >= deadline)
-                return yield* new MemoryWriteIoError({
-                  operation: "lock",
-                  path: lockPath,
-                  cause: "memory lock timed out after 2 seconds",
-                });
-              yield* Effect.sleep("50 millis");
-            }
-
-            return yield* use;
-          }),
-        (database) => releaseMemoryDatabase(database, lockPath),
-      ),
-    ),
+): Effect.Effect<A, E | MemoryWriteIoError> =>
+  withFileLock(
+    {
+      root: profilePath,
+      file: join(".runtime", "memory-locks", `${encodeURIComponent(document.relativePath)}.sqlite`),
+      waitMs: 2_000,
+    },
+    use,
+    (failure) => new MemoryWriteIoError({ operation: "lock", path: failure.path, cause: failure }),
   );
-};
 
 const writableMemoryDocument = (
   profilePath: string,

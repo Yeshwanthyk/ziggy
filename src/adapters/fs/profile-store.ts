@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { ProfileFileSystemError } from "../../domain/profile";
 import { ProfileStore, type ProfileFilesApi } from "../../application/profiles";
 

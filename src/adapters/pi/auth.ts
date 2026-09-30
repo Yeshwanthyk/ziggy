@@ -23,7 +23,7 @@ import {
   ProfileNotInitialized,
   ProviderConfigError,
 } from "../../domain/agent";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export type ProviderAuthType = "api_key" | "oauth";
 

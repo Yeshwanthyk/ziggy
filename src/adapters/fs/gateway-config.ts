@@ -7,7 +7,7 @@ import { GatewayConfigError } from "../../domain/gateway";
 import { decodeSlackGatewayConfigJson, type SlackGatewayConfig } from "../../domain/slack";
 import { decodeTelegramGatewayConfigJson, type TelegramGatewayConfig } from "../../domain/telegram";
 import type { ProfileTarget } from "../../domain/profile";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export const validateGatewayProfile = (
   target: ProfileTarget,

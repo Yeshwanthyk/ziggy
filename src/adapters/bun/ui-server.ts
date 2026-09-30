@@ -9,7 +9,7 @@ import {
   UI_PROTOCOL_MAX_FRAME_BYTES,
   type UiRequestEnvelope as UiRequestEnvelopeValue,
 } from "../../domain/ui-gateway";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { openWebAccessStore } from "./web-access-sqlite";
 import { webAssetResponse } from "./web-assets";
 

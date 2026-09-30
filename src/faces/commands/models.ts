@@ -1,6 +1,7 @@
 import { Console, Effect, Match } from "effect";
 import { Models } from "../../application/models";
-import { ZiggyPaths } from "../../application/ziggy-paths";
+import { resolveProfileTarget } from "../../domain/profile";
+import { ZiggyPaths } from "../../platform/paths";
 import type { CliCommand } from "../cli-command";
 import { renderModelSelection, renderModels, renderModelStatus } from "../models-cli";
 
@@ -17,16 +18,16 @@ export const runModelsCommand = (command: ModelsCommand) =>
     return yield* Match.valueTags(command, {
       ModelsStatus: (command) =>
         models
-          .status(paths.resolveTarget(command.target))
+          .status(resolveProfileTarget(command.target, paths))
           .pipe(Effect.flatMap((status) => Console.log(renderModelStatus(status)))),
       ModelsList: (command) =>
         models
-          .list(paths.resolveTarget(command.target), command.providerId)
+          .list(resolveProfileTarget(command.target, paths), command.providerId)
           .pipe(Effect.flatMap((listed) => Console.log(renderModels(listed)))),
       ModelsSet: (command) =>
         models
           .set(
-            paths.resolveTarget(command.target),
+            resolveProfileTarget(command.target, paths),
             command.providerId,
             command.modelId,
             command.thinking,

@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Schema, Semaphore } from "effect";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   UI_GROUP_LIMIT,
   UI_PIN_LIMIT,

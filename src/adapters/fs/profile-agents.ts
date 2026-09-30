@@ -9,7 +9,7 @@ import {
   ProfileAgentInvalid,
   ProfileFileSystemError,
 } from "../../domain/profile";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent, {
   onExcessProperty: "error",

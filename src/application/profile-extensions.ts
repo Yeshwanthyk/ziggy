@@ -56,7 +56,7 @@ import {
   resumeAutomationDefinition,
   type AutomationFileStore,
 } from "../adapters/fs/automation-files";
-import { fileSystemCauseDetails } from "../adapters/fs/cause";
+import { fileSystemCauseDetails } from "../platform/cause";
 import { makeExtensionUpdateStore } from "../adapters/fs/extension-update";
 import { parseAutomationFile, validateAutomationId } from "../domain/automation";
 

@@ -26,7 +26,7 @@ import {
   systemdLogsCommand,
   systemdMainPidCommand,
 } from "./systemd-service";
-import { ZiggyPaths, type ZiggyPathsApi } from "../../application/ziggy-paths";
+import { ZiggyPaths, type ZiggyPathsApi } from "../../platform/paths";
 import { validateGatewayProfile } from "../fs/gateway-config";
 import { readDiscordHealth } from "../fs/discord-health";
 import { readSlackHealth } from "../fs/slack-health";

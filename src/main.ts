@@ -3,7 +3,7 @@ import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Clock, Console, Effect, Exit, Match, Result, Runtime, Schedule } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
-import { fileSystemCauseDetails } from "./adapters/fs/cause";
+import { fileSystemCauseDetails } from "./platform/cause";
 import { readSelectedExtensionPackage } from "./adapters/fs/profile-extensions";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalExtensionManagerInteraction } from "./adapters/terminal/extension-manager-interaction";
@@ -34,7 +34,8 @@ import {
 } from "./composition";
 import { CliCommandFailed, exitWith } from "./faces/cli-exit";
 import { TerminalStyle } from "./faces/terminal-ui";
-import { ZiggyPaths } from "./application/ziggy-paths";
+import { resolveProfileTarget } from "./domain/profile";
+import { ZiggyPaths } from "./platform/paths";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
 import {
@@ -106,7 +107,7 @@ const runCommand = (command: LegacyCommand) =>
 
     switch (command._tag) {
       case "Init": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
 
         const initOptions = {
           minimal: command.minimal,
@@ -222,7 +223,7 @@ const runCommand = (command: LegacyCommand) =>
             ? managerOptions
             : {
                 ...managerOptions,
-                target: paths.resolveTarget(command.target),
+                target: resolveProfileTarget(command.target, paths),
               },
         );
 
@@ -233,7 +234,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "ExtensionsList": {
         if (command.target !== undefined) {
-          const target = paths.resolveTarget(command.target);
+          const target = resolveProfileTarget(command.target, paths);
           const listing = yield* profileExtensions.listForProfile(target.path);
           console.log(renderProfileExtensions(listing, target.path, command.json));
 
@@ -255,7 +256,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "ExtensionsShow": {
         const target =
-          command.target === undefined ? undefined : paths.resolveTarget(command.target);
+          command.target === undefined ? undefined : resolveProfileTarget(command.target, paths);
 
         const extension = yield* profileExtensions.show(command.id, target?.path);
 
@@ -309,7 +310,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "ExtensionsAdd":
       case "ExtensionsRemove": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
 
         const result = yield* command._tag === "ExtensionsAdd"
           ? profileExtensions.add(target, command.id)
@@ -344,7 +345,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "ExtensionsUpdate": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
 
         const updated = yield* extensionUpdate.update(target, command.id, {
           adopt: command.adopt,
@@ -374,7 +375,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "AuthStatus": {
-        const statuses = yield* auth.status(paths.resolveTarget(command.target));
+        const statuses = yield* auth.status(resolveProfileTarget(command.target, paths));
 
         const sorted = [...statuses].sort(
           (left, right) =>
@@ -406,7 +407,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AuthLogin": {
         const result = yield* auth.login(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.providerId,
           command.type,
           terminalAuthInteraction(),
@@ -421,7 +422,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AgentsCreate": {
         const created = yield* profileAgents.create(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.agentId,
         );
 
@@ -431,7 +432,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "AgentsList": {
-        const listed = yield* profileAgents.list(paths.resolveTarget(command.target));
+        const listed = yield* profileAgents.list(resolveProfileTarget(command.target, paths));
 
         console.log(command.json ? renderProfileAgentsJson(listed) : renderProfileAgents(listed));
 
@@ -440,7 +441,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AgentsShow": {
         const shown = yield* profileAgents.show(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.agentId,
         );
 
@@ -451,7 +452,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AgentsValidate": {
         const validation = yield* profileAgents.validate(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.agentId,
         );
 
@@ -462,7 +463,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AgentsRun": {
         const result = yield* profileAgents.run(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.agentId,
           command.prompt,
         );
@@ -473,7 +474,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "Run": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
 
         const sessionPath =
           command.sessionId === undefined
@@ -499,7 +500,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "Acp":
         return yield* runAcp(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.shared,
           agent,
           models,
@@ -507,7 +508,7 @@ const runCommand = (command: LegacyCommand) =>
         );
       case "AutomationsCreate": {
         const created = yield* automationDefinitions.create(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.automationId,
         );
 
@@ -517,7 +518,9 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "AutomationsList": {
-        const listed = yield* automationDefinitions.list(paths.resolveTarget(command.target));
+        const listed = yield* automationDefinitions.list(
+          resolveProfileTarget(command.target, paths),
+        );
 
         console.log(
           command.json
@@ -531,8 +534,14 @@ const runCommand = (command: LegacyCommand) =>
       case "AutomationsPause":
       case "AutomationsResume": {
         const definition = yield* command._tag === "AutomationsPause"
-          ? automationDefinitions.pause(paths.resolveTarget(command.target), command.automationId)
-          : automationDefinitions.resume(paths.resolveTarget(command.target), command.automationId);
+          ? automationDefinitions.pause(
+              resolveProfileTarget(command.target, paths),
+              command.automationId,
+            )
+          : automationDefinitions.resume(
+              resolveProfileTarget(command.target, paths),
+              command.automationId,
+            );
 
         console.log(
           renderAutomationTransition(
@@ -546,7 +555,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "AutomationsValidate": {
         const validation = yield* automationDefinitions.validate(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.automationId,
         );
 
@@ -556,7 +565,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "AutomationsStatus": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
         const status = yield* automationScheduler.status(target);
 
         console.log(
@@ -585,7 +594,7 @@ const runCommand = (command: LegacyCommand) =>
             : yield* validateAutomationId(command.automationId);
 
         const runs = yield* automationScheduler.runs(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           automationId,
         );
 
@@ -599,7 +608,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "Wake": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
         const owner = yield* residentGateway.status(target);
         let outcome: AutomationRunOutcome;
 
@@ -628,7 +637,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "ServeInstall": {
-        const result = yield* residentService.install(paths.resolveTarget(command.target), {
+        const result = yield* residentService.install(resolveProfileTarget(command.target, paths), {
           force: command.force,
           start: !command.noStart,
         });
@@ -642,7 +651,7 @@ const runCommand = (command: LegacyCommand) =>
       case "ServeStop":
       case "ServeRestart":
       case "ServeUninstall": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
 
         const result =
           command._tag === "ServeStart"
@@ -659,7 +668,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "ServeStatus": {
-        const status = yield* residentService.status(paths.resolveTarget(command.target));
+        const status = yield* residentService.status(resolveProfileTarget(command.target, paths));
 
         const rendered = renderServeStatus(status);
         console.log(rendered.text);
@@ -669,7 +678,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "ServeLogs": {
         const logs = yield* residentService.logs(
-          paths.resolveTarget(command.target),
+          resolveProfileTarget(command.target, paths),
           command.follow,
         );
 
@@ -682,7 +691,7 @@ const runCommand = (command: LegacyCommand) =>
 
       case "Serve":
       case "Gateway": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
         yield* refreshRequiredExtensions(target, (profile, id) =>
           extensionUpdate.update(profile, id),
         );
@@ -695,7 +704,7 @@ const runCommand = (command: LegacyCommand) =>
           message: `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
         });
       case "WebConfigure": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
         yield* configureWebAccess(target, command.port, command.publicUrl);
         console.log(
           `web configured: http://127.0.0.1:${command.port}${command.publicUrl === undefined ? "" : ` (public ${command.publicUrl})`}\nrestart the resident to apply it`,
@@ -705,7 +714,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "WebPair": {
-        const pairing = yield* issueWebPairing(paths.resolveTarget(command.target));
+        const pairing = yield* issueWebPairing(resolveProfileTarget(command.target, paths));
 
         console.log(`${pairing.url}\nexpires: ${pairing.expiresAt}`);
 
@@ -713,7 +722,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "WebRevoke": {
-        const count = yield* revokeWebSessions(paths.resolveTarget(command.target));
+        const count = yield* revokeWebSessions(resolveProfileTarget(command.target, paths));
 
         console.log(`revoked browser sessions: ${count}`);
 
@@ -721,7 +730,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "Open": {
-        const target = paths.resolveTarget(command.target);
+        const target = resolveProfileTarget(command.target, paths);
         const owner = yield* residentGateway.status(target);
 
         if (owner._tag !== "running") {
@@ -768,7 +777,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "Doctor": {
-        const report = yield* doctor.check(paths.resolveTarget(command.target));
+        const report = yield* doctor.check(resolveProfileTarget(command.target, paths));
 
         const rendered = renderDoctor(report);
         console.log(rendered.text);

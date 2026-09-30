@@ -57,7 +57,7 @@ import type {
   RunOnceOptions,
   ZiggyAgentApi,
 } from "../../application/agent";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import { composePiResources, discoverPiResources, type PiResources } from "./resources";
 import {

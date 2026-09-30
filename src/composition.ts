@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
-import { ZiggyPathsLive } from "./adapters/bun/ziggy-paths";
+import { ZiggyPathsLive } from "./platform/paths";
 import { MemoryFilesLive } from "./adapters/fs/memory-files";
 import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";

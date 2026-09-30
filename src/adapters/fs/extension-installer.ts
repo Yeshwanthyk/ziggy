@@ -17,7 +17,7 @@ import {
   type BundledExtensionCatalogEntry,
 } from "../../domain/extension-catalog";
 import { bundledFilePath } from "../../generated/builtin-files";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { readExtensionPackage } from "./profile-extensions";
 
 const installFailure = (

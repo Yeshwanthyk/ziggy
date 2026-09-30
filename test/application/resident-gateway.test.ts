@@ -41,7 +41,7 @@ import {
   type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
 import { Sessions, type SessionsApi } from "ziggy/application/sessions";
-import { ZiggyPaths } from "ziggy/application/ziggy-paths";
+import { ZiggyPaths } from "ziggy/platform/paths";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
 import { stableProfileId } from "ziggy/application/profile-directory";

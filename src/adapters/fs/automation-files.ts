@@ -13,7 +13,7 @@ import {
   type AutomationId,
 } from "../../domain/automation";
 import type { ProfileTarget } from "../../domain/profile";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export type AutomationLifecycle = "active" | "paused";
 

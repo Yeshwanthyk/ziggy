@@ -22,13 +22,18 @@ export function isDeclarationFile(filename) {
   return toRepoRelative(filename).endsWith(".d.ts");
 }
 
-/** End-to-end proofs and their harness drive real processes and sockets from outside, so they sit at the adapter boundary too. */
+/**
+ * `src/platform/` holds the shared low-level filesystem pieces, so it sits at the adapter boundary.
+ * End-to-end proofs and their harness drive real processes and sockets from outside, so they do too.
+ */
 export function isAdapterFile(filename) {
   const normalized = toRepoRelative(filename);
 
   return (
     normalized.startsWith("src/adapters/") ||
+    normalized.startsWith("src/platform/") ||
     normalized.startsWith("test/adapters/") ||
+    normalized.startsWith("test/platform/") ||
     normalized.startsWith("test/harness/") ||
     normalized.startsWith("test/e2e/")
   );

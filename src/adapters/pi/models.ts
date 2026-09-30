@@ -21,7 +21,7 @@ import {
   ModelUnknown,
   ProfileNotInitialized,
 } from "../../domain/agent";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 export interface ModelStatus {
   readonly providerId: string | undefined;

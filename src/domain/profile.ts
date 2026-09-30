@@ -1,11 +1,6 @@
 import * as path from "node:path";
 import { Schema } from "effect";
-
-export interface ProfileResolutionOptions {
-  readonly cwd: string;
-  readonly homedir: string;
-  readonly ziggyHome?: string | undefined;
-}
+import type { ZiggyPathsApi } from "../platform/paths";
 
 export interface ProfileTarget {
   readonly path: string;
@@ -171,22 +166,14 @@ const expandLeadingTilde = (value: string, homedir: string): string => {
   return value;
 };
 
-export const resolveZiggyHome = (options: ProfileResolutionOptions): string =>
-  path.resolve(options.cwd, options.ziggyHome ?? path.join(options.homedir, ".ziggy"));
-
-export const resolveProfilesDirectory = (options: ProfileResolutionOptions): string =>
-  path.join(resolveZiggyHome(options), "profiles");
-
-export const resolveProfilesRegistry = (options: ProfileResolutionOptions): string =>
-  path.join(resolveZiggyHome(options), "profiles.list");
-
+/** Resolve a CLI Profile argument: a path, or a name under `profilesDirectory`. */
 export const resolveProfileTarget = (
   value: string,
-  options: ProfileResolutionOptions,
+  paths: Pick<ZiggyPathsApi, "cwd" | "homedir" | "profilesDirectory">,
 ): ProfileTarget => {
   const targetPath = hasPathSyntax(value)
-    ? path.resolve(options.cwd, expandLeadingTilde(value, options.homedir))
-    : path.join(resolveProfilesDirectory(options), value);
+    ? path.resolve(paths.cwd, expandLeadingTilde(value, paths.homedir))
+    : path.join(paths.profilesDirectory, value);
 
   const basename = path.basename(targetPath);
 
@@ -199,8 +186,8 @@ export const resolveProfileTarget = (
 /**
  * The shortest CLI argument that resolves back to `profilePath`: the folder name when the
  * Profile lives directly under `profilesDirectory`, otherwise the absolute path. Round-trip
- * invariant: `resolveProfileTarget(profileCliTarget(p, dir), options).path === p` whenever
- * `dir === resolveProfilesDirectory(options)` and `p` is absolute.
+ * invariant: `resolveProfileTarget(profileCliTarget(p, dir), paths).path === p` whenever
+ * `dir === paths.profilesDirectory` and `p` is absolute.
  */
 export const profileCliTarget = (profilePath: string, profilesDirectory: string): string => {
   const name = path.basename(profilePath);

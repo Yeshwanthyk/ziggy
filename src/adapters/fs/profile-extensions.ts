@@ -20,7 +20,7 @@ import {
 } from "../../catalog";
 import { bundledFilePath } from "../../generated/builtin-files";
 import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 
 const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 

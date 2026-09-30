@@ -1,6 +1,7 @@
 import { Console, Effect, Match } from "effect";
 import { Memory } from "../../application/memory";
-import { ZiggyPaths } from "../../application/ziggy-paths";
+import { resolveProfileTarget } from "../../domain/profile";
+import { ZiggyPaths } from "../../platform/paths";
 import { parseMemoryScopeReference } from "../../domain/memory";
 import type { CliCommand } from "../cli-command";
 import {
@@ -20,7 +21,7 @@ export const runMemoryCommand = (command: MemoryCommand) =>
     return yield* Match.valueTags(command, {
       MemoryList: (command) =>
         memory
-          .list(paths.resolveTarget(command.target ?? "."))
+          .list(resolveProfileTarget(command.target ?? ".", paths))
           .pipe(
             Effect.flatMap((listed) =>
               Console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed)),
@@ -28,7 +29,10 @@ export const runMemoryCommand = (command: MemoryCommand) =>
           ),
       MemoryShow: (command) =>
         memory
-          .show(paths.resolveTarget(command.target), parseMemoryScopeReference(command.scope))
+          .show(
+            resolveProfileTarget(command.target, paths),
+            parseMemoryScopeReference(command.scope),
+          )
           .pipe(
             Effect.flatMap((shown) =>
               Console.log(command.json ? renderMemoryShowJson(shown) : renderMemoryShow(shown)),

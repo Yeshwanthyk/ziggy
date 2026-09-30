@@ -3,7 +3,7 @@ import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Effect, Schema } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   acquireGatewayOwner,
   isGatewayOwnerAuthority,

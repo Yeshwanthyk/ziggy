@@ -11,7 +11,7 @@ import type {
   SessionUsage,
 } from "../../domain/session";
 import { SessionNotFound, SessionReadFailed } from "../../domain/session";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { scanTranscriptLines, TranscriptLineRejected } from "./transcript-lines";
 
 const isOversizedLineCause = Schema.is(Schema.Struct({ kind: Schema.Literal("line-too-large") }));
