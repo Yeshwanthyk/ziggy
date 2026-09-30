@@ -104,12 +104,7 @@ const validTimestamp = (value: RawJson | undefined, fallback: string): string =>
 const boundedText = (value: string, maximum: number): string =>
   [...value].slice(0, maximum).join("");
 
-const MAX_ACTIVE_TOOL_CALLS = 1_024;
-
-const projectRecord = (
-  record: RawRecord,
-  activeTools: Map<string, { readonly timestamp: string; readonly toolName: string }>,
-): SessionHistoryEntry | undefined => {
+const projectRecord = (record: RawRecord): SessionHistoryEntry | undefined => {
   const type = stringValue(record.type);
   const timestamp = validTimestamp(record.timestamp, new Date(0).toISOString());
   const message = recordValue(record.message);
@@ -142,46 +137,16 @@ const projectRecord = (
     return text.length > 0 ? { kind: "assistant", timestamp, text } : undefined;
   }
 
-  if (type === "message" && (role === "toolResult" || role === "tool")) {
-    const toolCallId = stringValue(record.toolCallId) ?? stringValue(message?.toolCallId);
-    const toolName = stringValue(record.toolName) ?? stringValue(message?.toolName) ?? "tool";
-
-    if (toolCallId !== undefined) {
-      const started = activeTools.get(toolCallId);
-      activeTools.delete(toolCallId);
-
-      return {
-        kind: "tool",
-        timestamp,
-        phase: "end",
-        toolName: boundedText(started?.toolName ?? toolName, 48),
-        failed: Boolean(message?.isError ?? record.isError ?? false),
-      };
-    }
-
-    return undefined;
-  }
-
-  if (type === "toolCall" || type === "tool_call") {
-    const toolCallId = stringValue(record.toolCallId) ?? stringValue(record.id);
-    const toolName = stringValue(record.toolName) ?? stringValue(record.name) ?? "tool";
-
-    if (toolCallId !== undefined) {
-      if (activeTools.size >= MAX_ACTIVE_TOOL_CALLS) {
-        const oldest = activeTools.keys().next().value;
-
-        if (oldest !== undefined) activeTools.delete(oldest);
-      }
-
-      activeTools.set(toolCallId, { timestamp, toolName });
-    }
+  if (type === "message" && role === "toolResult") {
+    // Pi writes tool calls inside the assistant message; only the result is an entry.
+    if (stringValue(message?.toolCallId) === undefined) return undefined;
 
     return {
       kind: "tool",
       timestamp,
-      phase: "start",
-      toolName: boundedText(toolName, 48),
-      failed: false,
+      phase: "end",
+      toolName: boundedText(stringValue(message?.toolName) ?? "tool", 48),
+      failed: Boolean(message?.isError ?? false),
     };
   }
 
@@ -233,11 +198,6 @@ export const readSessionHistory = (
     const file = sessionFile(profilePath, metadata);
     const decodedCursor = before === undefined ? undefined : yield* decodeCursor(before);
 
-    const activeTools = new Map<
-      string,
-      { readonly timestamp: string; readonly toolName: string }
-    >();
-
     const recent: Array<SessionHistoryEntry> = [];
     const requested: Array<SessionHistoryEntry> = [];
     const requestedStart = Math.max(0, (decodedCursor?.index ?? 0) - MAX_HISTORY_ENTRIES);
@@ -255,7 +215,7 @@ export const readSessionHistory = (
         );
       }
 
-      const projected = projectRecord(record, activeTools);
+      const projected = projectRecord(record);
 
       if (projected === undefined) return;
 

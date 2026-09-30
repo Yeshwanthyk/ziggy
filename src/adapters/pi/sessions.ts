@@ -397,7 +397,9 @@ const parseSession = (
       } else if (entry.type === "message" && message?.role === "toolResult") {
         if (message.usage !== undefined) usage = addUsage(usage, message.usage);
       } else if (
-        (entry.type === "compaction" || entry.type === "branch_summary") &&
+        (entry.type === "usage" ||
+          entry.type === "compaction" ||
+          entry.type === "branch_summary") &&
         entry.usage !== undefined
       ) {
         usage = addUsage(usage, entry.usage);

@@ -54,6 +54,13 @@ type TestSessionEntryBody =
   | { readonly type: "thinking_level_change"; readonly thinkingLevel: string }
   | { readonly type: "session_info"; readonly name?: string }
   | { readonly type: "custom_message"; readonly customType: string }
+  | {
+      readonly type: "usage";
+      readonly kind: string;
+      readonly provider: string;
+      readonly model: string;
+      readonly usage: ReturnType<typeof usage>;
+    }
   | { readonly type: "message"; readonly message: TestSessionMessage };
 
 const header = (id: string, parentSession?: string) => {
@@ -219,6 +226,13 @@ describe("Pi session metadata adapter", () => {
           timestamp: 4,
         },
       }),
+      entry("ggggggg", "ffffff", {
+        type: "usage",
+        kind: "cache_warm",
+        provider: "openai",
+        model: "model-a",
+        usage: usage(1, 1, 0.1),
+      }),
     ]);
     await writeJsonl(childFile, [
       header("child-id", parentFile),
@@ -246,19 +260,19 @@ describe("Pi session metadata adapter", () => {
       path: "local/root.jsonl",
       id: "root-id",
       kind: "root",
-      entryCount: 6,
+      entryCount: 7,
       terminalState: "completed",
       children: [{ id: "child-id", path: "agents/child.jsonl" }],
       modelChanges: [{ at: "2026-08-08T10:00:01.000Z", provider: "openai", model: "model-a" }],
       thinkingChanges: [{ at: "2026-08-08T10:00:02.000Z", level: "high" }],
       usage: {
-        input: 22,
-        output: 9,
-        cacheRead: 3,
-        cacheWrite: 6,
-        reasoning: 9,
-        totalTokens: 40,
-        cost: 0.6000000000000001,
+        input: 23,
+        output: 10,
+        cacheRead: 4,
+        cacheWrite: 8,
+        reasoning: 12,
+        totalTokens: 45,
+        cost: 0.7000000000000001,
       },
     });
     expect(sessions.find((session) => session.id === "child-id")).toMatchObject({

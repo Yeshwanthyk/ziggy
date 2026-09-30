@@ -60,7 +60,7 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
         timestamp: "2026-01-01T00:00:00.000Z",
         cwd: profilePath,
       },
-      ...Array.from({ length: 35 }, (_, index) =>
+      ...Array.from({ length: 36 }, (_, index) =>
         message(
           `user-${index}`,
           `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
@@ -69,19 +69,17 @@ test("history reads a bounded projection from Pi JSONL and paginates with an opa
         ),
       ),
       {
-        type: "toolCall",
-        id: "tool-1",
-        parentId: null,
-        timestamp: "2026-01-01T01:00:00.000Z",
-        toolCallId: "call-1",
-        toolName: "search",
-      },
-      {
         type: "message",
         id: "tool-result-1",
         parentId: null,
         timestamp: "2026-01-01T01:00:01.000Z",
-        message: { role: "toolResult", toolCallId: "call-1", isError: false, content: "ok" },
+        message: {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "search",
+          isError: false,
+          content: "ok",
+        },
       },
       message("assistant-1", "2026-01-01T01:00:02.000Z", "assistant", "answer"),
     ];
