@@ -1272,3 +1272,10 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `repositoryRoot` was threaded through about ten APIs (`PiAgent`, `ProfileExtensions`, `Doctor`, `Setup`, the resident gateway, the extension manager and the UI gateway config), and every sink ignored it. It is gone from `src/` and `test/`, along with the `composition.ts` export.
 - `extensions show` now prints paths relative to the current directory, its only real use.
 - Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions show apple-notes` from source.
+
+## ZiggyPaths service
+
+- New `ZiggyPaths` service (`src/application/ziggy-paths.ts`) for Ziggy home, the Profiles directory and registry, and CLI Profile target resolution. `ZiggyPathsLive` (`src/adapters/bun/ziggy-paths.ts`) reads `ZIGGY_HOME` through `Config` and cwd/home when the layer builds. `main.ts` no longer reads host state at module scope for paths.
+- `makeResidentGatewayLive(registry, extensionHealth, directory)` is now a plain `ResidentGatewayLive` that yields `ZiggyPaths` and a new `ExtensionHealth` service. `composition.ts` exports a constant `CliLayer`.
+- Fix: resident service operations read `ZIGGY_HOME` raw, not resolved against cwd, so a relative `ZIGGY_HOME` could reach launchd/systemd unresolved. They now use `ZiggyPaths`, and their host runtime is built in the layer instead of at module load.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles`, `extensions show apple-notes`, and `profiles` with a relative `ZIGGY_HOME` from a scratch directory.

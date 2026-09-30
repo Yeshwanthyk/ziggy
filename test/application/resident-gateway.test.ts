@@ -34,12 +34,14 @@ import {
   ResidentGateway,
   loadResidentGatewayConfig,
   makeResidentGateway,
-  makeResidentGatewayLive,
+  ExtensionHealth,
+  ResidentGatewayLive,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
   type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
 import { Sessions, type SessionsApi } from "ziggy/application/sessions";
+import { ZiggyPaths } from "ziggy/application/ziggy-paths";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
 import { stableProfileId } from "ziggy/application/profile-directory";
@@ -509,9 +511,24 @@ describe("resident gateway supervision", () => {
         yield* Fiber.interrupt(fiber);
       }).pipe(
         Effect.provide(
-          makeResidentGatewayLive(undefined, () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
-          ).pipe(Layer.provide(dependencies)),
+          ResidentGatewayLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                dependencies,
+                Layer.succeed(ExtensionHealth, () =>
+                  Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
+                ),
+                Layer.succeed(
+                  ZiggyPaths,
+                  ZiggyPaths.make({
+                    cwd: target.path,
+                    homedir: target.path,
+                    ziggyHome: join(target.path, ".ziggy-home"),
+                  }),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

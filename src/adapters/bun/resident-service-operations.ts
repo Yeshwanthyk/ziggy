@@ -1,4 +1,4 @@
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { dirname } from "node:path";
 import { Duration, Effect, Layer, Result } from "effect";
 import {
@@ -26,6 +26,7 @@ import {
   systemdLogsCommand,
   systemdMainPidCommand,
 } from "./systemd-service";
+import { ZiggyPaths, type ZiggyPathsApi } from "../../application/ziggy-paths";
 import { validateGatewayProfile } from "../fs/gateway-config";
 import { readDiscordHealth } from "../fs/discord-health";
 import { readSlackHealth } from "../fs/slack-health";
@@ -133,12 +134,12 @@ export interface ResidentServiceRuntime {
   readonly sleep: (milliseconds: number) => Effect.Effect<void>;
 }
 
-const liveRuntime: ResidentServiceRuntime = {
+const liveRuntime = (paths: ZiggyPathsApi): ResidentServiceRuntime => ({
   platform: process.platform,
   executablePath: process.execPath,
   mainPath: Bun.main,
-  home: homedir(),
-  ziggyHome: process.env.ZIGGY_HOME ?? `${homedir()}/.ziggy`,
+  home: paths.homedir,
+  ziggyHome: paths.ziggyHome,
   uid: process.getuid?.() ?? userInfo().uid,
   user: process.env.USER ?? userInfo().username,
   commands: residentPlatformCommands,
@@ -147,7 +148,7 @@ const liveRuntime: ResidentServiceRuntime = {
   removeDefinition: removeManagedDefinition,
   ensureDirectory: ensureResidentServiceDirectory,
   sleep: (milliseconds) => Effect.sleep(Duration.millis(milliseconds)),
-};
+});
 
 const definitionFor = (
   target: ProfileTarget,
@@ -341,7 +342,7 @@ const waitForStopped = (
 export const makeResidentService = (
   gateway: ResidentGatewayApi,
   scheduler: AutomationSchedulerApi,
-  runtime: ResidentServiceRuntime = liveRuntime,
+  runtime: ResidentServiceRuntime,
 ): ResidentServiceApi => {
   const lifecycleBase = (definition: ResidentServiceDefinition) => ({
     manager: definition.manager,
@@ -573,6 +574,9 @@ export const makeResidentService = (
 export const ResidentServiceOperationsLive = Layer.effect(
   ResidentServiceOperations,
   Effect.gen(function* () {
-    return makeResidentService(yield* ResidentGateway, yield* AutomationScheduler);
+    const paths = yield* ZiggyPaths;
+    const runtime = yield* Effect.sync(() => liveRuntime(paths));
+
+    return makeResidentService(yield* ResidentGateway, yield* AutomationScheduler, runtime);
   }),
 );

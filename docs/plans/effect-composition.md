@@ -97,11 +97,17 @@ src/faces/commands/    one handler module per command area; handlers yield servi
 2. **Delete `repositoryRoot`.** Status: done. Dropped from `PiAgent`, `ProfileExtensions`,
    `Doctor`, `Setup`, the resident and the UI config; every sink ignored it. `extensions show`
    prints paths relative to cwd.
-3. **`ZiggyPaths` service.** Status: pending.
-   - Read the paths from `Config` and cwd/home through `Effect.sync`.
-   - `makeResidentGatewayLive(...)` becomes a plain `ResidentGatewayLive`.
-   - Fix the `ZIGGY_HOME` mismatch in resident operations.
-   - Covers review comment 5.
+3. **`ZiggyPaths` service.** Status: done.
+   - `ZiggyPaths` (application) holds home, `ZIGGY_HOME`, the Profiles directory and registry, and
+     `resolveTarget`. `ZiggyPathsLive` (Bun adapter) reads `ZIGGY_HOME` through `Config` and
+     cwd/home through `Effect.sync` when the layer builds.
+   - `makeResidentGatewayLive(...)` is now a plain `ResidentGatewayLive`. Extension health is an
+     `ExtensionHealth` service that the root fills with the Pi adapter's function.
+   - Resident operations take `ziggyHome` from `ZiggyPaths`, so a relative `ZIGGY_HOME` resolves
+     the same way everywhere. Their host runtime is built in the layer, not at module scope.
+   - `makeCliLayer(options)` is now the constant `CliLayer`.
+   - Covers part of review comment 5. The resident's wide dependency merge shrinks with the
+     per-area layers in slice 5.
 4. **CLI output and exit.** Status: pending.
    - Add a `TerminalOutput` service, `CliExit`, and `renderCliFailure`.
    - Delete `fail` and every `process.exitCode` write.

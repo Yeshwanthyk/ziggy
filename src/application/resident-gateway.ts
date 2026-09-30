@@ -51,6 +51,7 @@ import { ProfileExtensions } from "./profile-extensions";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
 import type { UiGatewayDependencies } from "./ui-gateway/types";
 import { Sessions, type SessionsApi } from "./sessions";
+import { ZiggyPaths } from "./ziggy-paths";
 import {
   makeSharedUiGateway,
   makeUiGateway,
@@ -336,38 +337,41 @@ export const makeResidentGateway = (
     }),
 });
 
-export const makeResidentGatewayLive = (
-  profileRegistryPath: string | undefined,
-  extensionHealth: UiGatewayDependencies["extensionHealth"],
-  profilesDirectory?: string,
-) =>
-  Layer.effect(
-    ResidentGateway,
-    Effect.gen(function* () {
-      return makeResidentGateway(
-        yield* AutomationScheduler,
-        yield* Gateway,
-        yield* DiscordGateway,
-        yield* SlackGateway,
-        liveRuntime,
-        makeLiveUiRuntime(
-          {
-            sessions: yield* Sessions,
-            agent: yield* ZiggyAgent,
-            profileExtensions: yield* ProfileExtensions,
-            extensionHealth,
-            profileAgents: yield* ProfileAgents,
-            models: yield* Models,
-            auth: yield* Auth,
-            doctor: yield* Doctor,
-            automationDefinitions: yield* AutomationDefinitions,
-            automationScheduler: yield* AutomationScheduler,
-            automations: yield* Automations,
-            memory: yield* Memory,
-          },
-          profileRegistryPath,
-          profilesDirectory,
-        ),
-      );
-    }),
-  );
+/** How the UI reports each selected extension's load health; supplied by the Pi adapter. */
+export class ExtensionHealth extends Context.Service<
+  ExtensionHealth,
+  UiGatewayDependencies["extensionHealth"]
+>()("ziggy/ExtensionHealth") {}
+
+export const ResidentGatewayLive = Layer.effect(
+  ResidentGateway,
+  Effect.gen(function* () {
+    const paths = yield* ZiggyPaths;
+
+    return makeResidentGateway(
+      yield* AutomationScheduler,
+      yield* Gateway,
+      yield* DiscordGateway,
+      yield* SlackGateway,
+      liveRuntime,
+      makeLiveUiRuntime(
+        {
+          sessions: yield* Sessions,
+          agent: yield* ZiggyAgent,
+          profileExtensions: yield* ProfileExtensions,
+          extensionHealth: yield* ExtensionHealth,
+          profileAgents: yield* ProfileAgents,
+          models: yield* Models,
+          auth: yield* Auth,
+          doctor: yield* Doctor,
+          automationDefinitions: yield* AutomationDefinitions,
+          automationScheduler: yield* AutomationScheduler,
+          automations: yield* Automations,
+          memory: yield* Memory,
+        },
+        paths.profilesRegistry,
+        paths.profilesDirectory,
+      ),
+    );
+  }),
+);

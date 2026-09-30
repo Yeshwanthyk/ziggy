@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
+import { ZiggyPathsLive } from "./adapters/bun/ziggy-paths";
 import { MemoryFilesLive } from "./adapters/fs/memory-files";
 import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
@@ -26,17 +27,12 @@ import { ModelsLive } from "./application/models";
 import { ProfileAgentsLive } from "./application/profile-agents";
 import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-extensions";
 import { ProfilesLive } from "./application/profiles";
-import { makeResidentGatewayLive } from "./application/resident-gateway";
+import { ExtensionHealth, ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentServiceLive } from "./application/resident-service";
 import { SelfUpdateLive } from "./application/self-update";
 import { SessionsLive } from "./application/sessions";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
-import {
-  type ProfileResolutionOptions,
-  resolveProfilesDirectory,
-  resolveProfilesRegistry,
-} from "./domain/profile";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -82,70 +78,70 @@ const MemoryLayer = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
 
 const SelfUpdateLayer = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));
 
-const residentLayers = (options: ProfileResolutionOptions) => {
-  const ResidentGatewayLayer = makeResidentGatewayLive(
-    resolveProfilesRegistry(options),
-    listProfileExtensionsWithHealth,
-    resolveProfilesDirectory(options),
-  ).pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        GatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
-        DiscordGatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
-        SlackGatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
-        ZiggyAgentLayer,
-        AutomationSchedulerLayer,
-        AutomationsLayer,
-        AutomationDefinitionsLive,
-        SessionsLive,
-        ProfileExtensionsLayer,
-        ProfileAgentsLayer,
-        ModelsLive,
-        AuthLive,
-        DoctorLayer,
-        MemoryLayer,
-      ),
+const ResidentGatewayLayer = ResidentGatewayLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      GatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
+      DiscordGatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
+      SlackGatewayLive.pipe(Layer.provide(ZiggyAgentLayer)),
+      ZiggyAgentLayer,
+      AutomationSchedulerLayer,
+      AutomationsLayer,
+      AutomationDefinitionsLive,
+      SessionsLive,
+      ProfileExtensionsLayer,
+      ProfileAgentsLayer,
+      ModelsLive,
+      AuthLive,
+      DoctorLayer,
+      MemoryLayer,
+      Layer.succeed(ExtensionHealth, listProfileExtensionsWithHealth),
+      ZiggyPathsLive,
     ),
-  );
+  ),
+);
 
-  const ResidentServiceLayer = ResidentServiceLive.pipe(
-    Layer.provide(
-      ResidentServiceOperationsLive.pipe(
-        Layer.provide(Layer.merge(ResidentGatewayLayer, AutomationSchedulerLayer)),
-      ),
+const ResidentServiceLayer = ResidentServiceLive.pipe(
+  Layer.provide(
+    ResidentServiceOperationsLive.pipe(
+      Layer.provide(Layer.mergeAll(ResidentGatewayLayer, AutomationSchedulerLayer, ZiggyPathsLive)),
     ),
-  );
+  ),
+);
 
-  const ExtensionUpdateLayer = ExtensionUpdateLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        ExtensionArchiveClientLive,
-        ProfileExtensionsLayer,
-        ProfileExtensionMutationLockLive,
-        ResidentServiceLayer,
-      ),
+const ExtensionUpdateLayer = ExtensionUpdateLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ExtensionArchiveClientLive,
+      ProfileExtensionsLayer,
+      ProfileExtensionMutationLockLive,
+      ResidentServiceLayer,
     ),
-  );
+  ),
+);
 
-  return Layer.mergeAll(ResidentGatewayLayer, ResidentServiceLayer, ExtensionUpdateLayer);
-};
+const ResidentLayer = Layer.mergeAll(
+  ResidentGatewayLayer,
+  ResidentServiceLayer,
+  ExtensionUpdateLayer,
+);
 
 /** Every service the CLI commands use, with Pi's standalone registrations installed first. */
-export const makeCliLayer = (options: ProfileResolutionOptions) =>
-  Layer.mergeAll(
-    ProfilesLayer,
-    ZiggyAgentLayer,
-    AuthLive,
-    ModelsLive,
-    DoctorLayer,
-    SetupLayer,
-    ProfileAgentsLayer,
-    AutomationDefinitionsLive,
-    AutomationsLayer,
-    AutomationSchedulerLayer,
-    SessionsLive,
-    ProfileExtensionsLayer,
-    SelfUpdateLayer,
-    MemoryLayer,
-    residentLayers(options),
-  ).pipe(Layer.provide(PiStandaloneRuntimeLive));
+export const CliLayer = Layer.mergeAll(
+  ProfilesLayer,
+  ZiggyAgentLayer,
+  AuthLive,
+  ModelsLive,
+  DoctorLayer,
+  SetupLayer,
+  ProfileAgentsLayer,
+  AutomationDefinitionsLive,
+  AutomationsLayer,
+  AutomationSchedulerLayer,
+  SessionsLive,
+  ProfileExtensionsLayer,
+  SelfUpdateLayer,
+  MemoryLayer,
+  ResidentLayer,
+  ZiggyPathsLive,
+).pipe(Layer.provide(PiStandaloneRuntimeLive));

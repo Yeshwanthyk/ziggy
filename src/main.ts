@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
 import { Cause, Clock, Effect, Exit, Result, Runtime, Schedule } from "effect";
@@ -28,15 +27,11 @@ import { Sessions } from "./application/sessions";
 import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
-import { makeCliLayer } from "./composition";
+import { CliLayer } from "./composition";
+import { ZiggyPaths } from "./application/ziggy-paths";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
 import { parseMemoryScopeReference } from "./domain/memory";
-import {
-  resolveProfileTarget,
-  resolveProfilesDirectory,
-  resolveProfilesRegistry,
-} from "./domain/profile";
 import {
   renderProfileAgent,
   renderProfileAgents,
@@ -88,12 +83,6 @@ import {
 } from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 
-const resolutionOptions = {
-  cwd: process.cwd(),
-  homedir: homedir(),
-  ziggyHome: process.env.ZIGGY_HOME,
-};
-
 const terminalRenderOptions = () => {
   const pretty = process.stdout.isTTY === true && process.env.TERM !== "dumb";
 
@@ -131,10 +120,11 @@ const runCommand = (command: ServiceCommand) =>
     const selfUpdate = yield* SelfUpdate;
     const extensionUpdate = yield* ExtensionUpdate;
     const memory = yield* Memory;
+    const paths = yield* ZiggyPaths;
 
     switch (command._tag) {
       case "Init": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
 
         const initOptions = {
           minimal: command.minimal,
@@ -157,7 +147,7 @@ const runCommand = (command: ServiceCommand) =>
 
         const result = yield* setup.initialize(
           target,
-          resolveProfilesRegistry(resolutionOptions),
+          paths.profilesRegistry,
           initOptions,
           terminalSetupInteraction(target.path),
         );
@@ -210,8 +200,8 @@ const runCommand = (command: ServiceCommand) =>
 
       case "Profiles": {
         const listings = yield* profiles.listProfiles(
-          resolveProfilesDirectory(resolutionOptions),
-          resolveProfilesRegistry(resolutionOptions),
+          paths.profilesDirectory,
+          paths.profilesRegistry,
         );
 
         if (command.json) {
@@ -223,7 +213,7 @@ const runCommand = (command: ServiceCommand) =>
         console.log(
           renderProfiles(listings, {
             ...terminalRenderOptions(),
-            homeDirectory: resolutionOptions.homedir,
+            homeDirectory: paths.homedir,
           }),
         );
 
@@ -239,8 +229,8 @@ const runCommand = (command: ServiceCommand) =>
         }
 
         const managerOptions = {
-          profilesDirectory: resolveProfilesDirectory(resolutionOptions),
-          registryPath: resolveProfilesRegistry(resolutionOptions),
+          profilesDirectory: paths.profilesDirectory,
+          registryPath: paths.profilesRegistry,
         };
 
         const result = yield* manageExtensions(
@@ -251,7 +241,7 @@ const runCommand = (command: ServiceCommand) =>
             ? managerOptions
             : {
                 ...managerOptions,
-                target: resolveProfileTarget(command.target, resolutionOptions),
+                target: paths.resolveTarget(command.target),
               },
         );
 
@@ -262,7 +252,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "ExtensionsList": {
         if (command.target !== undefined) {
-          const target = resolveProfileTarget(command.target, resolutionOptions);
+          const target = paths.resolveTarget(command.target);
           const listing = yield* profileExtensions.listForProfile(target.path);
           console.log(renderProfileExtensions(listing, target.path, command.json));
 
@@ -284,9 +274,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "ExtensionsShow": {
         const target =
-          command.target === undefined
-            ? undefined
-            : resolveProfileTarget(command.target, resolutionOptions);
+          command.target === undefined ? undefined : paths.resolveTarget(command.target);
 
         const extension = yield* profileExtensions.show(command.id, target?.path);
 
@@ -340,7 +328,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "ExtensionsAdd":
       case "ExtensionsRemove": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
 
         const result = yield* command._tag === "ExtensionsAdd"
           ? profileExtensions.add(target, command.id)
@@ -375,7 +363,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "ExtensionsUpdate": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
 
         const updated = yield* extensionUpdate.update(target, command.id, {
           adopt: command.adopt,
@@ -405,9 +393,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "AuthStatus": {
-        const statuses = yield* auth.status(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const statuses = yield* auth.status(paths.resolveTarget(command.target));
 
         const sorted = [...statuses].sort(
           (left, right) =>
@@ -439,7 +425,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AuthLogin": {
         const result = yield* auth.login(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.providerId,
           command.type,
           terminalAuthInteraction(),
@@ -454,7 +440,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AgentsCreate": {
         const created = yield* profileAgents.create(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.agentId,
         );
 
@@ -464,9 +450,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "AgentsList": {
-        const listed = yield* profileAgents.list(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const listed = yield* profileAgents.list(paths.resolveTarget(command.target));
 
         console.log(command.json ? renderProfileAgentsJson(listed) : renderProfileAgents(listed));
 
@@ -475,7 +459,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AgentsShow": {
         const shown = yield* profileAgents.show(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.agentId,
         );
 
@@ -486,7 +470,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AgentsValidate": {
         const validation = yield* profileAgents.validate(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.agentId,
         );
 
@@ -499,7 +483,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AgentsRun": {
         const result = yield* profileAgents.run(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.agentId,
           command.prompt,
         );
@@ -510,7 +494,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "Run": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
 
         const sessionPath =
           command.sessionId === undefined
@@ -538,7 +522,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "Acp":
         return yield* runAcp(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.shared,
           agent,
           models,
@@ -546,7 +530,7 @@ const runCommand = (command: ServiceCommand) =>
         );
       case "AutomationsCreate": {
         const created = yield* automationDefinitions.create(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.automationId,
         );
 
@@ -556,9 +540,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "AutomationsList": {
-        const listed = yield* automationDefinitions.list(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const listed = yield* automationDefinitions.list(paths.resolveTarget(command.target));
 
         console.log(
           command.json
@@ -572,14 +554,8 @@ const runCommand = (command: ServiceCommand) =>
       case "AutomationsPause":
       case "AutomationsResume": {
         const definition = yield* command._tag === "AutomationsPause"
-          ? automationDefinitions.pause(
-              resolveProfileTarget(command.target, resolutionOptions),
-              command.automationId,
-            )
-          : automationDefinitions.resume(
-              resolveProfileTarget(command.target, resolutionOptions),
-              command.automationId,
-            );
+          ? automationDefinitions.pause(paths.resolveTarget(command.target), command.automationId)
+          : automationDefinitions.resume(paths.resolveTarget(command.target), command.automationId);
 
         console.log(
           renderAutomationTransition(
@@ -593,7 +569,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "AutomationsValidate": {
         const validation = yield* automationDefinitions.validate(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.automationId,
         );
 
@@ -605,7 +581,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "AutomationsStatus": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
         const status = yield* automationScheduler.status(target);
 
         console.log(
@@ -634,7 +610,7 @@ const runCommand = (command: ServiceCommand) =>
             : yield* validateAutomationId(command.automationId);
 
         const runs = yield* automationScheduler.runs(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           automationId,
         );
 
@@ -648,7 +624,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "Wake": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
         const owner = yield* residentGateway.status(target);
         let outcome: AutomationRunOutcome;
 
@@ -680,9 +656,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "SessionsList": {
-        const listed = yield* sessions.list(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const listed = yield* sessions.list(paths.resolveTarget(command.target));
 
         console.log(command.json ? renderSessionListJson(listed) : renderSessionList(listed));
 
@@ -690,10 +664,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "SessionsShow": {
-        const shown = yield* sessions.show(
-          resolveProfileTarget(command.target, resolutionOptions),
-          command.reference,
-        );
+        const shown = yield* sessions.show(paths.resolveTarget(command.target), command.reference);
 
         console.log(command.json ? renderSessionJson(shown) : renderSession(shown));
 
@@ -701,9 +672,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "MemoryList": {
-        const listed = yield* memory.list(
-          resolveProfileTarget(command.target ?? ".", resolutionOptions),
-        );
+        const listed = yield* memory.list(paths.resolveTarget(command.target ?? "."));
 
         console.log(command.json ? renderMemoryListJson(listed) : renderMemoryList(listed));
 
@@ -712,7 +681,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "MemoryShow": {
         const shown = yield* memory.show(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           parseMemoryScopeReference(command.scope),
         );
 
@@ -722,10 +691,10 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "ServeInstall": {
-        const result = yield* residentService.install(
-          resolveProfileTarget(command.target, resolutionOptions),
-          { force: command.force, start: !command.noStart },
-        );
+        const result = yield* residentService.install(paths.resolveTarget(command.target), {
+          force: command.force,
+          start: !command.noStart,
+        });
 
         console.log(renderResidentLifecycle(result));
 
@@ -738,7 +707,7 @@ const runCommand = (command: ServiceCommand) =>
       case "ServeStop":
       case "ServeRestart":
       case "ServeUninstall": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
 
         const result =
           command._tag === "ServeStart"
@@ -757,9 +726,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "ServeStatus": {
-        const status = yield* residentService.status(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const status = yield* residentService.status(paths.resolveTarget(command.target));
 
         const rendered = renderServeStatus(status);
         console.log(rendered.text);
@@ -770,7 +737,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "ServeLogs": {
         const logs = yield* residentService.logs(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.follow,
         );
 
@@ -784,7 +751,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "Serve":
       case "Gateway": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
         yield* refreshRequiredExtensions(target, (profile, id) =>
           extensionUpdate.update(profile, id),
         );
@@ -797,7 +764,7 @@ const runCommand = (command: ServiceCommand) =>
           `ziggy ${command.name} is no longer a resident command; use: ziggy serve <name|path>`,
         );
       case "WebConfigure": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
         yield* configureWebAccess(target, command.port, command.publicUrl);
         console.log(
           `web configured: http://127.0.0.1:${command.port}${command.publicUrl === undefined ? "" : ` (public ${command.publicUrl})`}\nrestart the resident to apply it`,
@@ -807,9 +774,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "WebPair": {
-        const pairing = yield* issueWebPairing(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const pairing = yield* issueWebPairing(paths.resolveTarget(command.target));
 
         console.log(`${pairing.url}\nexpires: ${pairing.expiresAt}`);
 
@@ -817,9 +782,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "WebRevoke": {
-        const count = yield* revokeWebSessions(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const count = yield* revokeWebSessions(paths.resolveTarget(command.target));
 
         console.log(`revoked browser sessions: ${count}`);
 
@@ -827,7 +790,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "Open": {
-        const target = resolveProfileTarget(command.target, resolutionOptions);
+        const target = paths.resolveTarget(command.target);
         const owner = yield* residentGateway.status(target);
 
         if (owner._tag !== "running") {
@@ -874,7 +837,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "Doctor": {
-        const report = yield* doctor.check(resolveProfileTarget(command.target, resolutionOptions));
+        const report = yield* doctor.check(paths.resolveTarget(command.target));
 
         const rendered = renderDoctor(report);
         console.log(rendered.text);
@@ -884,9 +847,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "ModelsStatus": {
-        const status = yield* models.status(
-          resolveProfileTarget(command.target, resolutionOptions),
-        );
+        const status = yield* models.status(paths.resolveTarget(command.target));
 
         console.log(renderModelStatus(status));
 
@@ -894,10 +855,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "ModelsList": {
-        const listed = yield* models.list(
-          resolveProfileTarget(command.target, resolutionOptions),
-          command.providerId,
-        );
+        const listed = yield* models.list(paths.resolveTarget(command.target), command.providerId);
 
         console.log(renderModels(listed));
 
@@ -906,7 +864,7 @@ const runCommand = (command: ServiceCommand) =>
 
       case "ModelsSet": {
         const selection = yield* models.set(
-          resolveProfileTarget(command.target, resolutionOptions),
+          paths.resolveTarget(command.target),
           command.providerId,
           command.modelId,
           command.thinking,
@@ -934,7 +892,7 @@ const program = Effect.gen(function* () {
     return;
   }
 
-  return yield* runCommand(command).pipe(Effect.provide(makeCliLayer(resolutionOptions)));
+  return yield* runCommand(command).pipe(Effect.provide(CliLayer));
 }).pipe(
   Effect.catchTags({
     CliInputInvalid: (failure) => fail(failure.message),
