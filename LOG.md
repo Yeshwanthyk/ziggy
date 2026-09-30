@@ -1257,3 +1257,12 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - The `@effect/tsgo` patch was not applied, so `bun run check` had been running plain `tsc` without any Effect diagnostics. A `postinstall` now runs `effect-tsgo patch`. The two diagnostics it raised as errors (`missingReturnYieldStar` in the Slack gateway and extension lock tests) are fixed.
 - 53 warnings and 105 suggestions remain and are not yet enforced (`ignoreEffectWarningsInTscExitCode`). The plan ratchets them.
 - Verification: `bun run check` and `bun run test` (812 pass) passed with the patch applied.
+
+## Composition root for the CLI
+
+- `src/composition.ts` is now the one place layers are wired. Each service layer is named once and shared by reference: `ZiggyAgentLayer` over `PiAgentLayer`, `ProfilesLayer`, `DoctorLayer` and the rest. This removes `main.ts`'s 15 `XProvided` constants and the five inline re-spellings of `ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))`.
+- `makeCliLayer(resolutionOptions)` returns the CLI's service layer. The chat gateways are wired only under the resident, because no command uses them directly.
+- The Pi standalone registration (Bun OAuth flows, the Bedrock module, the Photon WASM fallback) no longer runs at module load. `PiStandaloneRuntimeLive`, a `Layer.effectDiscard`, is provided under the whole CLI layer, so it runs before any command touches Pi.
+- `main.ts` decodes the command first. `help` and `--version` answer without building any services. Every other command runs `runCommand` under `makeCliLayer`.
+- Removed the unused `makePiAgentLive`.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions list` from source.

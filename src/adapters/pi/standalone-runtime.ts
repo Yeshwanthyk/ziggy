@@ -2,7 +2,7 @@ import { bedrockProviderModule } from "@earendil-works/pi-ai/bedrock-provider";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { setBedrockProviderModule } from "@earendil-works/pi-ai/compat";
 import type { ObjectEncodingOptions, PathOrFileDescriptor } from "node:fs";
-import { Predicate } from "effect";
+import { Effect, Layer, Predicate } from "effect";
 import photonWasmFile from "../../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" };
 
 const piBuiltinPhotonWasmPath: string = `${photonWasmFile}`;
@@ -81,3 +81,8 @@ export const bootstrapPiStandaloneRuntime = (
   if (!compiledAssetPath(runtimeUrl)) return;
   register();
 };
+
+/** Install Pi's standalone registrations before any command uses Pi; a no-op in source mode. */
+export const PiStandaloneRuntimeLive = Layer.effectDiscard(
+  Effect.sync(() => bootstrapPiStandaloneRuntime()),
+);

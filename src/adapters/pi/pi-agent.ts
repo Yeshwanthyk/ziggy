@@ -26,7 +26,7 @@ import {
   type CreateAgentSessionFromServicesOptions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Context, Effect, Exit, Layer, Predicate, Result } from "effect";
+import { Context, Effect, Exit, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProfileNotInitialized,
@@ -1613,6 +1613,3 @@ export const makePiAgent = (
   openSpecialistChat: (target, agentId) =>
     openSpecialistChat(target, agentId, repositoryRoot, profileExtensions),
 });
-
-export const makePiAgentLive = (repositoryRoot: string, profileExtensions: ProfileExtensionsApi) =>
-  Layer.succeed(PiAgent, makePiAgent(repositoryRoot, profileExtensions));

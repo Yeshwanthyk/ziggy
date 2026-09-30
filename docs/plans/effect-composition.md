@@ -79,7 +79,14 @@ src/faces/commands/    one handler module per command area; handlers yield servi
 
 ## Slices
 
-1. **Composition root.** Status: pending.
+1. **Composition root.** Status: done.
+   - `src/composition.ts` names each layer once and exports `makeCliLayer`.
+   - The Pi bootstrap is `PiStandaloneRuntimeLive`, provided under the whole CLI layer.
+   - `help` and `--version` no longer build any services.
+   - Application layers keep their ports open on purpose. Application may not import adapters,
+     so the root closes them; this differs from Effect's library packages, where the
+     implementation is the service.
+   - `resolutionOptions` and `terminalRenderOptions` stay in `main.ts` until slices 3 and 4.
    - Move all layer wiring to `src/composition.ts`, one definition per service, and delete the
      duplicates.
    - Rename `AgentLive` to `ZiggyAgentLayer`. It's the application agent over the `PiAgent`
