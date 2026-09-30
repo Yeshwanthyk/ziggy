@@ -1,6 +1,4 @@
-import { Context, Effect, Layer } from "effect";
-import { PiAgent, type ChatSessionMode } from "../adapters/pi/pi-agent";
-import { makePiSessionRuntime } from "../adapters/pi/runtime";
+import { Context, Effect } from "effect";
 import type {
   ChatModelOverride,
   ChatNotStreaming,
@@ -18,6 +16,8 @@ import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
 } from "../domain/automation";
+
+export type ChatSessionMode = "continue" | "fresh";
 
 export interface ChatPromptImage {
   readonly type: "image";
@@ -146,32 +146,3 @@ export interface RunOnceOptions {
 }
 
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentApi>()("ziggy/ZiggyAgent") {}
-
-export const ZiggyAgentLive = Layer.effect(
-  ZiggyAgent,
-  Effect.gen(function* () {
-    const piAgent = yield* PiAgent;
-    const runtime = makePiSessionRuntime(piAgent);
-
-    return {
-      runOnce: (
-        target: ProfileTarget,
-        prompt: string,
-        continueSession: boolean,
-        context: ChatContext,
-        options?: RunOnceOptions,
-      ) => piAgent.askOnce(target, prompt, continueSession, context, options),
-      openChat: (
-        target: ProfileTarget,
-        context: ChatContext,
-        sessionDirectory: string,
-        sessionMode?: ChatSessionMode,
-        modelOverride?: ChatModelOverride,
-        sessionName?: string,
-      ) => runtime.open(target, context, sessionDirectory, sessionMode, modelOverride, sessionName),
-      openSpecialistChat: (target, agentId) => piAgent.openSpecialistChat(target, agentId),
-      runSpecialist: (target, agentId, task, context) =>
-        piAgent.runSpecialist(target, agentId, task, context),
-    };
-  }),
-);

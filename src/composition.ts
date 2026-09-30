@@ -7,13 +7,13 @@ import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
-import { makePiAgent, PiAgent } from "./adapters/pi/pi-agent";
+import { makePiAgent } from "./adapters/pi/pi-agent";
 import {
   listProfileExtensionsWithHealth,
   ProfileExtensionPreflightLive,
 } from "./adapters/pi/profile-extension-preflight";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
-import { ZiggyAgentLive } from "./application/agent";
+import { ZiggyAgent } from "./application/agent";
 import { AuthLive } from "./application/auth";
 import { AutomationDefinitionsLive } from "./application/automation-definitions";
 import { AutomationSchedulerLive } from "./application/automation-scheduler";
@@ -48,14 +48,11 @@ const ProfileExtensionsLayer = ProfileExtensionsLive.pipe(
   ),
 );
 
-/** The Pi SDK adapter: the only Pi importer, behind the client-neutral `ZiggyAgent`. */
-const PiAgentLayer = Layer.effect(
-  PiAgent,
+/** The agent every face and gateway talks to, backed by the Pi SDK adapter. */
+const ZiggyAgentLayer = Layer.effect(
+  ZiggyAgent,
   Effect.map(ProfileExtensions, (profileExtensions) => makePiAgent(profileExtensions)),
 ).pipe(Layer.provide(ProfileExtensionsLayer));
-
-/** The application agent every face and gateway talks to. */
-const ZiggyAgentLayer = ZiggyAgentLive.pipe(Layer.provide(PiAgentLayer));
 
 const ProfilesLayer = ProfilesLive.pipe(Layer.provide(ProfileStoreLive));
 

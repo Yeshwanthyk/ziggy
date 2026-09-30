@@ -52,8 +52,10 @@ import {
 import type {
   ChatEvent,
   ChatHandle,
+  ChatSessionMode,
   ChatSessionModelState,
   RunOnceOptions,
+  ZiggyAgentApi,
 } from "../../application/agent";
 import { fileSystemCauseDetails } from "../fs/cause";
 import { discoverProfileAgents } from "../fs/profile-agents";
@@ -102,38 +104,6 @@ import {
   automationResultContent,
   isAutomationReceipt,
 } from "./automation-result";
-
-export interface PiAgentApi {
-  readonly runSpecialist: (
-    target: ProfileTarget,
-    agentId: string,
-    task: string,
-    context: ProfileAgentRunContext,
-  ) => Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError>;
-  readonly askOnce: (
-    target: ProfileTarget,
-    prompt: string,
-    continueSession: boolean,
-    context: ChatContext,
-    options?: RunOnceOptions,
-  ) => Effect.Effect<number, ZiggyAgentError>;
-  readonly openChat: (
-    target: ProfileTarget,
-    context: ChatContext,
-    sessionDirectory: string,
-    sessionMode?: ChatSessionMode,
-    modelOverride?: ChatModelOverride,
-    sessionName?: string,
-  ) => Effect.Effect<ChatHandle, ZiggyAgentError>;
-  readonly openSpecialistChat: (
-    target: ProfileTarget,
-    agentId: string,
-  ) => Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError>;
-}
-
-export class PiAgent extends Context.Service<PiAgent, PiAgentApi>()("ziggy/PiAgent") {}
-
-export type ChatSessionMode = "continue" | "fresh";
 
 const sessionLeaseError = (
   profilePath: string,
@@ -1565,10 +1535,11 @@ export const runSpecialist = (
     ),
   );
 
-export const makePiAgent = (profileExtensions: ProfileExtensionsApi): PiAgentApi => ({
+/** The Pi SDK adapter behind the client-neutral `ZiggyAgent`. */
+export const makePiAgent = (profileExtensions: ProfileExtensionsApi): ZiggyAgentApi => ({
   runSpecialist: (target, agentId, task, context) =>
     runSpecialist(target, agentId, task, context, profileExtensions),
-  askOnce: (target, prompt, continueSession, context, options) =>
+  runOnce: (target, prompt, continueSession, context, options) =>
     askOnce(target, prompt, continueSession, context, options, profileExtensions),
   openChat: (target, context, sessionDirectory, sessionMode, modelOverride, sessionName) =>
     openChat(
