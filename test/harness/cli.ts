@@ -1,4 +1,5 @@
 /** Runs the real `bun src/main.ts` against a scratch `ZIGGY_HOME`. */
+import { setDefaultTimeout } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ScratchProfile } from "./profile";
@@ -6,6 +7,9 @@ import type { ScratchProfile } from "./profile";
 const repository = join(import.meta.dir, "..", "..");
 
 const main = join(repository, "src", "main.ts");
+
+// A proof spawns the CLI several times; under the parallel suite, cold starts exceed bun's 5 s default.
+setDefaultTimeout(30_000);
 
 export interface CliResult {
   readonly exitCode: number;
