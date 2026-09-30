@@ -1363,3 +1363,5 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 **`profiles` is read-only.** `listProfiles` no longer rewrites `profiles.list` to prune stale entries; it skips them. PROF-2 flipped green; the unit test now asserts the registry is untouched.
 
 **Delivery targets decided.** Conversation delivery stays: Squarey's `linkedin-jobs` sends to a Slack channel and a UI conversation at once. Plan step 7 now routes delivery through gateway-owned targets (Slack/Discord channel or thread, Telegram chat, ui-sdk conversation) behind one `deliver` seam, and gives the chat APIs a base URL so the harness can prove gateway delivery.
+
+**A cron that never fires is invalid.** `parseAutomationFile` rejects a cron that parses but never fires (`0 0 31 2 *`) with "cron never fires", so Effect's throwing `Cron.next` is never reached and `serve` starts. AUT-5 is green.

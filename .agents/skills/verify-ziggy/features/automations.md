@@ -10,8 +10,8 @@ An automation's result reaches its target conversation exactly once per run.
 - AUT-3: with a resident up, `ziggy wake` is forwarded to it, and a target it has not opened
   gets the stored receipt.
 - AUT-4: a live busy target is refused as `session-busy` (retriable) and not written mid-turn.
-- AUT-5 (red): a resident starts even when an automation's cron parses but never fires
-  (`0 0 31 2 *`). Today Effect's `Cron.next` throws and `serve` never comes up.
+- AUT-5: a resident starts even when an automation's cron parses but never fires
+  (`0 0 31 2 *`). Parsing rejects it as "cron never fires", so the scheduler records it invalid.
 
 Unreachable end to end: "delivering one run twice gives one receipt". Nothing re-sends a run
 (no retry path in `src/application/automations.ts`), so dedupe of the same `runId` is only
@@ -43,8 +43,8 @@ ui-sdk `automation-result` event.
 
 ## Gotchas
 
-- A cron that never fires is not a safe "never scheduled" value while AUT-5 is red: use
-  `0 9 * * *` and keep runs away from 09:00 UTC.
+- A cron that never fires makes the definition invalid, so it is not a "never scheduled" value:
+  use `0 9 * * *` and keep runs away from 09:00 UTC.
 - Do not quote `cron`; the frontmatter parser keeps the quotes and the cron is invalid.
 - Receipts are `custom_message` entries with `customType: ziggy.automation-result`, not
   messages: `transcript.text` does not include them.

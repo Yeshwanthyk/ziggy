@@ -125,9 +125,8 @@ describe("automation delivery", () => {
     expect(await receipts(target.file)).toBe(0);
   });
 
-  // Red until work-order step 1: Effect's Cron.next throws for a cron that parses but never fires,
-  // and the scheduler calls it unguarded, so `serve` never comes up.
-  test.failing("a resident starts even when an automation's cron never fires", async () => {
+  // Effect's Cron.next throws for a cron that parses but never fires; parsing rejects it instead.
+  test("a resident starts even when an automation's cron never fires", async () => {
     const target = await conversation();
     await writeAutomation(target.id, "0 0 31 2 *");
 

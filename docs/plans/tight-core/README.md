@@ -542,7 +542,7 @@ We build piece by piece: core first, then what sits on it. Every step runs end t
   - [ ] `agent_run` output is bounded and no longer duplicated.
   - [ ] Children refuse `profile_extensions` (a guard until step 6).
   - [ ] A live delivery into a switched session retries or falls back to the stored append.
-  - [ ] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
+  - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
   - [ ] Session stats count Pi's `usage` entries and drop the `toolCall` branch.
   - [ ] Delete dead code:
     - the GitHub catalog and tar extractor;

@@ -679,6 +679,11 @@ export const parseAutomationFile = (
 
     if (Result.isFailure(cron))
       return yield* invalid(filePath, `invalid automation ${id}: invalid cron`, cron.failure);
+
+    // A cron can parse and still never fire (`0 0 31 2 *`); `Cron.next` then throws.
+    if (Result.isFailure(Result.try(() => Cron.next(cron.success, new Date(0)))))
+      return yield* invalid(filePath, `invalid automation ${id}: cron never fires`);
+
     const broadcast = yield* parseBroadcast(id, filePath, decoded.broadcast);
 
     const origin =
