@@ -28,7 +28,6 @@ import type { ChatRegistryEvent, ChatRegistryListEntry } from "../chat-registry"
 import {
   badParams,
   boundedText,
-  noService,
   protocolFailure,
   safeFailureMessage,
   toGatewayError,
@@ -269,7 +268,6 @@ export const makeSessionDispatcher = (
 
           const branch = yield* route(params.ref.profileId);
 
-          if (config.sessions.history === undefined) return yield* noService(request.method);
           let reference: string;
 
           if (params.ref.kind === "stored") {
@@ -493,7 +491,7 @@ export const makeSessionDispatcher = (
             entry.handle,
             Effect.uninterruptible(
               entry.handle
-                .resume(target.path)
+                .resume(target.id)
                 .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
             ),
           );

@@ -16,7 +16,6 @@ import {
   type ChatRegistryApi,
   type ChatRegistryEvent,
 } from "ziggy/application/chat-registry";
-import type { SessionsApi } from "ziggy/application/sessions";
 import type { ProfileAgentsApi } from "ziggy/application/profile-agents";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
@@ -26,7 +25,7 @@ import {
   type ProfileExtensionsApi,
 } from "ziggy/domain/profile-extension";
 import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
-import { SessionNotFound, SessionReadFailed } from "ziggy/domain/session";
+import { SessionNotFound, SessionReadFailed, type SessionsApi } from "ziggy/session/index";
 import { ProfileAgentEditConflict } from "ziggy/domain/profile";
 import {
   UiEventFrame,
@@ -85,7 +84,9 @@ const makeSessions = (): SessionsApi => ({
   held: () => Effect.succeed(false),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
-  resolve: (_target, reference) =>
+  locate: (_target, reference) =>
+    Effect.fail(new SessionNotFound({ reference, message: "missing" })),
+  history: (_target, reference) =>
     Effect.fail(new SessionNotFound({ reference, message: "missing" })),
 });
 
@@ -1412,7 +1413,7 @@ test("UI gateway routes all management operations through decoded explicit Profi
 const sessionAt = (
   id: string,
   path: string,
-): import("../../src/domain/session").SessionMetadata => ({
+): import("../../src/session/index").SessionMetadata => ({
   id,
   path,
   kind: "root",
@@ -1960,9 +1961,9 @@ test("successful resume selects the resolved web transcript and resets live hist
   const handle = makeChatHandle({
     prompt: () => Effect.succeed(""),
     currentSession: Effect.sync(() => ({ id: current, file: `${current}.jsonl` })),
-    resume: (path) =>
+    resume: (sessionId) =>
       Effect.sync(() => {
-        expect(path).toBe("ui/work/new.jsonl");
+        expect(sessionId).toBe("new");
         current = "new";
         resumeCalled = true;
 
@@ -2047,9 +2048,9 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
 
         const handle = makeChatHandle({
           prompt: () => Effect.succeed(""),
-          resume: (path) =>
+          resume: (sessionId) =>
             Effect.gen(function* () {
-              calls.push(path);
+              calls.push(sessionId);
 
               if (calls.length === 1) {
                 yield* Deferred.succeed(entered, undefined);
@@ -2093,11 +2094,11 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
         yield* Deferred.await(secondShown);
         yield* Effect.yieldNow;
         yield* registry.publish(ref.key, { kind: "assistant-text", delta: "old", snapshot: "old" });
-        expect(calls).toEqual(["ui/work/first.jsonl"]);
+        expect(calls).toEqual(["first"]);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(first);
         yield* Fiber.join(second);
-        expect(calls).toEqual(["ui/work/first.jsonl", "ui/work/second.jsonl"]);
+        expect(calls).toEqual(["first", "second"]);
 
         const events = frames.flatMap((frame) => {
           const decoded = decodeEventResult(frame);

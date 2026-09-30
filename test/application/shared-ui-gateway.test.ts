@@ -6,13 +6,12 @@ import { type ChatEvent, type ChatHandle, type ZiggyAgentApi } from "ziggy/appli
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import { makeSharedUiGateway } from "ziggy/application/ui-gateway";
-import type { SessionsApi } from "ziggy/application/sessions";
 import type {
   ProfileDirectoryApi,
   ProfileDirectoryEntry,
 } from "ziggy/application/profile-directory";
 import { stableProfileId } from "ziggy/application/profile-directory";
-import { SessionNotFound } from "ziggy/domain/session";
+import { SessionNotFound, type SessionsApi } from "ziggy/session/index";
 import { UiEventFrame, UiResponseFrame } from "ziggy/domain/ui-gateway";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
@@ -75,7 +74,9 @@ const makeSessions = (): SessionsApi => ({
   held: () => Effect.succeed(false),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
-  resolve: (_target, reference) =>
+  locate: (_target, reference) =>
+    Effect.fail(new SessionNotFound({ reference, message: "missing" })),
+  history: (_target, reference) =>
     Effect.fail(new SessionNotFound({ reference, message: "missing" })),
 });
 

@@ -1,5 +1,7 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+/* oxlint-disable ziggy-effect/no-native-promise-ownership, ziggy-effect/no-promise-catch -- fixture setup drives the real filesystem */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- test cleanup and fixture guards need finally and throw */
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   lstat,
   mkdir,
@@ -14,14 +16,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { Effect, Result, Schema } from "effect";
-import { isSessionHeld, takeSessionLease } from "ziggy/session/index";
-import * as transcriptLines from "ziggy/adapters/pi/transcript-lines";
+import { Effect, Predicate, Result, Schema } from "effect";
 import {
-  listProfileSessionSummaries,
-  listProfileSessions,
-  showProfileSession,
-} from "ziggy/adapters/pi/sessions";
+  isSessionHeld,
+  listSessions,
+  sessionHistory,
+  sessionSummaries,
+  showSession,
+  takeSessionLease,
+} from "ziggy/session/index";
 
 const temporaryPaths: Array<string> = [];
 
@@ -127,7 +130,7 @@ afterEach(async () =>
   Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true }))),
 );
 
-describe("Pi session metadata adapter", () => {
+describe("session store", () => {
   test("projects the latest Pi session name and preserves an explicit clear", async () => {
     const root = await profile();
     const namedFile = join(root, "sessions", "named.jsonl");
@@ -144,7 +147,7 @@ describe("Pi session metadata adapter", () => {
       entry("new", "old", { type: "session_info", name: "" }),
     ]);
 
-    const sessions = await Effect.runPromise(listProfileSessions(root));
+    const sessions = await Effect.runPromise(listSessions(root));
 
     expect(sessions.find((session) => session.id === "named")?.name).toBe("Gateway review");
     expect(sessions.find((session) => session.id === "cleared")?.name).toBeUndefined();
@@ -175,7 +178,7 @@ describe("Pi session metadata adapter", () => {
       },
     ]);
 
-    const session = (await Effect.runPromise(listProfileSessions(root)))[0];
+    const session = (await Effect.runPromise(listSessions(root)))[0];
 
     expect(session?.name).toBe("Backfilled name");
     expect(session?.activityAt).toBe("2026-09-16T12:00:00.000Z");
@@ -251,8 +254,8 @@ describe("Pi session metadata adapter", () => {
     ]);
 
     const before = await snapshot(root);
-    const sessions = await Effect.runPromise(listProfileSessions(root));
-    const shown = await Effect.runPromise(showProfileSession(root, "local/root.jsonl"));
+    const sessions = await Effect.runPromise(listSessions(root));
+    const shown = await Effect.runPromise(showSession(root, "local/root.jsonl"));
     expect(await snapshot(root)).toEqual(before);
 
     expect(sessions).toHaveLength(2);
@@ -315,7 +318,7 @@ describe("Pi session metadata adapter", () => {
     ]);
 
     expect((await lstat(file)).size).toBeGreaterThan(8 * 1024 * 1024);
-    expect(await Effect.runPromise(showProfileSession(root, "large-session"))).toMatchObject({
+    expect(await Effect.runPromise(showSession(root, "large-session"))).toMatchObject({
       id: "large-session",
       entryCount: 19,
       terminalState: "completed",
@@ -325,12 +328,10 @@ describe("Pi session metadata adapter", () => {
 
   test("missing sessions stay missing and relative paths cannot escape", async () => {
     const root = await profile();
-    expect(await Effect.runPromise(listProfileSessions(root))).toEqual([]);
+    expect(await Effect.runPromise(listSessions(root))).toEqual([]);
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
 
-    const result = await Effect.runPromise(
-      showProfileSession(root, "../outside").pipe(Effect.result),
-    );
+    const result = await Effect.runPromise(showSession(root, "../outside").pipe(Effect.result));
 
     expect(Result.isFailure(result) && result.failure._tag).toBe("SessionNotFound");
     expect(await Bun.file(join(root, "sessions")).exists()).toBe(false);
@@ -344,12 +345,12 @@ describe("Pi session metadata adapter", () => {
     await writeFile(file, "x".repeat(8 * 1024 * 1024 + 1));
     await writeJsonl(valid, [header("valid")]);
 
-    expect(
-      (await Effect.runPromise(listProfileSessions(root))).map((session) => session.id),
-    ).toEqual(["valid"]);
+    expect((await Effect.runPromise(listSessions(root))).map((session) => session.id)).toEqual([
+      "valid",
+    ]);
 
     const result = await Effect.runPromise(
-      showProfileSession(root, "oversized.jsonl").pipe(Effect.result),
+      showSession(root, "oversized.jsonl").pipe(Effect.result),
     );
 
     expect(result).toMatchObject({
@@ -362,7 +363,7 @@ describe("Pi session metadata adapter", () => {
     });
   });
 
-  test("rejects symlinked roots, files, and nested directories", async () => {
+  test("rejects a symlinked root and never follows links inside it", async () => {
     const outside = await profile();
     await mkdir(join(outside, "real"));
     const rootLink = await profile();
@@ -378,10 +379,11 @@ describe("Pi session metadata adapter", () => {
     await mkdir(join(directoryLink, "sessions"));
     await symlink(join(outside, "real"), join(directoryLink, "sessions", "linked"));
 
-    for (const target of [rootLink, fileLink, directoryLink]) {
-      const result = await Effect.runPromise(listProfileSessions(target).pipe(Effect.result));
-      expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
-    }
+    const result = await Effect.runPromise(listSessions(rootLink).pipe(Effect.result));
+    expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
+
+    for (const target of [fileLink, directoryLink])
+      expect(await Effect.runPromise(listSessions(target))).toEqual([]);
   });
 
   test("CLI list and show are read-only and never print transcript content", async () => {
@@ -549,13 +551,14 @@ describe("Pi session metadata adapter", () => {
     }
   });
 
-  test("fails typed on malformed sessions without rewriting them", async () => {
+  test("skips a malformed session in listings, fails typed when addressed, never rewrites it", async () => {
     const root = await profile();
     const file = join(root, "sessions", "broken.jsonl");
     await writeJsonl(file, [header("broken")]);
     await writeFile(file, `${JSON.stringify(header("broken"))}\nnot-json\n`);
     const before = await readFile(file);
-    const result = await Effect.runPromise(listProfileSessions(root).pipe(Effect.result));
+    expect(await Effect.runPromise(listSessions(root))).toEqual([]);
+    const result = await Effect.runPromise(showSession(root, "broken.jsonl").pipe(Effect.result));
     expect(Result.isFailure(result) && result.failure._tag).toBe("SessionReadFailed");
     expect(await readFile(file)).toEqual(before);
   });
@@ -575,7 +578,7 @@ test("read-only session summaries use first user text while a writer holds the l
   const lease = Result.getOrThrow(takeSessionLease(root, "one"));
 
   try {
-    expect(await Effect.runPromise(listProfileSessionSummaries(root))).toEqual([
+    expect(await Effect.runPromise(sessionSummaries(root))).toEqual([
       {
         id: "one",
         path: "one.jsonl",
@@ -590,29 +593,6 @@ test("read-only session summaries use first user text while a writer holds the l
   }
 
   expect(Result.getOrThrow(isSessionHeld(root, "one"))).toBe(false);
-});
-
-test("summary projection reuses unchanged transcripts and rescans changed ones", async () => {
-  const root = await profile();
-  const file = join(root, "sessions", "cache.jsonl");
-  await writeJsonl(file, [header("cache")]);
-  const scan = spyOn(transcriptLines, "scanTranscriptLines");
-
-  try {
-    expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.title).toBeUndefined();
-    expect(scan).toHaveBeenCalledTimes(1);
-    await Effect.runPromise(listProfileSessionSummaries(root));
-    expect(scan).toHaveBeenCalledTimes(1);
-
-    await writeJsonl(file, [
-      header("cache"),
-      entry("name", null, { type: "session_info", name: "Renamed" }),
-    ]);
-    expect((await Effect.runPromise(listProfileSessionSummaries(root)))[0]?.title).toBe("Renamed");
-    expect(scan).toHaveBeenCalledTimes(2);
-  } finally {
-    scan.mockRestore();
-  }
 });
 
 test("summary listing isolates bad transcripts, sorts by activity and truncates Unicode titles", async () => {
@@ -637,7 +617,7 @@ test("summary listing isolates bad transcripts, sorts by activity and truncates 
   await writeFile(join(sessions, "broken.jsonl"), "not json\n");
   await symlink(first, join(sessions, "linked.jsonl"));
 
-  const result = await Effect.runPromise(listProfileSessionSummaries(root));
+  const result = await Effect.runPromise(sessionSummaries(root));
   expect(result.map((item) => item.id)).toEqual(["second", "first"]);
   expect(result[1]?.title).toBe("a".repeat(159) + "😀");
 });
@@ -652,15 +632,228 @@ test("show skips unrelated broken files but rejects only duplicate identities", 
   await writeFile(join(sessions, "broken.jsonl"), "not json\n");
   await symlink(healthy, join(sessions, "linked.jsonl"));
 
-  expect((await Effect.runPromise(showProfileSession(root, "healthy"))).id).toBe("healthy");
-  expect((await Effect.runPromise(showProfileSession(root, "healthy.jsonl"))).id).toBe("healthy");
+  expect((await Effect.runPromise(showSession(root, "healthy"))).id).toBe("healthy");
+  expect((await Effect.runPromise(showSession(root, "healthy.jsonl"))).id).toBe("healthy");
 
   for (const reference of ["duplicate", "duplicate-a.jsonl", "duplicate-b.jsonl"]) {
-    expect(
-      await Effect.runPromise(Effect.result(showProfileSession(root, reference))),
-    ).toMatchObject({
+    expect(await Effect.runPromise(Effect.result(showSession(root, reference)))).toMatchObject({
       _tag: "Failure",
       failure: { _tag: "SessionReadFailed", operation: "resolve" },
     });
+  }
+});
+
+const message = (
+  id: string,
+  timestamp: string,
+  role: "user" | "assistant",
+  text: string,
+): Schema.Json => ({
+  type: "message",
+  id,
+  parentId: null,
+  timestamp,
+  message:
+    role === "user"
+      ? { role, content: text }
+      : {
+          role,
+          content: text,
+          provider: "openai",
+          model: "gpt-5",
+          stopReason: "stop",
+          usage: usage(1, 1, 0),
+        },
+});
+
+const writeTranscript = async (profilePath: string, records: ReadonlyArray<Schema.Json>) => {
+  const sessionsPath = join(profilePath, "sessions");
+  await mkdir(sessionsPath, { recursive: true });
+  const file = join(sessionsPath, "root.jsonl");
+  await writeFile(file, records.map((record) => JSON.stringify(record)).join("\n") + "\n", "utf8");
+
+  return file;
+};
+
+test("history pages back with a cursor that survives appends and goes stale on rewrite", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-"));
+  const profilePath = join(root, "profile");
+  await mkdir(profilePath, { recursive: true });
+
+  try {
+    const records: Array<Schema.Json> = [
+      {
+        type: "session",
+        id: "root-session",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: profilePath,
+      },
+      ...Array.from({ length: 36 }, (_, index) =>
+        message(
+          `user-${index}`,
+          `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+          "user",
+          `question ${index}`,
+        ),
+      ),
+      {
+        type: "message",
+        id: "tool-result-1",
+        parentId: null,
+        timestamp: "2026-01-01T01:00:01.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "search",
+          isError: false,
+          content: "ok",
+        },
+      },
+      message("assistant-1", "2026-01-01T01:00:02.000Z", "assistant", "answer"),
+    ];
+
+    const file = await writeTranscript(profilePath, records);
+
+    const page = await Effect.runPromise(sessionHistory(profilePath, "root-session"));
+    expect(page.entries).toHaveLength(8);
+    expect(page.truncated).toBe(true);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(page.entries[0]).toEqual({
+      kind: "user",
+      timestamp: "2026-01-01T00:30:00.000Z",
+      text: "question 30",
+    });
+    expect(page.entries.at(-2)).toEqual({
+      kind: "tool",
+      timestamp: "2026-01-01T01:00:01.000Z",
+      phase: "end",
+      toolName: "search",
+      failed: false,
+    });
+    expect(page.entries.at(-1)).toEqual({
+      kind: "assistant",
+      timestamp: "2026-01-01T01:00:02.000Z",
+      text: "answer",
+    });
+    expect(page.terminalState).toBe("completed");
+
+    const older = await Effect.runPromise(
+      sessionHistory(profilePath, "root-session", page.nextCursor),
+    );
+
+    expect(older.entries).toHaveLength(8);
+    expect(older.entries[0]).toEqual({
+      kind: "user",
+      timestamp: "2026-01-01T00:22:00.000Z",
+      text: "question 22",
+    });
+    expect(older.hasMore).toBe(true);
+    expect(older.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+
+    const source = await readFile(file, "utf8");
+    await writeFile(
+      file,
+      `${source}${JSON.stringify(message("new", "2026-01-02T00:00:00.000Z", "user", "new"))}\n`,
+      "utf8",
+    );
+
+    const afterAppend = await Effect.runPromise(
+      sessionHistory(profilePath, "root-session", page.nextCursor),
+    );
+
+    expect(afterAppend.entries).toEqual(older.entries);
+
+    await writeTranscript(profilePath, [...records.slice(0, 1), ...records.slice(2)]);
+
+    const stale = await Effect.runPromise(
+      sessionHistory(profilePath, "root-session", page.nextCursor).pipe(Effect.result),
+    );
+
+    expect(
+      Result.match(stale, {
+        onFailure: (error) => Predicate.isTagged(error, "SessionHistoryCursorInvalid"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("history rejects malformed cursors with a typed failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-cursor-"));
+  const profilePath = join(root, "profile");
+  await mkdir(profilePath, { recursive: true });
+
+  try {
+    await writeTranscript(profilePath, [
+      {
+        type: "session",
+        id: "root-session",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: profilePath,
+      },
+      message("assistant-1", "2026-01-01T00:00:01.000Z", "assistant", "answer"),
+    ]);
+
+    const result = await Effect.runPromise(
+      sessionHistory(profilePath, "root-session", "not-a-cursor").pipe(Effect.result),
+    );
+
+    expect(
+      Result.match(result, {
+        onFailure: (error) => Predicate.isTagged(error, "SessionHistoryCursorInvalid"),
+        onSuccess: () => false,
+      }),
+    ).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("history paginates a transcript larger than the former total-file limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-session-history-large-"));
+  const profilePath = join(root, "profile");
+  await mkdir(profilePath, { recursive: true });
+
+  try {
+    const largeContent = "x".repeat(600 * 1024);
+
+    const records: Array<Schema.Json> = [
+      {
+        type: "session",
+        id: "large-session",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: profilePath,
+      },
+      ...Array.from({ length: 18 }, (_, index) =>
+        message(
+          `user-${index}`,
+          `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+          "user",
+          `question ${index}:${largeContent}`,
+        ),
+      ),
+      message("assistant", "2026-01-01T01:00:00.000Z", "assistant", "answer"),
+    ];
+
+    const file = await writeTranscript(profilePath, records);
+
+    expect((await Bun.file(file).size).valueOf()).toBeGreaterThan(8 * 1024 * 1024);
+
+    const first = await Effect.runPromise(sessionHistory(profilePath, "large-session"));
+    expect(first.entries).toHaveLength(8);
+    expect(first.entries[0]).toMatchObject({ kind: "user", text: expect.stringContaining("11:") });
+    expect(first.nextCursor).toBeDefined();
+
+    const second = await Effect.runPromise(
+      sessionHistory(profilePath, "large-session", first.nextCursor),
+    );
+
+    expect(second.entries).toHaveLength(8);
+    expect(second.entries[0]).toMatchObject({ kind: "user", text: expect.stringContaining("3:") });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

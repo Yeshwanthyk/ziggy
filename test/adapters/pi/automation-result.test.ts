@@ -7,8 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import { Effect, Result } from "effect";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
-import { readSessionHistory } from "ziggy/adapters/pi/session-history";
-import { takeSessionLease } from "ziggy/session/index";
+import { sessionHistory, takeSessionLease } from "ziggy/session/index";
 import { makeChatHandle } from "ziggy/session/handle";
 import { makeSessionLeaseSet } from "ziggy/session/lease";
 import { fakePiRuntime } from "../../harness/pi-runtime";
@@ -100,7 +99,7 @@ test("stored automation delivery persists one full-tree receipt and reloads thro
   const source = await readFile(file, "utf8");
   expect(source.match(/"customType":"ziggy\.automation-result"/gu)).toHaveLength(1);
 
-  const history = await Effect.runPromise(readSessionHistory(profilePath, "pinned-session"));
+  const history = await Effect.runPromise(sessionHistory(profilePath, "pinned-session"));
   expect(history.entries).toContainEqual({
     kind: "automation-result",
     automationId: "daily-note",

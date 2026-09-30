@@ -8,18 +8,12 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Option, Result, Semaphore } from "effect";
-import {
-  AUTOMATION_RESULT_CUSTOM_TYPE,
-  automationResultContent,
-  isAutomationReceipt,
-} from "../adapters/pi/automation-result";
+import { automationResultContent, isAutomationReceipt } from "../adapters/pi/automation-result";
 import { createChatEventProjector } from "../adapters/pi/chat-event-projector";
 import { promptForAssistantText } from "../adapters/pi/prompt-turn";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
-import { readSessionHeaderOnly } from "../adapters/pi/session-discovery";
 import { sessionReference } from "../adapters/pi/session-lineage";
 import { ensurePiSessionName } from "../adapters/pi/session-name";
-import { showProfileSession } from "../adapters/pi/sessions";
 import {
   ChatNotStreaming,
   SessionBusy,
@@ -28,6 +22,7 @@ import {
   type ZiggyAgentError,
 } from "../domain/agent";
 import {
+  AUTOMATION_RESULT_CUSTOM_TYPE,
   AutomationConversationDeliveryFailed,
   type AutomationConversationResult,
 } from "../domain/automation";
@@ -36,6 +31,8 @@ import { fileSystemCauseDetails } from "../platform/cause";
 import { ProviderConfigError } from "../profile";
 import type { SessionLeaseSet } from "./lease";
 import { disposeRuntime, type ProfileRuntime } from "./runtime";
+import { locateValidSession } from "./store";
+import { readTranscriptHeader } from "./transcript";
 import type { ChatEvent, ChatHandle, ChatSessionModelState } from "./types";
 
 /** The parts of Pi's live session the handle drives. */
@@ -195,7 +192,7 @@ export const makeChatHandle = (
     /** Lease the target before Pi tears the current session down. */
     const switchSession: AgentSessionRuntime["switchSession"] = async (path, switchOptions) => {
       // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi command callback bridge.
-      const header = await Effect.runPromise(readSessionHeaderOnly(path));
+      const header = await Effect.runPromise(readTranscriptHeader(path));
       const held = leases.hold(header.id);
 
       if (Result.isFailure(held)) throw held.failure;
@@ -436,20 +433,15 @@ export const makeChatHandle = (
             return modelState();
           }),
         ),
-      resume: (reference) =>
+      resume: (sessionId) =>
         control(
           Effect.gen(function* () {
-            const metadata = yield* showProfileSession(profilePath, reference);
-            const path = join(profilePath, "sessions", metadata.path);
-
-            const header = yield* readSessionHeaderOnly(path).pipe(
-              Effect.mapError((cause) => providerError(profilePath, "resume session", cause)),
-            );
+            const { id, file: path } = yield* locateValidSession(profilePath, sessionId);
 
             // Lease the target and switch as one step: once Pi starts tearing the old
             // session down the switch must finish, and an interrupt must not strand the lease.
             const result = yield* Effect.uninterruptible(
-              Effect.fromResult(leases.hold(header.id)).pipe(
+              Effect.fromResult(leases.hold(id)).pipe(
                 Effect.andThen(
                   piStep(profilePath, "resume session", () =>
                     replaced(() => runtime.switchSession(path)),

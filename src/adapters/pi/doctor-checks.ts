@@ -12,7 +12,7 @@ import {
   loadTelegramConfigFile,
 } from "../fs/gateway-config";
 import { describePinnedPiDocs, loadPinnedPiDocs } from "./pi-docs";
-import { listProfileSessions } from "./sessions";
+import { inspectSessions } from "../../session";
 import { readSlackHealth } from "../fs/slack-health";
 import { readDiscordHealth } from "../fs/discord-health";
 
@@ -319,9 +319,15 @@ const gatewayCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   );
 
 const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
-  listProfileSessions(target.path).pipe(
-    Effect.map((sessions) => {
+  inspectSessions(target.path).pipe(
+    Effect.map(({ sessions, skipped }) => {
       const broken = sessions.filter((session) => session.parentUnknown).length;
+
+      if (skipped > 0)
+        return error(
+          "sessions",
+          `${skipped} Pi session file${skipped === 1 ? " is" : "s are"} invalid, unreadable or duplicated`,
+        );
 
       return broken > 0
         ? warn(

@@ -27,12 +27,11 @@ import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-
 import { ExtensionHealth, ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentServiceLive } from "./application/resident-service";
 import { SelfUpdateLive } from "./application/self-update";
-import { SessionsLive } from "./application/sessions";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { Auth, Models, Profiles } from "./profile";
-import { makeZiggyAgent } from "./session";
+import { makeZiggyAgent, Sessions } from "./session";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -82,7 +81,7 @@ const ResidentGatewayLayer = ResidentGatewayLive.pipe(
       AutomationSchedulerLayer,
       AutomationsLayer,
       AutomationDefinitionsLive,
-      SessionsLive,
+      Sessions.layer,
       ProfileExtensionsLayer,
       ProfileAgentsLayer,
       Models.layer,
@@ -127,7 +126,7 @@ export const CliLayer = Layer.mergeAll(
   AutomationDefinitionsLive,
   AutomationsLayer,
   AutomationSchedulerLayer,
-  SessionsLive,
+  Sessions.layer,
   ProfileExtensionsLayer,
   SelfUpdateLayer,
   MemoryLayer,
@@ -142,7 +141,7 @@ export const ModelsCommandsLayer = Layer.mergeAll(Models.layer, ZiggyPathsLive).
 );
 
 /** `ziggy sessions ...`: a Profile's session history. */
-export const SessionsCommandsLayer = Layer.mergeAll(SessionsLive, ZiggyPathsLive).pipe(
+export const SessionsCommandsLayer = Layer.mergeAll(Sessions.layer, ZiggyPathsLive).pipe(
   Layer.provide(PiStandaloneRuntimeLive),
 );
 

@@ -8,7 +8,6 @@ import { Effect, Result } from "effect";
 import { discoverProfileAgents } from "../adapters/fs/profile-agents";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
 import { promptForAssistantText } from "../adapters/pi/prompt-turn";
-import { findRecentSessionFile, readSessionHeaderOnly } from "../adapters/pi/session-discovery";
 import { sessionReference } from "../adapters/pi/session-lineage";
 import { ensurePiSessionName } from "../adapters/pi/session-name";
 import { selectSpecialist, specialistRuntime, useSpecialistChild } from "../adapters/pi/specialist";
@@ -23,6 +22,7 @@ import type { ChatContext } from "../domain/memory";
 import { prepareProfileAgentPrompt, ProfileAgentMentionInvalid } from "../domain/profile";
 import { ProviderConfigError, type ProfileTarget } from "../profile";
 import { makeChatHandle } from "./handle";
+import { findRecentTranscript, readTranscriptHeader } from "./transcript";
 import { makeSessionLeaseSet, takeSessionLease, type SessionLeaseSet } from "./lease";
 import {
   createProfileRuntime,
@@ -76,7 +76,7 @@ const openTranscript = (
     const existing =
       file ??
       (session === "continue"
-        ? yield* findRecentSessionFile(profilePath, directory).pipe(
+        ? yield* findRecentTranscript(profilePath, directory).pipe(
             Effect.mapError((cause) => providerError(profilePath, "open session", cause)),
           )
         : undefined);
@@ -88,7 +88,7 @@ const openTranscript = (
       return manager;
     }
 
-    const header = yield* readSessionHeaderOnly(existing).pipe(
+    const header = yield* readTranscriptHeader(existing).pipe(
       Effect.mapError((cause) => providerError(profilePath, "open session", cause)),
     );
 

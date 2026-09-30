@@ -37,7 +37,7 @@ import {
   type ResidentGatewayRuntime,
   type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
-import { Sessions, type SessionsApi } from "ziggy/application/sessions";
+import { Sessions, type SessionsApi } from "ziggy/session/index";
 import { ZiggyPaths } from "ziggy/platform/paths";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
@@ -446,7 +446,8 @@ describe("resident gateway supervision", () => {
       held: () => Effect.succeed(false),
       list: () => Effect.succeed([]),
       show: () => Effect.never,
-      resolve: () => Effect.never,
+      locate: () => Effect.never,
+      history: () => Effect.never,
     };
 
     const agent: ZiggyAgentApi = {

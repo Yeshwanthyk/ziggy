@@ -10,8 +10,6 @@ import { makeAutomationRunStore, readAutomationRuns } from "ziggy/adapters/bun/a
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
-import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
-import { readSessionHistory } from "ziggy/adapters/pi/session-history";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
@@ -21,13 +19,12 @@ import {
   type ProfileDirectoryApi,
   type ProfileDirectoryEntry,
 } from "ziggy/application/profile-directory";
-import type { SessionsApi } from "ziggy/application/sessions";
 import {
   makeSharedUiGateway,
   makeUiGateway,
   type UiGatewayApi,
 } from "ziggy/application/ui-gateway";
-import { SessionNotFound } from "ziggy/domain/session";
+import { listSessions, Sessions, type SessionsApi } from "ziggy/session/index";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
 import { UiDestinationListResult, UiResponseFrame } from "ziggy/domain/ui-gateway";
@@ -64,22 +61,7 @@ const profileExtensions: ProfileExtensionsApi = {
   activateRuntime: () => Effect.never,
 };
 
-const sessions: SessionsApi = {
-  summaries: () => Effect.succeed([]),
-  held: () => Effect.succeed(false),
-  list: (target) => listProfileSessions(target.path),
-  show: (target, reference) => showProfileSession(target.path, reference),
-  resolve: (target, id) =>
-    Effect.gen(function* () {
-      const listed = yield* listProfileSessions(target.path);
-      const session = listed.find((candidate) => candidate.id === id);
-
-      if (session !== undefined) return session;
-
-      return yield* new SessionNotFound({ reference: id, message: `session not found: ${id}` });
-    }),
-  history: (target, reference, before) => readSessionHistory(target.path, reference, before),
-};
+const sessions: SessionsApi = Effect.runSync(Sessions.make);
 
 const definition = (broadcast: string) =>
   [
@@ -242,7 +224,7 @@ test("automation.run routes through the selected Profile registry and reloads th
     timestamp: Date.now(),
   });
   expect(
-    (await Effect.runPromise(listProfileSessions(fixture.target.path))).map((item) => item.id),
+    (await Effect.runPromise(listSessions(fixture.target.path))).map((item) => item.id),
   ).toContain("pinned-session");
 
   await Effect.runPromise(
@@ -295,7 +277,7 @@ test("automation.run routes through the selected Profile registry and reloads th
           state: "completed",
           localCompleted: true,
         });
-        expect((yield* listProfileSessions(defaultTarget.path)).map((item) => item.id)).toEqual([]);
+        expect((yield* listSessions(defaultTarget.path)).map((item) => item.id)).toEqual([]);
 
         const restartedDefaultRegistry = yield* makeChatRegistry(defaultTarget.path);
         const restartedRegistry = yield* makeChatRegistry(fixture.target.path);

@@ -19,7 +19,7 @@ import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./applic
 import { ProfileAgents } from "./application/profile-agents";
 import { ResidentGateway } from "./application/resident-gateway";
 import { ResidentService } from "./application/resident-service";
-import { Sessions } from "./application/sessions";
+import { Sessions } from "./session";
 import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
@@ -464,11 +464,7 @@ const runCommand = (command: LegacyCommand) =>
         const sessionPath =
           command.sessionId === undefined
             ? undefined
-            : path.resolve(
-                target.path,
-                "sessions",
-                (yield* sessions.resolve(target, command.sessionId)).path,
-              );
+            : (yield* sessions.locate(target, command.sessionId)).file;
 
         const exitCode = yield* agent.runOnce(
           target,

@@ -1,5 +1,5 @@
 import { Console, Effect, Match } from "effect";
-import { Sessions } from "../../application/sessions";
+import { Sessions } from "../../session";
 import { ZiggyPaths } from "../../platform/paths";
 import type { CliCommand } from "../cli-command";
 import {

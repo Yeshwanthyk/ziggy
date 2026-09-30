@@ -16,3 +16,16 @@ export {
   openSession,
   type SessionDependencies,
 } from "./agent";
+
+export {
+  inspectSessions,
+  listSessions,
+  locateSession,
+  locateValidSession,
+  sessionHistory,
+  sessionSummaries,
+  Sessions,
+  showSession,
+  type SessionLocation,
+  type SessionsApi,
+} from "./store";

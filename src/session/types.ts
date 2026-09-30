@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect";
+import { Context, Effect, Schema } from "effect";
 import type {
   ChatModelOverride,
   ChatNotStreaming,
@@ -10,7 +10,6 @@ import type {
 } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileAgentThinking } from "../domain/profile";
-import type { SessionNotFound, SessionReadFailed } from "../domain/session";
 import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
@@ -89,9 +88,9 @@ export interface ChatHandle {
   readonly setThinkingLevel: (
     level: ProfileAgentThinking,
   ) => Effect.Effect<ChatSessionModelState, ZiggyAgentError>;
-  /** Accepts a Profile session id or a path relative to its sessions directory. */
+  /** Switches to the Profile session with this id. */
   readonly resume: (
-    reference: string,
+    id: string,
   ) => Effect.Effect<ChatResumeResult, ZiggyAgentError | SessionReadFailed | SessionNotFound>;
   readonly isIdle: boolean;
   /** The current persisted Pi transcript identity, resolved at read time. */
@@ -149,3 +148,117 @@ export interface RunOnceOptions {
 }
 
 export class ZiggyAgent extends Context.Service<ZiggyAgent, ZiggyAgentApi>()("ziggy/ZiggyAgent") {}
+
+// ── Stored transcripts, read back by store.ts ─────────────────────────────────
+
+export interface SessionReferenceMetadata {
+  readonly id: string;
+  readonly path: string;
+}
+
+export interface SessionModelChange {
+  readonly at: string;
+  readonly provider: string;
+  readonly model: string;
+}
+
+export interface SessionThinkingChange {
+  readonly at: string;
+  readonly level: string;
+}
+
+export interface SessionUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly reasoning?: number;
+  readonly totalTokens: number;
+  readonly cost: number;
+}
+
+/** Read-only list projection. */
+export interface ProfileSessionSummary {
+  readonly id: string;
+  readonly path: string;
+  readonly title: string | undefined;
+  readonly updatedAt: string;
+}
+
+export interface SessionMetadata {
+  readonly path: string;
+  readonly id: string;
+  readonly name?: string;
+  readonly kind: "root" | "child";
+  readonly createdAt: string;
+  /** Latest persisted conversation message timestamp; metadata-only entries do not advance it. */
+  readonly activityAt?: string;
+  readonly entryCount: number;
+  readonly parent: SessionReferenceMetadata | undefined;
+  readonly parentUnknown: boolean;
+  readonly children: ReadonlyArray<SessionReferenceMetadata>;
+  readonly modelChanges: ReadonlyArray<SessionModelChange>;
+  readonly thinkingChanges: ReadonlyArray<SessionThinkingChange>;
+  readonly usage: SessionUsage;
+  readonly terminalState: SessionTerminalState;
+}
+
+export class SessionReadFailed extends Schema.TaggedErrorClass<SessionReadFailed>()(
+  "SessionReadFailed",
+  {
+    path: Schema.String,
+    operation: Schema.Literals(["inspect-root", "walk", "read", "decode", "resolve"]),
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+export class SessionNotFound extends Schema.TaggedErrorClass<SessionNotFound>()("SessionNotFound", {
+  reference: Schema.String,
+  message: Schema.String,
+}) {}
+
+export const SessionHistoryTerminalState = Schema.Literals([
+  "completed",
+  "aborted",
+  "failed",
+  "incomplete",
+]);
+
+export type SessionHistoryTerminalState = typeof SessionHistoryTerminalState.Type;
+
+export type SessionTerminalState = SessionHistoryTerminalState;
+
+export type SessionHistoryEntry =
+  | {
+      readonly kind: "user" | "assistant";
+      readonly timestamp: string;
+      readonly text: string;
+    }
+  | {
+      readonly kind: "tool";
+      readonly timestamp: string;
+      readonly phase: "start" | "end";
+      readonly toolName: string;
+      readonly failed: boolean;
+    }
+  | {
+      readonly kind: "automation-result";
+      readonly timestamp: string;
+      readonly automationId: string;
+      readonly runId: string;
+      readonly text: string;
+    };
+
+export interface SessionHistoryPage {
+  readonly entries: ReadonlyArray<SessionHistoryEntry>;
+  readonly terminalState: SessionHistoryTerminalState;
+  readonly truncated: boolean;
+  readonly hasMore: boolean;
+  readonly nextCursor?: string;
+}
+
+export class SessionHistoryCursorInvalid extends Schema.TaggedErrorClass<SessionHistoryCursorInvalid>()(
+  "SessionHistoryCursorInvalid",
+  { message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
+) {}

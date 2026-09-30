@@ -718,3 +718,23 @@ export const parseAutomationFile = (
       ),
     };
   });
+
+/** The Pi `custom_message` a delivered automation result is stored as. */
+export const AUTOMATION_RESULT_CUSTOM_TYPE = "ziggy.automation-result";
+
+export const AutomationResultDetails = Schema.Struct({
+  automationId: Schema.String.check(
+    Schema.makeFilter((value) => /^[a-z0-9-]{1,80}$/u.test(value), {
+      expected: "a bounded lowercase kebab-case automation id",
+    }),
+  ),
+  runId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  targetSessionId: Schema.String.check(
+    Schema.makeFilter(
+      (value) => value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
+      { expected: "a canonical 1-128 character Pi session id" },
+    ),
+  ),
+});
+
+export type AutomationResultDetails = typeof AutomationResultDetails.Type;

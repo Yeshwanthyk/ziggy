@@ -572,7 +572,7 @@ read the artifact back first.
   - The handle emits `session-state`.
   - Move the three resume-order tests to the handle.
   - Delete `chat-runtime-binding.ts`, the runtime leases and locks, and the print-mode capture.
-- [ ] **5. Core: `session/store.ts`.** One streaming store; the history cursor becomes index + id.
+- [x] **5. Core: `session/store.ts`.** One streaming store; the history cursor becomes index + id.
 - [ ] **6. Core: `extensions/`.**
   - Selection, loader, required cache, update with recovery, and the smaller tool.
   - Rebuild the extension half of `doctor-checks.ts`.
