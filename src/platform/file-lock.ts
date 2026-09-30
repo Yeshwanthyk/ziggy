@@ -79,7 +79,13 @@ const inspectLockFiles = async (path: string): Promise<void> => {
 const lockSegments = (file: string): readonly string[] => {
   const normalized = normalize(file);
 
-  if (isAbsolute(normalized) || normalized === "." || normalized.startsWith(`..${sep}`)) {
+  if (
+    isAbsolute(normalized) ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith(`..${sep}`) ||
+    normalized.split(sep).includes("")
+  ) {
     throw new Error(`${file} must be a relative path inside the lock root`);
   }
 
@@ -260,7 +266,9 @@ const begin = (
         });
       }
 
-      yield* Effect.sleep(`${RETRY_MS} millis`);
+      // Acquisition runs uninterruptibly; only the wait between attempts may be interrupted,
+      // and `take` then closes the database it opened.
+      yield* Effect.interruptible(Effect.sleep(`${RETRY_MS} millis`));
     }
   });
 

@@ -18,10 +18,11 @@ const lockFailure = (profilePath: string, failure: FileLockFailed): ProfileExten
   new ProfileExtensionLockFailed({
     profilePath,
     operation: failure.reason === "prepare" ? "prepare" : "acquire",
-    message:
-      failure.reason === "held"
-        ? `Profile extension mutation lock timed out after ${LOCK_TIMEOUT_MS} milliseconds`
-        : failure.message,
+    message: {
+      prepare: `could not prepare the Profile runtime directory at ${join(profilePath, ".runtime")}`,
+      open: "could not open the Profile extension lock",
+      held: `Profile extension mutation lock timed out after ${LOCK_TIMEOUT_MS} milliseconds`,
+    }[failure.reason],
     cause: failure.cause,
   });
 

@@ -34,7 +34,10 @@ const topFolder = (sourcePath) => sourcePath.split("/")[1];
 
 const isPlatformDependency = (specifier, target) =>
   target === undefined
-    ? specifier === "effect" || specifier.startsWith("node:") || specifier.startsWith("bun:")
+    ? specifier === "effect" ||
+      specifier.startsWith("effect/") ||
+      specifier.startsWith("node:") ||
+      specifier.startsWith("bun:")
     : target.startsWith("src/platform/");
 
 const isFolderEntry = (target, folder) =>
