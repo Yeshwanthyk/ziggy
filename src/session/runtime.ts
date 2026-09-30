@@ -16,7 +16,6 @@ import { loadProfileSystemPrompt } from "../adapters/pi/profile-prompt";
 import type { SpecialistVoiceHub } from "../adapters/pi/prompt-turn";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
 import type { ChatModelOverride, ZiggyAgentError } from "../domain/agent";
-import { memoryFilePaths, type ChatContext } from "../domain/memory";
 import type { ProfileAgent } from "../domain/profile";
 import {
   loadServices,
@@ -25,9 +24,11 @@ import {
   type PiResources,
   type SkippedPackage,
 } from "../extensions";
+import { runCallback } from "../platform/callback";
 import { fileSystemCauseDetails } from "../platform/cause";
 import { ProfileNotInitialized, ProviderConfigError, selectSessionModel } from "../profile";
-import type { SessionTools } from "./tools";
+import type { SessionPrompt, SessionTools } from "./tools";
+import type { ChatContext } from "./types";
 
 /** Per-turn context that reaches the provider but never the transcript. */
 export interface EphemeralPromptContext {
@@ -46,6 +47,7 @@ export interface ProfileRuntime extends AgentSessionRuntime {
 export interface ProfileRuntimeOptions {
   readonly agents?: ReadonlyArray<ProfileAgent>;
   readonly tools?: ReadonlyArray<SessionTools>;
+  readonly prompts?: ReadonlyArray<SessionPrompt>;
   readonly model?: ChatModelOverride;
   readonly runtimeFactory?: typeof createAgentSessionRuntime;
   /** Runs before Pi builds a session on `manager`; throwing refuses the build. */
@@ -118,10 +120,6 @@ export const createProfileRuntime = (
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(profilePath);
-    const paths = memoryFilePaths(profilePath, context);
-
-    if (!paths.ok) return yield* paths.error;
-
     const agents = options.agents ?? (yield* discoverProfileAgents(profilePath));
     const resources = yield* profileResources(profilePath);
 
@@ -130,10 +128,15 @@ export const createProfileRuntime = (
     const ephemeralPromptContext: EphemeralPromptContext = { generation: 0 };
     const voiceHub = makeVoiceHub();
 
+    const prompts = options.prompts ?? [];
+
+    const contributedPrompt = Effect.forEach(prompts, (prompt) =>
+      prompt({ profilePath, context }),
+    ).pipe(Effect.map((parts) => parts.filter((part) => part !== undefined)));
+
     const inlineExtensions = createProfileCoreInlineExtensions({
-      profilePath,
       agents,
-      memoryDocuments: paths.documents,
+      contributedPrompt: () => runCallback(contributedPrompt),
       ephemeralPromptContext: () => ephemeralPromptContext.value,
     });
 

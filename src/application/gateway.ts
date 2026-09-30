@@ -9,7 +9,8 @@ import {
 } from "../adapters/telegram/api";
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ProfileSpecialistError } from "../domain/agent";
-import { codePointLength, type ChatContext } from "../domain/memory";
+import { codePointLength } from "../platform/text";
+import type { ChatContext } from "../session";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { UiGatewayError } from "../domain/ui-gateway";

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { MemoryScopeReference } from "../domain/memory";
+import type { MemoryScopeReference } from "../memory";
 import type { HelpTopic } from "../domain/cli-help";
 
 export type CliCommand =

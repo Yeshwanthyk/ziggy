@@ -1,10 +1,16 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+/* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests are approved Effect execution boundaries */
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { memoryEntries } from "ziggy/domain/memory";
-import { createMemoryWriteTool } from "ziggy/adapters/pi/memory-write-tool";
+import { Effect } from "effect";
+import {
+  createMemoryWriteTool,
+  MEMORY_BACKUPS_KEPT,
+  memoryEntries,
+  memoryPrompt,
+} from "ziggy/memory/index";
 
 const temporaryProfiles: Array<string> = [];
 
@@ -239,13 +245,13 @@ describe("memory_write locking", () => {
     );
   });
 
-  test("retains only the newest ten backups", async () => {
+  test("retains only the newest backups", async () => {
     const profilePath = await temporaryProfile();
     const memoryPath = join(profilePath, "MEMORY.md");
     await writeFile(memoryPath, "entry 0\n");
     const tool = createMemoryWriteTool(profilePath, { kind: "local" });
 
-    for (let index = 1; index <= 11; index += 1) {
+    for (let index = 1; index <= MEMORY_BACKUPS_KEPT + 1; index += 1) {
       const result = await tool.execute(
         `write-${index}`,
         { scope: "shared", operations: [{ action: "add", content: `entry ${index}` }] },
@@ -258,7 +264,7 @@ describe("memory_write locking", () => {
     }
 
     const backups = await readdir(join(profilePath, ".runtime", "memory-backups", "MEMORY.md"));
-    expect(backups).toHaveLength(10);
+    expect(backups).toHaveLength(MEMORY_BACKUPS_KEPT);
   });
 
   test("backup failures block publication and memory symlinks are rejected", async () => {
@@ -298,38 +304,6 @@ describe("memory_write locking", () => {
     expect(await readFile(elsewhere, "utf8")).toBe(initial);
   });
 
-  test("a failure after the backup temp write leaves no partial final backup", async () => {
-    const profilePath = await temporaryProfile();
-    const memoryPath = join(profilePath, "MEMORY.md");
-    const initial = "prior\n";
-    await writeFile(memoryPath, initial);
-    const backupDirectory = join(profilePath, ".runtime", "memory-backups", "MEMORY.md");
-    await mkdir(backupDirectory, { recursive: true });
-    const now = new Date("2026-08-15T12:34:56.789Z");
-    const collision = `${now.toISOString()}.md`;
-    await mkdir(join(backupDirectory, collision));
-    const tool = createMemoryWriteTool(profilePath, { kind: "local" });
-
-    setSystemTime(now);
-
-    try {
-      const result = await tool.execute(
-        "post-write-failure",
-        { scope: "shared", operations: [{ action: "add", content: "must not publish" }] },
-        undefined,
-        undefined,
-        Object.create(null),
-      );
-
-      expect(resultText(result)).toContain("ERROR: memory backup failed");
-    } finally {
-      setSystemTime();
-    }
-
-    expect(await readFile(memoryPath, "utf8")).toBe(initial);
-    expect(await readdir(backupDirectory)).toEqual([collision]);
-  });
-
   test("rejects a symlinked runtime directory before creating a lock outside the Profile", async () => {
     const profilePath = await temporaryProfile();
     const externalPath = await mkdtemp(join(tmpdir(), "ziggy-memory-lock-external-"));
@@ -347,5 +321,50 @@ describe("memory_write locking", () => {
     expect(resultText(result)).toContain("ERROR: memory write failed");
     await expect(stat(join(externalPath, "memory-locks"))).rejects.toHaveProperty("code", "ENOENT");
     await rm(externalPath, { recursive: true, force: true });
+  });
+});
+
+describe("memory in the system prompt", () => {
+  test("is reread for each turn rather than pinned when the session opens", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "MEMORY.md"), "First durable fact");
+
+    const first = await Effect.runPromise(
+      memoryPrompt({ profilePath, context: { kind: "local" } }),
+    );
+
+    await writeFile(join(profilePath, "MEMORY.md"), "Second durable fact");
+
+    const second = await Effect.runPromise(
+      memoryPrompt({ profilePath, context: { kind: "local" } }),
+    );
+
+    expect(first).toContain("First durable fact");
+    expect(second).toContain("## Memory (shared)\nSecond durable fact");
+    expect(second).not.toContain("First durable fact");
+  });
+
+  test("a document replaced by a symlink is refused, not read", async () => {
+    const profilePath = await temporaryProfile();
+    await writeFile(join(profilePath, "private.md"), "Do not expose this private text");
+    await symlink(join(profilePath, "private.md"), join(profilePath, "MEMORY.md"));
+
+    const prompt = await Effect.runPromise(
+      memoryPrompt({ profilePath, context: { kind: "local" } }),
+    );
+
+    expect(prompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN");
+    expect(prompt).not.toContain("Do not expose this private text");
+  });
+
+  test("an id memory cannot store is reported to the model and does not fail the turn", async () => {
+    const profilePath = await temporaryProfile();
+
+    const prompt = await Effect.runPromise(
+      memoryPrompt({ profilePath, context: { kind: "user", userId: "bad/id" } }),
+    );
+
+    expect(prompt).toContain("PROFILE MEMORY UNAVAILABLE FOR THIS TURN");
+    expect(prompt).toContain("invalid user memory id");
   });
 });

@@ -12,7 +12,7 @@ import type {
   SlackIngressPayload,
   SlackIngressTerminalState,
 } from "../../domain/slack-ingress";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import { normalizeSlackUserText, SLACK_BROADCAST_MENTION } from "./intake";
 
 const SLACK_MESSAGE_LIMIT = 4_000;

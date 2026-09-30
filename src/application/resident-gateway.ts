@@ -32,7 +32,7 @@ import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-s
 import { AutomationDefinitions, type AutomationDefinitionsApi } from "./automation-definitions";
 import { Automations, type AutomationsApi } from "./automations";
 import { Doctor, type DoctorApi } from "./doctor";
-import { Memory, type MemoryApi } from "./memory";
+import { Memory, type MemoryApi } from "../memory";
 import { ProfileAgents, type ProfileAgentsApi } from "./profile-agents";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";

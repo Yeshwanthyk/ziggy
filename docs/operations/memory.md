@@ -41,19 +41,22 @@ contains scope, path, state, entry count, code-point count, and cap, but not raw
 empty and are distinct from a missing document. The `memory/README.md` format note is never
 loaded as memory and is excluded from `ziggy doctor` size checks.
 
+Memory is reread before every turn. If it cannot be read (a symlinked document, or a chat id that
+is not a valid memory id), the turn still runs and the model is told that memory is unavailable.
+
 Hand-editing is safe when no Ziggy process is writing the same document, you preserve the `§`
 delimiter, and you stay within the cap. Run `ziggy doctor <profile>` after edits.
 
 Before an existing document is changed, Ziggy saves its exact prior bytes under:
 
 ```text
-<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>.md
+<profile>/.runtime/memory-backups/<relative-path-with-__>/<ISO-timestamp>-<suffix>.md
 ```
 
-The newest ten backups for each document are retained. Backup and pruning failures block the
-memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
+The newest five backups for each document are retained; the names sort by time. Backup and
+pruning failures block the memory write. To restore one manually, copy a backup over the document and run `ziggy doctor`:
 
 ```sh
-cp <profile>/.runtime/memory-backups/MEMORY.md/<timestamp>.md <profile>/MEMORY.md
+cp <profile>/.runtime/memory-backups/MEMORY.md/<backup>.md <profile>/MEMORY.md
 ziggy doctor <profile>
 ```

@@ -2,7 +2,8 @@ import { Schema } from "effect";
 import { AutomationTargetString } from "../automation";
 import { ProfileAgentId, ProfileAgentThinking } from "../profile";
 import { ProfileId } from "../profile-directory";
-import { SHARED_MEMORY_CAP, codePointLength, memoryEntries } from "../memory";
+import { SHARED_MEMORY_CAP, memoryEntries } from "../../memory";
+import { codePointLength } from "../../platform/text";
 import {
   boundedString,
   boundedCodePointString,

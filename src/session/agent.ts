@@ -18,7 +18,6 @@ import {
   type ProfileSpecialistError,
   type ZiggyAgentError,
 } from "../domain/agent";
-import type { ChatContext } from "../domain/memory";
 import { prepareProfileAgentPrompt, ProfileAgentMentionInvalid } from "../domain/profile";
 import { ProviderConfigError, type ProfileTarget } from "../profile";
 import { makeChatHandle } from "./handle";
@@ -30,10 +29,13 @@ import {
   requireSoul,
   type ProfileRuntimeOptions,
 } from "./runtime";
-import type { ChatHandle, OpenSession, RunOnceOptions, ZiggyAgentApi } from "./types";
+import type { ChatContext, ChatHandle, OpenSession, RunOnceOptions, ZiggyAgentApi } from "./types";
 
 /** What composition plugs into every session this agent opens. */
-export type SessionDependencies = Pick<ProfileRuntimeOptions, "tools" | "runtimeFactory">;
+export type SessionDependencies = Pick<
+  ProfileRuntimeOptions,
+  "tools" | "prompts" | "runtimeFactory"
+>;
 
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");

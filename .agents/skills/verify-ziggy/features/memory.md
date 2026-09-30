@@ -25,3 +25,6 @@ File contents; the tool message in the following request; `rawRequests` for prom
 ## Gotchas
 
 - CLI `run` is a local context: `person` writes `memory/users/owner.md`; `group` is refused.
+- Each changed document keeps its last 5 prior versions under `.runtime/memory-backups/`.
+- Unreadable memory (a symlink, an invalid chat id) never fails the turn; the prompt says
+  `PROFILE MEMORY UNAVAILABLE FOR THIS TURN.` instead.

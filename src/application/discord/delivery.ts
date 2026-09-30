@@ -1,5 +1,5 @@
 import { Duration, Effect, Result } from "effect";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import type { DiscordIngressTerminalState } from "../../domain/discord-ingress";
 import {
   DISCORD_IMAGE_MIME_TYPES,

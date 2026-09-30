@@ -3,8 +3,9 @@ import type {
   AgentSessionServices,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { Effect } from "effect";
 import type { PiResources } from "../extensions";
-import type { ChatContext } from "../domain/memory";
+import type { ChatContext } from "./types";
 import type { ProfileAgent } from "../domain/profile";
 
 /** What a module sees when it contributes tools to a Profile session. */
@@ -25,3 +26,15 @@ export interface SessionToolContext {
  * installs whatever it is given without knowing what they are.
  */
 export type SessionTools = (context: SessionToolContext) => ReadonlyArray<ToolDefinition>;
+
+/** What a module sees when it contributes to a Profile session's system prompt. */
+export interface SessionPromptContext {
+  readonly profilePath: string;
+  readonly context: ChatContext;
+}
+
+/**
+ * The prompt seam: run before every turn, a contribution returns text to append to the system
+ * prompt, or nothing. It handles its own failures, so a turn never fails because of it.
+ */
+export type SessionPrompt = (context: SessionPromptContext) => Effect.Effect<string | undefined>;

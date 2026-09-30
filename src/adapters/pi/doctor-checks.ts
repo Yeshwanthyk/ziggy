@@ -15,7 +15,8 @@ import { readSlackHealth } from "../fs/slack-health";
 import { readDiscordHealth } from "../fs/discord-health";
 
 import { parseAutomationFile } from "../../domain/automation";
-import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../../domain/memory";
+import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP } from "../../memory";
+import { codePointLength } from "../../platform/text";
 import { type DoctorCheck, doctorReport } from "../../domain/doctor";
 import { type ExtensionsApi } from "../../extensions";
 import {

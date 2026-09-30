@@ -1,7 +1,7 @@
 import { Effect, Predicate, Schema } from "effect";
 import { CliInputInvalid, type CliCommand } from "./cli-command";
 import { isZiggyHelpTopic, renderZiggyHelp, ziggyHelpTopics } from "../domain/cli-help";
-import { MemoryScopeReference } from "../domain/memory";
+import { MemoryScopeReference } from "../memory";
 
 const decodeMemoryScope = Schema.decodeUnknownEffect(MemoryScopeReference);
 

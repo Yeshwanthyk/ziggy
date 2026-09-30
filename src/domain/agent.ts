@@ -1,6 +1,5 @@
 import { Schema } from "effect";
 import type { ProfileNotInitialized, ProviderConfigError } from "../profile";
-import type { MemoryIdInvalid } from "./memory";
 import {
   type ProfileAgentInvalid,
   type ProfileAgentMentionInvalid,
@@ -142,7 +141,6 @@ export type ZiggyAgentError =
   | ProfileNotInitialized
   | ProviderConfigError
   | ProviderCallError
-  | MemoryIdInvalid
   | ProfileAgentInvalid
   | ProfileAgentMentionInvalid
   | ExtensionRuntimeError;

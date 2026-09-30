@@ -8,13 +8,18 @@ import type {
   SessionReference,
   ZiggyAgentError,
 } from "../domain/agent";
-import type { ChatContext } from "../domain/memory";
 import type { ProfileAgentThinking } from "../domain/profile";
 import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
 } from "../domain/automation";
 import type { ProfileTarget } from "../profile";
+
+/** Who a conversation is with: the local owner, one person, or a group. */
+export type ChatContext =
+  | { readonly kind: "local" }
+  | { readonly kind: "user"; readonly userId: string }
+  | { readonly kind: "group"; readonly groupId: string };
 
 export interface ChatPromptImage {
   readonly type: "image";

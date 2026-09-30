@@ -7,7 +7,7 @@ import type { DoctorApi } from "../doctor";
 import type { AutomationDefinitionsApi } from "../automation-definitions";
 import type { AutomationSchedulerApi } from "../automation-scheduler";
 import type { AutomationsApi } from "../automations";
-import type { MemoryApi } from "../memory";
+import type { MemoryApi } from "../../memory";
 import type { SessionsApi } from "../../session";
 import type { ZiggyAgentApi } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";

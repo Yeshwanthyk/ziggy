@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MEMORY_ENTRY_DELIMITER, applyMemoryOperations, memoryEntries } from "ziggy/domain/memory";
+import { MEMORY_ENTRY_DELIMITER, applyMemoryOperations, memoryEntries } from "ziggy/memory/index";
 
 describe("applyMemoryOperations", () => {
   test("add is idempotent for an exact duplicate", () => {

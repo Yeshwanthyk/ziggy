@@ -579,7 +579,7 @@ read the artifact back first.
   - Update the extension skills and ops docs.
 - [ ] **7. On the core.** In any order:
   - [ ] `agents/`: one policy function, no selection runtime, tools through the seam.
-  - [ ] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
+  - [x] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
   - [ ] Delivery through gateway-owned targets:
     - one `deliver(target, text)` seam;
     - each gateway (Slack, Discord, Telegram, ui-sdk conversation) owns its target syntax,

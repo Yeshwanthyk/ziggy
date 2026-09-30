@@ -6,14 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { expect, test } from "bun:test";
-import { memoryFiles } from "ziggy/adapters/fs/memory-files";
-import { makeMemory } from "ziggy/application/memory";
-import {
-  MEMORY_ENTRY_DELIMITER,
-  codePointLength,
-  parseMemoryScopeReference,
-} from "ziggy/domain/memory";
+import { MEMORY_ENTRY_DELIMITER, Memory, parseMemoryScopeReference } from "ziggy/memory/index";
+import { codePointLength } from "ziggy/platform/text";
 import { decodeCliCommand } from "ziggy/faces/cli";
+
+const memory = Effect.runSync(Memory.make);
 
 test("memory inventory excludes README, counts Unicode code points, and distinguishes empty", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-memory-application-"));
@@ -27,9 +24,7 @@ test("memory inventory excludes README, counts Unicode code points, and distingu
     await writeFile(join(profilePath, "memory", "users", "alice.md"), content);
     await writeFile(join(profilePath, "memory", "groups", "team.md"), "group fact\n");
 
-    const listed = await Effect.runPromise(
-      makeMemory(memoryFiles).list({ path: profilePath, name: "Profile" }),
-    );
+    const listed = await Effect.runPromise(memory.list({ path: profilePath, name: "Profile" }));
 
     expect(listed.map((item) => item.document.relativePath)).toEqual([
       "MEMORY.md",
@@ -44,10 +39,7 @@ test("memory inventory excludes README, counts Unicode code points, and distingu
     expect(person?.codePoints).toBeLessThan(content.length);
 
     const missing = await Effect.runPromise(
-      makeMemory(memoryFiles).show(
-        { path: profilePath, name: "Profile" },
-        parseMemoryScopeReference("user:bob"),
-      ),
+      memory.show({ path: profilePath, name: "Profile" }, parseMemoryScopeReference("user:bob")),
     );
 
     expect(missing.state).toBe("missing");
@@ -85,7 +77,7 @@ test("memory inventory rejects symlinked documents and wrong-kind roots", async 
   try {
     await symlink(externalPath, join(profilePath, "memory"));
     await expect(
-      Effect.runPromise(makeMemory(memoryFiles).list({ path: profilePath, name: "Profile" })),
+      Effect.runPromise(memory.list({ path: profilePath, name: "Profile" })),
     ).rejects.toMatchObject({ _tag: "MemoryDocumentInvalid" });
 
     await rm(join(profilePath, "memory"));
@@ -97,7 +89,7 @@ test("memory inventory rejects symlinked documents and wrong-kind roots", async 
       join(profilePath, "memory", "users", "unsafe.md"),
     );
     await expect(
-      Effect.runPromise(makeMemory(memoryFiles).list({ path: profilePath, name: "Profile" })),
+      Effect.runPromise(memory.list({ path: profilePath, name: "Profile" })),
     ).rejects.toMatchObject({ _tag: "MemoryDocumentInvalid" });
   } finally {
     await rm(profilePath, { recursive: true, force: true });

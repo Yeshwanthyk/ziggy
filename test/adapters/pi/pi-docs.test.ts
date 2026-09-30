@@ -289,9 +289,8 @@ describe("pi_docs factory", () => {
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
 
     const extensions = createProfileCoreInlineExtensions({
-      profilePath,
       agents: [],
-      memoryDocuments: [],
+      contributedPrompt: () => Promise.resolve([]),
       ephemeralPromptContext: () => undefined,
     });
 

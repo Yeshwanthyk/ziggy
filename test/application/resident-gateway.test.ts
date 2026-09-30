@@ -22,7 +22,7 @@ import {
 import { AutomationDefinitions } from "ziggy/application/automation-definitions";
 import { Automations } from "ziggy/application/automations";
 import { Doctor } from "ziggy/application/doctor";
-import { Memory } from "ziggy/application/memory";
+import { Memory } from "ziggy/memory/index";
 import { ProfileAgents } from "ziggy/application/profile-agents";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
 import { Gateway, type GatewayApi } from "ziggy/application/gateway";

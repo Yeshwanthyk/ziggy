@@ -1,10 +1,8 @@
 import { Effect, Layer } from "effect";
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
 import { ZiggyPathsLive } from "./platform/paths";
-import { MemoryFilesLive } from "./adapters/fs/memory-files";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
-import { memoryTools } from "./adapters/pi/memory-write-tool";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
 import { agentTools } from "./adapters/pi/specialist";
 import { ZiggyAgent } from "./application/agent";
@@ -14,7 +12,6 @@ import { AutomationsLive } from "./application/automations";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
-import { MemoryLive } from "./application/memory";
 import { ProfileAgentsLive } from "./application/profile-agents";
 import { ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentServiceLive } from "./application/resident-service";
@@ -22,6 +19,7 @@ import { SelfUpdateLive } from "./application/self-update";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { Extensions, extensionTools } from "./extensions";
+import { Memory, memoryPrompt, memoryTools } from "./memory";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { Auth, Models, Profiles } from "./profile";
 import { makeZiggyAgent, Sessions } from "./session";
@@ -35,6 +33,7 @@ const ZiggyAgentLayer = Layer.effect(
   Effect.map(Extensions, (extensions) =>
     makeZiggyAgent({
       tools: [memoryTools, extensionTools(extensions), agentTools],
+      prompts: [memoryPrompt],
     }),
   ),
 ).pipe(Layer.provide(Extensions.layer));
@@ -55,7 +54,7 @@ const ProfileAgentsLayer = ProfileAgentsLive.pipe(
   Layer.provide(Layer.merge(ZiggyAgentLayer, Models.layer)),
 );
 
-const MemoryLayer = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
+const MemoryLayer = Memory.layer;
 
 const SelfUpdateLayer = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive));
 

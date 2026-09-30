@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { Deferred, Duration, Effect, Exit, Queue, Result } from "effect";
 import type { SlackApiError } from "../../adapters/slack/api";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
 import type { ProfileSpecialistError } from "../../domain/agent";

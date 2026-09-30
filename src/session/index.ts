@@ -7,7 +7,12 @@ export {
   type SessionLeaseError,
 } from "./lease";
 
-export type { SessionToolContext, SessionTools } from "./tools";
+export type {
+  SessionPrompt,
+  SessionPromptContext,
+  SessionToolContext,
+  SessionTools,
+} from "./tools";
 
 export {
   localMainSessionDirectory,

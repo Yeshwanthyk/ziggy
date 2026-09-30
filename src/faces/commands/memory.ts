@@ -1,7 +1,6 @@
 import { Console, Effect, Match } from "effect";
-import { Memory } from "../../application/memory";
+import { Memory, parseMemoryScopeReference } from "../../memory";
 import { ZiggyPaths } from "../../platform/paths";
-import { parseMemoryScopeReference } from "../../domain/memory";
 import type { CliCommand } from "../cli-command";
 import {
   renderMemoryList,

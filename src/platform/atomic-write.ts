@@ -33,7 +33,7 @@ const removeTemporary = (path: string): Effect.Effect<void> =>
  */
 export const writeFileAtomic = (
   path: string,
-  content: string,
+  content: string | Uint8Array,
 ): Effect.Effect<void, AtomicWriteFailed> => {
   const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
 
@@ -42,7 +42,7 @@ export const writeFileAtomic = (
       const handle = await open(temporary, TEMPORARY_FLAGS, 0o600);
 
       try {
-        await handle.writeFile(content, "utf8");
+        await handle.writeFile(content);
         await handle.sync();
       } finally {
         await handle.close();

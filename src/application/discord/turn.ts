@@ -7,7 +7,7 @@ import type {
   DiscordIngressTerminalState,
 } from "../../domain/discord-ingress";
 import type { DiscordHealthEvent } from "../../domain/discord-health";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import { automationTargetFromString } from "../../domain/automation";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";
