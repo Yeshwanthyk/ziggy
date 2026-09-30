@@ -1,4 +1,4 @@
-import type { KnownModel, ModelSelection, ModelStatus } from "../adapters/pi/models";
+import { type KnownModel, type ModelSelection, type ModelStatus } from "../profile";
 
 export const renderModelStatus = (status: ModelStatus): string =>
   [

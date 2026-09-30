@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ProviderAuthStatus } from "ziggy/adapters/pi/auth";
-import { defaultAuthType } from "ziggy/application/auth";
+import { type ProviderAuthStatus, defaultAuthType } from "ziggy/profile/index";
 
 const provider = (supportsApiKeyLogin: boolean, supportsOauth: boolean): ProviderAuthStatus => ({
   id: "provider",

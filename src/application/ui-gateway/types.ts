@@ -1,15 +1,10 @@
 import type { Effect } from "effect";
 import type { ProfileExtensionHealthListing } from "../../adapters/pi/profile-extension-preflight";
-import type { ProviderAuthStatus } from "../../adapters/pi/auth";
-import type { KnownModel } from "../../adapters/pi/models";
 import type { UiGroupStore, UiPinStore } from "../../adapters/fs/ui-state";
 import type { ProfileExtensionsApi, ProfileExtensionError } from "../../domain/profile-extension";
-import type { ProfileTarget } from "../../domain/profile";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { ResidentProfileBranch } from "../profile-runtime-directory";
 import type { ProfileAgentsApi } from "../profile-agents";
-import type { ModelsApi } from "../models";
-import type { AuthApi } from "../auth";
 import type { DoctorApi } from "../doctor";
 import type { AutomationDefinitionsApi } from "../automation-definitions";
 import type { AutomationSchedulerApi } from "../automation-scheduler";
@@ -18,6 +13,13 @@ import type { MemoryApi } from "../memory";
 import type { SessionsApi } from "../sessions";
 import type { ZiggyAgentApi } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";
+import {
+  type ProviderAuthStatus,
+  type KnownModel,
+  type ProfileTarget,
+  type ModelsApi,
+  type AuthApi,
+} from "../../profile";
 
 export type UiGatewayBranch = ResidentProfileBranch;
 

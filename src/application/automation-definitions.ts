@@ -21,7 +21,7 @@ import {
   parseAutomationFile,
   validateAutomationId,
 } from "../domain/automation";
-import type { ProfileTarget } from "../domain/profile";
+import { type ProfileTarget } from "../profile";
 
 export interface AutomationDefinitionProjection {
   readonly id: string;

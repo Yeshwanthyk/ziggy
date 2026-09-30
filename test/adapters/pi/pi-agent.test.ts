@@ -12,12 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { Cause, Effect, Exit, Fiber, Option, Predicate, Result } from "effect";
-import {
-  ChatNotStreaming,
-  ProviderCallError,
-  ProviderConfigError,
-  SpecialistAgentNotFound,
-} from "ziggy/domain/agent";
+import { ChatNotStreaming, ProviderCallError, SpecialistAgentNotFound } from "ziggy/domain/agent";
 import {
   ProfileExtensionPreflightFailed,
   ProfileExtensionRollbackFailed,
@@ -47,6 +42,7 @@ import {
 } from "ziggy/adapters/pi/chat-event-projector";
 import { promptForAssistantText } from "ziggy/adapters/pi/prompt-turn";
 import { providerError } from "ziggy/adapters/pi/provider-failure";
+import { ProviderConfigError } from "ziggy/profile/index";
 
 const assistantMessage = (
   text: string,

@@ -7,7 +7,7 @@ import { fileSystemCauseDetails } from "../../platform/cause";
 import { writeFileAtomic } from "../../platform/atomic-write";
 import { acquireFileLock } from "../../platform/file-lock";
 import { GatewayOwnerError, type GatewayOwnerStatus } from "../../domain/gateway";
-import type { ProfileTarget } from "../../domain/profile";
+import { type ProfileTarget } from "../../profile";
 
 const PositivePid = Schema.Int.check(Schema.isGreaterThan(0));
 

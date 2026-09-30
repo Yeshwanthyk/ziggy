@@ -10,11 +10,11 @@ import {
 import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
 import type { ZiggyAgentError } from "../domain/agent";
 import { codePointLength, type ChatContext } from "../domain/memory";
-import type { ProfileTarget } from "../domain/profile";
 import type { TelegramGatewayConfig } from "../domain/telegram";
 import type { ChatRegistryApi } from "./chat-registry";
 import type { UiGatewayError } from "../domain/ui-gateway";
 import { automationTargetFromString } from "../domain/automation";
+import { type ProfileTarget } from "../profile";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 

@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { expect, test } from "bun:test";
-import { Profiles, ProfilesLive, type ProfilesApi } from "ziggy/application/profiles";
-import { ProfileStoreLive } from "ziggy/adapters/fs/profile-store";
+import { ZiggyPaths } from "ziggy/platform/paths";
+import { Profiles, type ProfilesApi } from "ziggy/profile/index";
 
 const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
   const snapshot: string[] = [];
@@ -35,11 +35,23 @@ const snapshotTree = async (root: string): Promise<ReadonlyArray<string>> => {
 
 const useProfiles = <Value, Error>(
   operation: (profiles: ProfilesApi) => Effect.Effect<Value, Error>,
+  ziggyHome = tmpdir(),
 ): Promise<Value> =>
   Effect.runPromise(
     Effect.gen(function* () {
       return yield* operation(yield* Profiles);
-    }).pipe(Effect.provide(ProfilesLive.pipe(Layer.provide(ProfileStoreLive)))),
+    }).pipe(
+      Effect.provide(
+        Layer.effect(Profiles, Profiles.make).pipe(
+          Layer.provide(
+            Layer.succeed(
+              ZiggyPaths,
+              ZiggyPaths.make({ cwd: ziggyHome, homedir: ziggyHome, ziggyHome }),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 
 test("init creates safe starter folders idempotently without changing human-owned bytes", async () => {
@@ -49,7 +61,7 @@ test("init creates safe starter folders idempotently without changing human-owne
 
   try {
     const first = await useProfiles((profiles) =>
-      profiles.initProfile(target, { createStarterDirectories: true }),
+      profiles.init(target, { createStarterDirectories: true }),
     );
 
     const soul = await readFile(path.join(profilePath, "SOUL.md"));
@@ -58,7 +70,7 @@ test("init creates safe starter folders idempotently without changing human-owne
     const beforeSecond = await snapshotTree(profilePath);
 
     const second = await useProfiles((profiles) =>
-      profiles.initProfile(target, { createStarterDirectories: true }),
+      profiles.init(target, { createStarterDirectories: true }),
     );
 
     expect(first).toEqual({
@@ -86,7 +98,7 @@ test("concurrent init creates SOUL.md exactly once", async () => {
 
   try {
     const outcomes = await Promise.all(
-      Array.from({ length: 12 }, () => useProfiles((profiles) => profiles.initProfile(target))),
+      Array.from({ length: 12 }, () => useProfiles((profiles) => profiles.init(target))),
     );
 
     expect(outcomes.filter((outcome) => outcome.created)).toHaveLength(1);
@@ -101,14 +113,14 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
 
   try {
     const minimalPath = path.join(root, "minimal");
-    await useProfiles((profiles) => profiles.initProfile({ path: minimalPath, name: "Minimal" }));
+    await useProfiles((profiles) => profiles.init({ path: minimalPath, name: "Minimal" }));
     expect(await readdir(minimalPath)).toEqual(["SOUL.md"]);
 
     const directorySoul = path.join(root, "directory-soul");
     await mkdir(path.join(directorySoul, "SOUL.md"), { recursive: true });
     await expect(
       useProfiles((profiles) =>
-        profiles.initProfile(
+        profiles.init(
           { path: directorySoul, name: "Directory" },
           { createStarterDirectories: true },
         ),
@@ -122,10 +134,7 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
     await symlink(path.join(root, "human-soul.md"), path.join(symlinkSoul, "SOUL.md"));
     await expect(
       useProfiles((profiles) =>
-        profiles.initProfile(
-          { path: symlinkSoul, name: "Symlink" },
-          { createStarterDirectories: true },
-        ),
+        profiles.init({ path: symlinkSoul, name: "Symlink" }, { createStarterDirectories: true }),
       ),
     ).rejects.toMatchObject({ _tag: "ProfileTargetNotDirectory" });
     expect(await readFile(path.join(root, "human-soul.md"), "utf8")).toBe("do not touch\n");
@@ -136,7 +145,7 @@ test("minimal init creates only SOUL.md and rejects non-regular or symlinked SOU
     await mkdir(physicalProfile);
     await symlink(physicalProfile, linkedProfile);
     await expect(
-      useProfiles((profiles) => profiles.initProfile({ path: linkedProfile, name: "Linked" })),
+      useProfiles((profiles) => profiles.init({ path: linkedProfile, name: "Linked" })),
     ).rejects.toMatchObject({ _tag: "ProfileTargetNotDirectory", path: linkedProfile });
     expect(await readdir(physicalProfile)).toEqual([]);
   } finally {
@@ -168,9 +177,7 @@ test("listing admits only physical Profiles with a regular SOUL.md", async () =>
     const registry = `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`;
     await writeFile(registryPath, registry);
 
-    const listings = await useProfiles((profiles) =>
-      profiles.listProfiles(profilesDirectory, registryPath),
-    );
+    const listings = await useProfiles((profiles) => profiles.list(), root);
 
     expect(listings).toEqual([{ name: "valid", path: validProfile }]);
     expect(await readFile(registryPath, "utf8")).toBe(registry);
@@ -185,9 +192,7 @@ test("non-minimal init scaffolds private memory files and preserves them on reru
   const target = { path: profilePath, name: "Profile" };
 
   try {
-    await useProfiles((profiles) =>
-      profiles.initProfile(target, { createStarterDirectories: true }),
-    );
+    await useProfiles((profiles) => profiles.init(target, { createStarterDirectories: true }));
     const sharedMemoryPath = path.join(profilePath, "MEMORY.md");
     const memoryReadmePath = path.join(profilePath, "memory", "README.md");
     const paths = [sharedMemoryPath, memoryReadmePath];
@@ -209,7 +214,7 @@ test("non-minimal init scaffolds private memory files and preserves them on reru
     const before = await snapshotTree(profilePath);
 
     const rerun = await useProfiles((profiles) =>
-      profiles.initProfile(target, { createStarterDirectories: true }),
+      profiles.init(target, { createStarterDirectories: true }),
     );
 
     expect(rerun).toEqual({ path: profilePath, created: false, createdDirectories: [] });

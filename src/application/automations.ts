@@ -34,12 +34,12 @@ import {
   validateAutomationId,
 } from "../domain/automation";
 import type { ChatModelOverride, ProfileSpecialistError } from "../domain/agent";
-import type { ProfileTarget } from "../domain/profile";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { discordMessageChunks, loadDiscordGatewayConfig } from "./discord-gateway";
 import { loadGatewayConfig, telegramMessageChunks } from "./gateway";
 import { loadSlackGatewayConfig, slackMessageChunks } from "./slack-gateway";
 import type { ChatRegistryApi } from "./chat-registry";
+import { type ProfileTarget } from "../profile";
 
 export type AutomationError =
   | AutomationInvalid

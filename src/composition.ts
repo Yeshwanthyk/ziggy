@@ -3,7 +3,6 @@ import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extensi
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
 import { ZiggyPathsLive } from "./platform/paths";
 import { MemoryFilesLive } from "./adapters/fs/memory-files";
-import { ProfileStoreLive } from "./adapters/fs/profile-store";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
 import { makePiAgent } from "./adapters/pi/pi-agent";
@@ -13,7 +12,6 @@ import {
 } from "./adapters/pi/profile-extension-preflight";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
 import { ZiggyAgent } from "./application/agent";
-import { AuthLive } from "./application/auth";
 import { AutomationDefinitionsLive } from "./application/automation-definitions";
 import { AutomationSchedulerLive } from "./application/automation-scheduler";
 import { AutomationsLive } from "./application/automations";
@@ -22,10 +20,8 @@ import { DoctorLive } from "./application/doctor";
 import { ExtensionUpdateLive } from "./application/extension-update";
 import { GatewayLive } from "./application/gateway";
 import { MemoryLive } from "./application/memory";
-import { ModelsLive } from "./application/models";
 import { ProfileAgentsLive } from "./application/profile-agents";
 import { ProfileExtensions, ProfileExtensionsLive } from "./application/profile-extensions";
-import { ProfilesLive } from "./application/profiles";
 import { ExtensionHealth, ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentServiceLive } from "./application/resident-service";
 import { SelfUpdateLive } from "./application/self-update";
@@ -33,6 +29,7 @@ import { SessionsLive } from "./application/sessions";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
 import { TerminalStyle } from "./faces/terminal-ui";
+import { Auth, Models, Profiles } from "./profile";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -47,14 +44,12 @@ const ZiggyAgentLayer = Layer.effect(
   Effect.map(ProfileExtensions, (profileExtensions) => makePiAgent(profileExtensions)),
 ).pipe(Layer.provide(ProfileExtensionsLayer));
 
-const ProfilesLayer = ProfilesLive.pipe(Layer.provide(ProfileStoreLive));
-
 const DoctorLayer = DoctorLive.pipe(
-  Layer.provide(Layer.mergeAll(AuthLive, ModelsLive, ProfileExtensionsLayer, DoctorChecksLive)),
+  Layer.provide(Layer.mergeAll(Auth.layer, Models.layer, ProfileExtensionsLayer, DoctorChecksLive)),
 );
 
 const SetupLayer = SetupLive.pipe(
-  Layer.provide(Layer.mergeAll(ProfilesLayer, AuthLive, ModelsLive, DoctorLayer)),
+  Layer.provide(Layer.mergeAll(Profiles.layer, Auth.layer, Models.layer, DoctorLayer)),
 );
 
 const AutomationsLayer = AutomationsLive.pipe(Layer.provide(ZiggyAgentLayer));
@@ -62,7 +57,7 @@ const AutomationsLayer = AutomationsLive.pipe(Layer.provide(ZiggyAgentLayer));
 const AutomationSchedulerLayer = AutomationSchedulerLive.pipe(Layer.provide(AutomationsLayer));
 
 const ProfileAgentsLayer = ProfileAgentsLive.pipe(
-  Layer.provide(Layer.merge(ZiggyAgentLayer, ModelsLive)),
+  Layer.provide(Layer.merge(ZiggyAgentLayer, Models.layer)),
 );
 
 const MemoryLayer = MemoryLive.pipe(Layer.provide(MemoryFilesLive));
@@ -82,8 +77,8 @@ const ResidentGatewayLayer = ResidentGatewayLive.pipe(
       SessionsLive,
       ProfileExtensionsLayer,
       ProfileAgentsLayer,
-      ModelsLive,
-      AuthLive,
+      Models.layer,
+      Auth.layer,
       DoctorLayer,
       MemoryLayer,
       Layer.succeed(ExtensionHealth, listProfileExtensionsWithHealth),
@@ -114,10 +109,10 @@ const ResidentLayer = Layer.mergeAll(
 
 /** Every service the CLI commands use, with Pi's standalone registrations installed first. */
 export const CliLayer = Layer.mergeAll(
-  ProfilesLayer,
+  Profiles.layer,
   ZiggyAgentLayer,
-  AuthLive,
-  ModelsLive,
+  Auth.layer,
+  Models.layer,
   DoctorLayer,
   SetupLayer,
   ProfileAgentsLayer,
@@ -134,7 +129,7 @@ export const CliLayer = Layer.mergeAll(
 ).pipe(Layer.provide(PiStandaloneRuntimeLive));
 
 /** `ziggy models ...`: the model catalog and a Profile's selection. */
-export const ModelsCommandsLayer = Layer.mergeAll(ModelsLive, ZiggyPathsLive).pipe(
+export const ModelsCommandsLayer = Layer.mergeAll(Models.layer, ZiggyPathsLive).pipe(
   Layer.provide(PiStandaloneRuntimeLive),
 );
 

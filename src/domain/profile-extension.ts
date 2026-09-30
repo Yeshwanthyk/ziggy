@@ -1,6 +1,7 @@
 import { Context, Effect, Schema } from "effect";
 import type { ExtensionCatalogInstallFailed, ExtensionCatalogInvalid } from "./extension-catalog";
-import type { ProfileExtensionInvalid, ProfileFileSystemError, ProfileTarget } from "./profile";
+import type { ProfileExtensionInvalid } from "./profile";
+import { type ProfileFileSystemError, type ProfileTarget } from "../profile";
 
 export const ProfileExtensionId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),

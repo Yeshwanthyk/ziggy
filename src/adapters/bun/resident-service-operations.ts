@@ -30,7 +30,6 @@ import { ZiggyPaths, type ZiggyPathsApi } from "../../platform/paths";
 import { validateGatewayProfile } from "../fs/gateway-config";
 import { readDiscordHealth } from "../fs/discord-health";
 import { readSlackHealth } from "../fs/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
 import {
   deriveResidentServiceIdentity,
   type ResidentServiceDefinition,
@@ -49,6 +48,7 @@ import {
 } from "../../application/resident-service";
 import type { ResidentSupervisorStatus } from "../../application/resident-service";
 import type { GatewayOwnerStatus } from "../../domain/gateway";
+import { type ProfileTarget } from "../../profile";
 
 export const managerFor = (
   platform: NodeJS.Platform,

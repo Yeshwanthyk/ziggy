@@ -1,9 +1,8 @@
 import { Console, Effect, Match } from "effect";
-import { Models } from "../../application/models";
-import { resolveProfileTarget } from "../../domain/profile";
 import { ZiggyPaths } from "../../platform/paths";
 import type { CliCommand } from "../cli-command";
 import { renderModelSelection, renderModels, renderModelStatus } from "../models-cli";
+import { Models, resolveProfileTarget } from "../../profile";
 
 export type ModelsCommand = Extract<
   CliCommand,

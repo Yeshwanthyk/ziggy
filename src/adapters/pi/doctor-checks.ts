@@ -15,13 +15,10 @@ import { describePinnedPiDocs, loadPinnedPiDocs } from "./pi-docs";
 import { listProfileSessions } from "./sessions";
 import { readSlackHealth } from "../fs/slack-health";
 import { readDiscordHealth } from "../fs/discord-health";
-import type { AuthApi } from "../../application/auth";
-import type { ModelsApi } from "../../application/models";
 
 import { parseAutomationFile } from "../../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../../domain/memory";
 import { type DoctorCheck, doctorReport } from "../../domain/doctor";
-import type { ProfileTarget } from "../../domain/profile";
 import {
   ProfileExtensionPreflightFailed,
   type ProfileExtensionsApi,
@@ -41,6 +38,7 @@ import {
   agentsDoctorCheck,
 } from "../../application/doctor";
 import packageJson from "../../../package.json" with { type: "json" };
+import { type AuthApi, type ModelsApi, type ProfileTarget } from "../../profile";
 
 const inspect = (targetPath: string) =>
   Effect.tryPromise({
@@ -86,7 +84,7 @@ const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   });
 
 const modelCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<DoctorCheck> =>
-  models.readOnlyStatus(target).pipe(
+  models.status(target).pipe(
     Effect.map(modelDoctorCheck),
     Effect.catch(() =>
       Effect.succeed(error("model", "Pi model settings are invalid or unreadable")),
@@ -99,11 +97,11 @@ const authCheck = (
   models: ModelsApi,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const status = yield* models.readOnlyStatus(target);
+    const status = yield* models.status(target);
 
     if (status.providerId === undefined) return authDoctorCheck(undefined, []);
 
-    const providers = yield* auth.readOnlyStatus(target);
+    const providers = yield* auth.status(target);
 
     return authDoctorCheck(status.providerId, providers);
   }).pipe(

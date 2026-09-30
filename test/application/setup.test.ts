@@ -3,13 +3,15 @@
 /* oxlint-disable ziggy-effect/no-effect-escape-hatch -- unreachable fake methods fail tests immediately */
 import { Effect, Exit } from "effect";
 import { expect, test } from "bun:test";
-import type { AuthApi } from "ziggy/application/auth";
 import type { DoctorApi } from "ziggy/application/doctor";
-import type { ModelsApi } from "ziggy/application/models";
-import type { ProfilesApi } from "ziggy/application/profiles";
 import { makeSetup, type SetupInteraction } from "ziggy/application/setup";
 import type { DoctorReport } from "ziggy/domain/doctor";
-import { ProfileFileSystemError } from "ziggy/domain/profile";
+import {
+  type AuthApi,
+  type ModelsApi,
+  type ProfilesApi,
+  ProfileFileSystemError,
+} from "ziggy/profile/index";
 
 const target = { path: "/profile", name: "Profile" };
 
@@ -20,7 +22,7 @@ const report: DoctorReport = {
 };
 
 const profiles = (events: string[], registerFails = false): ProfilesApi => ({
-  initProfile: (_target, options) => {
+  init: (_target, options) => {
     events.push(`init:${options?.createStarterDirectories === true}`);
 
     return Effect.succeed({
@@ -29,7 +31,7 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
       createdDirectories: [],
     });
   },
-  registerProfile: () => {
+  register: () => {
     events.push("register");
 
     return registerFails
@@ -44,26 +46,12 @@ const profiles = (events: string[], registerFails = false): ProfilesApi => ({
         )
       : Effect.void;
   },
-  listProfiles: () => Effect.die("unused"),
+  list: () => Effect.die("unused"),
 });
 
 const auth = (events: string[], configured = true): AuthApi => ({
   status: () => {
     events.push("auth-status");
-
-    return Effect.succeed([
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        supportsApiKeyLogin: true,
-        ambientOnly: false,
-        supportsOauth: true,
-        configured: configured ? { type: "api_key" } : undefined,
-      },
-    ]);
-  },
-  readOnlyStatus: () => {
-    events.push("auth-read-only-status");
 
     return Effect.succeed([
       {
@@ -89,11 +77,6 @@ const models = (
 ): ModelsApi => ({
   status: () => {
     events.push("model-status");
-
-    return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
-  },
-  readOnlyStatus: () => {
-    events.push("model-read-only-status");
 
     return Effect.succeed({ ...current, authConfigured: current.providerId !== undefined });
   },
@@ -164,12 +147,7 @@ test("existing guided setup resumes configured auth and model without resetting 
   const setup = makeSetup(profiles(events), auth(events), models(events, current), doctor(events));
 
   const result = await Effect.runPromise(
-    setup.initialize(
-      target,
-      "/registry",
-      { minimal: false, interactive: true },
-      interaction(events),
-    ),
+    setup.initialize(target, { minimal: false, interactive: true }, interaction(events)),
   );
 
   expect(result.modelStatus).toMatchObject({
@@ -202,7 +180,6 @@ test("explicit non-interactive setup selects through Models without prompting", 
   await Effect.runPromise(
     setup.initialize(
       target,
-      "/registry",
       {
         minimal: false,
         interactive: false,
@@ -236,12 +213,7 @@ test("non-interactive setup fails rather than prompting and registry failures re
   );
 
   const missingExit = await Effect.runPromiseExit(
-    missing.initialize(
-      target,
-      "/registry",
-      { minimal: false, interactive: false },
-      interaction(missingEvents),
-    ),
+    missing.initialize(target, { minimal: false, interactive: false }, interaction(missingEvents)),
   );
 
   expect(Exit.isFailure(missingExit)).toBeTrue();
@@ -257,12 +229,7 @@ test("non-interactive setup fails rather than prompting and registry failures re
   );
 
   const registryExit = await Effect.runPromiseExit(
-    registry.initialize(
-      target,
-      "/registry",
-      { minimal: true, interactive: false },
-      interaction(registryEvents),
-    ),
+    registry.initialize(target, { minimal: true, interactive: false }, interaction(registryEvents)),
   );
 
   expect(Exit.isFailure(registryExit)).toBeTrue();

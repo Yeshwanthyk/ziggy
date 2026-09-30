@@ -4,7 +4,6 @@ import type { SlackApiError } from "../../adapters/slack/api";
 import { codePointLength } from "../../domain/memory";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
 import type { ZiggyAgentError } from "../../domain/agent";
 import type { UiGatewayError } from "../../domain/ui-gateway";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
@@ -35,6 +34,7 @@ import type {
   SlackIngressRuntime,
   SlackTransport,
 } from "./model";
+import { type ProfileTarget } from "../../profile";
 
 const HEARTBEAT_SECONDS = 30;
 

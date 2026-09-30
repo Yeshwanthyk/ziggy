@@ -2,7 +2,6 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun test functions own the Effect Promise boundary */
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Ref } from "effect";
-import { ProfileNotInitialized } from "ziggy/domain/agent";
 import { type ChatEvent, type ChatHandle } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import {
@@ -10,6 +9,7 @@ import {
   MAX_UI_SESSIONS,
   makeChatRegistry,
 } from "ziggy/application/chat-registry";
+import { ProfileNotInitialized } from "ziggy/profile/index";
 
 test("remembered destinations keep a known label when a fallback observation arrives", async () => {
   await Effect.runPromise(

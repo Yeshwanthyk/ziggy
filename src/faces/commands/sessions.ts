@@ -1,6 +1,5 @@
 import { Console, Effect, Match } from "effect";
 import { Sessions } from "../../application/sessions";
-import { resolveProfileTarget } from "../../domain/profile";
 import { ZiggyPaths } from "../../platform/paths";
 import type { CliCommand } from "../cli-command";
 import {
@@ -9,6 +8,7 @@ import {
   renderSessionList,
   renderSessionListJson,
 } from "../sessions-cli";
+import { resolveProfileTarget } from "../../profile";
 
 export type SessionsCommand = Extract<
   CliCommand,

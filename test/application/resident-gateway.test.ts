@@ -15,17 +15,14 @@ import {
   type UiServerProjection,
 } from "ziggy/adapters/bun/ui-server";
 import { AutomationSchedulerError } from "ziggy/domain/automation";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import {
   AutomationScheduler,
   type AutomationSchedulerApi,
 } from "ziggy/application/automation-scheduler";
 import { AutomationDefinitions } from "ziggy/application/automation-definitions";
 import { Automations } from "ziggy/application/automations";
-import { Auth } from "ziggy/application/auth";
 import { Doctor } from "ziggy/application/doctor";
 import { Memory } from "ziggy/application/memory";
-import { Models } from "ziggy/application/models";
 import { ProfileAgents } from "ziggy/application/profile-agents";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
 import { Gateway, type GatewayApi } from "ziggy/application/gateway";
@@ -47,6 +44,7 @@ import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import { type ProfileTarget, Auth, Models } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 

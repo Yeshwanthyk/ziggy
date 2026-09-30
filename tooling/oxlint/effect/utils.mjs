@@ -7,6 +7,21 @@ export function toRepoRelative(filename) {
   return path.relative(repoRoot, path.resolve(filename)).split(path.sep).join("/");
 }
 
+/** Files outside `src/adapters/pi/` that may import Pi (the `[Pi]` files in the tight-core plan). */
+export const piFiles = new Set([
+  "src/profile/pi-models.ts",
+  "src/profile/pi-auth.ts",
+  "src/session/runtime.ts",
+  "src/session/handle.ts",
+  "src/session/agent.ts",
+  "src/session/tools.ts",
+  "src/extensions/loader.ts",
+  "src/extensions/tool.ts",
+  "src/agents/run.ts",
+  "src/agents/tools.ts",
+  "src/memory/tool.ts",
+]);
+
 export function isTestLike(filename) {
   const normalized = toRepoRelative(filename);
 
@@ -24,6 +39,7 @@ export function isDeclarationFile(filename) {
 
 /**
  * `src/platform/` holds the shared low-level filesystem pieces, so it sits at the adapter boundary.
+ * The `[Pi]` files wrap Pi's Promise APIs, so they and their tests sit there too.
  * End-to-end proofs and their harness drive real processes and sockets from outside, so they do too.
  */
 export function isAdapterFile(filename) {
@@ -32,6 +48,8 @@ export function isAdapterFile(filename) {
   return (
     normalized.startsWith("src/adapters/") ||
     normalized.startsWith("src/platform/") ||
+    piFiles.has(normalized) ||
+    piFiles.has(normalized.replace(/^test\//, "src/").replace(/\.test\.ts$/, ".ts")) ||
     normalized.startsWith("test/adapters/") ||
     normalized.startsWith("test/platform/") ||
     normalized.startsWith("test/harness/") ||

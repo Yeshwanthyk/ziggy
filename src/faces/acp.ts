@@ -15,8 +15,7 @@ import {
 import { Effect, Queue, Result, Schema, Semaphore, type Scope } from "effect";
 import packageJson from "../../package.json" with { type: "json" };
 import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../application/agent";
-import type { ModelsApi } from "../application/models";
-import type { ProfileTarget } from "../domain/profile";
+import { type ModelsApi, type ProfileTarget } from "../profile";
 
 /** Buzz/ACP unstable session-model state (SessionModelState). */
 interface AcpSessionModelState {
@@ -279,7 +278,7 @@ export const makeAcpAgent = (
             );
 
             const status = yield* models
-              .readOnlyStatus(target)
+              .status(target)
               .pipe(
                 Effect.mapError((cause) =>
                   modelError(cause, "could not resolve the session model"),

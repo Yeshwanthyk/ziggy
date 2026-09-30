@@ -7,7 +7,6 @@ import { bindChatRuntime, type ChatRuntimeBinding } from "./chat-runtime-binding
 import { providerError, piPromise } from "./provider-failure";
 import { promptForAssistantText, type PromptSession, type SpecialistVoiceHub } from "./prompt-turn";
 
-import { selectSessionModel } from "../../application/models";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 
 import {
@@ -29,8 +28,6 @@ import {
 import { Effect, Exit, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
-  ProfileNotInitialized,
-  ProviderConfigError,
   SessionBusy,
   SessionHeld,
   SpecialistAgentNotFound,
@@ -47,7 +44,6 @@ import {
   ProfileAgentMentionInvalid,
   type ProfileAgentThinking,
   type ProfileAgent,
-  type ProfileTarget,
 } from "../../domain/profile";
 import type {
   ChatEvent,
@@ -104,6 +100,12 @@ import {
   automationResultContent,
   isAutomationReceipt,
 } from "./automation-result";
+import {
+  selectSessionModel,
+  ProfileNotInitialized,
+  ProviderConfigError,
+  type ProfileTarget,
+} from "../../profile";
 
 const sessionLeaseError = (
   profilePath: string,

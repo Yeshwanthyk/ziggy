@@ -5,19 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Fiber } from "effect";
 import {
-  listAuthStatusReadOnly,
-  makePiAuth,
   type AuthInteraction,
-  type PiAuthRuntime,
   type ProviderAuthType,
-} from "ziggy/adapters/pi/auth";
-import {
   AuthFlowFailed,
   AuthProviderUnknown,
   AuthTypeUnsupported,
   ProfileNotInitialized,
   ProviderConfigError,
-} from "ziggy/domain/agent";
+} from "ziggy/profile/index";
+import { listAuthStatusReadOnly, makePiAuth, type PiAuthRuntime } from "ziggy/profile/pi-auth";
 
 const temporaryPaths: Array<string> = [];
 

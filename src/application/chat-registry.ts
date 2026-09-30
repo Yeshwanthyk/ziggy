@@ -11,12 +11,12 @@ import {
   type AutomationTarget,
   type AutomationConversationResult,
 } from "../domain/automation";
-import type { ProfileTarget } from "../domain/profile";
 import type { ZiggyAgentError } from "../domain/agent";
 import {
   appendStoredAutomationResult,
   automationResultContent,
 } from "../adapters/pi/automation-result";
+import { type ProfileTarget } from "../profile";
 
 export const MAX_UI_SESSIONS = 32;
 

@@ -1,8 +1,7 @@
 import { Effect } from "effect";
 import type { ProfileExtensionsApi, ProfileExtensionListing } from "../domain/profile-extension";
-import type { ProfileTarget } from "../domain/profile";
 import type { TerminalInteractionFailed } from "../domain/terminal-interaction";
-import type { ProfileListing, ProfilesApi } from "./profiles";
+import { type ProfileTarget, type ProfileListing, type ProfilesApi } from "../profile";
 
 export interface ExtensionManagerChanges {
   readonly added: ReadonlyArray<string>;
@@ -41,8 +40,6 @@ export type ExtensionManagerResult =
 
 export interface ExtensionManagerOptions {
   readonly target?: ProfileTarget;
-  readonly profilesDirectory: string;
-  readonly registryPath: string;
 }
 
 const asTarget = (profile: ProfileListing): ProfileTarget => ({
@@ -73,10 +70,7 @@ export const manageExtensions = (
     let profile = options.target;
 
     if (profile === undefined) {
-      const availableProfiles = yield* profiles.listProfiles(
-        options.profilesDirectory,
-        options.registryPath,
-      );
+      const availableProfiles = yield* profiles.list();
 
       if (availableProfiles.length === 0) return { status: "empty" } as const;
       const choice = yield* interaction.selectProfile(availableProfiles);

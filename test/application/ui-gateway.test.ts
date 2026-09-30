@@ -17,8 +17,6 @@ import {
   type ChatRegistryEvent,
 } from "ziggy/application/chat-registry";
 import type { SessionsApi } from "ziggy/application/sessions";
-import type { ModelsApi } from "ziggy/application/models";
-import type { AuthApi } from "ziggy/application/auth";
 import type { ProfileAgentsApi } from "ziggy/application/profile-agents";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
@@ -37,6 +35,7 @@ import {
   type UiGroupRecord,
 } from "ziggy/domain/ui-gateway";
 import { UiGroupState, type UiGroupState as UiGroupStateValue } from "ziggy/domain/ui-state";
+import { type ModelsApi, type AuthApi } from "ziggy/profile/index";
 
 const target = { path: "/profile", name: "Profile" } as const;
 
@@ -888,8 +887,7 @@ test("auth status retains configured providers beyond the sixteen-provider cap",
   };
 
   const auth: AuthApi = {
-    status: () => Effect.never,
-    readOnlyStatus: () => Effect.succeed([...unconfigured, configured]),
+    status: () => Effect.succeed([...unconfigured, configured]),
     login: () => Effect.never,
   };
 
@@ -1520,13 +1518,6 @@ test("session model and thinking mutations stay on the open handle, not the Prof
         thinking: "medium",
         authConfigured: true,
       }),
-    readOnlyStatus: () =>
-      Effect.succeed({
-        providerId: "default",
-        modelId: "unchanged",
-        thinking: "medium",
-        authConfigured: true,
-      }),
     list: () => Effect.succeed([]),
     available: () => Effect.succeed([]),
     set: () =>
@@ -1758,13 +1749,6 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
 
   const modelService: ModelsApi = {
     status: () =>
-      Effect.succeed({
-        providerId: "provider-0",
-        modelId: "model-0000",
-        thinking: "off",
-        authConfigured: true,
-      }),
-    readOnlyStatus: () =>
       Effect.succeed({
         providerId: "provider-0",
         modelId: "model-0000",

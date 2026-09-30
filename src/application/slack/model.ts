@@ -21,9 +21,9 @@ import type {
   SlackIngressTerminalState,
 } from "../../domain/slack-ingress";
 import type { SlackHealthProjectionError, SlackHealthSnapshot } from "../../domain/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
 import type { ChatHandle } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";
+import { type ProfileTarget } from "../../profile";
 
 export type SlackGatewayError = SlackApiError | SlackIngressDatabaseError;
 

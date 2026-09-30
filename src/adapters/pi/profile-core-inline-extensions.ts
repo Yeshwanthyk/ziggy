@@ -6,7 +6,6 @@ import type {
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { ProviderConfigError } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
 import { renderMemoryForPrompt, type MemoryDocument } from "../../domain/memory";
 import { fileSystemCauseDetails } from "../../platform/cause";
@@ -14,6 +13,7 @@ import { createPiDocsExtension } from "./pi-docs";
 import { createProfileAgentGuidanceExtension } from "./profile-agent-guidance";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { createSessionNamingExtension } from "./session-name";
+import { ProviderConfigError } from "../../profile";
 
 interface LoadedMemoryDocument {
   readonly content: string;

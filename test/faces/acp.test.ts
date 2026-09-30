@@ -15,8 +15,8 @@ import {
   type ZiggyAgentApi,
 } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
-import type { ModelsApi } from "ziggy/application/models";
 import { makeAcpAgent } from "ziggy/faces/acp";
+import { type ModelsApi } from "ziggy/profile/index";
 
 const target = { path: "/profile", name: "Profile" } as const;
 
@@ -55,13 +55,6 @@ const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
 
 const stubModels: ModelsApi = {
   status: () =>
-    Effect.succeed({
-      providerId: "openai",
-      modelId: "gpt-5",
-      thinking: "high",
-      authConfigured: true,
-    }),
-  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "openai",
       modelId: "gpt-5",
@@ -440,7 +433,7 @@ test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => 
     };
     const models = {
       status: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
-      readOnlyStatus: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
+      status: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
       list: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
       available: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
       set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),

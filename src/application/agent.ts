@@ -9,13 +9,13 @@ import type {
   ZiggyAgentError,
 } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
-import type { ProfileTarget } from "../domain/profile";
 import type { ProfileAgentThinking } from "../domain/profile";
 import type { SessionNotFound, SessionReadFailed } from "../domain/session";
 import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
 } from "../domain/automation";
+import { type ProfileTarget } from "../profile";
 
 export type ChatSessionMode = "continue" | "fresh";
 

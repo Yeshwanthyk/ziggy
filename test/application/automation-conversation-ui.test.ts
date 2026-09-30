@@ -29,9 +29,9 @@ import {
 } from "ziggy/application/ui-gateway";
 import { SessionNotFound } from "ziggy/domain/session";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
 import { UiDestinationListResult, UiResponseFrame } from "ziggy/domain/ui-gateway";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const roots: string[] = [];
 

@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { ProfileNotInitialized, ProviderConfigError } from "../profile";
 import type { MemoryIdInvalid } from "./memory";
 import {
   type ProfileAgentInvalid,
@@ -37,24 +38,6 @@ export const ChatModelOverride = Schema.Struct({
 
 export type ChatModelOverride = typeof ChatModelOverride.Type;
 
-export class ProfileNotInitialized extends Schema.TaggedErrorClass<ProfileNotInitialized>()(
-  "ProfileNotInitialized",
-  {
-    profilePath: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-export class ProviderConfigError extends Schema.TaggedErrorClass<ProviderConfigError>()(
-  "ProviderConfigError",
-  {
-    profilePath: Schema.String,
-    operation: Schema.String,
-    message: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {}
-
 export class ProviderCallError extends Schema.TaggedErrorClass<ProviderCallError>()(
   "ProviderCallError",
   {
@@ -71,76 +54,6 @@ export class ChatNotStreaming extends Schema.TaggedErrorClass<ChatNotStreaming>(
     profilePath: Schema.String,
     operation: Schema.String,
     message: Schema.String,
-  },
-) {}
-
-export class AuthProviderUnknown extends Schema.TaggedErrorClass<AuthProviderUnknown>()(
-  "AuthProviderUnknown",
-  {
-    profilePath: Schema.String,
-    providerId: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-export class AuthTypeUnsupported extends Schema.TaggedErrorClass<AuthTypeUnsupported>()(
-  "AuthTypeUnsupported",
-  {
-    providerId: Schema.String,
-    requested: Schema.Literals(["api_key", "oauth"]),
-    message: Schema.String,
-  },
-) {}
-
-export class AuthFlowFailed extends Schema.TaggedErrorClass<AuthFlowFailed>()("AuthFlowFailed", {
-  providerId: Schema.String,
-  message: Schema.String,
-  cause: Schema.Defect(),
-}) {}
-
-export class ModelProviderUnknown extends Schema.TaggedErrorClass<ModelProviderUnknown>()(
-  "ModelProviderUnknown",
-  {
-    profilePath: Schema.String,
-    providerId: Schema.String,
-    message: Schema.String,
-  },
-) {}
-
-export class ModelUnknown extends Schema.TaggedErrorClass<ModelUnknown>()("ModelUnknown", {
-  profilePath: Schema.String,
-  providerId: Schema.String,
-  modelId: Schema.String,
-  message: Schema.String,
-}) {}
-
-export class ModelThinkingUnsupported extends Schema.TaggedErrorClass<ModelThinkingUnsupported>()(
-  "ModelThinkingUnsupported",
-  {
-    providerId: Schema.String,
-    modelId: Schema.String,
-    thinking: Schema.String,
-    supported: Schema.Array(Schema.String),
-    message: Schema.String,
-  },
-) {}
-
-export class ModelOperationFailed extends Schema.TaggedErrorClass<ModelOperationFailed>()(
-  "ModelOperationFailed",
-  {
-    profilePath: Schema.String,
-    operation: Schema.String,
-    message: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {}
-
-export class ModelSettingsWriteFailed extends Schema.TaggedErrorClass<ModelSettingsWriteFailed>()(
-  "ModelSettingsWriteFailed",
-  {
-    profilePath: Schema.String,
-    message: Schema.String,
-    cause: Schema.Defect(),
   },
 ) {}
 

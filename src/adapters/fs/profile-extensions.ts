@@ -19,8 +19,9 @@ import {
   isRequiredBundledExtension,
 } from "../../catalog";
 import { bundledFilePath } from "../../generated/builtin-files";
-import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
+import { ProfileExtensionInvalid } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../../platform/cause";
+import { ProfileFileSystemError } from "../../profile";
 
 const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 

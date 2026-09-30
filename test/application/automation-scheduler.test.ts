@@ -25,7 +25,6 @@ import {
   AutomationScheduleSuperseded,
 } from "ziggy/domain/automation";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import {
@@ -34,6 +33,7 @@ import {
   makeAutomations,
 } from "ziggy/application/automations";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 

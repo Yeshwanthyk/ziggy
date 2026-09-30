@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import { Result } from "effect";
-import { selectSessionModel } from "ziggy/application/models";
+import { selectSessionModel } from "ziggy/profile/index";
 
 const candidate = fc.oneof(
   fc.constantFrom("default", "ready"),

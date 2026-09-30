@@ -6,13 +6,13 @@ import {
 } from "../adapters/pi/sessions";
 import { readSessionHistory } from "../adapters/pi/session-history";
 import { isSessionLeaseHeld, type SessionLeaseFailed } from "../adapters/pi/session-lease";
-import type { ProfileTarget } from "../domain/profile";
 import {
   SessionNotFound,
   type SessionHistoryCursorInvalid,
   type SessionHistoryPage,
 } from "../domain/session";
 import type { SessionMetadata, ProfileSessionSummary, SessionReadFailed } from "../domain/session";
+import { type ProfileTarget } from "../profile";
 
 export type SessionsError = SessionReadFailed | SessionNotFound;
 

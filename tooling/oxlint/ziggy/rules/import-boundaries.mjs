@@ -1,21 +1,8 @@
 import path from "node:path";
-import { toRepoRelative } from "../../effect/utils.mjs";
+import { piFiles, toRepoRelative } from "../../effect/utils.mjs";
 
 /** Folders whose files are private: code outside a folder imports only its `index.ts`. */
 const conceptFolders = ["profile", "session", "extensions", "agents", "memory"];
-
-/** Files outside `src/adapters/pi/` that may import Pi (the `[Pi]` files in the tight-core plan). */
-const piFiles = new Set([
-  "src/session/runtime.ts",
-  "src/session/handle.ts",
-  "src/session/agent.ts",
-  "src/session/tools.ts",
-  "src/extensions/loader.ts",
-  "src/extensions/tool.ts",
-  "src/agents/run.ts",
-  "src/agents/tools.ts",
-  "src/memory/tool.ts",
-]);
 
 const isPiPackage = (specifier) => specifier.startsWith("@earendil-works/");
 

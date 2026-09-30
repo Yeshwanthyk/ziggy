@@ -22,8 +22,8 @@ import {
   AuthTypeUnsupported,
   ProfileNotInitialized,
   ProviderConfigError,
-} from "../../domain/agent";
-import { fileSystemCauseDetails } from "../../platform/cause";
+} from "./types";
+import { fileSystemCauseDetails } from "../platform/cause";
 
 export type ProviderAuthType = "api_key" | "oauth";
 
@@ -324,8 +324,6 @@ export const makePiAuth = (createRuntime: PiAuthRuntimeFactory = createModelRunt
 const piAuth = makePiAuth();
 
 const piReadOnlyAuth = makePiAuth(createReadOnlyModelRuntime);
-
-export const listAuthStatus = piAuth.listAuthStatus;
 
 export const listAuthStatusReadOnly = piReadOnlyAuth.listAuthStatus;
 

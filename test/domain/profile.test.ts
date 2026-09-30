@@ -4,11 +4,10 @@ import { Effect, Predicate, Result, Schema } from "effect";
 import {
   parseLeadingProfileAgentMention,
   prepareProfileAgentPrompt,
-  profileCliTarget,
   ProfileAgent,
-  resolveProfileTarget,
 } from "ziggy/domain/profile";
 import { ZiggyPaths } from "ziggy/platform/paths";
+import { profileCliTarget, resolveProfileTarget } from "ziggy/profile/index";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent);
 

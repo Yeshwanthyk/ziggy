@@ -14,9 +14,9 @@ import type {
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { SessionNotFound } from "ziggy/domain/session";
 import { UiEventFrame, UiResponseFrame } from "ziggy/domain/ui-gateway";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const alphaTarget = { path: "/private/alpha", name: "Alpha" } satisfies ProfileTarget;
 

@@ -10,7 +10,7 @@ import {
   listModelsReadOnly,
   makePiModels,
   type KnownModel,
-} from "ziggy/adapters/pi/models";
+} from "ziggy/profile/pi-models";
 
 const temporaryPaths: string[] = [];
 

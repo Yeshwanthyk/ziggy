@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { Effect, Exit } from "effect";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
-import type { ModelsApi } from "ziggy/application/models";
 import { makeProfileAgents } from "ziggy/application/profile-agents";
+import { type ModelsApi } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 
@@ -41,13 +41,6 @@ const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
 
 const models: ModelsApi = {
   status: () =>
-    Effect.succeed({
-      providerId: "openai",
-      modelId: "gpt-test",
-      thinking: "medium",
-      authConfigured: true,
-    }),
-  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "openai",
       modelId: "gpt-test",

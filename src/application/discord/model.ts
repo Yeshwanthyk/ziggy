@@ -14,9 +14,9 @@ import type {
   DiscordHealthProjectionError,
   DiscordHealthSnapshot,
 } from "../../domain/discord-health";
-import type { ProfileTarget } from "../../domain/profile";
 import type { ChatHandle } from "../agent";
 import type { ChatRegistryApi } from "../chat-registry";
+import { type ProfileTarget } from "../../profile";
 
 export type DiscordGatewayError = DiscordApiError | DiscordIngressDatabaseError;
 

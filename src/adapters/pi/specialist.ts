@@ -24,7 +24,6 @@ import { Value } from "typebox/value";
 import { type Static, Type } from "typebox";
 import {
   ProviderCallError,
-  ProviderConfigError,
   SpecialistAgentNotFound,
   SpecialistAuthUnavailable,
   SpecialistModelUnsupported,
@@ -43,6 +42,7 @@ import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-p
 import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";
 import { createZiggyHelpExtension } from "./ziggy-help";
+import { ProviderConfigError } from "../../profile";
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 

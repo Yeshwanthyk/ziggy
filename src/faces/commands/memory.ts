@@ -1,6 +1,5 @@
 import { Console, Effect, Match } from "effect";
 import { Memory } from "../../application/memory";
-import { resolveProfileTarget } from "../../domain/profile";
 import { ZiggyPaths } from "../../platform/paths";
 import { parseMemoryScopeReference } from "../../domain/memory";
 import type { CliCommand } from "../cli-command";
@@ -10,6 +9,7 @@ import {
   renderMemoryShow,
   renderMemoryShowJson,
 } from "../memory-cli";
+import { resolveProfileTarget } from "../../profile";
 
 export type MemoryCommand = Extract<CliCommand, { readonly _tag: "MemoryList" | "MemoryShow" }>;
 

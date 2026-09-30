@@ -14,11 +14,15 @@ import {
   ProfileAgentEditConflict,
   ProfileAgentInvalid,
   type ProfileAgent,
-  type ProfileFileSystemError,
-  type ProfileTarget,
 } from "../domain/profile";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
-import { Models, type ModelsError, type ModelsApi } from "./models";
+import {
+  type ProfileFileSystemError,
+  type ProfileTarget,
+  Models,
+  type ModelsError,
+  type ModelsApi,
+} from "../profile";
 
 const decodeAgentId = Schema.decodeUnknownEffect(ProfileAgentId);
 
@@ -224,8 +228,7 @@ export const makeProfileAgents = (
           observation.agent !== undefined,
       );
 
-      const defaults =
-        parsed.length === 0 ? undefined : yield* modelsRuntime.readOnlyStatus(target);
+      const defaults = parsed.length === 0 ? undefined : yield* modelsRuntime.status(target);
 
       const models = parsed.length === 0 ? [] : yield* modelsRuntime.list(target);
 

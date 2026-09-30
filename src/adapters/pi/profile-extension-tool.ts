@@ -10,9 +10,9 @@ import type {
   ProfileExtensionValidation,
   ProfileExtensionsApi,
 } from "../../domain/profile-extension";
-import type { ProfileTarget } from "../../domain/profile";
 import { inspectPiPackageHealth } from "./profile-extension-preflight";
 import type { SkippedPiPackage } from "./profile-extension-diagnostics";
+import { type ProfileTarget } from "../../profile";
 
 export const PROFILE_EXTENSIONS_MAX_ID_CODE_POINTS = 96;
 

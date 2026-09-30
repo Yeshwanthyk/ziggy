@@ -7,7 +7,7 @@ import {
   BUILTIN_PACKAGE_METADATA,
   REQUIRED_BUNDLED_EXTENSION_IDS,
 } from "../../catalog";
-import { ProfileExtensionInvalid, ProfileFileSystemError } from "../../domain/profile";
+import { ProfileExtensionInvalid } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   bundledExtensionPackage,
@@ -15,6 +15,7 @@ import {
   readExtensionSelection,
 } from "../fs/profile-extensions";
 import { bundledFilePath } from "../../generated/builtin-files";
+import { ProfileFileSystemError } from "../../profile";
 
 export interface BundledExtensionFactory {
   readonly name: string;

@@ -12,7 +12,7 @@ import { isProfileId } from "../../packages/ui-sdk/src/protocol/common";
 import type { UiServerProjection } from "../adapters/bun/ui-server";
 import { UiGatewayError } from "../domain/ui-gateway";
 import { stableProfileId } from "../application/profile-directory";
-import type { ProfileTarget } from "../domain/profile";
+import { type ProfileTarget } from "../profile";
 
 // Automation sessions and specialist tasks have no overall run deadline. This generous
 // response wait is not a run limit; after a sent request times out, its result is unknown.

@@ -9,17 +9,14 @@ import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalExtensionManagerInteraction } from "./adapters/terminal/extension-manager-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
 import { ZiggyAgent } from "./application/agent";
-import { Auth } from "./application/auth";
 import { AutomationDefinitions } from "./application/automation-definitions";
 import { AutomationScheduler } from "./application/automation-scheduler";
 import { Automations } from "./application/automations";
 import { ProfileExtensions } from "./application/profile-extensions";
 import { manageExtensions } from "./application/extension-manager";
 import { Doctor } from "./application/doctor";
-import { Models } from "./application/models";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents } from "./application/profile-agents";
-import { Profiles } from "./application/profiles";
 import { ResidentGateway } from "./application/resident-gateway";
 import { ResidentService } from "./application/resident-service";
 import { Sessions } from "./application/sessions";
@@ -34,7 +31,6 @@ import {
 } from "./composition";
 import { CliCommandFailed, exitWith } from "./faces/cli-exit";
 import { TerminalStyle } from "./faces/terminal-ui";
-import { resolveProfileTarget } from "./domain/profile";
 import { ZiggyPaths } from "./platform/paths";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
@@ -78,6 +74,7 @@ import { renderProfiles, renderProfilesJson } from "./faces/profiles-cli";
 import { runAcp } from "./faces/acp";
 import { wakeInResident } from "./faces/wake-resident";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
+import { Auth, Models, Profiles, resolveProfileTarget } from "./profile";
 
 type LegacyCommand = Exclude<
   CliCommand,
@@ -130,7 +127,6 @@ const runCommand = (command: LegacyCommand) =>
 
         const result = yield* setup.initialize(
           target,
-          paths.profilesRegistry,
           initOptions,
           terminalSetupInteraction(target.path),
         );
@@ -181,10 +177,7 @@ const runCommand = (command: LegacyCommand) =>
       }
 
       case "Profiles": {
-        const listings = yield* profiles.listProfiles(
-          paths.profilesDirectory,
-          paths.profilesRegistry,
-        );
+        const listings = yield* profiles.list();
 
         if (command.json) {
           console.log(renderProfilesJson(listings));
@@ -210,21 +203,13 @@ const runCommand = (command: LegacyCommand) =>
           });
         }
 
-        const managerOptions = {
-          profilesDirectory: paths.profilesDirectory,
-          registryPath: paths.profilesRegistry,
-        };
-
         const result = yield* manageExtensions(
           profiles,
           profileExtensions,
           terminalExtensionManagerInteraction,
           command.target === undefined
-            ? managerOptions
-            : {
-                ...managerOptions,
-                target: resolveProfileTarget(command.target, paths),
-              },
+            ? {}
+            : { target: resolveProfileTarget(command.target, paths) },
         );
 
         console.log(renderExtensionManagerResult(result, style));

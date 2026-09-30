@@ -1,14 +1,11 @@
 import { Context, Effect, Layer } from "effect";
-import type { AuthApi } from "./auth";
-import { Auth } from "./auth";
-import type { ModelsApi } from "./models";
-import { Models } from "./models";
 import { ProfileExtensions } from "./profile-extensions";
 import type { BundledCopyState, DoctorCheck, DoctorReport } from "../domain/doctor";
 import type { SlackHealthProjection } from "../domain/slack-health";
 import type { DiscordHealthProjection } from "../domain/discord-health";
-import type { ProfileAgent, ProfileTarget } from "../domain/profile";
+import type { ProfileAgent } from "../domain/profile";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
+import { type AuthApi, Auth, type ModelsApi, Models, type ProfileTarget } from "../profile";
 
 export interface DoctorApi {
   readonly check: (target: ProfileTarget) => Effect.Effect<DoctorReport>;
@@ -147,7 +144,7 @@ export const bundledCopyCheck = (
 };
 
 export const modelDoctorCheck = (
-  status: Effect.Success<ReturnType<ModelsApi["readOnlyStatus"]>>,
+  status: Effect.Success<ReturnType<ModelsApi["status"]>>,
 ): DoctorCheck =>
   status.providerId === undefined || status.modelId === undefined
     ? error("model", "No effective Pi model is selected")
@@ -158,7 +155,7 @@ export const modelDoctorCheck = (
 
 export const authDoctorCheck = (
   providerId: string | undefined,
-  providers: Effect.Success<ReturnType<AuthApi["readOnlyStatus"]>>,
+  providers: Effect.Success<ReturnType<AuthApi["status"]>>,
 ): DoctorCheck => {
   if (providerId === undefined)
     return warn("auth", "Provider auth cannot be checked until a model is selected");

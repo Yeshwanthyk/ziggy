@@ -13,7 +13,6 @@ import {
   type UiRequestEnvelope,
 } from "../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
-import { profileCliTarget } from "../domain/profile";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
 import { makeCommandCache, safeFingerprint } from "./ui-gateway/command-cache";
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
@@ -31,6 +30,7 @@ export type { UiGatewayDependencies } from "./ui-gateway/types";
 
 import { badParams, boundedText, protocolFailure, toGatewayError } from "./ui-gateway/errors";
 import { resultFrame, failureFrame, sendResponse } from "./ui-gateway/transport";
+import { profileCliTarget } from "../profile";
 
 const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty: "error" });
 

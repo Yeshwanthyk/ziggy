@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { ProfileTarget } from "./profile";
+import { type ProfileTarget } from "../profile";
 
 /** Opaque, stable identity for a Profile.  Paths never cross the UI protocol boundary. */
 export const ProfileId = Schema.String.check(

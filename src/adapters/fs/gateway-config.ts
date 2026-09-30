@@ -1,13 +1,12 @@
 import { lstat, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { ProfileNotInitialized } from "../../domain/agent";
 import { decodeDiscordGatewayConfigJson, type DiscordGatewayConfig } from "../../domain/discord";
 import { GatewayConfigError } from "../../domain/gateway";
 import { decodeSlackGatewayConfigJson, type SlackGatewayConfig } from "../../domain/slack";
 import { decodeTelegramGatewayConfigJson, type TelegramGatewayConfig } from "../../domain/telegram";
-import type { ProfileTarget } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../../platform/cause";
+import { ProfileNotInitialized, type ProfileTarget } from "../../profile";
 
 export const validateGatewayProfile = (
   target: ProfileTarget,

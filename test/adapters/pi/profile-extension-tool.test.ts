@@ -15,12 +15,13 @@ import {
   type ProfileExtensionToolDetails,
   type ProfileExtensionsAction,
 } from "ziggy/adapters/pi/profile-extension-tool";
-import { ProfileExtensionInvalid, type ProfileTarget } from "ziggy/domain/profile";
+import { ProfileExtensionInvalid } from "ziggy/domain/profile";
 import {
   ProfileExtensionPreflightFailed,
   type ProfileExtensionListing,
   type ProfileExtensionsApi,
 } from "ziggy/domain/profile-extension";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const temporaryPaths: Array<string> = [];
 

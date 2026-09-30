@@ -25,11 +25,7 @@ import {
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { TelegramApiError } from "ziggy/adapters/telegram/api";
-import {
-  ProviderCallError,
-  ProviderConfigError,
-  SpecialistAgentNotFound,
-} from "ziggy/domain/agent";
+import { ProviderCallError, SpecialistAgentNotFound } from "ziggy/domain/agent";
 import {
   AutomationDatabaseError,
   automationScheduleFingerprint,
@@ -37,13 +33,13 @@ import {
   validateAutomationId,
   type AutomationTargetOutcome,
 } from "ziggy/domain/automation";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import { type ZiggyAgentApi } from "ziggy/application/agent";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
+import { ProviderConfigError, type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 

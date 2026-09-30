@@ -3,7 +3,6 @@ import { lstat, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect } from "effect";
 import { fileSystemCauseDetails } from "../platform/cause";
-import type { ProfileTarget } from "../domain/profile";
 import {
   DefaultProfileUnavailable,
   DefaultProfileUnknown,
@@ -15,6 +14,7 @@ import {
   type ProfileId,
   type ResolvedProfile,
 } from "../domain/profile-directory";
+import { type ProfileTarget } from "../profile";
 
 export interface ProfileDirectoryConfig {
   readonly registryPath: string;

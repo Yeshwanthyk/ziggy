@@ -12,7 +12,7 @@ import {
   type MemoryDocument,
   type MemoryScopeSelection,
 } from "../domain/memory";
-import type { ProfileTarget } from "../domain/profile";
+import { type ProfileTarget } from "../profile";
 
 export type MemoryDocumentState = "empty" | "present" | "missing";
 

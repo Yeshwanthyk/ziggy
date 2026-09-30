@@ -6,16 +6,16 @@ import {
   manageExtensions,
   type ExtensionManagerInteraction,
 } from "ziggy/application/extension-manager";
-import type { ProfilesApi } from "ziggy/application/profiles";
 import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import { type ProfilesApi } from "ziggy/profile/index";
 
 const unused = () => Effect.never;
 
 const profiles = (available: ReadonlyArray<{ readonly name: string; readonly path: string }>) =>
   ({
-    initProfile: unused,
-    registerProfile: unused,
-    listProfiles: () => Effect.succeed(available),
+    init: unused,
+    register: unused,
+    list: () => Effect.succeed(available),
   }) satisfies ProfilesApi;
 
 const extensionService = (selected: ReadonlyArray<string>, calls: Array<ReadonlyArray<string>>) =>
@@ -42,10 +42,7 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
     activateRuntime: unused,
   }) satisfies ProfileExtensionsApi;
 
-const options = {
-  profilesDirectory: "/profiles",
-  registryPath: "/profiles.txt",
-};
+const options = {};
 
 test("reviews one complete extension selection before one transactional mutation", async () => {
   const calls: Array<ReadonlyArray<string>> = [];

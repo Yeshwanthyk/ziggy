@@ -7,7 +7,6 @@ import type {
   DiscordIngressTerminalState,
 } from "../../domain/discord-ingress";
 import type { DiscordHealthEvent } from "../../domain/discord-health";
-import type { ProfileTarget } from "../../domain/profile";
 import { codePointLength } from "../../domain/memory";
 import { automationTargetFromString } from "../../domain/automation";
 import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
@@ -33,6 +32,7 @@ import type {
   DiscordIngressRuntime,
 } from "./model";
 import type { DiscordProgressUpdateState } from "./delivery";
+import { type ProfileTarget } from "../../profile";
 
 const TYPING_REFRESH_SECONDS = 8;
 

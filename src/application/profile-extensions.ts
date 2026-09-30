@@ -29,11 +29,7 @@ import {
   type ProfileExtensionsApi,
   type ProfileExtensionRuntimeError,
 } from "../domain/profile-extension";
-import {
-  ProfileExtensionInvalid,
-  ProfileFileSystemError,
-  type ProfileTarget,
-} from "../domain/profile";
+import { ProfileExtensionInvalid } from "../domain/profile";
 import { installBundledPackage } from "../adapters/fs/extension-installer";
 import {
   readExtensionPackage,
@@ -59,6 +55,7 @@ import {
 import { fileSystemCauseDetails } from "../platform/cause";
 import { makeExtensionUpdateStore } from "../adapters/fs/extension-update";
 import { parseAutomationFile, validateAutomationId } from "../domain/automation";
+import { ProfileFileSystemError, type ProfileTarget } from "../profile";
 
 /** File operations owned by Profile extension activation; injectable for rollback proofs. */
 export interface ProfileExtensionAutomationOperations {

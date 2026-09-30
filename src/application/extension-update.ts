@@ -21,12 +21,12 @@ import {
 import { ExtensionUpdateError, type ExtensionUpdateResult } from "../domain/extension-update";
 import type { ExtensionCatalog } from "../domain/extension-catalog";
 import type { BundledExtensionCatalogEntry } from "../domain/extension-catalog";
-import type { ProfileTarget } from "../domain/profile";
 import { ResidentService, type ResidentServiceApi } from "./resident-service";
 import type {
   ResidentServiceDefinitionState,
   ResidentServiceError,
 } from "../domain/resident-service";
+import { type ProfileTarget } from "../profile";
 
 const decodeId = Schema.decodeUnknownEffect(ProfileExtensionId);
 

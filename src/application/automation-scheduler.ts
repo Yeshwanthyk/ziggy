@@ -29,10 +29,10 @@ import {
   scheduledRunId,
   validateAutomationId,
 } from "../domain/automation";
-import type { ProfileTarget } from "../domain/profile";
 import type { GatewayOwnerHandle } from "../adapters/bun/gateway-owner";
 import { Automations, type AutomationsApi } from "./automations";
 import type { ChatRegistryApi } from "./chat-registry";
+import { type ProfileTarget } from "../profile";
 
 // oxfmt-ignore
 export interface AutomationSchedulerApi { readonly run: (target: ProfileTarget, owner: GatewayOwnerHandle, registry: ChatRegistryApi) => Effect.Effect<never, AutomationSchedulerError>; readonly status: (target: ProfileTarget) => Effect.Effect<AutomationStatusProjection, AutomationProjectionError>; readonly runs: (target: ProfileTarget, automationId?: AutomationId) => Effect.Effect<ReadonlyArray<AutomationRunProjection>, AutomationProjectionError> }

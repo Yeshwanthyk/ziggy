@@ -3,13 +3,9 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema, Semaphore } from "effect";
-import {
-  ProfileAgent,
-  ProfileAgentEditConflict,
-  ProfileAgentInvalid,
-  ProfileFileSystemError,
-} from "../../domain/profile";
+import { ProfileAgent, ProfileAgentEditConflict, ProfileAgentInvalid } from "../../domain/profile";
 import { fileSystemCauseDetails } from "../../platform/cause";
+import { ProfileFileSystemError } from "../../profile";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent, {
   onExcessProperty: "error",

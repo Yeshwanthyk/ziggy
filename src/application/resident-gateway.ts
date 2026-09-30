@@ -16,14 +16,12 @@ import { gatewayConfigPresent, validateGatewayProfile } from "../adapters/fs/gat
 import { readWebAccessConfig } from "../adapters/fs/web-access-config";
 import { type SlackApiError } from "../adapters/slack/api";
 import { type TelegramApiError } from "../adapters/telegram/api";
-import { ProfileNotInitialized } from "../domain/agent";
 import { type AutomationSchedulerError } from "../domain/automation";
 import {
   GatewayConfigError,
   type GatewayOwnerError,
   type GatewayOwnerStatus,
 } from "../domain/gateway";
-import type { ProfileTarget } from "../domain/profile";
 import { makeProfileDirectory, stableProfileId } from "./profile-directory";
 import type { DiscordGatewayConfig } from "../domain/discord";
 import type { DiscordIngressDatabaseError } from "../domain/discord-ingress";
@@ -33,10 +31,8 @@ import type { TelegramGatewayConfig } from "../domain/telegram";
 import { AutomationScheduler, type AutomationSchedulerApi } from "./automation-scheduler";
 import { AutomationDefinitions, type AutomationDefinitionsApi } from "./automation-definitions";
 import { Automations, type AutomationsApi } from "./automations";
-import { Auth, type AuthApi } from "./auth";
 import { Doctor, type DoctorApi } from "./doctor";
 import { Memory, type MemoryApi } from "./memory";
-import { Models, type ModelsApi } from "./models";
 import { ProfileAgents, type ProfileAgentsApi } from "./profile-agents";
 import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
 import { makeChatRegistry, type ChatRegistryApi } from "./chat-registry";
@@ -59,6 +55,14 @@ import {
   type UiGatewayConnection,
 } from "./ui-gateway";
 import type { ResidentProfileBranch } from "./profile-runtime-directory";
+import {
+  ProfileNotInitialized,
+  type ProfileTarget,
+  Auth,
+  type AuthApi,
+  Models,
+  type ModelsApi,
+} from "../profile";
 
 export interface ResidentGatewayConfig {
   readonly telegram: TelegramGatewayConfig | undefined;

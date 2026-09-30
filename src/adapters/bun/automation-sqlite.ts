@@ -21,9 +21,9 @@ import {
   type AutomationTargetOutcome,
   manualRunId,
 } from "../../domain/automation";
-import type { ProfileTarget } from "../../domain/profile";
 import { GatewayOwnerError } from "../../domain/gateway";
 import { isLocalProcessAlive } from "./process";
+import { type ProfileTarget } from "../../profile";
 
 const DATABASE_NAME = "automation-scheduler.sqlite";
 

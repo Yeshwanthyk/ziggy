@@ -1,23 +1,30 @@
 import { Context, Effect, Layer, Result } from "effect";
-import { ProviderConfigError } from "../domain/agent";
+import {
+  listAuthStatusReadOnly,
+  loginProvider,
+  type AuthInteraction,
+  type ProviderAuthStatus,
+  type ProviderAuthType,
+} from "./pi-auth";
 import {
   getModelStatusReadOnly,
-  type KnownModel,
   listAvailableModels,
   listModelsReadOnly,
-  type ModelSelection,
-  type ModelStatus,
   setModel,
-} from "../adapters/pi/models";
-import type {
-  ModelOperationFailed,
-  ModelProviderUnknown,
-  ModelSettingsWriteFailed,
-  ModelThinkingUnsupported,
-  ModelUnknown,
-  ProfileNotInitialized,
-} from "../domain/agent";
-import type { ProfileTarget } from "../domain/profile";
+} from "./pi-models";
+import {
+  AuthProviderUnknown,
+  ProviderConfigError,
+  type AuthFlowFailed,
+  type AuthTypeUnsupported,
+  type ModelOperationFailed,
+  type ModelProviderUnknown,
+  type ModelSettingsWriteFailed,
+  type ModelThinkingUnsupported,
+  type ModelUnknown,
+  type ProfileNotInitialized,
+  type ProfileTarget,
+} from "./types";
 
 export type ModelsError =
   | ProfileNotInitialized
@@ -27,34 +34,76 @@ export type ModelsError =
   | ModelThinkingUnsupported
   | ModelSettingsWriteFailed;
 
-export interface ModelsApi {
-  readonly status: (target: ProfileTarget) => Effect.Effect<ModelStatus, ModelsError>;
-  readonly readOnlyStatus: (target: ProfileTarget) => Effect.Effect<ModelStatus, ModelsError>;
-  readonly list: (
-    target: ProfileTarget,
-    providerId?: string,
-  ) => Effect.Effect<ReadonlyArray<KnownModel>, ModelsError>;
-  readonly available: (
-    target: ProfileTarget,
-  ) => Effect.Effect<ReadonlyArray<KnownModel>, ModelsError>;
-  readonly set: (
-    target: ProfileTarget,
-    providerId: string,
-    modelId: string,
-    thinking?: string,
-  ) => Effect.Effect<ModelSelection, ModelsError>;
+export type AuthError =
+  | ProfileNotInitialized
+  | ProviderConfigError
+  | AuthProviderUnknown
+  | AuthTypeUnsupported
+  | AuthFlowFailed;
+
+/** A Profile's model selection, read without writing Pi's settings or model cache. */
+export class Models extends Context.Service<Models>()("ziggy/Models", {
+  make: Effect.succeed({
+    status: Effect.fn("Models.status")((target: ProfileTarget) =>
+      getModelStatusReadOnly(target.path),
+    ),
+    list: Effect.fn("Models.list")((target: ProfileTarget, providerId?: string) =>
+      listModelsReadOnly(target.path, providerId),
+    ),
+    available: Effect.fn("Models.available")((target: ProfileTarget) =>
+      listAvailableModels(target.path),
+    ),
+    set: Effect.fn("Models.set")(
+      (target: ProfileTarget, providerId: string, modelId: string, thinking?: string) =>
+        setModel(target.path, providerId, modelId, thinking),
+    ),
+  } as const),
+}) {
+  static readonly layer = Layer.effect(this, this.make);
 }
 
-export class Models extends Context.Service<Models, ModelsApi>()("ziggy/Models") {}
+export type ModelsApi = (typeof Models)["Service"];
 
-export const ModelsLive = Layer.succeed(Models, {
-  status: (target) => getModelStatusReadOnly(target.path),
-  readOnlyStatus: (target) => getModelStatusReadOnly(target.path),
-  list: (target, providerId) => listModelsReadOnly(target.path, providerId),
-  available: (target) => listAvailableModels(target.path),
-  set: (target, providerId, modelId, thinking) =>
-    setModel(target.path, providerId, modelId, thinking),
-});
+export const defaultAuthType = (provider: ProviderAuthStatus): ProviderAuthType =>
+  provider.supportsOauth && !provider.supportsApiKeyLogin ? "oauth" : "api_key";
+
+/** Provider credentials stored in a Profile. `status` never writes. */
+export class Auth extends Context.Service<Auth>()("ziggy/Auth", {
+  make: Effect.sync(() => {
+    const status = Effect.fn("Auth.status")((target: ProfileTarget) =>
+      listAuthStatusReadOnly(target.path),
+    );
+
+    /** Log in with `type`, or with the provider's default login type when it is omitted. */
+    const login = Effect.fn("Auth.login")(function* (
+      target: ProfileTarget,
+      providerId: string,
+      type: ProviderAuthType | undefined,
+      interaction: AuthInteraction,
+    ) {
+      if (type !== undefined)
+        return yield* loginProvider(target.path, providerId, type, interaction);
+
+      const provider = (yield* status(target)).find((candidate) => candidate.id === providerId);
+
+      if (provider === undefined) {
+        return yield* new AuthProviderUnknown({
+          profilePath: target.path,
+          providerId,
+          message: `unknown auth provider ${providerId}`,
+        });
+      }
+
+      return yield* loginProvider(target.path, providerId, defaultAuthType(provider), interaction);
+    });
+
+    return { status, login } as const;
+  }),
+}) {
+  static readonly layer = Layer.effect(this, this.make);
+}
+
+export type AuthApi = (typeof Auth)["Service"];
 
 const configuredSessionModelError = (profilePath: string, message: string) =>
   new ProviderConfigError({

@@ -134,7 +134,9 @@ src/
     index.ts
     types.ts              ProfileTarget, ProfileRef, errors   (split out of domain/profile.ts)
     profiles.ts           init, list (read-only), resolve, registry
-    models.ts             model selection + auth (today application/models, auth, adapters/pi/models, auth)
+    models.ts             Models and Auth services (today application/models, auth)
+    pi-models.ts          Pi's model registry and settings                                       [Pi]
+    pi-auth.ts            Pi's auth storage and login flows                                      [Pi]
 
   session/                open a Profile session, talk to it, read it back
     index.ts              ZiggyAgent, ChatHandle, OpenSession, ChatEvent, SessionTool, errors
@@ -180,7 +182,7 @@ src/
 
 | Rule | Today | Target |
 |---|---|---|
-| Where Pi may be imported | `adapters/pi/**` | files marked `[Pi]` above. Never `profile/`, `platform/`, `resident/` or `cli/`. |
+| Where Pi may be imported | `adapters/pi/**` | files marked `[Pi]` above. Never the rest of `profile/`, nor `platform/`, `resident/` or `cli/`. |
 | Cross-folder imports | anything imports anything | only `<folder>/index.ts`, enforced by an oxlint `no-restricted-imports` rule |
 | Direction | faces → application → domain (not held) | cli/resident → agents/memory → core → platform. Core never imports agents, memory or resident. |
 | Where Effects run | `main.ts`, plus 16 `Effect.runPromise` calls in `adapters/pi` | `main.ts`, plus **one** documented bridge for Pi tool callbacks (§5) |

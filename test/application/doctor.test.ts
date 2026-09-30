@@ -7,17 +7,16 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect } from "effect";
 import { expect, test } from "bun:test";
-import type { AuthApi } from "ziggy/application/auth";
 import { makeProfileExtensionPreflight } from "ziggy/adapters/pi/profile-extension-preflight";
 import { makeProfileExtensions } from "ziggy/application/profile-extensions";
 import { makeDoctor } from "ziggy/application/doctor";
 import { makeDoctorChecks } from "ziggy/adapters/pi/doctor-checks";
-import type { ModelsApi } from "ziggy/application/models";
 import { renderDoctor } from "ziggy/faces/doctor-cli";
 import type {
   ProfileExtensionMutationLockApi,
   ProfileExtensionsApi,
 } from "ziggy/domain/profile-extension";
+import { type AuthApi, type ModelsApi } from "ziggy/profile/index";
 
 const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   const output: string[] = [];
@@ -55,29 +54,11 @@ const auth: AuthApi = {
         configured: { type: "oauth" },
       },
     ]),
-  readOnlyStatus: () =>
-    Effect.succeed([
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        supportsApiKeyLogin: true,
-        ambientOnly: false,
-        supportsOauth: true,
-        configured: { type: "oauth" },
-      },
-    ]),
   login: () => Effect.die("not used"),
 };
 
 const models: ModelsApi = {
   status: () =>
-    Effect.succeed({
-      providerId: "anthropic",
-      modelId: "claude",
-      thinking: "high",
-      authConfigured: true,
-    }),
-  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "anthropic",
       modelId: "claude",
