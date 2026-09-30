@@ -6,7 +6,6 @@ An editor talks to the Profile over the Agent Client Protocol on stdio.
 
 - ACP-1: `initialize`, `session/new`, `session/prompt` returns `end_turn` with the Profile's model.
 - ACP-2: `session/set_model` to `harness/harness-other` changes the next request's model.
-  Today it stores an override nothing reads.
 
 ## Entry points
 
