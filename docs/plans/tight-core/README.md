@@ -555,7 +555,7 @@ read the artifact back first.
     - `runtime.ts`;
     - `ZiggyAgentLive`.
   - [x] Make the optional test-seam members required; move `makeChatHandle` to `test/harness/`.
-- [ ] **2. `platform/` and the rules.**
+- [x] **2. `platform/` and the rules.**
   - Add `paths.ts`, `file-lock.ts` and `atomic-write.ts`.
   - Adopt them in memory, gateway-owner and the extension lock.
   - Add the folder-import lint rule and the `[Pi]` import rule.
@@ -660,3 +660,7 @@ Add one dated line per session: what landed, which proofs went green, and what w
   - A verifier pass found no bugs; its follow-ups (ACP `set_model` busy error, weak assertions, wording) landed together.
   - E2E proofs get a 30 s default timeout; one cold-start timing flake is fixed, and two unreproduced flakes are recorded in LOG.md.
   - Starting step 2 on the picks in §9, since the go-ahead was to build this plan.
+- 2026-09-30: Step 2 landed.
+  - `src/platform/` holds `file-lock.ts`, `atomic-write.ts`, `paths.ts` and `cause.ts`; memory, the gateway owner and the extension lock use them.
+  - `ziggy/import-boundaries` enforces the `[Pi]` rule, a Ziggy-free `platform/` and folder-index imports.
+  - `AGENTS.md` and the Effect skills carry §4 and §5.
