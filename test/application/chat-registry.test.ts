@@ -80,7 +80,9 @@ test("fresh subscriptions bootstrap retained activity while resume cursors requi
         yield* registry.publish("local/main", { kind: "settled" });
         expect(received).toHaveLength(CHAT_REPLAY_LIMIT + 1);
         expect(resumed).toHaveLength(2);
-        expect(yield* Effect.result(registry.replay("local/main", 0))).toMatchObject({
+        expect(
+          yield* Effect.result(registry.subscribeSequenced("local/main", () => undefined, 0)),
+        ).toMatchObject({
           _tag: "Failure",
           failure: { code: "replay_gap" },
         });
@@ -157,18 +159,17 @@ test("UI capacity counts live sessions and openings", async () => {
   );
 });
 
-test("stale channel unregister cannot remove its replacement", async () => {
+test("closing a stale channel handle cannot remove the live one", async () => {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
-        const first = makeChatHandle({ prompt: () => Effect.succeed("first") });
-        const second = makeChatHandle({ prompt: () => Effect.succeed("second") });
-        yield* registry.registerAlias("discord/user-1", "discord", first);
-        yield* registry.registerAlias("discord/user-1", "discord", second);
-        yield* registry.unregisterAlias("discord/user-1", first);
-        expect((yield* registry.get("discord/user-1")).handle).toBe(second);
-        yield* registry.unregisterAlias("discord/user-1", second);
+        const stale = makeChatHandle({ prompt: () => Effect.succeed("stale") });
+        const live = makeChatHandle({ prompt: () => Effect.succeed("live") });
+        yield* registry.openAlias("discord/user-1", "discord", Effect.succeed(live));
+        yield* registry.closeAlias("discord/user-1", stale);
+        expect((yield* registry.get("discord/user-1")).handle).toBe(live);
+        yield* registry.closeAlias("discord/user-1", live);
         expect((yield* Effect.result(registry.get("discord/user-1")))._tag).toBe("Failure");
       }),
     ),
@@ -220,7 +221,11 @@ test("subscriber disconnect does not abort, interrupt, or dispose an admitted pr
 
         const registry = yield* makeChatRegistry();
         yield* registry.getOrOpenUi("ui/main", Effect.succeed(handle));
-        const disconnect = yield* registry.subscribe("ui/main", (event) => events.push(event));
+
+        const disconnect = yield* registry.subscribeSequenced("ui/main", ({ event }) =>
+          events.push(event),
+        );
+
         yield* registry.submit("ui/main", "hello");
         yield* Deferred.await(promptStarted);
         disconnect();
@@ -298,7 +303,7 @@ test("automation delivery refuses opening and closing owners and rejects cross-P
           dispose: Deferred.await(releaseDispose),
         });
 
-        yield* registry.registerAlias("slack/closing", "slack", closingHandle);
+        yield* registry.openAlias("slack/closing", "slack", Effect.succeed(closingHandle));
 
         const closing = yield* registry
           .closeAlias("slack/closing", closingHandle)

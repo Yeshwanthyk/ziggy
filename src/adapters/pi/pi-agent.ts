@@ -26,7 +26,7 @@ import {
   type CreateAgentSessionFromServicesOptions,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Context, Effect, Exit, Predicate, Result } from "effect";
+import { Effect, Exit, Predicate, Result } from "effect";
 import {
   ChatNotStreaming,
   ProfileNotInitialized,

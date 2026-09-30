@@ -14,6 +14,7 @@ import {
   CHAT_REPLAY_LIMIT,
   makeChatRegistry,
   type ChatRegistryApi,
+  type ChatRegistryEvent,
 } from "ziggy/application/chat-registry";
 import type { SessionsApi } from "ziggy/application/sessions";
 import type { ModelsApi } from "ziggy/application/models";
@@ -48,6 +49,16 @@ const decodeEventResult = Schema.decodeUnknownResult(Schema.fromJsonString(UiEve
 const decodeSummaryResult = Schema.decodeUnknownSync(UiSessionSummaryResult);
 
 const decodeEmptyGroupState = Schema.decodeUnknownSync(UiGroupState);
+
+/** The retained live events after `afterSeq`, read through a throwaway subscription. */
+const retainedEvents = (registry: ChatRegistryApi, key: string, afterSeq?: number) =>
+  Effect.gen(function* () {
+    const events: ChatRegistryEvent[] = [];
+    const stop = yield* registry.subscribeSequenced(key, (event) => events.push(event), afterSeq);
+    stop();
+
+    return events;
+  });
 
 const makeProfileExtensions = (
   overrides: Partial<ProfileExtensionsApi> = {},
@@ -1060,7 +1071,7 @@ test("specialist session.open uses local specialist Pi primitive, never a channe
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry();
-        yield* registry.registerAlias("slack/user-1", "slack", handle);
+        yield* registry.openAlias("slack/user-1", "slack", Effect.succeed(handle));
 
         const connection = (yield* makeUiGateway(makeConfig(registry, agent))).connect(
           () => undefined,
@@ -2019,7 +2030,7 @@ test("successful resume selects the resolved web transcript and resets live hist
           params: { ref, sessionId: "new" },
         });
         yield* connection.request({ id: "history", method: "session.history", params: { ref } });
-        const replay = yield* registry.replay("local/main", 0).pipe(Effect.result);
+        const replay = yield* retainedEvents(registry, "local/main", 0).pipe(Effect.result);
         expect(replay._tag).toBe("Failure");
       }),
     ),
@@ -2119,8 +2130,8 @@ test("concurrent resumes publish each reset before the next switch starts", asyn
         expect(
           events.filter((event) => event.event === "session-state").map((event) => event.seq),
         ).toEqual([2, 3]);
-        const replay = yield* registry.replay(ref.key, 2);
-        expect(replay.events.map((event) => event.event)).toEqual([
+        const replay = yield* retainedEvents(registry, ref.key, 2);
+        expect(replay.map((event) => event.event)).toEqual([
           { kind: "session-state", scope: "transcript" },
         ]);
       }),
@@ -2177,8 +2188,8 @@ test("interrupting a resume waits for Pi and publishes its reset before releasin
         yield* Effect.yieldNow;
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(interrupted);
-        const replay = yield* registry.replay(ref.key);
-        expect(replay.events.map((event) => event.event)).toEqual([
+        const replay = yield* retainedEvents(registry, ref.key);
+        expect(replay.map((event) => event.event)).toEqual([
           { kind: "session-state", scope: "transcript" },
         ]);
       }),
@@ -2256,8 +2267,8 @@ test("a prompt submitted during resume starts after the transcript reset", async
         yield* Fiber.join(resume);
         yield* Fiber.join(prompt);
         yield* Deferred.await(prompted);
-        const replay = yield* registry.replay(ref.key);
-        expect(replay.events.map((event) => event.event)).toContainEqual({
+        const replay = yield* retainedEvents(registry, ref.key);
+        expect(replay.map((event) => event.event)).toContainEqual({
           kind: "assistant-text",
           delta: "new",
           snapshot: "new",

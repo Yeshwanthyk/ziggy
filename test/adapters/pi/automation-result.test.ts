@@ -247,9 +247,9 @@ test("live idle delivery appends without prompting, publishes once, and busy del
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.registerAlias("discord/live", "discord", handle);
+        yield* registry.openAlias("discord/live", "discord", Effect.succeed(handle));
         const events: unknown[] = [];
-        yield* registry.subscribe("discord/live", (event) => events.push(event));
+        yield* registry.subscribeSequenced("discord/live", ({ event }) => events.push(event));
         yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
         yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
         expect(events).toHaveLength(1);
@@ -343,7 +343,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.registerAlias("ui/poison", "slack", failedHandle);
+        yield* registry.openAlias("ui/poison", "slack", Effect.succeed(failedHandle));
 
         for (let attempt = 0; attempt < 2; attempt += 1) {
           expect(
@@ -398,7 +398,7 @@ test("a live append rejection never dedupes from memory and a reopened owner can
           },
         );
 
-        yield* registry.registerAlias("ui/poison", "slack", reopened);
+        yield* registry.openAlias("ui/poison", "slack", Effect.succeed(reopened));
         yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
       }),
     ),
@@ -454,7 +454,7 @@ test("a live owner that switched away after the match falls back to the stored a
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* makeChatRegistry(profilePath);
-        yield* registry.registerAlias("ui/main", "slack", handle);
+        yield* registry.openAlias("ui/main", "slack", Effect.succeed(handle));
         yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
       }),
     ),

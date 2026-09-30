@@ -22,18 +22,10 @@ export const MAX_UI_SESSIONS = 32;
 
 export type ChatRegistryKind = "telegram" | "discord" | "slack" | "ui";
 
-export type ChatRegistryListener = (event: ChatEvent) => void;
-
 export interface ChatRegistryEvent {
   readonly seq: number;
   readonly eventId: string;
   readonly event: ChatEvent;
-}
-
-export interface ChatRegistryReplay {
-  readonly events: ReadonlyArray<ChatRegistryEvent>;
-  readonly oldestSeq: number;
-  readonly latestSeq: number;
 }
 
 export const CHAT_REPLAY_LIMIT = 256;
@@ -48,7 +40,6 @@ interface LiveEntry {
   readonly kind: ChatRegistryKind;
   readonly ownership: "channel" | "registry";
   readonly handle: ChatHandle;
-  readonly listeners: Set<ChatRegistryListener>;
   readonly unsubscribeHandle: () => void;
   readonly sequencedListeners: Set<(event: ChatRegistryEvent) => void>;
   readonly replay: Array<ChatRegistryEvent>;
@@ -113,17 +104,11 @@ export interface AutomationDestination {
 }
 
 export interface ChatRegistryApi {
-  readonly registerAlias: (
-    key: UiSessionKey,
-    kind: Exclude<ChatRegistryKind, "ui">,
-    handle: ChatHandle,
-  ) => Effect.Effect<void, UiGatewayError>;
   readonly openAlias: (
     key: UiSessionKey,
     kind: Exclude<ChatRegistryKind, "ui">,
     open: Effect.Effect<ChatHandle, unknown>,
   ) => Effect.Effect<ChatHandle, UiGatewayError>;
-  readonly unregisterAlias: (key: UiSessionKey, handle: ChatHandle) => Effect.Effect<void>;
   readonly closeAlias: (
     key: UiSessionKey,
     handle: ChatHandle,
@@ -137,19 +122,11 @@ export interface ChatRegistryApi {
     open: Effect.Effect<ChatHandle, unknown>,
     metadata?: { readonly context?: UiConversationContext; readonly agentId?: string },
   ) => Effect.Effect<ChatHandle, UiGatewayError>;
-  readonly subscribe: (
-    key: UiSessionKey,
-    listener: ChatRegistryListener,
-  ) => Effect.Effect<() => void, UiGatewayError>;
   readonly subscribeSequenced: (
     key: UiSessionKey,
     listener: (event: ChatRegistryEvent) => void,
     afterSeq?: number,
   ) => Effect.Effect<() => void, UiGatewayError>;
-  readonly replay: (
-    key: UiSessionKey,
-    afterSeq?: number,
-  ) => Effect.Effect<ChatRegistryReplay, UiGatewayError>;
   readonly publish: (key: UiSessionKey, event: ChatEvent) => Effect.Effect<void, UiGatewayError>;
   readonly resetTranscript: (key: UiSessionKey) => Effect.Effect<void, UiGatewayError>;
   readonly submit: (
@@ -197,8 +174,6 @@ const emit = (entry: LiveEntry, event: ChatEvent): void => {
 
   if (entry.replay.length > CHAT_REPLAY_LIMIT) entry.replay.shift();
 
-  for (const listener of Array.from(entry.listeners)) listener(event);
-
   for (const listener of Array.from(entry.sequencedListeners)) listener(sequenced);
 };
 
@@ -211,7 +186,6 @@ const makeLiveEntry = (
 ): Effect.Effect<LiveEntry, UiGatewayError> =>
   Effect.try({
     try: () => {
-      const listeners = new Set<ChatRegistryListener>();
       const sequencedListeners = new Set<(event: ChatRegistryEvent) => void>();
       let unsubscribe: () => void = () => undefined;
 
@@ -221,7 +195,6 @@ const makeLiveEntry = (
         kind,
         ownership,
         handle,
-        listeners,
         phase: { _tag: "Idle" as const },
         unsubscribeHandle: () => unsubscribe(),
         sequencedListeners,
@@ -339,32 +312,6 @@ export const makeChatRegistry = (
       );
 
     const api: ChatRegistryApi = {
-      registerAlias: (key, kind, handle) =>
-        Effect.gen(function* () {
-          const replacement = yield* makeLiveEntry(key, kind, "channel", handle);
-
-          const previous = yield* statePermit
-            .withPermit(
-              Effect.gen(function* () {
-                const current = entries.get(key);
-
-                if (
-                  current?._tag === "Opening" ||
-                  current?._tag === "Closing" ||
-                  (current?._tag === "Live" && current.kind === "ui")
-                ) {
-                  return yield* failure("internal", `cannot replace registry-owned session ${key}`);
-                }
-
-                entries.set(key, replacement);
-
-                return current;
-              }),
-            )
-            .pipe(Effect.tapError(() => Effect.sync(() => replacement.unsubscribeHandle())));
-
-          if (previous?._tag === "Live") previous.unsubscribeHandle();
-        }),
       openAlias: (key, kind, open) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -462,17 +409,6 @@ export const makeChatRegistry = (
             );
 
             return opened.success;
-          }),
-        ),
-      unregisterAlias: (key, handle) =>
-        statePermit.withPermit(
-          Effect.sync(() => {
-            const current = entries.get(key);
-
-            if (current?._tag === "Live" && current.handle === handle) {
-              entries.delete(key);
-              current.unsubscribeHandle();
-            }
           }),
         ),
       closeAlias: (key, handle) =>
@@ -632,14 +568,6 @@ export const makeChatRegistry = (
             return yield* restore(Deferred.await(opening.result));
           }),
         ),
-      subscribe: (key, listener) =>
-        requireLive(key).pipe(
-          Effect.map((entry) => {
-            entry.listeners.add(listener);
-
-            return () => entry.listeners.delete(listener);
-          }),
-        ),
       subscribeSequenced: (key, listener, afterSeq) =>
         statePermit.withPermit(
           Effect.gen(function* () {
@@ -668,28 +596,6 @@ export const makeChatRegistry = (
             entry.sequencedListeners.add(listener);
 
             return () => entry.sequencedListeners.delete(listener);
-          }),
-        ),
-      replay: (key, afterSeq = 0) =>
-        requireLive(key).pipe(
-          Effect.flatMap((entry) => {
-            const oldestSeq = entry.replay[0]?.seq ?? entry.nextSeq;
-            const latestSeq = entry.nextSeq - 1;
-
-            if (afterSeq > latestSeq || afterSeq < oldestSeq - 1) {
-              return Effect.fail(
-                failure(
-                  "replay_gap",
-                  `replay window for ${key} does not contain sequence ${afterSeq}`,
-                ),
-              );
-            }
-
-            return Effect.succeed({
-              events: entry.replay.filter((event) => event.seq > afterSeq),
-              oldestSeq,
-              latestSeq,
-            });
           }),
         ),
       publish: (key, event) =>
