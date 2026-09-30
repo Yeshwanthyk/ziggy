@@ -26,7 +26,6 @@ export interface UiGatewayDependencies {
   readonly defaultProfile: UiGatewayBranch;
   readonly profileDirectory?: import("../profile-directory").ProfileDirectoryApi;
   readonly runtimeDirectory?: import("../profile-runtime-directory").ProfileRuntimeDirectoryApi;
-  readonly repositoryRoot: string;
   /** Directory that bare Profile names resolve under; enables short CLI targets. */
   readonly profilesDirectory?: string | undefined;
   readonly sessions: SessionsApi;
@@ -34,7 +33,6 @@ export interface UiGatewayDependencies {
   readonly profileExtensions: ProfileExtensionsApi;
   readonly extensionHealth: (
     profilePath: string,
-    repositoryRoot: string,
     extensions: ProfileExtensionsApi,
   ) => Effect.Effect<ProfileExtensionHealthListing, ProfileExtensionError>;
   readonly profileAgents?: ProfileAgentsApi;

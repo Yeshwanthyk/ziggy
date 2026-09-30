@@ -11,7 +11,7 @@ import type { ProfileAgent, ProfileTarget } from "../domain/profile";
 import type { ProfileExtensionsApi } from "../domain/profile-extension";
 
 export interface DoctorApi {
-  readonly check: (target: ProfileTarget, repositoryRoot: string) => Effect.Effect<DoctorReport>;
+  readonly check: (target: ProfileTarget) => Effect.Effect<DoctorReport>;
 }
 
 export class Doctor extends Context.Service<Doctor, DoctorApi>()("ziggy/Doctor") {}
@@ -20,7 +20,6 @@ export class Doctor extends Context.Service<Doctor, DoctorApi>()("ziggy/Doctor")
 export interface DoctorChecksApi {
   readonly check: (
     target: ProfileTarget,
-    repositoryRoot: string,
     auth: AuthApi,
     models: ModelsApi,
     profileExtensions: ProfileExtensionsApi,
@@ -37,8 +36,7 @@ export const makeDoctor = (
   profileExtensions: ProfileExtensionsApi,
   checks: DoctorChecksApi,
 ): DoctorApi => ({
-  check: (target, repositoryRoot) =>
-    checks.check(target, repositoryRoot, auth, models, profileExtensions),
+  check: (target) => checks.check(target, auth, models, profileExtensions),
 });
 
 export const DoctorLive = Layer.effect(

@@ -172,7 +172,7 @@ const fixture = async (residentRunning = false, pendingJournal = false) => {
           }),
       }),
     preflight: {
-      preflight: (_path, _repositoryRoot, selected) =>
+      preflight: (_path, selected) =>
         Effect.sync(() => {
           expect(selected).toEqual(["weather"]);
           stagedChecks += 1;

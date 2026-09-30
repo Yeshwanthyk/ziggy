@@ -153,7 +153,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
         models,
         profileExtensions,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     const rendered = renderDoctor(report);
@@ -233,7 +233,7 @@ test("doctor uses the ProfileExtensions service without publishing or activating
         models,
         service,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "resources")).toEqual({
@@ -261,7 +261,7 @@ test("doctor excludes the format README from memory size checks", async () => {
         models,
         profileExtensions,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "memory")).toEqual({
@@ -299,7 +299,7 @@ test("doctor uses the session projection for broken parent links", async () => {
         models,
         profileExtensions,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "sessions")).toEqual({
@@ -330,7 +330,7 @@ test("doctor warns when configured Slack has no runtime observation", async () =
         models,
         profileExtensions,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "slack-runtime")).toEqual({
@@ -358,7 +358,7 @@ test("doctor continues independent checks after malformed session metadata", asy
         models,
         profileExtensions,
         makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     const rendered = renderDoctor(report);
@@ -388,7 +388,7 @@ test("doctor reports skipped broken packages as an error with the diagnostic", a
             { id: "broken", diagnostics: [{ source: "index.ts", message: "missing module" }] },
           ]),
         ),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "resources")).toMatchObject({

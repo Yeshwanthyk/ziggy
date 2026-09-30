@@ -167,7 +167,6 @@ test("existing guided setup resumes configured auth and model without resetting 
     setup.initialize(
       target,
       "/registry",
-      "/repository",
       { minimal: false, interactive: true },
       interaction(events),
     ),
@@ -204,7 +203,6 @@ test("explicit non-interactive setup selects through Models without prompting", 
     setup.initialize(
       target,
       "/registry",
-      "/repository",
       {
         minimal: false,
         interactive: false,
@@ -241,7 +239,6 @@ test("non-interactive setup fails rather than prompting and registry failures re
     missing.initialize(
       target,
       "/registry",
-      "/repository",
       { minimal: false, interactive: false },
       interaction(missingEvents),
     ),
@@ -263,7 +260,6 @@ test("non-interactive setup fails rather than prompting and registry failures re
     registry.initialize(
       target,
       "/registry",
-      "/repository",
       { minimal: true, interactive: false },
       interaction(registryEvents),
     ),

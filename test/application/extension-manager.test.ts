@@ -32,7 +32,7 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
       }),
     add: unused,
     remove: unused,
-    setSelected: (_target, _repositoryRoot, ids) => {
+    setSelected: (_target, ids) => {
       calls.push(ids);
 
       return Effect.succeed({ changed: true, selected: [...ids].sort() });
@@ -45,7 +45,6 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
 const options = {
   profilesDirectory: "/profiles",
   registryPath: "/profiles.txt",
-  repositoryRoot: "/repository",
 };
 
 test("reviews one complete extension selection before one transactional mutation", async () => {

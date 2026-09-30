@@ -250,7 +250,6 @@ export type ProfileExtensionTool = ToolDefinition<
 
 export interface ProfileExtensionToolOptions {
   readonly profilePath: string;
-  readonly repositoryRoot: string;
   readonly profileExtensions: ProfileExtensionsApi;
   readonly inspectPackages: typeof inspectPiPackageHealth;
 }
@@ -563,8 +562,8 @@ const actionEffect = (
   switch (params.action) {
     case "list":
       return Effect.all([
-        options.profileExtensions.listForProfile(options.profilePath, options.repositoryRoot),
-        options.inspectPackages(options.profilePath, options.repositoryRoot).pipe(
+        options.profileExtensions.listForProfile(options.profilePath),
+        options.inspectPackages(options.profilePath).pipe(
           Effect.map((broken) => ({ broken, healthWarning: false })),
           Effect.catch((failure) =>
             Effect.logWarning("Profile extension health inspection failed", { failure }).pipe(
@@ -583,13 +582,13 @@ const actionEffect = (
       );
     case "add":
       return options.profileExtensions
-        .add(target, options.repositoryRoot, params.id)
+        .add(target, params.id)
         .pipe(
           Effect.map((value) => ({ action: "add", value }) satisfies ProfileExtensionActionResult),
         );
     case "remove":
       return options.profileExtensions
-        .remove(target, options.repositoryRoot, params.id)
+        .remove(target, params.id)
         .pipe(
           Effect.map(
             (value) => ({ action: "remove", value }) satisfies ProfileExtensionActionResult,
@@ -597,7 +596,7 @@ const actionEffect = (
         );
     case "validate":
       return options.profileExtensions
-        .validate(target, options.repositoryRoot)
+        .validate(target)
         .pipe(
           Effect.map(
             (value) => ({ action: "validate", value }) satisfies ProfileExtensionActionResult,
@@ -732,13 +731,11 @@ const invalidInput = (): AgentToolResult<ProfileExtensionToolDetails> =>
 
 export const createProfileExtensionTool = (
   profilePath: string,
-  repositoryRoot: string,
   profileExtensions: ProfileExtensionsApi,
   inspectPackages: typeof inspectPiPackageHealth = inspectPiPackageHealth,
 ): ProfileExtensionTool => {
   const options: ProfileExtensionToolOptions = {
     profilePath,
-    repositoryRoot,
     profileExtensions,
     inspectPackages,
   };

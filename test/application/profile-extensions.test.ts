@@ -78,7 +78,6 @@ const makeProfile = async () => {
   return {
     root,
     profilePath,
-    repositoryRoot: join(root, "repository"),
     target: { path: profilePath, name: "Test" },
   };
 };
@@ -224,7 +223,7 @@ test("lists catalog metadata and Profile-owned shelf choices through one service
   const fixture = await makeProfile();
   const service = makeService();
 
-  const listed = await Effect.runPromise(service.list(fixture.repositoryRoot));
+  const listed = await Effect.runPromise(service.list());
   expect(listed.find((entry) => entry.id === "weather")).toMatchObject({
     id: "weather",
     source: "bundled",
@@ -236,9 +235,7 @@ test("lists catalog metadata and Profile-owned shelf choices through one service
   await writeShelfPackage(fixture.profilePath, "local");
   await writeSelection(fixture.profilePath, []);
 
-  const profileListing = await Effect.runPromise(
-    service.listForProfile(fixture.profilePath, fixture.repositoryRoot),
-  );
+  const profileListing = await Effect.runPromise(service.listForProfile(fixture.profilePath));
 
   expect(profileListing.available).toContainEqual({
     id: "local",
@@ -249,9 +246,7 @@ test("lists catalog metadata and Profile-owned shelf choices through one service
   expect(profileListing.selected).toEqual([]);
   await writeSelection(fixture.profilePath, ["lost"]);
 
-  const withMissing = await Effect.runPromise(
-    service.listForProfile(fixture.profilePath, fixture.repositoryRoot),
-  );
+  const withMissing = await Effect.runPromise(service.listForProfile(fixture.profilePath));
 
   expect(withMissing.selected).toContain("lost");
   expect(withMissing.available.some((item) => item.id === "lost")).toBeFalse();
@@ -264,31 +259,24 @@ test("Profile detail prefers a local package and rejects uninitialized targets",
   const packagePath = await writeShelfPackage(fixture.profilePath, "local");
   await writeShelfPackage(fixture.profilePath, "weather");
 
-  expect(
-    await Effect.runPromise(service.show(fixture.repositoryRoot, "local", fixture.profilePath)),
-  ).toMatchObject({
+  expect(await Effect.runPromise(service.show("local", fixture.profilePath))).toMatchObject({
     id: "local",
     source: "profile",
     version: "profile-local",
     packagePath,
     skills: [{ name: "local", description: "local test skill" }],
   });
-  expect(
-    await Effect.runPromise(service.show(fixture.repositoryRoot, "weather", fixture.profilePath)),
-  ).toMatchObject({ id: "weather", source: "profile" });
+  expect(await Effect.runPromise(service.show("weather", fixture.profilePath))).toMatchObject({
+    id: "weather",
+    source: "profile",
+  });
   expect(
     await Effect.runPromise(
-      service
-        .show(fixture.repositoryRoot, "weather", join(fixture.root, "typo"))
-        .pipe(Effect.result),
+      service.show("weather", join(fixture.root, "typo")).pipe(Effect.result),
     ),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "ProfileExtensionInvalid" } });
   expect(
-    await Effect.runPromise(
-      service
-        .listForProfile(join(fixture.root, "typo"), fixture.repositoryRoot)
-        .pipe(Effect.result),
-    ),
+    await Effect.runPromise(service.listForProfile(join(fixture.root, "typo")).pipe(Effect.result)),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "ProfileExtensionInvalid" } });
 });
 
@@ -301,7 +289,7 @@ test("invalid manifests preserve exact selection bytes and remain inactive", asy
   await writeFile(join(packagePath, "package.json"), "{\n");
 
   const result = await Effect.runPromise(
-    service.add(fixture.target, fixture.repositoryRoot, "broken-manifest").pipe(Effect.result),
+    service.add(fixture.target, "broken-manifest").pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -310,8 +298,7 @@ test("invalid manifests preserve exact selection bytes and remain inactive", asy
   });
   expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(bytes);
   expect(
-    (await Effect.runPromise(discoverPiResources(fixture.profilePath, fixture.repositoryRoot)))
-      .extensionPaths,
+    (await Effect.runPromise(discoverPiResources(fixture.profilePath))).extensionPaths,
   ).toEqual([]);
 });
 
@@ -331,7 +318,7 @@ test("automation conflicts preserve selection and human-owned bytes", async () =
   await writeFile(automationPath, humanBytes);
 
   const result = await Effect.runPromise(
-    service.add(fixture.target, fixture.repositoryRoot, "self-improvement").pipe(Effect.result),
+    service.add(fixture.target, "self-improvement").pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -345,8 +332,7 @@ test("automation conflicts preserve selection and human-owned bytes", async () =
     existsSync(join(fixture.profilePath, "automations", "self-improvement-curator.paused.md")),
   ).toBe(false);
   expect(
-    (await Effect.runPromise(discoverPiResources(fixture.profilePath, fixture.repositoryRoot)))
-      .extensionPaths,
+    (await Effect.runPromise(discoverPiResources(fixture.profilePath))).extensionPaths,
   ).toEqual([]);
 });
 
@@ -366,18 +352,20 @@ test("bundled and existing shelf adds select atomically; repeated add is a stric
   await writeShelfPackage(fixture.profilePath, "local");
   await writeSelection(fixture.profilePath, []);
 
-  expect(
-    await Effect.runPromise(service.add(fixture.target, fixture.repositoryRoot, "local")),
-  ).toMatchObject({ id: "local", changed: true, selected: true });
-  expect(
-    await Effect.runPromise(service.add(fixture.target, fixture.repositoryRoot, "weather")),
-  ).toMatchObject({ id: "weather", changed: true, selected: true });
+  expect(await Effect.runPromise(service.add(fixture.target, "local"))).toMatchObject({
+    id: "local",
+    changed: true,
+    selected: true,
+  });
+  expect(await Effect.runPromise(service.add(fixture.target, "weather"))).toMatchObject({
+    id: "weather",
+    changed: true,
+    selected: true,
+  });
   const selectionBytes = await readFile(join(fixture.profilePath, "extensions.json"), "utf8");
   expect(selectionBytes).toBe('{\n  "extensions": [\n    "local",\n    "weather"\n  ]\n}\n');
   const callsBeforeNoOp = preflightCalls;
-  expect(
-    await Effect.runPromise(service.add(fixture.target, fixture.repositoryRoot, "weather")),
-  ).toEqual({
+  expect(await Effect.runPromise(service.add(fixture.target, "weather"))).toEqual({
     id: "weather",
     profilePath: fixture.profilePath,
     changed: false,
@@ -405,25 +393,21 @@ test("owned automation is inactive during preflight, activates after selection, 
   const service = makeService(preflight);
   await writeSelection(fixture.profilePath, []);
 
-  await Effect.runPromise(service.add(fixture.target, fixture.repositoryRoot, "self-improvement"));
+  await Effect.runPromise(service.add(fixture.target, "self-improvement"));
   expect(activeDuringPreflight).toBe(false);
   const activePath = join(fixture.profilePath, "automations", "self-improvement-curator.md");
   const pausedPath = join(fixture.profilePath, "automations", "self-improvement-curator.paused.md");
   expect(existsSync(activePath)).toBe(true);
 
   const activeBytes = await readFile(activePath, "utf8");
-  await Effect.runPromise(
-    service.remove(fixture.target, fixture.repositoryRoot, "self-improvement"),
-  );
+  await Effect.runPromise(service.remove(fixture.target, "self-improvement"));
   expect(await readFile(pausedPath, "utf8")).toBe(activeBytes);
   expect(existsSync(activePath)).toBe(false);
   expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(
     '{\n  "extensions": []\n}\n',
   );
 
-  const noOp = await Effect.runPromise(
-    service.remove(fixture.target, fixture.repositoryRoot, "self-improvement"),
-  );
+  const noOp = await Effect.runPromise(service.remove(fixture.target, "self-improvement"));
 
   expect(noOp).toEqual({
     id: "self-improvement",
@@ -440,9 +424,7 @@ test("remove rejects a malformed absent ID before returning a no-op", async () =
   await writeFile(join(fixture.profilePath, "extensions.json"), bytes);
 
   const result = await Effect.runPromise(
-    makeService()
-      .remove(fixture.target, fixture.repositoryRoot, "not_an_extension")
-      .pipe(Effect.result),
+    makeService().remove(fixture.target, "not_an_extension").pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -468,9 +450,7 @@ test("remove valid unselected ID is a byte-preserving no-op", async () => {
   const source = automationSource("extension:unselected");
   await writeFile(activePath, source);
 
-  const result = await Effect.runPromise(
-    makeService().remove(fixture.target, fixture.repositoryRoot, "unselected"),
-  );
+  const result = await Effect.runPromise(makeService().remove(fixture.target, "unselected"));
 
   expect(result).toEqual({
     id: "unselected",
@@ -496,7 +476,7 @@ test("adding a broken Pi factory fails preflight without selecting it", async ()
   const service = makeService(makeProfileExtensionPreflight());
 
   const result = await Effect.runPromise(
-    service.add(fixture.target, fixture.repositoryRoot, "broken-import").pipe(Effect.result),
+    service.add(fixture.target, "broken-import").pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -506,8 +486,7 @@ test("adding a broken Pi factory fails preflight without selecting it", async ()
   expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(before);
   expect(existsSync(join(fixture.profilePath, "extensions", "broken-import"))).toBe(true);
   expect(
-    (await Effect.runPromise(discoverPiResources(fixture.profilePath, fixture.repositoryRoot)))
-      .extensionPaths,
+    (await Effect.runPromise(discoverPiResources(fixture.profilePath))).extensionPaths,
   ).toEqual([]);
 });
 
@@ -524,9 +503,7 @@ test("enabling a broken Pi package fails without changing selection", async () =
   const service = makeService(makeProfileExtensionPreflight());
 
   const result = await Effect.runPromise(
-    service
-      .setSelected(fixture.target, fixture.repositoryRoot, ["broken-enable"])
-      .pipe(Effect.result),
+    service.setSelected(fixture.target, ["broken-enable"]).pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -563,7 +540,6 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
       fixture.target,
       { kind: "local" },
       join(fixture.profilePath, "sessions"),
-      fixture.repositoryRoot,
       "fresh",
       undefined,
       service,
@@ -575,9 +551,7 @@ test("optional Pi diagnostics skip the package without blocking activation", asy
     failure: { _tag: "ProviderConfigError", operation: "select model" },
   });
   expect(
-    (
-      await Effect.runPromise(inspectPiPackageHealth(fixture.profilePath, fixture.repositoryRoot))
-    ).map((item) => item.id),
+    (await Effect.runPromise(inspectPiPackageHealth(fixture.profilePath))).map((item) => item.id),
   ).toEqual(["diagnostic-runtime"]);
   expect(existsSync(join(fixture.profilePath, "automations"))).toBe(false);
 });
@@ -592,13 +566,9 @@ test("runtime quarantine pauses existing package automations without deleting th
 
   const service = makeService(noPreflight, noLock);
 
-  const first = await Effect.runPromise(
-    service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
-  );
+  const first = await Effect.runPromise(service.prepareRuntime(fixture.profilePath));
 
-  await Effect.runPromise(
-    service.activateRuntime(fixture.profilePath, fixture.repositoryRoot, first, ["quarantined"]),
-  );
+  await Effect.runPromise(service.activateRuntime(fixture.profilePath, first, ["quarantined"]));
 
   const active = join(fixture.profilePath, "automations", `${id}.md`);
 
@@ -609,13 +579,9 @@ test("runtime quarantine pauses existing package automations without deleting th
   // A package may stop declaring an already installed owner-tagged automation.
   await writeShelfPackage(fixture.profilePath, "quarantined", { skill: true });
 
-  const second = await Effect.runPromise(
-    service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
-  );
+  const second = await Effect.runPromise(service.prepareRuntime(fixture.profilePath));
 
-  await Effect.runPromise(
-    service.activateRuntime(fixture.profilePath, fixture.repositoryRoot, second, []),
-  );
+  await Effect.runPromise(service.activateRuntime(fixture.profilePath, second, []));
 
   expect(existsSync(active)).toBe(false);
   expect(existsSync(paused)).toBe(true);
@@ -651,9 +617,7 @@ test("runtime activation rejects exact selection-byte drift before activating ow
 
   const service = makeService(noPreflight, noLock, automation);
 
-  const preparation = await Effect.runPromise(
-    service.prepareRuntime(fixture.profilePath, fixture.repositoryRoot),
-  );
+  const preparation = await Effect.runPromise(service.prepareRuntime(fixture.profilePath));
 
   expect(preparation).toEqual({
     selected: ["runtime-owned"],
@@ -668,9 +632,7 @@ test("runtime activation rejects exact selection-byte drift before activating ow
   expect(extensionSelectionGeneration(changedSnapshot)).not.toBe(preparation.generation);
 
   const result = await Effect.runPromise(
-    service
-      .activateRuntime(fixture.profilePath, fixture.repositoryRoot, preparation)
-      .pipe(Effect.result),
+    service.activateRuntime(fixture.profilePath, preparation).pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -720,7 +682,7 @@ test("post-selection automation provisioning rolls selection back", async () => 
   const service = makeService(preflight);
 
   const result = await Effect.runPromise(
-    service.add(fixture.target, fixture.repositoryRoot, "post-selection").pipe(Effect.result),
+    service.add(fixture.target, "post-selection").pipe(Effect.result),
   );
 
   expect(result).toMatchObject({
@@ -739,7 +701,7 @@ test("multi-package activation failure cleans every earlier activation and resto
 
   const result = await Effect.runPromise(
     makeService(noPreflight, noLock, makeAutomationOperations(true, false))
-      .setSelected(fixture.target, fixture.repositoryRoot, ["alpha", "beta"])
+      .setSelected(fixture.target, ["alpha", "beta"])
       .pipe(Effect.result),
   );
 
@@ -768,7 +730,7 @@ test("multi-package activation rollback returns a pre-existing paused automation
 
   const result = await Effect.runPromise(
     makeService(noPreflight, noLock, makeAutomationOperations(true, false))
-      .setSelected(fixture.target, fixture.repositoryRoot, ["alpha", "beta"])
+      .setSelected(fixture.target, ["alpha", "beta"])
       .pipe(Effect.result),
   );
 
@@ -791,7 +753,7 @@ test("rollback failure is a bounded typed error that preserves the uncertain sta
 
   const result = await Effect.runPromise(
     makeService(noPreflight, noLock, makeAutomationOperations(true, true))
-      .setSelected(fixture.target, fixture.repositoryRoot, ["alpha", "beta"])
+      .setSelected(fixture.target, ["alpha", "beta"])
       .pipe(Effect.result),
   );
 
@@ -815,7 +777,7 @@ test("failed add restores an originally absent selection file", async () => {
 
   const result = await Effect.runPromise(
     makeService(noPreflight, noLock, makeAutomationOperations(true, false))
-      .add(fixture.target, fixture.repositoryRoot, "beta")
+      .add(fixture.target, "beta")
       .pipe(Effect.result),
   );
 
@@ -833,11 +795,7 @@ test("removing a stale unknown ID changes only the selection", async () => {
   await writeSelection(fixture.profilePath, ["retired-package"]);
 
   const result = await Effect.runPromise(
-    makeService(makeProfileExtensionPreflight(), noLock).remove(
-      fixture.target,
-      fixture.repositoryRoot,
-      "retired-package",
-    ),
+    makeService(makeProfileExtensionPreflight(), noLock).remove(fixture.target, "retired-package"),
   );
 
   expect(result).toEqual({
@@ -861,9 +819,7 @@ test("validate uses real services without creating runtime state or changing Pro
   expect(existsSync(join(fixture.profilePath, ".runtime"))).toBe(false);
   const service = makeService(makeProfileExtensionPreflight(), makeProfileExtensionMutationLock());
 
-  const validation = await Effect.runPromise(
-    service.validate(fixture.target, join(import.meta.dir, "../..")),
-  );
+  const validation = await Effect.runPromise(service.validate(fixture.target));
 
   expect(validation.selected).toEqual(["alpha"]);
   expect(validation.preflight.skillPathCount).toBeGreaterThan(0);
@@ -885,8 +841,8 @@ test("independent lock users serialize full read-validate-commit operations with
   const second = makeService(delayedPreflight, makeProfileExtensionMutationLock());
 
   await Promise.all([
-    Effect.runPromise(first.add(fixture.target, fixture.repositoryRoot, "alpha")),
-    Effect.runPromise(second.add(fixture.target, fixture.repositoryRoot, "beta")),
+    Effect.runPromise(first.add(fixture.target, "alpha")),
+    Effect.runPromise(second.add(fixture.target, "beta")),
   ]);
 
   expect(await readFile(join(fixture.profilePath, "extensions.json"), "utf8")).toBe(

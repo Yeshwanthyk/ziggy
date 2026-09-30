@@ -94,9 +94,9 @@ src/faces/commands/    one handler module per command area; handlers yield servi
    - Turn the Pi bootstrap into a layer.
    - Remove module-scope work from `main.ts`.
    - Covers review comments 2, 3 and 4.
-2. **Delete `repositoryRoot`.** Status: pending. Drop it from `PiAgent`, `ProfileExtensions`,
-   `Doctor`, `Setup`, the resident and the UI config. `extensions show` prints paths relative to
-   cwd.
+2. **Delete `repositoryRoot`.** Status: done. Dropped from `PiAgent`, `ProfileExtensions`,
+   `Doctor`, `Setup`, the resident and the UI config; every sink ignored it. `extensions show`
+   prints paths relative to cwd.
 3. **`ZiggyPaths` service.** Status: pending.
    - Read the paths from `Config` and cwd/home through `Effect.sync`.
    - `makeResidentGatewayLive(...)` becomes a plain `ResidentGatewayLive`.

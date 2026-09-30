@@ -629,7 +629,7 @@ export const makeProfileExtensions = (
   const installer = makeExtensionInstaller(archiveClient, extractor);
   const entryFor = (id: string) => catalog.extensions.find((entry) => entry.id === id);
 
-  const list = (_repositoryRoot: string) =>
+  const list = () =>
     Effect.forEach(catalog.extensions, (entry) =>
       entry.source === "bundled"
         ? bundledListing(entry.id, entry.version)
@@ -638,7 +638,7 @@ export const makeProfileExtensions = (
       Effect.map((items) => [...items].sort((left, right) => left.id.localeCompare(right.id))),
     );
 
-  const show = (repositoryRoot: string, id: string, profilePath?: string) =>
+  const show = (id: string, profilePath?: string) =>
     Effect.gen(function* () {
       if (profilePath !== undefined) {
         yield* verifyInitialized(profilePath);
@@ -661,7 +661,7 @@ export const makeProfileExtensions = (
         }
       }
 
-      const items = yield* list(repositoryRoot);
+      const items = yield* list();
       const found = items.find((item) => item.id === id);
 
       if (found === undefined) {
@@ -677,7 +677,6 @@ export const makeProfileExtensions = (
 
   const ensurePublished = (
     profilePath: string,
-    _repositoryRoot: string,
     id: string,
   ): Effect.Effect<ExtensionPackage, ProfileExtensionError> =>
     Effect.gen(function* () {
@@ -740,10 +739,9 @@ export const makeProfileExtensions = (
 
   const readSelectedPackage = (
     profilePath: string,
-    repositoryRoot: string,
     id: string,
   ): Effect.Effect<ExtensionPackage, ProfileExtensionError> =>
-    readSelectedExtensionPackage(profilePath, repositoryRoot, id);
+    readSelectedExtensionPackage(profilePath, id);
 
   const readPresentPackage = (
     profilePath: string,
@@ -764,24 +762,22 @@ export const makeProfileExtensions = (
 
   const readOptionalPresentPackage = (
     profilePath: string,
-    repositoryRoot: string,
     id: string,
   ): Effect.Effect<ExtensionPackage | undefined, ProfileExtensionError> =>
     packageExists(profilePath, id).pipe(
       Effect.flatMap((exists) =>
-        exists ? readSelectedPackage(profilePath, repositoryRoot, id) : Effect.succeed(undefined),
+        exists ? readSelectedPackage(profilePath, id) : Effect.succeed(undefined),
       ),
     );
 
   const validatePackages = (
     profilePath: string,
-    repositoryRoot: string,
     ids: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionError> =>
     Effect.forEach(
       ids,
       (id) =>
-        ensurePublished(profilePath, repositoryRoot, id).pipe(
+        ensurePublished(profilePath, id).pipe(
           Effect.tap((packageInfo) =>
             validatePackageAutomationDefinitions(automation, profilePath, packageInfo),
           ),
@@ -791,7 +787,6 @@ export const makeProfileExtensions = (
 
   const validateExistingPackages = (
     profilePath: string,
-    repositoryRoot: string,
     selected: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<ExtensionPackage>, ProfileExtensionError> => {
     const selectedSet = new Set(selected);
@@ -801,7 +796,7 @@ export const makeProfileExtensions = (
       (id) =>
         (selectedSet.has(id)
           ? readPresentPackage(profilePath, id)
-          : readSelectedPackage(profilePath, repositoryRoot, id)
+          : readSelectedPackage(profilePath, id)
         ).pipe(
           Effect.tap((packageInfo) =>
             validatePackageAutomationDefinitions(automation, profilePath, packageInfo),
@@ -875,14 +870,14 @@ export const makeProfileExtensions = (
       }
     });
 
-  const listForProfile = (profilePath: string, repositoryRoot: string) =>
+  const listForProfile = (profilePath: string) =>
     verifyInitialized(profilePath).pipe(
       Effect.andThen(
         lock
           .withLock(
             profilePath,
             Effect.all({
-              catalogue: list(repositoryRoot),
+              catalogue: list(),
               profileOwned: scanOptionalExtensionShelf(profilePath),
               selected: readExtensionSelection(profilePath),
             }),
@@ -932,7 +927,7 @@ export const makeProfileExtensions = (
       ),
     );
 
-  const add = (target: ProfileTarget, repositoryRoot: string, id: string) =>
+  const add = (target: ProfileTarget, id: string) =>
     verifyInitialized(target.path).pipe(
       Effect.andThen(
         lock.withLock(
@@ -952,13 +947,9 @@ export const makeProfileExtensions = (
             const snapshot = yield* snapshotExtensionSelection(target.path);
             const requested = yield* decodeRequestedSelection(target.path, [...current, id]);
 
-            const packages = yield* validatePackages(
-              target.path,
-              repositoryRoot,
-              materializationIds(requested),
-            );
+            const packages = yield* validatePackages(target.path, materializationIds(requested));
 
-            yield* preflight.preflight(target.path, repositoryRoot, requested, {
+            yield* preflight.preflight(target.path, requested, {
               rejectBrokenIds: [id],
             });
             const activated: Array<ActivatedAutomation> = [];
@@ -993,7 +984,7 @@ export const makeProfileExtensions = (
       ),
     );
 
-  const remove = (target: ProfileTarget, repositoryRoot: string, id: string) =>
+  const remove = (target: ProfileTarget, id: string) =>
     verifyInitialized(target.path).pipe(
       Effect.andThen(
         lock.withLock(
@@ -1019,11 +1010,7 @@ export const makeProfileExtensions = (
 
             const snapshot = yield* snapshotExtensionSelection(target.path);
 
-            const packageInfo = yield* readOptionalPresentPackage(
-              target.path,
-              repositoryRoot,
-              requestedId,
-            );
+            const packageInfo = yield* readOptionalPresentPackage(target.path, requestedId);
 
             if (packageInfo?.required === true) {
               return yield* selectionInvalid(
@@ -1037,8 +1024,8 @@ export const makeProfileExtensions = (
             }
 
             const next = current.filter((candidate) => candidate !== requestedId);
-            yield* validateExistingPackages(target.path, repositoryRoot, next);
-            yield* preflight.preflight(target.path, repositoryRoot, next);
+            yield* validateExistingPackages(target.path, next);
+            yield* preflight.preflight(target.path, next);
             const paused: Array<PausedAutomation> = [];
             yield* Effect.gen(function* () {
               if (packageInfo !== undefined) {
@@ -1068,7 +1055,7 @@ export const makeProfileExtensions = (
       ),
     );
 
-  const setSelected = (target: ProfileTarget, repositoryRoot: string, ids: ReadonlyArray<string>) =>
+  const setSelected = (target: ProfileTarget, ids: ReadonlyArray<string>) =>
     verifyInitialized(target.path).pipe(
       Effect.andThen(
         lock.withLock(
@@ -1089,7 +1076,7 @@ export const makeProfileExtensions = (
 
             const removedPackages = yield* Effect.forEach(
               removed,
-              (id) => readOptionalPresentPackage(target.path, repositoryRoot, id),
+              (id) => readOptionalPresentPackage(target.path, id),
               { concurrency: 1 },
             );
 
@@ -1103,10 +1090,10 @@ export const makeProfileExtensions = (
             );
 
             const nextPackages = yield* added.length > 0
-              ? validatePackages(target.path, repositoryRoot, materializationIds(next))
-              : validateExistingPackages(target.path, repositoryRoot, next);
+              ? validatePackages(target.path, materializationIds(next))
+              : validateExistingPackages(target.path, next);
 
-            yield* preflight.preflight(target.path, repositoryRoot, next, {
+            yield* preflight.preflight(target.path, next, {
               rejectBrokenIds: added,
             });
             const paused: Array<PausedAutomation> = [];
@@ -1143,16 +1130,16 @@ export const makeProfileExtensions = (
       ),
     );
 
-  const validate = (target: ProfileTarget, repositoryRoot: string) =>
+  const validate = (target: ProfileTarget) =>
     verifyInitialized(target.path).pipe(
       Effect.andThen(
         Effect.gen(function* () {
           const before = yield* snapshotExtensionSelection(target.path);
           const selected = before.selected;
-          yield* validateExistingPackages(target.path, repositoryRoot, selected);
+          yield* validateExistingPackages(target.path, selected);
 
           const preflightResult = yield* preflight
-            .preflight(target.path, repositoryRoot, selected)
+            .preflight(target.path, selected)
             .pipe(Effect.result);
 
           const after = yield* snapshotExtensionSelection(target.path);
@@ -1174,7 +1161,7 @@ export const makeProfileExtensions = (
       ),
     );
 
-  const prepareRuntime = (profilePath: string, repositoryRoot: string) =>
+  const prepareRuntime = (profilePath: string) =>
     verifyInitialized(profilePath)
       .pipe(
         Effect.andThen(
@@ -1183,8 +1170,8 @@ export const makeProfileExtensions = (
             Effect.gen(function* () {
               const snapshot = yield* snapshotExtensionSelection(profilePath);
               const selected = snapshot.selected;
-              yield* validatePackages(profilePath, repositoryRoot, materializationIds(selected));
-              yield* preflight.preflight(profilePath, repositoryRoot, selected);
+              yield* validatePackages(profilePath, materializationIds(selected));
+              yield* preflight.preflight(profilePath, selected);
 
               const preparation: ProfileExtensionRuntimePreparation = {
                 selected,
@@ -1200,7 +1187,6 @@ export const makeProfileExtensions = (
 
   const activateRuntime = (
     profilePath: string,
-    repositoryRoot: string,
     preparation: ProfileExtensionRuntimePreparation,
     acceptedOptionalIds: ReadonlyArray<string> = preparation.selected,
   ) =>
@@ -1223,11 +1209,7 @@ export const makeProfileExtensions = (
                 );
               }
 
-              const packages = yield* validateExistingPackages(
-                profilePath,
-                repositoryRoot,
-                preparation.selected,
-              );
+              const packages = yield* validateExistingPackages(profilePath, preparation.selected);
 
               const activated: Array<ActivatedAutomation> = [];
               const paused: Array<PausedAutomation> = [];

@@ -126,7 +126,6 @@ const disabledUiRuntime: ResidentUiRuntime = {
 };
 
 const makeLiveUiRuntime = (
-  repositoryRoot: string,
   capabilities: {
     readonly sessions: SessionsApi;
     readonly agent: ZiggyAgentApi;
@@ -168,7 +167,6 @@ const makeLiveUiRuntime = (
       if (profileRegistryPath === undefined) {
         openedGateway = yield* makeUiGateway({
           defaultProfile: defaultBranch,
-          repositoryRoot,
           profilesDirectory,
           ...capabilities,
         });
@@ -209,7 +207,6 @@ const makeLiveUiRuntime = (
           defaultProfile: defaultBranch,
           branches,
           profileDirectory,
-          repositoryRoot,
           profilesDirectory,
           ...capabilities,
         });
@@ -340,7 +337,6 @@ export const makeResidentGateway = (
 });
 
 export const makeResidentGatewayLive = (
-  repositoryRoot: string,
   profileRegistryPath: string | undefined,
   extensionHealth: UiGatewayDependencies["extensionHealth"],
   profilesDirectory?: string,
@@ -355,7 +351,6 @@ export const makeResidentGatewayLive = (
         yield* SlackGateway,
         liveRuntime,
         makeLiveUiRuntime(
-          repositoryRoot,
           {
             sessions: yield* Sessions,
             agent: yield* ZiggyAgent,

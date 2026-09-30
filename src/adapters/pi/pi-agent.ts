@@ -261,7 +261,6 @@ export const askOnce = (
   prompt: string,
   continueSession: boolean,
   context: ChatContext,
-  repositoryRoot: string,
   options?: RunOnceOptions,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<number, ZiggyAgentError> =>
@@ -309,7 +308,6 @@ export const askOnce = (
 
       const runtime = yield* createProfileRuntime(
         target.path,
-        repositoryRoot,
         soulPath,
         sessionManager,
         context,
@@ -416,7 +414,6 @@ interface ProfileRuntimeOptions {
 
 const createProfileRuntime = (
   profilePath: string,
-  repositoryRoot: string,
   soulPath: string,
   sessionManager: SessionManager,
   context: ChatContext,
@@ -436,11 +433,11 @@ const createProfileRuntime = (
       const preparation =
         runtimeOptions.profileExtensions === undefined
           ? undefined
-          : yield* runtimeOptions.profileExtensions.prepareRuntime(profilePath, repositoryRoot);
+          : yield* runtimeOptions.profileExtensions.prepareRuntime(profilePath);
 
       const resources =
         preparation === undefined
-          ? yield* discoverPiResources(profilePath, repositoryRoot)
+          ? yield* discoverPiResources(profilePath)
           : yield* composePiResources(profilePath, preparation.selected);
 
       const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
@@ -550,11 +547,7 @@ const createProfileRuntime = (
                   ? []
                   : [
                       defineTool(
-                        createProfileExtensionTool(
-                          profilePath,
-                          repositoryRoot,
-                          runtimeOptions.profileExtensions,
-                        ),
+                        createProfileExtensionTool(profilePath, runtimeOptions.profileExtensions),
                       ),
                     ]),
                 ...(specialistRunner === undefined
@@ -641,7 +634,6 @@ const createProfileRuntime = (
         yield* runtimeOptions.profileExtensions
           .activateRuntime(
             profilePath,
-            repositoryRoot,
             preparation,
             (acceptedResources.optionalPackages ?? []).map((item) => item.id),
           )
@@ -1154,7 +1146,6 @@ export const openChat = (
   target: ProfileTarget,
   context: ChatContext,
   sessionDirectory: string,
-  repositoryRoot: string,
   sessionMode: ChatSessionMode = "continue",
   modelOverride?: ChatModelOverride,
   profileExtensions?: ProfileExtensionsApi,
@@ -1196,14 +1187,7 @@ export const openChat = (
       };
 
       const runtime = yield* restore(
-        createProfileRuntime(
-          target.path,
-          repositoryRoot,
-          soulPath,
-          sessionManager,
-          context,
-          runtimeOptions,
-        ),
+        createProfileRuntime(target.path, soulPath, sessionManager, context, runtimeOptions),
       ).pipe(
         Effect.onExit((exit) =>
           Exit.isFailure(exit)
@@ -1330,7 +1314,6 @@ export const openChat = (
 export const openSpecialistChat = (
   target: ProfileTarget,
   agentId: string,
-  repositoryRoot: string,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError> =>
   withProfileRuntimeLock(
@@ -1356,7 +1339,6 @@ export const openSpecialistChat = (
           Effect.acquireUseRelease(
             createProfileRuntime(
               target.path,
-              repositoryRoot,
               soulPath,
               SessionManager.inMemory(target.path),
               { kind: "local" },
@@ -1493,7 +1475,6 @@ export const runSpecialist = (
   agentId: string,
   task: string,
   context: ProfileAgentRunContext,
-  repositoryRoot: string,
   profileExtensions?: ProfileExtensionsApi,
 ): Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError> =>
   withProfileRuntimeLock(
@@ -1535,7 +1516,6 @@ export const runSpecialist = (
         const selectedEnvironment = yield* Effect.acquireUseRelease(
           createProfileRuntime(
             target.path,
-            repositoryRoot,
             soulPath,
             rootManager,
             { kind: "local" },
@@ -1590,26 +1570,21 @@ export const runSpecialist = (
     ),
   );
 
-export const makePiAgent = (
-  repositoryRoot: string,
-  profileExtensions: ProfileExtensionsApi,
-): PiAgentApi => ({
+export const makePiAgent = (profileExtensions: ProfileExtensionsApi): PiAgentApi => ({
   runSpecialist: (target, agentId, task, context) =>
-    runSpecialist(target, agentId, task, context, repositoryRoot, profileExtensions),
+    runSpecialist(target, agentId, task, context, profileExtensions),
   askOnce: (target, prompt, continueSession, context, options) =>
-    askOnce(target, prompt, continueSession, context, repositoryRoot, options, profileExtensions),
+    askOnce(target, prompt, continueSession, context, options, profileExtensions),
   openChat: (target, context, sessionDirectory, sessionMode, modelOverride, sessionName) =>
     openChat(
       target,
       context,
       sessionDirectory,
-      repositoryRoot,
       sessionMode,
       modelOverride,
       profileExtensions,
       undefined,
       sessionName,
     ),
-  openSpecialistChat: (target, agentId) =>
-    openSpecialistChat(target, agentId, repositoryRoot, profileExtensions),
+  openSpecialistChat: (target, agentId) => openSpecialistChat(target, agentId, profileExtensions),
 });

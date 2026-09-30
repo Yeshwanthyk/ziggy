@@ -43,7 +43,6 @@ export interface ExtensionManagerOptions {
   readonly target?: ProfileTarget;
   readonly profilesDirectory: string;
   readonly registryPath: string;
-  readonly repositoryRoot: string;
 }
 
 const asTarget = (profile: ProfileListing): ProfileTarget => ({
@@ -86,7 +85,7 @@ export const manageExtensions = (
 
     if (profile === undefined) return { status: "cancelled" } as const;
 
-    const listing = yield* extensions.listForProfile(profile.path, options.repositoryRoot);
+    const listing = yield* extensions.listForProfile(profile.path);
     const requested = yield* interaction.selectExtensions(profile, listing);
 
     if (requested === undefined) return { status: "cancelled" } as const;
@@ -101,7 +100,7 @@ export const manageExtensions = (
 
     if (confirmed !== true) return { status: "cancelled" } as const;
 
-    const result = yield* extensions.setSelected(profile, options.repositoryRoot, requested);
+    const result = yield* extensions.setSelected(profile, requested);
 
     if (!result.changed) {
       return { status: "unchanged", profile, selected: result.selected } as const;

@@ -143,7 +143,6 @@ export const composePiResources = (
 
 export const discoverPiResources = (
   profilePath: string,
-  _repositoryRoot: string,
   approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
   readExtensionSelection(profilePath).pipe(

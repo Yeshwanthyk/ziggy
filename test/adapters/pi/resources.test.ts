@@ -106,11 +106,11 @@ const noLock: ProfileExtensionMutationLockApi = {
 
 const profileExtensions = makeProfileExtensions(noDownload, noPreflight, noLock);
 
-const resolveResources = (profilePath: string, repositoryRoot = profilePath) =>
-  Effect.runPromise(discoverPiResources(profilePath, repositoryRoot));
+const resolveResources = (profilePath: string) =>
+  Effect.runPromise(discoverPiResources(profilePath));
 
-const prepareRuntime = (profilePath: string, repositoryRoot: string) =>
-  Effect.runPromise(profileExtensions.prepareRuntime(profilePath, repositoryRoot));
+const prepareRuntime = (profilePath: string) =>
+  Effect.runPromise(profileExtensions.prepareRuntime(profilePath));
 
 const factoryNames = (factories: ReadonlyArray<{ readonly name: string }>) =>
   factories.map((factory) => factory.name);
@@ -148,9 +148,7 @@ test("a selected approved extension fails closed until it exists as a Profile fo
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["github"]}\n');
 
-  const result = await Effect.runPromise(
-    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-  );
+  const result = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
   expect(
     Result.match(result, {
@@ -186,9 +184,7 @@ test("runtime rejects an unapproved ID but accepts the same Profile-local ID", a
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["stray"]}\n');
 
-  const rejected = await Effect.runPromise(
-    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-  );
+  const rejected = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
   expect(
     Result.match(rejected, {
@@ -245,7 +241,7 @@ test("Pi loads a selected Profile-owned extension and ignores leftover Profile s
     skills: ["./skills"],
   });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
-  await prepareRuntime(profilePath, "/does-not-exist");
+  await prepareRuntime(profilePath);
 
   const resources = await resolveResources(profilePath);
 
@@ -317,10 +313,9 @@ test("loads an upstream package name independently from its computer-use shelf I
     "utf8",
   );
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["computer-use"]}\n');
-  const repositoryRoot = resolve(import.meta.dir, "../../..");
-  await prepareRuntime(profilePath, repositoryRoot);
+  await prepareRuntime(profilePath);
 
-  const resources = await resolveResources(profilePath, repositoryRoot);
+  const resources = await resolveResources(profilePath);
   expect(resources.extensionPaths).toEqual([extensionPackage]);
 
   const services = await createAgentSessionServices({
@@ -362,9 +357,7 @@ test("rejects a blank package name", async () => {
   await writeFile(join(extensionPackage, "index.ts"), "export default function () {}\n", "utf8");
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["blank-name"]}\n');
 
-  const result = await Effect.runPromise(
-    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-  );
+  const result = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
   expect(
     Result.match(result, {
@@ -394,9 +387,7 @@ test("selection decoding fails closed for malformed, duplicate, reserved, and un
   ]) {
     await writeFile(join(profilePath, "extensions.json"), content);
 
-    const result = await Effect.runPromise(
-      discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-    );
+    const result = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
     expect(
       Result.match(result, {
@@ -420,9 +411,7 @@ test("a selected Profile-owned package must be a physical shelf directory", asyn
   await symlink(externalPackage, join(profilePath, "extensions", "alpha"), "dir");
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
-  const result = await Effect.runPromise(
-    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-  );
+  const result = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
   expect(
     Result.match(result, {
@@ -447,9 +436,7 @@ test("manifest-declared symlinks cannot escape their Profile-owned package", asy
   await writePackage(alphaPackage, "alpha", { skills: ["./skills"] });
   await writeFile(join(profilePath, "extensions.json"), '{"extensions":["alpha"]}\n');
 
-  const result = await Effect.runPromise(
-    discoverPiResources(profilePath, profilePath).pipe(Effect.result),
-  );
+  const result = await Effect.runPromise(discoverPiResources(profilePath).pipe(Effect.result));
 
   expect(
     Result.match(result, {
@@ -491,7 +478,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     join(profilePath, "extensions.json"),
     `${JSON.stringify({ extensions: packageNames.filter((name) => !REQUIRED_BUNDLED_EXTENSION_IDS.has(name)) }, null, 2)}\n`,
   );
-  await prepareRuntime(profilePath, repositoryRoot);
+  await prepareRuntime(profilePath);
 
   const loadCatalog = (
     additionalExtensionPaths: string[],
@@ -534,7 +521,7 @@ test("the complete bundled catalog copies onto the Profile and loads from those 
     return toolNames;
   };
 
-  const productionResources = await resolveResources(profilePath, repositoryRoot);
+  const productionResources = await resolveResources(profilePath);
   expect(factoryNames(productionResources.extensionFactories)).toEqual([]);
   expect(productionResources.extensionPaths).toEqual(
     executablePackages.map((id) => join(profilePath, "extensions", id)),

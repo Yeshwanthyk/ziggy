@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { ProfileExtensionMutationLockLive } from "./adapters/bun/profile-extension-lock";
 import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-operations";
@@ -42,8 +41,6 @@ import {
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
 
-export const repositoryRoot = path.resolve(import.meta.dir, "..");
-
 const ProfileExtensionsLayer = ProfileExtensionsLive.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -57,9 +54,7 @@ const ProfileExtensionsLayer = ProfileExtensionsLive.pipe(
 /** The Pi SDK adapter: the only Pi importer, behind the client-neutral `ZiggyAgent`. */
 const PiAgentLayer = Layer.effect(
   PiAgent,
-  Effect.map(ProfileExtensions, (profileExtensions) =>
-    makePiAgent(repositoryRoot, profileExtensions),
-  ),
+  Effect.map(ProfileExtensions, (profileExtensions) => makePiAgent(profileExtensions)),
 ).pipe(Layer.provide(ProfileExtensionsLayer));
 
 /** The application agent every face and gateway talks to. */
@@ -89,7 +84,6 @@ const SelfUpdateLayer = SelfUpdateLive.pipe(Layer.provide(ZiggyReleaseClientLive
 
 const residentLayers = (options: ProfileResolutionOptions) => {
   const ResidentGatewayLayer = makeResidentGatewayLive(
-    repositoryRoot,
     resolveProfilesRegistry(options),
     listProfileExtensionsWithHealth,
     resolveProfilesDirectory(options),

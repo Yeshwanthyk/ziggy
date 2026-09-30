@@ -135,7 +135,6 @@ export type ProfileExtensionError =
 export interface ProfileExtensionPreflightApi {
   readonly preflight: (
     profilePath: string,
-    repositoryRoot: string,
     selected: ReadonlyArray<string>,
     options?: { readonly rejectBrokenIds: ReadonlyArray<string> },
   ) => Effect.Effect<ProfileExtensionPreflightResult, ProfileExtensionError>;
@@ -159,44 +158,37 @@ export class ProfileExtensionMutationLock extends Context.Service<
 >()("ziggy/ProfileExtensionMutationLock") {}
 
 export interface ProfileExtensionsApi {
-  readonly list: (
-    repositoryRoot: string,
-  ) => Effect.Effect<ReadonlyArray<ProfileExtensionCatalogListing>, ProfileExtensionError>;
+  readonly list: () => Effect.Effect<
+    ReadonlyArray<ProfileExtensionCatalogListing>,
+    ProfileExtensionError
+  >;
   readonly show: (
-    repositoryRoot: string,
     id: string,
     profilePath?: string,
   ) => Effect.Effect<ProfileExtensionCatalogListing, ProfileExtensionError>;
   readonly listForProfile: (
     profilePath: string,
-    repositoryRoot: string,
   ) => Effect.Effect<ProfileExtensionListing, ProfileExtensionError>;
   readonly add: (
     target: ProfileTarget,
-    repositoryRoot: string,
     id: string,
   ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
   readonly remove: (
     target: ProfileTarget,
-    repositoryRoot: string,
     id: string,
   ) => Effect.Effect<ProfileExtensionMutation, ProfileExtensionError>;
   readonly setSelected: (
     target: ProfileTarget,
-    repositoryRoot: string,
     ids: ReadonlyArray<string>,
   ) => Effect.Effect<ProfileExtensionSetResult, ProfileExtensionError>;
   readonly validate: (
     target: ProfileTarget,
-    repositoryRoot: string,
   ) => Effect.Effect<ProfileExtensionValidation, ProfileExtensionError>;
   readonly prepareRuntime: (
     profilePath: string,
-    repositoryRoot: string,
   ) => Effect.Effect<ProfileExtensionRuntimePreparation, ProfileExtensionRuntimeError>;
   readonly activateRuntime: (
     profilePath: string,
-    repositoryRoot: string,
     preparation: ProfileExtensionRuntimePreparation,
     acceptedOptionalIds?: ReadonlyArray<string>,
   ) => Effect.Effect<void, ProfileExtensionRuntimeError>;

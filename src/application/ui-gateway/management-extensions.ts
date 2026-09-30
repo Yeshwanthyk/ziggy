@@ -187,48 +187,41 @@ export const dispatchExtensions = (
         Effect.mapError((cause) => badParams(request.method, cause)),
         Effect.flatMap((params) => route(params.profileId)),
         Effect.flatMap((branch) =>
-          config
-            .extensionHealth(branch.target.path, config.repositoryRoot, config.profileExtensions)
-            .pipe(
-              Effect.catchTag("ProfileExtensionPreflightFailed", (cause) =>
-                config.profileExtensions
-                  .listForProfile(branch.target.path, config.repositoryRoot)
-                  .pipe(
-                    Effect.map((listing) => ({
-                      listing,
-                      skipped: [
+          config.extensionHealth(branch.target.path, config.profileExtensions).pipe(
+            Effect.catchTag("ProfileExtensionPreflightFailed", (cause) =>
+              config.profileExtensions.listForProfile(branch.target.path).pipe(
+                Effect.map((listing) => ({
+                  listing,
+                  skipped: [
+                    {
+                      id: "health-inspection",
+                      diagnostics: [
                         {
-                          id: "health-inspection",
-                          diagnostics: [
-                            {
-                              source: "Profile extensions",
-                              message: safeFailureMessage(
-                                cause,
-                                "Could not inspect extension health",
-                              ),
-                            },
-                          ],
+                          source: "Profile extensions",
+                          message: safeFailureMessage(cause, "Could not inspect extension health"),
                         },
                       ],
-                    })),
-                  ),
+                    },
+                  ],
+                })),
               ),
-              Effect.mapError((cause) =>
-                protocolFailure(
-                  "internal",
-                  `could not ${operation} Profile extensions`,
-                  cause,
-                  extensionFailure(operation, cause),
-                ),
+            ),
+            Effect.mapError((cause) =>
+              protocolFailure(
+                "internal",
+                `could not ${operation} Profile extensions`,
+                cause,
+                extensionFailure(operation, cause),
               ),
-              Effect.flatMap((result) =>
-                decodeExtensionListResult(projectExtensionList(branch.profileId, result)).pipe(
-                  Effect.mapError((cause) =>
-                    protocolFailure("internal", "invalid Profile extension response", cause),
-                  ),
+            ),
+            Effect.flatMap((result) =>
+              decodeExtensionListResult(projectExtensionList(branch.profileId, result)).pipe(
+                Effect.mapError((cause) =>
+                  protocolFailure("internal", "invalid Profile extension response", cause),
                 ),
               ),
             ),
+          ),
         ),
       );
     case "extension.add":
@@ -237,7 +230,7 @@ export const dispatchExtensions = (
         Effect.flatMap((params) =>
           route(params.profileId).pipe(
             Effect.flatMap((branch) =>
-              config.profileExtensions.add(branch.target, config.repositoryRoot, params.id).pipe(
+              config.profileExtensions.add(branch.target, params.id).pipe(
                 Effect.map((result) => ({
                   profileId: branch.profileId,
                   id: result.id,
@@ -264,7 +257,7 @@ export const dispatchExtensions = (
         Effect.flatMap((params) =>
           route(params.profileId).pipe(
             Effect.flatMap((branch) =>
-              config.profileExtensions.remove(branch.target, config.repositoryRoot, params.id).pipe(
+              config.profileExtensions.remove(branch.target, params.id).pipe(
                 Effect.map((result) => ({
                   profileId: branch.profileId,
                   id: result.id,
@@ -290,7 +283,7 @@ export const dispatchExtensions = (
         Effect.mapError((cause) => badParams(request.method, cause)),
         Effect.flatMap((params) => route(params.profileId)),
         Effect.flatMap((branch) =>
-          config.profileExtensions.validate(branch.target, config.repositoryRoot).pipe(
+          config.profileExtensions.validate(branch.target).pipe(
             Effect.mapError((cause) =>
               protocolFailure(
                 "internal",

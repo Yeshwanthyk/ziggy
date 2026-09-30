@@ -63,7 +63,7 @@ export const makeProfileExtensionPreflight = (
   createServices: typeof createAgentSessionServices = createAgentSessionServices,
   createCoreInlineExtensions: ProfileCoreInlineExtensionFactory = createProfileCoreInlineExtensions,
 ): ProfileExtensionPreflightApi => ({
-  preflight: (profilePath, _repositoryRoot, selected, options) =>
+  preflight: (profilePath, selected, options) =>
     Effect.gen(function* () {
       const resources = yield* composePiResources(profilePath, selected);
 
@@ -230,10 +230,9 @@ export {
 /** Read-only diagnostic projection for doctor, agent tools and the UI gateway. */
 export const inspectPiPackageHealth = (
   profilePath: string,
-  repositoryRoot: string,
 ): Effect.Effect<ReadonlyArray<SkippedPiPackage>, ProfileExtensionPreflightFailed> =>
   Effect.gen(function* () {
-    const resources = yield* discoverPiResources(profilePath, repositoryRoot);
+    const resources = yield* discoverPiResources(profilePath);
     const agents = yield* discoverProfileAgents(profilePath);
     const systemPrompt = yield* loadProfileSystemPrompt(profilePath, join(profilePath, "SOUL.md"));
 
@@ -304,13 +303,12 @@ export interface ProfileExtensionHealthListing {
 /** One typed UI projection: catalog selection alongside the runtime's skipped-package policy. */
 export const listProfileExtensionsWithHealth = (
   profilePath: string,
-  repositoryRoot: string,
   extensions: Pick<ProfileExtensionsApi, "listForProfile">,
 ): Effect.Effect<
   ProfileExtensionHealthListing,
   ProfileExtensionError | ProfileExtensionPreflightFailed
 > =>
   Effect.all({
-    listing: extensions.listForProfile(profilePath, repositoryRoot),
-    skipped: inspectPiPackageHealth(profilePath, repositoryRoot),
+    listing: extensions.listForProfile(profilePath),
+    skipped: inspectPiPackageHealth(profilePath),
   });

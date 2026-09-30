@@ -87,10 +87,8 @@ const makeExtensions = (): ProfileExtensionsApi => ({
   list: () => Effect.succeed([]),
   show: () => Effect.never,
   listForProfile: () => Effect.succeed({ available: [], selected: [] }),
-  add: (_target, _repositoryRoot, id) =>
-    Effect.succeed({ id, profilePath: "", changed: true, selected: true }),
-  remove: (_target, _repositoryRoot, id) =>
-    Effect.succeed({ id, profilePath: "", changed: true, selected: false }),
+  add: (_target, id) => Effect.succeed({ id, profilePath: "", changed: true, selected: true }),
+  remove: (_target, id) => Effect.succeed({ id, profilePath: "", changed: true, selected: false }),
   setSelected: () => Effect.never,
   validate: () =>
     Effect.succeed({
@@ -163,7 +161,6 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
             { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
             { profileId: betaId, target: betaTarget, registry: betaRegistry },
           ],
-          repositoryRoot: "/private/repository",
           extensionHealth: () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: makeSessions(),

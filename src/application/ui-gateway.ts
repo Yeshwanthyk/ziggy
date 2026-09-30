@@ -240,7 +240,7 @@ export const makeUiGateway = (
             }
 
             const report = yield* config.doctor
-              .check(branch.target, config.repositoryRoot)
+              .check(branch.target)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
             return {

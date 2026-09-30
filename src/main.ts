@@ -28,7 +28,7 @@ import { Sessions } from "./application/sessions";
 import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
-import { makeCliLayer, repositoryRoot } from "./composition";
+import { makeCliLayer } from "./composition";
 import { validateAutomationId, type AutomationRunOutcome } from "./domain/automation";
 import { type CliCommand, CliInputInvalid } from "./faces/cli-command";
 import { parseMemoryScopeReference } from "./domain/memory";
@@ -158,7 +158,6 @@ const runCommand = (command: ServiceCommand) =>
         const result = yield* setup.initialize(
           target,
           resolveProfilesRegistry(resolutionOptions),
-          repositoryRoot,
           initOptions,
           terminalSetupInteraction(target.path),
         );
@@ -242,7 +241,6 @@ const runCommand = (command: ServiceCommand) =>
         const managerOptions = {
           profilesDirectory: resolveProfilesDirectory(resolutionOptions),
           registryPath: resolveProfilesRegistry(resolutionOptions),
-          repositoryRoot,
         };
 
         const result = yield* manageExtensions(
@@ -265,13 +263,13 @@ const runCommand = (command: ServiceCommand) =>
       case "ExtensionsList": {
         if (command.target !== undefined) {
           const target = resolveProfileTarget(command.target, resolutionOptions);
-          const listing = yield* profileExtensions.listForProfile(target.path, repositoryRoot);
+          const listing = yield* profileExtensions.listForProfile(target.path);
           console.log(renderProfileExtensions(listing, target.path, command.json));
 
           return;
         }
 
-        const extensions = yield* profileExtensions.list(repositoryRoot);
+        const extensions = yield* profileExtensions.list();
 
         if (command.json) {
           console.log(renderExtensionsJson(extensions));
@@ -290,16 +288,13 @@ const runCommand = (command: ServiceCommand) =>
             ? undefined
             : resolveProfileTarget(command.target, resolutionOptions);
 
-        const extension = yield* profileExtensions.show(repositoryRoot, command.id, target?.path);
+        const extension = yield* profileExtensions.show(command.id, target?.path);
 
         const profile =
           target === undefined
             ? undefined
             : yield* Effect.gen(function* () {
-                const listing = yield* profileExtensions.listForProfile(
-                  target.path,
-                  repositoryRoot,
-                );
+                const listing = yield* profileExtensions.listForProfile(target.path);
 
                 return {
                   path: target.path,
@@ -327,11 +322,11 @@ const runCommand = (command: ServiceCommand) =>
                 extension.packagePath === undefined
                   ? undefined
                   : path.isAbsolute(extension.packagePath)
-                    ? path.relative(repositoryRoot, extension.packagePath)
+                    ? path.relative(process.cwd(), extension.packagePath)
                     : extension.packagePath,
               extensionPaths: extension.extensionPaths?.map((extensionPath) =>
                 path.isAbsolute(extensionPath)
-                  ? path.relative(repositoryRoot, extensionPath)
+                  ? path.relative(process.cwd(), extensionPath)
                   : extensionPath,
               ),
             },
@@ -348,17 +343,15 @@ const runCommand = (command: ServiceCommand) =>
         const target = resolveProfileTarget(command.target, resolutionOptions);
 
         const result = yield* command._tag === "ExtensionsAdd"
-          ? profileExtensions.add(target, repositoryRoot, command.id)
-          : profileExtensions.remove(target, repositoryRoot, command.id);
+          ? profileExtensions.add(target, command.id)
+          : profileExtensions.remove(target, command.id);
 
         console.log(renderExtensionMutation(result, terminalRenderOptions()));
 
         if (command._tag === "ExtensionsAdd" && result.selected && result.changed) {
-          const extension = yield* readSelectedExtensionPackage(
-            target.path,
-            repositoryRoot,
-            result.id,
-          ).pipe(Effect.result);
+          const extension = yield* readSelectedExtensionPackage(target.path, result.id).pipe(
+            Effect.result,
+          );
 
           if (Result.isFailure(extension)) {
             console.warn("extension added; could not inspect its schedules for a resident hint");
@@ -881,10 +874,7 @@ const runCommand = (command: ServiceCommand) =>
       }
 
       case "Doctor": {
-        const report = yield* doctor.check(
-          resolveProfileTarget(command.target, resolutionOptions),
-          repositoryRoot,
-        );
+        const report = yield* doctor.check(resolveProfileTarget(command.target, resolutionOptions));
 
         const rendered = renderDoctor(report);
         console.log(rendered.text);

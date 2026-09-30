@@ -41,8 +41,6 @@ const target = { path: "/profile", name: "Profile" } as const;
 
 const profileId = stableProfileId(target.path);
 
-const repositoryRoot = "/repository";
-
 const decodeResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponseFrame));
 
 const decodeEventResult = Schema.decodeUnknownResult(Schema.fromJsonString(UiEventFrame));
@@ -57,9 +55,9 @@ const makeProfileExtensions = (
   list: () => Effect.never,
   show: () => Effect.never,
   listForProfile: () => Effect.succeed({ available: [], selected: [] }),
-  add: (_target, _repositoryRoot, id) =>
+  add: (_target, id) =>
     Effect.succeed({ id, profilePath: "/profile", changed: true, selected: true }),
-  remove: (_target, _repositoryRoot, id) =>
+  remove: (_target, id) =>
     Effect.succeed({ id, profilePath: "/profile", changed: true, selected: false }),
   setSelected: () => Effect.never,
   validate: () =>
@@ -119,13 +117,12 @@ const makeConfig = (
   extra: TestConfigExtras = {},
 ) => ({
   defaultProfile: { profileId, target, registry },
-  repositoryRoot,
   sessions: makeSessions(),
   agent,
   profileExtensions,
-  extensionHealth: (_path: string, root: string, extensions: ProfileExtensionsApi) =>
+  extensionHealth: (_path: string, extensions: ProfileExtensionsApi) =>
     extensions
-      .listForProfile(target.path, root)
+      .listForProfile(target.path)
       .pipe(Effect.map((listing) => ({ listing, skipped: [] }))),
   ...extra,
 });
@@ -1337,26 +1334,26 @@ test("UI gateway routes all management operations through decoded explicit Profi
   const calls: string[] = [];
 
   const profileExtensions = makeProfileExtensions({
-    listForProfile: (profilePath, root) => {
-      calls.push(`list:${profilePath}:${root}`);
+    listForProfile: (profilePath) => {
+      calls.push(`list:${profilePath}`);
 
       return Effect.succeed({
         available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
         selected: ["weather"],
       });
     },
-    add: (profile, root, id) => {
-      calls.push(`add:${profile.path}:${root}:${id}`);
+    add: (profile, id) => {
+      calls.push(`add:${profile.path}:${id}`);
 
       return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: true });
     },
-    remove: (profile, root, id) => {
-      calls.push(`remove:${profile.path}:${root}:${id}`);
+    remove: (profile, id) => {
+      calls.push(`remove:${profile.path}:${id}`);
 
       return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: false });
     },
-    validate: (profile, root) => {
-      calls.push(`validate:${profile.path}:${root}`);
+    validate: (profile) => {
+      calls.push(`validate:${profile.path}`);
 
       return Effect.succeed({
         selected: ["weather"],
@@ -1398,10 +1395,10 @@ test("UI gateway routes all management operations through decoded explicit Profi
     ),
   );
   expect(calls).toEqual([
-    "list:/profile:/repository",
-    "add:/profile:/repository:weather",
-    "remove:/profile:/repository:weather",
-    "validate:/profile:/repository",
+    "list:/profile",
+    "add:/profile:weather",
+    "remove:/profile:weather",
+    "validate:/profile",
   ]);
   expect(responses.map((response) => response.ok)).toEqual([true, true, true, true]);
   expect(responses[0]).toMatchObject({ ok: true, result: { profileId } });

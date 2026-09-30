@@ -428,9 +428,9 @@ describe("resident gateway supervision", () => {
       add: () => Effect.never,
       remove: () => Effect.never,
       setSelected: () => Effect.never,
-      validate: (validatedTarget, repositoryRoot) =>
+      validate: (validatedTarget) =>
         Effect.sync(() => {
-          calls.push(`validate:${validatedTarget.path}:${repositoryRoot}`);
+          calls.push(`validate:${validatedTarget.path}`);
 
           return {
             selected: [],
@@ -509,14 +509,14 @@ describe("resident gateway supervision", () => {
         yield* Fiber.interrupt(fiber);
       }).pipe(
         Effect.provide(
-          makeResidentGatewayLive("/repository", undefined, () =>
+          makeResidentGatewayLive(undefined, () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           ).pipe(Layer.provide(dependencies)),
         ),
       ),
     );
 
-    expect(calls).toEqual([`validate:${target.path}:/repository`]);
+    expect(calls).toEqual([`validate:${target.path}`]);
   });
 
   test("scheduler failure interrupts channel siblings before owner release", async () => {

@@ -237,12 +237,11 @@ const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const resourcesCheck = (
   target: ProfileTarget,
-  repositoryRoot: string,
   profileExtensions: ProfileExtensionsApi,
   inspectPackages: typeof inspectPiPackageHealth,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const skipped = yield* inspectPackages(target.path, repositoryRoot);
+    const skipped = yield* inspectPackages(target.path);
 
     if (skipped.length > 0)
       return error(
@@ -250,7 +249,7 @@ const resourcesCheck = (
         `BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
       );
 
-    const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);
+    const { preflight } = yield* profileExtensions.validate(target);
 
     for (const entry of BUILTIN_EXTENSION_CATALOG.extensions) {
       if (!isRequiredBundledExtension(entry.id) || entry.source !== "bundled") continue;
@@ -377,7 +376,7 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 export const makeDoctorChecks = (
   inspectPackages: typeof inspectPiPackageHealth = inspectPiPackageHealth,
 ): DoctorChecksApi => ({
-  check: (target, repositoryRoot, auth, models, profileExtensions) =>
+  check: (target, auth, models, profileExtensions) =>
     Effect.gen(function* () {
       const checks = [
         ok("ziggy", `Ziggy ${packageJson.version}`),
@@ -387,7 +386,7 @@ export const makeDoctorChecks = (
         yield* agentsCheck(target, models),
         yield* automationsCheck(target),
         yield* memoryCheck(target),
-        yield* resourcesCheck(target, repositoryRoot, profileExtensions, inspectPackages),
+        yield* resourcesCheck(target, profileExtensions, inspectPackages),
         piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),

@@ -35,7 +35,6 @@ export interface SetupApi {
   readonly initialize: (
     target: ProfileTarget,
     registryPath: string,
-    repositoryRoot: string,
     options: SetupOptions,
     interaction: SetupInteraction,
   ) => Effect.Effect<SetupResult, SetupError>;
@@ -93,7 +92,7 @@ export const makeSetup = (
   models: ModelsApi,
   doctor: DoctorApi,
 ): SetupApi => ({
-  initialize: (target, registryPath, repositoryRoot, options, interaction) =>
+  initialize: (target, registryPath, options, interaction) =>
     Effect.gen(function* () {
       const initialized = yield* profiles.initProfile(target, {
         createStarterDirectories: !options.minimal,
@@ -212,7 +211,7 @@ export const makeSetup = (
       }
 
       const modelStatus = yield* models.status(target);
-      const report = yield* doctor.check(target, repositoryRoot);
+      const report = yield* doctor.check(target);
 
       return {
         profilePath: target.path,

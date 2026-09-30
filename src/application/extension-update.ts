@@ -166,7 +166,6 @@ export const makeExtensionUpdate = (
             yield* store.stageContext(prepared.stagingProfile);
             yield* preflight.preflight(
               prepared.stagingProfile,
-              prepared.stagingProfile,
               isRequiredBundledExtension(id) ? [] : [id],
             );
             const stagedPath = join(prepared.stagingProfile, "extensions", id);
@@ -213,7 +212,7 @@ export const makeExtensionUpdate = (
                 oldHash,
                 newHash: contentHash,
                 packageVersion: entry.version,
-                validate: profiles.validate(target, target.path),
+                validate: profiles.validate(target),
               });
 
               return {

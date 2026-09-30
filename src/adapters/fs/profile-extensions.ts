@@ -414,7 +414,6 @@ const extensionPackageExists = (shelfOwnerPath: string, id: string) => {
 /** Resolve a Profile selection without allowing the catalogue to shadow Profile-owned code. */
 export const readSelectedExtensionPackage = (
   profilePath: string,
-  _repositoryRoot: string,
   id: string,
   approvedRepositoryIds: ReadonlySet<string> = APPROVED_BUNDLED_EXTENSION_IDS,
 ): Effect.Effect<ExtensionPackage, ProfileExtensionInvalid | ProfileFileSystemError> =>

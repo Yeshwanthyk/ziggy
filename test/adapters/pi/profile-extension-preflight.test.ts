@@ -120,7 +120,7 @@ test("preflight uses the production resource-loader shape for arbitrary packages
   };
 
   const result = await Effect.runPromise(
-    makeProfileExtensionPreflight(createServices).preflight(profilePath, "/repository", ["alpha"]),
+    makeProfileExtensionPreflight(createServices).preflight(profilePath, ["alpha"]),
   );
 
   expect(result).toEqual({
@@ -178,10 +178,10 @@ test("skips broken imports and skills while reporting bounded package diagnostic
     JSON.stringify({ extensions: ["broken-import", "bad-skill", "healthy"] }),
   );
 
-  const broken = await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"));
+  const broken = await Effect.runPromise(inspectPiPackageHealth(profilePath));
 
   const health = await Effect.runPromise(
-    listProfileExtensionsWithHealth(profilePath, "/repository", {
+    listProfileExtensionsWithHealth(profilePath, {
       listForProfile: () =>
         Effect.succeed({ available: [], selected: ["broken-import", "bad-skill", "healthy"] }),
     }),
@@ -201,7 +201,7 @@ test("skips broken imports and skills while reporting bounded package diagnostic
   ).toBe(true);
 
   const result = await Effect.runPromise(
-    makeProfileExtensionPreflight().preflight(profilePath, "/repository", [
+    makeProfileExtensionPreflight().preflight(profilePath, [
       "broken-import",
       "bad-skill",
       "healthy",
@@ -261,7 +261,6 @@ test("runtime opens with healthy package while a broken package is reported", as
       { path: profilePath, name: "Profile" },
       { kind: "local" },
       join(profilePath, "sessions"),
-      "/repository",
       "fresh",
       undefined,
       undefined,
@@ -280,9 +279,7 @@ test("runtime opens with healthy package while a broken package is reported", as
     expect((await readFile(factoryLog, "utf8")).length - before).toBe(1);
     expect(before).toBeGreaterThan(0);
     expect(
-      (await Effect.runPromise(inspectPiPackageHealth(profilePath, "/repository"))).map(
-        (item) => item.id,
-      ),
+      (await Effect.runPromise(inspectPiPackageHealth(profilePath))).map((item) => item.id),
     ).toEqual(["broken"]);
   } finally {
     await Effect.runPromise(handle.dispose);
@@ -329,7 +326,6 @@ test("a package that breaks mid-lifetime is quarantined on the next rebuild", as
       { path: profilePath, name: "Profile" },
       { kind: "local" },
       join(profilePath, "sessions"),
-      "/repository",
       "fresh",
       undefined,
       undefined,
@@ -378,7 +374,7 @@ test("preflight aggregates a service error without creating an AgentSession or p
 
   const failure = await Effect.runPromise(
     makeProfileExtensionPreflight(createServices)
-      .preflight(profilePath, "/repository", ["alpha"])
+      .preflight(profilePath, ["alpha"])
       .pipe(Effect.flip),
   );
 
@@ -414,7 +410,7 @@ test("an inline Ziggy failure remains fatal even when an optional package is bro
   ]);
 
   const failure = await Effect.runPromise(
-    preflight.preflight(profilePath, "/repository", ["broken"]).pipe(Effect.flip),
+    preflight.preflight(profilePath, ["broken"]).pipe(Effect.flip),
   );
 
   expect(failure).toMatchObject({ _tag: "ProfileExtensionPreflightFailed", stage: "extensions" });

@@ -1266,3 +1266,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `main.ts` decodes the command first. `help` and `--version` answer without building any services. Every other command runs `runCommand` under `makeCliLayer`.
 - Removed the unused `makePiAgentLive`.
 - Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions list` from source.
+
+## Delete the dead repositoryRoot parameter
+
+- `repositoryRoot` was threaded through about ten APIs (`PiAgent`, `ProfileExtensions`, `Doctor`, `Setup`, the resident gateway, the extension manager and the UI gateway config), and every sink ignored it. It is gone from `src/` and `test/`, along with the `composition.ts` export.
+- `extensions show` now prints paths relative to the current directory, its only real use.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions show apple-notes` from source.

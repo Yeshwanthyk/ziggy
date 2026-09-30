@@ -219,7 +219,6 @@ test("run --session refuses a session held by another writer before creating Pi"
         "hello",
         false,
         { kind: "local" },
-        profilePath,
         { sessionPath: file },
       ),
     );
@@ -255,7 +254,6 @@ test("a failed chat runtime build releases the transcript lease", async () => {
     { path: profilePath, name: "Profile" },
     { kind: "local" },
     directory,
-    profilePath,
     "continue",
   ] as const;
 
@@ -304,7 +302,6 @@ test("interrupting a pending runtime build releases the transcript lease", async
       { path: profilePath, name: "Profile" },
       { kind: "local" },
       directory,
-      profilePath,
       "continue",
       undefined,
       undefined,
@@ -327,7 +324,6 @@ test("interrupting a pending runtime build releases the transcript lease", async
       { path: profilePath, name: "Profile" },
       { kind: "local" },
       directory,
-      profilePath,
       "continue",
       undefined,
       undefined,
@@ -368,7 +364,6 @@ test("a held chat refuses before calling Pi's runtime factory", async () => {
         { path: profilePath, name: "Profile" },
         { kind: "local" },
         directory,
-        profilePath,
         "continue",
         undefined,
         undefined,
@@ -676,7 +671,6 @@ describe("Pi ephemeral prompt context", () => {
           { path: profilePath, name: "Profile" },
           { kind: "group", groupId: "slC123" },
           sessionDirectory,
-          process.cwd(),
           "fresh",
         ),
       );
@@ -805,7 +799,6 @@ describe("Profile-authoritative model selection", () => {
           { path: profilePath, name: "Profile" },
           { kind: "group", groupId: "slC123" },
           sessionDirectory,
-          process.cwd(),
           "continue",
         ),
       );
@@ -1081,7 +1074,6 @@ describe("Profile runtime activation rollback", () => {
         { path: profilePath, name: "Profile" },
         { kind: "local" },
         join(profilePath, "sessions"),
-        process.cwd(),
         "fresh",
         undefined,
         profileExtensions,
@@ -1160,7 +1152,6 @@ describe("Profile runtime activation rollback", () => {
         { path: profilePath, name: "Profile" },
         { kind: "local" },
         join(profilePath, "sessions"),
-        process.cwd(),
         "fresh",
         undefined,
         profileExtensions,
@@ -1234,7 +1225,6 @@ describe("Profile extension tool admission", () => {
         { path: profilePath, name: "Profile" },
         { kind: "local" },
         join(profilePath, "sessions", "parent"),
-        process.cwd(),
         "fresh",
         undefined,
         profileExtensions,
@@ -1318,13 +1308,9 @@ describe("Profile specialist runtime integration", () => {
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
     expect(
       await Effect.runPromiseExit(
-        runSpecialist(
-          { path: profilePath, name: "Profile" },
-          "missing",
-          "task",
-          { sessionDirectory: join(profilePath, "sessions", "direct") },
-          process.cwd(),
-        ),
+        runSpecialist({ path: profilePath, name: "Profile" }, "missing", "task", {
+          sessionDirectory: join(profilePath, "sessions", "direct"),
+        }),
       ),
     ).toEqual(
       Exit.fail(
@@ -1379,13 +1365,9 @@ describe("Profile specialist runtime integration", () => {
       );
 
       const result = await Effect.runPromise(
-        runSpecialist(
-          { path: profilePath, name: "Profile" },
-          "fixture",
-          "root task",
-          { sessionDirectory },
-          process.cwd(),
-        ),
+        runSpecialist({ path: profilePath, name: "Profile" }, "fixture", "root task", {
+          sessionDirectory,
+        }),
       );
 
       const files = (await readdir(sessionDirectory, { recursive: true })).filter((path) =>
@@ -1484,16 +1466,11 @@ describe("Profile agent admission across faces", () => {
     const target = { path: profilePath, name: "Profile" };
 
     const results = await Promise.all([
+      Effect.runPromise(askOnce(target, "prompt", false, { kind: "local" }).pipe(Effect.result)),
       Effect.runPromise(
-        askOnce(target, "prompt", false, { kind: "local" }, process.cwd()).pipe(Effect.result),
-      ),
-      Effect.runPromise(
-        openChat(
-          target,
-          { kind: "local" },
-          join(profilePath, "sessions", "gateway"),
-          process.cwd(),
-        ).pipe(Effect.result),
+        openChat(target, { kind: "local" }, join(profilePath, "sessions", "gateway")).pipe(
+          Effect.result,
+        ),
       ),
     ]);
 
@@ -1554,7 +1531,7 @@ describe("specialist chat rails", () => {
     await writeFile(join(profilePath, "SOUL.md"), "# Profile\n", "utf8");
     expect(
       await Effect.runPromiseExit(
-        openSpecialistChat({ path: profilePath, name: "Profile" }, "missing", process.cwd()),
+        openSpecialistChat({ path: profilePath, name: "Profile" }, "missing"),
       ),
     ).toEqual(
       Exit.fail(
@@ -1608,14 +1585,12 @@ describe("specialist chat rails", () => {
       );
 
       const target = { path: profilePath, name: "Profile" };
-      const handle = await Effect.runPromise(openSpecialistChat(target, "reviewer", process.cwd()));
+      const handle = await Effect.runPromise(openSpecialistChat(target, "reviewer"));
 
       try {
         await Effect.runPromise(handle.prompt("first rail turn"));
 
-        const competing = await Effect.runPromiseExit(
-          openSpecialistChat(target, "reviewer", process.cwd()),
-        );
+        const competing = await Effect.runPromiseExit(openSpecialistChat(target, "reviewer"));
 
         const competingMessage = Exit.isFailure(competing)
           ? Option.getOrUndefined(Cause.findErrorOption(competing.cause))?.message

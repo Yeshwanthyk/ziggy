@@ -264,7 +264,6 @@ test("automation.run routes through the selected Profile registry and reloads th
             { profileId: fixture.profileId, target: fixture.target, registry },
           ],
           profileDirectory,
-          repositoryRoot: fixture.target.path,
           extensionHealth: () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
@@ -317,7 +316,6 @@ test("automation.run routes through the selected Profile registry and reloads th
             },
           ],
           profileDirectory,
-          repositoryRoot: fixture.target.path,
           extensionHealth: () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
@@ -374,7 +372,6 @@ test("a missing destination records a terminal failure without a fallback conver
 
         const gateway = yield* makeUiGateway({
           defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
-          repositoryRoot: fixture.target.path,
           extensionHealth: () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
@@ -577,7 +574,6 @@ test("destination.list pages the selected Profile's stored and external destinat
             { profileId: otherProfileId, target: otherTarget, registry: otherRegistry },
           ],
           profileDirectory: directory,
-          repositoryRoot: fixture.target.path,
           extensionHealth: () =>
             Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: manySessions,

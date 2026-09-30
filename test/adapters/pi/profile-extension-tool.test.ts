@@ -46,13 +46,11 @@ const invoke = async (
 const makeProfileFixture = async (): Promise<{
   readonly root: string;
   readonly profilePath: string;
-  readonly repositoryRoot: string;
   readonly target: ProfileTarget;
 }> => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-profile-extension-tool-"));
   temporaryPaths.push(root);
   const profilePath = join(root, "profile");
-  const repositoryRoot = join(root, "repository");
   await mkdir(profilePath, { recursive: true });
   await writeFile(join(profilePath, "SOUL.md"), "# Test profile\n", "utf8");
   await writeFile(join(profilePath, "extensions.json"), '{\n  "extensions": []\n}\n', "utf8");
@@ -60,7 +58,6 @@ const makeProfileFixture = async (): Promise<{
   return {
     root,
     profilePath,
-    repositoryRoot,
     target: { path: profilePath, name: "Profile" },
   };
 };
@@ -96,24 +93,24 @@ const makeStub = (calls: Array<ReadonlyArray<unknown>>): ProfileExtensionsApi =>
   return {
     list: unused,
     show: unused,
-    listForProfile: (profilePath, repositoryRoot) => {
-      calls.push(["list", profilePath, repositoryRoot]);
+    listForProfile: (profilePath) => {
+      calls.push(["list", profilePath]);
 
       return Effect.succeed(listing);
     },
-    add: (target, repositoryRoot, id) => {
-      calls.push(["add", target, repositoryRoot, id]);
+    add: (target, id) => {
+      calls.push(["add", target, id]);
 
       return Effect.succeed({ id, profilePath: target.path, changed: true, selected: true });
     },
-    remove: (target, repositoryRoot, id) => {
-      calls.push(["remove", target, repositoryRoot, id]);
+    remove: (target, id) => {
+      calls.push(["remove", target, id]);
 
       return Effect.succeed({ id, profilePath: target.path, changed: true, selected: false });
     },
     setSelected: unused,
-    validate: (target, repositoryRoot) => {
-      calls.push(["validate", target, repositoryRoot]);
+    validate: (target) => {
+      calls.push(["validate", target]);
 
       return Effect.succeed({
         selected: ["alpha"],
@@ -160,11 +157,8 @@ describe("profile_extensions input and result contract", () => {
   test("delegates each action directly and returns bounded structured success details", async () => {
     const calls: Array<ReadonlyArray<unknown>> = [];
     const profilePath = "/trusted/profile";
-    const repositoryRoot = "/trusted/repository";
 
-    const tool = createProfileExtensionTool(profilePath, repositoryRoot, makeStub(calls), () =>
-      Effect.succeed([]),
-    );
+    const tool = createProfileExtensionTool(profilePath, makeStub(calls), () => Effect.succeed([]));
 
     const listed = await invoke(tool, { action: "list" });
     const added = await invoke(tool, { action: "add", id: "alpha", source: "shelf" });
@@ -172,10 +166,10 @@ describe("profile_extensions input and result contract", () => {
     const validated = await invoke(tool, { action: "validate" });
 
     expect(calls).toEqual([
-      ["list", profilePath, repositoryRoot],
-      ["add", { path: profilePath, name: "profile" }, repositoryRoot, "alpha"],
-      ["remove", { path: profilePath, name: "profile" }, repositoryRoot, "alpha"],
-      ["validate", { path: profilePath, name: "profile" }, repositoryRoot],
+      ["list", profilePath],
+      ["add", { path: profilePath, name: "profile" }, "alpha"],
+      ["remove", { path: profilePath, name: "profile" }, "alpha"],
+      ["validate", { path: profilePath, name: "profile" }],
     ]);
     expect(listed.details).toMatchObject({
       ok: true,
@@ -239,20 +233,16 @@ describe("profile_extensions input and result contract", () => {
   });
 
   test("warns and returns an empty broken list when health inspection fails", async () => {
-    const tool = createProfileExtensionTool(
-      "/trusted/profile",
-      "/trusted/repository",
-      makeStub([]),
-      () =>
-        Effect.fail(
-          new ProfileExtensionPreflightFailed({
-            profilePath: "/trusted/profile",
-            stage: "extensions",
-            message: "inspection failed",
-            diagnostics: [],
-            cause: undefined,
-          }),
-        ),
+    const tool = createProfileExtensionTool("/trusted/profile", makeStub([]), () =>
+      Effect.fail(
+        new ProfileExtensionPreflightFailed({
+          profilePath: "/trusted/profile",
+          stage: "extensions",
+          message: "inspection failed",
+          diagnostics: [],
+          cause: undefined,
+        }),
+      ),
     );
 
     const listed = await invoke(tool, { action: "list" });
@@ -278,11 +268,7 @@ describe("profile_extensions input and result contract", () => {
       add: () => Effect.fail(failure),
     };
 
-    const tool = createProfileExtensionTool(
-      "/trusted/profile",
-      "/trusted/repository",
-      profileExtensions,
-    );
+    const tool = createProfileExtensionTool("/trusted/profile", profileExtensions);
 
     const response = await invoke(tool, { action: "add", id: "alpha", source: "shelf" });
 
@@ -320,7 +306,7 @@ describe("profile_extensions real service boundary", () => {
       makeProfileExtensionMutationLock(),
     );
 
-    const tool = createProfileExtensionTool(fixture.profilePath, fixture.repositoryRoot, service);
+    const tool = createProfileExtensionTool(fixture.profilePath, service);
 
     const previousPath = process.env.PATH;
     const originalSpawn = Bun.spawn;
@@ -366,7 +352,7 @@ describe("profile_extensions real service boundary", () => {
 });
 
 test("list names skipped broken packages and their diagnostic", async () => {
-  const tool = createProfileExtensionTool("/profile", "/repo", makeStub([]), () =>
+  const tool = createProfileExtensionTool("/profile", makeStub([]), () =>
     Effect.succeed([
       {
         id: "broken",
