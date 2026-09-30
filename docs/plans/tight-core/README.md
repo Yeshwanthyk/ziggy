@@ -543,7 +543,7 @@ republish to that URL (Artifact tool, `url` set).
 - [ ] **1. Free fixes and deletions.** Each is its own commit:
   - [x] Profile `list` stops writing the registry.
   - [x] ACP `set_model` actually applies.
-  - [ ] `agent_run` output is bounded and no longer duplicated.
+  - [x] `agent_run` output is bounded and no longer duplicated.
   - [x] Children refuse `profile_extensions` (a guard until step 6).
   - [ ] A live delivery into a switched session retries or falls back to the stored append.
   - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.

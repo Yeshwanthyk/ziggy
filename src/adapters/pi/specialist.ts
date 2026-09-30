@@ -60,6 +60,9 @@ export const DISCUSSION_TRANSCRIPT_MAX_CODE_POINTS = 8_000;
 
 export const DISCUSSION_PROMPT_MAX_CODE_POINTS = 12_000;
 
+/** The child answer `agent_run` hands back to the parent model; the full answer stays in the child file. */
+export const AGENT_RUN_ANSWER_MAX_CODE_POINTS = 3_000;
+
 const thinkingSchema = Type.Union([
   Type.Literal("off"),
   Type.Literal("minimal"),
@@ -119,8 +122,9 @@ const specialistResultSchema = Type.Object({
   usage: specialistUsageSchema,
 });
 
+// The answer is the tool's content; details keep only where it came from.
 const specialistToolDetailsSchema = Type.Object({
-  result: Type.Optional(specialistResultSchema),
+  result: Type.Optional(Type.Omit(specialistResultSchema, ["answer"])),
   error: Type.Optional(Type.String()),
 });
 
@@ -862,6 +866,13 @@ const textResult = (
   return result;
 };
 
+const boundedAgentRunAnswer = (answer: string, childFile: string): string => {
+  if (Array.from(answer).length <= AGENT_RUN_ANSWER_MAX_CODE_POINTS) return answer;
+  const note = `\n\n[answer truncated; the full answer is in the child session ${childFile}]`;
+
+  return `${truncateDiscussionText(answer, AGENT_RUN_ANSWER_MAX_CODE_POINTS - Array.from(note).length)}${note}`;
+};
+
 export type AgentRunTool = Omit<ToolDefinition, "execute"> & {
   execute(
     toolCallId: string,
@@ -894,10 +905,14 @@ export const createAgentRunTool = (
     const program = runner.run(rawInput, signal).pipe(
       Effect.match({
         onFailure: (failure) => textResult(`ERROR: ${failure.message}`, { error: failure.message }),
-        onSuccess: (result) => {
-          onVoice?.(rawInput.agent, result.answer);
+        onSuccess: ({ answer, ...result }) => {
+          onVoice?.(rawInput.agent, answer);
 
-          return textResult(result.answer, { result }, result.usage);
+          return textResult(
+            boundedAgentRunAnswer(answer, result.session.file),
+            { result },
+            result.usage,
+          );
         },
       }),
     );

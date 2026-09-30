@@ -191,9 +191,10 @@ describe("agent_run tool", () => {
         prompt: "Find the answer",
       },
     ]);
+    const { answer: _answer, ...source } = result;
     expect(response).toEqual({
       content: [{ type: "text", text: "delegated answer" }],
-      details: { result },
+      details: { result: source },
       usage: result.usage,
     });
   });

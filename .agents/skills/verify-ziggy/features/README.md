@@ -14,7 +14,7 @@ documents a known bug and turns green when the work order fixes it; **uncovered*
 | [Sessions](sessions.md) | list/show are read-only; `run --session` continues one file | green — `cli.test.ts` |
 | [Web sessions](web-sessions.md) | the UI streams a turn, survives reconnect, shares one main | green — `resident.test.ts` |
 | [Single writer](single-writer.md) | a live session refuses a second writer by name | green — `resident.test.ts` |
-| [Agents](agents.md) | `agent_run` makes one linked child with only its declared tools | green / red — `agents.test.ts` |
+| [Agents](agents.md) | `agent_run` makes one linked child with only its declared tools | green — `agents.test.ts` |
 | [Memory](memory.md) | memory persists, is visible next turn, and respects scope and cap | green — `memory.test.ts` |
 | [Automations](automations.md) | an automation's result reaches its target conversation once | green — `automations.test.ts` |
 | [ACP](acp.md) | an editor prompts over ACP and gets streamed answers | green — `acp.test.ts` |

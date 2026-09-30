@@ -61,8 +61,7 @@ describe("agent_run", () => {
     expect(child.roles).toEqual(["user", "assistant"]);
   });
 
-  // Red until work-order step 1: the whole child answer comes back as the tool result.
-  test.failing("keeps the parent's tool result bounded", async () => {
+  test("keeps the parent's tool result bounded", async () => {
     await writeAgent("researcher", "read");
     const long = "x".repeat(20_000);
     server.push(
@@ -73,6 +72,10 @@ describe("agent_run", () => {
 
     await ziggy(profile, "run", profile.path, "delegate this");
     expect(server.toolResults(2).length).toBeLessThan(4_000);
+    expect(server.toolResults(2)).toContain(
+      "[answer truncated; the full answer is in the child session",
+    );
+    expect(server.raw(2).split("[answer truncated")).toHaveLength(2);
   });
 
   test.each(["reed", "profile_extensions"])(
