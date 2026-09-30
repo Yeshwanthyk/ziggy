@@ -38,7 +38,7 @@ import {
   initialDiscordHealth,
   type DiscordHealthEvent,
 } from "../../domain/discord-health";
-import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "../../session";
 import type { LiveSessionRefused, LiveSessionsApi } from "../../resident/live-sessions";
 import {
   retryDiscordDelivery,

@@ -10,7 +10,7 @@ import { makeAutomationRunStore, readAutomationRuns } from "ziggy/adapters/bun/a
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
-import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 import { makeLiveSessions } from "ziggy/resident/live-sessions";

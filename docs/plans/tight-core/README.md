@@ -595,7 +595,7 @@ read the artifact back first.
     - delete the transcript reset;
     - move UI verbs out.
 - [x] **8. Composition.** Per-command layers only; delete `runCommand` and `CliLayer`.
-- [ ] **9. Clean up.**
+- [x] **9. Clean up.**
   - All face tests use `fake-chat.ts`.
   - Delete the re-exports at old paths.
 

@@ -4,7 +4,7 @@ import { ZiggyPathsLive } from "./platform/paths";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
-import { ZiggyAgent } from "./application/agent";
+import { ZiggyAgent } from "./session";
 import { makeZiggyAgent, ProfileAgentsLive } from "./agents";
 import { AutomationDefinitionsLive } from "./application/automation-definitions";
 import { AutomationSchedulerLive } from "./application/automation-scheduler";

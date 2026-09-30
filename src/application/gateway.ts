@@ -7,7 +7,7 @@ import {
   type TelegramApiError,
   type TelegramUpdate,
 } from "../adapters/telegram/api";
-import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "../session";
 import type { ProfileSpecialistError } from "../domain/agent";
 import { codePointLength } from "../platform/text";
 import type { ChatContext } from "../session";

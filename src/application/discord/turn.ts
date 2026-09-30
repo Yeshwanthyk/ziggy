@@ -9,7 +9,7 @@ import type {
 import type { DiscordHealthEvent } from "../../domain/discord-health";
 import { codePointLength } from "../../platform/text";
 import { automationTargetFromString } from "../../domain/automation";
-import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "../../session";
 import type { DestinationBook } from "../../resident/destinations";
 import type { LiveSessionsApi } from "../../resident/live-sessions";
 import {

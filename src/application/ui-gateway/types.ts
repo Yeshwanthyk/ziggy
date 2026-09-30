@@ -9,7 +9,7 @@ import type { AutomationSchedulerApi } from "../automation-scheduler";
 import type { AutomationsApi } from "../automations";
 import type { MemoryApi } from "../../memory";
 import type { SessionsApi } from "../../session";
-import type { ZiggyAgentApi } from "../agent";
+import type { ZiggyAgentApi } from "../../session";
 import type { LiveSessionsApi } from "../../resident/live-sessions";
 import {
   type ProviderAuthStatus,

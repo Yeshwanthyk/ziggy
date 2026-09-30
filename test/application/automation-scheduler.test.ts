@@ -25,7 +25,7 @@ import {
   AutomationScheduleSuperseded,
 } from "ziggy/domain/automation";
 import { makeLiveSessions } from "ziggy/resident/live-sessions";
-import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import {
   type AutomationCapabilities,

@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import { ChatNotStreaming } from "ziggy/domain/agent";
-import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import {
   makeSlackGateway,

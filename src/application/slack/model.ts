@@ -21,7 +21,7 @@ import type {
   SlackIngressTerminalState,
 } from "../../domain/slack-ingress";
 import type { SlackHealthProjectionError, SlackHealthSnapshot } from "../../domain/slack-health";
-import type { ChatHandle } from "../agent";
+import type { ChatHandle } from "../../session";
 import type { DestinationBook } from "../../resident/destinations";
 import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { type ProfileTarget } from "../../profile";

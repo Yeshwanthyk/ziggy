@@ -12,7 +12,7 @@ import {
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Effect, Exit, Fiber, Result } from "effect";
 import { ChatNotStreaming, ProviderCallError } from "ziggy/domain/agent";
-import type { ChatEvent, ChatProgressEvent } from "ziggy/application/agent";
+import type { ChatEvent, ChatProgressEvent } from "ziggy/session/index";
 import { ensurePiSessionName } from "ziggy/adapters/pi/session-name";
 import { Extensions, extensionTools } from "ziggy/extensions/index";
 import {

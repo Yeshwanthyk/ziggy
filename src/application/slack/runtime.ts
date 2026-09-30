@@ -36,7 +36,7 @@ import {
   type SlackHealthEvent,
 } from "../../domain/slack-health";
 import { automationTargetFromString } from "../../domain/automation";
-import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "../../session";
 import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { uniqueSlackStatusTargets } from "./delivery";
 import {

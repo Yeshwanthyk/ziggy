@@ -2,7 +2,7 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun test functions own the Effect Promise boundary */
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Ref } from "effect";
-import { type ChatHandle } from "ziggy/application/agent";
+import { type ChatHandle } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import { LIVE_REPLAY_LIMIT, MAX_UI_SESSIONS, makeLiveSessions } from "ziggy/resident/live-sessions";
 import { ProfileNotInitialized } from "ziggy/profile/index";

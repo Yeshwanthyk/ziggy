@@ -9,11 +9,7 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { Deferred, Effect, Schema } from "effect";
-import {
-  type ChatHandle,
-  type ChatPromptOptions,
-  type ZiggyAgentApi,
-} from "ziggy/application/agent";
+import { type ChatHandle, type ChatPromptOptions, type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeAcpAgent } from "ziggy/faces/acp";
 import { type ModelsApi } from "ziggy/profile/index";

@@ -1,6 +1,6 @@
 /** A fake `ChatHandle` for unit tests: pass `prompt` and override what the test drives. */
 import { Effect } from "effect";
-import type { ChatHandle } from "ziggy/application/agent";
+import type { ChatHandle } from "ziggy/session/index";
 import { AutomationConversationDeliveryFailed } from "ziggy/domain/automation";
 import { ProviderConfigError } from "ziggy/profile/index";
 

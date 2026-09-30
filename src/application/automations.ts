@@ -30,7 +30,7 @@ import {
   validateAutomationId,
 } from "../domain/automation";
 import type { ProfileSpecialistError } from "../domain/agent";
-import { ZiggyAgent, type OpenSession, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, type OpenSession, type ZiggyAgentApi } from "../session";
 import type { Deliver, DeliveryFailure } from "./delivery";
 import { deliverDiscord } from "./discord-gateway";
 import { deliverTelegram } from "./gateway";

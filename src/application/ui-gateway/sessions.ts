@@ -22,7 +22,7 @@ import {
 } from "../../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
-import type { ChatPromptOptions } from "../agent";
+import type { ChatPromptOptions } from "../../session";
 import { localSpecialistSessionDirectory } from "../../agents";
 import type { LiveSessionEvent, LiveSessionView } from "../../resident/live-sessions";
 import {

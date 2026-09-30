@@ -34,7 +34,7 @@ import { Automations, type AutomationsApi } from "./automations";
 import { Doctor, type DoctorApi } from "./doctor";
 import { Memory, type MemoryApi } from "../memory";
 import { ProfileAgents, type ProfileAgentsApi } from "../agents";
-import { ZiggyAgent, type ZiggyAgentApi } from "./agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "../session";
 import { makeDestinationBook, type DestinationBook } from "../resident/destinations";
 import { makeLiveSessions, type LiveSessionsApi } from "../resident/live-sessions";
 import {

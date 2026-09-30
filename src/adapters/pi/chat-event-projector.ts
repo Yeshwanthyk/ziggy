@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { Option, Schema } from "effect";
-import type { ChatEvent } from "../../application/agent";
+import type { ChatEvent } from "../../session";
 
 const AssistantTextContent = Schema.Struct({
   type: Schema.Literal("text"),

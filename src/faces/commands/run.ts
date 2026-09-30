@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { ZiggyAgent } from "../../application/agent";
+import { ZiggyAgent } from "../../session";
 import { ZiggyPaths } from "../../platform/paths";
 import { Models, resolveProfileTarget } from "../../profile";
 import { Sessions } from "../../session";

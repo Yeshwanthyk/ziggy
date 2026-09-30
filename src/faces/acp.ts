@@ -14,7 +14,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Effect, Queue, Result, Schema, Semaphore, type Scope } from "effect";
 import packageJson from "../../package.json" with { type: "json" };
-import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../application/agent";
+import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../session";
 import { localSpecialistSessionDirectory } from "../agents";
 import { type ModelsApi, type ProfileTarget } from "../profile";
 

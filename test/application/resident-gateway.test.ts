@@ -38,7 +38,7 @@ import {
 import { Sessions, type SessionsApi } from "ziggy/session/index";
 import { ZiggyPaths } from "ziggy/platform/paths";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
-import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/session/index";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
 import { Extensions, type ExtensionsApi } from "ziggy/extensions/index";

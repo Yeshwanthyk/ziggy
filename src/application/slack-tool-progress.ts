@@ -1,4 +1,4 @@
-import type { ChatProgressEvent } from "./agent";
+import type { ChatProgressEvent } from "../session";
 
 type ToolProgress = Extract<ChatProgressEvent, { kind: "tool" }>;
 

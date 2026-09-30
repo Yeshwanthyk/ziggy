@@ -1489,3 +1489,9 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - A prompt waits behind a control or append instead of failing busy (the plan's "keep waiting"); a second prompt is still refused while the first is waiting or running. The resume test now proves the prompt starts after the transcript reset.
 - `session.close` releases the handle it checked, not whatever holds the key by then.
 - Also: dropped the dead `session-held` branch in conversation delivery (only the stored append produces it), `watch` replays and attaches in the same step as its gap check, and `release` documents that an opening key is left alone. Not changed: `findBySessionId` still reports an unreadable transcript as `open-failed`. `bun run check`, 747 unit and 44 e2e pass.
+
+## Step 9: clean up
+
+- Deleted `src/application/agent.ts`, the last old-path re-export (`export * from "../session"`); its 17 source and 14 test importers use `session/` directly. `application/discord-gateway.ts`, `application/slack-gateway.ts` and `domain/ui-gateway.ts` stay: they are deliberate public faces of their folders, not leftovers of a move.
+- Face tests already build handles through the one fake, `test/harness/chat-handle.ts` (the plan called it `fake-chat.ts`; not renamed). The only other handle builders are the real-handle tests over `fakePiRuntime` (`test/session/{agent,handle}.test.ts`, `test/adapters/pi/automation-result.test.ts`).
+- `bun run check`, 747 unit and 44 e2e pass.

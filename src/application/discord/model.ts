@@ -14,7 +14,7 @@ import type {
   DiscordHealthProjectionError,
   DiscordHealthSnapshot,
 } from "../../domain/discord-health";
-import type { ChatHandle } from "../agent";
+import type { ChatHandle } from "../../session";
 import type { DestinationBook } from "../../resident/destinations";
 import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { type ProfileTarget } from "../../profile";

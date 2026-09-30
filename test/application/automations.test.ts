@@ -32,7 +32,7 @@ import {
   validateAutomationId,
   type AutomationTargetOutcome,
 } from "ziggy/domain/automation";
-import { takeSessionLease, type ZiggyAgentApi } from "ziggy/application/agent";
+import { takeSessionLease, type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";

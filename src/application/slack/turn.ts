@@ -6,7 +6,7 @@ import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
 import type { ProfileSpecialistError } from "../../domain/agent";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
-import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "../../session";
 import type { LiveSessionRefused, LiveSessionsApi } from "../../resident/live-sessions";
 import { slackTaskTitle } from "../slack-tool-progress";
 import { makeTurnProgress } from "./progress";

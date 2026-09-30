@@ -7,7 +7,7 @@ import {
   type ChatEvent,
   type ChatSessionModelState,
   type ZiggyAgentApi,
-} from "ziggy/application/agent";
+} from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
 import { SessionBusy, SessionHeld } from "ziggy/domain/agent";
 import {

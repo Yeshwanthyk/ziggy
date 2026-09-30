@@ -1,6 +1,6 @@
 import type { AgentSessionRuntime } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import type { ChatPromptOptions } from "../../application/agent";
+import type { ChatPromptOptions } from "../../session";
 import { ProviderCallError } from "../../domain/agent";
 import { createChatEventProjector } from "./chat-event-projector";
 import { piPromise, providerError } from "./provider-failure";
