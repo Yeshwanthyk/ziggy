@@ -341,17 +341,6 @@ See docs/operations/memory.md for scope rules, caps, backups, and safe hand-edit
         ),
       );
 
-      const validRegistryEntries = registryEntries.filter((registryEntry) =>
-        listings.some(({ initialized, listing }) => initialized && listing?.path === registryEntry),
-      );
-
-      if (validRegistryEntries.length !== registryEntries.length) {
-        yield* writeFile(
-          registryPath,
-          validRegistryEntries.length === 0 ? "" : `${validRegistryEntries.join("\n")}\n`,
-        );
-      }
-
       return listings
         .flatMap(({ listing }) => (listing === undefined ? [] : [listing]))
         .sort(

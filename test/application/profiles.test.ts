@@ -175,7 +175,9 @@ test("listing admits only physical Profiles with a regular SOUL.md", async () =>
     );
 
     expect(listings).toEqual([{ name: "valid", path: validProfile }]);
-    expect(await readFile(registryPath, "utf8")).toBe(`${validProfile}\n`);
+    expect(await readFile(registryPath, "utf8")).toBe(
+      `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

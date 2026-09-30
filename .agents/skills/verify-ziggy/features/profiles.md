@@ -5,8 +5,8 @@
 ## Behaviors
 
 - PROF-1: `init` on an existing Profile leaves `SOUL.md` byte-identical.
-- PROF-2 (red): `profiles` changes nothing under the scratch `HOME`, even when `profiles.list` holds a
-  stale entry. Today it prunes the registry.
+- PROF-2: `profiles` changes nothing under the scratch `HOME`, even when `profiles.list` holds a
+  stale entry. Stale entries are skipped, never pruned.
 
 ## Entry points
 
@@ -22,4 +22,4 @@ Equal tree hashes; `SOUL.md` content equal to what was written.
 
 ## Gotchas
 
-- Without a stale entry nothing is pruned, so PROF-2 passes vacuously. The proof plants one.
+- Without a stale entry PROF-2 passes vacuously. The proof plants one.

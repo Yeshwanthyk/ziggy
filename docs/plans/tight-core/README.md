@@ -537,7 +537,7 @@ We build piece by piece: core first, then what sits on it. Every step runs end t
 
 - [x] **0. Harness and proofs** against today's code. Mark the two known bugs red.
 - [ ] **1. Free fixes and deletions.** Each is its own commit:
-  - [ ] Profile `list` stops writing the registry.
+  - [x] Profile `list` stops writing the registry.
   - [ ] ACP `set_model` actually applies.
   - [ ] `agent_run` output is bounded and no longer duplicated.
   - [ ] Children refuse `profile_extensions` (a guard until step 6).

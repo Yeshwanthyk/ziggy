@@ -35,23 +35,19 @@ describe("Profile commands", () => {
     expect(await readFile(join(profile.path, "SOUL.md"), "utf8")).toBe(profile.soul);
   });
 
-  // Red until work-order step 1: listing Profiles prunes stale registry entries.
-  test.failing(
-    "profiles changes nothing and starts nothing, even with a stale registry",
-    async () => {
-      await writeFile(
-        join(profile.home, "profiles.list"),
-        `${profile.path}\n${join(profile.root, "moved-away")}\n`,
-        "utf8",
-      );
-      const before = await treeHash(profile.root);
-      const listed = await ziggy(profile, "profiles");
+  test("profiles changes nothing and starts nothing, even with a stale registry", async () => {
+    await writeFile(
+      join(profile.home, "profiles.list"),
+      `${profile.path}\n${join(profile.root, "moved-away")}\n`,
+      "utf8",
+    );
+    const before = await treeHash(profile.root);
+    const listed = await ziggy(profile, "profiles");
 
-      expect(listed.exitCode).toBe(0);
-      expect(listed.stdout).toContain(profile.path);
-      expect(await treeHash(profile.root)).toBe(before);
-    },
-  );
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain(profile.path);
+    expect(await treeHash(profile.root)).toBe(before);
+  });
 });
 
 describe("run", () => {

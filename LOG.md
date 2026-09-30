@@ -1357,3 +1357,7 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
   - `bun run test` gave 836 pass in about 13 s (budget 15 s); e2e alone is about 7 s (budget 10 s).
   - A deliberately failing proof with a resident up leaves no `serve` process.
   - The sandbox recipe was followed by hand: doctor all OK, `run` printed `ok`, and one request was logged.
+
+## Tight core, step 1: free fixes
+
+**`profiles` is read-only.** `listProfiles` no longer rewrites `profiles.list` to prune stale entries; it skips them. PROF-2 flipped green; the unit test now asserts the registry is untouched.

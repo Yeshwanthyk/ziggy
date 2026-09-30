@@ -9,7 +9,7 @@ documents a known bug and turns green when the work order fixes it; **uncovered*
 | Feature | Outcome the user sees | Proof |
 | --- | --- | --- |
 | [Run](run.md) | `ziggy run` answers from the Profile's SOUL and model | green — `cli.test.ts` |
-| [Profiles](profiles.md) | `init` never overwrites SOUL; `profiles` is read-only | green / red — `cli.test.ts` |
+| [Profiles](profiles.md) | `init` never overwrites SOUL; `profiles` is read-only | green — `cli.test.ts` |
 | [Models](models.md) | `models set` changes the model the next turn uses | green — `cli.test.ts` |
 | [Sessions](sessions.md) | list/show are read-only; `run --session` continues one file | green — `cli.test.ts` |
 | [Web sessions](web-sessions.md) | the UI streams a turn, survives reconnect, shares one main | green — `resident.test.ts` |
