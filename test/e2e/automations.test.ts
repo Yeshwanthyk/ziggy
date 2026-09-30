@@ -151,7 +151,13 @@ describe("automation delivery", () => {
 
     const outcome = await client.gateway.runAutomation(client.profileId, "digest");
 
-    expect(JSON.stringify(outcome)).not.toContain("category");
+    expect(outcome.runOutcome).toEqual({
+      kind: "executed",
+      delivery: {
+        kind: "resolved",
+        targets: [{ target: expect.any(String), status: "delivered" }],
+      },
+    });
     expect(await resident.stop()).toBe(0);
     expect(await receipts(target.file)).toBe(1);
   });

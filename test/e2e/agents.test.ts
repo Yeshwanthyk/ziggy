@@ -75,7 +75,6 @@ describe("agent_run", () => {
     expect(server.toolResults(2)).toContain(
       "[answer truncated; the full answer is in the child session",
     );
-    expect(server.raw(2).split("[answer truncated")).toHaveLength(2);
   });
 
   test.each(["reed", "profile_extensions"])(

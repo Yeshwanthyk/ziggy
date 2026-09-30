@@ -548,7 +548,7 @@ read the artifact back first.
   - [x] Children refuse `profile_extensions` (a guard until step 6).
   - [x] A live delivery into a switched session retries or falls back to the stored append.
   - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
-  - [x] Session stats count Pi's `usage` entries and drop the `toolCall` branch.
+  - [x] Session stats count Pi's `usage` entries and history drops the `toolCall` branch.
   - [ ] Delete dead code:
     - the GitHub catalog and tar extractor;
     - 4 unused registry members;

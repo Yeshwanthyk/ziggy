@@ -332,17 +332,14 @@ See docs/operations/memory.md for scope rules, caps, backups, and safe hand-edit
 
       const listings = yield* Effect.forEach(profilePaths, (profilePath) =>
         isInitializedProfile(profilePath).pipe(
-          Effect.map((initialized) => ({
-            initialized,
-            listing: initialized
-              ? { name: path.basename(profilePath), path: profilePath }
-              : undefined,
-          })),
+          Effect.map((initialized) =>
+            initialized ? [{ name: path.basename(profilePath), path: profilePath }] : [],
+          ),
         ),
       );
 
       return listings
-        .flatMap(({ listing }) => (listing === undefined ? [] : [listing]))
+        .flat()
         .sort(
           (left, right) =>
             left.name.localeCompare(right.name) || left.path.localeCompare(right.path),

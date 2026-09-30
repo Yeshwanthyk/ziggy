@@ -344,8 +344,10 @@ export const makeAcpAgent = (
               yield* session.handle
                 .setModel(providerId, modelId)
                 .pipe(
-                  Effect.mapError(() =>
-                    RequestError.internalError(undefined, "could not set the session model"),
+                  Effect.mapError((cause) =>
+                    cause._tag === "SessionBusy"
+                      ? RequestError.invalidRequest(undefined, "ACP session has an active prompt")
+                      : modelError(cause, "could not set the session model"),
                   ),
                 );
 

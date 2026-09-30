@@ -165,19 +165,15 @@ test("listing admits only physical Profiles with a regular SOUL.md", async () =>
     await mkdir(physicalProfile);
     await writeFile(path.join(physicalProfile, "SOUL.md"), "# Physical\n");
     await symlink(physicalProfile, linkedProfile);
-    await writeFile(
-      registryPath,
-      `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`,
-    );
+    const registry = `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`;
+    await writeFile(registryPath, registry);
 
     const listings = await useProfiles((profiles) =>
       profiles.listProfiles(profilesDirectory, registryPath),
     );
 
     expect(listings).toEqual([{ name: "valid", path: validProfile }]);
-    expect(await readFile(registryPath, "utf8")).toBe(
-      `${directorySoul}\n${linkedProfile}\n${symlinkSoul}\n${validProfile}\n`,
-    );
+    expect(await readFile(registryPath, "utf8")).toBe(registry);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
