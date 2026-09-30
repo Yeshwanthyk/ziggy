@@ -544,7 +544,7 @@ republish to that URL (Artifact tool, `url` set).
   - [x] Profile `list` stops writing the registry.
   - [x] ACP `set_model` actually applies.
   - [ ] `agent_run` output is bounded and no longer duplicated.
-  - [ ] Children refuse `profile_extensions` (a guard until step 6).
+  - [x] Children refuse `profile_extensions` (a guard until step 6).
   - [ ] A live delivery into a switched session retries or falls back to the stored append.
   - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
   - [ ] Session stats count Pi's `usage` entries and drop the `toolCall` branch.

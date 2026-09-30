@@ -8,8 +8,9 @@ The Profile delegates to an agent in `agents/<id>.md` and gets a bounded answer 
   `parentSession` is the parent's absolute path; the child is sent only its declared tools and
   the agent body.
 - AG-2 (red): the parent's tool result is bounded. Today it is the full answer, twice.
-- AG-3 (red): an agent declaring an unknown tool (`reed`) or `profile_extensions` fails before
-  any model call. Today it is noticed only when `agent_run` is called.
+- AG-3: `agent_run` on an agent declaring an unknown tool (`reed`) or `profile_extensions` returns
+  "tool is unavailable to Profile agent …", creates no child file, and the child never reaches the
+  model. The parent run carries on; one bad agent file does not break the Profile.
 
 ## Entry points
 

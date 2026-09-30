@@ -75,15 +75,25 @@ describe("agent_run", () => {
     expect(server.toolResults(2).length).toBeLessThan(4_000);
   });
 
-  // Red until work-order step 1: a bad tools line is only noticed when agent_run is called.
-  test.failing.each(["reed", "profile_extensions"])(
-    "an agent declaring %s fails before any model call",
+  test.each(["reed", "profile_extensions"])(
+    "agent_run refuses an agent declaring %s before the child reaches the model",
     async (bad) => {
       await writeAgent("researcher", `read, ${bad}`);
+      server.push(
+        tools({ name: "agent_run", arguments: { agent: "researcher", prompt: "go" } }),
+        text("parent done"),
+      );
 
-      const result = await ziggy(profile, "run", profile.path, "hi");
-      expect(result.exitCode).toBe(1);
-      expect(server.requests).toHaveLength(0);
+      const result = await ziggy(profile, "run", profile.path, "delegate this");
+
+      expect(result.exitCode).toBe(0);
+      expect(server.requests).toHaveLength(2);
+      expect(server.toolResults(1)).toContain(
+        `tool is unavailable to Profile agent researcher: ${bad}`,
+      );
+      expect(
+        (await sessionFiles(profile.path)).filter((file) => file.startsWith("agents/")),
+      ).toEqual([]);
     },
   );
 });

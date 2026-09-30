@@ -1369,3 +1369,5 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 **ACP `set_model` applies.** The face stored a `modelOverride` nothing read; it now calls the session handle's `setModel` and the field is gone. ACP-2 is green; the face unit test's fake handle records the applied model.
 
 Once, a combined `bun run test` stalled with one worker at 100% CPU; three reruns and every folder alone pass (836 in ~12 s). Not reproduced; watch for it.
+
+**Children refuse `profile_extensions`.** Both blocked-tool lists (the child selector in `adapters/pi/specialist.ts` and the agent validator in `profile-agents.ts`) now include it; children load no Profile extensions, so it used to pass validation and vanish. AG-3 was rewritten: the step-0 version demanded that one bad agent file fail the whole `run`, which would break a Profile over one file. It now proves `agent_run` is refused, no child file exists, and the child never reaches the model (confirmed red without the guard).

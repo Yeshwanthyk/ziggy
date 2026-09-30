@@ -543,6 +543,8 @@ const blockedSpecialistTool = (name: string): boolean =>
   name === "memory_write" ||
   name === "agent_run" ||
   name === "agent_discuss" ||
+  // Children load no Profile extensions, so the tool would silently vanish; a guard until step 6.
+  name === "profile_extensions" ||
   name === "discussion" ||
   name.startsWith("discussion_") ||
   name.startsWith("discussion-");

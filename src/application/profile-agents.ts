@@ -22,7 +22,7 @@ import { Models, type ModelsError, type ModelsApi } from "./models";
 
 const decodeAgentId = Schema.decodeUnknownEffect(ProfileAgentId);
 
-const blockedTools = new Set(["memory_write", "agent_run", "agent_discuss"]);
+const blockedTools = new Set(["memory_write", "agent_run", "agent_discuss", "profile_extensions"]);
 
 export interface ProfileAgentProjection {
   readonly id: string;
