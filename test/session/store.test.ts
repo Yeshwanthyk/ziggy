@@ -20,6 +20,7 @@ import { Effect, Predicate, Result, Schema } from "effect";
 import {
   isSessionHeld,
   listSessions,
+  locateSession,
   sessionHistory,
   sessionSummaries,
   showSession,
@@ -641,6 +642,29 @@ test("show skips unrelated broken files but rejects only duplicate identities", 
       failure: { _tag: "SessionReadFailed", operation: "resolve" },
     });
   }
+});
+
+test("locate reads the addressed transcript strictly and sets aside an unreadable same-id copy", async () => {
+  const root = await profile();
+  const sessions = join(root, "sessions");
+  const broken = join(sessions, "broken.jsonl");
+  await writeJsonl(broken, [header("broken")]);
+  await writeFile(broken, `${JSON.stringify({ ...header("broken"), version: 1 })}\nnot-json\n`);
+  const before = await readFile(broken);
+
+  expect(await Effect.runPromise(Effect.result(locateSession(root, "broken")))).toMatchObject({
+    _tag: "Failure",
+    failure: { _tag: "SessionReadFailed" },
+  });
+  expect(await readFile(broken)).toEqual(before);
+
+  await writeJsonl(join(sessions, "copy-a.jsonl"), [header("copied")]);
+  await writeFile(
+    join(sessions, "copy-b.jsonl"),
+    `${JSON.stringify(header("copied"))}\nnot-json\n`,
+  );
+
+  expect((await Effect.runPromise(locateSession(root, "copied"))).path).toBe("copy-a.jsonl");
 });
 
 const message = (

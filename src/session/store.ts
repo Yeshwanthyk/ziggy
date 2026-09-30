@@ -56,9 +56,14 @@ interface Transcript {
 }
 
 /** Parsed transcripts by file, reused while size and mtime hold; oldest evicted past the limit. */
+/** Parse results by file, failures included, so an unreadable file is not re-read every list. */
 type TranscriptCache = Map<
   string,
-  { readonly mtimeMs: number; readonly size: number; readonly transcript: Transcript }
+  {
+    readonly mtimeMs: number;
+    readonly size: number;
+    readonly read: Result.Result<Transcript, SessionReadFailed>;
+  }
 >;
 
 const sessionsRoot = (profilePath: string) => path.join(profilePath, "sessions");
@@ -239,18 +244,18 @@ const readTranscript = (root: string, file: string, cache: TranscriptCache | und
     if (hit !== undefined && hit.mtimeMs === status.mtimeMs && hit.size === status.size) {
       cache.set(file, hit);
 
-      return hit.transcript;
+      return yield* Effect.fromResult(hit.read);
     }
 
-    const transcript = yield* parseTranscript(root, file);
-    cache.set(file, { mtimeMs: status.mtimeMs, size: status.size, transcript });
+    const read = yield* Effect.result(parseTranscript(root, file));
+    cache.set(file, { mtimeMs: status.mtimeMs, size: status.size, read });
 
     for (const oldest of cache.keys()) {
       if (cache.size <= CACHE_LIMIT) break;
       cache.delete(oldest);
     }
 
-    return transcript;
+    return yield* Effect.fromResult(read);
   });
 
 interface ProfileScan {
@@ -443,38 +448,35 @@ export interface SessionLocation {
   readonly path: string;
 }
 
-/** Find a session's transcript by id from headers alone. */
+/**
+ * Find a session's transcript by id and read it strictly, before anyone hands the file to Pi,
+ * whose SessionManager may rewrite a file it cannot fully parse. A same-id copy that does not
+ * parse is set aside, as `list` does, so it never makes a readable session ambiguous.
+ */
 export const locateSession = (profilePath: string, id: string) =>
   Effect.gen(function* () {
     const root = sessionsRoot(profilePath);
     const { files } = yield* transcriptFiles(root);
-    const matches: Array<string> = [];
+    const valid: Array<string> = [];
+    let invalid: SessionReadFailed | undefined;
 
     for (const file of files) {
       const header = yield* readTranscriptHeader(file).pipe(Effect.option);
 
-      if (header._tag === "Some" && header.value.id === id) matches.push(file);
+      if (header._tag === "None" || header.value.id !== id) continue;
+      const parsed = yield* Effect.result(parseTranscript(root, file));
+
+      if (Result.isSuccess(parsed)) valid.push(file);
+      else invalid ??= parsed.failure;
     }
 
-    const [file, ...others] = matches;
+    const [file, ...others] = valid;
 
-    if (file === undefined) return yield* notFound(id);
+    if (file === undefined) return yield* invalid ?? notFound(id);
 
     if (others.length > 0) return yield* ambiguous(root, id);
 
     const location: SessionLocation = { id, file, path: path.relative(root, file) };
-
-    return location;
-  });
-
-/**
- * Locate a session and read its whole transcript strictly, before handing the file to Pi,
- * whose SessionManager may rewrite a file it cannot fully parse.
- */
-export const locateValidSession = (profilePath: string, id: string) =>
-  Effect.gen(function* () {
-    const location = yield* locateSession(profilePath, id);
-    yield* parseTranscript(sessionsRoot(profilePath), location.file);
 
     return location;
   });

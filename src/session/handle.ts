@@ -31,7 +31,7 @@ import { fileSystemCauseDetails } from "../platform/cause";
 import { ProviderConfigError } from "../profile";
 import type { SessionLeaseSet } from "./lease";
 import { disposeRuntime, type ProfileRuntime } from "./runtime";
-import { locateValidSession } from "./store";
+import { locateSession } from "./store";
 import { readTranscriptHeader } from "./transcript";
 import type { ChatEvent, ChatHandle, ChatSessionModelState } from "./types";
 
@@ -436,7 +436,7 @@ export const makeChatHandle = (
       resume: (sessionId) =>
         control(
           Effect.gen(function* () {
-            const { id, file: path } = yield* locateValidSession(profilePath, sessionId);
+            const { id, file: path } = yield* locateSession(profilePath, sessionId);
 
             // Lease the target and switch as one step: once Pi starts tearing the old
             // session down the switch must finish, and an interrupt must not strand the lease.

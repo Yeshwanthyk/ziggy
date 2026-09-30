@@ -8,7 +8,7 @@ import {
   type AutomationConversationResult,
 } from "../../domain/automation";
 import { SessionHeld } from "../../domain/agent";
-import { locateValidSession, SessionNotFound, takeSessionLease } from "../../session";
+import { locateSession, SessionNotFound, takeSessionLease } from "../../session";
 
 const isAutomationResultDetails = Schema.is(AutomationResultDetails);
 
@@ -49,7 +49,7 @@ export const appendStoredAutomationResult = (
   profilePath: string,
   result: AutomationConversationResult,
 ): Effect.Effect<void, AutomationConversationDeliveryFailed> =>
-  locateValidSession(profilePath, result.targetSessionId).pipe(
+  locateSession(profilePath, result.targetSessionId).pipe(
     Effect.mapError((cause) =>
       cause instanceof SessionNotFound
         ? failure("destination-missing", false, cause.message, cause)

@@ -21,7 +21,6 @@ export {
   inspectSessions,
   listSessions,
   locateSession,
-  locateValidSession,
   sessionHistory,
   sessionSummaries,
   Sessions,
