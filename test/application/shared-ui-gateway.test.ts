@@ -2,12 +2,8 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun test callbacks are Promise-shaped */
 import { expect, test } from "bun:test";
 import { Effect, Result, Schema } from "effect";
-import {
-  makeChatHandle,
-  type ChatEvent,
-  type ChatHandle,
-  type ZiggyAgentApi,
-} from "ziggy/application/agent";
+import { type ChatEvent, type ChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import { makeSharedUiGateway } from "ziggy/application/ui-gateway";
 import type { SessionsApi } from "ziggy/application/sessions";

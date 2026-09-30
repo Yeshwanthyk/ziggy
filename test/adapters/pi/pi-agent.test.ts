@@ -551,6 +551,7 @@ describe("Pi provider failure classification", () => {
         },
       }),
       {
+        currentSession: Effect.succeed(undefined),
         prompt: () => Effect.succeed("unused"),
         dispose: Effect.void,
       },

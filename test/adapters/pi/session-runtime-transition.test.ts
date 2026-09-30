@@ -132,7 +132,12 @@ test("Pi command wrappers transfer leases and preserve the old owner on a pre-te
     const handle = makeSessionChatHandle(
       profilePath,
       () => runtime.session,
-      { ...controls, prompt: () => Effect.succeed(""), dispose: Effect.void },
+      {
+        ...controls,
+        currentSession: Effect.succeed(undefined),
+        prompt: () => Effect.succeed(""),
+        dispose: Effect.void,
+      },
       undefined,
       undefined,
       lease,

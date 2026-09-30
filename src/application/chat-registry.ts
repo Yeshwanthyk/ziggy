@@ -857,9 +857,7 @@ export const makeChatRegistry = (
             let matching: LiveEntry | undefined;
 
             for (const candidate of entries.values()) {
-              if (candidate._tag !== "Live" || candidate.handle.currentSession === undefined) {
-                continue;
-              }
+              if (candidate._tag !== "Live") continue;
 
               const current = yield* candidate.handle.currentSession.pipe(
                 Effect.mapError(
@@ -878,14 +876,6 @@ export const makeChatRegistry = (
 
             if (matching === undefined) {
               return yield* appendStoredAutomationResult(target.path, result);
-            }
-
-            if (matching.handle.appendAutomationResult === undefined) {
-              return yield* new AutomationConversationDeliveryFailed({
-                category: "owner-unavailable",
-                retriable: true,
-                message: "live conversation owner cannot accept automation results",
-              });
             }
 
             if (matching.phase._tag !== "Idle") {

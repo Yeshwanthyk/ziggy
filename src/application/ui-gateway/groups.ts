@@ -276,7 +276,7 @@ export const dispatchGroups = (
                 ),
               );
 
-            if (entry?.handle.currentSession !== undefined) {
+            if (entry !== undefined) {
               const session = yield* entry.handle.currentSession.pipe(
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               );

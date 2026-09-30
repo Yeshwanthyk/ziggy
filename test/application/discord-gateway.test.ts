@@ -11,7 +11,8 @@ import type {
   DiscordIngressPayload,
   DiscordIngressTerminalState,
 } from "ziggy/domain/discord-ingress";
-import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   discordMessageChunks,
   discordIngressTerminalState,

@@ -232,12 +232,9 @@ export const makeSessionDispatcher = (
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
-            const current =
-              entry.handle.currentSession === undefined
-                ? undefined
-                : yield* entry.handle.currentSession.pipe(
-                    Effect.mapError((cause) => toGatewayError(request.method, cause)),
-                  );
+            const current = yield* entry.handle.currentSession.pipe(
+              Effect.mapError((cause) => toGatewayError(request.method, cause)),
+            );
 
             const shown = {
               profileId: branch.profileId,
@@ -280,13 +277,6 @@ export const makeSessionDispatcher = (
             const entry = yield* branch.registry
               .get(params.ref.key)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
-
-            if (entry.handle.currentSession === undefined) {
-              return yield* protocolFailure(
-                "unknown_session",
-                "live session history is unavailable",
-              );
-            }
 
             const current = yield* entry.handle.currentSession.pipe(
               Effect.mapError((cause) => toGatewayError(request.method, cause)),
@@ -430,12 +420,11 @@ export const makeSessionDispatcher = (
 
           const canResume = entry !== undefined && resumableEntry(entry);
 
-          const current =
-            canResume && entry.handle.currentSession !== undefined
-              ? yield* entry.handle.currentSession.pipe(
-                  Effect.mapError((cause) => toGatewayError(request.method, cause)),
-                )
-              : undefined;
+          const current = canResume
+            ? yield* entry.handle.currentSession.pipe(
+                Effect.mapError((cause) => toGatewayError(request.method, cause)),
+              )
+            : undefined;
 
           const summaries = yield* config.sessions
             .summaries(branch.target)

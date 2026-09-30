@@ -4,11 +4,11 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Deferred, Effect, Fiber, Result, Schema } from "effect";
 import {
-  makeChatHandle,
   type ChatEvent,
   type ChatSessionModelState,
   type ZiggyAgentApi,
 } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import { SessionBusy, SessionHeld } from "ziggy/domain/agent";
 import {
   CHAT_REPLAY_LIMIT,

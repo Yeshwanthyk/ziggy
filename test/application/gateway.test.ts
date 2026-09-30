@@ -3,7 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { TelegramUpdate } from "ziggy/adapters/telegram/api";
-import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   isTelegramStopCommand,
   makeTelegramGateway,

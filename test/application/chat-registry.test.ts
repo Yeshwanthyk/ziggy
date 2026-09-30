@@ -3,7 +3,8 @@
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Ref } from "effect";
 import { ProfileNotInitialized } from "ziggy/domain/agent";
-import { makeChatHandle, type ChatEvent, type ChatHandle } from "ziggy/application/agent";
+import { type ChatEvent, type ChatHandle } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   CHAT_REPLAY_LIMIT,
   MAX_UI_SESSIONS,

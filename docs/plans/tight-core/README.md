@@ -554,7 +554,7 @@ read the artifact back first.
     - 4 unused registry members;
     - `runtime.ts`;
     - `ZiggyAgentLive`.
-  - [ ] Make the optional test-seam members required; move `makeChatHandle` to `test/harness/`.
+  - [x] Make the optional test-seam members required; move `makeChatHandle` to `test/harness/`.
 - [ ] **2. `platform/` and the rules.**
   - Add `paths.ts`, `file-lock.ts` and `atomic-write.ts`.
   - Adopt them in memory, gateway-owner and the extension lock.

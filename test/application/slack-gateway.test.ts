@@ -7,7 +7,8 @@ import type { SlackInboundMessage } from "ziggy/adapters/slack/socket";
 import { ProviderCallError } from "ziggy/domain/agent";
 import type { SlackIngressRecord } from "ziggy/domain/slack-ingress";
 import { SlackHealthProjectionError, type SlackHealthSnapshot } from "ziggy/domain/slack-health";
-import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {
   classifySlackCommand,

@@ -38,7 +38,8 @@ import {
   type AutomationTargetOutcome,
 } from "ziggy/domain/automation";
 import type { ProfileTarget } from "ziggy/domain/profile";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
 import { makeChatRegistry } from "ziggy/application/chat-registry";

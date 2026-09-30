@@ -10,7 +10,6 @@ import type {
   SessionReference,
   ZiggyAgentError,
 } from "../domain/agent";
-import { ProviderConfigError } from "../domain/agent";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileTarget } from "../domain/profile";
 import type { ProfileAgentThinking } from "../domain/profile";
@@ -98,8 +97,8 @@ export interface ChatHandle {
   ) => Effect.Effect<ChatResumeResult, ZiggyAgentError | SessionReadFailed | SessionNotFound>;
   readonly isIdle: boolean;
   /** The current persisted Pi transcript identity, resolved at read time. */
-  readonly currentSession?: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
-  readonly appendAutomationResult?: (
+  readonly currentSession: Effect.Effect<SessionReference | undefined, ZiggyAgentError>;
+  readonly appendAutomationResult: (
     result: AutomationConversationResult,
   ) => Effect.Effect<boolean, AutomationConversationDeliveryFailed>;
   readonly prompt: (
@@ -112,32 +111,6 @@ export interface ChatHandle {
   readonly subscribe: (listener: (event: ChatEvent) => void) => () => void;
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
-
-const unsupportedLiveControl = (operation: string) =>
-  Effect.fail(
-    new ProviderConfigError({
-      profilePath: "",
-      operation,
-      message: "live session controls are unavailable on this handle",
-      cause: undefined,
-    }),
-  );
-
-export const makeChatHandle = (
-  methods: Pick<ChatHandle, "prompt"> & Partial<Omit<ChatHandle, "prompt">>,
-): ChatHandle => ({
-  isIdle: true,
-  modelState: unsupportedLiveControl("read model"),
-  setModel: () => unsupportedLiveControl("set model"),
-  setThinkingLevel: () => unsupportedLiveControl("set thinking"),
-  resume: () => unsupportedLiveControl("resume session"),
-  abort: Effect.void,
-  steer: () => Effect.void,
-  followUp: () => Effect.void,
-  subscribe: () => () => undefined,
-  dispose: Effect.void,
-  ...methods,
-});
 
 export interface ZiggyAgentApi {
   readonly runOnce: (

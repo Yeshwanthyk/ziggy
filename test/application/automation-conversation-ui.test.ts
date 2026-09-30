@@ -12,7 +12,8 @@ import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-resul
 import { makeUiPinStore } from "ziggy/adapters/fs/ui-state";
 import { listProfileSessions, showProfileSession } from "ziggy/adapters/pi/sessions";
 import { readSessionHistory } from "ziggy/adapters/pi/session-history";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import {

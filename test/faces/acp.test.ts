@@ -10,11 +10,11 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Deferred, Effect, Schema } from "effect";
 import {
-  makeChatHandle,
   type ChatHandle,
   type ChatPromptOptions,
   type ZiggyAgentApi,
 } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import type { ModelsApi } from "ziggy/application/models";
 import { makeAcpAgent } from "ziggy/faces/acp";
 
@@ -422,10 +422,11 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
 
 test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => {
   const faceUrl = new URL("../../src/faces/acp.ts", import.meta.url).href;
+  const handleUrl = new URL("../harness/chat-handle.ts", import.meta.url).href;
 
   const script = `
     import { Effect } from "effect";
-    import { makeChatHandle } from "ziggy/application/agent";
+    import { makeChatHandle } from ${JSON.stringify(handleUrl)};
     import { runAcp } from ${JSON.stringify(faceUrl)};
     const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
     const agent = {

@@ -819,10 +819,8 @@ export const makeLiveChatControls = (
 export const makeSessionChatHandle = (
   profilePath: string,
   liveSession: () => ChatSession,
-  methods: Pick<ChatHandle, "prompt" | "dispose"> &
-    Partial<
-      Pick<ChatHandle, "currentSession" | "modelState" | "setModel" | "setThinkingLevel" | "resume">
-    >,
+  methods: Pick<ChatHandle, "prompt" | "dispose" | "currentSession"> &
+    Partial<Pick<ChatHandle, "modelState" | "setModel" | "setThinkingLevel" | "resume">>,
   abortSession: () => Promise<void> = sharePiAbort(() => liveSession().abort()),
   voiceHub?: SpecialistVoiceHub,
   lease?: SessionLeaseTransitions,
@@ -852,9 +850,6 @@ export const makeSessionChatHandle = (
 
           for (const listener of listeners) listener(event);
         });
-
-  const currentSession =
-    methods.currentSession === undefined ? {} : { currentSession: methods.currentSession };
 
   let automationAppendPoisoned = false;
 
@@ -929,7 +924,7 @@ export const makeSessionChatHandle = (
           providerError(profilePath, "resume session", new Error("session controls unavailable")),
         )),
     prompt: (text, options) => whileNotSwitching(() => methods.prompt(text, options)),
-    ...currentSession,
+    currentSession: methods.currentSession,
     appendAutomationResult: (result) =>
       Effect.gen(function* () {
         if (lease !== undefined && !lease.owns(result.targetSessionId)) {

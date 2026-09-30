@@ -26,7 +26,8 @@ import {
 } from "ziggy/domain/automation";
 import { makeChatRegistry } from "ziggy/application/chat-registry";
 import type { ProfileTarget } from "ziggy/domain/profile";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   type AutomationCapabilities,
   type AutomationsApi,
