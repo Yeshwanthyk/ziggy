@@ -1,11 +1,7 @@
 import { join } from "node:path";
 import { Context, Effect, Layer, Schema, type Result } from "effect";
 import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../catalog";
-import {
-  ExtensionArchiveClient,
-  type ExtensionArchiveClientApi,
-} from "../adapters/github/extension-catalog";
-import { makeExtensionInstaller } from "../adapters/fs/extension-installer";
+import { installBundledPackage } from "../adapters/fs/extension-installer";
 import {
   classifyBundledCopy,
   hasPendingExtensionUpdates,
@@ -63,12 +59,11 @@ export const refreshRequiredExtensions = (
   );
 
 export const makeExtensionUpdate = (
-  archiveClient: ExtensionArchiveClientApi,
   profiles: Pick<ProfileExtensionsApi, "validate">,
   lock: ProfileExtensionMutationLockApi,
   options: {
     readonly catalog?: ExtensionCatalog;
-    readonly stage?: ReturnType<typeof makeExtensionInstaller>["installBundled"];
+    readonly stage?: typeof installBundledPackage;
     readonly fence?: typeof withProfileUpdateLock;
     readonly pending?: typeof hasPendingExtensionUpdates;
     readonly inspectOwner?: typeof inspectGatewayOwner;
@@ -83,7 +78,7 @@ export const makeExtensionUpdate = (
   } = {},
 ) => {
   const catalog = options.catalog ?? BUILTIN_EXTENSION_CATALOG;
-  const stage = options.stage ?? makeExtensionInstaller(archiveClient).installBundled;
+  const stage = options.stage ?? installBundledPackage;
   const fence = options.fence ?? withProfileUpdateLock;
   const pendingUpdates = options.pending ?? hasPendingExtensionUpdates;
   const inspectOwner = options.inspectOwner ?? inspectGatewayOwner;
@@ -363,11 +358,8 @@ export class ExtensionUpdate extends Context.Service<
 export const ExtensionUpdateLive = Layer.effect(
   ExtensionUpdate,
   Effect.gen(function* () {
-    return makeExtensionUpdate(
-      yield* ExtensionArchiveClient,
-      yield* ProfileExtensions,
-      yield* ProfileExtensionMutationLock,
-      { resident: yield* ResidentService },
-    );
+    return makeExtensionUpdate(yield* ProfileExtensions, yield* ProfileExtensionMutationLock, {
+      resident: yield* ResidentService,
+    });
   }),
 );

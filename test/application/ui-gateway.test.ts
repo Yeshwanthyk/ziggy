@@ -1697,10 +1697,10 @@ test("UI gateway maps extension failures to bounded typed details without filesy
       Effect.fail(
         new ExtensionCatalogInstallFailed({
           id: "weather",
-          path: "/secret/catalog.tar.gz",
-          reason: "download",
+          path: "/secret/extensions/weather",
+          reason: "filesystem",
           message: "m".repeat(400),
-          cause: "catalog download failed",
+          cause: "catalog install failed",
         }),
       ),
     validate: () =>
@@ -1739,7 +1739,7 @@ test("UI gateway maps extension failures to bounded typed details without filesy
   );
   expect(responses[0]).toMatchObject({
     ok: false,
-    error: { code: "internal", details: { operation: "add", stage: "download" } },
+    error: { code: "internal", details: { operation: "add", stage: "filesystem" } },
   });
   expect(responses[1]).toMatchObject({
     ok: false,

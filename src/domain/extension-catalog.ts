@@ -4,10 +4,6 @@ const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]
 
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
 
-const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
-
-const Commit = Schema.String.check(Schema.isPattern(/^[a-f0-9]{7,64}$/));
-
 const CatalogEntryFields = {
   id: ExtensionId,
   version: NonEmpty,
@@ -19,25 +15,9 @@ export const BundledExtensionCatalogEntry = Schema.Struct({
   path: Schema.String.check(Schema.isPattern(/^\.\/extensions\/[a-z0-9-]+$/)),
 });
 
-export const GitHubExtensionCatalogEntry = Schema.Struct({
-  ...CatalogEntryFields,
-  description: NonEmpty,
-  source: Schema.Literal("github"),
-  repository: Schema.String.check(Schema.isPattern(/^[^/\\s]+\/[^/\\s]+$/)),
-  commit: Commit,
-  path: Schema.String.check(Schema.isPattern(/^\.\/extensions\/[a-z0-9-]+$/)),
-  archiveUrl: Schema.String.check(Schema.isPattern(/^https:\/\//)),
-  archiveSha256: Sha256,
-});
-
-export const ExtensionCatalogEntry = Schema.Union([
-  BundledExtensionCatalogEntry,
-  GitHubExtensionCatalogEntry,
-]);
-
 export const ExtensionCatalog = Schema.Struct({
   version: Schema.Literal(1),
-  extensions: Schema.Array(ExtensionCatalogEntry),
+  extensions: Schema.Array(BundledExtensionCatalogEntry),
 }).check(
   Schema.makeFilter(
     (value) =>
@@ -47,11 +27,7 @@ export const ExtensionCatalog = Schema.Struct({
   ),
 );
 
-export type ExtensionCatalogEntry = typeof ExtensionCatalogEntry.Type;
-
 export type BundledExtensionCatalogEntry = typeof BundledExtensionCatalogEntry.Type;
-
-export type GitHubExtensionCatalogEntry = typeof GitHubExtensionCatalogEntry.Type;
 
 export type ExtensionCatalog = typeof ExtensionCatalog.Type;
 
@@ -64,21 +40,12 @@ export class ExtensionCatalogInvalid extends Schema.TaggedErrorClass<ExtensionCa
   },
 ) {}
 
-export class ExtensionCatalogUnavailable extends Schema.TaggedErrorClass<ExtensionCatalogUnavailable>()(
-  "ExtensionCatalogUnavailable",
-  {
-    operation: Schema.String,
-    message: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {}
-
 export class ExtensionCatalogInstallFailed extends Schema.TaggedErrorClass<ExtensionCatalogInstallFailed>()(
   "ExtensionCatalogInstallFailed",
   {
     id: ExtensionId,
     path: Schema.String,
-    reason: Schema.Literals(["download", "checksum", "archive", "validation", "filesystem"]),
+    reason: Schema.Literals(["validation", "filesystem"]),
     message: Schema.String,
     cause: Schema.Defect(),
   },

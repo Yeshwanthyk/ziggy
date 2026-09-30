@@ -11,14 +11,12 @@ import {
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Predicate, Result } from "effect";
-import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { discoverPiResources } from "ziggy/adapters/pi/resources";
 import { makeProfileExtensions } from "ziggy/application/profile-extensions";
 import type {
   ProfileExtensionMutationLockApi,
   ProfileExtensionPreflightApi,
 } from "ziggy/domain/profile-extension";
-import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { bundledFilePath } from "ziggy/generated/builtin-files";
 import { BUILTIN_PACKAGE_METADATA, REQUIRED_BUNDLED_EXTENSION_IDS } from "ziggy/catalog";
 
@@ -84,17 +82,6 @@ const requiredSkillPaths = [
   requiredSkill("extensions/ziggy-operations/skills/ziggy-operations/SKILL.md"),
 ];
 
-const noDownload: ExtensionArchiveClientApi = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "test download",
-        message: "bundled catalogue entry must not use the network",
-        cause: undefined,
-      }),
-    ),
-};
-
 const noPreflight: ProfileExtensionPreflightApi = {
   preflight: () =>
     Effect.succeed({ extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 }),
@@ -104,7 +91,7 @@ const noLock: ProfileExtensionMutationLockApi = {
   withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
 };
 
-const profileExtensions = makeProfileExtensions(noDownload, noPreflight, noLock);
+const profileExtensions = makeProfileExtensions(noPreflight, noLock);
 
 const resolveResources = (profilePath: string) =>
   Effect.runPromise(discoverPiResources(profilePath));

@@ -13,7 +13,6 @@ import {
   removeAutomationDefinition,
   resumeAutomationDefinition,
 } from "ziggy/adapters/fs/automation-files";
-import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { makeProfileExtensionMutationLock } from "ziggy/adapters/bun/profile-extension-lock";
 import {
   extensionSelectionGeneration,
@@ -30,7 +29,6 @@ import {
   type ProfileExtensionAutomationOperations,
 } from "ziggy/application/profile-extensions";
 import { AutomationFileSystemError } from "ziggy/domain/automation";
-import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import {
   ProfileExtensionPreflightFailed,
   ProfileExtensionRollbackFailed,
@@ -47,17 +45,6 @@ const preflightCounts = {
   extensionPathCount: 0,
   skillPathCount: 0,
   extensionFactoryCount: 0,
-};
-
-const noDownload: ExtensionArchiveClientApi = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "test download",
-        message: "bundled catalogue entry must not use the network",
-        cause: undefined,
-      }),
-    ),
 };
 
 const noPreflight: ProfileExtensionPreflightApi = {
@@ -212,8 +199,7 @@ const makeService = (
   preflight: ProfileExtensionPreflightApi = noPreflight,
   lock: ProfileExtensionMutationLockApi = noLock,
   automation?: ProfileExtensionAutomationOperations,
-): ProfileExtensionsApi =>
-  makeProfileExtensions(noDownload, preflight, lock, undefined, undefined, automation);
+): ProfileExtensionsApi => makeProfileExtensions(preflight, lock, undefined, automation);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

@@ -1,9 +1,5 @@
 import { Context, Effect, Schema } from "effect";
-import type {
-  ExtensionCatalogInstallFailed,
-  ExtensionCatalogInvalid,
-  ExtensionCatalogUnavailable,
-} from "./extension-catalog";
+import type { ExtensionCatalogInstallFailed, ExtensionCatalogInvalid } from "./extension-catalog";
 import type { ProfileExtensionInvalid, ProfileFileSystemError, ProfileTarget } from "./profile";
 
 export const ProfileExtensionId = Schema.String.check(
@@ -126,7 +122,6 @@ export type ProfileExtensionError =
   | ProfileExtensionInvalid
   | ProfileFileSystemError
   | ExtensionCatalogInvalid
-  | ExtensionCatalogUnavailable
   | ExtensionCatalogInstallFailed
   | ProfileExtensionPreflightFailed
   | ProfileExtensionLockFailed

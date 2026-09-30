@@ -10,7 +10,6 @@ import {
   ExtensionCatalog,
   ExtensionCatalogInstallFailed,
   ExtensionCatalogInvalid,
-  type GitHubExtensionCatalogEntry,
 } from "../domain/extension-catalog";
 import {
   ProfileExtensionId,
@@ -35,14 +34,7 @@ import {
   ProfileFileSystemError,
   type ProfileTarget,
 } from "../domain/profile";
-import {
-  ExtensionArchiveClient,
-  type ExtensionArchiveClientApi,
-} from "../adapters/github/extension-catalog";
-import {
-  makeExtensionInstaller,
-  type ExtensionArchiveExtractor,
-} from "../adapters/fs/extension-installer";
+import { installBundledPackage } from "../adapters/fs/extension-installer";
 import {
   readExtensionPackage,
   readExtensionSelection,
@@ -184,16 +176,6 @@ const bundledListing = (
     extensionPaths: [...metadata.executables],
   });
 };
-
-const remoteListing = (entry: GitHubExtensionCatalogEntry): ProfileExtensionCatalogListing => ({
-  id: entry.id,
-  version: entry.version,
-  description: entry.description,
-  kind: "remote",
-  required: false,
-  source: "remote-approved",
-  installed: false,
-});
 
 const selectionInvalid = (profilePath: string, message: string, cause?: unknown) =>
   new ProfileExtensionInvalid({
@@ -619,22 +601,15 @@ const provisionOwnedAutomations = (
 };
 
 export const makeProfileExtensions = (
-  archiveClient: ExtensionArchiveClientApi,
   preflight: ProfileExtensionPreflightApi,
   lock: ProfileExtensionMutationLockApi,
   catalog: ExtensionCatalog = BUILTIN_EXTENSION_CATALOG,
-  extractor?: ExtensionArchiveExtractor,
   automation: ProfileExtensionAutomationOperations = liveAutomationOperations,
 ): ProfileExtensionsApi => {
-  const installer = makeExtensionInstaller(archiveClient, extractor);
   const entryFor = (id: string) => catalog.extensions.find((entry) => entry.id === id);
 
   const list = () =>
-    Effect.forEach(catalog.extensions, (entry) =>
-      entry.source === "bundled"
-        ? bundledListing(entry.id, entry.version)
-        : Effect.succeed(remoteListing(entry)),
-    ).pipe(
+    Effect.forEach(catalog.extensions, (entry) => bundledListing(entry.id, entry.version)).pipe(
       Effect.map((items) => [...items].sort((left, right) => left.id.localeCompare(right.id))),
     );
 
@@ -696,11 +671,7 @@ export const makeProfileExtensions = (
         });
       }
 
-      if (entry.source === "github") {
-        yield* installer.installGitHub(profilePath, entry);
-      } else {
-        yield* installer.installBundled(profilePath, entry);
-      }
+      yield* installBundledPackage(profilePath, entry);
 
       if (REQUIRED_BUNDLED_EXTENSION_IDS.has(id)) {
         const store = makeExtensionUpdateStore(profilePath, id);
@@ -1264,7 +1235,6 @@ export const ProfileExtensionsLive = Layer.effect(
   ProfileExtensions,
   Effect.gen(function* () {
     return makeProfileExtensions(
-      yield* ExtensionArchiveClient,
       yield* ProfileExtensionPreflight,
       yield* ProfileExtensionMutationLock,
     );

@@ -8,14 +8,12 @@ import * as path from "node:path";
 import { Effect } from "effect";
 import { expect, test } from "bun:test";
 import type { AuthApi } from "ziggy/application/auth";
-import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { makeProfileExtensionPreflight } from "ziggy/adapters/pi/profile-extension-preflight";
 import { makeProfileExtensions } from "ziggy/application/profile-extensions";
 import { makeDoctor } from "ziggy/application/doctor";
 import { makeDoctorChecks } from "ziggy/adapters/pi/doctor-checks";
 import type { ModelsApi } from "ziggy/application/models";
 import { renderDoctor } from "ziggy/faces/doctor-cli";
-import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import type {
   ProfileExtensionMutationLockApi,
   ProfileExtensionsApi,
@@ -123,17 +121,6 @@ const profileExtensions: ProfileExtensionsApi = {
   activateRuntime: () => Effect.die("unused"),
 };
 
-const noDownload: ExtensionArchiveClientApi = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "doctor test download",
-        message: "doctor read-only proof must not download",
-        cause: undefined,
-      }),
-    ),
-};
-
 const noLock: ProfileExtensionMutationLockApi = {
   withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
 };
@@ -225,7 +212,7 @@ test("doctor uses the ProfileExtensions service without publishing or activating
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     const before = await tree(profilePath);
-    const service = makeProfileExtensions(noDownload, makeProfileExtensionPreflight(), noLock);
+    const service = makeProfileExtensions(makeProfileExtensionPreflight(), noLock);
 
     const report = await Effect.runPromise(
       makeDoctor(

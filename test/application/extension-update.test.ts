@@ -11,10 +11,7 @@ import {
   makeExtensionUpdateStore,
   recoverExtensionUpdates,
 } from "ziggy/adapters/fs/extension-update";
-import {
-  ExtensionCatalogInstallFailed,
-  ExtensionCatalogUnavailable,
-} from "ziggy/domain/extension-catalog";
+import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
 import { ProfileExtensionInvalid } from "ziggy/domain/profile";
 import { ResidentServiceError } from "ziggy/domain/resident-service";
 import type {
@@ -33,17 +30,6 @@ afterEach(async () => {
 const lock: ProfileExtensionMutationLockApi = { withLock: (_path, use) => use };
 
 const counts = { extensionPathCount: 1, skillPathCount: 0, extensionFactoryCount: 1 };
-
-const archive = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "download",
-        message: "Unexpected download",
-        cause: undefined,
-      }),
-    ),
-};
 
 const fixture = async (residentRunning = false, pendingJournal = false) => {
   const root = await mkdtemp(join(tmpdir(), "ziggy-extension-update-"));
@@ -90,7 +76,7 @@ const fixture = async (residentRunning = false, pendingJournal = false) => {
 
   const target = { name: "profile", path: profile };
 
-  const service = makeExtensionUpdate(archive, profiles, lock, {
+  const service = makeExtensionUpdate(profiles, lock, {
     pending: pendingJournal
       ? () =>
           Effect.promise(() =>

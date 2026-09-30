@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { Value } from "typebox/value";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
-import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
 import { makeProfileExtensionMutationLock } from "ziggy/adapters/bun/profile-extension-lock";
 import { makeProfileExtensions } from "ziggy/application/profile-extensions";
 import { makeProfileExtensionPreflight } from "ziggy/adapters/pi/profile-extension-preflight";
@@ -16,7 +15,6 @@ import {
   type ProfileExtensionToolDetails,
   type ProfileExtensionsAction,
 } from "ziggy/adapters/pi/profile-extension-tool";
-import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
 import { ProfileExtensionInvalid, type ProfileTarget } from "ziggy/domain/profile";
 import {
   ProfileExtensionPreflightFailed,
@@ -120,17 +118,6 @@ const makeStub = (calls: Array<ReadonlyArray<unknown>>): ProfileExtensionsApi =>
     prepareRuntime: unused,
     activateRuntime: unused,
   };
-};
-
-const noDownload: ExtensionArchiveClientApi = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "test download",
-        message: "the tool fixture must not use a network source",
-        cause: undefined,
-      }),
-    ),
 };
 
 afterEach(async () => {
@@ -301,7 +288,6 @@ describe("profile_extensions real service boundary", () => {
     await writeShelfPackage(fixture.profilePath, "local");
 
     const service = makeProfileExtensions(
-      noDownload,
       makeProfileExtensionPreflight(),
       makeProfileExtensionMutationLock(),
     );

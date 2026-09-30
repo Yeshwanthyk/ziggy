@@ -475,8 +475,6 @@ const failureProjection = (failure: ProfileExtensionError): FailureProjection =>
         source: failure.source,
         selectionChanged: false,
       };
-    case "ExtensionCatalogUnavailable":
-      return { stage: "catalog", code: "catalog_unavailable", selectionChanged: false };
     case "ExtensionCatalogInstallFailed":
       return {
         stage: failure.reason,

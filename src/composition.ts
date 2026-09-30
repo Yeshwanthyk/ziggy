@@ -4,7 +4,6 @@ import { ResidentServiceOperationsLive } from "./adapters/bun/resident-service-o
 import { ZiggyPathsLive } from "./adapters/bun/ziggy-paths";
 import { MemoryFilesLive } from "./adapters/fs/memory-files";
 import { ProfileStoreLive } from "./adapters/fs/profile-store";
-import { ExtensionArchiveClientLive } from "./adapters/github/extension-catalog";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
 import { makePiAgent } from "./adapters/pi/pi-agent";
@@ -39,13 +38,7 @@ import { TerminalStyle } from "./faces/terminal-ui";
 // named once and shared by reference, so Effect builds each service once per program.
 
 const ProfileExtensionsLayer = ProfileExtensionsLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      ExtensionArchiveClientLive,
-      ProfileExtensionPreflightLive,
-      ProfileExtensionMutationLockLive,
-    ),
-  ),
+  Layer.provide(Layer.mergeAll(ProfileExtensionPreflightLive, ProfileExtensionMutationLockLive)),
 );
 
 /** The agent every face and gateway talks to, backed by the Pi SDK adapter. */
@@ -109,12 +102,7 @@ const ResidentServiceLayer = ResidentServiceLive.pipe(
 
 const ExtensionUpdateLayer = ExtensionUpdateLive.pipe(
   Layer.provide(
-    Layer.mergeAll(
-      ExtensionArchiveClientLive,
-      ProfileExtensionsLayer,
-      ProfileExtensionMutationLockLive,
-      ResidentServiceLayer,
-    ),
+    Layer.mergeAll(ProfileExtensionsLayer, ProfileExtensionMutationLockLive, ResidentServiceLayer),
   ),
 );
 

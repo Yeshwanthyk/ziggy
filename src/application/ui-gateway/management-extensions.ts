@@ -58,7 +58,7 @@ const extensionFailure = (
           ? "lock"
           : tag === "ProfileExtensionRollbackFailed"
             ? "rollback"
-            : tag === "ExtensionCatalogInvalid" || tag === "ExtensionCatalogUnavailable"
+            : tag === "ExtensionCatalogInvalid"
               ? "catalog"
               : tag === "ProfileFileSystemError" || tag === "ProfileExtensionInvalid"
                 ? "filesystem"
