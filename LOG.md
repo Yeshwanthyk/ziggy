@@ -1247,3 +1247,13 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `ziggy auth <profile> openai --type oauth` now works. Pi 0.99's Sign in with ChatGPT needs `LoginOptions.getDeviceId`, and without it the login failed before any network call. `src/adapters/pi/auth.ts` passes Pi's own `SettingsManager.getOrCreateDeviceId()` for the Profile, so each Profile keeps a stable UUID in its `settings.json`, created on first login.
 - `openai-codex` (Pi's "legacy" provider) is left available, not hidden; new Profiles should use `openai`.
 - Verification: `bun run check` passed. The rebuilt dev binary, run against a scratch Profile, printed the `auth.openai.com` authorize URL with `ext_agent_host_id=urn:uuid:<id>` and the ChatGPT token scopes, and wrote the ID to `settings.json`. The browser consent and a live model turn were not completed.
+
+## Effect composition plan and live Effect diagnostics
+
+- New plan `docs/plans/effect-composition.md`, from the kvim review of `src/main.ts`. It covers:
+  - why the file grew: services don't own their wiring, one layer is built for every command, host state is read at module scope, exit codes bypass the error channel, and command logic lives in the entrypoint;
+  - the target shape: a composition root, per-area handlers, `Match.valueTags` dispatch, and per-command layers;
+  - five slices, and the lint and skill guardrails.
+- The `@effect/tsgo` patch was not applied, so `bun run check` had been running plain `tsc` without any Effect diagnostics. A `postinstall` now runs `effect-tsgo patch`. The two diagnostics it raised as errors (`missingReturnYieldStar` in the Slack gateway and extension lock tests) are fixed.
+- 53 warnings and 105 suggestions remain and are not yet enforced (`ignoreEffectWarningsInTscExitCode`). The plan ratchets them.
+- Verification: `bun run check` and `bun run test` (812 pass) passed with the patch applied.

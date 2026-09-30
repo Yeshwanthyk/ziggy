@@ -292,7 +292,8 @@ describe("Profile extension mutation lock", () => {
         profilePath,
         Effect.gen(function* () {
           yield* Deferred.succeed(entered, undefined);
-          yield* Effect.never;
+
+          return yield* Effect.never;
         }),
       ),
     );

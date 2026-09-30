@@ -1335,7 +1335,8 @@ describe("Slack gateway boundary", () => {
 
               if (text === "This conversation is busy. Please try again later.") {
                 yield* Deferred.succeed(busy, undefined);
-                yield* Effect.never;
+
+                return yield* Effect.never;
               }
 
               return { ts: "placeholder" };

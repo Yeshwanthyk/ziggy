@@ -2,6 +2,7 @@
 
 Completed and superseded plans are removed; use Git history to read them.
 
+- [Effect composition](effect-composition.md): thin `main.ts`, composition root, per-area CLI handlers, and the lint/skill guardrails from the 2026-09-29 main.ts review.
 - [Core review](core-review.md): section-by-section tightening pass from the 2026-09-28 core review; the status line per section tracks progress.
 - [UI capabilities](ui-capabilities-squarey-web.md): reconcile the original scope with the current web client, add UI authoring guidance, and define a full acceptance sweep. Its original worktree/status section is historical, not current status.
 - [Proactive curator](proactive-curator.md): pending/reviewed state, foreground eligibility, adoption, scheduling, and empty-reply handling remain unfinished.

@@ -11,6 +11,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
+    "postinstall": "effect-tsgo patch",
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p clients/web/tsconfig.json",
     "lint": "oxlint src test extensions tooling",
