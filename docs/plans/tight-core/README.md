@@ -527,7 +527,7 @@ Each proof is a behaviour that must hold throughout, and each step lands its pro
 - Unit tests for removed machinery are deleted in the same commit.
 - A proof only changes when intended behaviour changes, and that change gets its own LOG entry.
 
-**Time budget:** measure it after the first step. The target is e2e at 10 s or less and the whole suite at 15 s or less (18.2 s today).
+**Time budget:** e2e at 10 s or less, the whole suite at 15 s or less. After step 0, with `bun test --parallel`: e2e about 7 s, the whole suite about 13 s.
 
 ---
 
@@ -535,13 +535,14 @@ Each proof is a behaviour that must hold throughout, and each step lands its pro
 
 We build piece by piece: core first, then what sits on it. Every step runs end to end and leaves faces working.
 
-- [ ] **0. Harness and proofs** against today's code. Mark the two known bugs red.
+- [x] **0. Harness and proofs** against today's code. Mark the two known bugs red.
 - [ ] **1. Free fixes and deletions.** Each is its own commit:
   - [ ] Profile `list` stops writing the registry.
   - [ ] ACP `set_model` actually applies.
   - [ ] `agent_run` output is bounded and no longer duplicated.
   - [ ] Children refuse `profile_extensions` (a guard until step 6).
   - [ ] A live delivery into a switched session retries or falls back to the stored append.
+  - [ ] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
   - [ ] Session stats count Pi's `usage` entries and drop the `toolCall` branch.
   - [ ] Delete dead code:
     - the GitHub catalog and tar extractor;

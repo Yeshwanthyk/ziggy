@@ -1327,3 +1327,33 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - Verification:
   - `bun run check` and `bun run test` (812 pass) passed.
   - Smoke-tested from a scratch `ZIGGY_HOME`: `memory list` and `sessions list` on a fresh Profile both exit 0.
+
+## Tight core, step 0: harness and end-to-end proofs
+
+- `test/harness/` drives the real product from outside:
+  - a scripted OpenAI-compatible SSE model server (`provider.ts`: text, tool calls, failures, a turn held open by a gate);
+  - scratch Profiles in a tmp `ZIGGY_HOME` with `HOME` split from it, plus `treeHash` for "nothing changed";
+  - the real `bun src/main.ts` (`cli.ts`), a real `ziggy serve` driven through `packages/ui-sdk` (`resident.ts`), Pi transcript reading (`transcript.ts`);
+  - `sandbox.ts` for driving by hand.
+- `test/e2e/` proves run, profiles, models, sessions, web sessions (reconnect mid-turn, shared main), single writer, `agent_run`, memory (next turn, group scope, cap), automation delivery (stored with and without a resident, live idle, live busy) and ACP.
+- Red proofs (`test.failing`) mark the known bugs step 1 fixes:
+  - `profiles` rewrites `profiles.list`;
+  - ACP `session/set_model` is ignored;
+  - `agent_run` returns an unbounded result;
+  - an agent declaring an unknown tool or `profile_extensions` is only noticed at call time.
+- `.agents/skills/verify-ziggy/` plus `features/` map every user flow to its recipe and proof, and record what is uncovered. "One automation run delivered twice gives one receipt" is unreachable end to end, because nothing re-sends a run.
+- Lint: `test/harness/` and `test/e2e/` count as adapter code (they own processes, sockets and Promises).
+- An independent verifier reviewed the harness. It confirmed every red proof fails on its intended assertion and caught leaks: a failed proof left `ziggy serve` or `ziggy acp` running. Fixed:
+  - `stopResidents()` runs in `afterEach`, a resident that never comes up is killed, CLI children are killed at 4.5 s, and ACP closes in `finally`;
+  - `eventually` treats `false` as "not yet";
+  - the mid-turn reconnect now rewatches before the turn ends;
+  - single writer also proves no model call and an unchanged transcript;
+  - the cap proof seeds `MEMORY.md`;
+  - `wake` forwarding to a running resident is proven.
+- Found while doing so: Effect's `Cron.next` throws for a cron that parses but never fires (`0 0 31 2 *`), and the scheduler calls it unguarded, so one such automation file keeps `serve` from starting. Recorded as a red proof and added to step 1.
+- `bun run test` now runs files with `--parallel`; `bun run test:e2e` runs only the proofs.
+- Verification:
+  - `bun run check` passed.
+  - `bun run test` gave 836 pass in about 13 s (budget 15 s); e2e alone is about 7 s (budget 10 s).
+  - A deliberately failing proof with a resident up leaves no `serve` process.
+  - The sandbox recipe was followed by hand: doctor all OK, `run` printed `ok`, and one request was logged.

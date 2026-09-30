@@ -2,6 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "test/**/*.test.ts",
+    "test/harness/sandbox.ts",
     "extensions/*/index.ts",
     "extensions/*/bin/**/*.{ts,mjs}",
     "extensions/*/test/**/*.test.ts",

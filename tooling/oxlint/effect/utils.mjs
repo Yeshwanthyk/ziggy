@@ -22,10 +22,16 @@ export function isDeclarationFile(filename) {
   return toRepoRelative(filename).endsWith(".d.ts");
 }
 
+/** End-to-end proofs and their harness drive real processes and sockets from outside, so they sit at the adapter boundary too. */
 export function isAdapterFile(filename) {
   const normalized = toRepoRelative(filename);
 
-  return normalized.startsWith("src/adapters/") || normalized.startsWith("test/adapters/");
+  return (
+    normalized.startsWith("src/adapters/") ||
+    normalized.startsWith("test/adapters/") ||
+    normalized.startsWith("test/harness/") ||
+    normalized.startsWith("test/e2e/")
+  );
 }
 
 export function unwrapExpression(node) {
