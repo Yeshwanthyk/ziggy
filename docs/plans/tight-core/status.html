@@ -1,0 +1,335 @@
+<title>Ziggy Tight Core</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:wght@400;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single reading column; summary strip, then "resume here", then the work order as a
+   vertical track, then proofs grouped by feature, then commits. Status is carried by chips. */
+:root {
+  --bg: #f5f6f4;
+  --panel: #ffffff;
+  --ink: #1d2320;
+  --muted: #5e6862;
+  --line: #d9ded9;
+  --accent: #2f6f5e;
+  --accent-soft: #dcebe5;
+  --ok: #2c7a4b;
+  --ok-soft: #dff1e5;
+  --bad: #b3412f;
+  --bad-soft: #f7e1dc;
+  --warn: #8a6415;
+  --warn-soft: #f4ead3;
+  --todo: #7b8580;
+  --todo-soft: #eceeec;
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131715; --panel: #1b201e; --ink: #e6ebe8; --muted: #9aa59f; --line: #2d3531;
+    --accent: #7cc4ad; --accent-soft: #20352f; --ok: #6fcf94; --ok-soft: #1c3226;
+    --bad: #f08c78; --bad-soft: #3a211c; --warn: #e2b95c; --warn-soft: #362c17;
+    --todo: #8c9690; --todo-soft: #242a27; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131715; --panel: #1b201e; --ink: #e6ebe8; --muted: #9aa59f; --line: #2d3531;
+  --accent: #7cc4ad; --accent-soft: #20352f; --ok: #6fcf94; --ok-soft: #1c3226;
+  --bad: #f08c78; --bad-soft: #3a211c; --warn: #e2b95c; --warn-soft: #362c17;
+  --todo: #8c9690; --todo-soft: #242a27; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--body); padding-inline: 16px; padding-block: 28px 64px; }
+main { max-width: 880px; margin: 0 auto; display: grid; gap: 36px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 5vw, 40px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 21px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 500; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.eyebrow { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 14px; }
+.summary { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: baseline; }
+.summary b { font-family: var(--display); font-size: 22px; font-variant-numeric: tabular-nums; }
+.bar { height: 8px; border-radius: 4px; background: var(--todo-soft); overflow: hidden; display: flex; }
+.bar span { display: block; height: 100%; }
+.resume { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 18px 20px; display: grid; gap: 12px; }
+.resume ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+pre { margin: 0; background: var(--todo-soft); border-radius: 4px; padding: 10px 12px; overflow-x: auto; font: 400 13px/1.5 var(--mono); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; white-space: nowrap; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip.done, .chip.green { color: var(--ok); background: var(--ok-soft); }
+.chip.active { color: var(--warn); background: var(--warn-soft); }
+.chip.todo, .chip.uncovered { color: var(--todo); background: var(--todo-soft); }
+.chip.red { color: var(--bad); background: var(--bad-soft); }
+.track { display: grid; gap: 0; }
+.step { display: grid; grid-template-columns: 28px 1fr; gap: 14px; }
+.rail { display: flex; flex-direction: column; align-items: center; }
+.dot { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--todo); background: var(--bg); margin-top: 4px; flex: none; }
+.step.done .dot { background: var(--ok); border-color: var(--ok); }
+.step.active .dot { border-color: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+.rail::after { content: ""; flex: 1; width: 2px; background: var(--line); margin-block: 4px; }
+.step:last-child .rail::after { display: none; }
+.step-body { padding-bottom: 22px; min-width: 0; display: grid; gap: 8px; }
+.step-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.items li { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: baseline; }
+.items li .box { font-family: var(--mono); color: var(--todo); }
+.items li.done .box { color: var(--ok); }
+.items li.active .box { color: var(--warn); }
+.items li.done .text { color: var(--muted); }
+.items .sha { font: 400 12px var(--mono); color: var(--muted); }
+.features { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 14px; }
+.feature { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.feature-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.feature ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.feature li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline; }
+.feature li .note { display: block; font-size: 13px; color: var(--muted); }
+.uncovered-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.uncovered-list span { font-size: 13px; padding: 4px 10px; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); }
+.commits { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.commits li { display: grid; grid-template-columns: 76px 1fr; gap: 12px; }
+.decision { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; }
+section { display: grid; gap: 14px; }
+@media (max-width: 520px) { .items li { grid-template-columns: 18px 1fr; } .items .sha { grid-column: 2; } }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Ziggy · work order in docs/plans/tight-core/README.md</span>
+    <h1>Tight core rebuild</h1>
+    <div class="summary" id="summary"></div>
+    <div class="bar" id="bar" aria-hidden="true"></div>
+    <p class="muted" id="updated"></p>
+  </header>
+
+  <section class="resume" id="resume"></section>
+
+  <section>
+    <h2>Work order</h2>
+    <div class="track" id="track"></div>
+  </section>
+
+  <section>
+    <h2>End-to-end proofs</h2>
+    <p class="muted">Every proof drives the real <code>ziggy</code> binary against a scratch Profile and a fake model server. Green passes. Red is a <code>test.failing</code> proof of a known bug; it flips green when the fix lands.</p>
+    <div class="features" id="features"></div>
+    <h3>Not covered yet</h3>
+    <div class="uncovered-list" id="uncovered"></div>
+  </section>
+
+  <section>
+    <h2>Decisions</h2>
+    <div id="decisions" style="display:grid;gap:10px"></div>
+  </section>
+
+  <section>
+    <h2>Commits</h2>
+    <ul class="commits" id="commits"></ul>
+  </section>
+</main>
+
+<script>
+// The only part to edit when progress changes.
+const STATUS = {
+  updated: "2026-09-30 · step 1 in progress",
+  suite: "bun run test: 836 pass in ~13 s · bun run test:e2e: 24 proofs in ~7 s",
+  next: {
+    step: "Step 1 · Free fixes and deletions",
+    item: "ACP set_model actually applies (src/faces/acp.ts sets session.modelOverride, which nothing reads)",
+    read: [
+      "docs/plans/tight-core/README.md (§8 work order)",
+      "LOG.md (last entry)",
+      ".agents/skills/verify-ziggy/SKILL.md and features/",
+    ],
+    loop: "Fix → flip the red proof to test → bun run check → bun run test → tick the plan, the feature recipe and this page → LOG.md → commit",
+  },
+  steps: [
+    { n: 0, title: "Harness and proofs", state: "done", items: [
+      { text: "End-to-end harness, 24 proofs, verify-ziggy skill", state: "done", sha: "2f3b4786" },
+    ]},
+    { n: 1, title: "Free fixes and deletions", state: "active", items: [
+      { text: "Profile list stops writing the registry", state: "done", sha: "25531d0b" },
+      { text: "The scheduler survives a cron that never fires", state: "done", sha: "dc7bd430" },
+      { text: "ACP set_model actually applies", state: "active" },
+      { text: "agent_run output is bounded and no longer duplicated", state: "todo" },
+      { text: "Children refuse profile_extensions and misspelled tools", state: "todo" },
+      { text: "A live delivery into a switched session retries or falls back (proof first)", state: "todo" },
+      { text: "Session stats count Pi's usage entries", state: "todo" },
+      { text: "Delete dead code: GitHub catalog, tar extractor, 4 registry members, runtime.ts, ZiggyAgentLive", state: "todo" },
+      { text: "Optional test-seam members become required; makeChatHandle moves to test/harness/", state: "todo" },
+    ]},
+    { n: 2, title: "platform/ and the rules", state: "todo", items: [
+      { text: "paths.ts, file-lock.ts, atomic-write.ts; adopt in memory, gateway-owner, extension lock", state: "todo" },
+      { text: "Folder-import and [Pi] import lint rules; update CLAUDE.md and Effect skills", state: "todo" },
+    ]},
+    { n: 3, title: "Core: profile/", state: "todo", items: [
+      { text: "Split domain/profile.ts, merge ProfileStore, move models and auth, new service syntax", state: "todo" },
+    ]},
+    { n: 4, title: "Core: session/", state: "todo", items: [
+      { text: "Runtime, handle, lease, agent and tools; OpenSession and the tool seam", state: "todo" },
+      { text: "Delete chat-runtime-binding.ts, runtime leases and locks, print-mode capture", state: "todo" },
+    ]},
+    { n: 5, title: "Core: session/store.ts", state: "todo", items: [
+      { text: "One streaming store; history cursor becomes index + id", state: "todo" },
+    ]},
+    { n: 6, title: "Core: extensions/", state: "todo", items: [
+      { text: "Selection, loader, required cache, update with recovery, smaller tool", state: "todo" },
+    ]},
+    { n: 7, title: "On the core", state: "todo", items: [
+      { text: "agents/: one policy function, tools through the seam", state: "todo" },
+      { text: "memory/: scope table, plain backups, tool through the seam", state: "todo" },
+      { text: "Delivery through gateway-owned targets (Slack, Discord, Telegram, ui-sdk conversation)", state: "todo" },
+      { text: "resident/live-sessions.ts: split destination book, drop the fence, move UI verbs", state: "todo" },
+    ]},
+    { n: 8, title: "Composition", state: "todo", items: [
+      { text: "Per-command layers only; delete runCommand and CliLayer", state: "todo" },
+    ]},
+    { n: 9, title: "Clean up", state: "todo", items: [
+      { text: "Face tests use fake-chat.ts; delete re-exports at old paths", state: "todo" },
+    ]},
+  ],
+  features: [
+    { name: "Run", file: "cli.test.ts", proofs: [
+      { text: "Sends the configured model and the SOUL, prints the reply, exits 0", state: "green" },
+      { text: "--json prints Pi's session header first", state: "green" },
+      { text: "A model error exits 1 with one stderr line", state: "green" },
+    ]},
+    { name: "Profiles", file: "cli.test.ts", proofs: [
+      { text: "init twice leaves SOUL.md byte-identical", state: "green" },
+      { text: "profiles changes nothing, even with a stale registry", state: "green", note: "was red; fixed in 25531d0b" },
+    ]},
+    { name: "Models", file: "cli.test.ts", proofs: [
+      { text: "models set changes the model of the next request", state: "green" },
+    ]},
+    { name: "Sessions", file: "cli.test.ts", proofs: [
+      { text: "list and show change nothing; run --session appends to that file", state: "green" },
+    ]},
+    { name: "Web sessions", file: "resident.test.ts", proofs: [
+      { text: "A client that drops mid-turn and rewatches from its cursor gets the live tail", state: "green" },
+      { text: "Two clients opening the same session share one handle and one file", state: "green" },
+    ]},
+    { name: "Single writer", file: "resident.test.ts", proofs: [
+      { text: "With the web session open, run -c and run --session are refused and name the pid", state: "green" },
+    ]},
+    { name: "Agents", file: "agents.test.ts", proofs: [
+      { text: "agent_run makes one linked child file running only the declared tools", state: "green" },
+      { text: "The parent's tool result stays bounded", state: "red", note: "today the whole 20,004-char child answer comes back" },
+      { text: "A child declaring a misspelled tool is refused before the model call", state: "red" },
+      { text: "A child declaring profile_extensions is refused before the model call", state: "red" },
+    ]},
+    { name: "Memory", file: "memory.test.ts", proofs: [
+      { text: "memory_write lands on disk and in the next turn's prompt", state: "green" },
+      { text: "A write over the cap is refused and memory is unchanged", state: "green" },
+      { text: "A group conversation sees its group memory and never a person's", state: "green" },
+    ]},
+    { name: "Automations", file: "automations.test.ts", proofs: [
+      { text: "No resident: each wake stores one receipt in the target conversation", state: "green" },
+      { text: "Resident up: wake is forwarded and stores the receipt", state: "green" },
+      { text: "A live idle conversation gets the result as an event and one receipt", state: "green" },
+      { text: "A busy conversation is refused as retriable and not written mid-turn", state: "green" },
+      { text: "A resident starts even when a cron never fires", state: "green", note: "was red; fixed in dc7bd430" },
+    ]},
+    { name: "ACP", file: "acp.test.ts", proofs: [
+      { text: "A prompt streams the model's answer back", state: "green" },
+      { text: "session/set_model changes the next request's model", state: "red", note: "the override is stored and never read" },
+    ]},
+  ],
+  uncovered: [
+    "Web /new then run -c",
+    "Resume / new / fork ordering",
+    "Telegram and Discord watch-only",
+    "Live delivery into a switched session",
+    "Automation delivery to Slack, Discord, Telegram (step 7 adds base URLs)",
+    "Profile extensions",
+    "agent_discuss",
+    "Web UI in a real browser",
+  ],
+  decisions: [
+    { title: "Automation delivery stays and goes through gateways",
+      text: "Squarey's linkedin-jobs sends to a Slack channel and a UI conversation at once. Delivery must reach a Slack channel or thread, a Discord channel or thread, a Telegram chat, or a ui-sdk conversation, behind one deliver seam (step 7)." },
+    { title: "No backward compatibility for internals",
+      text: "Rebuild freely. Faces, gateways, ui-sdk and the web UI must keep working, and the proofs above guard that." },
+  ],
+  commits: [
+    { sha: "dc7bd430", text: "Reject automation crons that never fire" },
+    { sha: "d81bdcf7", text: "Plan gateway-owned automation delivery targets" },
+    { sha: "25531d0b", text: "Make profiles listing read-only" },
+    { sha: "2f3b4786", text: "Add end-to-end harness, proofs and verify-ziggy skill" },
+  ],
+};
+
+const el = (tag, attrs = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  for (const kid of kids) node.append(kid);
+  return node;
+};
+const chip = (state, label = state) => el("span", { class: `chip ${state}` }, label);
+
+const items = STATUS.steps.flatMap((step) => step.items);
+const done = items.filter((item) => item.state === "done").length;
+const proofs = STATUS.features.flatMap((feature) => feature.proofs);
+const green = proofs.filter((proof) => proof.state === "green").length;
+const red = proofs.length - green;
+
+document.getElementById("summary").append(
+  el("span", {}, el("b", {}, `${done}/${items.length}`), " work items done"),
+  el("span", {}, el("b", {}, String(green)), " green proofs"),
+  el("span", {}, el("b", {}, String(red)), " red proofs"),
+  el("span", {}, el("b", {}, String(STATUS.uncovered.length)), " flows uncovered"),
+);
+const bar = document.getElementById("bar");
+bar.append(el("span", { style: `width:${(done / items.length) * 100}%;background:var(--ok)` }));
+document.getElementById("updated").textContent = `Updated ${STATUS.updated}. ${STATUS.suite}.`;
+
+const resume = document.getElementById("resume");
+resume.append(
+  el("span", { class: "eyebrow" }, "Resume here from a fresh session"),
+  el("h2", {}, STATUS.next.item),
+  el("p", { class: "muted" }, STATUS.next.step),
+  el("div", {}, el("h3", {}, "Read first"), el("ol", {}, ...STATUS.next.read.map((line) => el("li", {}, el("code", {}, line))))),
+  el("div", { style: "display:grid;gap:6px" }, el("h3", {}, "Each item"), el("p", {}, STATUS.next.loop)),
+  el("pre", {}, "bun run check && bun run test && bun run test:e2e"),
+);
+
+const track = document.getElementById("track");
+for (const step of STATUS.steps) {
+  const doneCount = step.items.filter((item) => item.state === "done").length;
+  track.append(el("div", { class: `step ${step.state}` },
+    el("div", { class: "rail" }, el("span", { class: "dot" })),
+    el("div", { class: "step-body" },
+      el("div", { class: "step-head" },
+        el("h3", {}, `${step.n}. ${step.title}`),
+        chip(step.state, step.state === "active" ? "in progress" : step.state),
+        el("span", { class: "mono muted" }, `${doneCount}/${step.items.length}`),
+      ),
+      el("ul", { class: "items" }, ...step.items.map((item) => el("li", { class: item.state },
+        el("span", { class: "box" }, item.state === "done" ? "✓" : item.state === "active" ? "›" : "·"),
+        el("span", { class: "text" }, item.text),
+        el("span", { class: "sha" }, item.sha ?? ""),
+      ))),
+    ),
+  ));
+}
+
+const features = document.getElementById("features");
+for (const feature of STATUS.features) {
+  const hasRed = feature.proofs.some((proof) => proof.state === "red");
+  features.append(el("article", { class: "feature" },
+    el("div", { class: "feature-head" }, el("h3", {}, feature.name), el("span", { class: "mono muted" }, feature.file)),
+    el("ul", {}, ...feature.proofs.map((proof) => el("li", {},
+      chip(proof.state),
+      el("span", {}, proof.text, proof.note ? el("span", { class: "note" }, proof.note) : ""),
+    ))),
+  ));
+  if (hasRed) features.lastChild.style.borderColor = "var(--bad)";
+}
+
+document.getElementById("uncovered").append(...STATUS.uncovered.map((text) => el("span", {}, text)));
+document.getElementById("decisions").append(...STATUS.decisions.map((d) =>
+  el("div", { class: "decision" }, el("h3", {}, d.title), el("p", { class: "muted" }, d.text))));
+document.getElementById("commits").append(...STATUS.commits.map((c) =>
+  el("li", {}, el("span", { class: "mono muted" }, c.sha), el("span", {}, c.text))));
+</script>
