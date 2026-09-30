@@ -257,6 +257,42 @@ describe("updating a bundled copy", () => {
     await resident.stop();
   });
 
+  test("an update that published but lost its receipt is current on the next run", async () => {
+    const receipt = JSON.parse(await readFile(receiptFile("weather"), "utf8"));
+    await writeFile(
+      receiptFile("weather"),
+      JSON.stringify({ ...receipt, contentHash: "0".repeat(64) }),
+    );
+
+    const result = await ziggy(profile, "extensions", "update", profile.path, "weather");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toStartWith("current weather");
+    expect(JSON.parse(await readFile(receiptFile("weather"), "utf8")).contentHash).not.toBe(
+      "0".repeat(64),
+    );
+  });
+
+  test("doctor reports a copy left at <id>.old without moving it", async () => {
+    await rename(shelf("weather"), `${shelf("weather")}.old`);
+
+    const doctor = await ziggy(profile, "doctor", profile.path);
+
+    expect(doctor.stdout).toContain("ERROR\tresources");
+    expect(await exists(`${shelf("weather")}.old`)).toBe(true);
+    expect(await exists(shelf("weather"))).toBe(false);
+  });
+
+  test("update puts a copy left at <id>.old back before it checks the shelf", async () => {
+    await rename(shelf("weather"), `${shelf("weather")}.old`);
+
+    const result = await ziggy(profile, "extensions", "update", profile.path, "weather");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toStartWith("current weather");
+    expect(await exists(`${shelf("weather")}.old`)).toBe(false);
+  });
+
   test("a copy left only at <id>.old by an interrupted swap is put back on open", async () => {
     await rename(shelf("weather"), `${shelf("weather")}.old`);
 

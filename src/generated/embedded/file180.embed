@@ -87,7 +87,7 @@ ziggy extensions update squarey ziggy-operations --adopt
 
 Use `--adopt` only for the initial takeover of an untracked package. Locally modified copies are
 not refreshed; resolve changes before updating. `--restart` on a managed resident avoids stopping
-it manually. See [Updating bundled extensions](extension-updates.md) for fencing and backups.
+it manually. See [Updating bundled extensions](extension-updates.md) for the resident, the extension lock and recovery.
 
 ## Troubleshooting
 

@@ -19,6 +19,7 @@ import type { ProfileFileSystemError, ProfileTarget } from "../profile";
 import { requiredPackages, unpackBundled } from "./bundled";
 import { checkSelection } from "./loader";
 import { fsError, invalid, packageExists, readExtensionPackage, scanShelf } from "./package";
+import { recoverInterruptedUpdate } from "./resources";
 import {
   readSelection,
   restoreSelection,
@@ -129,6 +130,8 @@ const profileListing = (item: ExtensionPackage): ExtensionListing => ({
 /** The package on the Profile shelf; a bundled one missing there is unpacked first. */
 const shelfPackage = (profilePath: string, id: string): Effect.Effect<ExtensionPackage, Invalid> =>
   Effect.gen(function* () {
+    yield* recoverInterruptedUpdate(profilePath, id);
+
     if (yield* packageExists(profilePath, id)) return yield* readExtensionPackage(profilePath, id);
 
     if (bundledPackageMetadata(id) === undefined) {
@@ -357,6 +360,8 @@ const apply = (profilePath: string, next: ReadonlyArray<string>) =>
           { discard: true },
         ),
       ),
+      // An aborted tool call never stops between a change and its undo.
+      Effect.uninterruptible,
     );
 
     return [...adding, ...removing].flat().map((automation) => automation.id);

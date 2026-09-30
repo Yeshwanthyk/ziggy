@@ -10,6 +10,7 @@ import type { ProfileTarget } from "../profile";
 import { withStagedBundle } from "./bundled";
 import { checkSelection } from "./loader";
 import { packageExists, readExtensionPackage } from "./package";
+import { recoverInterruptedUpdate } from "./resources";
 import { withSelectionLock } from "./selection";
 import {
   ExtensionId,
@@ -185,6 +186,8 @@ export const updateBundled = (
         const packagePath = path.join(target.path, "extensions", id);
         const previous = `${packagePath}.old`;
 
+        yield* recoverInterruptedUpdate(target.path, id);
+
         if (!(yield* packageExists(target.path, id))) {
           return yield* refuse(
             target.path,
@@ -211,17 +214,6 @@ export const updateBundled = (
           );
         }
 
-        if (receipt !== undefined && receipt.contentHash !== previousHash) {
-          return yield* refuse(
-            target.path,
-            id,
-            "modified",
-            "Installed extension has local changes. Preserve or resolve them before updating; --adopt does not overwrite managed edits.",
-          );
-        }
-
-        const current = yield* readExtensionPackage(target.path, id);
-
         return yield* withStagedBundle(target.path, id, (staging, staged) =>
           Effect.gen(function* () {
             const stagedPath = path.join(staging, "extensions", id);
@@ -235,6 +227,21 @@ export const updateBundled = (
               contentHash,
             };
 
+            // Bytes that already match this build are current even when the receipt lags, so an
+            // update that published but failed to record its receipt heals on the next run.
+            if (
+              receipt !== undefined &&
+              receipt.contentHash !== previousHash &&
+              contentHash !== previousHash
+            ) {
+              return yield* refuse(
+                target.path,
+                id,
+                "modified",
+                "Installed extension has local changes. Preserve or resolve them before updating; --adopt does not overwrite managed edits.",
+              );
+            }
+
             if (contentHash === previousHash) {
               yield* writeReceipt(target.path, nextReceipt);
 
@@ -246,6 +253,8 @@ export const updateBundled = (
                 contentHash,
               } satisfies ExtensionUpdateResult;
             }
+
+            const current = yield* readExtensionPackage(target.path, id);
 
             if (
               (yield* automationSources(target.path, current)) !==
@@ -281,7 +290,14 @@ export const updateBundled = (
                     ),
                   ),
                 );
-                yield* writeReceipt(target.path, nextReceipt);
+                yield* writeReceipt(target.path, nextReceipt).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      "updated extension; could not record its receipt, the next update will",
+                      { cause },
+                    ),
+                  ),
+                );
                 yield* disk(target.path, id, `could not remove ${previous}`, () =>
                   rm(previous, { recursive: true, force: true }),
                 ).pipe(

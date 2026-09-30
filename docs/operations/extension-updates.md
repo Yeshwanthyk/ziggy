@@ -15,13 +15,12 @@ If a managed resident (`ziggy serve install`) is running, add `--restart`:
 ziggy extensions update squarey computer-workflows --restart
 ```
 
-Ziggy stages and validates the new package first, then stops the resident, applies the update
-under the Profile's extension lock, and starts the resident again. Without `--restart` the update is refused
-while the resident runs. If a step fails, either the old or the new version stays applied, and
-the command reports whether the resident is running or recovery is needed. The updater does not
-drain active work, schedule an update, or download another executable. Older Ziggy processes do
-not participate in the update fence: close old web, run, ACP, wake, and specialist sessions and
-stop older residents before the initial upgrade.
+With `--restart`, Ziggy stops the resident, applies the update under the Profile's extension
+lock, and starts the resident again. Without `--restart` the update is refused while the resident
+runs. The update stages the new package and checks it through Pi before swapping it in; if a step
+fails, either the old or the new version stays applied. The updater does not drain active work,
+schedule an update, or download another executable. Close web, run, ACP, wake, and specialist
+sessions from older Ziggy builds before the first update.
 
 ## Adopt an existing installation
 
@@ -45,8 +44,11 @@ that protection.
 - The selected extension set, browser profiles, saved workflows, and human-owned Profile
   documents are not replaced.
 - Updates that change extension-owned automation definitions are rejected in this version.
-- The swap is two renames through `<id>.old`. If it stops between them, the next open of the
-  Profile restores `<id>.old`, so the Profile runs the previous version until you rerun the update.
+- The swap is two renames through `<id>.old`. If it stops between them, the next session open (for
+  a selected package), `add`, or `update` restores `<id>.old` under the extension lock, so the
+  Profile runs the previous version until you rerun the update. `doctor` only reports it.
+- If the update publishes but cannot record its receipt, it warns; the next `update` sees the
+  bytes already match this build and records the receipt.
 - The new tool code and skill instructions load together when the resident restarts; `--restart`
   does this for you.
 

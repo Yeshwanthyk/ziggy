@@ -5,7 +5,7 @@ import type { ProfileExtensionInvalid } from "../domain/profile";
 import type { ProfileFileSystemError } from "../profile";
 import { requiredPackages } from "./bundled";
 import { fsError, invalid, packageExists, readExtensionPackage } from "./package";
-import { readSelection } from "./selection";
+import { readSelection, withSelectionLock } from "./selection";
 
 /** The files Pi loads for one Profile, plus which optional package owns which folder. */
 export interface PiResources {
@@ -14,18 +14,23 @@ export interface PiResources {
   readonly optional: ReadonlyArray<{ readonly id: string; readonly packagePath: string }>;
 }
 
+const interrupted = (profilePath: string, id: string) =>
+  Effect.map(
+    Effect.all([packageExists(profilePath, id), packageExists(profilePath, `${id}.old`)]),
+    ([current, previous]) => !current && previous,
+  );
+
 /**
  * An update moves `<id>` to `<id>.old`, then the staged copy to `<id>`. If it stopped between the two
  * renames, only `<id>.old` is left; put it back so the Profile opens as before the update.
+ * Callers hold the selection lock.
  */
-const recoverInterruptedUpdate = (profilePath: string, id: string) =>
+export const recoverInterruptedUpdate = (profilePath: string, id: string) =>
   Effect.gen(function* () {
-    if (yield* packageExists(profilePath, id)) return;
+    if (!(yield* interrupted(profilePath, id))) return;
 
     const packagePath = path.join(profilePath, "extensions", id);
     const previous = `${packagePath}.old`;
-
-    if (!(yield* packageExists(profilePath, `${id}.old`))) return;
 
     yield* Effect.logWarning("restoring extension left behind by an interrupted update", {
       profilePath,
@@ -37,21 +42,40 @@ const recoverInterruptedUpdate = (profilePath: string, id: string) =>
     });
   });
 
+/** Read-only: a selected package must be on the shelf; an interrupted update is only reported. */
 const readSelected = (profilePath: string, id: string) =>
   Effect.gen(function* () {
-    yield* recoverInterruptedUpdate(profilePath, id);
-
     if (!(yield* packageExists(profilePath, id))) {
       const packagePath = path.join(profilePath, "extensions", id);
 
       return yield* invalid(
         packagePath,
-        `selected extension '${id}' is not installed at ${packagePath}`,
+        (yield* interrupted(profilePath, id))
+          ? `selected extension '${id}' was left at ${packagePath}.old by an interrupted update; the next session open restores it`
+          : `selected extension '${id}' is not installed at ${packagePath}`,
       );
     }
 
     return yield* readExtensionPackage(profilePath, id);
   });
+
+/** Session open repairs an interrupted update, under the lock so it never races one in flight. */
+const recoverUnderLock = (profilePath: string, id: string) =>
+  Effect.flatMap(interrupted(profilePath, id), (found) =>
+    found
+      ? withSelectionLock(profilePath, recoverInterruptedUpdate(profilePath, id)).pipe(
+          Effect.catchTag("ExtensionLockFailed", (failure) =>
+            Effect.fail(
+              invalid(
+                path.join(profilePath, "extensions", id),
+                `could not restore '${id}' after an interrupted update: ${failure.message}`,
+                failure,
+              ),
+            ),
+          ),
+        )
+      : Effect.void,
+  );
 
 /** Resolve the packages Pi should load for `selected`: the Profile's own, then required. */
 export const resolveResources = (
@@ -81,4 +105,10 @@ export const resolveResources = (
 export const profileResources = (
   profilePath: string,
 ): Effect.Effect<PiResources, ProfileExtensionInvalid | ProfileFileSystemError> =>
-  Effect.flatMap(readSelection(profilePath), (selected) => resolveResources(profilePath, selected));
+  Effect.gen(function* () {
+    const selected = yield* readSelection(profilePath);
+
+    yield* Effect.forEach(selected, (id) => recoverUnderLock(profilePath, id), { discard: true });
+
+    return yield* resolveResources(profilePath, selected);
+  });
