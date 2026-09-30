@@ -1293,3 +1293,30 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `main.ts` dispatches every command, help and version included, through one exhaustive `Match.valueTags`. Commands not yet moved map to `legacy`, which still runs `runCommand` under `CliLayer`.
 - `ziggy models status|list|set` moved to `src/faces/commands/models.ts`. It yields only `Models` and `ZiggyPaths`, prints through `Console`, and runs under `ModelsCommandsLayer`, so it no longer builds the resident, gateway and agent layers.
 - Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested from a scratch `ZIGGY_HOME`: `help models` 0; `models status` and `models list --provider anthropic` on a fresh Profile 0; both on an uninitialized Profile 1 with one report.
+
+## Tight-core alignment audit
+
+- Added `docs/research/tight-core-alignment-audit.md` and its JSON evidence index: a bottom-up review of 61 current core/composition files (17,255 lines), checked against pinned Effect beta.99 and installed Pi 0.99.1. Every file has a disposition; findings include correction scope, caller impact, proof limits, and implementation order.
+- Disposable local fixtures reproduced premature session-writer admission after failed shutdown, a Profile registry lost update, memory-lock symlink traversal, missing acquired-handle cleanup during UI registration failure, and eager runtime-directory reads. No production source or Profile data was changed; existing CLI extraction work was preserved.
+- Verification: `bun run lint` and `bun run typecheck` passed. The 32-file focused core test run had 230 pass and 1 fail; the optional-Pi-diagnostics activation test also failed in isolation because it expected model-selection failure but obtained a chat handle. The report records that unresolved test/startup-contract mismatch. No full-suite, live provider/gateway, or footprint claim is made.
+
+## Tight-core rebuild plan
+
+- Added `docs/plans/tight-core/`, a working plan spanning several sessions. `README.md` is the synthesis: a reach table, the mistake patterns, per-area targets, decisions D1–D16, an e2e verification loop with proofs P1–P19, slices 0–9, a disagreement ledger and a bug list. `areas/` holds five area reviews and two challenge reviews (Fable, and a devil's advocate for the current design).
+- The challenge round corrected draft v1, which had dropped guards without naming the invariants they protected:
+  - The writer lease stays, as a lease held for the handle's lifetime that moves across switch, `/new` and `/fork` (web `/new` followed by `run -c` would otherwise branch the transcript).
+  - The `.owner` pid stays.
+  - The extension selection lock stays.
+  - `update` gets `.old` crash recovery.
+  - Required packages go to a cache directory for each Ziggy version (embedded-only breaks the relative `references/` links).
+  - Sessions keep the streaming scan (the largest transcript is 376 MB).
+  - The resume-ordering tests move to handle level.
+- Documentation only. No source changed and no checks run.
+- 2026-09-30: Rewrote `docs/plans/tight-core/README.md` bottom-up. It now covers:
+  - the `src/` inventory, showing each concept spread across 5–9 folders and 34 of 53 `application/` files importing adapters;
+  - a three-folder core (`profile/`, `session/`, `extensions/`), with agents, memory and resident built on top through a tool seam;
+  - the `Context.Service` + `make` + `static layer` service syntax, and where each of the 34 services goes;
+  - Effect patterns before and after;
+  - the plain-language areas, the work order, and three open questions.
+
+  Documentation only; no checks run.

@@ -1,0 +1,1004 @@
+{
+  "audit": "tight-core-alignment",
+  "date": "2026-09-29",
+  "repository": "/Users/yesh/code/personal/ziggy",
+  "head": "23c49386996c56ce7b6b2eefede9a79255e5bf1a",
+  "vendorEffect": {
+    "version": "4.0.0-beta.99",
+    "commit": "6184a7dc53cb9310e299b65ad6d6c712c2cbf202"
+  },
+  "piVersion": "0.99.1",
+  "preservedExistingWork": [
+    "src/composition.ts",
+    "src/main.ts",
+    "src/faces/commands/memory.ts",
+    "src/faces/commands/sessions.ts"
+  ],
+  "coverage": {
+    "files": 61,
+    "physicalLines": 17255,
+    "scope": "tight core and immediate composition seams, not all src"
+  },
+  "ledger": [
+    {
+      "path": "src/domain/profile.ts",
+      "linesRead": 231,
+      "disposition": "findings",
+      "findingIds": ["L01", "L02"],
+      "summary": "Profile path/name resolution and SOUL template are plain domain logic; one path-expansion edge case and duplicated agent-ID regex found; otherwise retain.",
+      "sha256": "e7d744506062bcf64dff97bb381a689c9a2c69518ff0c8464b589d49914d2f44",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/memory.ts",
+      "linesRead": 404,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Memory scopes, ID canonicalization, document paths, cap checks, and pure batch operations are coherent; no finding.",
+      "sha256": "ac6db21ce6bd28b5dab7f73de75390ab81107813ac7660c14acd275f55ac6949",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/agent.ts",
+      "linesRead": 245,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Schema-derived model override and tagged failures preserve useful distinctions; no finding.",
+      "sha256": "e9d3842de6cb9fb9a6f310928741859611ff2bd3c4a085bffd13f62d8a6fe559",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/session.ts",
+      "linesRead": 113,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Pi session projections and history types remain metadata-only and explicit; no finding.",
+      "sha256": "809d56d5599f685e4bee593fe7a455905b5c350a552dd2bd355cdb03ae3bf0b2",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/profile-extension.ts",
+      "linesRead": 195,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Extension selection/runtime error unions match distinct recovery and rollback paths; no finding.",
+      "sha256": "b2a5a4672204abe0468d8cbc9431e114ddbe4cd7e24605ce327e79bb461de698",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/extension-catalog.ts",
+      "linesRead": 93,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Catalog schemas derive types and validate IDs, versions, paths, and unique entries; no finding.",
+      "sha256": "82913f9ac481e3ee79c2ebefee38dc2fea4b5c0ada534acbbae2e3d61f21b4c8",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/domain/profile-directory.ts",
+      "linesRead": 57,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Opaque ProfileId is a derived path projection, with explicit unavailable/unknown/collision errors; no finding.",
+      "sha256": "cc60f3de1d5a1d002fa1afb7307139018354eeddef56b6e1d0445d4e2dad24ca",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/profiles.ts",
+      "linesRead": 366,
+      "disposition": "findings",
+      "findingIds": ["A02", "L03"],
+      "summary": "ProfileStore is a useful inward-owned port; SOUL initialization preserves human bytes. Registry read/prune/write can race with registration; invalid SOUL uses a misleading error tag.",
+      "sha256": "fe32555f045289da6a95cba179ef52bbe158e98a1a53317e387bfdedf3283907",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/memory.ts",
+      "linesRead": 85,
+      "disposition": "findings",
+      "findingIds": ["A09"],
+      "summary": "Read/list projection is small and pure; its capability contract and error type are imported from the filesystem adapter.",
+      "sha256": "370bf9e888cd3e69d48d2e926e133cf3f4a036838e301e164c16b8d82ed2d210",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/profile-agents.ts",
+      "linesRead": 275,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Application validates policy, uses injected agent/model capabilities, and keeps runtime validation separate from parsing; no finding in this file.",
+      "sha256": "e7c145b2cf5ac516f0117e8f9ef154080a15e20bf5b9a9ba96bf57f79db44c1b",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/models.ts",
+      "linesRead": 157,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Session model selection is a plain total Result calculation; model read-only distinctions support callers and are tested; no finding.",
+      "sha256": "fadf7ce4ea921ca5ced47c5e9749852f8faf4510892d5688511b8d95ae97999b",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/auth.ts",
+      "linesRead": 82,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Auth type default and login orchestration are small; typed errors and read-only status contract are preserved; no finding.",
+      "sha256": "70c38466b0b2c19e2e769d09340095afde57cec537c286416bb774fb1d23610b",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/sessions.ts",
+      "linesRead": 63,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Session facade keeps Pi details behind Effect-returning operations and provides a clear not-found case; no finding.",
+      "sha256": "855d109dfd102b0080656f32f7fa97c732cdc72b7575e8dc7fa5b3d9226f4b73",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/application/ziggy-paths.ts",
+      "linesRead": 31,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Service captures host paths and exposes pure target resolution; no finding beyond the resolver edge case in L01.",
+      "sha256": "63cc5f7097b9971479c3aefd0492be6563c2e35071d23506fffa8ad4446eb796",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/fs/cause.ts",
+      "linesRead": 22,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Unknown filesystem causes are inspected through Effect Schema with safe fallback formatting; no finding.",
+      "sha256": "e3d37299a87801376e3850d46ab9ba6316cd1f1d9cf7c20c2ab158bd2ecea9fc",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/fs/profile-store.ts",
+      "linesRead": 52,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Node promises are adapted once into typed Effects and implement the application-owned ProfileStore port; no finding.",
+      "sha256": "3d74895e08bf5c9eab2dbb9b55a800a11308bae96d39e0e8962d193b83bf27ff",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/fs/memory-files.ts",
+      "linesRead": 194,
+      "disposition": "findings",
+      "findingIds": ["A09"],
+      "summary": "Memory inventory/read rejects symlink and nonphysical roots and uses O_NOFOLLOW; service contract is misplaced in this adapter.",
+      "sha256": "f0d92932b1f5a3a7d5b79f77ac96acc5b3adcf47a51162bf6bb5ae7eee9ff84c",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/fs/profile-agents.ts",
+      "linesRead": 497,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "External Markdown is strictly parsed and writes validate preconditions before atomic replacement; no finding in this file.",
+      "sha256": "65e831034d15c92af981f92403e3d30d61143c4f00fec1e3af653a35c18effdc",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/bun/ziggy-paths.ts",
+      "linesRead": 14,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Host cwd/home and ZIGGY_HOME are captured once at Layer construction; no finding.",
+      "sha256": "8274fc39fbffa7ca380c4180a6426b771fd9104a5d8749f1051c212c0ac971f7",
+      "lane": "primitives"
+    },
+    {
+      "path": "src/adapters/pi/auth.ts",
+      "linesRead": 332,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns Pi-backed credential/model runtime construction for one Profile. The read-only store reads explicit Profile auth/model paths and makes writes/deletes no-ops; keep login\u2019s Promise adaptation and interruption signal at this Pi boundary.",
+      "sha256": "6aa2cadb38424648b3705077a8c940cf68ef92161a0370665d0f1ea936789f30",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/models.ts",
+      "linesRead": 484,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns the Pi ModelRuntime/SettingsManager adapter: every operation opens from Profile paths, checks provider/model/thinking selections, flushes settings writes, and maps Pi failures into typed Ziggy errors. Read-only model listing does not create or mutate store files.",
+      "sha256": "2f1b2fdc7119a9b5bb0ea120bc60c98c60ccbd9c8d00223e157a8e821ca85525",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "linesRead": 402,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Projects Profile/runtime checks into one doctor report. Subsystem failures are intentionally caught and rendered as diagnostics so one failed area does not suppress the rest of the report; preserve these localized recoveries.",
+      "sha256": "c635656cec03e984b84423283138b80271cf454217bc85655077247c16409100",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/pi-docs.ts",
+      "linesRead": 235,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Provides the Pi-docs tool over generated bundled documentation with bounded selectors/output. The provider-facing top-level TypeBox object marker is a documented compatibility assertion; runtime selection remains schema-validated.",
+      "sha256": "cd9167d72b2ab11b0b9f4bfe80eccde383a8cd63d2e2c002ce65602935f488dc",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/memory-write-tool.ts",
+      "linesRead": 655,
+      "disposition": "finding",
+      "findingIds": ["A03"],
+      "summary": "Owns Pi input validation and the per-document read/apply/backup/atomic-publish sequence; serializes writers and intentionally logs best-effort temporary-file/lock cleanup. A03: the generated SQLite lock artifact itself lacks no-follow/physical-file validation.",
+      "sha256": "81b6f98866a3dd3d44e3ef6d5c56c83bd5531341a9fc213f99e8ee7c8336adc5",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-agent-guidance.ts",
+      "linesRead": 27,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Keeps the small profile-agent instruction text at the Pi hook adapter, where it is attached as a system-prompt addition. Preserve this narrow bridge rather than moving Pi lifecycle imports inward.",
+      "sha256": "9cccca7015a91d488e35bc896369665df66f9cd0a22b4c80703a6895a6f6e3ca",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-core-inline-extensions.ts",
+      "linesRead": 182,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Composes Ziggy-owned inline Pi extensions once for both preflight and production resource loading; the Effect execution exception in the Promise callback is the documented Pi hook bridge.",
+      "sha256": "7fe23b2450ea302c9ff9197433719980ea263219c52e76ca0a35455c2aba4551",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-extension-diagnostics.ts",
+      "linesRead": 223,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns conversion and bounded projection of Pi loader diagnostics, assigning only selected optional-package roots to quarantine; diagnostics with no optional owner remain fatal core/runtime failures.",
+      "sha256": "e60bf6a8a0739790b269d0e9272daf30aaec5ebf30d83d71dcdf52f12c7b64ad",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-extension-preflight.ts",
+      "linesRead": 314,
+      "disposition": "finding",
+      "findingIds": ["A08"],
+      "summary": "Constructs isolated Pi services against the candidate Profile resource set and checks fatal versus quarantinable diagnostics before admission. A08: probe services and any healthy rebuild are bracketed only by temporary-directory cleanup, without invalidating their ExtensionRuntime.",
+      "sha256": "c8b27f41711d318fea1e76d6db90469c36f72ec10db67238480f5dc5c6116a9b",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-extension-tool.ts",
+      "linesRead": 798,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns the Pi tool\u2019s strict input schema and bounded/redacted structured result projection; lifecycle decisions stay in ProfileExtensionsApi and failures remain typed until this face translates them.",
+      "sha256": "7abf70feb93ada731cb0d2d9a304f5412b7015150a83e3f380a5ced478d132ca",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-prompt.ts",
+      "linesRead": 58,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns SOUL/profile prompt file reading and bounded loading at the Pi adapter; keep filesystem decode/read errors mapped to the profile-specific failure rather than letting Pi discovery add ambient prompt sources.",
+      "sha256": "2622fb02a9a76570bb890fa6530a7a8803a818f3206da8492496c73879203e5d",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/profile-resource-loader.ts",
+      "linesRead": 53,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Builds the single production/preflight Pi loader option set, explicitly disabling ambient extensions, skills, templates, themes, and context files while passing the admitted paths/factories.",
+      "sha256": "7a9e718b6271f091e069c97ac07cd12424bdd50bc88abbfd09712d9eb1f0d333",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/resources.ts",
+      "linesRead": 150,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Composes only selected approved/Profile-local optional packages plus required bundled resources; a selected-but-missing package and an unknown ID remain distinct typed admission failures.",
+      "sha256": "792b3232bff85e0e5344067e13d864ce8c6063c69dda43b5e46aa1243c07bd02",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/session-discovery.ts",
+      "linesRead": 91,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Reads bounded first-line headers through O_NOFOLLOW and finds the newest readable matching-CWD transcript without constructing Pi SessionManager; unreadable candidates are intentionally skipped for this discovery path.",
+      "sha256": "afdc97d34f23cfc8dc4b0add4d0a6162ff34d6fa618bc67afa725836d2b09406",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/session-history.ts",
+      "linesRead": 301,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns a bounded read-only transcript projection with versioned cursors tied to the transcript digest. Keep its tolerant projection separate from strict session-list validation because the consumer contracts differ.",
+      "sha256": "100706b1b8cfbff1a215cfd4e3c85d1595a142af3164e4420e61b2372c4e5c49",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/sessions.ts",
+      "linesRead": 729,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns strict Pi JSONL metadata parsing, duplicate-ID/path resolution, and summary projection. Lists isolate unreadable/oversized files; direct references preserve an explicit read failure, and cleanup/recovery catches are scoped to those policies.",
+      "sha256": "178ae7a63253707fcdb5b217d2ed90f62927a4e4b8c9279162268d8055520bc5",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/standalone-runtime.ts",
+      "linesRead": 88,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Contains the compiled-Bun Photon asset compatibility patch and compiled-only provider registration; fallback is restricted to the known ENOENT case, so preserve that boundary instead of broad filesystem recovery.",
+      "sha256": "7f085e2dcd7dfad39ffa24476554778e137cfdaeda1e2676b01a8ae906226dce",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/transcript-lines.ts",
+      "linesRead": 118,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Provides shared bounded, streaming, cancellable JSONL reads with O_NOFOLLOW and a transcript digest. The visitor\u2019s early-stop signal currently yields a prefix digest; callers in this lane scan fully, so retain that constraint if the callback contract is changed.",
+      "sha256": "6fc575cbaeb6988a6d6a9385980979ad7cade173a554e04546acf465130da3a5",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/ziggy-help.ts",
+      "linesRead": 39,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Keeps the agent-facing help tool as a bounded projection of canonical CLI help topics, validating the topic before lookup rather than duplicating command help content.",
+      "sha256": "7dbb06e7daa49b41f9c3eed00aa264edba14b72f2e67480105e8b6e733e78d26",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/fs/profile-extensions.ts",
+      "linesRead": 711,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns filesystem trust for extension manifests/selections: validates declared paths against lexical and real package roots, rejects symlinked selection files, and snapshots exact bytes/absence for safe rollback.",
+      "sha256": "b68ab182b032822b77e9505adc531c7c42302670aa1b32f8feba5ff2731b125b",
+      "lane": "resources"
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "linesRead": 1272,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns Profile extension admission and mutation: lock, package/preflight validation, exact-selection snapshot, owned-automation pause/provision, rollback, and generation-checked runtime activation. Preserve this lifecycle; it is not disposable package-manager plumbing.",
+      "sha256": "66d20751ae8d2a77d9e4394a64612d305b72047eb19d6aaf318bb5eb673e18b6",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/bun/profile-extension-lock.ts",
+      "linesRead": 318,
+      "disposition": "retain-no-issue",
+      "findingIds": [],
+      "summary": "Owns the hardened SQLite Profile mutation lock, including physical runtime/database/sidecar checks, no-follow opens, private modes, bounded busy retry, interruption-safe release, and shared transaction serialization.",
+      "sha256": "c791fe01f8acd1ced500107c2e2358586daa588d6e49f47f3f534421af05caad",
+      "lane": "resources"
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "linesRead": 1590,
+      "disposition": "finding-and-keep",
+      "findingIds": ["A01", "A07", "L04"],
+      "summary": "Entire content reviewed. Runtime/services construction and Profile policy remain essential Pi adapter composition. Writer release on rejected disposal is confirmed for openChat and statically shared by print, live specialist and direct specialist selection; Promise callbacks lack a shared Effect owner; synchronous thinking mutation has an unnecessary Promise boundary. Preserve normal failed-build release, abort serialization, idle controls, replacement reservations, automation reconciliation and public APIs.",
+      "sha256": "31587533ec74d82c8841c319d53641edf1de7889118df4a296e083f4984e82bf",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/runtime.ts",
+      "linesRead": 50,
+      "disposition": "decision",
+      "findingIds": ["D01"],
+      "summary": "Keep an authored capability contract; optional simplification removes private forwarding aliases after choosing the canonical handle. Preserve live isIdle and injection.",
+      "sha256": "13396808213026a9ac55d4cdb18303d09815198ea8b9f40cb58f49476196e061",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/chat-runtime-binding.ts",
+      "linesRead": 217,
+      "disposition": "finding-and-keep",
+      "findingIds": ["A07"],
+      "summary": "Entire content reviewed. Callback Effect roots should use a session-owned captured runner. Keep semaphore serialization, target reservation, cancelled replacement cleanup, invalidation poisoning, command rebinding, session switching control and narrow Pi Promise signatures. Callback ownership is structural; no naturally occurring escaped-work incident was proved.",
+      "sha256": "a4d66766fd391046e87571eda17bb99cfe84d7aeb16a2e871be2eb409280f624",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/prompt-turn.ts",
+      "linesRead": 100,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Effect.callback adapts incoming Pi events and Promise settlement, completes on agent_settled, extracts final assistant text/errors and removes listeners plus aborts on interruption. It does not create a new Effect execution root. Keep distinction from outbound Promise callback bridges.",
+      "sha256": "c0b04589b4fc5ba29bde377eb04b16ae07decdab25554354aee100ac5dd1d541",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/provider-failure.ts",
+      "linesRead": 68,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. One local Promise adapter maps unknown provider failures into typed configuration/call errors while retaining existing typed failures and original causes. No confirmed failure-channel defect found; ordinary SDK rejection should not become a defect.",
+      "sha256": "dacd9d98ae48a01c8a269b61c98758ed486935d22beb36441d52fa3fd3d55ba4",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/profile-runtime-lease.ts",
+      "linesRead": 131,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Correct conservative package ownership precedent for A01: masked uncancellable construction waits for settlement, interrupted handoff disposes, runtime disposal is memoized, rollback or rejected shutdown retains lease until process exit. FiberSet would not make the underlying Pi constructor cancellable.",
+      "sha256": "952d17e682f25f247db25f1415e378efab2c439f60557d3bfe435b88e4c8eefc",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "linesRead": 322,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. SQLite BEGIN IMMEDIATE is writer authority; PID JSON projection is diagnostic and best effort. Reserve/cancel/transfer, failed release retries and poisoning are meaningful lifecycle safeguards. A01 corrects callers' timing of close, not lease authority. Temporary unknown channels are locally classified or consumed as diagnostics.",
+      "sha256": "7286272c0c353086938fe6a701224c972611e7da137d16922938b0245d6f9a19",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/session-name.ts",
+      "linesRead": 51,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Pure Unicode-safe bounded normalization, no overwrite when any session_info exists, and a hidden Pi inline naming extension preserve Pi as session-name authority. No additional naming registry or Effect wrapper is needed.",
+      "sha256": "fbf83d46276d8e286a51175d39c7160d2925ac43332abdc03ce09c6635879519",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/session-lineage.ts",
+      "linesRead": 34,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Persistent-parent check, Profile-owned child directory and Pi parentSession header provide lineage without copying transcripts or a second registry. Session reference is derived directly from Pi.",
+      "sha256": "edab270f691c59cee8d66e5d383d516c0c0ec9778681cbadce6180f264d85cac",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/specialist.ts",
+      "linesRead": 1010,
+      "disposition": "finding-and-keep",
+      "findingIds": ["A01", "A05", "A07"],
+      "summary": "Entire content reviewed. Child shutdown finally releases its writer despite failed runtime stop; agent_run parent content/details contain complete unbounded child answer; tool callbacks start fresh Effect roots although AbortSignal is correctly forwarded. Keep authored runner contracts, policy selection, restricted child tools, Pi lineage, acquireUseRelease child cleanup, bounded discussion rounds and usage aggregation.",
+      "sha256": "8cdf746687e3223942e5d3a30cf21a72e82d8260b26b2412a437937e2df84337",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/chat-event-projector.ts",
+      "linesRead": 173,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Schema boundary for unknown tool arguments, bounded Unicode progress detail, stable small ChatEvent projection and agent_settled event match the current compact product contract. A richer SDK event stream is outside this audit; no finding is inferred from intentional lossiness.",
+      "sha256": "bb04283343707c8ab797362f0691a03cfd05877e31d00cd100e465b1bef7529c",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/pi/automation-result.ts",
+      "linesRead": 142,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Receipt uses automation/run/target identity, stored append resolves session safely under exclusive writer authority and verifies durable receipt through Pi reopening. Expected delivery failures are typed with retriable categories. It is a A01 downstream consumer, not a duplicate transcript authority.",
+      "sha256": "bd4d69b9c7b504b5e10c789d0a751ac58faa30c03e38f920e5fa6c34d93ca8f6",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/adapters/bun/profile-runtime-lock.ts",
+      "linesRead": 85,
+      "disposition": "keep",
+      "findingIds": [],
+      "summary": "Entire content reviewed. Shared rollback-journal readers pin package lifetimes; exclusive activation excludes them and process exit drops authority. Bracketed lock operations match pinned Effect acquireUseRelease. This guarantee is distinct from per-session single-writer ownership and cannot substitute for it after failed shutdown.",
+      "sha256": "4c9b693e18ff56b2d48bc4c4c4f4c3a45d2c81919822a3529c1bd57d5d462249",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/application/agent.ts",
+      "linesRead": 204,
+      "disposition": "keep",
+      "findingIds": ["D01"],
+      "summary": "Retain the public ChatHandle and agent contract. Decide whether the Pi layer can implement it directly and remove overlapping forwarding names without exposing Pi types.",
+      "sha256": "1c6501558f081219b579126a458287fc64c2d73b7f45593f4baf72160ea18461",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/application/chat-registry.ts",
+      "linesRead": 914,
+      "disposition": "finding-and-keep",
+      "findingIds": ["A04"],
+      "summary": "Entire content reviewed. getOrOpenUi subscription failure deletes the opening without disposing a successfully acquired handle, unlike openAlias. Preserve scoped FiberMap work, shared acquisition, capacity, bounded replay, Opening/Live/Closing transitions, channel versus registry ownership, routing validation and unknown-outcome automation delivery behavior.",
+      "sha256": "970071596d2035a917ce247b387258259bbd0d98f66c27d4c619d3e2ca5545f7",
+      "lane": "pi_runtime"
+    },
+    {
+      "path": "src/composition.ts",
+      "linesRead": 159,
+      "disposition": "align",
+      "findingIds": ["A10"],
+      "summary": "Named layer references already preserve memoization. Keep the composition root; narrow remaining core command layers without duplicating active WIP.",
+      "sha256": "5493f3328942285db43de15647b915b87258d2026a53da3c4a07cc0f781156dc",
+      "lane": "composition"
+    },
+    {
+      "path": "src/main.ts",
+      "linesRead": 906,
+      "disposition": "align",
+      "findingIds": ["A10"],
+      "summary": "Exhaustive dispatch and typed exit handling are sound. Legacy core commands still build/yield the wide CLI service graph; extract only remaining core areas.",
+      "sha256": "fbc24f7dd5ed06b599735fd3fb8325fc08e1336a60a01339bb062022a091a0e1",
+      "lane": "composition"
+    },
+    {
+      "path": "src/catalog.ts",
+      "linesRead": 56,
+      "disposition": "retain",
+      "findingIds": [],
+      "summary": "Embedded catalog decoding is pure bounded build-data validation. Keep schema-owned types and catalog authority; no new service or arbitrary module-scope ban.",
+      "sha256": "a0d0a7dbee7edcfce0565b95e007afc9d07f696647f2703684547f60a5596535",
+      "lane": "composition"
+    },
+    {
+      "path": "src/application/profile-runtime-directory.ts",
+      "linesRead": 78,
+      "disposition": "defect",
+      "findingIds": ["A06"],
+      "summary": "Private runtime map has one owner, but branch() captures map state before its returned Effect runs. Local reproduction confirms stale read; dynamic lifecycle callers not present yet.",
+      "sha256": "fd7309ca63065520d890ba3a67a61a34fce813cb25a69f716496384ebab6b951",
+      "lane": "composition"
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "linesRead": 209,
+      "disposition": "align",
+      "findingIds": ["A09"],
+      "summary": "Profile identity and collision/unavailable distinctions are useful. Registry filesystem reads duplicate the physical Profile seam inside application; move only I/O behind an inward-owned port, preserve path hashing.",
+      "sha256": "070547e5b4b356860900a6dfa43c8439ce16061fee8d21e036f4c700ed01f2a3",
+      "lane": "composition"
+    }
+  ],
+  "diagnostics": [
+    {
+      "path": "src/adapters/pi/chat-runtime-binding.ts",
+      "line": 42,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 46,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 52,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 58,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 91,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 110,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 125,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 176,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 235,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 318,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 338,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 346,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/doctor-checks.ts",
+      "line": 354,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 302,
+      "level": "suggestion",
+      "rule": "runEffectInsideEffect",
+      "message": "`Effect.runPromise` is called inside an Effect with a separate services invocation. In this context, child Effects run with the surrounding services, which can be accessed through `Effect.context` and `Effect.runPromiseWith`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 1120,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 1122,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 1139,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 1185,
+      "level": "suggestion",
+      "rule": "runEffectInsideEffect",
+      "message": "`Effect.runPromise` is called inside an Effect with a separate services invocation. In this context, child Effects run with the surrounding services, which can be accessed through `Effect.context` and `Effect.runPromiseWith`."
+    },
+    {
+      "path": "src/adapters/pi/pi-agent.ts",
+      "line": 1404,
+      "level": "suggestion",
+      "rule": "runEffectInsideEffect",
+      "message": "`Effect.runPromise` is called inside an Effect with a separate services invocation. In this context, child Effects run with the surrounding services, which can be accessed through `Effect.context` and `Effect.runPromiseWith`."
+    },
+    {
+      "path": "src/adapters/pi/profile-core-inline-extensions.ts",
+      "line": 51,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/resources.ts",
+      "line": 71,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/adapters/pi/resources.ts",
+      "line": 85,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/adapters/pi/session-history.ts",
+      "line": 29,
+      "level": "suggestion",
+      "rule": "schemaNumber",
+      "message": "This Schema number API accepts `NaN`, `Infinity`, and `-Infinity`. Use `Schema.Finite` for finite domain numbers. If non-finite values are intentional, disable this diagnostic for that line."
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "line": 46,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "line": 54,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "line": 62,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "line": 86,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.try` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/session-lease.ts",
+      "line": 166,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/adapters/pi/sessions.ts",
+      "line": 505,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/adapters/pi/specialist.ts",
+      "line": 412,
+      "level": "suggestion",
+      "rule": "runEffectInsideEffect",
+      "message": "`Effect.runPromise` is called inside an Effect with a separate services invocation. In this context, child Effects run with the surrounding services, which can be accessed through `Effect.context` and `Effect.runPromiseWith`."
+    },
+    {
+      "path": "src/application/chat-registry.ts",
+      "line": 600,
+      "level": "suggestion",
+      "rule": "catchToIgnore",
+      "message": "`Effect.ignore` expresses ignored failure more directly than `Effect.catch` returning `Effect.void`."
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "line": 30,
+      "level": "suggestion",
+      "rule": "lazyEffect",
+      "message": "Interface 'ProfileDirectoryApi' member 'entries' returns a lazy Effect. Effect is already lazy, so wrapping it in a zero-argument function adds unnecessary indirection."
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "line": 34,
+      "level": "suggestion",
+      "rule": "lazyEffect",
+      "message": "Interface 'ProfileDirectoryApi' member 'list' returns a lazy Effect. Effect is already lazy, so wrapping it in a zero-argument function adds unnecessary indirection."
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "line": 38,
+      "level": "suggestion",
+      "rule": "lazyEffect",
+      "message": "Interface 'ProfileDirectoryApi' member 'current' returns a lazy Effect. Effect is already lazy, so wrapping it in a zero-argument function adds unnecessary indirection."
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "line": 92,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/application/profile-directory.ts",
+      "line": 105,
+      "level": "suggestion",
+      "rule": "catchToOrElseSucceed",
+      "message": "`Effect.orElseSucceed` expresses the same recovery more directly than `Effect.catch` followed by `Effect.succeed`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 88,
+      "level": "suggestion",
+      "rule": "lazyEffect",
+      "message": "Service 'ProfileExtensions' member 'list' returns a lazy Effect. Effect is already lazy, so wrapping it in a zero-argument function adds unnecessary indirection."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 235,
+      "level": "suggestion",
+      "rule": "multipleCatchTag",
+      "message": "These 2 consecutive `catchTag` transformations can be collapsed into a single `catchTags` call."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 235,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 238,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 339,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 348,
+      "level": "suggestion",
+      "rule": "unnecessaryFailYieldableError",
+      "message": "This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 366,
+      "level": "suggestion",
+      "rule": "unnecessaryFailYieldableError",
+      "message": "This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 473,
+      "level": "suggestion",
+      "rule": "unnecessaryFailYieldableError",
+      "message": "This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 580,
+      "level": "warning",
+      "rule": "unknownInEffectCatch",
+      "message": "The `catch` callback in `Effect.tryPromise` returns `unknown`, so the Effect error type stays untyped. A specific typed error preserves error-channel information, for example by narrowing the value or wrapping it in `Data.TaggedError`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 752,
+      "level": "suggestion",
+      "rule": "unnecessaryFailYieldableError",
+      "message": "This `yield* Effect.fail(...)` passes a yieldable error value. `yield*` represents that value directly without wrapping it in `Effect.fail`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 769,
+      "level": "suggestion",
+      "rule": "effectSucceedWithVoid",
+      "message": "`Effect.void` represents the same outcome as `Effect.succeed(undefined)` or `Effect.succeed(void 0)`."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 1165,
+      "level": "suggestion",
+      "rule": "unnecessaryPipeChain",
+      "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call."
+    },
+    {
+      "path": "src/application/profile-extensions.ts",
+      "line": 1193,
+      "level": "suggestion",
+      "rule": "unnecessaryPipeChain",
+      "message": "This expression contains chained `pipe` calls that can be simplified to a single `pipe` call."
+    },
+    {
+      "path": "src/domain/profile-extension.ts",
+      "line": 161,
+      "level": "suggestion",
+      "rule": "lazyEffect",
+      "message": "Interface 'ProfileExtensionsApi' member 'list' returns a lazy Effect. Effect is already lazy, so wrapping it in a zero-argument function adds unnecessary indirection."
+    }
+  ],
+  "verification": {
+    "lint": "passed",
+    "typecheck": "passed with warnings and suggestions",
+    "tests": {
+      "passed": 230,
+      "failed": 1,
+      "assertions": 1077,
+      "files": [
+        "test/adapters/bun/profile-extension-lock.test.ts",
+        "test/adapters/bun/profile-runtime-lock.test.ts",
+        "test/adapters/fs/profile-agents.test.ts",
+        "test/adapters/fs/profile-extensions.test.ts",
+        "test/adapters/pi/auth.test.ts",
+        "test/adapters/pi/automation-result.test.ts",
+        "test/adapters/pi/memory-write-tool.test.ts",
+        "test/adapters/pi/models.test.ts",
+        "test/adapters/pi/pi-agent.test.ts",
+        "test/adapters/pi/pi-docs.test.ts",
+        "test/adapters/pi/profile-core-inline-extensions.test.ts",
+        "test/adapters/pi/profile-extension-diagnostics.test.ts",
+        "test/adapters/pi/profile-extension-preflight.test.ts",
+        "test/adapters/pi/profile-extension-tool.test.ts",
+        "test/adapters/pi/profile-prompt.test.ts",
+        "test/adapters/pi/resources.test.ts",
+        "test/adapters/pi/session-history.test.ts",
+        "test/adapters/pi/session-lease.test.ts",
+        "test/adapters/pi/session-runtime-transition.test.ts",
+        "test/adapters/pi/sessions.test.ts",
+        "test/adapters/pi/specialist.test.ts",
+        "test/adapters/pi/standalone-runtime.test.ts",
+        "test/adapters/pi/ziggy-help.test.ts",
+        "test/application/auth.test.ts",
+        "test/application/chat-registry.test.ts",
+        "test/application/memory.test.ts",
+        "test/application/models.test.ts",
+        "test/application/profile-agents.test.ts",
+        "test/application/profile-extensions.test.ts",
+        "test/application/profiles.test.ts",
+        "test/domain/memory.test.ts",
+        "test/domain/profile.test.ts"
+      ],
+      "failingTest": "optional Pi diagnostics skip the package without blocking activation",
+      "isolatedRerun": "same failure"
+    },
+    "reproductions": {
+      "writer-lease-reproduction": {
+        "constructionFailureTag": "ProfileExtensionRollbackFailed",
+        "disposalRejected": true,
+        "secondWriterLeaseAcquiredAfterFailedShutdown": true
+      },
+      "registry-reproduction": {
+        "registrationObservedBeforePrune": true,
+        "registrationLostAfterPrune": true,
+        "listDidNotSeeNewProfile": true
+      },
+      "memory-lock-reproduction": {
+        "lockSymlinkAccepted": true,
+        "outsideTargetCreated": true,
+        "memoryDocumentPublished": true
+      },
+      "registry-handoff-reproduction": {
+        "registrationResult": "Failure",
+        "disposalCallsAfterOwnerScopeClosed": 0
+      },
+      "reproduction": {
+        "readConstructedBeforeRemovalReturnsRemovedBranch": true,
+        "freshReadAfterRemovalFails": true,
+        "readConstructedBeforeRegistrationStillFails": true,
+        "freshReadAfterRegistrationSucceeds": true
+      }
+    },
+    "notRun": [
+      "full test suite",
+      "live provider turn",
+      "live gateway/UI verification",
+      "performance or footprint benchmark"
+    ]
+  },
+  "scratchEvidenceDirectory": "/tmp/ziggy-tight-core-audit"
+}
