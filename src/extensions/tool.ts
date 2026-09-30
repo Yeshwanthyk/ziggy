@@ -202,44 +202,45 @@ const failed = (params: Action, failure: ExtensionError): Details => {
 /** The `profile_extensions` tool: the model's only way to change its Profile's packages. */
 export const extensionTools =
   (extensions: ExtensionsApi): SessionTools =>
-  ({ profilePath }) => [
-    defineTool({
-      name: "profile_extensions",
-      label: "profile_extensions",
-      description:
-        "List, add, remove, or validate Profile extensions in-process. Add and remove accept only existing shelf or catalog IDs; do not pass paths or GitHub URLs.",
-      promptSnippet: "profile_extensions(action, id) — manage Profile extensions in-process",
-      promptGuidelines: [
-        "Use profile_extensions for extension lifecycle changes instead of Bash, Ziggy commands, or direct extensions.json edits.",
-        "For add and remove, use an existing lowercase shelf or catalog ID; GitHub URLs are not supported by this tool.",
-        "Treat success as true only when the structured tool result has ok=true.",
-      ],
-      executionMode: "sequential",
-      parameters,
-      execute(_toolCallId, params, signal) {
-        if (!Value.Check(parameters, params)) {
-          return Promise.resolve(
-            reply({
-              ok: false,
-              operation: "input",
-              stage: "input",
-              code: "invalid_input",
-              message:
-                "invalid profile_extensions input; use a strict list, add, remove, or validate action",
-              selectionChanged: false,
+  ({ profilePath }) =>
+    Effect.succeed([
+      defineTool({
+        name: "profile_extensions",
+        label: "profile_extensions",
+        description:
+          "List, add, remove, or validate Profile extensions in-process. Add and remove accept only existing shelf or catalog IDs; do not pass paths or GitHub URLs.",
+        promptSnippet: "profile_extensions(action, id) — manage Profile extensions in-process",
+        promptGuidelines: [
+          "Use profile_extensions for extension lifecycle changes instead of Bash, Ziggy commands, or direct extensions.json edits.",
+          "For add and remove, use an existing lowercase shelf or catalog ID; GitHub URLs are not supported by this tool.",
+          "Treat success as true only when the structured tool result has ok=true.",
+        ],
+        executionMode: "sequential",
+        parameters,
+        execute(_toolCallId, params, signal) {
+          if (!Value.Check(parameters, params)) {
+            return Promise.resolve(
+              reply({
+                ok: false,
+                operation: "input",
+                stage: "input",
+                code: "invalid_input",
+                message:
+                  "invalid profile_extensions input; use a strict list, add, remove, or validate action",
+                selectionChanged: false,
+              }),
+            );
+          }
+
+          const program = run(extensions, profilePath, params).pipe(
+            Effect.match({
+              onFailure: (failure) => reply(failed(params, failure)),
+              onSuccess: reply,
             }),
           );
-        }
 
-        const program = run(extensions, profilePath, params).pipe(
-          Effect.match({
-            onFailure: (failure) => reply(failed(params, failure)),
-            onSuccess: reply,
-          }),
-        );
-
-        // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the adapter bridge.
-        return Effect.runPromise(program, { signal });
-      },
-    }),
-  ];
+          // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning tool callback; this is the adapter bridge.
+          return Effect.runPromise(program, { signal });
+        },
+      }),
+    ]);

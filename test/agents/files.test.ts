@@ -1,4 +1,5 @@
 /* oxlint-disable ziggy-effect/no-effect-execution-boundary -- Bun tests execute filesystem Effects */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- fixture setup owns disposable filesystem promises */
 import { afterEach, expect, test } from "bun:test";
 import { Effect, Predicate, Result } from "effect";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -8,7 +9,7 @@ import {
   discoverProfileAgents,
   readProfileAgent,
   replaceProfileAgentFile,
-} from "ziggy/adapters/fs/profile-agents";
+} from "ziggy/agents/files";
 
 const temporaryPaths: Array<string> = [];
 

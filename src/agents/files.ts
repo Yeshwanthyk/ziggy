@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema, Semaphore } from "effect";
-import { ProfileAgent, ProfileAgentEditConflict, ProfileAgentInvalid } from "../../domain/profile";
-import { fileSystemCauseDetails } from "../../platform/cause";
-import { ProfileFileSystemError } from "../../profile";
+import { ProfileAgent, ProfileAgentEditConflict, ProfileAgentInvalid } from "../domain/profile";
+import { writeFileAtomic } from "../platform/atomic-write";
+import { fileSystemCauseDetails } from "../platform/cause";
+import { readPhysicalFile } from "../platform/tree";
+import { ProfileFileSystemError } from "../profile";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent, {
   onExcessProperty: "error",
@@ -53,21 +53,16 @@ const editLock = (targetPath: string): Semaphore.Semaphore => {
   return created;
 };
 
-const readPhysicalText = async (targetPath: string, signal?: AbortSignal): Promise<string> => {
-  const handle = await open(targetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-  try {
-    return await handle.readFile({ encoding: "utf8", signal });
-  } finally {
-    await handle.close();
-  }
-};
-
-const readText = (targetPath: string) =>
-  Effect.tryPromise({
-    try: (signal) => readPhysicalText(targetPath, signal),
-    catch: (cause) => fsError("read", targetPath, cause),
-  });
+/** A physical file's text; a symlink, a non-file, or a file that vanished is a read failure. */
+const readText = (targetPath: string): Effect.Effect<string, ProfileFileSystemError> =>
+  readPhysicalFile(targetPath).pipe(
+    Effect.mapError((failure) => fsError("read", targetPath, failure)),
+    Effect.flatMap((bytes) =>
+      bytes === undefined
+        ? Effect.fail(fsError("read", targetPath, `${targetPath} does not exist`))
+        : Effect.succeed(new TextDecoder().decode(bytes)),
+    ),
+  );
 
 const parseScalar = (value: string): string => {
   const trimmed = value.trim();
@@ -348,19 +343,28 @@ export const createProfileAgentFile = (
 
   return decodeProfileAgentSource(targetPath, source).pipe(
     Effect.flatMap((agent) =>
-      Effect.tryPromise({
-        try: async () => {
-          await mkdir(agentsPath, { recursive: true });
-          const status = await lstat(agentsPath);
+      Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => mkdir(agentsPath, { recursive: true }),
+          catch: (cause) => fsError("create", targetPath, cause),
+        });
+        const status = yield* inspect(agentsPath);
 
-          if (status.isSymbolicLink() || !status.isDirectory()) {
-            throw new Error("Profile agents root must be a physical directory");
-          }
+        if (status.isSymbolicLink() || !status.isDirectory()) {
+          return yield* fsError(
+            "create",
+            targetPath,
+            "Profile agents root must be a physical directory",
+          );
+        }
 
-          await writeFile(targetPath, source, { encoding: "utf8", flag: "wx" });
-        },
-        catch: (cause) => fsError("create", targetPath, cause),
-      }).pipe(Effect.as({ agent, path: targetPath })),
+        yield* Effect.tryPromise({
+          try: () => writeFile(targetPath, source, { encoding: "utf8", flag: "wx" }),
+          catch: (cause) => fsError("create", targetPath, cause),
+        });
+
+        return { agent, path: targetPath };
+      }),
     ),
   );
 };
@@ -432,59 +436,53 @@ export const replaceProfileAgentFile = (
 
       if (source === current.source) return { ...current, agent };
 
-      const temporaryPath = `${current.path}.ziggy-edit-${randomUUID()}.tmp`;
+      const agentsPath = path.join(profilePath, "agents");
+
+      // Re-check under the lock: the tree must still be physical and the file unchanged.
+      const [profileStatus, agentsStatus, fileStatus] = yield* Effect.all([
+        inspect(profilePath),
+        inspect(agentsPath),
+        inspect(current.path),
+      ]);
+
+      if (profileStatus.isSymbolicLink() || !profileStatus.isDirectory()) {
+        return yield* fsError(
+          "save",
+          current.path,
+          `${profilePath} must remain a physical directory`,
+        );
+      }
+
+      if (agentsStatus.isSymbolicLink() || !agentsStatus.isDirectory()) {
+        return yield* fsError(
+          "save",
+          current.path,
+          `${agentsPath} must remain a physical directory`,
+        );
+      }
+
+      if (fileStatus.isSymbolicLink() || !fileStatus.isFile()) {
+        return yield* fsError("save", current.path, `${current.path} must remain a physical file`);
+      }
+
+      if ((yield* readText(current.path)) !== expectedSource) {
+        return yield* new ProfileAgentEditConflict({
+          id,
+          path: current.path,
+          message: `Profile agent ${id} changed while it was being saved; reopen it before retrying`,
+        });
+      }
+
       yield* Effect.uninterruptible(
-        Effect.tryPromise({
-          try: async () => {
-            let replaced = false;
-
-            try {
-              const [profileStatus, agentsStatus, fileStatus] = await Promise.all([
-                lstat(profilePath),
-                lstat(path.join(profilePath, "agents")),
-                lstat(current.path),
-              ]);
-
-              if (profileStatus.isSymbolicLink() || !profileStatus.isDirectory()) {
-                throw new Error(`${profilePath} must remain a physical directory`);
-              }
-
-              if (agentsStatus.isSymbolicLink() || !agentsStatus.isDirectory()) {
-                throw new Error(
-                  `${path.join(profilePath, "agents")} must remain a physical directory`,
-                );
-              }
-
-              if (fileStatus.isSymbolicLink() || !fileStatus.isFile()) {
-                throw new Error(`${current.path} must remain a physical file`);
-              }
-
-              const actualSource = await readPhysicalText(current.path);
-
-              if (actualSource !== expectedSource) {
-                throw new ProfileAgentEditConflict({
-                  id,
-                  path: current.path,
-                  message: `Profile agent ${id} changed while it was being saved; reopen it before retrying`,
-                });
-              }
-
-              await writeFile(temporaryPath, source, {
-                encoding: "utf8",
-                flag: "wx",
-                mode: fileStatus.mode,
-              });
-              await rename(temporaryPath, current.path);
-              replaced = true;
-            } finally {
-              if (!replaced) await rm(temporaryPath, { force: true });
-            }
-          },
-          catch: (cause) =>
-            cause instanceof ProfileAgentEditConflict
-              ? cause
-              : fsError("save", current.path, cause),
-        }),
+        writeFileAtomic(current.path, source).pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () => chmod(current.path, fileStatus.mode),
+              catch: (cause) => cause,
+            }),
+          ),
+          Effect.mapError((failure) => fsError("save", current.path, failure)),
+        ),
       );
 
       return { agent, path: current.path, source };

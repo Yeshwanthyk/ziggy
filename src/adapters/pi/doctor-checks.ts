@@ -2,7 +2,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../../platform/cause";
-import { discoverProfileAgents } from "../fs/profile-agents";
+import { discoverProfileAgents } from "../../agents";
 import {
   gatewayConfigPresent,
   loadDiscordConfigFile,

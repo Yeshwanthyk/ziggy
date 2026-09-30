@@ -75,6 +75,7 @@ const models = (
   events: string[],
   current: { providerId: string | undefined; modelId: string | undefined; thinking: string },
 ): ModelsApi => ({
+  check: () => Effect.never,
   status: () => {
     events.push("model-status");
 

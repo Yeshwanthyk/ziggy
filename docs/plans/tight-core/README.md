@@ -578,7 +578,7 @@ read the artifact back first.
   - Rebuild the extension half of `doctor-checks.ts`.
   - Update the extension skills and ops docs.
 - [ ] **7. On the core.** In any order:
-  - [ ] `agents/`: one policy function, no selection runtime, tools through the seam.
+  - [x] `agents/`: one policy function, no selection runtime, tools through the seam.
   - [x] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
   - [ ] Delivery through gateway-owned targets:
     - one `deliver(target, text)` seam;

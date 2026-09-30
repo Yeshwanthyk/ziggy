@@ -53,6 +53,7 @@ const stubAgent = (open: ZiggyAgentApi["open"]): ZiggyAgentApi => ({
 });
 
 const stubModels: ModelsApi = {
+  check: () => Effect.never,
   status: () =>
     Effect.succeed({
       providerId: "openai",

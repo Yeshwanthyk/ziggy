@@ -99,3 +99,52 @@ describe("agent_run", () => {
     },
   );
 });
+
+describe("agent_discuss", () => {
+  test("runs sorted agents for two rounds, one child file each, with no child tools", async () => {
+    await writeAgent("zeta", "read");
+    await writeAgent("alpha", "read");
+    server.push(
+      tools({
+        name: "agent_discuss",
+        arguments: { topic: "pick one", agents: ["zeta", "alpha"], rounds: 2 },
+      }),
+      text("ALPHA_ONE"),
+      text("ZETA_ONE"),
+      text("ALPHA_TWO"),
+      text("ZETA_TWO"),
+      text("parent done"),
+    );
+
+    const result = await ziggy(profile, "run", profile.path, "discuss this");
+
+    expect(result).toEqual({ exitCode: 0, stdout: "parent done\n", stderr: "" });
+    expect(server.requests).toHaveLength(6);
+
+    for (const index of [1, 2, 3, 4]) expect(toolNames(index)).toEqual([]);
+
+    expect(server.raw(1)).toContain("the alpha specialist");
+    expect(server.raw(2)).toContain("the zeta specialist");
+    expect(server.raw(3)).toContain("ZETA_ONE");
+    expect(server.toolResults(5)).toContain("ZETA_TWO");
+
+    const files = await sessionFiles(profile.path);
+    const parentFile = files.find((file) => !file.startsWith("agents/"));
+    const parent = await readTranscript(profile.path, parentFile ?? "");
+    const childFiles = files.filter((file) => file.startsWith(`agents/${parent.header.id}/`));
+    expect(childFiles).toHaveLength(4);
+  });
+
+  test("refuses duplicate agents before any child runs", async () => {
+    await writeAgent("alpha", "read");
+    server.push(
+      tools({ name: "agent_discuss", arguments: { topic: "t", agents: ["alpha", "alpha"] } }),
+      text("parent done"),
+    );
+
+    await ziggy(profile, "run", profile.path, "discuss this");
+
+    expect(server.requests).toHaveLength(2);
+    expect(server.toolResults(1)).toContain("requires unique Profile agent ids");
+  });
+});

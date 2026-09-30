@@ -12,7 +12,8 @@ import {
   readStoredCredential,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Effect, Schema } from "effect";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { Effect, Result, Schema } from "effect";
 import {
   ModelOperationFailed,
   ModelProviderUnknown,
@@ -20,6 +21,7 @@ import {
   ModelThinkingUnsupported,
   ModelUnknown,
   ProfileNotInitialized,
+  ProviderConfigError,
 } from "./types";
 import { fileSystemCauseDetails } from "../platform/cause";
 
@@ -43,6 +45,120 @@ export interface ModelSelection {
   readonly thinking: string | undefined;
 }
 
+const configuredSessionModelError = (profilePath: string, message: string) =>
+  new ProviderConfigError({
+    profilePath,
+    operation: "select model",
+    message,
+    cause: undefined,
+  });
+
+export const selectSessionModel = <M, T extends string>(
+  profilePath: string,
+  services: {
+    readonly settingsManager: {
+      readonly getDefaultProvider: () => string | undefined;
+      readonly getDefaultModel: () => string | undefined;
+      readonly getDefaultThinkingLevel: () => T | undefined;
+    };
+    readonly modelRuntime: {
+      readonly getProvider: (providerId: string) => object | undefined;
+      readonly getModel: (providerId: string, modelId: string) => M | undefined;
+      readonly supportedThinkingLevels: (model: M) => ReadonlyArray<string>;
+      readonly hasConfiguredAuth: (providerId: string) => boolean;
+    };
+  },
+  override:
+    | { readonly provider?: string; readonly model?: string; readonly thinking?: T }
+    | undefined,
+) => {
+  const overrideProvider = override?.provider;
+  const overrideModel = override?.model;
+
+  if ((overrideProvider === undefined) !== (overrideModel === undefined)) {
+    return Result.fail(
+      configuredSessionModelError(profilePath, "provider and model must be provided together"),
+    );
+  }
+
+  const providerId = overrideProvider ?? services.settingsManager.getDefaultProvider();
+  const modelId = overrideModel ?? services.settingsManager.getDefaultModel();
+  const thinking = override?.thinking ?? services.settingsManager.getDefaultThinkingLevel();
+
+  const model =
+    providerId === undefined || modelId === undefined
+      ? undefined
+      : services.modelRuntime.getModel(providerId, modelId);
+
+  if (overrideProvider !== undefined) {
+    if (services.modelRuntime.getProvider(overrideProvider) === undefined) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `provider is not configured in the Profile model registry: ${overrideProvider}`,
+        ),
+      );
+    }
+
+    if (model === undefined) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `model is not configured in the Profile model registry: ${overrideProvider}/${overrideModel}`,
+        ),
+      );
+    }
+
+    if (!services.modelRuntime.hasConfiguredAuth(overrideProvider)) {
+      return Result.fail(
+        configuredSessionModelError(
+          profilePath,
+          `provider auth is not configured in the Profile: ${overrideProvider}`,
+        ),
+      );
+    }
+  } else if (override?.thinking !== undefined && model === undefined) {
+    return Result.fail(
+      configuredSessionModelError(
+        profilePath,
+        "thinking override requires a configured Profile model",
+      ),
+    );
+  }
+
+  const overridePresent = overrideProvider !== undefined || override?.thinking !== undefined;
+
+  if (
+    overridePresent &&
+    model !== undefined &&
+    thinking !== undefined &&
+    !services.modelRuntime.supportedThinkingLevels(model).some((level) => level === thinking)
+  ) {
+    return Result.fail(
+      configuredSessionModelError(
+        profilePath,
+        `thinking level is not supported by ${providerId}/${modelId}: ${thinking}`,
+      ),
+    );
+  }
+
+  return Result.succeed({ model, thinking });
+};
+
+/** A session's model choice; omitted parts come from the Profile default. */
+export interface SessionModelOverride {
+  readonly provider?: string;
+  readonly model?: string;
+  readonly thinking?: ThinkingLevel;
+}
+
+/** The model a session would run on. */
+export interface SessionModelCheck {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly thinking: ThinkingLevel | undefined;
+}
+
 interface PiModelsSession {
   readonly status: () => Promise<ModelStatus>;
   readonly hasProvider: (providerId: string) => boolean;
@@ -53,6 +169,9 @@ interface PiModelsSession {
     modelId: string,
     thinking?: string,
   ) => ModelSelection | undefined;
+  readonly check: (
+    override: SessionModelOverride | undefined,
+  ) => Promise<Result.Result<SessionModelCheck, ProviderConfigError>>;
   readonly flush: () => Promise<void>;
   readonly drainSettingsError: () => Error | undefined;
 }
@@ -231,6 +350,46 @@ const createPiModelsSessionWith = async (
       if (selectedThinking !== undefined) settings.setDefaultThinkingLevel(selectedThinking);
 
       return { providerId, modelId, thinking: selectedThinking };
+    },
+    check: async (override) => {
+      // Auth is checked below, against the effective provider, not only an overriding one.
+      const selection = selectSessionModel(
+        profilePath,
+        {
+          settingsManager: settings,
+          modelRuntime: {
+            getProvider: (id) => runtime.getProvider(id),
+            getModel: (provider, id) => runtime.getModel(provider, id),
+            hasConfiguredAuth: () => true,
+            supportedThinkingLevels: (model) => getSupportedThinkingLevels(model),
+          },
+        },
+        override,
+      );
+
+      if (Result.isFailure(selection)) return Result.fail(selection.failure);
+
+      const { model, thinking } = selection.success;
+
+      if (model === undefined) {
+        return Result.fail(
+          configuredSessionModelError(
+            profilePath,
+            `no configured model is available; place credentials in ${join(profilePath, "auth.json")} and model configuration in ${join(profilePath, "models.json")}`,
+          ),
+        );
+      }
+
+      if ((await runtime.checkAuth(model.provider)) === undefined) {
+        return Result.fail(
+          configuredSessionModelError(
+            profilePath,
+            `provider auth is not configured in the Profile: ${model.provider}`,
+          ),
+        );
+      }
+
+      return Result.succeed({ providerId: model.provider, modelId: model.id, thinking });
     },
     flush: () => settings.flush(),
     drainSettingsError: () => settings.drainErrors()[0]?.error,
@@ -464,7 +623,38 @@ export const makePiModels = (createSession: PiModelsSessionFactory = createPiMod
       return selection;
     });
 
-  return { status, list, listAvailable, set } as const;
+  /** Whether a session with `override` could run now; every failure is a `ProviderConfigError`. */
+  const check = (
+    profilePath: string,
+    override?: SessionModelOverride,
+  ): Effect.Effect<SessionModelCheck, ProfileNotInitialized | ProviderConfigError> =>
+    open(profilePath, "check model").pipe(
+      Effect.catchTag(
+        "ModelOperationFailed",
+        (failure) =>
+          new ProviderConfigError({
+            profilePath,
+            operation: "select model",
+            message: failure.message,
+            cause: failure,
+          }),
+      ),
+      Effect.flatMap((session) =>
+        Effect.tryPromise({
+          try: () => session.check(override),
+          catch: (cause) =>
+            new ProviderConfigError({
+              profilePath,
+              operation: "select model",
+              message: `could not check the model for ${profilePath}`,
+              cause,
+            }),
+        }),
+      ),
+      Effect.flatMap(Effect.fromResult),
+    );
+
+  return { status, list, listAvailable, set, check } as const;
 };
 
 const piModels = makePiModels();
@@ -478,3 +668,5 @@ export const listModelsReadOnly = piReadOnlyModels.list;
 export const listAvailableModels = piReadOnlyModels.listAvailable;
 
 export const setModel = piModels.set;
+
+export const checkSessionModel = piReadOnlyModels.check;

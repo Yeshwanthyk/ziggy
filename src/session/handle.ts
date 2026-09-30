@@ -12,7 +12,6 @@ import { automationResultContent, isAutomationReceipt } from "../adapters/pi/aut
 import { createChatEventProjector } from "../adapters/pi/chat-event-projector";
 import { promptForAssistantText } from "../adapters/pi/prompt-turn";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
-import { sessionReference } from "../adapters/pi/session-lineage";
 import { ensurePiSessionName } from "../adapters/pi/session-name";
 import {
   ChatNotStreaming,
@@ -26,7 +25,6 @@ import {
   AutomationConversationDeliveryFailed,
   type AutomationConversationResult,
 } from "../domain/automation";
-import { prepareProfileAgentPrompt, ProfileAgentMentionInvalid } from "../domain/profile";
 import { fileSystemCauseDetails } from "../platform/cause";
 import { ProviderConfigError } from "../profile";
 import type { SessionLeaseSet } from "./lease";
@@ -56,14 +54,14 @@ export type HandleSession = Pick<
   | "setThinkingLevel"
 >;
 
-/** The parts of Pi's runtime the handle drives. A Profile runtime also carries agents and prompt context. */
+/** The parts of Pi's runtime the handle drives. A Profile runtime also carries prompt context. */
 export interface HandleRuntime
   extends
     Pick<
       AgentSessionRuntime,
       "switchSession" | "newSession" | "fork" | "setRebindSession" | "dispose"
     >,
-    Partial<Pick<ProfileRuntime, "agents" | "ephemeralPromptContext" | "voiceHub">> {
+    Partial<Pick<ProfileRuntime, "ephemeralPromptContext" | "voiceHub">> {
   readonly session: HandleSession;
   readonly services: { readonly modelRuntime: Pick<ModelRuntime, "getModel"> };
 }
@@ -74,6 +72,8 @@ export interface ChatHandleOptions {
   /** Already holds the lease on the runtime's current transcript. */
   readonly leases: SessionLeaseSet;
   readonly name?: string | undefined;
+  /** Rewrites or refuses each prompt before the model sees it. */
+  readonly prepare?: ((text: string) => Effect.Effect<string, ZiggyAgentError>) | undefined;
 }
 
 const transcriptChanged: ChatEvent = { kind: "session-state", scope: "transcript" };
@@ -103,9 +103,11 @@ const currentReference = (
   manager: SessionManager,
 ): Effect.Effect<SessionReference | undefined, ZiggyAgentError> =>
   Effect.suspend(() => {
-    const reference = sessionReference(manager);
+    const file = manager.getSessionFile();
 
-    if (reference === undefined) return Effect.succeed(undefined);
+    if (file === undefined) return Effect.succeed(undefined);
+
+    const reference: SessionReference = { id: manager.getSessionId(), file };
 
     return Effect.tryPromise({ try: () => stat(reference.file), catch: (cause) => cause }).pipe(
       Effect.flatMap((metadata) =>
@@ -241,47 +243,39 @@ export const makeChatHandle = (
     };
 
     const prompt = (text: string, promptOptions?: Parameters<ChatHandle["prompt"]>[1]) =>
-      Effect.suspend((): Effect.Effect<string, ZiggyAgentError> => {
-        const prepared =
-          runtime.agents === undefined
-            ? { ok: true as const, text }
-            : prepareProfileAgentPrompt(text, runtime.agents);
+      (options.prepare?.(text) ?? Effect.succeed(text)).pipe(
+        Effect.flatMap((prepared) => {
+          ensurePiSessionName(runtime.session.sessionManager, options.name, text);
+          const context = runtime.ephemeralPromptContext;
+          const generation = context === undefined ? 0 : ++context.generation;
 
-        if (!prepared.ok)
-          return Effect.fail(
-            new ProfileAgentMentionInvalid({ profilePath, message: prepared.message }),
-          );
+          if (context !== undefined) {
+            if (promptOptions?.ephemeralContext === undefined) delete context.value;
+            else context.value = promptOptions.ephemeralContext;
+          }
 
-        ensurePiSessionName(runtime.session.sessionManager, options.name, text);
-        const context = runtime.ephemeralPromptContext;
-        const generation = context === undefined ? 0 : ++context.generation;
-
-        if (context !== undefined) {
-          if (promptOptions?.ephemeralContext === undefined) delete context.value;
-          else context.value = promptOptions.ephemeralContext;
-        }
-
-        return promptForAssistantText(
-          profilePath,
-          {
-            abort,
-            prompt: (message, turnOptions) => runtime.session.prompt(message, turnOptions),
-            subscribe: (listener) => runtime.session.subscribe(listener),
-            get isIdle() {
-              return runtime.session.isIdle;
+          return promptForAssistantText(
+            profilePath,
+            {
+              abort,
+              prompt: (message, turnOptions) => runtime.session.prompt(message, turnOptions),
+              subscribe: (listener) => runtime.session.subscribe(listener),
+              get isIdle() {
+                return runtime.session.isIdle;
+              },
             },
-          },
-          prepared.text,
-          promptOptions,
-          runtime.voiceHub,
-        ).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (context?.generation === generation) delete context.value;
-            }),
-          ),
-        );
-      });
+            prepared,
+            promptOptions,
+            runtime.voiceHub,
+          ).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (context?.generation === generation) delete context.value;
+              }),
+            ),
+          );
+        }),
+      );
 
     const deliveryFailure = (
       category: AutomationConversationDeliveryFailed["category"],

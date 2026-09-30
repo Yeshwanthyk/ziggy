@@ -8,19 +8,14 @@ export {
 } from "./lease";
 
 export type {
+  SessionPrepare,
   SessionPrompt,
   SessionPromptContext,
   SessionToolContext,
   SessionTools,
 } from "./tools";
 
-export {
-  localMainSessionDirectory,
-  localSpecialistSessionDirectory,
-  makeZiggyAgent,
-  openSession,
-  type SessionDependencies,
-} from "./agent";
+export { localMainSessionDirectory, openSession, runOnce, type SessionDependencies } from "./agent";
 
 export {
   inspectSessions,

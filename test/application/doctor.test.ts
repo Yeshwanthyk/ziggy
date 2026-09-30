@@ -53,6 +53,7 @@ const auth: AuthApi = {
 };
 
 const models: ModelsApi = {
+  check: () => Effect.never,
   status: () =>
     Effect.succeed({
       providerId: "anthropic",

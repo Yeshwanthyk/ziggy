@@ -102,9 +102,8 @@ export const createMemoryWriteTool = (
 });
 
 /** Contributes `memory_write` to every Profile session. */
-export const memoryTools: SessionTools = ({ profilePath, context }) => [
-  createMemoryWriteTool(profilePath, context),
-];
+export const memoryTools: SessionTools = ({ profilePath, context }) =>
+  Effect.succeed([createMemoryWriteTool(profilePath, context)]);
 
 const oneLine = (message: string): string => message.replace(/\s+/gu, " ").trim();
 

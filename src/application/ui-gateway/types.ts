@@ -2,7 +2,7 @@ import type { UiGroupStore, UiPinStore } from "../../adapters/fs/ui-state";
 import type { ExtensionsApi } from "../../extensions";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { ResidentProfileBranch } from "../profile-runtime-directory";
-import type { ProfileAgentsApi } from "../profile-agents";
+import type { ProfileAgentsApi } from "../../agents";
 import type { DoctorApi } from "../doctor";
 import type { AutomationDefinitionsApi } from "../automation-definitions";
 import type { AutomationSchedulerApi } from "../automation-scheduler";

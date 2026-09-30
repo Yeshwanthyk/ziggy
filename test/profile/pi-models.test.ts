@@ -64,6 +64,7 @@ const fakeSession = (events: string[] = []) => ({
   flush: async () => {
     events.push("flush");
   },
+  check: () => Promise.reject(new Error("not used")),
   drainSettingsError: () => undefined,
 });
 

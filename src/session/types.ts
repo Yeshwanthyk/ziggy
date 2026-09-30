@@ -128,6 +128,20 @@ export interface OpenSession {
   readonly name?: string | undefined;
 }
 
+/** A Profile agent as the core session sees it: instructions and the only tools it may use. */
+export interface SessionPersona {
+  readonly id: string;
+  readonly body: string;
+  readonly tools: ReadonlyArray<string>;
+}
+
+/** What the core opens: a Profile session, or a persona session, possibly a child transcript. */
+export type OpenSessionRequest = Omit<OpenSession, "agent"> & {
+  readonly persona?: SessionPersona;
+  /** The parent transcript file a new child transcript records in its header. */
+  readonly parentSession?: string;
+};
+
 export interface ZiggyAgentApi {
   readonly open: (
     request: OpenSession,

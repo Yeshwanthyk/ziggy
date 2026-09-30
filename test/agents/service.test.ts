@@ -5,10 +5,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
-import { type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/session/index";
 import { makeChatHandle } from "../harness/chat-handle";
-import { makeProfileAgents } from "ziggy/application/profile-agents";
-import { type ModelsApi } from "ziggy/profile/index";
+import { makeProfileAgents } from "ziggy/agents/index";
+import { ProviderConfigError, type ModelsApi } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 
@@ -38,6 +38,17 @@ const agentRuntime = (sessionDirectories: Array<string>): ZiggyAgentApi => ({
 });
 
 const models: ModelsApi = {
+  check: (target, override) =>
+    override?.model === "missing-model"
+      ? Effect.fail(
+          new ProviderConfigError({
+            profilePath: target.path,
+            operation: "check model",
+            message: "model not found: fixture/missing-model",
+            cause: undefined,
+          }),
+        )
+      : Effect.succeed({ providerId: "openai", modelId: "gpt-test", thinking: undefined }),
   status: () =>
     Effect.succeed({
       providerId: "openai",
@@ -106,7 +117,7 @@ describe("Profile agent application commands", () => {
     expect(await readFile(join(target.path, "agents", "reviewer.md"), "utf8")).toBe(before);
   });
 
-  test("validates parse and safely checkable runtime policy per file", async () => {
+  test("validates each file with the checks a run makes: parse, tools, and model", async () => {
     const target = await profile();
     await mkdir(join(target.path, "agents"));
     await writeFile(
@@ -118,6 +129,10 @@ describe("Profile agent application commands", () => {
       "---\nversion: 1\ndescription: Blocked\ntools: agent_run\n---\n\nWork.\n",
     );
     await writeFile(join(target.path, "agents", "broken.md"), "not frontmatter\n");
+    await writeFile(
+      join(target.path, "agents", "unmodeled.md"),
+      "---\nversion: 1\ndescription: Unmodeled\nprovider: fixture\nmodel: missing-model\n---\n\nWork.\n",
+    );
 
     const validation = await Effect.runPromise(
       makeProfileAgents(agentRuntime([]), models).validate(target),
@@ -127,9 +142,11 @@ describe("Profile agent application commands", () => {
       { id: "blocked", valid: false },
       { id: "broken", valid: false },
       { id: "good", valid: true },
+      { id: "unmodeled", valid: false },
     ]);
     expect(validation[0]?.message).toContain("tool is unavailable");
     expect(validation[1]?.message).toContain("missing frontmatter");
+    expect(validation[3]?.message).toBe("model not found: fixture/missing-model");
   });
 
   test("direct run delegates to the persistent root specialist operation", async () => {

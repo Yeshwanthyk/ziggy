@@ -3,9 +3,7 @@ import type {
   BeforeAgentStartEventResult,
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import type { ProfileAgent } from "../../domain/profile";
 import { createPiDocsExtension } from "./pi-docs";
-import { createProfileAgentGuidanceExtension } from "./profile-agent-guidance";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { createSessionNamingExtension } from "./session-name";
 
@@ -48,7 +46,6 @@ export const createEphemeralPromptContextExtension = (
 });
 
 export interface ProfileCoreInlineExtensionOptions {
-  readonly agents: ReadonlyArray<ProfileAgent>;
   readonly contributedPrompt: () => Promise<ReadonlyArray<string>>;
   readonly ephemeralPromptContext: () => string | undefined;
 }
@@ -66,14 +63,18 @@ export type ProfileCoreInlineExtensionFactory = (
 ) => ReadonlyArray<InlineExtension>;
 
 export const createProfileCoreInlineExtensions: ProfileCoreInlineExtensionFactory = ({
-  agents,
   contributedPrompt,
   ephemeralPromptContext,
 }) => [
   createPiDocsExtension(),
   createZiggyHelpExtension(),
   createSessionNamingExtension(),
-  ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
   createContributedPromptExtension(contributedPrompt),
   createEphemeralPromptContextExtension(ephemeralPromptContext),
+];
+
+/** A Profile agent's session: only the read-only Ziggy reference tools, no Profile prompt seams. */
+export const createPersonaInlineExtensions = (): ReadonlyArray<InlineExtension> => [
+  createPiDocsExtension(),
+  createZiggyHelpExtension(),
 ];

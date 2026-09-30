@@ -1,20 +1,12 @@
-import type {
-  AgentSession,
-  AgentSessionServices,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Effect } from "effect";
-import type { PiResources } from "../extensions";
+import type { ZiggyAgentError } from "../domain/agent";
 import type { ChatContext } from "./types";
-import type { ProfileAgent } from "../domain/profile";
 
 /** What a module sees when it contributes tools to a Profile session. */
 export interface SessionToolContext {
   readonly profilePath: string;
   readonly context: ChatContext;
-  readonly agents: ReadonlyArray<ProfileAgent>;
-  readonly services: AgentSessionServices;
-  readonly resources: PiResources;
   /** The live session; undefined while the runtime is still being built. */
   readonly session: () => AgentSession | undefined;
   /** Show a Profile agent's words to whoever watches this session. */
@@ -22,10 +14,12 @@ export interface SessionToolContext {
 }
 
 /**
- * The tool seam: modules such as memory and agents contribute tools here, and the session runtime
- * installs whatever it is given without knowing what they are.
+ * The tool seam: modules such as memory and agents contribute tools here, once per runtime, and
+ * the session runtime installs whatever it is given without knowing what they are.
  */
-export type SessionTools = (context: SessionToolContext) => ReadonlyArray<ToolDefinition>;
+export type SessionTools = (
+  context: SessionToolContext,
+) => Effect.Effect<ReadonlyArray<ToolDefinition>, ZiggyAgentError>;
 
 /** What a module sees when it contributes to a Profile session's system prompt. */
 export interface SessionPromptContext {
@@ -38,3 +32,9 @@ export interface SessionPromptContext {
  * prompt, or nothing. It handles its own failures, so a turn never fails because of it.
  */
 export type SessionPrompt = (context: SessionPromptContext) => Effect.Effect<string | undefined>;
+
+/** The input seam: rewrites or refuses what the user typed before a Profile session sees it. */
+export type SessionPrepare = (
+  profilePath: string,
+  text: string,
+) => Effect.Effect<string, ZiggyAgentError>;

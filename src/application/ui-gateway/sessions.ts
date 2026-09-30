@@ -23,7 +23,7 @@ import {
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 import type { ChatHandle, ChatPromptOptions } from "../agent";
-import { localSpecialistSessionDirectory } from "../agent";
+import { localSpecialistSessionDirectory } from "../../agents";
 import type { ChatRegistryEvent, ChatRegistryListEntry } from "../chat-registry";
 import {
   badParams,

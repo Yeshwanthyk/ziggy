@@ -16,7 +16,7 @@ import {
   type ChatRegistryApi,
   type ChatRegistryEvent,
 } from "ziggy/application/chat-registry";
-import type { ProfileAgentsApi } from "ziggy/application/profile-agents";
+import type { ProfileAgentsApi } from "ziggy/agents/index";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
@@ -1529,6 +1529,7 @@ test("session model and thinking mutations stay on the open handle, not the Prof
   });
 
   const models: ModelsApi = {
+    check: () => Effect.never,
     status: () =>
       Effect.succeed({
         providerId: "default",
@@ -1770,6 +1771,7 @@ test("UI gateway fairly truncates a large model catalog below the response wire 
   }));
 
   const modelService: ModelsApi = {
+    check: () => Effect.never,
     status: () =>
       Effect.succeed({
         providerId: "provider-0",

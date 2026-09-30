@@ -5,43 +5,30 @@ import {
   type AgentSessionRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Result } from "effect";
-import { discoverProfileAgents } from "../adapters/fs/profile-agents";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
-import { promptForAssistantText } from "../adapters/pi/prompt-turn";
-import { sessionReference } from "../adapters/pi/session-lineage";
-import { ensurePiSessionName } from "../adapters/pi/session-name";
-import { selectSpecialist, specialistRuntime, useSpecialistChild } from "../adapters/pi/specialist";
-import {
-  SpecialistAgentNotFound,
-  type ProfileAgentRunContext,
-  type ProfileAgentRunResult,
-  type ProfileSpecialistError,
-  type ZiggyAgentError,
-} from "../domain/agent";
-import { prepareProfileAgentPrompt, ProfileAgentMentionInvalid } from "../domain/profile";
+import { SpecialistToolUnsupported, type ZiggyAgentError } from "../domain/agent";
 import { ProviderConfigError, type ProfileTarget } from "../profile";
 import { makeChatHandle } from "./handle";
 import { findRecentTranscript, readTranscriptHeader } from "./transcript";
-import { makeSessionLeaseSet, takeSessionLease, type SessionLeaseSet } from "./lease";
+import { makeSessionLeaseSet, type SessionLeaseSet } from "./lease";
 import {
   createProfileRuntime,
   disposeRuntime,
   requireSoul,
   type ProfileRuntimeOptions,
 } from "./runtime";
-import type { ChatContext, ChatHandle, OpenSession, RunOnceOptions, ZiggyAgentApi } from "./types";
+import type { SessionPrepare } from "./tools";
+import type { SessionPersona } from "./types";
+import type { ChatContext, ChatHandle, OpenSessionRequest, RunOnceOptions } from "./types";
 
 /** What composition plugs into every session this agent opens. */
 export type SessionDependencies = Pick<
   ProfileRuntimeOptions,
   "tools" | "prompts" | "runtimeFactory"
->;
+> & { readonly prepare?: SessionPrepare };
 
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");
-
-export const localSpecialistSessionDirectory = (profilePath: string, agentId: string): string =>
-  join(profilePath, "sessions", "local", "agents", agentId);
 
 const disposeQuietly = (profilePath: string, runtime: AgentSessionRuntime) =>
   disposeRuntime(profilePath, runtime).pipe(
@@ -49,7 +36,7 @@ const disposeQuietly = (profilePath: string, runtime: AgentSessionRuntime) =>
   );
 
 const runtimeOptions = (
-  deps: SessionDependencies,
+  { prepare: _prepare, ...deps }: SessionDependencies,
   options: ProfileRuntimeOptions = {},
 ): ProfileRuntimeOptions => ({ ...options, ...deps });
 
@@ -60,13 +47,17 @@ const leaseEachSession = (leases: SessionLeaseSet) => (manager: SessionManager) 
   if (Result.isFailure(held)) throw held.failure;
 };
 
-/** Pick the transcript, lease it, then open it — so a held transcript is refused before Pi sees it. */
+/**
+ * Pick the transcript, lease it, then open it — so a held transcript is refused before Pi sees it.
+ * A new transcript with `parentSession` is a child that records its parent in its header.
+ */
 const openTranscript = (
   profilePath: string,
   directory: string,
   session: "new" | "continue",
   leases: SessionLeaseSet,
   file?: string,
+  parentSession?: string,
 ): Effect.Effect<SessionManager, ZiggyAgentError> =>
   Effect.gen(function* () {
     // An uninitialized Profile is refused before any lease or session directory is created.
@@ -81,7 +72,11 @@ const openTranscript = (
         : undefined);
 
     if (existing === undefined) {
-      const manager = SessionManager.create(profilePath, directory);
+      const manager =
+        parentSession === undefined
+          ? SessionManager.create(profilePath, directory)
+          : SessionManager.create(profilePath, directory, { parentSession });
+
       yield* Effect.fromResult(leases.hold(manager.getSessionId()));
 
       return manager;
@@ -121,120 +116,80 @@ const requireModel = (profilePath: string, runtime: AgentSessionRuntime) =>
         ),
       );
 
-const requireAgent = (profilePath: string, agentId: string) =>
-  discoverProfileAgents(profilePath).pipe(
-    Effect.flatMap((agents) =>
-      agents.some((agent) => agent.id === agentId)
-        ? Effect.succeed(agents)
-        : Effect.fail(
-            new SpecialistAgentNotFound({
-              profilePath,
-              agentId,
-              message: `unknown Profile agent: ${agentId}`,
-            }),
-          ),
-    ),
-  );
-
-/** Resolve a Profile agent's model, thinking and tools against a throwaway Profile runtime. */
-const selectAgent = (
+/** Pi drops a tool it cannot find; a Profile agent must not run with less than it declared. */
+const requirePersonaTools = (
   profilePath: string,
-  agentId: string,
-  prompt: string,
-  manager: SessionManager,
-  deps: SessionDependencies,
-) =>
-  Effect.gen(function* () {
-    const agents = yield* requireAgent(profilePath, agentId);
+  runtime: AgentSessionRuntime,
+  persona: SessionPersona | undefined,
+) => {
+  const active = new Set(runtime.session.getActiveToolNames());
+  const missing = persona?.tools.find((name) => !active.has(name));
 
-    return yield* Effect.acquireUseRelease(
-      createProfileRuntime(
-        profilePath,
-        manager,
-        { kind: "local" },
-        runtimeOptions(deps, { agents }),
-      ),
-      (runtime) =>
-        selectSpecialist({ profilePath, agents }, { agent: agentId, prompt }, runtime).pipe(
-          Effect.map((selected) => ({
-            selected,
-            environment: { services: runtime.services, resources: runtime.resources },
-          })),
+  return persona === undefined || missing === undefined
+    ? Effect.void
+    : disposeQuietly(profilePath, runtime).pipe(
+        Effect.andThen(
+          new SpecialistToolUnsupported({
+            profilePath,
+            agentId: persona.id,
+            toolName: missing,
+            message: `tool is unavailable to Profile agent ${persona.id}: ${missing}`,
+          }),
         ),
-      (runtime) => disposeQuietly(profilePath, runtime),
-    );
-  });
+      );
+};
 
-/** Open a live session on the Profile, or on one of its agents. */
+/** Open a live session on the Profile, or as a Profile agent when `persona` is set. */
 export const openSession = (
-  request: OpenSession,
+  request: OpenSessionRequest,
   deps: SessionDependencies = {},
-): Effect.Effect<ChatHandle, ZiggyAgentError | ProfileSpecialistError> =>
+): Effect.Effect<ChatHandle, ZiggyAgentError | SpecialistToolUnsupported> =>
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       const profilePath = request.target.path;
       const leases = makeSessionLeaseSet(profilePath);
-      const beforeServices = leaseEachSession(leases);
-      const agentId = request.agent;
+      const { persona } = request;
 
       const build = Effect.gen(function* () {
-        if (agentId === undefined) {
-          const manager = yield* openTranscript(
-            profilePath,
-            request.directory,
-            request.session,
-            leases,
-          );
-
-          const options: ProfileRuntimeOptions =
-            request.model === undefined
-              ? { beforeServices }
-              : { beforeServices, model: request.model };
-
-          const runtime = yield* createProfileRuntime(
-            profilePath,
-            manager,
-            request.context,
-            runtimeOptions(deps, options),
-          );
-
-          yield* requireModel(profilePath, runtime);
-
-          return runtime;
-        }
-
-        const { selected, environment } = yield* selectAgent(
-          profilePath,
-          agentId,
-          agentId,
-          SessionManager.inMemory(profilePath),
-          deps,
-        );
-
         const manager = yield* openTranscript(
           profilePath,
           request.directory,
           request.session,
           leases,
+          undefined,
+          request.parentSession,
         );
 
-        return yield* specialistRuntime(
+        const options: ProfileRuntimeOptions = {
+          beforeServices: leaseEachSession(leases),
+          model: request.model,
+          persona,
+        };
+
+        const runtime = yield* createProfileRuntime(
           profilePath,
-          environment,
-          selected.agent,
-          selected.model,
-          selected.thinking,
-          selected.tools,
           manager,
-          beforeServices,
+          request.context,
+          runtimeOptions(deps, options),
         );
+
+        yield* requireModel(profilePath, runtime);
+        yield* requirePersonaTools(profilePath, runtime, persona);
+
+        return runtime;
       });
 
       const releaseLeases = Effect.sync(() => leases.keepOnly(undefined));
       const runtime = yield* restore(build).pipe(Effect.onError(() => releaseLeases));
-      const name = request.name ?? (agentId === undefined ? undefined : `Agent · ${agentId}`);
+      const prepare = persona === undefined ? deps.prepare : undefined;
 
-      return yield* makeChatHandle({ profilePath, runtime, leases, name }).pipe(
+      return yield* makeChatHandle({
+        profilePath,
+        runtime,
+        leases,
+        name: request.name,
+        prepare: prepare === undefined ? undefined : (text) => prepare(profilePath, text),
+      }).pipe(
         Effect.onError(() =>
           disposeQuietly(profilePath, runtime).pipe(Effect.ensuring(releaseLeases)),
         ),
@@ -285,15 +240,12 @@ export const runOnce = (
         (created) => disposeQuietly(profilePath, created),
       );
 
-      const prepared = prepareProfileAgentPrompt(prompt, runtime.agents);
-
-      if (!prepared.ok)
-        return yield* new ProfileAgentMentionInvalid({ profilePath, message: prepared.message });
+      const prepared = yield* deps.prepare?.(profilePath, prompt) ?? Effect.succeed(prompt);
 
       yield* requireModel(profilePath, runtime);
 
       const exitCode = yield* piPromise(profilePath, "call provider", () =>
-        runPrintMode(runtime, { mode: options?.mode ?? "text", initialMessage: prepared.text }),
+        runPrintMode(runtime, { mode: options?.mode ?? "text", initialMessage: prepared }),
       );
 
       return exitCode === 0
@@ -305,69 +257,3 @@ export const runOnce = (
           );
     }),
   );
-
-/** Run one task on a Profile agent in a fresh saved transcript. */
-export const runSpecialist = (
-  target: ProfileTarget,
-  agentId: string,
-  task: string,
-  context: ProfileAgentRunContext,
-  deps: SessionDependencies = {},
-): Effect.Effect<ProfileAgentRunResult, ProfileSpecialistError> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const profilePath = target.path;
-      yield* requireAgent(profilePath, agentId);
-      const root = SessionManager.create(profilePath, context.sessionDirectory);
-      ensurePiSessionName(root, `Agent · ${agentId}`, task);
-      const reference = sessionReference(root);
-
-      if (reference === undefined) {
-        return yield* new ProviderConfigError({
-          profilePath,
-          operation: "create Profile agent session",
-          message: "Pi did not create a persistent Profile agent session",
-          cause: undefined,
-        });
-      }
-
-      yield* Effect.acquireRelease(
-        Effect.fromResult(takeSessionLease(profilePath, reference.id)),
-        (lease) => Effect.sync(lease.release),
-      );
-
-      const { selected, environment } = yield* selectAgent(profilePath, agentId, task, root, deps);
-
-      const result = yield* useSpecialistChild(
-        profilePath,
-        specialistRuntime(
-          profilePath,
-          environment,
-          selected.agent,
-          selected.model,
-          selected.thinking,
-          selected.tools,
-          root,
-        ).pipe(
-          Effect.map((runtime) => ({
-            session: runtime.session,
-            reference,
-            dispose: () => runtime.dispose(),
-          })),
-        ),
-        selected,
-        (runtime) => promptForAssistantText(profilePath, runtime.session, task),
-      );
-
-      return { answer: result.answer, session: result.session };
-    }),
-  );
-
-/** The Pi-backed `ZiggyAgent`. */
-export const makeZiggyAgent = (deps: SessionDependencies): ZiggyAgentApi => ({
-  open: (request) => openSession(request, deps),
-  runOnce: (target, prompt, continueSession, context, options) =>
-    runOnce(target, prompt, continueSession, context, options, deps),
-  runSpecialist: (target, agentId, task, context) =>
-    runSpecialist(target, agentId, task, context, deps),
-});

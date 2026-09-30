@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { ProfileAgentProjection, ProfileAgentValidation } from "../application/profile-agents";
+import type { ProfileAgentProjection, ProfileAgentValidation } from "../agents";
 
 export const ProfileAgentProjectionJson = Schema.Struct({
   id: Schema.String,

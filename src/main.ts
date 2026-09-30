@@ -25,7 +25,7 @@ import { Automations } from "./application/automations";
 import { manageExtensions } from "./application/extension-manager";
 import { Doctor } from "./application/doctor";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
-import { ProfileAgents } from "./application/profile-agents";
+import { ProfileAgents } from "./agents";
 import { ResidentGateway } from "./application/resident-gateway";
 import { ResidentService, type ResidentServiceApi } from "./application/resident-service";
 import { Sessions } from "./session";

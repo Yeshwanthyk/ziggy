@@ -10,13 +10,18 @@ import {
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Effect, Predicate, Result } from "effect";
-import { discoverProfileAgents } from "../adapters/fs/profile-agents";
-import { createProfileCoreInlineExtensions } from "../adapters/pi/profile-core-inline-extensions";
-import { loadProfileSystemPrompt } from "../adapters/pi/profile-prompt";
+import {
+  createPersonaInlineExtensions,
+  createProfileCoreInlineExtensions,
+} from "../adapters/pi/profile-core-inline-extensions";
+import {
+  composeProfileSystemPrompt,
+  loadProfileAgentsPrompt,
+  loadProfileSystemPrompt,
+} from "../adapters/pi/profile-prompt";
 import type { SpecialistVoiceHub } from "../adapters/pi/prompt-turn";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
 import type { ChatModelOverride, ZiggyAgentError } from "../domain/agent";
-import type { ProfileAgent } from "../domain/profile";
 import {
   loadServices,
   profileResources,
@@ -28,7 +33,7 @@ import { runCallback } from "../platform/callback";
 import { fileSystemCauseDetails } from "../platform/cause";
 import { ProfileNotInitialized, ProviderConfigError, selectSessionModel } from "../profile";
 import type { SessionPrompt, SessionTools } from "./tools";
-import type { ChatContext } from "./types";
+import type { ChatContext, SessionPersona } from "./types";
 
 /** Per-turn context that reaches the provider but never the transcript. */
 export interface EphemeralPromptContext {
@@ -39,19 +44,19 @@ export interface EphemeralPromptContext {
 export interface ProfileRuntime extends AgentSessionRuntime {
   readonly resources: PiResources;
   readonly skippedPackages: ReadonlyArray<SkippedPackage>;
-  readonly agents: ReadonlyArray<ProfileAgent>;
   readonly ephemeralPromptContext: EphemeralPromptContext;
   readonly voiceHub: SpecialistVoiceHub;
 }
 
 export interface ProfileRuntimeOptions {
-  readonly agents?: ReadonlyArray<ProfileAgent>;
   readonly tools?: ReadonlyArray<SessionTools>;
   readonly prompts?: ReadonlyArray<SessionPrompt>;
-  readonly model?: ChatModelOverride;
+  readonly model?: ChatModelOverride | undefined;
   readonly runtimeFactory?: typeof createAgentSessionRuntime;
   /** Runs before Pi builds a session on `manager`; throwing refuses the build. */
   readonly beforeServices?: (manager: SessionManager) => void;
+  /** Run as this Profile agent: its body replaces SOUL.md and only its tools are active. */
+  readonly persona?: SessionPersona | undefined;
 }
 
 const notInitialized = (profilePath: string) =>
@@ -111,7 +116,10 @@ export const disposeRuntime = (
     await runtime.dispose();
   });
 
-/** Build the Pi runtime for a Profile: its prompt, resources, contributed tools and model. */
+/**
+ * Build the Pi runtime for a Profile: its prompt, resources, contributed tools and model. A
+ * persona session gets none of the contributed tools or prompts, only its declared tools.
+ */
 export const createProfileRuntime = (
   profilePath: string,
   sessionManager: SessionManager,
@@ -120,25 +128,43 @@ export const createProfileRuntime = (
 ): Effect.Effect<ProfileRuntime, ZiggyAgentError> =>
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(profilePath);
-    const agents = options.agents ?? (yield* discoverProfileAgents(profilePath));
     const resources = yield* profileResources(profilePath);
+    const persona = options.persona;
 
-    const systemPrompt = yield* loadProfileSystemPrompt(profilePath, soulPath);
+    const systemPrompt =
+      persona === undefined
+        ? yield* loadProfileSystemPrompt(profilePath, soulPath)
+        : composeProfileSystemPrompt(yield* loadProfileAgentsPrompt(profilePath), persona.body);
+
     let current: ProfileRuntime | undefined;
     const ephemeralPromptContext: EphemeralPromptContext = { generation: 0 };
     const voiceHub = makeVoiceHub();
 
-    const prompts = options.prompts ?? [];
+    const toolContext = {
+      profilePath,
+      context,
+      session: () => current?.session,
+      voice: voiceHub.emit,
+    };
 
-    const contributedPrompt = Effect.forEach(prompts, (prompt) =>
+    const customTools =
+      persona === undefined
+        ? (yield* Effect.forEach(options.tools ?? [], (contribute) =>
+            contribute(toolContext),
+          )).flat()
+        : [];
+
+    const contributedPrompt = Effect.forEach(options.prompts ?? [], (prompt) =>
       prompt({ profilePath, context }),
     ).pipe(Effect.map((parts) => parts.filter((part) => part !== undefined)));
 
-    const inlineExtensions = createProfileCoreInlineExtensions({
-      agents,
-      contributedPrompt: () => runCallback(contributedPrompt),
-      ephemeralPromptContext: () => ephemeralPromptContext.value,
-    });
+    const inlineExtensions =
+      persona === undefined
+        ? createProfileCoreInlineExtensions({
+            contributedPrompt: () => runCallback(contributedPrompt),
+            ephemeralPromptContext: () => ephemeralPromptContext.value,
+          })
+        : createPersonaInlineExtensions();
 
     const runtimeFactory = options.runtimeFactory ?? createAgentSessionRuntime;
     let acceptedResources = resources;
@@ -165,21 +191,15 @@ export const createProfileRuntime = (
             acceptedResources = loaded.resources;
             skippedPackages = [...skippedPackages, ...loaded.skipped];
 
-            const toolContext = {
-              profilePath,
-              context,
-              agents,
-              services,
-              resources: acceptedResources,
-              session: () => current?.session,
-              voice: voiceHub.emit,
-            };
-
-            const sessionOptions: CreateAgentSessionFromServicesOptions = {
-              services,
-              sessionManager: nextManager,
-              customTools: (options.tools ?? []).flatMap((contribute) => contribute(toolContext)),
-            };
+            const sessionOptions: CreateAgentSessionFromServicesOptions =
+              persona === undefined
+                ? { services, sessionManager: nextManager, customTools: [...customTools] }
+                : {
+                    services,
+                    sessionManager: nextManager,
+                    tools: [...persona.tools],
+                    noTools: "all",
+                  };
 
             if (sessionStartEvent !== undefined)
               sessionOptions.sessionStartEvent = sessionStartEvent;
@@ -229,7 +249,6 @@ export const createProfileRuntime = (
     const profileRuntime: ProfileRuntime = Object.assign(runtime, {
       resources: acceptedResources,
       skippedPackages,
-      agents,
       ephemeralPromptContext,
       voiceHub,
     });

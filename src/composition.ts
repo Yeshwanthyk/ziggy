@@ -4,15 +4,14 @@ import { ZiggyPathsLive } from "./platform/paths";
 import { ZiggyReleaseClientLive } from "./adapters/github/self-update";
 import { DoctorChecksLive } from "./adapters/pi/doctor-checks";
 import { PiStandaloneRuntimeLive } from "./adapters/pi/standalone-runtime";
-import { agentTools } from "./adapters/pi/specialist";
 import { ZiggyAgent } from "./application/agent";
+import { makeZiggyAgent, ProfileAgentsLive } from "./agents";
 import { AutomationDefinitionsLive } from "./application/automation-definitions";
 import { AutomationSchedulerLive } from "./application/automation-scheduler";
 import { AutomationsLive } from "./application/automations";
 import { DiscordGatewayLive } from "./application/discord-gateway";
 import { DoctorLive } from "./application/doctor";
 import { GatewayLive } from "./application/gateway";
-import { ProfileAgentsLive } from "./application/profile-agents";
 import { ResidentGatewayLive } from "./application/resident-gateway";
 import { ResidentServiceLive } from "./application/resident-service";
 import { SelfUpdateLive } from "./application/self-update";
@@ -22,7 +21,7 @@ import { Extensions, extensionTools } from "./extensions";
 import { Memory, memoryPrompt, memoryTools } from "./memory";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { Auth, Models, Profiles } from "./profile";
-import { makeZiggyAgent, Sessions } from "./session";
+import { Sessions } from "./session";
 
 // The composition root: the one place adapter layers close application ports. Each layer is
 // named once and shared by reference, so Effect builds each service once per program.
@@ -32,7 +31,7 @@ const ZiggyAgentLayer = Layer.effect(
   ZiggyAgent,
   Effect.map(Extensions, (extensions) =>
     makeZiggyAgent({
-      tools: [memoryTools, extensionTools(extensions), agentTools],
+      tools: [memoryTools, extensionTools(extensions)],
       prompts: [memoryPrompt],
     }),
   ),
