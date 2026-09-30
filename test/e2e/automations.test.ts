@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ziggy } from "../harness/cli";
-import { scratchProfile, type ScratchProfile } from "../harness/profile";
+import { scratchProfile, sessionFiles, type ScratchProfile } from "../harness/profile";
 import { gate, held, type ModelServer, startModelServer, text } from "../harness/provider";
 import { eventually } from "../harness/eventually";
 import { startResident, stopResidents } from "../harness/resident";
@@ -45,6 +45,19 @@ const conversation = async (): Promise<{ file: string; id: string }> => {
   const transcript = await onlyTranscript(profile.path);
 
   return { file: transcript.file, id: sessionId(transcript) };
+};
+
+/** A conversation moved into the web session directory, so the UI can resume it. */
+const webConversation = async (): Promise<{ file: string; id: string }> => {
+  await ziggy(profile, "run", profile.path, "start");
+  const [file] = (await sessionFiles(profile.path)).filter((path) => !path.includes("/"));
+
+  if (file === undefined) throw new Error("run left no top-level session file");
+  const moved = join("local", "main", file);
+  await mkdir(join(profile.path, "sessions", "local", "main"), { recursive: true });
+  await rename(join(profile.path, "sessions", file), join(profile.path, "sessions", moved));
+
+  return { file: moved, id: sessionId(await readTranscript(profile.path, moved)) };
 };
 
 describe("automation delivery", () => {
@@ -123,6 +136,24 @@ describe("automation delivery", () => {
     );
     expect(await resident.stop()).toBe(0);
     expect(await receipts(target.file)).toBe(0);
+  });
+
+  test("a conversation the UI switched away from gets the stored receipt", async () => {
+    const target = await webConversation();
+    const other = await webConversation();
+    await writeAutomation(target.id);
+    const resident = await startResident(profile);
+    const client = await resident.connect();
+    const ref = await client.gateway.openMain(client.profileId);
+    await client.gateway.resumeSession(ref, target.id);
+    await client.gateway.resumeSession(ref, other.id);
+    server.push(text("DIGEST_SWITCHED"));
+
+    const outcome = await client.gateway.runAutomation(client.profileId, "digest");
+
+    expect(JSON.stringify(outcome)).not.toContain("category");
+    expect(await resident.stop()).toBe(0);
+    expect(await receipts(target.file)).toBe(1);
   });
 
   // Effect's Cron.next throws for a cron that parses but never fires; parsing rejects it instead.

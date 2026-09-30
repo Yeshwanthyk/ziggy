@@ -12,6 +12,10 @@ An automation's result reaches its target conversation exactly once per run.
 - AUT-4: a live busy target is refused as `session-busy` (retriable) and not written mid-turn.
 - AUT-5: a resident starts even when an automation's cron parses but never fires
   (`0 0 31 2 *`). Parsing rejects it as "cron never fires", so the scheduler records it invalid.
+- AUT-6: a web conversation the UI resumed and then switched away from gets the stored receipt.
+  A switch that lands between the registry match and the live append (resume is not under the
+  registry permit) also falls back to the stored append; that race is proven below the CLI in
+  `test/adapters/pi/automation-result.test.ts`.
 
 Unreachable end to end: "delivering one run twice gives one receipt". Nothing re-sends a run
 (no retry path in `src/application/automations.ts`), so dedupe of the same `runId` is only
@@ -49,3 +53,5 @@ ui-sdk `automation-result` event.
 - Receipts are `custom_message` entries with `customType: ziggy.automation-result`, not
   messages: `transcript.text` does not include them.
 - `wake` forwards to the resident when one is running.
+- The UI resumes only web transcripts (`sessions/local/main/`); move a `run` transcript there
+  before `resumeSession`.

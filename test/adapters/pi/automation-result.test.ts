@@ -413,3 +413,59 @@ test("a live append rejection never dedupes from memory and a reopened owner can
       ),
   ).toHaveLength(1);
 });
+
+test("a live owner that switched away after the match falls back to the stored append", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-switched-"));
+  roots.push(profilePath);
+  const directory = join(profilePath, "sessions", "local", "main");
+  const target = materialize(SessionManager.create(profilePath, directory, { id: "target" }));
+  const switched = SessionManager.create(profilePath, directory, { id: "switched" });
+  materialize(switched);
+
+  // The registry still sees the target as current; the live session has already moved on.
+  const handle = makeSessionChatHandle(
+    profilePath,
+    () => ({
+      isIdle: true,
+      sessionManager: switched,
+      prompt: () => Promise.resolve(),
+      abort: () => Promise.resolve(),
+      steer: () => Promise.resolve("queued" as const),
+      followUp: () => Promise.resolve("queued" as const),
+      sendCustomMessage: () => Promise.reject(new Error("must not write the switched session")),
+      subscribe: () => () => undefined,
+    }),
+    {
+      currentSession: Effect.succeed({ id: "target", file: target }),
+      prompt: () => Effect.succeed("unused"),
+      dispose: Effect.void,
+    },
+  );
+
+  const result = {
+    automationId: "daily-note",
+    runId: "manual:switched",
+    targetSessionId: "target",
+    text: "switched result",
+    timestamp: "2026-09-17T12:00:00.000Z",
+  } as const;
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* makeChatRegistry(profilePath);
+        yield* registry.registerAlias("ui/main", "slack", handle);
+        yield* registry.deliverAutomationResult({ name: "test", path: profilePath }, result);
+      }),
+    ),
+  );
+
+  expect(
+    SessionManager.open(target)
+      .getEntries()
+      .filter(
+        (entry) =>
+          entry.type === "custom_message" && entry.customType === "ziggy.automation-result",
+      ),
+  ).toHaveLength(1);
+});

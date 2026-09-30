@@ -546,7 +546,7 @@ read the artifact back first.
   - [x] ACP `set_model` actually applies.
   - [x] `agent_run` output is bounded and no longer duplicated.
   - [x] Children refuse `profile_extensions` (a guard until step 6).
-  - [ ] A live delivery into a switched session retries or falls back to the stored append.
+  - [x] A live delivery into a switched session retries or falls back to the stored append.
   - [x] The scheduler survives a cron that never fires (`Cron.next` throws); the resident still starts.
   - [ ] Session stats count Pi's `usage` entries and drop the `toolCall` branch.
   - [ ] Delete dead code:

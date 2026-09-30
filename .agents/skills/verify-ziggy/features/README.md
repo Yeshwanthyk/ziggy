@@ -20,7 +20,6 @@ documents a known bug and turns green when the work order fixes it; **uncovered*
 | [ACP](acp.md) | an editor prompts over ACP and gets streamed answers | green — `acp.test.ts` |
 
 Uncovered, recorded rather than implied: web `/new` then `run -c`; resume/new/fork ordering;
-channel (Telegram/Discord) watch-only; a live automation delivery into a session the UI
-switched away from; automation delivery to Slack, Discord or Telegram (the chat APIs have no
+channel (Telegram/Discord) watch-only; automation delivery to Slack, Discord or Telegram (the chat APIs have no
 base URL to point at the fake server until step 7); Profile extensions; `agent_discuss`; the web UI in a real
 browser (drive by hand with `web pair`, see `../SKILL.md`).

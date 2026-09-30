@@ -896,7 +896,15 @@ export const makeChatRegistry = (
               });
             }
 
-            const appended = yield* matching.handle.appendAutomationResult(result);
+            // The owner can switch sessions after the match (resume is not under statePermit);
+            // the target is then a stored conversation.
+            const appended = yield* matching.handle.appendAutomationResult(result).pipe(
+              Effect.catchIf(
+                (error) =>
+                  error.category === "destination-missing" || error.category === "session-held",
+                () => appendStoredAutomationResult(target.path, result).pipe(Effect.as(false)),
+              ),
+            );
 
             if (!appended) return;
             emit(matching, {
