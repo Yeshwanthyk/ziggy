@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Clock, Console, Effect, Exit, Result, Runtime, Schedule } from "effect";
+import { Cause, Clock, Console, Effect, Exit, Match, Result, Runtime, Schedule } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { fileSystemCauseDetails } from "./adapters/fs/cause";
@@ -16,8 +16,8 @@ import { Automations } from "./application/automations";
 import { ProfileExtensions } from "./application/profile-extensions";
 import { manageExtensions } from "./application/extension-manager";
 import { Doctor } from "./application/doctor";
-import { Models } from "./application/models";
 import { Memory } from "./application/memory";
+import { Models } from "./application/models";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents } from "./application/profile-agents";
 import { Profiles } from "./application/profiles";
@@ -27,7 +27,7 @@ import { Sessions } from "./application/sessions";
 import { SelfUpdate } from "./application/self-update";
 import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
-import { CliLayer } from "./composition";
+import { CliLayer, ModelsCommandsLayer } from "./composition";
 import { CliCommandFailed, exitWith } from "./faces/cli-exit";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { ZiggyPaths } from "./application/ziggy-paths";
@@ -67,7 +67,7 @@ import {
   renderProfileExtensionFailure,
   renderProfileExtensions,
 } from "./faces/extensions-cli";
-import { renderModelSelection, renderModels, renderModelStatus } from "./faces/models-cli";
+import { type ModelsCommand, runModelsCommand } from "./faces/commands/models";
 import {
   renderMemoryList,
   renderMemoryListJson,
@@ -85,9 +85,9 @@ import {
 } from "./faces/sessions-cli";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
 
-type ServiceCommand = Exclude<CliCommand, { readonly _tag: "Help" | "Version" }>;
+type LegacyCommand = Exclude<CliCommand, { readonly _tag: "Help" | "Version" } | ModelsCommand>;
 
-const runCommand = (command: ServiceCommand) =>
+const runCommand = (command: LegacyCommand) =>
   Effect.gen(function* () {
     const profiles = yield* Profiles;
     const agent = yield* ZiggyAgent;
@@ -815,36 +815,68 @@ const runCommand = (command: ServiceCommand) =>
 
         return rendered.exitCode;
       }
-
-      case "ModelsStatus": {
-        const status = yield* models.status(paths.resolveTarget(command.target));
-
-        console.log(renderModelStatus(status));
-
-        return;
-      }
-
-      case "ModelsList": {
-        const listed = yield* models.list(paths.resolveTarget(command.target), command.providerId);
-
-        console.log(renderModels(listed));
-
-        return;
-      }
-
-      case "ModelsSet": {
-        const selection = yield* models.set(
-          paths.resolveTarget(command.target),
-          command.providerId,
-          command.modelId,
-          command.thinking,
-        );
-
-        console.log(renderModelSelection(selection));
-
-        return;
-      }
     }
+  });
+
+const modelsArea = (command: ModelsCommand) =>
+  runModelsCommand(command).pipe(Effect.provide(ModelsCommandsLayer));
+
+// Commands not yet moved into an area module still run through `runCommand` with every service.
+const legacy = (command: LegacyCommand) => runCommand(command).pipe(Effect.provide(CliLayer));
+
+// Every command maps to its area runner; each area builds only its own layer.
+const dispatch = (command: CliCommand) =>
+  Match.valueTags(command, {
+    Help: (command) => Console.log(renderHelp(command.topic)),
+    Version: () => Console.log(packageJson.version),
+    ModelsStatus: modelsArea,
+    ModelsList: modelsArea,
+    ModelsSet: modelsArea,
+    Update: legacy,
+    Init: legacy,
+    Profiles: legacy,
+    ExtensionsList: legacy,
+    ExtensionsShow: legacy,
+    ExtensionsManage: legacy,
+    ExtensionsAdd: legacy,
+    ExtensionsRemove: legacy,
+    ExtensionsUpdate: legacy,
+    AuthStatus: legacy,
+    AuthLogin: legacy,
+    Doctor: legacy,
+    AgentsCreate: legacy,
+    AgentsList: legacy,
+    AgentsShow: legacy,
+    AgentsValidate: legacy,
+    AgentsRun: legacy,
+    Run: legacy,
+    Acp: legacy,
+    AutomationsCreate: legacy,
+    AutomationsList: legacy,
+    AutomationsPause: legacy,
+    AutomationsResume: legacy,
+    AutomationsValidate: legacy,
+    AutomationsStatus: legacy,
+    AutomationsRuns: legacy,
+    Wake: legacy,
+    SessionsList: legacy,
+    SessionsShow: legacy,
+    MemoryList: legacy,
+    MemoryShow: legacy,
+    Serve: legacy,
+    ServeInstall: legacy,
+    ServeStart: legacy,
+    ServeStop: legacy,
+    ServeRestart: legacy,
+    ServeStatus: legacy,
+    ServeLogs: legacy,
+    ServeUninstall: legacy,
+    WebConfigure: legacy,
+    WebPair: legacy,
+    WebRevoke: legacy,
+    Gateway: legacy,
+    UnsupportedResidentAlias: legacy,
+    Open: legacy,
   });
 
 const reportFailure = (message: string) => Console.error(message).pipe(Effect.as(1));
@@ -852,19 +884,7 @@ const reportFailure = (message: string) => Console.error(message).pipe(Effect.as
 const program = Effect.gen(function* () {
   const command = yield* decodeCliCommand(process.argv.slice(2));
 
-  if (command._tag === "Help") {
-    console.log(renderHelp(command.topic));
-
-    return;
-  }
-
-  if (command._tag === "Version") {
-    console.log(packageJson.version);
-
-    return;
-  }
-
-  return yield* runCommand(command).pipe(Effect.provide(CliLayer));
+  return yield* dispatch(command);
 }).pipe(
   // Typed failures print one line and exit 1; a few tags carry detail beyond their message.
   Effect.catchTags({

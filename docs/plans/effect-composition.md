@@ -117,7 +117,12 @@ src/faces/commands/    one handler module per command area; handlers yield servi
      render more than `.message`, then one `Effect.catch`.
    - `disableErrorReporting` is gone, so defects are reported instead of exiting 1 silently.
    - Covers review comment 1.
-5. **Per-area handlers.** Status: pending.
+5. **Per-area handlers.** Status: in progress (models done).
+   - Area modules live in `src/faces/commands/<area>.ts`. Each exports its command type and a
+     `run<Area>Command` that `Match.valueTags` over its tags, yields only its services, and prints
+     through `Console`. `composition.ts` exports a matching `<Area>CommandsLayer`.
+   - `main.ts` `dispatch` is one exhaustive `Match.valueTags` over every `CliCommand`, including
+     help and version. Tags not moved yet map to `legacy`, which runs `runCommand` under `CliLayer`.
    - One area per commit: models, sessions, memory, auth, agents, automations, extensions,
      profiles/init, serve/web/open, run/acp, doctor, update.
    - `main.ts` dispatches with `Match.valueTags` and provides each area's layer.

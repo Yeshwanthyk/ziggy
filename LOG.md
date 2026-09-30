@@ -1287,3 +1287,9 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `disableErrorReporting` is removed from `runMain`, so defects print instead of exiting 1 silently.
 - `TerminalStyle` (`src/faces/terminal-ui.ts`) replaces `terminalRenderOptions()`. It reads `TERM` and `NO_COLOR` through `Config` and the stdout TTY and columns when its layer builds.
 - Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested exit codes from source: `--version`/`help`/`profiles` 0; doctor on a missing Profile, unknown extension, `serve status` on an uninstalled Profile, and an uninitialized Profile all 1 with one printed report. Under a pseudo-TTY `profiles` renders the pretty panel, and `NO_COLOR` drops colors.
+
+## Per-area CLI handlers: models
+
+- `main.ts` dispatches every command, help and version included, through one exhaustive `Match.valueTags`. Commands not yet moved map to `legacy`, which still runs `runCommand` under `CliLayer`.
+- `ziggy models status|list|set` moved to `src/faces/commands/models.ts`. It yields only `Models` and `ZiggyPaths`, prints through `Console`, and runs under `ModelsCommandsLayer`, so it no longer builds the resident, gateway and agent layers.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested from a scratch `ZIGGY_HOME`: `help models` 0; `models status` and `models list --provider anthropic` on a fresh Profile 0; both on an uninitialized Profile 1 with one report.

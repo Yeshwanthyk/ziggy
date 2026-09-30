@@ -147,3 +147,8 @@ export const CliLayer = Layer.mergeAll(
   ZiggyPathsLive,
   TerminalStyle.layer,
 ).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy models ...`: the model catalog and a Profile's selection. */
+export const ModelsCommandsLayer = Layer.mergeAll(ModelsLive, ZiggyPathsLive).pipe(
+  Layer.provide(PiStandaloneRuntimeLive),
+);
