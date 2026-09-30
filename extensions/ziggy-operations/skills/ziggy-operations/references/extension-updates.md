@@ -16,7 +16,7 @@ ziggy extensions update squarey computer-workflows --restart
 ```
 
 Ziggy stages and validates the new package first, then stops the resident, applies the update
-under the update lock, and starts the resident again. Without `--restart` the update is refused
+under the Profile's extension lock, and starts the resident again. Without `--restart` the update is refused
 while the resident runs. If a step fails, either the old or the new version stays applied, and
 the command reports whether the resident is running or recovery is needed. The updater does not
 drain active work, schedule an update, or download another executable. Older Ziggy processes do
@@ -33,20 +33,20 @@ ziggy extensions update squarey computer-workflows --adopt
 ```
 
 Adoption is a takeover of that package directory, not proof that its previous contents came
-from Ziggy. Inspect local changes first. The updater retains the previous package as a backup.
+from Ziggy. Inspect local changes first; the previous copy is not kept after a successful update.
 Once a receipt exists, modified package contents block updates; `--adopt` does not override
 that protection.
 
 ## Boundaries
 
-- Only an explicitly named, already installed bundled extension is updated.
+- Only an explicitly named, already installed optional bundled extension is updated. Required
+  packages are read from Ziggy's own cache and update with Ziggy itself.
 - Package content hashes detect changes even when the package version is unchanged.
 - The selected extension set, browser profiles, saved workflows, and human-owned Profile
   documents are not replaced.
 - Updates that change extension-owned automation definitions are rejected in this version.
-- A recovery journal protects interrupted replacement. An unresolved update blocks runtime
-  loading until recovery succeeds. Rerun the update command for that package to recover it;
-  if recovery detects changed files, it preserves them and reports the conflict.
+- The swap is two renames through `<id>.old`. If it stops between them, the next open of the
+  Profile restores `<id>.old`, so the Profile runs the previous version until you rerun the update.
 - The new tool code and skill instructions load together when the resident restarts; `--restart`
   does this for you.
 

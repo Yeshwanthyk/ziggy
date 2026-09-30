@@ -6,7 +6,7 @@ import {
   manageExtensions,
   type ExtensionManagerInteraction,
 } from "ziggy/application/extension-manager";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import type { ExtensionsApi } from "ziggy/extensions/index";
 import { type ProfilesApi } from "ziggy/profile/index";
 
 const unused = () => Effect.never;
@@ -29,6 +29,7 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
           { id: "beta", description: "Beta", kind: "code", source: "bundled" },
         ],
         selected,
+        required: [],
       }),
     add: unused,
     remove: unused,
@@ -38,9 +39,9 @@ const extensionService = (selected: ReadonlyArray<string>, calls: Array<Readonly
       return Effect.succeed({ changed: true, selected: [...ids].sort() });
     },
     validate: unused,
-    prepareRuntime: unused,
-    activateRuntime: unused,
-  }) satisfies ProfileExtensionsApi;
+    health: unused,
+    update: unused,
+  }) satisfies ExtensionsApi;
 
 const options = {};
 

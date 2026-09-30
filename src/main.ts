@@ -1,10 +1,20 @@
 import * as path from "node:path";
 import { BunRuntime } from "@effect/platform-bun";
-import { Cause, Clock, Console, Effect, Exit, Match, Result, Runtime, Schedule } from "effect";
+import {
+  Cause,
+  Clock,
+  Console,
+  Effect,
+  Exit,
+  Logger,
+  Match,
+  Result,
+  Runtime,
+  Schedule,
+} from "effect";
 import packageJson from "../package.json" with { type: "json" };
 import { readUiServerProjection } from "./adapters/bun/ui-server";
 import { fileSystemCauseDetails } from "./platform/cause";
-import { readSelectedExtensionPackage } from "./adapters/fs/profile-extensions";
 import { terminalAuthInteraction } from "./adapters/terminal/auth-interaction";
 import { terminalExtensionManagerInteraction } from "./adapters/terminal/extension-manager-interaction";
 import { terminalSetupInteraction } from "./adapters/terminal/setup-interaction";
@@ -12,16 +22,14 @@ import { ZiggyAgent } from "./application/agent";
 import { AutomationDefinitions } from "./application/automation-definitions";
 import { AutomationScheduler } from "./application/automation-scheduler";
 import { Automations } from "./application/automations";
-import { ProfileExtensions } from "./application/profile-extensions";
 import { manageExtensions } from "./application/extension-manager";
 import { Doctor } from "./application/doctor";
 import { configureWebAccess, issueWebPairing, revokeWebSessions } from "./application/web-access";
 import { ProfileAgents } from "./application/profile-agents";
 import { ResidentGateway } from "./application/resident-gateway";
-import { ResidentService } from "./application/resident-service";
+import { ResidentService, type ResidentServiceApi } from "./application/resident-service";
 import { Sessions } from "./session";
 import { SelfUpdate } from "./application/self-update";
-import { ExtensionUpdate, refreshRequiredExtensions } from "./application/extension-update";
 import { Setup } from "./application/setup";
 import {
   CliLayer,
@@ -74,12 +82,51 @@ import { renderProfiles, renderProfilesJson } from "./faces/profiles-cli";
 import { runAcp } from "./faces/acp";
 import { wakeInResident } from "./faces/wake-resident";
 import { renderResidentLifecycle, renderResidentLogs, renderServeStatus } from "./faces/serve-cli";
-import { Auth, Models, Profiles, resolveProfileTarget } from "./profile";
+import { Auth, Models, Profiles, resolveProfileTarget, type ProfileTarget } from "./profile";
+import { Extensions } from "./extensions";
 
 type LegacyCommand = Exclude<
   CliCommand,
   { readonly _tag: "Help" | "Version" } | ModelsCommand | SessionsCommand | MemoryCommand
 >;
+
+/** `extensions update --restart`: stop the managed resident around `update`, then start it again. */
+const withResidentStopped = <A, E>(
+  residentService: ResidentServiceApi,
+  target: ProfileTarget,
+  update: Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const service = yield* residentService.status(target);
+
+    if (Result.isFailure(service.managed) || service.managed.success._tag === "not-installed") {
+      return yield* new CliCommandFailed({
+        message:
+          "--restart requires an installed managed resident; stop the resident and update without --restart",
+      });
+    }
+
+    const stopped = yield* residentService.stop(target);
+
+    if (stopped.ready !== true) {
+      return yield* new CliCommandFailed({
+        message: "Resident did not stop cleanly; update not applied.",
+      });
+    }
+
+    const restart = residentService.start(target).pipe(
+      Effect.flatMap((started) =>
+        started.ready === true
+          ? Effect.void
+          : Console.error("resident not running; use ziggy serve start"),
+      ),
+      Effect.catch((failure) =>
+        Console.error(`resident not running; use ziggy serve start: ${failure.message}`),
+      ),
+    );
+
+    return yield* update.pipe(Effect.ensuring(restart));
+  });
 
 const runCommand = (command: LegacyCommand) =>
   Effect.gen(function* () {
@@ -96,9 +143,8 @@ const runCommand = (command: LegacyCommand) =>
     const residentGateway = yield* ResidentGateway;
     const residentService = yield* ResidentService;
     const sessions = yield* Sessions;
-    const profileExtensions = yield* ProfileExtensions;
+    const profileExtensions = yield* Extensions;
     const selfUpdate = yield* SelfUpdate;
-    const extensionUpdate = yield* ExtensionUpdate;
     const paths = yield* ZiggyPaths;
     const style = yield* TerminalStyle;
 
@@ -254,8 +300,7 @@ const runCommand = (command: LegacyCommand) =>
                 return {
                   path: target.path,
                   selected:
-                    listing.required?.includes(command.id) === true ||
-                    listing.selected.includes(command.id),
+                    listing.required.includes(command.id) || listing.selected.includes(command.id),
                 };
               });
 
@@ -304,13 +349,7 @@ const runCommand = (command: LegacyCommand) =>
         console.log(renderExtensionMutation(result, style));
 
         if (command._tag === "ExtensionsAdd" && result.selected && result.changed) {
-          const extension = yield* readSelectedExtensionPackage(target.path, result.id).pipe(
-            Effect.result,
-          );
-
-          if (Result.isFailure(extension)) {
-            console.warn("extension added; could not inspect its schedules for a resident hint");
-          } else if (extension.success.automations.length > 0) {
+          if (result.automations.length > 0) {
             const service = yield* residentService.status(target);
 
             if (
@@ -331,23 +370,14 @@ const runCommand = (command: LegacyCommand) =>
 
       case "ExtensionsUpdate": {
         const target = resolveProfileTarget(command.target, paths);
+        const update = profileExtensions.update(target, command.id, { adopt: command.adopt });
 
-        const updated = yield* extensionUpdate.update(target, command.id, {
-          adopt: command.adopt,
-          restart: command.restart,
-        });
+        const updated = command.restart
+          ? yield* withResidentStopped(residentService, target, update)
+          : yield* update;
 
         console.log(`${updated.status} ${updated.id} in ${updated.profilePath}`);
-
-        if (updated.adoptedUnknownOrigin) console.log("adopted previously untracked package");
         console.log(`content ${updated.contentHash}`);
-
-        if (updated.backupPath !== undefined) console.log(`backup ${updated.backupPath}`);
-
-        if (updated.residentStopped)
-          console.log(
-            `resident stopped; run ziggy serve start ${JSON.stringify(target.path)} (or install the service first)`,
-          );
 
         return;
       }
@@ -673,9 +703,6 @@ const runCommand = (command: LegacyCommand) =>
       case "Serve":
       case "Gateway": {
         const target = resolveProfileTarget(command.target, paths);
-        yield* refreshRequiredExtensions(target, (profile, id) =>
-          extensionUpdate.update(profile, id),
-        );
 
         return yield* residentGateway.run(target);
       }
@@ -850,11 +877,9 @@ const program = Effect.gen(function* () {
       reportFailure(`profile target is not a directory: ${failure.path}`),
     ProfileFileSystemError: (failure) =>
       reportFailure(`failed to ${failure.operation} ${failure.path}: ${failure.message}`),
-    ProfileExtensionPreflightFailed: (failure) =>
-      reportFailure(renderProfileExtensionFailure(failure)),
-    ProfileExtensionLockFailed: (failure) => reportFailure(renderProfileExtensionFailure(failure)),
-    ProfileExtensionRollbackFailed: (failure) =>
-      reportFailure(renderProfileExtensionFailure(failure)),
+    ExtensionLoadFailed: (failure) => reportFailure(renderProfileExtensionFailure(failure)),
+    ExtensionLockFailed: (failure) => reportFailure(renderProfileExtensionFailure(failure)),
+    ExtensionUpdateError: (failure) => reportFailure(renderProfileExtensionFailure(failure)),
     SessionHeld: (failure) =>
       reportFailure(
         `this session is open in another process${failure.pid === undefined ? "" : ` (pid ${failure.pid})`}; use the UI, or start a new session`,
@@ -862,6 +887,8 @@ const program = Effect.gen(function* () {
   }),
   Effect.catch((failure) => reportFailure(failure.message)),
   Effect.flatMap(exitWith),
+  // stdout carries command output and the ACP protocol; logs never share it.
+  Effect.provideService(Logger.LogToStderr, true),
 );
 
 BunRuntime.runMain(

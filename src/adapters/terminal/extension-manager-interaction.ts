@@ -5,7 +5,7 @@ import type {
   ExtensionManagerChanges,
   ExtensionManagerInteraction,
 } from "../../application/extension-manager";
-import type { ProfileExtensionListing } from "../../domain/profile-extension";
+import type { ExtensionSelection } from "../../extensions";
 import { TerminalInteractionFailed } from "../../domain/terminal-interaction";
 import { type ProfileListing, type ProfileTarget } from "../../profile";
 
@@ -41,7 +41,7 @@ const selectProfile = (profiles: ReadonlyArray<ProfileListing>) =>
     ),
   );
 
-const selectExtensions = (profile: ProfileTarget, listing: ProfileExtensionListing) =>
+const selectExtensions = (profile: ProfileTarget, listing: ExtensionSelection) =>
   prompt("select extensions", (signal) =>
     autocompleteMultiselect({
       message: ziggyPrompt(`extensions · ${profile.name}`),

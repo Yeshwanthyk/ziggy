@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { Schema } from "effect";
 import {
-  ProfileExtensionLockFailed,
-  ProfileExtensionPreflightFailed,
-  ProfileExtensionRollbackFailed,
-} from "ziggy/domain/profile-extension";
+  ExtensionLoadFailed,
+  ExtensionLockFailed,
+  ExtensionUpdateError,
+} from "ziggy/extensions/index";
 import {
   renderExtension,
   renderExtensionManagerResult,
@@ -29,7 +29,6 @@ const extension = {
   kind: "skill" as const,
   required: false,
   source: "bundled" as const,
-  installed: true,
   packagePath: "extensions/weather",
   skills: [{ name: "weather", description: "Look up weather" }],
   extensionPaths: ["extensions/weather/index.ts"],
@@ -58,9 +57,9 @@ test("keeps the management action readable in a narrow terminal", () => {
     [
       {
         ...extension,
-        id: "required-remote-extension-with-a-long-name",
+        id: "required-profile-extension-with-a-long-name",
         required: true,
-        source: "remote-approved",
+        source: "profile",
       },
     ],
     {
@@ -70,7 +69,7 @@ test("keeps the management action readable in a narrow terminal", () => {
     },
   );
 
-  expect(rendered).toContain("remote-approved · required");
+  expect(rendered).toContain("profile · required");
   expect(rendered).toContain(" MANAGE  ziggy extensions manage");
   expect(rendered).toContain("<profile>");
   expect(rendered).toContain("choose extensions");
@@ -115,6 +114,7 @@ test("bounds long extension detail and result values in a narrow terminal", () =
       profilePath: `/tmp/${longValue}`,
       changed: true,
       selected: true,
+      automations: [],
     },
     options,
   );
@@ -138,13 +138,14 @@ test("preserves extension metadata in the pretty detail view", () => {
   expect(rendered).toContain("extensions/weather");
 });
 
-test("names the Profile for installed selection and distinguishes package presence", () => {
+test("names the Profile whose selection a listing describes", () => {
   const options = { pretty: false, colors: false, columns: 76 };
-  expect(renderExtension(extension, options)).toContain("package present\tyes");
-  expect(renderExtension(extension, options)).not.toContain("installed");
+  expect(renderExtension(extension, options)).not.toContain("selected in");
   expect(
     renderExtension(extension, options, { path: "/profiles/buddy", selected: false }),
   ).toContain("selected in /profiles/buddy\tno");
+
+  const required: ReadonlyArray<string> = [];
 
   const listing = {
     available: [
@@ -156,6 +157,7 @@ test("names the Profile for installed selection and distinguishes package presen
       },
     ],
     selected: ["weather"],
+    required,
   };
 
   expect(renderProfileExtensions(listing, "/profiles/buddy", false)).toContain("weather\tselected");
@@ -188,7 +190,7 @@ test("projects bounded preflight diagnostics without exposing the cause", () => 
   const reason = `${"r".repeat(360)}-reason-secret`;
 
   const rendered = renderProfileExtensionFailure(
-    new ProfileExtensionPreflightFailed({
+    new ExtensionLoadFailed({
       profilePath: "/private/profile",
       stage: "skills",
       message: "Pi resource preflight found diagnostics",
@@ -205,49 +207,31 @@ test("projects bounded preflight diagnostics without exposing the cause", () => 
   expect(rendered).not.toContain("preflight-cause-secret");
 });
 
-test("projects lock operation and bounded reason without exposing the cause", () => {
+test("projects lock and update refusals with bounded reasons and no cause", () => {
   const reason = `${"l".repeat(360)}-lock-secret`;
 
-  const rendered = renderProfileExtensionFailure(
-    new ProfileExtensionLockFailed({
+  const lock = renderProfileExtensionFailure(
+    new ExtensionLockFailed({
       profilePath: "/private/profile",
-      operation: "acquire",
       message: reason,
       cause: { secret: "lock-cause-secret" },
     }),
   );
 
-  expect(rendered).toContain("operation=acquire");
-  expect(rendered).toContain(`reason=${"l".repeat(360)}`);
-  expect(rendered).not.toContain("lock-secret");
-  expect(rendered).not.toContain("lock-cause-secret");
-});
+  expect(lock).toContain(`Profile extension lock failed: ${"l".repeat(360)}`);
+  expect(lock).not.toContain("lock-secret");
+  expect(lock).not.toContain("lock-cause-secret");
 
-test("projects rollback operation, bounded path, and reason without raw failures", () => {
-  const rollbackPath = "p".repeat(240);
-  const rollbackReason = "b".repeat(360);
-
-  const rendered = renderProfileExtensionFailure(
-    new ProfileExtensionRollbackFailed({
+  const update = renderProfileExtensionFailure(
+    new ExtensionUpdateError({
       profilePath: "/private/profile",
-      operation: "set-selected",
-      message: "Profile extension mutation failed and state may have changed",
-      originalFailure: { secret: "original-cause-secret" },
-      rollbackFailures: [
-        {
-          operation: "restore extensions.json",
-          path: rollbackPath,
-          message: rollbackReason,
-        },
-      ],
-      cause: { secret: "rollback-cause-secret" },
+      id: "weather",
+      reason: "modified",
+      message: "Installed extension has local changes.",
+      cause: { secret: "update-cause-secret" },
     }),
   );
 
-  expect(rendered).toContain("operation=set-selected");
-  expect(rendered).toContain("rollback operation=restore extensions.json");
-  expect(rendered).toContain(`path=${"p".repeat(240)}`);
-  expect(rendered).toContain(`reason=${"b".repeat(360)}`);
-  expect(rendered).not.toContain("original-cause-secret");
-  expect(rendered).not.toContain("rollback-cause-secret");
+  expect(update).toContain("id=weather; reason=modified");
+  expect(update).not.toContain("update-cause-secret");
 });

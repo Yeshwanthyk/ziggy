@@ -1,10 +1,9 @@
 import { Context, Effect, Layer } from "effect";
-import { ProfileExtensions } from "./profile-extensions";
-import type { BundledCopyState, DoctorCheck, DoctorReport } from "../domain/doctor";
+import type { DoctorCheck, DoctorReport } from "../domain/doctor";
 import type { SlackHealthProjection } from "../domain/slack-health";
 import type { DiscordHealthProjection } from "../domain/discord-health";
 import type { ProfileAgent } from "../domain/profile";
-import type { ProfileExtensionsApi } from "../domain/profile-extension";
+import { Extensions, type ExtensionsApi } from "../extensions";
 import { type AuthApi, Auth, type ModelsApi, Models, type ProfileTarget } from "../profile";
 
 export interface DoctorApi {
@@ -19,7 +18,7 @@ export interface DoctorChecksApi {
     target: ProfileTarget,
     auth: AuthApi,
     models: ModelsApi,
-    profileExtensions: ProfileExtensionsApi,
+    profileExtensions: ExtensionsApi,
   ) => Effect.Effect<DoctorReport>;
 }
 
@@ -30,7 +29,7 @@ export class DoctorChecks extends Context.Service<DoctorChecks, DoctorChecksApi>
 export const makeDoctor = (
   auth: AuthApi,
   models: ModelsApi,
-  profileExtensions: ProfileExtensionsApi,
+  profileExtensions: ExtensionsApi,
   checks: DoctorChecksApi,
 ): DoctorApi => ({
   check: (target) => checks.check(target, auth, models, profileExtensions),
@@ -39,7 +38,7 @@ export const makeDoctor = (
 export const DoctorLive = Layer.effect(
   Doctor,
   Effect.gen(function* () {
-    return makeDoctor(yield* Auth, yield* Models, yield* ProfileExtensions, yield* DoctorChecks);
+    return makeDoctor(yield* Auth, yield* Models, yield* Extensions, yield* DoctorChecks);
   }),
 );
 
@@ -120,27 +119,6 @@ export const classifyDiscordRuntime = (projection: DiscordHealthProjection): Doc
   }
 
   return warn("discord-runtime", `Discord runtime is ${snapshot.state}`);
-};
-
-/** Recovery text is Profile policy; the adapter only determines the copy state. */
-export const bundledCopyCheck = (
-  profilePath: string,
-  id: string,
-  state: BundledCopyState,
-): DoctorCheck | undefined => {
-  if (state === "modified")
-    return warn(
-      "resources",
-      `${id} has local changes; copy your edits elsewhere and restore the original files, then run ziggy extensions update ${JSON.stringify(profilePath)} ${id}`,
-    );
-
-  if (state === "untracked-behind")
-    return warn(
-      "resources",
-      `${id} is behind the bundle and untracked; run ziggy extensions update ${JSON.stringify(profilePath)} ${id} --adopt`,
-    );
-
-  return undefined;
 };
 
 export const modelDoctorCheck = (

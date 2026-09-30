@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { ProfileExtensionsApi, ProfileExtensionListing } from "../domain/profile-extension";
+import type { ExtensionSelection, ExtensionsApi } from "../extensions";
 import type { TerminalInteractionFailed } from "../domain/terminal-interaction";
 import { type ProfileTarget, type ProfileListing, type ProfilesApi } from "../profile";
 
@@ -14,7 +14,7 @@ export interface ExtensionManagerInteraction {
   ) => Effect.Effect<ProfileListing | undefined, TerminalInteractionFailed>;
   readonly selectExtensions: (
     profile: ProfileTarget,
-    listing: ProfileExtensionListing,
+    listing: ExtensionSelection,
   ) => Effect.Effect<ReadonlyArray<string> | undefined, TerminalInteractionFailed>;
   readonly confirmChanges: (
     profile: ProfileTarget,
@@ -62,7 +62,7 @@ const changesBetween = (
 
 export const manageExtensions = (
   profiles: ProfilesApi,
-  extensions: ProfileExtensionsApi,
+  extensions: ExtensionsApi,
   interaction: ExtensionManagerInteraction,
   options: ExtensionManagerOptions,
 ) =>

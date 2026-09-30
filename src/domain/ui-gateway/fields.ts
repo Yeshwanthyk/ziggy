@@ -2,7 +2,6 @@ import { Schema } from "effect";
 import { AutomationTargetString } from "../automation";
 import { ProfileAgentId, ProfileAgentThinking } from "../profile";
 import { ProfileId } from "../profile-directory";
-import { ProfileExtensionId } from "../profile-extension";
 
 export const UI_PROTOCOL_MAX_FRAME_BYTES = 64 * 1_024;
 
@@ -225,7 +224,10 @@ export const UiSessionHistoryParams = Schema.Struct({
 
 export type UiSessionHistoryParams = typeof UiSessionHistoryParams.Type;
 
-export const UiExtensionId = ProfileExtensionId.check(Schema.isMaxLength(128));
+export const UiExtensionId = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  Schema.isMaxLength(128),
+);
 
 export type UiExtensionId = typeof UiExtensionId.Type;
 

@@ -33,10 +33,7 @@ import {
 import type { ChatHandle, OpenSession, RunOnceOptions, ZiggyAgentApi } from "./types";
 
 /** What composition plugs into every session this agent opens. */
-export type SessionDependencies = Pick<
-  ProfileRuntimeOptions,
-  "extensions" | "tools" | "runtimeFactory"
->;
+export type SessionDependencies = Pick<ProfileRuntimeOptions, "tools" | "runtimeFactory">;
 
 export const localMainSessionDirectory = (profilePath: string): string =>
   join(profilePath, "sessions", "local", "main");

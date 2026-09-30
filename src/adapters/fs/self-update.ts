@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect } from "effect";
-import { ZiggyUpdateUnavailable } from "../../domain/extension-catalog";
+import { ZiggyUpdateUnavailable } from "../../domain/self-update";
 
 export type SelfUpdateInstaller = (
   targetPath: string,

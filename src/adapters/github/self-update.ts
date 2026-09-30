@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Predicate } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ZiggyUpdateUnavailable } from "../../domain/extension-catalog";
+import { ZiggyUpdateUnavailable } from "../../domain/self-update";
 
 export interface ZiggyReleaseClientApi {
   readonly downloadLatest: () => Effect.Effect<

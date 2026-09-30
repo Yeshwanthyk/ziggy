@@ -26,12 +26,10 @@ import { Memory } from "ziggy/application/memory";
 import { ProfileAgents } from "ziggy/application/profile-agents";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
 import { Gateway, type GatewayApi } from "ziggy/application/gateway";
-import { ProfileExtensions } from "ziggy/application/profile-extensions";
 import {
   ResidentGateway,
   loadResidentGatewayConfig,
   makeResidentGateway,
-  ExtensionHealth,
   ResidentGatewayLive,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
@@ -43,7 +41,7 @@ import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gate
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import { Extensions, type ExtensionsApi } from "ziggy/extensions/index";
 import { type ProfileTarget, Auth, Models } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
@@ -417,11 +415,11 @@ describe("resident gateway supervision", () => {
     expect(events.at(-1)).toBe("owner:exit");
   });
 
-  test("routes an authenticated UI extension request through shared ProfileExtensions", async () => {
+  test("routes an authenticated UI extension request through shared Extensions", async () => {
     const target = await profile();
     const calls: Array<string> = [];
 
-    const profileExtensions: ProfileExtensionsApi = {
+    const profileExtensions: ExtensionsApi = {
       list: () => Effect.never,
       show: () => Effect.never,
       listForProfile: () => Effect.never,
@@ -437,8 +435,8 @@ describe("resident gateway supervision", () => {
             preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
           };
         }),
-      prepareRuntime: () => Effect.never,
-      activateRuntime: () => Effect.never,
+      health: () => Effect.never,
+      update: () => Effect.never,
     };
 
     const sessions: SessionsApi = {
@@ -468,7 +466,7 @@ describe("resident gateway supervision", () => {
       Layer.succeed(SlackGateway, channelLoops.slack),
       Layer.succeed(Sessions, sessions),
       Layer.succeed(ZiggyAgent, agent),
-      Layer.succeed(ProfileExtensions, profileExtensions),
+      Layer.succeed(Extensions, profileExtensions),
       Layer.mock(AutomationDefinitions, {}),
       Layer.mock(Automations, {}),
       Layer.mock(Auth, {}),
@@ -513,9 +511,6 @@ describe("resident gateway supervision", () => {
             Layer.provide(
               Layer.mergeAll(
                 dependencies,
-                Layer.succeed(ExtensionHealth, () =>
-                  Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
-                ),
                 Layer.succeed(
                   ZiggyPaths,
                   ZiggyPaths.make({

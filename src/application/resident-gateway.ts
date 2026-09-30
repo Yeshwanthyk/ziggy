@@ -43,9 +43,7 @@ import {
 } from "./discord-gateway";
 import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
 import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
-import { ProfileExtensions } from "./profile-extensions";
-import type { ProfileExtensionsApi } from "../domain/profile-extension";
-import type { UiGatewayDependencies } from "./ui-gateway/types";
+import { Extensions, type ExtensionsApi } from "../extensions";
 import { Sessions, type SessionsApi } from "../session";
 import { ZiggyPaths } from "../platform/paths";
 import {
@@ -134,8 +132,7 @@ const makeLiveUiRuntime = (
   capabilities: {
     readonly sessions: SessionsApi;
     readonly agent: ZiggyAgentApi;
-    readonly profileExtensions: ProfileExtensionsApi;
-    readonly extensionHealth: UiGatewayDependencies["extensionHealth"];
+    readonly profileExtensions: ExtensionsApi;
     readonly profileAgents: ProfileAgentsApi;
     readonly models: ModelsApi;
     readonly auth: AuthApi;
@@ -341,12 +338,6 @@ export const makeResidentGateway = (
     }),
 });
 
-/** How the UI reports each selected extension's load health; supplied by the Pi adapter. */
-export class ExtensionHealth extends Context.Service<
-  ExtensionHealth,
-  UiGatewayDependencies["extensionHealth"]
->()("ziggy/ExtensionHealth") {}
-
 export const ResidentGatewayLive = Layer.effect(
   ResidentGateway,
   Effect.gen(function* () {
@@ -362,8 +353,7 @@ export const ResidentGatewayLive = Layer.effect(
         {
           sessions: yield* Sessions,
           agent: yield* ZiggyAgent,
-          profileExtensions: yield* ProfileExtensions,
-          extensionHealth: yield* ExtensionHealth,
+          profileExtensions: yield* Extensions,
           profileAgents: yield* ProfileAgents,
           models: yield* Models,
           auth: yield* Auth,

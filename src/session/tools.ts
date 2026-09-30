@@ -3,7 +3,7 @@ import type {
   AgentSessionServices,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { PiResources } from "../adapters/pi/resources";
+import type { PiResources } from "../extensions";
 import type { ChatContext } from "../domain/memory";
 import type { ProfileAgent } from "../domain/profile";
 

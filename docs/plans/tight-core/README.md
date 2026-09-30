@@ -573,7 +573,7 @@ read the artifact back first.
   - Move the three resume-order tests to the handle.
   - Delete `chat-runtime-binding.ts`, the runtime leases and locks, and the print-mode capture.
 - [x] **5. Core: `session/store.ts`.** One streaming store; the history cursor becomes index + id.
-- [ ] **6. Core: `extensions/`.**
+- [x] **6. Core: `extensions/`.**
   - Selection, loader, required cache, update with recovery, and the smaller tool.
   - Rebuild the extension half of `doctor-checks.ts`.
   - Update the extension skills and ops docs.
@@ -670,3 +670,7 @@ Add one dated line per session: what landed, which proofs went green, and what w
   - `src/profile/` holds `types`, `profiles`, `models` and the `[Pi]` files `pi-models` and `pi-auth`; `ProfileStore` and `application/{profiles,models,auth}` are gone.
   - `Profiles` reads `ZiggyPaths` itself: `init`, `register`, `list`.
   - Left for step 7: `application/profile-directory.ts` still reads the registry for the ui-gateway.
+- 2026-09-30: Steps 4–6 landed.
+  - `src/session/` and `session/store.ts` own live sessions and transcripts; see LOG.md.
+  - `src/extensions/` owns selection, loading, the required cache, update with `<id>.old` recovery and the tool; 14 old files are gone.
+  - EXT-1..9 are green in `test/e2e/extensions.test.ts`; logs moved to stderr.

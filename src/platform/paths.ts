@@ -32,13 +32,15 @@ export class ZiggyPaths extends Context.Service<ZiggyPaths, ZiggyPathsApi>()("zi
   };
 }
 
-/** Read the working directory, home directory and `ZIGGY_HOME` once, when the layer builds. */
-export const ZiggyPathsLive = Layer.effect(
-  ZiggyPaths,
-  Effect.gen(function* () {
+/** Read the working directory, home directory and `ZIGGY_HOME` from the process. */
+export const readZiggyPaths: Effect.Effect<ZiggyPathsApi, Config.ConfigError> = Effect.gen(
+  function* () {
     const ziggyHome = yield* Config.string("ZIGGY_HOME").pipe(Config.option);
     const host = yield* Effect.sync(() => ({ cwd: process.cwd(), homedir: homedir() }));
 
     return ZiggyPaths.make({ ...host, ziggyHome: Option.getOrUndefined(ziggyHome) });
-  }),
+  },
 );
+
+/** Read the paths once, when the layer builds. */
+export const ZiggyPathsLive = Layer.effect(ZiggyPaths, readZiggyPaths);

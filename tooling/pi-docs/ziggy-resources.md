@@ -14,7 +14,7 @@ constructs the Pi runtime from a specific Profile and disables Pi's ambient disc
 - A selected package's manifest declares `pi.extensions` (executable Pi extension entrypoints)
   and/or `pi.skills` (skill files or directories). Selected skills load first. Required bundled
   packages `extension-authoring`, `pi-packages`, and `ziggy-operations` also contribute skills
-  even without optional selection. Skills are progressively loaded from their `SKILL.md`
+  even without optional selection; they load from Ziggy's cache under `ZIGGY_HOME`, not the Profile. Skills are progressively loaded from their `SKILL.md`
   metadata; selection admits a skill, not an instruction to invoke it on every turn.
 - Use the `profile_extensions` tool or `ziggy extensions add <profile> <id>` and
   `ziggy extensions remove <profile> <id>` to change selection. Use `ziggy extensions list` and

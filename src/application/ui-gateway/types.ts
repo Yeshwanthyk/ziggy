@@ -1,7 +1,5 @@
-import type { Effect } from "effect";
-import type { ProfileExtensionHealthListing } from "../../adapters/pi/profile-extension-preflight";
 import type { UiGroupStore, UiPinStore } from "../../adapters/fs/ui-state";
-import type { ProfileExtensionsApi, ProfileExtensionError } from "../../domain/profile-extension";
+import type { ExtensionsApi } from "../../extensions";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { ResidentProfileBranch } from "../profile-runtime-directory";
 import type { ProfileAgentsApi } from "../profile-agents";
@@ -32,11 +30,7 @@ export interface UiGatewayDependencies {
   readonly profilesDirectory?: string | undefined;
   readonly sessions: SessionsApi;
   readonly agent: ZiggyAgentApi;
-  readonly profileExtensions: ProfileExtensionsApi;
-  readonly extensionHealth: (
-    profilePath: string,
-    extensions: ProfileExtensionsApi,
-  ) => Effect.Effect<ProfileExtensionHealthListing, ProfileExtensionError>;
+  readonly profileExtensions: ExtensionsApi;
   readonly profileAgents?: ProfileAgentsApi;
   readonly models?: ModelsApi;
   readonly auth?: AuthApi;

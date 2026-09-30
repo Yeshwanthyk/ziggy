@@ -1,12 +1,12 @@
 import { Schema } from "effect";
 import type { ExtensionManagerResult } from "../application/extension-manager";
 import type {
-  ProfileExtensionListing,
-  ProfileExtensionLockFailed,
-  ProfileExtensionMutation,
-  ProfileExtensionPreflightFailed,
-  ProfileExtensionRollbackFailed,
-} from "../domain/profile-extension";
+  ExtensionLoadFailed,
+  ExtensionLockFailed,
+  ExtensionMutation,
+  ExtensionSelection,
+  ExtensionUpdateError,
+} from "../extensions";
 import {
   actionBadge,
   alignEdges,
@@ -19,18 +19,11 @@ import {
   ziggyBadge,
 } from "./terminal-ui";
 
-type ProfileExtensionFailure =
-  | ProfileExtensionPreflightFailed
-  | ProfileExtensionLockFailed
-  | ProfileExtensionRollbackFailed;
+type ProfileExtensionFailure = ExtensionLoadFailed | ExtensionLockFailed | ExtensionUpdateError;
 
 const MAX_DIAGNOSTIC_SOURCE = 160;
 
 const MAX_DIAGNOSTIC_REASON = 360;
-
-const MAX_ROLLBACK_OPERATION = 96;
-
-const MAX_ROLLBACK_PATH = 240;
 
 const bounded = (value: string, maximum: number): string =>
   [
@@ -47,7 +40,7 @@ const safeText = (value: string, maximum: number): string =>
 
 export const renderProfileExtensionFailure = (failure: ProfileExtensionFailure): string => {
   switch (failure._tag) {
-    case "ProfileExtensionPreflightFailed": {
+    case "ExtensionLoadFailed": {
       const diagnostic = failure.diagnostics[0];
 
       return [
@@ -59,18 +52,10 @@ export const renderProfileExtensionFailure = (failure: ProfileExtensionFailure):
       ].join("; ");
     }
 
-    case "ProfileExtensionLockFailed":
-      return `Profile extension lock failed: operation=${failure.operation}; reason=${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`;
-    case "ProfileExtensionRollbackFailed": {
-      const rollbackFailure = failure.rollbackFailures[0];
-
-      return [
-        `Profile extension rollback failed: operation=${failure.operation}; reason=${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`,
-        rollbackFailure === undefined
-          ? "rollback failure=unavailable"
-          : `rollback operation=${safeText(rollbackFailure.operation, MAX_ROLLBACK_OPERATION)}; path=${safeText(rollbackFailure.path, MAX_ROLLBACK_PATH)}; reason=${safeText(rollbackFailure.message, MAX_DIAGNOSTIC_REASON)}`,
-      ].join("; ");
-    }
+    case "ExtensionLockFailed":
+      return `Profile extension lock failed: ${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`;
+    case "ExtensionUpdateError":
+      return `Extension update refused: id=${failure.id}; reason=${failure.reason}; ${safeText(failure.message, MAX_DIAGNOSTIC_REASON)}`;
   }
 };
 
@@ -83,10 +68,9 @@ export const ExtensionCatalogListingJson = Schema.Struct({
   id: Schema.String,
   version: Schema.String,
   description: Schema.String,
-  kind: Schema.Literals(["skill", "code", "skill+code", "remote"]),
+  kind: Schema.Literals(["skill", "code", "skill+code"]),
   required: Schema.Boolean,
-  source: Schema.Literals(["bundled", "remote-approved", "profile"]),
-  installed: Schema.Boolean,
+  source: Schema.Literals(["bundled", "profile"]),
   packagePath: Schema.optional(Schema.String),
   skills: Schema.optional(Schema.Array(ExtensionSkillJson)),
   extensionPaths: Schema.optional(Schema.Array(Schema.String)),
@@ -108,12 +92,12 @@ export const ProfileExtensionsJson = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       description: Schema.String,
-      kind: Schema.Literals(["skill", "code", "skill+code", "remote"]),
-      source: Schema.Literals(["bundled", "remote-approved", "profile"]),
+      kind: Schema.Literals(["skill", "code", "skill+code"]),
+      source: Schema.Literals(["bundled", "profile"]),
     }),
   ),
   selected: Schema.Array(Schema.String),
-  required: Schema.optionalKey(Schema.Array(Schema.String)),
+  required: Schema.Array(Schema.String),
 });
 
 const encodeProfileExtensions = Schema.encodeSync(ProfileExtensionsJson);
@@ -139,7 +123,7 @@ export const renderProfileExtensionJson = (
   );
 
 export const renderProfileExtensions = (
-  listing: ProfileExtensionListing,
+  listing: ExtensionSelection,
   profilePath: string,
   json: boolean,
 ): string =>
@@ -149,16 +133,16 @@ export const renderProfileExtensions = (
         `Profile: ${profilePath}`,
         ...listing.available.map(
           (extension) =>
-            `${extension.id}\t${listing.selected.includes(extension.id) || listing.required?.includes(extension.id) ? "selected" : "available"}\t${extension.kind}\t${extension.description}`,
+            `${extension.id}\t${listing.selected.includes(extension.id) || listing.required.includes(extension.id) ? "selected" : "available"}\t${extension.kind}\t${extension.description}`,
         ),
         ...listing.selected
           .filter(
             (id) =>
               !listing.available.some((extension) => extension.id === id) &&
-              !listing.required?.includes(id),
+              !listing.required.includes(id),
           )
           .map((id) => `${id}\tselected\tmissing`),
-        ...(listing.required ?? []).map((id) => `${id}\tselected\trequired`),
+        ...listing.required.map((id) => `${id}\tselected\trequired`),
       ].join("\n");
 
 export const renderExtensionsJson = (
@@ -172,8 +156,7 @@ const kindBadge = (
   color: ReturnType<typeof createTerminalColors>,
   kind: ExtensionCatalogListingJson["kind"],
 ): string => {
-  const label =
-    kind === "skill" ? "SK" : kind === "code" ? "CD" : kind === "skill+code" ? "SC" : "RM";
+  const label = kind === "skill" ? "SK" : kind === "code" ? "CD" : "SC";
 
   return color.bgMagenta(color.black(color.bold(` ${label} `)));
 };
@@ -299,9 +282,9 @@ const renderPlainExtension = (
     `description\t${extension.description}`,
     `source\t${extension.source}`,
     `version\t${extension.version}`,
-    profile === undefined
-      ? `package present\t${extension.installed ? "yes" : "no"}`
-      : `selected in ${profile.path}\t${profile.selected ? "yes" : "no"}`,
+    ...(profile === undefined
+      ? []
+      : [`selected in ${profile.path}\t${profile.selected ? "yes" : "no"}`]),
     ...(extension.packagePath === undefined ? [] : [`path\t${extension.packagePath}`]),
     ...(extension.skills ?? []).map((skill) => `skill\t${skill.name} — ${skill.description}`),
     ...(extension.extensionPaths ?? []).map((extensionPath) => `executable\t${extensionPath}`),
@@ -349,16 +332,21 @@ export const renderExtension = (
       alignBoundedRight("selection", extension.required ? "required" : "optional", innerWidth),
       width,
     ),
-    panelLine(
-      color,
-      alignBoundedRight(
-        profile === undefined ? "package present" : `selected in ${profile.path}`,
-        (profile?.selected ?? extension.installed) ? "yes" : "no",
-        innerWidth,
-      ),
-      width,
-    ),
   ];
+
+  if (profile !== undefined) {
+    lines.push(
+      panelLine(
+        color,
+        alignBoundedRight(
+          `selected in ${profile.path}`,
+          profile.selected ? "yes" : "no",
+          innerWidth,
+        ),
+        width,
+      ),
+    );
+  }
 
   if (extension.packagePath !== undefined) {
     lines.push(
@@ -474,7 +462,7 @@ export const renderExtensionManagerResult = (
 };
 
 export const renderExtensionMutation = (
-  result: ProfileExtensionMutation,
+  result: ExtensionMutation,
   options: TerminalRenderOptions,
 ): string => {
   if (!options.pretty) {

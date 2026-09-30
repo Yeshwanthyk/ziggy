@@ -13,7 +13,7 @@ import type {
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { SessionNotFound, type SessionsApi } from "ziggy/session/index";
 import { UiEventFrame, UiResponseFrame } from "ziggy/domain/ui-gateway";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import type { ExtensionsApi } from "ziggy/extensions/index";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
 import { type ProfileTarget } from "ziggy/profile/index";
 
@@ -80,20 +80,23 @@ const makeSessions = (): SessionsApi => ({
     Effect.fail(new SessionNotFound({ reference, message: "missing" })),
 });
 
-const makeExtensions = (): ProfileExtensionsApi => ({
+const makeExtensions = (): ExtensionsApi => ({
   list: () => Effect.succeed([]),
   show: () => Effect.never,
-  listForProfile: () => Effect.succeed({ available: [], selected: [] }),
-  add: (_target, id) => Effect.succeed({ id, profilePath: "", changed: true, selected: true }),
-  remove: (_target, id) => Effect.succeed({ id, profilePath: "", changed: true, selected: false }),
+  listForProfile: () => Effect.succeed({ available: [], selected: [], required: [] }),
+  add: (_target, id) =>
+    Effect.succeed({ id, profilePath: "", changed: true, selected: true, automations: [] }),
+  remove: (_target, id) =>
+    Effect.succeed({ id, profilePath: "", changed: true, selected: false, automations: [] }),
   setSelected: () => Effect.never,
   validate: () =>
     Effect.succeed({
       selected: [],
       preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
     }),
-  prepareRuntime: () => Effect.never,
-  activateRuntime: () => Effect.never,
+  health: () =>
+    Effect.succeed({ listing: { available: [], selected: [], required: [] }, skipped: [] }),
+  update: () => Effect.never,
 });
 
 const eventFrames = (frames: ReadonlyArray<string>) =>
@@ -157,8 +160,6 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
             { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
             { profileId: betaId, target: betaTarget, registry: betaRegistry },
           ],
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: makeSessions(),
           agent,
           profileExtensions: makeExtensions(),

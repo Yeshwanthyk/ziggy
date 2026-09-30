@@ -6,7 +6,7 @@ import {
   type ProfileAgentMentionInvalid,
   ProfileAgentThinking,
 } from "./profile";
-import type { ProfileExtensionRuntimeError } from "./profile-extension";
+import type { ExtensionRuntimeError } from "../extensions";
 
 /** Read-only projection of one Pi-owned session. */
 export interface SessionReference {
@@ -145,7 +145,7 @@ export type ZiggyAgentError =
   | MemoryIdInvalid
   | ProfileAgentInvalid
   | ProfileAgentMentionInvalid
-  | ProfileExtensionRuntimeError;
+  | ExtensionRuntimeError;
 
 export type ProfileSpecialistError =
   | ZiggyAgentError

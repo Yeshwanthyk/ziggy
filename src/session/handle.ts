@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
   SessionManager,
   type AgentSession,

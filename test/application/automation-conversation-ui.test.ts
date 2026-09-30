@@ -25,7 +25,7 @@ import {
   type UiGatewayApi,
 } from "ziggy/application/ui-gateway";
 import { listSessions, Sessions, type SessionsApi } from "ziggy/session/index";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import type { ExtensionsApi } from "ziggy/extensions/index";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
 import { UiDestinationListResult, UiResponseFrame } from "ziggy/domain/ui-gateway";
 import { type ProfileTarget } from "ziggy/profile/index";
@@ -45,10 +45,10 @@ const decodeResponse = Schema.decodeUnknownSync(Schema.fromJsonString(UiResponse
 
 const decodeDestinations = Schema.decodeUnknownSync(UiDestinationListResult);
 
-const profileExtensions: ProfileExtensionsApi = {
+const profileExtensions: ExtensionsApi = {
   list: () => Effect.never,
   show: () => Effect.never,
-  listForProfile: () => Effect.succeed({ available: [], selected: [] }),
+  listForProfile: () => Effect.succeed({ available: [], selected: [], required: [] }),
   add: () => Effect.never,
   remove: () => Effect.never,
   setSelected: () => Effect.never,
@@ -57,8 +57,9 @@ const profileExtensions: ProfileExtensionsApi = {
       selected: [],
       preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
     }),
-  prepareRuntime: () => Effect.never,
-  activateRuntime: () => Effect.never,
+  health: () =>
+    Effect.succeed({ listing: { available: [], selected: [], required: [] }, skipped: [] }),
+  update: () => Effect.never,
 };
 
 const sessions: SessionsApi = Effect.runSync(Sessions.make);
@@ -249,8 +250,6 @@ test("automation.run routes through the selected Profile registry and reloads th
             { profileId: fixture.profileId, target: fixture.target, registry },
           ],
           profileDirectory,
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
           agent: fixture.agent,
           profileExtensions,
@@ -301,8 +300,6 @@ test("automation.run routes through the selected Profile registry and reloads th
             },
           ],
           profileDirectory,
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
           agent: fixture.agent,
           profileExtensions,
@@ -357,8 +354,6 @@ test("a missing destination records a terminal failure without a fallback conver
 
         const gateway = yield* makeUiGateway({
           defaultProfile: { profileId: fixture.profileId, target: fixture.target, registry },
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions,
           agent: fixture.agent,
           profileExtensions,
@@ -559,8 +554,6 @@ test("destination.list pages the selected Profile's stored and external destinat
             { profileId: otherProfileId, target: otherTarget, registry: otherRegistry },
           ],
           profileDirectory: directory,
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: manySessions,
           agent: fixture.agent,
           profileExtensions,

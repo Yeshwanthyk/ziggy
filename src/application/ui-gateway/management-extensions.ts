@@ -1,6 +1,4 @@
 import { Effect, Schema } from "effect";
-import type { ProfileExtensionHealthListing } from "../../adapters/pi/profile-extension-preflight";
-
 import {
   UiExtensionAddParams,
   UiExtensionListForProfileParams,
@@ -17,7 +15,7 @@ import {
   type UiRequestEnvelope,
 } from "../../domain/ui-gateway";
 
-import type { ProfileExtensionError } from "../../domain/profile-extension";
+import type { ExtensionError, ExtensionHealth } from "../../extensions";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 import { badParams, boundedText, protocolFailure, safeFailureMessage } from "./errors";
@@ -44,43 +42,22 @@ const decodeExtensionValidationResult = Schema.decodeUnknownEffect(UiExtensionVa
 
 const extensionFailure = (
   operation: UiExtensionOperation,
-  cause: ProfileExtensionError,
+  cause: ExtensionError,
   requestedId?: string,
 ): UiExtensionFailureValue => {
-  const tag = cause._tag;
-
-  const stage: UiExtensionFailureStage =
-    tag === "ExtensionCatalogInstallFailed"
-      ? cause.reason
-      : tag === "ProfileExtensionPreflightFailed"
-        ? cause.stage
-        : tag === "ProfileExtensionLockFailed"
-          ? "lock"
-          : tag === "ProfileExtensionRollbackFailed"
-            ? "rollback"
-            : tag === "ExtensionCatalogInvalid"
-              ? "catalog"
-              : tag === "ProfileFileSystemError" || tag === "ProfileExtensionInvalid"
-                ? "filesystem"
-                : "response";
-
-  const code =
-    tag === "ExtensionCatalogInstallFailed"
-      ? "catalog_install_failed"
-      : tag === "ProfileExtensionPreflightFailed"
-        ? "preflight_failed"
-        : tag === "ProfileExtensionLockFailed"
-          ? "lock_failed"
-          : tag === "ProfileExtensionRollbackFailed"
-            ? "rollback_failed"
-            : tag.toLowerCase();
+  const { stage, code }: { stage: UiExtensionFailureStage; code: string } =
+    cause._tag === "ExtensionLoadFailed"
+      ? { stage: cause.stage, code: "preflight_failed" }
+      : cause._tag === "ExtensionLockFailed"
+        ? { stage: "lock", code: "lock_failed" }
+        : { stage: "filesystem", code: cause._tag.toLowerCase() };
 
   const result = {
     operation,
     stage,
     code: boundedText(code, 64, "extension_operation_failed"),
     message: safeFailureMessage(cause, "Profile extension operation failed"),
-    selectionChanged: tag === "ProfileExtensionRollbackFailed",
+    selectionChanged: false,
   };
 
   if (requestedId === undefined) return result;
@@ -88,7 +65,7 @@ const extensionFailure = (
   return { ...result, id: boundedText(requestedId, 128, "extension") };
 };
 
-const projectExtensionList = (profileId: ProfileId, result: ProfileExtensionHealthListing) => {
+const projectExtensionList = (profileId: ProfileId, result: ExtensionHealth) => {
   const selected = result.listing.selected.slice(0, 64);
 
   const skipped: Array<{ id: string; diagnostics: Array<{ source: string; message: string }> }> =
@@ -187,8 +164,8 @@ export const dispatchExtensions = (
         Effect.mapError((cause) => badParams(request.method, cause)),
         Effect.flatMap((params) => route(params.profileId)),
         Effect.flatMap((branch) =>
-          config.extensionHealth(branch.target.path, config.profileExtensions).pipe(
-            Effect.catchTag("ProfileExtensionPreflightFailed", (cause) =>
+          config.profileExtensions.health(branch.target.path).pipe(
+            Effect.catchTag("ExtensionLoadFailed", (cause) =>
               config.profileExtensions.listForProfile(branch.target.path).pipe(
                 Effect.map((listing) => ({
                   listing,

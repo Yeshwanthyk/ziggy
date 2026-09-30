@@ -2,8 +2,6 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
 import { fileSystemCauseDetails } from "../../platform/cause";
-import { classifyBundledCopy } from "../fs/extension-update";
-import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../../catalog";
 import { discoverProfileAgents } from "../fs/profile-agents";
 import {
   gatewayConfigPresent,
@@ -19,11 +17,7 @@ import { readDiscordHealth } from "../fs/discord-health";
 import { parseAutomationFile } from "../../domain/automation";
 import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../../domain/memory";
 import { type DoctorCheck, doctorReport } from "../../domain/doctor";
-import {
-  ProfileExtensionPreflightFailed,
-  type ProfileExtensionsApi,
-} from "../../domain/profile-extension";
-import { inspectPiPackageHealth } from "./profile-extension-preflight";
+import { type ExtensionsApi } from "../../extensions";
 import {
   DoctorChecks,
   type DoctorChecksApi,
@@ -32,7 +26,6 @@ import {
   error,
   classifySlackRuntime,
   classifyDiscordRuntime,
-  bundledCopyCheck,
   modelDoctorCheck,
   authDoctorCheck,
   agentsDoctorCheck,
@@ -235,46 +228,29 @@ const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const resourcesCheck = (
   target: ProfileTarget,
-  profileExtensions: ProfileExtensionsApi,
-  inspectPackages: typeof inspectPiPackageHealth,
+  extensions: ExtensionsApi,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const skipped = yield* inspectPackages(target.path);
+    const { skipped } = yield* extensions.health(target.path);
 
     if (skipped.length > 0)
       return error(
         "resources",
-        `BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
+        `BROKEN Profile packages skipped: ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
       );
 
-    const { preflight } = yield* profileExtensions.validate(target);
-
-    for (const entry of BUILTIN_EXTENSION_CATALOG.extensions) {
-      if (!isRequiredBundledExtension(entry.id) || entry.source !== "bundled") continue;
-      const present = yield* Effect.result(inspect(path.join(target.path, "extensions", entry.id)));
-
-      if (present._tag === "Failure" && isMissing(present.failure)) continue;
-
-      if (present._tag === "Failure")
-        return error("resources", `Could not inspect required package ${entry.id}`);
-
-      const copy = yield* classifyBundledCopy(target.path, entry);
-
-      const copyCheck = bundledCopyCheck(target.path, entry.id, copy.state);
-
-      if (copyCheck !== undefined) return copyCheck;
-    }
+    const { preflight } = yield* extensions.validate(target);
 
     return ok(
       "resources",
-      `${preflight.extensionFactoryCount} bundled factories, ${preflight.extensionPathCount} Profile extension entrypoints, and ${preflight.skillPathCount} skill roots selected`,
+      `${preflight.extensionPathCount} Profile extension entrypoints and ${preflight.skillPathCount} skill roots selected`,
     );
   }).pipe(
     Effect.catch((failure) =>
       Effect.succeed(
         error(
           "resources",
-          failure instanceof ProfileExtensionPreflightFailed
+          failure._tag === "ExtensionLoadFailed"
             ? `Fatal Pi resource diagnostics: ${failure.diagnostics
                 .slice(0, 3)
                 .map((item) => `${item.source}: ${item.message}`)
@@ -377,9 +353,7 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
       : error("runtime", "Resident runtime path must be a regular directory");
   });
 
-export const makeDoctorChecks = (
-  inspectPackages: typeof inspectPiPackageHealth = inspectPiPackageHealth,
-): DoctorChecksApi => ({
+export const makeDoctorChecks = (): DoctorChecksApi => ({
   check: (target, auth, models, profileExtensions) =>
     Effect.gen(function* () {
       const checks = [
@@ -390,7 +364,7 @@ export const makeDoctorChecks = (
         yield* agentsCheck(target, models),
         yield* automationsCheck(target),
         yield* memoryCheck(target),
-        yield* resourcesCheck(target, profileExtensions, inspectPackages),
+        yield* resourcesCheck(target, profileExtensions),
         piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),

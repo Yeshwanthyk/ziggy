@@ -20,11 +20,8 @@ import type { ProfileAgentsApi } from "ziggy/application/profile-agents";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
-import {
-  ProfileExtensionPreflightFailed,
-  type ProfileExtensionsApi,
-} from "ziggy/domain/profile-extension";
-import { ExtensionCatalogInstallFailed } from "ziggy/domain/extension-catalog";
+import { ExtensionLoadFailed, type ExtensionsApi } from "ziggy/extensions/index";
+import { ProfileFileSystemError } from "ziggy/profile/index";
 import { SessionNotFound, SessionReadFailed, type SessionsApi } from "ziggy/session/index";
 import { ProfileAgentEditConflict } from "ziggy/domain/profile";
 import {
@@ -58,26 +55,43 @@ const retainedEvents = (registry: ChatRegistryApi, key: string, afterSeq?: numbe
     return events;
   });
 
-const makeProfileExtensions = (
-  overrides: Partial<ProfileExtensionsApi> = {},
-): ProfileExtensionsApi => ({
-  list: () => Effect.never,
-  show: () => Effect.never,
-  listForProfile: () => Effect.succeed({ available: [], selected: [] }),
-  add: (_target, id) =>
-    Effect.succeed({ id, profilePath: "/profile", changed: true, selected: true }),
-  remove: (_target, id) =>
-    Effect.succeed({ id, profilePath: "/profile", changed: true, selected: false }),
-  setSelected: () => Effect.never,
-  validate: () =>
-    Effect.succeed({
-      selected: [],
-      preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
-    }),
-  prepareRuntime: () => Effect.never,
-  activateRuntime: () => Effect.never,
-  ...overrides,
-});
+const makeProfileExtensions = (overrides: Partial<ExtensionsApi> = {}): ExtensionsApi => {
+  const listForProfile: ExtensionsApi["listForProfile"] =
+    overrides.listForProfile ??
+    (() => Effect.succeed({ available: [], selected: [], required: [] }));
+
+  return {
+    list: () => Effect.never,
+    show: () => Effect.never,
+    listForProfile,
+    add: (_target, id) =>
+      Effect.succeed({
+        id,
+        profilePath: "/profile",
+        changed: true,
+        selected: true,
+        automations: [],
+      }),
+    remove: (_target, id) =>
+      Effect.succeed({
+        id,
+        profilePath: "/profile",
+        changed: true,
+        selected: false,
+        automations: [],
+      }),
+    setSelected: () => Effect.never,
+    validate: () =>
+      Effect.succeed({
+        selected: [],
+        preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
+      }),
+    health: (profilePath) =>
+      Effect.map(listForProfile(profilePath), (listing) => ({ listing, skipped: [] })),
+    update: () => Effect.never,
+    ...overrides,
+  };
+};
 
 const makeSessions = (): SessionsApi => ({
   summaries: () => Effect.succeed([]),
@@ -130,10 +144,6 @@ const makeConfig = (
   sessions: makeSessions(),
   agent,
   profileExtensions,
-  extensionHealth: (_path: string, extensions: ProfileExtensionsApi) =>
-    extensions
-      .listForProfile(target.path)
-      .pipe(Effect.map((listing) => ({ listing, skipped: [] }))),
   ...extra,
 });
 
@@ -1344,17 +1354,30 @@ test("UI gateway routes all management operations through decoded explicit Profi
       return Effect.succeed({
         available: [{ id: "weather", description: "Weather", kind: "skill", source: "bundled" }],
         selected: ["weather"],
+        required: [],
       });
     },
     add: (profile, id) => {
       calls.push(`add:${profile.path}:${id}`);
 
-      return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: true });
+      return Effect.succeed({
+        id,
+        profilePath: profile.path,
+        changed: true,
+        selected: true,
+        automations: [],
+      });
     },
     remove: (profile, id) => {
       calls.push(`remove:${profile.path}:${id}`);
 
-      return Effect.succeed({ id, profilePath: profile.path, changed: true, selected: false });
+      return Effect.succeed({
+        id,
+        profilePath: profile.path,
+        changed: true,
+        selected: false,
+        automations: [],
+      });
     },
     validate: (profile) => {
       calls.push(`validate:${profile.path}`);
@@ -1579,10 +1602,11 @@ test("UI extension listing respects the frame budget and reports truncation", as
     source: "bundled" as const,
   }));
 
-  const profileExtensions = makeProfileExtensions({
-    listForProfile: () =>
-      Effect.succeed({ available: choices, selected: choices.map((choice) => choice.id) }),
-  });
+  const listing = {
+    available: choices,
+    selected: choices.map((choice) => choice.id),
+    required: [],
+  };
 
   const skipped = Array.from({ length: 16 }, (_, index) => ({
     id: `broken-${index}`,
@@ -1601,13 +1625,11 @@ test("UI extension listing respects the frame budget and reports truncation", as
           ...makeConfig(
             registry,
             makeAgent(makeChatHandle({ prompt: () => Effect.never })),
-            profileExtensions,
-          ),
-          extensionHealth: () =>
-            Effect.succeed({
-              listing: { available: choices, selected: choices.map((choice) => choice.id) },
-              skipped,
+            makeProfileExtensions({
+              listForProfile: () => Effect.succeed(listing),
+              health: () => Effect.succeed({ listing, skipped }),
             }),
+          ),
         })).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
@@ -1640,19 +1662,24 @@ test("extension listing reports quarantined package diagnostics", async () => {
         const registry = yield* makeChatRegistry();
 
         const connection = (yield* makeUiGateway({
-          ...makeConfig(registry, makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") }))),
-          extensionHealth: () =>
-            Effect.succeed({
-              listing: { available: [], selected: ["broken-one"] },
-              skipped: [
-                {
-                  id: "broken-one",
-                  diagnostics: [
-                    { source: "broken-one/index.ts", message: "invalid command registration" },
+          ...makeConfig(
+            registry,
+            makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
+            makeProfileExtensions({
+              health: () =>
+                Effect.succeed({
+                  listing: { available: [], selected: ["broken-one"], required: [] },
+                  skipped: [
+                    {
+                      id: "broken-one",
+                      diagnostics: [
+                        { source: "broken-one/index.ts", message: "invalid command registration" },
+                      ],
+                    },
                   ],
-                },
-              ],
+                }),
             }),
+          ),
         })).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({
@@ -1681,17 +1708,17 @@ test("UI gateway maps extension failures to bounded typed details without filesy
   const profileExtensions = makeProfileExtensions({
     add: () =>
       Effect.fail(
-        new ExtensionCatalogInstallFailed({
-          id: "weather",
+        new ProfileFileSystemError({
+          operation: "rename",
           path: "/secret/extensions/weather",
-          reason: "filesystem",
           message: "m".repeat(400),
-          cause: "catalog install failed",
+          code: "EACCES",
+          cause: "unpack failed",
         }),
       ),
     validate: () =>
       Effect.fail(
-        new ProfileExtensionPreflightFailed({
+        new ExtensionLoadFailed({
           profilePath: "/secret/profile",
           stage: "extensions",
           message: "package import is unavailable",
@@ -2312,7 +2339,18 @@ test("health inspection failure still lists selected extensions with a diagnosti
         const registry = yield* makeChatRegistry();
 
         const extensions = makeProfileExtensions({
-          listForProfile: () => Effect.succeed({ selected: ["weather"], available: [] }),
+          listForProfile: () =>
+            Effect.succeed({ selected: ["weather"], available: [], required: [] }),
+          health: () =>
+            Effect.fail(
+              new ExtensionLoadFailed({
+                profilePath: "/secret",
+                stage: "extensions",
+                diagnostics: [],
+                message: "health inspection failed",
+                cause: undefined,
+              }),
+            ),
         });
 
         const connection = (yield* makeUiGateway({
@@ -2321,16 +2359,6 @@ test("health inspection failure still lists selected extensions with a diagnosti
             makeAgent(makeChatHandle({ prompt: () => Effect.succeed("") })),
             extensions,
           ),
-          extensionHealth: () =>
-            Effect.fail(
-              new ProfileExtensionPreflightFailed({
-                profilePath: "/secret",
-                stage: "extensions",
-                diagnostics: [],
-                message: "health inspection failed",
-                cause: undefined,
-              }),
-            ),
         })).connect((frame) => responses.push(decodeResponse(frame)));
 
         yield* connection.request({

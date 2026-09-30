@@ -34,10 +34,10 @@ import {
   type SessionReference,
 } from "../../domain/agent";
 import type { ProfileAgent } from "../../domain/profile";
+import { loaderOptions, type PiResources } from "../../extensions";
 import { createPiDocsExtension } from "./pi-docs";
 import { promptForAssistantText } from "./prompt-turn";
 import { composeProfileSystemPrompt, loadProfileAgentsPrompt } from "./profile-prompt";
-import type { PiResources } from "./resources";
 import { createProfileAgentChildSession } from "./session-lineage";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { ProviderConfigError } from "../../profile";
@@ -244,18 +244,6 @@ const specialistFailure = (
     cause,
   });
 
-interface SpecialistResourceLoaderOptions {
-  systemPrompt: string;
-  noExtensions: true;
-  noSkills: true;
-  noPromptTemplates: true;
-  noThemes: true;
-  noContextFiles: true;
-  extensionFactories?: InlineExtension[];
-  additionalExtensionPaths?: string[];
-  additionalSkillPaths?: string[];
-}
-
 export interface SpecialistExecutionEnvironment {
   readonly services: AgentSessionServices;
   readonly resources: PiResources;
@@ -290,30 +278,11 @@ export const specialistRuntime = (
                 cwd,
                 agentDir,
                 modelRuntime: environment.services.modelRuntime,
-                resourceLoaderOptions: (() => {
-                  const options: SpecialistResourceLoaderOptions = {
-                    systemPrompt: composeProfileSystemPrompt(agentsPrompt, agent.body),
-                    noExtensions: true,
-                    noSkills: true,
-                    noPromptTemplates: true,
-                    noThemes: true,
-                    noContextFiles: true,
-                    extensionFactories: [
-                      ...environment.resources.extensionFactories,
-                      ...specialistReferenceExtensions(),
-                    ],
-                  };
-
-                  if (environment.resources.extensionPaths.length > 0) {
-                    options.additionalExtensionPaths = [...environment.resources.extensionPaths];
-                  }
-
-                  if (environment.resources.skillPaths.length > 0) {
-                    options.additionalSkillPaths = [...environment.resources.skillPaths];
-                  }
-
-                  return options;
-                })(),
+                resourceLoaderOptions: loaderOptions(
+                  composeProfileSystemPrompt(agentsPrompt, agent.body),
+                  environment.resources,
+                  specialistReferenceExtensions(),
+                ),
               });
 
               const created = await createAgentSessionFromServices(

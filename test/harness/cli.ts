@@ -31,13 +31,20 @@ const environment = (profile: ScratchProfile) => ({
   NO_COLOR: "1",
 });
 
-export const ziggy = async (
+export const ziggy = (
   profile: ScratchProfile,
+  ...args: ReadonlyArray<string>
+): Promise<CliResult> => ziggyWith(profile, {}, ...args);
+
+/** `ziggy` with some of the child's environment replaced, e.g. an empty `PATH`. */
+export const ziggyWith = async (
+  profile: ScratchProfile,
+  overrides: Readonly<Record<string, string>>,
   ...args: ReadonlyArray<string>
 ): Promise<CliResult> => {
   const child = Bun.spawn([process.execPath, main, ...args], {
     cwd: profile.root,
-    env: environment(profile),
+    env: { ...environment(profile), ...overrides },
     // Killed before bun's 5 s test timeout, so a hung command never outlives its proof.
     timeout: 4_500,
     killSignal: "SIGKILL",
