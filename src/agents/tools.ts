@@ -292,14 +292,16 @@ const agentDiscussTool = (
   },
 });
 
-/** Contributes `agent_run` and `agent_discuss` when the Profile has agents. */
+/**
+ * Contributes `agent_run` and `agent_discuss` to every session, so an agent added while the session
+ * is open can be run: the prompt lists agents each turn and a run refuses an unknown id. An invalid
+ * agent file refuses the session.
+ */
 export const agentTools =
   (open: OpenAgentSession): SessionTools =>
   (context) =>
     discoverProfileAgents(context.profilePath).pipe(
-      Effect.map((agents) =>
-        agents.length === 0 ? [] : [agentRunTool(open, context), agentDiscussTool(open, context)],
-      ),
+      Effect.as([agentRunTool(open, context), agentDiscussTool(open, context)]),
     );
 
 const guidance = (agents: ReadonlyArray<ProfileAgent>): string =>

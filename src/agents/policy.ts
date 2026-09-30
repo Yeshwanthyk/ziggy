@@ -30,8 +30,9 @@ export const agentModel = ({ provider, model, thinking }: ProfileAgent): ChatMod
 };
 
 /**
- * The persona a session runs as. The whole declaration is checked even when an internal caller
- * narrows it, and narrowing can only remove tools.
+ * The persona a session runs as. Forbidden tools are refused across the whole declaration even
+ * when an internal caller narrows it, and narrowing can only remove tools. A declared tool that
+ * does not exist is refused when the session opens, so only if it survives the narrowing.
  */
 export const agentPersona = (
   profilePath: string,

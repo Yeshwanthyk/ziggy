@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Predicate, Schema, Semaphore } from "effect";
 import { ProfileAgent, ProfileAgentEditConflict, ProfileAgentInvalid } from "../domain/profile";
@@ -474,13 +474,7 @@ export const replaceProfileAgentFile = (
       }
 
       yield* Effect.uninterruptible(
-        writeFileAtomic(current.path, source).pipe(
-          Effect.andThen(
-            Effect.tryPromise({
-              try: () => chmod(current.path, fileStatus.mode),
-              catch: (cause) => cause,
-            }),
-          ),
+        writeFileAtomic(current.path, source, fileStatus.mode).pipe(
           Effect.mapError((failure) => fsError("save", current.path, failure)),
         ),
       );

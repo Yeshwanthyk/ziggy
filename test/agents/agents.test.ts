@@ -11,7 +11,7 @@ import type { ProfileAgent } from "ziggy/domain/profile";
 import { localSpecialistSessionDirectory, makeZiggyAgent } from "ziggy/agents/index";
 import { agentPersona } from "ziggy/agents/policy";
 import { scratchProfile, type ScratchProfile } from "../harness/profile";
-import { type ModelServer, startModelServer, text } from "../harness/provider";
+import { type ModelServer, startModelServer, text, tools } from "../harness/provider";
 
 let server: ModelServer;
 
@@ -166,6 +166,33 @@ describe("Profile agent rails", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     expect(await readdir(profile.path)).not.toContain("sessions");
   });
+});
+
+test("an agent added while a session is open can be run from it", async () => {
+  server.push(
+    tools({ name: "agent_run", arguments: { agent: "late", prompt: "late task" } }),
+    text("LATE_ANSWER"),
+    text("parent done"),
+  );
+
+  const handle = await Effect.runPromise(
+    makeZiggyAgent({}).open({
+      target: target(),
+      context: { kind: "local" },
+      directory: join(profile.path, "sessions"),
+      session: "new",
+    }),
+  );
+
+  try {
+    await writeAgent("late", "");
+    expect(await Effect.runPromise(handle.prompt("delegate"))).toBe("parent done");
+  } finally {
+    await Effect.runPromise(handle.dispose);
+  }
+
+  expect(server.raw(1)).toContain("AGENT_BODY_late");
+  expect(server.toolResults(2)).toContain("LATE_ANSWER");
 });
 
 test("an invalid agent file refuses print and gateway chat before Pi is called", async () => {
