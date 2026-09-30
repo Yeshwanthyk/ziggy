@@ -12,7 +12,7 @@ export const withBaseUrl = (
   base === undefined || base === origin
     ? client
     : HttpClient.mapRequest(client, (request) =>
-        request.url.startsWith(origin)
+        request.url === origin || request.url.startsWith(`${origin}/`)
           ? HttpClientRequest.setUrl(request, `${base}${request.url.slice(origin.length)}`)
           : request,
       );

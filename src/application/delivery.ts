@@ -47,8 +47,17 @@ export const apiFailure = (
   }
 };
 
-/** A chat API base URL from the environment (e.g. `ZIGGY_SLACK_API_URL`); unset means the real API. */
+/**
+ * A chat API base URL from the environment (e.g. `ZIGGY_SLACK_API_URL`); unset or empty means the
+ * real API. A value that is not a URL is a configuration failure, not a retriable send failure.
+ */
 export const chatApiUrl = (name: string): Effect.Effect<string | undefined, DeliveryFailure> =>
   Effect.gen(function* () {
-    return Option.getOrUndefined(yield* Config.string(name).pipe(Config.option));
+    const value = Option.getOrUndefined(yield* Config.string(name).pipe(Config.option));
+
+    if (value === undefined || value === "") return undefined;
+
+    if (!URL.canParse(value)) return yield* Effect.fail(configurationFailure);
+
+    return value.replace(/\/+$/, "");
   }).pipe(Effect.mapError(() => configurationFailure));
