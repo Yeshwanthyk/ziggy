@@ -24,7 +24,12 @@ import { prepareProfileAgentPrompt, ProfileAgentMentionInvalid } from "../domain
 import { ProviderConfigError, type ProfileTarget } from "../profile";
 import { makeChatHandle } from "./handle";
 import { makeSessionLeaseSet, takeSessionLease, type SessionLeaseSet } from "./lease";
-import { createProfileRuntime, disposeRuntime, type ProfileRuntimeOptions } from "./runtime";
+import {
+  createProfileRuntime,
+  disposeRuntime,
+  requireSoul,
+  type ProfileRuntimeOptions,
+} from "./runtime";
 import type { ChatHandle, OpenSession, RunOnceOptions, ZiggyAgentApi } from "./types";
 
 /** What composition plugs into every session this agent opens. */
@@ -65,6 +70,9 @@ const openTranscript = (
   file?: string,
 ): Effect.Effect<SessionManager, ZiggyAgentError> =>
   Effect.gen(function* () {
+    // An uninitialized Profile is refused before any lease or session directory is created.
+    yield* requireSoul(profilePath);
+
     const existing =
       file ??
       (session === "continue"

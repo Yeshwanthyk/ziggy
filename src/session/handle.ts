@@ -324,19 +324,33 @@ export const makeChatHandle = (
               if (!runtime.session.isIdle)
                 throw deliveryFailure("session-busy", true, "conversation has an active turn");
 
-              await runtime.session.sendCustomMessage(
-                {
-                  customType: AUTOMATION_RESULT_CUSTOM_TYPE,
-                  content: automationResultContent(result),
-                  display: true,
-                  details: {
-                    automationId: result.automationId,
-                    runId: result.runId,
-                    targetSessionId: result.targetSessionId,
+              try {
+                await runtime.session.sendCustomMessage(
+                  {
+                    customType: AUTOMATION_RESULT_CUSTOM_TYPE,
+                    content: automationResultContent(result),
+                    display: true,
+                    details: {
+                      automationId: result.automationId,
+                      runId: result.runId,
+                      targetSessionId: result.targetSessionId,
+                    },
                   },
-                },
-                { triggerTurn: false },
-              );
+                  { triggerTurn: false },
+                );
+              } catch (cause) {
+                // A send can throw after Pi persisted the entry; the transcript is the receipt.
+                if (alreadyDelivered(result)) return true;
+
+                throw cause;
+              }
+
+              if (!alreadyDelivered(result))
+                throw deliveryFailure(
+                  "write",
+                  true,
+                  "the automation result was not persisted to the conversation",
+                );
 
               return true;
             },
@@ -432,12 +446,15 @@ export const makeChatHandle = (
               Effect.mapError((cause) => providerError(profilePath, "resume session", cause)),
             );
 
-            yield* Effect.fromResult(leases.hold(header.id));
-
-            // Once Pi starts tearing the old session down, the switch must finish.
+            // Lease the target and switch as one step: once Pi starts tearing the old
+            // session down the switch must finish, and an interrupt must not strand the lease.
             const result = yield* Effect.uninterruptible(
-              piStep(profilePath, "resume session", () =>
-                replaced(() => runtime.switchSession(path)),
+              Effect.fromResult(leases.hold(header.id)).pipe(
+                Effect.andThen(
+                  piStep(profilePath, "resume session", () =>
+                    replaced(() => runtime.switchSession(path)),
+                  ),
+                ),
               ),
             );
 
@@ -448,7 +465,14 @@ export const makeChatHandle = (
         currentReference(profilePath, runtime.session.sessionManager),
       ),
       appendAutomationResult,
-      prompt: (text, promptOptions) => turn.withPermit(prompt(text, promptOptions)),
+      prompt: (text, promptOptions) =>
+        turn
+          .withPermitsIfAvailable(1)(prompt(text, promptOptions))
+          .pipe(
+            Effect.flatMap(
+              Option.match({ onNone: () => Effect.fail(busy()), onSome: Effect.succeed }),
+            ),
+          ),
       abort: piPromise(profilePath, "abort agent session", abort),
       steer: (text) => whileStreaming("steer", () => runtime.session.steer(text)),
       followUp: (text) => whileStreaming("followUp", () => runtime.session.followUp(text)),

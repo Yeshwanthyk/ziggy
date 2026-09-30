@@ -202,6 +202,41 @@ test("a held chat refuses before calling Pi's runtime factory", async () => {
   }
 });
 
+test("an uninitialized Profile is refused before any lease or session directory exists", async () => {
+  const profilePath = await temporaryProfile();
+
+  const exit = await Effect.runPromiseExit(
+    openSession(openRequest(profilePath, join(profilePath, "sessions", "chat"))),
+  );
+
+  expect(exit).toMatchObject({
+    cause: { reasons: [{ error: { _tag: "ProfileNotInitialized" } }] },
+  });
+  expect(await readdir(profilePath)).toEqual([]);
+});
+
+test("a second prompt is refused as busy instead of queueing behind the first", async () => {
+  const sessionManager = SessionManager.inMemory("/profile");
+
+  const runtime = fakePiRuntime({
+    sessionManager,
+    prompt: () => new Promise<void>(() => undefined),
+  });
+
+  const handle = await Effect.runPromise(
+    makeChatHandle({ profilePath: "/profile", runtime, leases: makeSessionLeaseSet("/profile") }),
+  );
+
+  const first = Effect.runFork(handle.prompt("first"));
+  await Effect.runPromise(Effect.yieldNow);
+
+  const second = await Effect.runPromiseExit(handle.prompt("second"));
+  expect(second).toMatchObject({ cause: { reasons: [{ error: { _tag: "SessionBusy" } }] } });
+
+  await Effect.runPromise(Fiber.interrupt(first));
+  await Effect.runPromise(handle.dispose);
+});
+
 describe("Pi provider failure classification", () => {
   test("extracts a bounded command or path from tool args", () => {
     expect(progressToolDetail({ command: "  osascript -e tell Reminders  " })).toBe(

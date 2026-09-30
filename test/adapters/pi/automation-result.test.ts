@@ -293,6 +293,52 @@ test("live idle delivery appends without prompting, publishes once, and busy del
   ).toHaveLength(1);
 });
 
+test("live delivery trusts the transcript receipt, not the send promise", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-receipt-"));
+  roots.push(profilePath);
+
+  const manager = SessionManager.create(profilePath, join(profilePath, "sessions", "channel"), {
+    id: "live-session",
+  });
+
+  materialize(manager);
+  let persist = true;
+
+  const handle = await liveHandle(profilePath, {
+    sessionManager: manager,
+    sendCustomMessage: (message) => {
+      if (persist)
+        manager.appendCustomMessageEntry(
+          message.customType,
+          message.content,
+          message.display,
+          message.details,
+        );
+
+      return Promise.reject(new Error("write reported failure"));
+    },
+  });
+
+  const result = {
+    automationId: "daily-note",
+    runId: "manual:persisted",
+    targetSessionId: "live-session",
+    text: "live result",
+    timestamp: "2026-09-17T12:00:00.000Z",
+  } as const;
+
+  expect(await Effect.runPromise(handle.appendAutomationResult(result))).toBe(true);
+
+  persist = false;
+  expect(
+    await Effect.runPromise(
+      Effect.result(handle.appendAutomationResult({ ...result, runId: "manual:lost" })),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { category: "write", retriable: true } });
+
+  await Effect.runPromise(handle.dispose);
+});
+
 test("a live owner that switched away after the match falls back to the stored append", async () => {
   const profilePath = await mkdtemp(join(tmpdir(), "ziggy-automation-switched-"));
   roots.push(profilePath);
